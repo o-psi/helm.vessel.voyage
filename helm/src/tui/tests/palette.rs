@@ -147,7 +147,10 @@ fn slash_palette_completes_filesystem_arguments() {
     app.composer.insert_str("/workspace pro");
     let workspace = slash_palette_items(&app.palette_context());
     assert_eq!(workspace.len(), 1);
-    assert_eq!(workspace[0].completion, "/workspace project-alpha/");
+    assert_eq!(
+        workspace[0].completion,
+        format!("/workspace project-alpha{}", std::path::MAIN_SEPARATOR)
+    );
 
     app.composer = Composer::default();
     app.composer.insert_str("/config helm-");
