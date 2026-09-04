@@ -6,7 +6,7 @@ administer scoped systems, and maintain a durable working conversation.
 
 ## Capabilities
 
-- Provider-neutral agent loop with OpenAI-compatible and Anthropic adapters
+- Provider-neutral agent loop with native incremental OpenAI-compatible and Anthropic streaming
 - Native tool calling across repeated model/tool turns
 - File reading/writing, SHA-guarded atomic patching, directory traversal, and search
 - One-shot shell execution plus persistent PTY processes with incremental I/O and resize

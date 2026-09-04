@@ -16,6 +16,7 @@ pub enum AgentEvent {
         turn: usize,
     },
     AssistantText(String),
+    AssistantTextDelta(String),
     ToolStarted {
         name: String,
         arguments: serde_json::Value,
@@ -168,10 +169,11 @@ impl Agent {
                 temperature: self.temperature,
                 max_tokens: Some(self.max_tokens),
             };
-            let response = self.complete_with_retry(request, &cancel).await?;
+            let response = self.stream_with_retry(request, &cancel).await?;
             usage.input_tokens += response.usage.input_tokens;
             usage.output_tokens += response.usage.output_tokens;
             let assistant = response.message;
+            // AssistantText remains a completion notification for non-stream-aware sinks.
             if !assistant.content.is_empty() {
                 self.sink
                     .emit(AgentEvent::AssistantText(assistant.content.clone()))
@@ -217,38 +219,77 @@ impl Agent {
         Err(AgentError::MaxTurns(self.max_turns))
     }
 
-    async fn complete_with_retry(
+    async fn stream_with_retry(
         &self,
         request: ModelRequest,
         cancel: &CancellationToken,
     ) -> Result<crate::model::ModelResponse, AgentError> {
+        use crate::provider::{ProviderDelta, ProviderStreamEvent};
+        use futures_util::StreamExt;
         let mut delay = self.retry.initial_delay;
         for attempt in 1..=self.retry.max_attempts.max(1) {
-            let result = tokio::select! {
-                _ = cancel.cancelled() => { self.sink.emit(AgentEvent::Cancelled).await; return Err(AgentError::Cancelled); }
-                value = self.provider.complete(request.clone()) => value,
-            };
-            match result {
-                Ok(response) => return Ok(response),
+            let stream_result = tokio::select! {_ = cancel.cancelled()=>{self.sink.emit(AgentEvent::Cancelled).await;return Err(AgentError::Cancelled);}, value=self.provider.stream(request.clone())=>value};
+            let mut stream = match stream_result {
+                Ok(value) => value,
                 Err(error) if error.is_retryable() && attempt < self.retry.max_attempts => {
-                    let wait = error
-                        .retry_after()
-                        .unwrap_or(delay)
-                        .min(self.retry.max_delay);
-                    self.sink
-                        .emit(AgentEvent::ProviderRetry {
-                            attempt,
-                            delay: wait,
-                            error: error.to_string(),
-                        })
-                        .await;
-                    tokio::select! { _ = cancel.cancelled() => return Err(AgentError::Cancelled), _ = tokio::time::sleep(wait) => {} }
+                    self.retry_wait(attempt, &error, delay, cancel).await?;
                     delay = delay.saturating_mul(2).min(self.retry.max_delay);
+                    continue;
                 }
                 Err(error) => return Err(error.into()),
+            };
+            let mut partial = false;
+            loop {
+                let event = tokio::select! {_ = cancel.cancelled()=>{self.sink.emit(AgentEvent::Cancelled).await;return Err(AgentError::Cancelled);}, value=stream.next()=>value};
+                match event {
+                    Some(Ok(ProviderStreamEvent::Delta(delta))) => {
+                        partial = true;
+                        if let ProviderDelta::Text(text) = delta {
+                            self.sink.emit(AgentEvent::AssistantTextDelta(text)).await;
+                        }
+                    }
+                    Some(Ok(ProviderStreamEvent::Completed(response))) => return Ok(response),
+                    Some(Err(error))
+                        if !partial
+                            && error.is_retryable()
+                            && attempt < self.retry.max_attempts =>
+                    {
+                        self.retry_wait(attempt, &error, delay, cancel).await?;
+                        delay = delay.saturating_mul(2).min(self.retry.max_delay);
+                        break;
+                    }
+                    Some(Err(error)) => return Err(error.into()),
+                    None => {
+                        return Err(ProviderError::InvalidResponse(
+                            "provider stream ended without completion".into(),
+                        )
+                        .into());
+                    }
+                }
             }
         }
         unreachable!("retry loop always returns")
+    }
+
+    async fn retry_wait(
+        &self,
+        attempt: usize,
+        error: &ProviderError,
+        delay: Duration,
+        cancel: &CancellationToken,
+    ) -> Result<(), AgentError> {
+        let wait = error
+            .retry_after()
+            .unwrap_or(delay)
+            .min(self.retry.max_delay);
+        self.sink
+            .emit(AgentEvent::ProviderRetry {
+                attempt,
+                delay: wait,
+                error: error.to_string(),
+            })
+            .await;
+        tokio::select! {_ = cancel.cancelled()=>Err(AgentError::Cancelled),_ = tokio::time::sleep(wait)=>Ok(())}
     }
 
     pub fn workspace(&self) -> &std::path::Path {
@@ -298,6 +339,63 @@ mod tests {
     impl Provider for Hanging {
         async fn complete(&self, _: ModelRequest) -> Result<ModelResponse, ProviderError> {
             std::future::pending().await
+        }
+    }
+    struct PartialFailure {
+        calls: Arc<AtomicUsize>,
+    }
+    struct StreamingOk;
+    #[async_trait]
+    impl Provider for StreamingOk {
+        async fn complete(&self, _: ModelRequest) -> Result<ModelResponse, ProviderError> {
+            unreachable!()
+        }
+        async fn stream(
+            &self,
+            _: ModelRequest,
+        ) -> Result<crate::provider::ProviderStream, ProviderError> {
+            Ok(Box::pin(futures_util::stream::iter(vec![
+                Ok(crate::provider::ProviderStreamEvent::Delta(
+                    crate::provider::ProviderDelta::Text("hel".into()),
+                )),
+                Ok(crate::provider::ProviderStreamEvent::Delta(
+                    crate::provider::ProviderDelta::Text("lo".into()),
+                )),
+                Ok(crate::provider::ProviderStreamEvent::Completed(
+                    ModelResponse {
+                        message: Message::new(Role::Assistant, "hello"),
+                        usage: Usage::default(),
+                    },
+                )),
+            ])))
+        }
+    }
+    #[derive(Default)]
+    struct Recording {
+        events: std::sync::Mutex<Vec<AgentEvent>>,
+    }
+    #[async_trait]
+    impl EventSink for Recording {
+        async fn emit(&self, event: AgentEvent) {
+            self.events.lock().unwrap().push(event);
+        }
+    }
+    #[async_trait]
+    impl Provider for PartialFailure {
+        async fn complete(&self, _: ModelRequest) -> Result<ModelResponse, ProviderError> {
+            unreachable!()
+        }
+        async fn stream(
+            &self,
+            _: ModelRequest,
+        ) -> Result<crate::provider::ProviderStream, ProviderError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Ok(Box::pin(futures_util::stream::iter(vec![
+                Ok(crate::provider::ProviderStreamEvent::Delta(
+                    crate::provider::ProviderDelta::Text("partial".into()),
+                )),
+                Err(ProviderError::Unavailable("connection lost".into())),
+            ])))
         }
     }
 
@@ -355,5 +453,64 @@ mod tests {
             .await
             .unwrap_err();
         assert!(matches!(error, AgentError::Cancelled));
+    }
+
+    #[tokio::test]
+    async fn never_retries_after_visible_partial_output() {
+        let directory = tempfile::tempdir().unwrap();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let error = agent(
+            Box::new(PartialFailure {
+                calls: calls.clone(),
+            }),
+            &directory,
+        )
+        .run(vec![], "hello".into())
+        .await
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            AgentError::Provider(ProviderError::Unavailable(_))
+        ));
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn forwards_provider_text_as_incremental_agent_events() {
+        let directory = tempfile::tempdir().unwrap();
+        let sink = Arc::new(Recording::default());
+        let policy =
+            Arc::new(Policy::new(&Config::default(), directory.path().to_path_buf()).unwrap());
+        let agent = Agent::new(
+            Box::new(StreamingOk),
+            ToolRegistry::default(),
+            ToolContext {
+                policy,
+                approver: Arc::new(Yes),
+                timeout: Duration::from_secs(1),
+                max_output_bytes: 4096,
+                environment: Default::default(),
+                cancellation: CancellationToken::new(),
+            },
+            sink.clone(),
+            "test".into(),
+            "system".into(),
+            2,
+            100,
+            None,
+        );
+        let outcome = agent.run(vec![], "hi".into()).await.unwrap();
+        assert_eq!(outcome.answer, "hello");
+        let deltas = sink
+            .events
+            .lock()
+            .unwrap()
+            .iter()
+            .filter_map(|event| match event {
+                AgentEvent::AssistantTextDelta(text) => Some(text.as_str()),
+                _ => None,
+            })
+            .collect::<String>();
+        assert_eq!(deltas, "hello");
     }
 }

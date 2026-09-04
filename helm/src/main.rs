@@ -259,7 +259,10 @@ enum Command {
     Manpage,
 }
 
-struct Terminal;
+#[derive(Default)]
+struct Terminal {
+    streamed: std::sync::Mutex<bool>,
+}
 #[async_trait]
 impl Approver for Terminal {
     async fn approve(&self, reason: &str) -> bool {
@@ -275,10 +278,25 @@ impl EventSink for Terminal {
     async fn emit(&self, event: AgentEvent) {
         match event {
             AgentEvent::Thinking { turn } => eprintln!("[model turn {turn}]"),
+            AgentEvent::AssistantTextDelta(text) => {
+                print!("{text}");
+                let _ = io::stdout().flush();
+                *self
+                    .streamed
+                    .lock()
+                    .expect("terminal stream state poisoned") = true;
+            }
             AgentEvent::AssistantText(text) => {
-                if !text.is_empty() {
+                let mut streamed = self
+                    .streamed
+                    .lock()
+                    .expect("terminal stream state poisoned");
+                if *streamed {
+                    println!();
+                } else if !text.is_empty() {
                     println!("{text}");
                 }
+                *streamed = false;
             }
             AgentEvent::ToolStarted { name, arguments } => eprintln!("[tool {name}] {arguments}"),
             AgentEvent::ToolFinished {
@@ -365,7 +383,7 @@ async fn main() -> Result<()> {
 
 async fn build_agent(config: &Config, workspace: PathBuf) -> Result<Agent> {
     let policy = Arc::new(Policy::new(config, workspace)?);
-    let terminal = Arc::new(Terminal);
+    let terminal = Arc::new(Terminal::default());
     let context = ToolContext {
         policy,
         approver: terminal.clone(),
@@ -374,20 +392,7 @@ async fn build_agent(config: &Config, workspace: PathBuf) -> Result<Agent> {
         environment: config.env.clone(),
         cancellation: tokio_util::sync::CancellationToken::new(),
     };
-    let mut tools = ToolRegistry::standard();
-    for (name, server) in &config.mcp_servers {
-        let mcp =
-            helm::tools::mcp::McpServer::connect(name, &server.command, &server.args, &server.env)
-                .await
-                .with_context(|| format!("failed to initialize MCP server `{name}`"))?;
-        for tool in mcp
-            .discover()
-            .await
-            .with_context(|| format!("failed to discover tools from MCP server `{name}`"))?
-        {
-            tools.register_arc(tool);
-        }
-    }
+    let tools = build_tools(config).await?;
     Ok(Agent::new(
         provider::from_config(config)?,
         tools,
@@ -433,7 +438,7 @@ async fn tui_chat(
     let agent = Arc::new(
         Agent::new(
             provider::from_config(&config)?,
-            ToolRegistry::standard(),
+            build_tools(&config).await?,
             context,
             bridge.clone(),
             config.model.clone(),
@@ -449,6 +454,24 @@ async fn tui_chat(
         }),
     );
     helm::tui::run(agent, store, session, receiver, bridge.sender()).await
+}
+
+async fn build_tools(config: &Config) -> Result<ToolRegistry> {
+    let mut tools = ToolRegistry::standard();
+    for (name, server) in &config.mcp_servers {
+        let mcp =
+            helm::tools::mcp::McpServer::connect(name, &server.command, &server.args, &server.env)
+                .await
+                .with_context(|| format!("failed to initialize MCP server `{name}`"))?;
+        for tool in mcp
+            .discover()
+            .await
+            .with_context(|| format!("failed to discover tools from MCP server `{name}`"))?
+        {
+            tools.register_arc(tool);
+        }
+    }
+    Ok(tools)
 }
 
 async fn execute(
