@@ -722,7 +722,10 @@ mod tests {
                 break;
             }
         }
-        assert!(second.contains("got:hello"));
+        assert!(
+            second.contains("got:hello"),
+            "interactive PTY response was not captured: {second:?}"
+        );
         tool.execute(json!({"action":"terminate","id":id}), &ctx)
             .await
             .unwrap();
@@ -856,7 +859,7 @@ mod tests {
     }
     #[cfg(windows)]
     fn interactive_input() -> &'static str {
-        "H"
+        "H\r\n"
     }
     #[cfg(unix)]
     fn long_running_command() -> &'static str {
