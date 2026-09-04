@@ -319,6 +319,22 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn assistant_markdown_survives_save_and_resume_verbatim() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = SessionStore::new(dir.path().into());
+        let mut session = Session::new(dir.path().into(), "model".into());
+        let source = "# Result\n\n```rust\nfn main() {}\n```\n\n| A | B |\n|---|---|\n| 1 | 2 |";
+        session
+            .messages
+            .push(Message::new(crate::model::Role::Assistant, source));
+
+        store.save(&mut session).await.unwrap();
+        let restored = store.load(session.id).await.unwrap();
+
+        assert_eq!(restored.messages[0].content, source);
+    }
+
+    #[tokio::test]
     async fn model_switch_history_survives_restart() {
         let dir = tempfile::tempdir().unwrap();
         let store = SessionStore::new(dir.path().into());

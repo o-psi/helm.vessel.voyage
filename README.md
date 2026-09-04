@@ -58,3 +58,7 @@ the active session. See [Model discovery and switching](docs/model-management.md
 
 Helm derives its model-facing capability contract from the live registry and never persists runtime
 instructions as conversation history. See [Runtime guidance](docs/runtime-guidance.md).
+
+Assistant responses use safe, streaming-aware Markdown presentation without changing the canonical
+session text. See [Markdown rendering](docs/markdown-rendering.md) for syntax, fallback, and terminal
+safety behavior.

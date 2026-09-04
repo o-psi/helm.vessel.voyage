@@ -110,6 +110,15 @@ Inside plain chat, `/session` shows identity and token use, `/clear` resets hist
 and `/exit` saves and leaves. Tool progress goes to stderr, leaving assistant text on
 stdout for straightforward scripting.
 
+In line-oriented mode, assistant Markdown is rendered only when stdout is an interactive terminal.
+Set `NO_COLOR` to request the same stable canonical Markdown used for redirected output. Redirected
+stdout contains no ANSI styling and ends each assistant response with one newline, making it safe to
+pipe into files and other programs. Tool names, arguments, and results are untrusted diagnostics on
+stderr: Helm sanitizes terminal controls and never renders them as Markdown.
+Plain and `NO_COLOR` output streams sanitized assistant text token by token for responsiveness and
+does not repeat it at completion. Styled line-oriented output buffers one response so Markdown can
+be rendered coherently, then writes it once.
+
 Pair the same Helm runtime with a Vessel without exposing an inbound port:
 
 ```sh

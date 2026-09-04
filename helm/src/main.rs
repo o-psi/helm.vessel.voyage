@@ -336,16 +336,89 @@ enum AuthCommand {
     },
 }
 
-#[derive(Default)]
 struct Terminal {
-    streamed: std::sync::Mutex<bool>,
+    streamed: std::sync::Mutex<PlainStream>,
+    styled: bool,
+    width: usize,
+}
+#[derive(Default)]
+struct PlainStream {
+    buffer: String,
+    emitted: bool,
+}
+impl Default for Terminal {
+    fn default() -> Self {
+        Self::for_output(
+            io::stdout().is_terminal(),
+            std::env::var_os("NO_COLOR").is_some(),
+        )
+    }
+}
+impl Terminal {
+    fn for_output(terminal: bool, no_color: bool) -> Self {
+        Self {
+            streamed: std::sync::Mutex::new(PlainStream::default()),
+            styled: terminal && !no_color,
+            width: std::env::var("COLUMNS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(100)
+                .max(20),
+        }
+    }
+    fn assistant_delta(&self, text: &str) -> String {
+        let mut state = self
+            .streamed
+            .lock()
+            .expect("terminal stream state poisoned");
+        let safe = safe_assistant(text);
+        state.buffer.push_str(&safe);
+        if self.styled {
+            String::new()
+        } else {
+            state.emitted = true;
+            safe
+        }
+    }
+    fn assistant_completion(&self, text: &str) -> String {
+        let mut streamed = self
+            .streamed
+            .lock()
+            .expect("terminal stream state poisoned");
+        if !self.styled && streamed.emitted {
+            let newline = if streamed.buffer.ends_with('\n') {
+                String::new()
+            } else {
+                "\n".into()
+            };
+            streamed.buffer.clear();
+            streamed.emitted = false;
+            return newline;
+        }
+        let source = if text.is_empty() {
+            streamed.buffer.as_str()
+        } else {
+            text
+        };
+        let rendered = if self.styled {
+            render_terminal_markdown(source, self.width)
+        } else {
+            safe_assistant(source)
+        };
+        streamed.buffer.clear();
+        streamed.emitted = false;
+        with_one_newline(rendered)
+    }
 }
 #[async_trait]
 impl Approver for Terminal {
     async fn approve(&self, request: &ApprovalRequest) -> ApprovalOutcome {
         eprint!(
             "\nApproval {} required for {} on {}:\n{}\nProceed? [y/N] ",
-            request.id, request.action, request.target, request.reason
+            request.id,
+            safe_diagnostic(&request.action),
+            safe_diagnostic(&request.target),
+            safe_diagnostic(&request.reason)
         );
         let _ = io::stderr().flush();
         let mut answer = String::new();
@@ -369,26 +442,18 @@ impl EventSink for Terminal {
         match event {
             AgentEvent::Thinking { turn } => eprintln!("[model turn {turn}]"),
             AgentEvent::AssistantTextDelta(text) => {
-                print!("{text}");
+                print!("{}", self.assistant_delta(&text));
                 let _ = io::stdout().flush();
-                *self
-                    .streamed
-                    .lock()
-                    .expect("terminal stream state poisoned") = true;
             }
             AgentEvent::AssistantText(text) => {
-                let mut streamed = self
-                    .streamed
-                    .lock()
-                    .expect("terminal stream state poisoned");
-                if *streamed {
-                    println!();
-                } else if !text.is_empty() {
-                    println!("{text}");
-                }
-                *streamed = false;
+                print!("{}", self.assistant_completion(&text));
+                let _ = io::stdout().flush();
             }
-            AgentEvent::ToolStarted { name, arguments } => eprintln!("[tool {name}] {arguments}"),
+            AgentEvent::ToolStarted { name, arguments } => eprintln!(
+                "[tool {}] {}",
+                safe_diagnostic(&name),
+                safe_diagnostic(&arguments.to_string())
+            ),
             AgentEvent::ToolFinished {
                 name,
                 result,
@@ -396,7 +461,7 @@ impl EventSink for Terminal {
             } => eprintln!(
                 "[{} {name}] {}",
                 if success { "done" } else { "error" },
-                summarize(&result)
+                summarize(&safe_diagnostic(&result))
             ),
             AgentEvent::ProviderRetry {
                 attempt,
@@ -404,7 +469,8 @@ impl EventSink for Terminal {
                 error,
             } => eprintln!(
                 "[provider retry {attempt} in {:.1}s] {error}",
-                delay.as_secs_f32()
+                delay.as_secs_f32(),
+                error = safe_diagnostic(&error)
             ),
             AgentEvent::Cancelled => eprintln!("[cancelled]"),
         }
@@ -1330,11 +1396,94 @@ async fn list_sessions() -> Result<()> {
 }
 fn summarize(text: &str) -> String {
     let line = text.lines().next().unwrap_or_default();
-    if line.len() > 160 {
-        format!("{}…", &line[..160])
+    if line.chars().count() > 160 {
+        format!("{}…", line.chars().take(160).collect::<String>())
     } else {
         line.into()
     }
+}
+fn with_one_newline(mut text: String) -> String {
+    if text.is_empty() {
+        return text;
+    }
+    while text.ends_with('\n') {
+        text.pop();
+    }
+    text.push('\n');
+    text
+}
+fn safe_diagnostic(text: &str) -> String {
+    text.chars().filter(|ch|!ch.is_control()&&!matches!(*ch,'\u{7f}'|'\u{80}'..='\u{9f}'|'\u{202a}'..='\u{202e}'|'\u{2066}'..='\u{2069}')).collect()
+}
+fn safe_assistant(text: &str) -> String {
+    text.chars().filter(|ch| matches!(*ch,'\n'|'\t')||(!ch.is_control()&&!matches!(*ch,'\u{7f}'|'\u{80}'..='\u{9f}'|'\u{202a}'..='\u{202e}'|'\u{2066}'..='\u{2069}'))).collect()
+}
+fn render_terminal_markdown(source: &str, width: usize) -> String {
+    use crossterm::style::{
+        Attribute, Color as CtColor, ResetColor, SetAttribute, SetBackgroundColor,
+        SetForegroundColor,
+    };
+    use ratatui::style::{Color, Modifier};
+    fn color(value: Color) -> CtColor {
+        match value {
+            Color::Reset => CtColor::Reset,
+            Color::Black => CtColor::Black,
+            Color::Red => CtColor::DarkRed,
+            Color::Green => CtColor::DarkGreen,
+            Color::Yellow => CtColor::DarkYellow,
+            Color::Blue => CtColor::DarkBlue,
+            Color::Magenta => CtColor::DarkMagenta,
+            Color::Cyan => CtColor::DarkCyan,
+            Color::Gray => CtColor::Grey,
+            Color::DarkGray => CtColor::DarkGrey,
+            Color::LightRed => CtColor::Red,
+            Color::LightGreen => CtColor::Green,
+            Color::LightYellow => CtColor::Yellow,
+            Color::LightBlue => CtColor::Blue,
+            Color::LightMagenta => CtColor::Magenta,
+            Color::LightCyan => CtColor::Cyan,
+            Color::White => CtColor::White,
+            Color::Rgb(r, g, b) => CtColor::Rgb { r, g, b },
+            Color::Indexed(i) => CtColor::AnsiValue(i),
+        }
+    }
+    let text = helm::markdown::render_markdown(
+        source,
+        helm::markdown::RenderOptions {
+            width,
+            ..Default::default()
+        },
+    );
+    let mut output = String::new();
+    for (line_index, line) in text.lines.iter().enumerate() {
+        for span in &line.spans {
+            output.push_str(&SetAttribute(Attribute::Reset).to_string());
+            output.push_str(
+                &SetForegroundColor(color(span.style.fg.unwrap_or(Color::Reset))).to_string(),
+            );
+            if let Some(bg) = span.style.bg {
+                output.push_str(&SetBackgroundColor(color(bg)).to_string())
+            }
+            for (modifier, attribute) in [
+                (Modifier::BOLD, Attribute::Bold),
+                (Modifier::ITALIC, Attribute::Italic),
+                (Modifier::UNDERLINED, Attribute::Underlined),
+                (Modifier::CROSSED_OUT, Attribute::CrossedOut),
+                (Modifier::DIM, Attribute::Dim),
+            ] {
+                if span.style.add_modifier.contains(modifier) {
+                    output.push_str(&SetAttribute(attribute).to_string())
+                }
+            }
+            output.push_str(&span.content);
+        }
+        output.push_str(&ResetColor.to_string());
+        output.push_str(&SetAttribute(Attribute::Reset).to_string());
+        if line_index + 1 < text.lines.len() {
+            output.push('\n')
+        }
+    }
+    output
 }
 
 #[cfg(test)]
@@ -1387,5 +1536,37 @@ mod cli_tests {
                 command: AuthCommand::ImportCodex { force: true, .. }
             })
         ));
+    }
+
+    #[test]
+    fn streamed_completion_is_emitted_once_with_one_newline() {
+        let terminal = Terminal::for_output(false, false);
+        assert_eq!(terminal.assistant_delta("hello\n"), "hello\n");
+        assert_eq!(terminal.assistant_delta("world"), "world");
+        assert_eq!(terminal.assistant_completion("hello\nworld\n\n"), "\n");
+        assert_eq!(terminal.assistant_completion(""), "");
+    }
+
+    #[test]
+    fn redirected_and_no_color_output_never_contains_ansi() {
+        for terminal in [
+            Terminal::for_output(false, false),
+            Terminal::for_output(true, true),
+        ] {
+            assert_eq!(terminal.assistant_delta("**bo"), "**bo");
+            assert_eq!(
+                terminal.assistant_delta("ld** \u{1b}[31mred"),
+                "ld** [31mred"
+            );
+            let rendered = terminal.assistant_completion("**bold** red");
+            assert!(!rendered.contains('\u{1b}'));
+            assert_eq!(rendered, "\n");
+        }
+    }
+
+    #[test]
+    fn tool_diagnostics_are_sanitized_without_markdown_interpretation() {
+        assert_eq!(safe_diagnostic("**failure**\u{1b}[31m"), "**failure**[31m");
+        assert_eq!(summarize(&"é".repeat(200)).chars().count(), 161);
     }
 }

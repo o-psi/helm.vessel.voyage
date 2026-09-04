@@ -28,6 +28,7 @@ use unicode_width::UnicodeWidthChar;
 
 use crate::{
     Agent, AgentEvent, EventSink,
+    markdown::{MarkdownTheme, RenderOptions, render_markdown},
     model::Role,
     provider::ModelInfo,
     session::{Session, SessionStore, compact_messages},
@@ -197,9 +198,13 @@ struct App {
     provider_label: String,
     composer: Composer,
     activity: Vec<String>,
-    streaming_activity: Option<usize>,
+    streaming_response: String,
     status: String,
     scroll: u16,
+    conversation_width: usize,
+    conversation_height: usize,
+    markdown_theme: MarkdownTheme,
+    markdown_syntax_highlighting: bool,
     running: Option<Running>,
     approval: Option<ApprovalRequest>,
     show_sessions: bool,
@@ -279,9 +284,13 @@ impl App {
             provider_label: "provider unknown".into(),
             composer: Composer::default(),
             activity: Vec::new(),
-            streaming_activity: None,
+            streaming_response: String::new(),
             status: "Ready".into(),
             scroll: 0,
+            conversation_width: 78,
+            conversation_height: 13,
+            markdown_theme: markdown_theme(),
+            markdown_syntax_highlighting: std::env::var_os("NO_COLOR").is_none(),
             running: None,
             approval: None,
             show_sessions: false,
@@ -351,6 +360,10 @@ pub async fn run(
     let _guard = TerminalGuard::enter().context("failed to initialize terminal")?;
     let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
     terminal.clear()?;
+    if let Ok(size) = terminal.size() {
+        app.conversation_width = size.width.saturating_sub(2).max(1) as usize;
+        app.conversation_height = size.height.saturating_sub(11).max(1) as usize;
+    }
     let mut input = EventStream::new();
     let termination = termination_signal();
     tokio::pin!(termination);
@@ -364,6 +377,11 @@ pub async fn run(
                         handle_key(key, &mut app, &agent, &store, &tx, terminals.as_ref(), supervisor.clone(), todos.clone()).await?;
                     }
                     Some(Ok(Event::Resize(columns, rows))) => {
+                        resize_conversation(
+                            &mut app,
+                            columns.saturating_sub(2) as usize,
+                            rows.saturating_sub(11).max(1) as usize,
+                        );
                         if let Some(id) = app.attached_terminal {
                             let _ = terminals.resize(id, columns, rows.saturating_sub(1)).await;
                         }
@@ -471,23 +489,21 @@ async fn handle_ui_event(
             app.status = format!("Model turn {turn}…  Esc cancels");
         }
         UiEvent::Agent(AgentEvent::AssistantTextDelta(text)) => {
-            let index = *app.streaming_activity.get_or_insert_with(|| {
-                app.activity.push("assistant: ".into());
-                app.activity.len() - 1
-            });
-            app.activity[index].push_str(&text);
+            let before = transcript_height(app, app.conversation_width);
+            app.streaming_response.push_str(&text);
+            preserve_manual_anchor(app, before);
             app.status = "Receiving response…  Esc cancels".into();
         }
         UiEvent::Agent(AgentEvent::AssistantText(text)) => {
-            if app.streaming_activity.take().is_none() {
-                app.activity
-                    .push(format!("assistant: {}", one_line(&text, 240)));
-            }
+            let before = transcript_height(app, app.conversation_width);
+            app.streaming_response = text.clone();
+            preserve_manual_anchor(app, before);
             app.status = "Receiving response…  Esc cancels".into();
         }
         UiEvent::Agent(AgentEvent::ToolStarted { name, arguments }) => {
-            app.streaming_activity = None;
+            let before = transcript_height(app, app.conversation_width);
             app.activity.push(format!("▶ {name} {arguments}"));
+            preserve_manual_anchor(app, before);
             app.status = format!("Running {name}…  Esc cancels");
         }
         UiEvent::Agent(AgentEvent::ToolFinished {
@@ -495,26 +511,32 @@ async fn handle_ui_event(
             result,
             success,
         }) => {
+            let before = transcript_height(app, app.conversation_width);
             app.activity.push(format!(
                 "{} {name}: {}",
                 if success { "✓" } else { "✗" },
                 one_line(&result, 160)
             ));
+            preserve_manual_anchor(app, before);
         }
         UiEvent::Agent(AgentEvent::ProviderRetry {
             attempt,
             delay,
             error,
         }) => {
+            let before = transcript_height(app, app.conversation_width);
             app.activity.push(format!(
                 "↻ provider retry {attempt} in {:.1}s: {}",
                 delay.as_secs_f32(),
                 one_line(&error, 160)
             ));
+            preserve_manual_anchor(app, before);
             app.status = format!("Provider retry {attempt}…  Esc cancels");
         }
         UiEvent::Agent(AgentEvent::Cancelled) => {
+            let before = transcript_height(app, app.conversation_width);
             app.activity.push("■ operation cancelled".into());
+            preserve_manual_anchor(app, before);
             app.status = "Cancelled".into();
         }
         UiEvent::Approval(request) => {
@@ -527,6 +549,7 @@ async fn handle_ui_event(
             }
         }
         UiEvent::Finished(result) => {
+            let before = transcript_height(app, app.conversation_width);
             app.running = None;
             match result {
                 Ok(outcome) => {
@@ -539,6 +562,8 @@ async fn handle_ui_event(
                 }
                 Err(error) => app.status = format!("Error: {error}"),
             }
+            app.streaming_response.clear();
+            preserve_manual_anchor(app, before);
         }
         UiEvent::SupervisorTree(result) => match result {
             Ok(agents) => {
@@ -673,6 +698,8 @@ async fn handle_key(
                     app.session = session;
                     agent.set_model(app.session.model.clone())?;
                     app.activity.clear();
+                    app.streaming_response.clear();
+                    app.scroll = 0;
                     app.status = "Session opened".into();
                     app.show_sessions = false;
                 }
@@ -715,11 +742,15 @@ async fn handle_key(
                 app.session =
                     Session::new(app.session.workspace.clone(), app.session.model.clone());
                 app.activity.clear();
+                app.streaming_response.clear();
+                app.scroll = 0;
                 app.status = "New session".into();
             }
             KeyCode::Char('b') if !app.is_running() => {
                 app.session = store.branch(&app.session, None).await?;
                 app.sessions = store.list().await?;
+                app.streaming_response.clear();
+                app.scroll = 0;
                 app.status = "Branched session".into();
             }
             KeyCode::Char('e') => {
@@ -1520,7 +1551,7 @@ fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
         .block(Block::default().borders(Borders::BOTTOM)),
         chunks[0],
     );
-    let transcript = transcript(app);
+    let transcript = transcript(app, viewport_width_for(chunks[1]));
     let viewport_height = chunks[1].height.saturating_sub(2) as usize;
     let viewport_width = chunks[1].width.saturating_sub(2) as usize;
     let rendered_lines = transcript
@@ -2369,7 +2400,7 @@ fn encode_terminal_key(key: KeyEvent) -> Option<Vec<u8>> {
     Some(bytes)
 }
 
-fn transcript(app: &App) -> Text<'static> {
+fn transcript(app: &App, width: usize) -> Text<'static> {
     let mut lines = Vec::new();
     for message in &app.session.messages {
         if message.role == Role::System || message.role == Role::Tool {
@@ -2384,11 +2415,47 @@ fn transcript(app: &App) -> Text<'static> {
             label,
             Style::default().fg(color).add_modifier(Modifier::BOLD),
         )));
+        if message.role == Role::Assistant {
+            lines.extend(
+                render_markdown(
+                    &message.content,
+                    RenderOptions {
+                        width,
+                        theme: app.markdown_theme,
+                        syntax_highlighting: app.markdown_syntax_highlighting,
+                        ..Default::default()
+                    },
+                )
+                .lines,
+            );
+        } else {
+            lines.extend(
+                message
+                    .content
+                    .lines()
+                    .map(|line| Line::raw(display_safe(line))),
+            );
+        }
+        lines.push(Line::raw(""));
+    }
+    if !app.streaming_response.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "helm · streaming",
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        )));
         lines.extend(
-            message
-                .content
-                .lines()
-                .map(|line| Line::raw(display_safe(line))),
+            render_markdown(
+                &app.streaming_response,
+                RenderOptions {
+                    width,
+                    theme: app.markdown_theme,
+                    syntax_highlighting: app.markdown_syntax_highlighting,
+                    ..Default::default()
+                },
+            )
+            .lines,
         );
         lines.push(Line::raw(""));
     }
@@ -2409,6 +2476,70 @@ fn transcript(app: &App) -> Text<'static> {
         );
     }
     Text::from(lines)
+}
+
+fn viewport_width_for(area: Rect) -> usize {
+    area.width.saturating_sub(2).max(1) as usize
+}
+
+fn markdown_theme() -> MarkdownTheme {
+    markdown_theme_for(std::env::var_os("NO_COLOR").is_some())
+}
+
+fn markdown_theme_for(no_color: bool) -> MarkdownTheme {
+    if !no_color {
+        return MarkdownTheme::default();
+    }
+    MarkdownTheme {
+        text: Color::Reset,
+        heading: Color::Reset,
+        link: Color::Reset,
+        code: Color::Reset,
+        code_background: Color::Reset,
+        quote: Color::Reset,
+        rule: Color::Reset,
+        table_header: Color::Reset,
+        warning: Color::Reset,
+    }
+}
+
+fn transcript_height(app: &App, width: usize) -> usize {
+    transcript(app, width)
+        .lines
+        .iter()
+        .map(|line| line.width().max(1).div_ceil(width.max(1)))
+        .sum()
+}
+
+fn preserve_manual_anchor(app: &mut App, previous_height: usize) {
+    if app.scroll == 0 {
+        return;
+    }
+    let next = transcript_height(app, app.conversation_width);
+    if next >= previous_height {
+        app.scroll = app
+            .scroll
+            .saturating_add((next - previous_height).min(u16::MAX as usize) as u16);
+    } else {
+        app.scroll = app
+            .scroll
+            .saturating_sub((previous_height - next).min(u16::MAX as usize) as u16);
+    }
+}
+
+fn resize_conversation(app: &mut App, width: usize, height: usize) {
+    let previous = transcript_height(app, app.conversation_width);
+    let previous_bottom = previous.saturating_sub(app.conversation_height);
+    let anchored_top = previous_bottom.saturating_sub(app.scroll as usize);
+    app.conversation_width = width.max(1);
+    app.conversation_height = height.max(1);
+    if app.scroll > 0 {
+        let next_bottom =
+            transcript_height(app, app.conversation_width).saturating_sub(app.conversation_height);
+        app.scroll = next_bottom
+            .saturating_sub(anchored_top)
+            .min(u16::MAX as usize) as u16;
+    }
 }
 
 fn draw_sessions(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
@@ -2585,6 +2716,8 @@ async fn handle_command(
             let branch_name = (!argument.trim().is_empty()).then(|| argument.trim().to_owned());
             app.session = store.branch(&app.session, branch_name).await?;
             app.sessions = store.list().await?;
+            app.streaming_response.clear();
+            app.scroll = 0;
             app.status = "Branched session".into();
         }
         "compact" => {
@@ -2598,6 +2731,7 @@ async fn handle_command(
             };
             let removed = compact_messages(&mut app.session.messages, retain);
             store.save(&mut app.session).await?;
+            app.scroll = 0;
             app.status = format!("Compacted {removed} messages");
         }
         "export" => {
@@ -2613,6 +2747,8 @@ async fn handle_command(
             app.session.messages.clear();
             store.save(&mut app.session).await?;
             app.activity.clear();
+            app.streaming_response.clear();
+            app.scroll = 0;
             app.status = "Conversation cleared".into();
         }
         "clear" => app.status = "Clearing is permanent; use /clear confirm".into(),
@@ -3390,6 +3526,133 @@ mod tests {
         terminal.draw(|frame| draw(frame, &app)).unwrap();
         let rendered = terminal.backend().buffer().content();
         assert!(rendered.iter().any(|cell| cell.symbol() == "H"));
+    }
+
+    #[test]
+    fn transcript_renders_only_assistant_content_as_markdown() {
+        let mut session = Session::new(PathBuf::from("/tmp"), "test-model".into());
+        session
+            .messages
+            .push(crate::Message::new(Role::User, "**user literal**"));
+        session
+            .messages
+            .push(crate::Message::new(Role::Assistant, "# Heading\n\n`code`"));
+        session
+            .messages
+            .push(crate::Message::new(Role::Tool, "# tool literal"));
+        let app = App::new(session, Vec::new());
+        let rendered = transcript(&app, 40);
+        let symbols = rendered
+            .lines
+            .iter()
+            .flat_map(|line| line.spans.iter())
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+        assert!(symbols.contains("**user literal**"));
+        assert!(symbols.contains("Heading"));
+        assert!(!symbols.contains("# tool literal"));
+        assert!(
+            rendered
+                .lines
+                .iter()
+                .flat_map(|line| &line.spans)
+                .any(|span| span.style.add_modifier.contains(Modifier::BOLD))
+        );
+    }
+
+    #[test]
+    fn no_color_markdown_theme_has_no_foreground_or_background_colors() {
+        let theme = markdown_theme_for(true);
+        assert_eq!(theme.text, Color::Reset);
+        assert_eq!(theme.heading, Color::Reset);
+        assert_eq!(theme.link, Color::Reset);
+        assert_eq!(theme.code, Color::Reset);
+        assert_eq!(theme.code_background, Color::Reset);
+        assert_eq!(theme.quote, Color::Reset);
+        assert_eq!(theme.table_header, Color::Reset);
+        assert_eq!(theme.warning, Color::Reset);
+    }
+
+    #[test]
+    fn markdown_full_screen_buffer_keeps_borders_and_inner_width() {
+        let mut session = Session::new(PathBuf::from("/tmp"), "test-model".into());
+        session
+            .messages
+            .push(crate::Message::new(Role::User, "# literal user"));
+        session.messages.push(crate::Message::new(
+            Role::Assistant,
+            "# Rendered\n\n| A | B |\n|---|---|\n| one | two |",
+        ));
+        let app = App::new(session, Vec::new());
+        let backend = ratatui::backend::TestBackend::new(48, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let buffer = terminal.backend().buffer();
+        let rows = (0..buffer.area.height)
+            .map(|y| {
+                (0..buffer.area.width)
+                    .map(|x| buffer[(x, y)].symbol())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>();
+        let snapshot = rows.join("\n");
+        assert!(snapshot.contains("# literal user"));
+        assert!(snapshot.contains("Rendered"));
+        assert!(snapshot.contains("one"));
+        assert!(snapshot.contains("Conversation"));
+        assert!(rows.iter().all(|row| row.chars().count() == 48));
+    }
+
+    #[test]
+    fn incomplete_markdown_stream_is_stable_and_canonical() {
+        let session = Session::new(PathBuf::from("/tmp"), "test-model".into());
+        let mut app = App::new(session, Vec::new());
+        let source = "## Live\n\n```rust\nfn main() {}\n```";
+        for character in source.chars() {
+            app.streaming_response.push(character);
+            let rendered = transcript(&app, 24);
+            assert!(rendered.lines.len() < 100);
+        }
+        assert_eq!(app.streaming_response, source);
+        let rendered = transcript(&app, 24);
+        let symbols = rendered
+            .lines
+            .iter()
+            .flat_map(|line| line.spans.iter())
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+        assert!(symbols.contains("fn main() {}"));
+    }
+
+    #[test]
+    fn manual_scroll_anchor_survives_stream_growth_and_resize() {
+        let mut session = Session::new(PathBuf::from("/tmp"), "test-model".into());
+        session.messages.push(crate::Message::new(
+            Role::Assistant,
+            (0..40)
+                .map(|line| format!("line {line}\n"))
+                .collect::<String>(),
+        ));
+        let mut app = App::new(session, Vec::new());
+        app.conversation_width = 30;
+        app.conversation_height = 8;
+        app.scroll = 7;
+        let before_height = transcript_height(&app, app.conversation_width);
+        let before_top = before_height
+            .saturating_sub(app.conversation_height)
+            .saturating_sub(app.scroll as usize);
+        app.streaming_response
+            .push_str("new streamed line\nsecond line");
+        preserve_manual_anchor(&mut app, before_height);
+        let grown_top = transcript_height(&app, app.conversation_width)
+            .saturating_sub(app.conversation_height)
+            .saturating_sub(app.scroll as usize);
+        assert_eq!(grown_top, before_top);
+        resize_conversation(&mut app, 18, 12);
+        let resized_top = transcript_height(&app, app.conversation_width)
+            .saturating_sub(app.conversation_height)
+            .saturating_sub(app.scroll as usize);
+        assert_eq!(resized_top, before_top);
     }
 
     #[test]

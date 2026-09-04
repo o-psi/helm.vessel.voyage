@@ -1,5 +1,6 @@
 pub mod agent;
 pub mod config;
+pub mod markdown;
 pub mod model;
 pub mod policy;
 pub mod provider;

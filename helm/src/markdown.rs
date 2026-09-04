@@ -1,0 +1,986 @@
+//! Safe, width-aware CommonMark/GFM rendering for terminal frontends.
+//!
+//! The renderer deliberately returns owned ratatui text. It never changes the
+//! canonical Markdown supplied by the model and never places terminal control
+//! sequences in its output.
+
+use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
+use ratatui::{
+    style::{Color, Modifier, Style},
+    text::{Line, Span, Text},
+};
+use std::sync::OnceLock;
+use syntect::{
+    easy::HighlightLines,
+    highlighting::{FontStyle, Theme, ThemeSet},
+    parsing::SyntaxSet,
+    util::LinesWithEndings,
+};
+use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::UnicodeWidthStr;
+
+pub const DEFAULT_MAX_INPUT_BYTES: usize = 2 * 1024 * 1024;
+pub const DEFAULT_MAX_OUTPUT_LINES: usize = 20_000;
+const MAX_NESTING: usize = 64;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MarkdownTheme {
+    pub text: Color,
+    pub heading: Color,
+    pub link: Color,
+    pub code: Color,
+    pub code_background: Color,
+    pub quote: Color,
+    pub rule: Color,
+    pub table_header: Color,
+    pub warning: Color,
+}
+
+impl Default for MarkdownTheme {
+    fn default() -> Self {
+        Self {
+            text: Color::Reset,
+            heading: Color::Cyan,
+            link: Color::Blue,
+            code: Color::Yellow,
+            code_background: Color::DarkGray,
+            quote: Color::DarkGray,
+            rule: Color::DarkGray,
+            table_header: Color::Magenta,
+            warning: Color::Yellow,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RenderOptions {
+    /// Display columns available to the Markdown body. Zero is treated as one.
+    pub width: usize,
+    pub theme: MarkdownTheme,
+    pub max_input_bytes: usize,
+    pub max_output_lines: usize,
+    /// Apply language-aware syntax colors to recognized fenced code blocks.
+    /// Disable this for monochrome or `NO_COLOR` frontends.
+    pub syntax_highlighting: bool,
+}
+
+impl Default for RenderOptions {
+    fn default() -> Self {
+        Self {
+            width: 80,
+            theme: MarkdownTheme::default(),
+            max_input_bytes: DEFAULT_MAX_INPUT_BYTES,
+            max_output_lines: DEFAULT_MAX_OUTPUT_LINES,
+            syntax_highlighting: true,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct StyledText {
+    text: String,
+    style: Style,
+}
+
+#[derive(Default)]
+struct TableState {
+    rows: Vec<Vec<Vec<StyledText>>>,
+    row: Vec<Vec<StyledText>>,
+    cell: Vec<StyledText>,
+    header_rows: usize,
+    in_head: bool,
+}
+
+struct Renderer {
+    options: RenderOptions,
+    lines: Vec<Line<'static>>,
+    current: Vec<StyledText>,
+    style_stack: Vec<Style>,
+    list_stack: Vec<Option<u64>>,
+    quote_depth: usize,
+    code_block: bool,
+    code_language: Option<String>,
+    code_buffer: String,
+    link_stack: Vec<(String, String)>,
+    table: Option<TableState>,
+    truncated: bool,
+}
+
+/// Render CommonMark plus the GFM table, task-list and strikethrough extensions.
+///
+/// Malformed/incomplete streaming input is rendered best-effort. This function
+/// does not return an error and applies explicit resource bounds. Raw HTML is
+/// displayed as inert text; images use a `[image: alt] (URL)` textual fallback
+/// because a terminal transcript cannot embed or safely interpret either.
+pub fn render_markdown(source: &str, mut options: RenderOptions) -> Text<'static> {
+    options.width = options.width.max(1);
+    options.max_input_bytes = options.max_input_bytes.max(1);
+    options.max_output_lines = options.max_output_lines.max(1);
+    let (input, input_truncated) = bounded_source(source, options.max_input_bytes);
+    let mut renderer = Renderer::new(options);
+    let parser_options = Options::ENABLE_TABLES
+        | Options::ENABLE_TASKLISTS
+        | Options::ENABLE_STRIKETHROUGH
+        | Options::ENABLE_FOOTNOTES;
+    for event in Parser::new_ext(input, parser_options) {
+        if renderer.lines.len() >= renderer.options.max_output_lines {
+            renderer.truncated = true;
+            break;
+        }
+        renderer.event(event);
+    }
+    renderer.finish(input_truncated)
+}
+
+/// Render Markdown to safe, unstyled plain text for redirected/non-TTY output.
+pub fn render_plain(source: &str, width: usize) -> String {
+    let rendered = render_markdown(
+        source,
+        RenderOptions {
+            width,
+            syntax_highlighting: false,
+            ..RenderOptions::default()
+        },
+    );
+    rendered
+        .lines
+        .iter()
+        .map(|line| {
+            line.spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn bounded_source(source: &str, maximum: usize) -> (&str, bool) {
+    if source.len() <= maximum {
+        return (source, false);
+    }
+    let mut end = maximum;
+    while !source.is_char_boundary(end) {
+        end -= 1;
+    }
+    (&source[..end], true)
+}
+
+impl Renderer {
+    fn new(options: RenderOptions) -> Self {
+        Self {
+            options,
+            lines: Vec::new(),
+            current: Vec::new(),
+            style_stack: vec![Style::default().fg(options.theme.text)],
+            list_stack: Vec::new(),
+            quote_depth: 0,
+            code_block: false,
+            code_language: None,
+            code_buffer: String::new(),
+            link_stack: Vec::new(),
+            table: None,
+            truncated: false,
+        }
+    }
+
+    fn style(&self) -> Style {
+        self.style_stack.last().copied().unwrap_or_default()
+    }
+
+    fn push_style(&mut self, addition: Style) {
+        if self.style_stack.len() < MAX_NESTING {
+            self.style_stack.push(self.style().patch(addition));
+        }
+    }
+
+    fn pop_style(&mut self) {
+        if self.style_stack.len() > 1 {
+            self.style_stack.pop();
+        }
+    }
+
+    fn event(&mut self, event: Event<'_>) {
+        match event {
+            Event::Start(tag) => self.start(tag),
+            Event::End(tag) => self.end(tag),
+            Event::Text(text) => self.add_text(&text),
+            Event::Code(text) => {
+                self.push_style(
+                    Style::default()
+                        .fg(self.options.theme.code)
+                        .bg(self.options.theme.code_background),
+                );
+                self.add_text(&text);
+                self.pop_style();
+            }
+            Event::Html(html) | Event::InlineHtml(html) => self.add_text(&html),
+            Event::SoftBreak => self.add_text(if self.code_block { "\n" } else { " " }),
+            Event::HardBreak => self.flush_line(false),
+            Event::Rule => {
+                self.flush_line(false);
+                let rule = "─".repeat(self.options.width.min(72));
+                self.current.push(StyledText {
+                    text: rule,
+                    style: Style::default().fg(self.options.theme.rule),
+                });
+                self.flush_line(false);
+            }
+            Event::TaskListMarker(checked) => self.add_text(if checked { "[x] " } else { "[ ] " }),
+            Event::FootnoteReference(name) => self.add_text(&format!("[^{name}]")),
+            Event::InlineMath(math) => self.add_text(&math),
+            Event::DisplayMath(math) => {
+                self.flush_line(false);
+                self.add_text(&math);
+                self.flush_line(false);
+            }
+        }
+    }
+
+    fn start(&mut self, tag: Tag<'_>) {
+        match tag {
+            Tag::Paragraph => {}
+            Tag::Heading { level, .. } => {
+                self.flush_line(false);
+                let level = heading_number(level);
+                self.current.push(StyledText {
+                    text: format!("{} ", "#".repeat(level)),
+                    style: Style::default()
+                        .fg(self.options.theme.heading)
+                        .add_modifier(Modifier::BOLD),
+                });
+                self.push_style(
+                    Style::default()
+                        .fg(self.options.theme.heading)
+                        .add_modifier(Modifier::BOLD),
+                );
+            }
+            Tag::BlockQuote(_) => {
+                self.flush_line(false);
+                self.quote_depth = (self.quote_depth + 1).min(MAX_NESTING);
+            }
+            Tag::CodeBlock(kind) => {
+                self.flush_line(false);
+                self.code_block = true;
+                self.code_language = match kind {
+                    CodeBlockKind::Fenced(language) if !language.is_empty() => {
+                        Some(sanitize(&language))
+                    }
+                    _ => None,
+                };
+                if let Some(language) = self.code_language.clone() {
+                    self.current.push(StyledText {
+                        text: language,
+                        style: Style::default()
+                            .fg(self.options.theme.quote)
+                            .add_modifier(Modifier::ITALIC),
+                    });
+                    self.flush_line(false);
+                }
+                self.push_style(
+                    Style::default()
+                        .fg(self.options.theme.code)
+                        .bg(self.options.theme.code_background),
+                );
+            }
+            Tag::List(start) => {
+                self.flush_line(false);
+                if self.list_stack.len() < MAX_NESTING {
+                    self.list_stack.push(start);
+                }
+            }
+            Tag::Item => {
+                self.flush_line(false);
+                let indent = "  ".repeat(self.list_stack.len().saturating_sub(1));
+                let marker = match self.list_stack.last_mut() {
+                    Some(Some(number)) => {
+                        let marker = format!("{number}. ");
+                        *number = number.saturating_add(1);
+                        marker
+                    }
+                    _ => "• ".to_owned(),
+                };
+                self.add_text(&format!("{indent}{marker}"));
+            }
+            Tag::Emphasis => self.push_style(Style::default().add_modifier(Modifier::ITALIC)),
+            Tag::Strong => self.push_style(Style::default().add_modifier(Modifier::BOLD)),
+            Tag::Strikethrough => {
+                self.push_style(Style::default().add_modifier(Modifier::CROSSED_OUT))
+            }
+            Tag::Link { dest_url, .. } => {
+                self.link_stack.push((sanitize(&dest_url), String::new()));
+                self.push_style(
+                    Style::default()
+                        .fg(self.options.theme.link)
+                        .add_modifier(Modifier::UNDERLINED),
+                );
+            }
+            Tag::Image { dest_url, .. } => {
+                self.add_text("[image: ");
+                self.link_stack.push((sanitize(&dest_url), String::new()));
+            }
+            Tag::Table(_) => {
+                self.flush_line(false);
+                self.table = Some(TableState::default());
+            }
+            Tag::TableHead => {
+                if let Some(table) = &mut self.table {
+                    table.in_head = true;
+                }
+            }
+            Tag::TableRow => {}
+            Tag::TableCell => {}
+            Tag::FootnoteDefinition(name) => {
+                self.flush_line(false);
+                self.add_text(&format!("[^{name}]: "));
+            }
+            Tag::HtmlBlock
+            | Tag::DefinitionList
+            | Tag::DefinitionListTitle
+            | Tag::DefinitionListDefinition => {}
+            Tag::MetadataBlock(_) => {}
+            Tag::Superscript => self.push_style(Style::default()),
+            Tag::Subscript => self.push_style(Style::default()),
+        }
+    }
+
+    fn end(&mut self, tag: TagEnd) {
+        match tag {
+            TagEnd::Paragraph => self.flush_line(false),
+            TagEnd::Heading(_) => {
+                self.pop_style();
+                self.flush_line(false);
+            }
+            TagEnd::BlockQuote(_) => {
+                self.flush_line(false);
+                self.quote_depth = self.quote_depth.saturating_sub(1);
+            }
+            TagEnd::CodeBlock => {
+                self.pop_style();
+                self.flush_code_block();
+                self.code_block = false;
+                self.code_language = None;
+            }
+            TagEnd::List(_) => {
+                self.flush_line(false);
+                self.list_stack.pop();
+            }
+            TagEnd::Item => self.flush_line(false),
+            TagEnd::Emphasis | TagEnd::Strong | TagEnd::Strikethrough => self.pop_style(),
+            TagEnd::Link => {
+                self.pop_style();
+                if let Some((url, label)) = self.link_stack.pop()
+                    && !url.is_empty()
+                    && label.trim() != url
+                {
+                    self.add_styled(
+                        format!(" ({url})"),
+                        Style::default().fg(self.options.theme.link),
+                    );
+                }
+            }
+            TagEnd::Image => {
+                if let Some((url, _)) = self.link_stack.pop() {
+                    self.add_text(&format!("] ({url})"));
+                } else {
+                    self.add_text("]");
+                }
+            }
+            TagEnd::TableCell => {
+                if let Some(table) = &mut self.table {
+                    table.row.push(std::mem::take(&mut table.cell));
+                }
+            }
+            TagEnd::TableRow => {
+                if let Some(table) = &mut self.table {
+                    table.rows.push(std::mem::take(&mut table.row));
+                    if table.in_head {
+                        table.header_rows += 1;
+                    }
+                }
+            }
+            TagEnd::TableHead => {
+                if let Some(table) = &mut self.table {
+                    // pulldown-cmark models the header as TableHead -> TableCell,
+                    // without a surrounding TableRow event.
+                    if !table.row.is_empty() {
+                        table.rows.push(std::mem::take(&mut table.row));
+                        table.header_rows += 1;
+                    }
+                    table.in_head = false;
+                }
+            }
+            TagEnd::Table => self.flush_table(),
+            TagEnd::FootnoteDefinition => self.flush_line(false),
+            TagEnd::HtmlBlock
+            | TagEnd::DefinitionList
+            | TagEnd::DefinitionListTitle
+            | TagEnd::DefinitionListDefinition
+            | TagEnd::MetadataBlock(_) => {}
+            TagEnd::Superscript | TagEnd::Subscript => self.pop_style(),
+        }
+    }
+
+    fn add_text(&mut self, raw: &str) {
+        let safe = sanitize(raw);
+        if safe.is_empty() {
+            return;
+        }
+        if self.code_block {
+            self.code_buffer.push_str(&safe);
+            return;
+        }
+        if let Some((_, label)) = self.link_stack.last_mut() {
+            label.push_str(&safe);
+        }
+        if let Some(table) = &mut self.table {
+            table.cell.push(StyledText {
+                text: safe,
+                style: self.style_stack.last().copied().unwrap_or_default(),
+            });
+            return;
+        }
+        self.current.push(StyledText {
+            text: safe,
+            style: self.style(),
+        });
+    }
+
+    fn add_styled(&mut self, text: String, style: Style) {
+        if let Some(table) = &mut self.table {
+            table.cell.push(StyledText { text, style });
+        } else {
+            self.current.push(StyledText { text, style });
+        }
+    }
+
+    fn flush_code_block(&mut self) {
+        let code = std::mem::take(&mut self.code_buffer);
+        let language = self.code_language.as_deref();
+        let highlighted = self.options.syntax_highlighting
+            && language.is_some()
+            && syntax_assets()
+                .0
+                .find_syntax_by_token(language.unwrap_or_default())
+                .is_some();
+
+        if highlighted {
+            let (syntaxes, theme) = syntax_assets();
+            let syntax = syntaxes
+                .find_syntax_by_token(language.unwrap_or_default())
+                .expect("checked above");
+            let mut highlighter = HighlightLines::new(syntax, theme);
+            for line in LinesWithEndings::from(&code) {
+                match highlighter.highlight_line(line, syntaxes) {
+                    Ok(regions) => {
+                        for (syntax_style, value) in regions {
+                            let value = value.strip_suffix('\n').unwrap_or(value);
+                            if !value.is_empty() {
+                                self.current.push(StyledText {
+                                    text: value.to_owned(),
+                                    style: syntax_style_to_ratatui(syntax_style),
+                                });
+                            }
+                        }
+                    }
+                    Err(_) => self.current.push(StyledText {
+                        text: line.strip_suffix('\n').unwrap_or(line).to_owned(),
+                        style: Style::default()
+                            .fg(self.options.theme.code)
+                            .bg(self.options.theme.code_background),
+                    }),
+                }
+                self.flush_line(true);
+            }
+        } else {
+            let style = Style::default()
+                .fg(self.options.theme.code)
+                .bg(self.options.theme.code_background);
+            for line in code.split_terminator('\n') {
+                self.current.push(StyledText {
+                    text: line.to_owned(),
+                    style,
+                });
+                self.flush_line(true);
+            }
+            if code.is_empty() {
+                self.flush_line(true);
+            }
+        }
+    }
+
+    fn flush_line(&mut self, preserve_empty: bool) {
+        if self.current.is_empty() && !preserve_empty {
+            return;
+        }
+        let mut content = std::mem::take(&mut self.current);
+        if self.quote_depth > 0 {
+            content.insert(
+                0,
+                StyledText {
+                    text: "│ ".repeat(self.quote_depth.min(8)),
+                    style: Style::default().fg(self.options.theme.quote),
+                },
+            );
+        }
+        let remaining = self
+            .options
+            .max_output_lines
+            .saturating_sub(self.lines.len())
+            .max(1);
+        let (wrapped, wrapping_truncated) =
+            wrap_fragments(&content, self.options.width, self.code_block, remaining);
+        self.truncated |= wrapping_truncated;
+        for line in wrapped {
+            if self.lines.len() >= self.options.max_output_lines {
+                self.truncated = true;
+                break;
+            }
+            self.lines.push(Line::from(
+                line.into_iter()
+                    .map(|part| Span::styled(part.text, part.style))
+                    .collect::<Vec<_>>(),
+            ));
+        }
+    }
+
+    fn flush_table(&mut self) {
+        let Some(table) = self.table.take() else {
+            return;
+        };
+        let columns = table.rows.iter().map(Vec::len).max().unwrap_or(0);
+        if columns == 0 {
+            return;
+        }
+        let plain = table
+            .rows
+            .iter()
+            .map(|row| {
+                row.iter()
+                    .map(|cell| fragments_text(cell))
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+        let widths = (0..columns)
+            .map(|column| {
+                plain
+                    .iter()
+                    .filter_map(|row| row.get(column))
+                    .map(|value| UnicodeWidthStr::width(value.as_str()))
+                    .max()
+                    .unwrap_or(1)
+                    .max(1)
+            })
+            .collect::<Vec<_>>();
+        let grid_width = widths.iter().sum::<usize>() + columns.saturating_sub(1) * 3 + 4;
+        if grid_width <= self.options.width {
+            for (row_index, row) in plain.iter().enumerate() {
+                let mut text = String::from("│ ");
+                for (column, column_width) in widths.iter().enumerate() {
+                    if column > 0 {
+                        text.push_str(" │ ");
+                    }
+                    let value = row.get(column).map(String::as_str).unwrap_or("");
+                    text.push_str(value);
+                    text.push_str(
+                        &" ".repeat(column_width.saturating_sub(UnicodeWidthStr::width(value))),
+                    );
+                }
+                text.push_str(" │");
+                let style = if row_index < table.header_rows {
+                    Style::default()
+                        .fg(self.options.theme.table_header)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    self.style()
+                };
+                self.current.push(StyledText { text, style });
+                self.flush_line(false);
+                if row_index + 1 == table.header_rows {
+                    let rule = format!("├{}┤", "─".repeat(grid_width.saturating_sub(2)));
+                    self.current.push(StyledText {
+                        text: rule,
+                        style: Style::default().fg(self.options.theme.rule),
+                    });
+                    self.flush_line(false);
+                }
+            }
+        } else {
+            // A narrow viewport gets a deterministic, readable record layout.
+            let headers = plain.first().filter(|_| table.header_rows > 0);
+            for (row_index, row) in plain.iter().enumerate().skip(table.header_rows) {
+                if row_index > table.header_rows {
+                    self.flush_line(false);
+                }
+                for column in 0..columns {
+                    let label = headers
+                        .and_then(|header| header.get(column))
+                        .filter(|header| !header.trim().is_empty())
+                        .cloned()
+                        .unwrap_or_else(|| format!("Column {}", column + 1));
+                    let value = row.get(column).map(String::as_str).unwrap_or("");
+                    self.current.push(StyledText {
+                        text: format!("{label}: "),
+                        style: Style::default()
+                            .fg(self.options.theme.table_header)
+                            .add_modifier(Modifier::BOLD),
+                    });
+                    self.current.push(StyledText {
+                        text: value.to_owned(),
+                        style: self.style(),
+                    });
+                    self.flush_line(false);
+                }
+            }
+        }
+    }
+
+    fn finish(mut self, input_truncated: bool) -> Text<'static> {
+        self.flush_line(false);
+        if input_truncated || self.truncated {
+            if self.lines.len() >= self.options.max_output_lines {
+                self.lines
+                    .truncate(self.options.max_output_lines.saturating_sub(1));
+            }
+            self.lines.push(Line::styled(
+                "… Markdown output truncated …",
+                Style::default().fg(self.options.theme.warning),
+            ));
+        }
+        Text::from(self.lines)
+    }
+}
+
+fn syntax_assets() -> &'static (SyntaxSet, Theme) {
+    static ASSETS: OnceLock<(SyntaxSet, Theme)> = OnceLock::new();
+    ASSETS.get_or_init(|| {
+        let syntaxes = SyntaxSet::load_defaults_newlines();
+        let mut themes = ThemeSet::load_defaults();
+        let theme = themes
+            .themes
+            .remove("base16-ocean.dark")
+            .or_else(|| themes.themes.into_values().next())
+            .unwrap_or_default();
+        (syntaxes, theme)
+    })
+}
+
+fn syntax_style_to_ratatui(value: syntect::highlighting::Style) -> Style {
+    let mut modifiers = Modifier::empty();
+    if value.font_style.contains(FontStyle::BOLD) {
+        modifiers |= Modifier::BOLD;
+    }
+    if value.font_style.contains(FontStyle::ITALIC) {
+        modifiers |= Modifier::ITALIC;
+    }
+    if value.font_style.contains(FontStyle::UNDERLINE) {
+        modifiers |= Modifier::UNDERLINED;
+    }
+    Style::default()
+        .fg(Color::Rgb(
+            value.foreground.r,
+            value.foreground.g,
+            value.foreground.b,
+        ))
+        .add_modifier(modifiers)
+}
+
+fn heading_number(level: HeadingLevel) -> usize {
+    match level {
+        HeadingLevel::H1 => 1,
+        HeadingLevel::H2 => 2,
+        HeadingLevel::H3 => 3,
+        HeadingLevel::H4 => 4,
+        HeadingLevel::H5 => 5,
+        HeadingLevel::H6 => 6,
+    }
+}
+
+fn fragments_text(fragments: &[StyledText]) -> String {
+    fragments
+        .iter()
+        .map(|fragment| fragment.text.as_str())
+        .collect()
+}
+
+fn wrap_fragments(
+    parts: &[StyledText],
+    width: usize,
+    preserve_whitespace: bool,
+    max_lines: usize,
+) -> (Vec<Vec<StyledText>>, bool) {
+    let mut lines = vec![Vec::<StyledText>::new()];
+    let mut used = 0usize;
+    let mut truncated = false;
+    'parts: for part in parts {
+        for grapheme in part.text.graphemes(true) {
+            if grapheme == "\n" {
+                if lines.len() >= max_lines {
+                    truncated = true;
+                    break 'parts;
+                }
+                lines.push(Vec::new());
+                used = 0;
+                continue;
+            }
+            let grapheme_width = UnicodeWidthStr::width(grapheme);
+            if used > 0 && grapheme_width > 0 && used.saturating_add(grapheme_width) > width {
+                if lines.len() >= max_lines {
+                    truncated = true;
+                    break 'parts;
+                }
+                lines.push(Vec::new());
+                used = 0;
+            }
+            if !preserve_whitespace && used == 0 && grapheme.chars().all(char::is_whitespace) {
+                continue;
+            }
+            if let Some(last) = lines.last_mut().and_then(|line| line.last_mut())
+                && last.style == part.style
+            {
+                last.text.push_str(grapheme);
+            } else {
+                lines.last_mut().expect("line exists").push(StyledText {
+                    text: grapheme.to_owned(),
+                    style: part.style,
+                });
+            }
+            used = used.saturating_add(grapheme_width);
+        }
+    }
+    (lines, truncated)
+}
+
+/// Remove terminal controls, C0/C1 controls and invisible bidi formatting.
+fn sanitize(value: &str) -> String {
+    value
+        .chars()
+        .map(|character| match character {
+            '\n' | '\t' => character,
+            '\u{0000}'..='\u{001f}' | '\u{007f}'..='\u{009f}' => '�',
+            '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}' => '�',
+            _ => character,
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn text(source: &str, width: usize) -> Text<'static> {
+        render_markdown(
+            source,
+            RenderOptions {
+                width,
+                ..RenderOptions::default()
+            },
+        )
+    }
+
+    fn plain(rendered: &Text<'_>) -> String {
+        rendered
+            .lines
+            .iter()
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[test]
+    fn renders_commonmark_and_gfm_constructs() {
+        let rendered = text(
+            "# Title\n\n**bold** and *em* and `code`\n\n- [x] done\n- todo\n\n> quote\n\n[site](https://example.com)\n\n~~old~~",
+            100,
+        );
+        let output = plain(&rendered);
+        assert!(output.contains("# Title"));
+        assert!(output.contains("bold and em and code"));
+        assert!(output.contains("• [x] done"));
+        assert!(output.contains("│ quote"));
+        assert!(output.contains("site (https://example.com)"));
+        assert!(
+            rendered
+                .lines
+                .iter()
+                .flatten()
+                .any(|span| span.style.add_modifier.contains(Modifier::BOLD))
+        );
+        assert!(
+            rendered
+                .lines
+                .iter()
+                .flatten()
+                .any(|span| span.style.add_modifier.contains(Modifier::ITALIC))
+        );
+    }
+
+    #[test]
+    fn strips_terminal_and_bidi_controls_without_touching_source() {
+        let source = "safe\u{1b}[31mRED\u{1b}[0m \u{202e}txt".to_owned();
+        let original = source.clone();
+        let output = render_plain(&source, 100);
+        assert_eq!(source, original);
+        assert!(!output.contains('\u{1b}'));
+        assert!(!output.contains('\u{202e}'));
+        assert!(output.contains('�'));
+    }
+
+    #[test]
+    fn wraps_on_grapheme_boundaries_and_display_width() {
+        let rendered = text("a界e\u{301}z", 3);
+        assert_eq!(plain(&rendered), "a界\ne\u{301}z");
+        for line in &rendered.lines {
+            let value = line
+                .spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect::<String>();
+            assert!(UnicodeWidthStr::width(value.as_str()) <= 3);
+        }
+    }
+
+    #[test]
+    fn narrow_table_uses_stable_labeled_fallback() {
+        let output = render_plain(
+            "| Name | Value |\n|---|---|\n| alpha | a very long value |",
+            12,
+        );
+        assert!(output.contains("Name: alpha"), "{output:?}");
+        assert!(output.contains("Value:"));
+        assert!(output.contains("long value"));
+    }
+
+    #[test]
+    fn wide_table_uses_grid() {
+        let output = render_plain("| A | B |\n|---|---|\n| 1 | 2 |", 80);
+        assert!(output.contains("│ A │ B │"));
+        assert!(output.contains("├"), "{output:?}");
+    }
+
+    #[test]
+    fn accepts_incomplete_streaming_markdown() {
+        for source in [
+            "**unfinished",
+            "```rust\nfn main() {",
+            "[partial](https://",
+            "| a | b\n| --",
+        ] {
+            let rendered = text(source, 20);
+            assert!(!plain(&rendered).is_empty());
+        }
+    }
+
+    #[test]
+    fn bounds_input_and_output() {
+        let rendered = render_markdown(
+            &"x\n\n".repeat(100),
+            RenderOptions {
+                width: 10,
+                max_input_bytes: 40,
+                max_output_lines: 5,
+                ..RenderOptions::default()
+            },
+        );
+        assert!(rendered.lines.len() <= 5);
+        assert!(plain(&rendered).contains("truncated"));
+    }
+
+    #[test]
+    fn deeply_nested_input_does_not_panic() {
+        let source = format!("{}x{}", "*".repeat(10_000), "*".repeat(10_000));
+        let _ = text(&source, 40);
+    }
+
+    #[test]
+    fn highlights_known_fenced_languages_and_has_monochrome_fallback() {
+        let highlighted = render_markdown(
+            "```rust\nfn main() { let answer = 42; }\n```",
+            RenderOptions {
+                width: 80,
+                syntax_highlighting: true,
+                ..RenderOptions::default()
+            },
+        );
+        let colors = highlighted
+            .lines
+            .iter()
+            .skip(1)
+            .flat_map(|line| line.spans.iter().map(|span| span.style.fg))
+            .collect::<std::collections::HashSet<_>>();
+        assert!(colors.len() > 1, "expected language-aware token colors");
+
+        let theme = MarkdownTheme::default();
+        let monochrome = render_markdown(
+            "```rust\nfn main() {}\n```",
+            RenderOptions {
+                width: 80,
+                theme,
+                syntax_highlighting: false,
+                ..RenderOptions::default()
+            },
+        );
+        for span in monochrome.lines.iter().skip(1).flatten() {
+            assert_eq!(span.style.fg, Some(theme.code));
+        }
+    }
+
+    #[test]
+    fn html_and_images_have_inert_text_fallbacks() {
+        let output = render_plain(
+            "<script>bad()</script>\n\n![diagram](https://example.test/a.png)",
+            100,
+        );
+        assert!(output.contains("<script>bad()</script>"));
+        assert!(
+            output.contains("[image: diagram] (https://example.test/a.png)"),
+            "{output:?}"
+        );
+    }
+
+    #[test]
+    fn arbitrary_inputs_are_deterministic_safe_and_bounded() {
+        let mut seed = 0x9e37_79b9_u32;
+        for case in 0..256 {
+            let mut source = String::new();
+            for _ in 0..(case % 97) {
+                seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                let character = match seed % 16 {
+                    0 => '\u{1b}',
+                    1 => '\u{009b}',
+                    2 => '\u{202e}',
+                    3 => '\n',
+                    4 => '`',
+                    5 => '*',
+                    6 => '|',
+                    7 => '[',
+                    _ => char::from_u32(32 + seed % 0x700).unwrap_or('�'),
+                };
+                source.push(character);
+            }
+            let options = RenderOptions {
+                width: 1 + case % 31,
+                max_input_bytes: 256,
+                max_output_lines: 64,
+                ..RenderOptions::default()
+            };
+            let first = render_plain_with_options(&source, options);
+            let second = render_plain_with_options(&source, options);
+            assert_eq!(first, second);
+            assert!(first.lines().count() <= options.max_output_lines);
+            assert!(!first.chars().any(|character| matches!(
+                character,
+                '\u{001b}' | '\u{007f}'..='\u{009f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}'
+            )));
+        }
+    }
+
+    fn render_plain_with_options(source: &str, options: RenderOptions) -> String {
+        plain(&render_markdown(source, options))
+    }
+}
