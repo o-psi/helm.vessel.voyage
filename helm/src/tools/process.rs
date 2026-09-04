@@ -55,7 +55,7 @@ struct Managed {
     cols: u16,
     master: Box<dyn MasterPty + Send>,
     child: Box<dyn Child + Send + Sync>,
-    writer: Box<dyn Write + Send>,
+    writer: Arc<Mutex<Box<dyn Write + Send>>>,
     output: Arc<Mutex<Capture>>,
     notification_pending: Arc<AtomicBool>,
     cursor: usize,
@@ -316,7 +316,7 @@ impl ProcessTool {
         let child = pair.slave.spawn_command(builder).map_err(failed)?;
         drop(pair.slave);
         let mut reader = pair.master.try_clone_reader().map_err(failed)?;
-        let writer = pair.master.take_writer().map_err(failed)?;
+        let writer = Arc::new(Mutex::new(pair.master.take_writer().map_err(failed)?));
         let output = Arc::new(Mutex::new(Capture::new(rows, cols)));
         let max_unread_bytes = self.max_unread_bytes;
         let sink = output.clone();
@@ -324,6 +324,7 @@ impl ProcessTool {
         let events = self.events.clone();
         let notification_pending = Arc::new(AtomicBool::new(false));
         let reader_pending = notification_pending.clone();
+        let reader_writer = writer.clone();
         std::thread::Builder::new()
             .name("helm-pty-reader".into())
             .spawn(move || {
@@ -334,6 +335,13 @@ impl ProcessTool {
                         Ok(n) => {
                             let mut capture = sink.lock().expect("PTY buffer poisoned");
                             capture.parser.process(&buffer[..n]);
+                            let cursor_report = buffer[..n]
+                                .windows(4)
+                                .any(|window| window == b"\x1b[6n")
+                                .then(|| {
+                                    let (row, column) = capture.parser.screen().cursor_position();
+                                    format!("\x1b[{};{}R", row + 1, column + 1)
+                                });
                             capture.bytes.extend_from_slice(&buffer[..n]);
                             if capture.bytes.len() > max_unread_bytes {
                                 let remove = capture.bytes.len() - max_unread_bytes;
@@ -343,6 +351,13 @@ impl ProcessTool {
                             }
                             if !reader_pending.swap(true, Ordering::AcqRel) {
                                 let _ = events.send(TerminalEvent::Changed(TerminalId(id)));
+                            }
+                            drop(capture);
+                            if let Some(report) = cursor_report
+                                && let Ok(mut writer) = reader_writer.lock()
+                            {
+                                let _ = writer.write_all(report.as_bytes());
+                                let _ = writer.flush();
                             }
                         }
                     }
@@ -390,10 +405,9 @@ impl ProcessTool {
         let p = map
             .get_mut(&id)
             .ok_or_else(|| ToolError::Failed(format!("unknown process {id}")))?;
-        p.writer
-            .write_all(data.as_bytes())
-            .and_then(|_| p.writer.flush())
-            .map_err(failed)?;
+        let mut writer = p.writer.lock().map_err(failed)?;
+        writer.write_all(data.as_bytes()).map_err(failed)?;
+        writer.flush().map_err(failed)?;
         Ok(format!("wrote {} bytes", data.len()))
     }
     fn resize(&self, id: Uuid, rows: u16, cols: u16) -> Result<String, ToolError> {
@@ -546,9 +560,13 @@ impl InteractiveTerminals for ProcessTool {
             .lock()
             .map_err(|e| TerminalError::Failed(e.to_string()))?;
         let p = map.get_mut(&id.0).ok_or(TerminalError::NotFound(id))?;
-        p.writer
+        let mut writer = p
+            .writer
+            .lock()
+            .map_err(|e| TerminalError::Failed(e.to_string()))?;
+        writer
             .write_all(&bytes)
-            .and_then(|_| p.writer.flush())
+            .and_then(|_| writer.flush())
             .map_err(|e| TerminalError::Failed(e.to_string()))
     }
     async fn resize(&self, id: TerminalId, columns: u16, rows: u16) -> Result<(), TerminalError> {
