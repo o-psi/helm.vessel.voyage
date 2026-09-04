@@ -701,25 +701,23 @@ mod tests {
             .unwrap();
         let id = Uuid::parse_str(started.split_whitespace().last().unwrap()).unwrap();
 
-        #[cfg(not(windows))]
-        {
-            let mut first = String::new();
-            for _ in 0..100 {
-                tokio::time::sleep(Duration::from_millis(50)).await;
-                first.push_str(
-                    &tool
-                        .execute(json!({"action":"read","id":id}), &ctx)
-                        .await
-                        .unwrap(),
-                );
-                if first.contains("ready") {
-                    break;
-                }
+        let mut first = String::new();
+        for _ in 0..100 {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            first.push_str(
+                &tool
+                    .execute(json!({"action":"read","id":id}), &ctx)
+                    .await
+                    .unwrap(),
+            );
+            if first.contains("ready") {
+                break;
             }
-            assert!(first.contains("ready"));
         }
-        #[cfg(windows)]
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert!(
+            first.contains("ready"),
+            "interactive PTY did not become ready: {first:?}"
+        );
 
         tool.execute(
             json!({"action":"write","id":id,"data":interactive_input()}),
