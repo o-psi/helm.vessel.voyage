@@ -274,7 +274,7 @@ fn allowed_in_read_only(name: &str, arguments: &Value) -> bool {
         "todo" => action == Some("list"),
         "subagent" => match action {
             Some(
-                "status" | "list" | "wait" | "wait_many" | "message" | "follow_up"
+                "status" | "list" | "archive" | "wait" | "wait_many" | "message" | "follow_up"
                 | "worktree_status" | "worktree_conflicts" | "cancel",
             ) => true,
             Some("spawn") => !arguments

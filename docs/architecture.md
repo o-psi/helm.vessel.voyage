@@ -63,3 +63,11 @@ Vessel exposes:
 - Authenticated operator claims, TLS/mTLS, scoped principals, and credential rotation
 - SQLite/Postgres Vessel persistence and append-only task/audit history
 - Ratatui Helm frontend, MCP tools, context compaction, observability, and packaging
+
+## Planned Vessel session management
+
+The agreed [Vessel-managed session design](vessel-session-management.md) specifies
+`helm attach VESSEL_URL JOIN_KEY`, outbound interactive control, explicit sharing,
+and phased service/approval support. These are planned capabilities, not current
+CLI commands; existing pairing and task interfaces remain unchanged. Delivery is
+tracked in [#77](https://github.com/o-psi/voyage/issues/77).

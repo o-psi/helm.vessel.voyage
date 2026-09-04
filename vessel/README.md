@@ -34,3 +34,11 @@ Operational endpoints are `/health` for liveness, `/ready` for database readines
 `/metrics` for Prometheus-compatible fleet/task gauges, and `/v1/diagnostics` for a
 secret-free support snapshot. Run with `--log-format json` for structured request
 spans and correlation IDs. See [security and operations](../docs/security-operations.md).
+
+## Planned Vessel session management
+
+The agreed [Vessel-managed session design](../docs/vessel-session-management.md) specifies
+`helm attach VESSEL_URL JOIN_KEY`, outbound interactive control, explicit sharing,
+and phased service/approval support. These are planned capabilities, not current
+CLI commands; existing pairing and task interfaces remain unchanged. Delivery is
+tracked in [#77](https://github.com/o-psi/voyage/issues/77).

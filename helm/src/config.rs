@@ -93,7 +93,6 @@ pub struct Config {
     /// Kept separate from `base_url` so provider switching cannot redirect OAuth tokens.
     pub chatgpt_base_url: Option<String>,
     pub system_prompt: String,
-    pub max_turns: usize,
     pub max_tokens: u32,
     pub temperature: Option<f32>,
     pub provider_retry_attempts: usize,
@@ -191,11 +190,6 @@ pub const CONFIG_OVERRIDE_SPECS: &[ConfigOverrideSpec] = &[
         key: "system_prompt",
         description: "Agent system guidance",
         kind: ConfigValueKind::Text,
-    },
-    ConfigOverrideSpec {
-        key: "max_turns",
-        description: "Maximum model turns",
-        kind: ConfigValueKind::PositiveInteger,
     },
     ConfigOverrideSpec {
         key: "max_tokens",
@@ -368,7 +362,6 @@ impl Default for Config {
             base_url: None,
             chatgpt_base_url: None,
             system_prompt: include_str!("../prompts/system.md").trim().into(),
-            max_turns: 64,
             max_tokens: 8192,
             temperature: None,
             provider_retry_attempts: 4,
@@ -525,9 +518,6 @@ impl Config {
         if self.model.trim().is_empty() {
             bail!("model cannot be empty");
         }
-        if self.max_turns == 0 {
-            bail!("max_turns must be greater than zero");
-        }
         if self.max_output_bytes < 1024 {
             bail!("max_output_bytes must be at least 1024");
         }
@@ -595,10 +585,10 @@ mod tests {
     #[test]
     fn validated_runtime_overrides_support_scalars_and_nested_maps() {
         let mut config = Config::default();
-        config.apply_override("max_turns", "32").unwrap();
+        config.apply_override("max_tokens", "32").unwrap();
         config.apply_override("access", "unrestricted").unwrap();
         config.apply_override("env.HELM_TEST", "enabled").unwrap();
-        assert_eq!(config.max_turns, 32);
+        assert_eq!(config.max_tokens, 32);
         assert_eq!(config.access, Some(AccessMode::Unrestricted));
         assert_eq!(
             config.env.get("HELM_TEST").map(String::as_str),
@@ -606,6 +596,28 @@ mod tests {
         );
         assert!(config.apply_override("not_a_setting", "true").is_err());
         assert!(config.apply_override("max_turns", "0").is_err());
+    }
+
+    #[test]
+    fn legacy_turn_limit_is_ignored_and_not_exposed() {
+        for value in [0, 1, 64, 256] {
+            let directory = tempfile::tempdir().unwrap();
+            let path = directory.path().join("config.toml");
+            std::fs::write(&path, format!("max_turns = {value}\nmax_tokens = 1234\n")).unwrap();
+            let mut config = Config::load(Some(&path)).unwrap();
+            assert_eq!(config.max_tokens, 1234);
+            assert!(!toml::to_string(&config).unwrap().contains("max_turns"));
+            assert!(
+                config
+                    .apply_override("max_turns", &value.to_string())
+                    .is_err()
+            );
+        }
+        assert!(
+            !CONFIG_OVERRIDE_SPECS
+                .iter()
+                .any(|spec| spec.key == "max_turns")
+        );
     }
 
     #[test]

@@ -1,9 +1,11 @@
 //! Durable coordination primitives for isolated child agents.
+mod archive;
 mod persistence;
 mod runtime;
 mod tool;
 mod worktree;
 
+pub use archive::{ArchivePage, ArchivedAgent};
 pub use persistence::{AgentTree, AgentTreeStore};
 pub use runtime::{
     ExecutionContext, InboxMessage, RuntimeError, RuntimeLimits, SpawnRequest, SubagentEvent,
@@ -66,7 +68,6 @@ pub enum ApprovalPolicy {
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AgentBudget {
-    pub max_turns: u32,
     pub max_tokens: u64,
     pub max_runtime_secs: u64,
     pub max_children: u32,
@@ -108,8 +109,7 @@ impl AgentPolicy {
             "child writable root exceeds parent policy"
         );
         anyhow::ensure!(
-            child.budget.max_turns <= self.budget.max_turns
-                && child.budget.max_tokens <= self.budget.max_tokens
+            child.budget.max_tokens <= self.budget.max_tokens
                 && child.budget.max_runtime_secs <= self.budget.max_runtime_secs
                 && child.budget.max_children <= self.budget.max_children
                 && child.budget.max_terminals <= self.budget.max_terminals,
@@ -159,7 +159,6 @@ mod tests {
             allowed_tools: ["read".into(), "shell".into()].into_iter().collect(),
             approval: ApprovalPolicy::Deny,
             budget: AgentBudget {
-                max_turns: 10,
                 max_tokens: 100,
                 max_runtime_secs: 60,
                 max_children: 2,
@@ -167,6 +166,23 @@ mod tests {
             },
         }
     }
+    #[test]
+    fn remaining_child_budgets_cannot_exceed_parent() {
+        let parent = policy();
+        for field in [
+            "max_tokens",
+            "max_runtime_secs",
+            "max_children",
+            "max_terminals",
+        ] {
+            let mut encoded = serde_json::to_value(&parent).unwrap();
+            let value = encoded["budget"][field].as_u64().unwrap();
+            encoded["budget"][field] = serde_json::json!(value + 1);
+            let child: AgentPolicy = serde_json::from_value(encoded).unwrap();
+            assert!(parent.validate_child(&child).is_err(), "{field}");
+        }
+    }
+
     #[test]
     fn child_policy_can_only_reduce_authority() {
         let parent = policy();

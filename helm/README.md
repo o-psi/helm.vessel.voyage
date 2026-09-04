@@ -105,6 +105,12 @@ name; use `/new [TITLE]` to start a fresh session and optionally name it immedia
 Long conversations compact automatically while retaining recent turns.
 The conversation footer shows current status rather than permanently listing global shortcuts;
 press `F1` to open contextual keyboard help and `F1` or `Esc` to close it.
+Use `Up` and `Down` in the chat input to recall previously sent messages in the current
+session (including messages from a resumed session). `Down` past the newest message
+restores your unsent draft. Recalled messages can be edited before sending; slash-command
+suggestions and open pickers retain their existing arrow-key controls. A new session
+starts with empty input history.
+
 Scroll the conversation with the mouse wheel or `PageUp` and `PageDown`; a divider keeps the
 composer visually distinct without enclosing it in a permanent box.
 Typing `/` opens the slash-command palette above the composer. Continue typing to filter it,
@@ -168,12 +174,17 @@ helm --voyage https://vessel.example.com --name workstation
 # prints voyage:v1:XXXXXXXXXX; claim it in Vessel
 ```
 
+Helm does not impose a model-turn count limit: work continues until completion, cancellation,
+or an error (and child workers retain their wall-time budgets). Legacy `max_turns`
+entries in configuration are ignored and omitted when configuration is saved;
+`--set max_turns=...` and `/set max_turns ...` are no longer supported.
+
 ## Architecture
 
 The crate is split around stable boundaries:
 
 - `provider`: translates the internal message/tool protocol to remote APIs
-- `agent`: owns the bounded model → tool → model state machine
+- `agent`: owns the cancellable model → tool → model state machine
 - `tools`: capability registry and execution context
 - `policy`: validates filesystem and process actions before execution
 - `session`: durable neutral messages plus bounded/versioned provider continuation state
@@ -234,7 +245,7 @@ Press `Ctrl+A` in the full-screen UI to supervise concurrent agent work. The tre
 inspection, messaging, follow-up, and confirmed cancellation controls are described
 in the [agent supervision guide](../docs/agent-supervision.md).
 The model-facing `subagent` tool supports `spawn`, `status`, `list`, `wait`, `wait_many`,
-`cancel`, `message`, `follow_up`, conflict inspection, guarded commit/integration, and
+`cancel`, `message`, `follow_up`, `archive`, conflict inspection, guarded commit/integration, and
 safe cleanup. A spawn can request `worktree: true` when the workspace is a
 supported Git repository; Helm records the managed branch and path and refuses
 destructive cleanup of dirty work.
@@ -251,3 +262,8 @@ The next durable layers include structured audit logs and model-generated semant
 context summarization. Native token streaming, cancellation, managed PTYs, MCP tools,
 conflict-safe patches, and the full-screen interface are implemented behind the shared
 agent, event, tool, and session contracts.
+
+Finished subagents [archive automatically](../docs/subagents.md#automatic-archive).
+Models can page through historical IDs with `subagent` action `archive`, then read
+results with `status` or `wait`, including after restart. Archived records do not
+consume execution slots; failed outcomes keep their original status.

@@ -99,6 +99,27 @@ access = "read-only"
                         time.sleep(0.2)  # allow the resize event to finish before sending a key sequence
                         os.write(master, keys)
                         wait_for(b"question-flow-complete")
+                        # Streaming is provisional: Ctrl+Q while the run is still
+                        # active cancels it. Wait for canonical completion, not
+                        # merely its text, before testing normal exit persistence.
+                        deadline = time.monotonic() + 15
+                        while True:
+                            completed = False
+                            for path in (root / "data" / "helm" / "sessions").glob("*.json"):
+                                messages = json.loads(path.read_text())["messages"]
+                                completed = (
+                                    any(m["role"] == "tool" for m in messages)
+                                    and any(m["role"] == "assistant" and
+                                            m["content"] == "question-flow-complete"
+                                            for m in messages)
+                                )
+                                if completed:
+                                    break
+                            if completed:
+                                break
+                            assert time.monotonic() < deadline, (case, "turn was not persisted", bytes(output[-3000:]))
+                            if select.select([master], [], [], 0.1)[0]:
+                                output.extend(os.read(master, 65536))
                         os.write(master, b"\x11")  # Ctrl+Q
                         deadline = time.monotonic() + 5
                         while time.monotonic() < deadline:
