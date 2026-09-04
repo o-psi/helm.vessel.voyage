@@ -2,8 +2,8 @@ use async_trait::async_trait;
 use serde_json::{Value, json};
 
 use super::{
-    Provider, ProviderDelta, ProviderError, ProviderStream, ProviderStreamEvent, checked_json,
-    checked_stream_response,
+    ModelInfo, Provider, ProviderDelta, ProviderError, ProviderStream, ProviderStreamEvent,
+    checked_json, checked_stream_response, normalize_models,
 };
 use crate::model::{Message, ModelRequest, ModelResponse, Role, ToolCall, Usage};
 
@@ -28,6 +28,55 @@ impl AnthropicProvider {
 
 #[async_trait]
 impl Provider for AnthropicProvider {
+    async fn models(&self) -> Result<Vec<ModelInfo>, ProviderError> {
+        let mut models = Vec::new();
+        let mut after_id: Option<String> = None;
+        loop {
+            let mut request = self
+                .client
+                .get(format!("{}/models", self.base_url))
+                .header("x-api-key", &self.api_key)
+                .header("anthropic-version", "2023-06-01")
+                .query(&[("limit", "1000")]);
+            if let Some(cursor) = &after_id {
+                request = request.query(&[("after_id", cursor)]);
+            }
+            let value = checked_json(request.send().await.map_err(map_transport)?).await?;
+            let data = value.get("data").and_then(Value::as_array).ok_or_else(|| {
+                ProviderError::InvalidResponse("Anthropic models response omitted data".into())
+            })?;
+            for item in data {
+                let id = item.get("id").and_then(Value::as_str).ok_or_else(|| {
+                    ProviderError::InvalidResponse("Anthropic model omitted id".into())
+                })?;
+                let mut model = ModelInfo::minimal(id);
+                model.display_name = item
+                    .get("display_name")
+                    .and_then(Value::as_str)
+                    .unwrap_or(id)
+                    .to_owned();
+                models.push(model);
+            }
+            if !value
+                .get("has_more")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+            {
+                break;
+            }
+            after_id = value
+                .get("last_id")
+                .and_then(Value::as_str)
+                .map(str::to_owned);
+            if after_id.is_none() {
+                return Err(ProviderError::InvalidResponse(
+                    "Anthropic models response has_more without last_id".into(),
+                ));
+            }
+        }
+        normalize_models(&mut models);
+        Ok(models)
+    }
     async fn complete(&self, request: ModelRequest) -> Result<ModelResponse, ProviderError> {
         let system = request
             .messages

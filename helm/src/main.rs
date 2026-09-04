@@ -24,7 +24,7 @@ use sha2::{Digest, Sha256};
 use std::{
     io::{self, IsTerminal, Write},
     path::PathBuf,
-    sync::{Arc, OnceLock, Weak},
+    sync::{Arc, OnceLock, RwLock, Weak},
 };
 use tracing_subscriber::EnvFilter;
 use voyage_protocol::{
@@ -191,6 +191,7 @@ async fn voyage_worker(
             Some(id) => store.load(id).await?,
             None => Session::new(workspace.clone(), config.model.clone()),
         };
+        agent.set_model(session.model.clone())?;
         match agent
             .run(session.messages.clone(), task.request.prompt)
             .await
@@ -266,6 +267,12 @@ enum Command {
         plain: bool,
     },
     Sessions,
+    /// List models available to the configured provider/account.
+    Models {
+        /// Emit stable machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
     Config,
     /// Generate a shell completion script on stdout.
     Completions {
@@ -374,6 +381,7 @@ async fn main() -> Result<()> {
             .init(),
     }
     let mut config = Config::load(cli.config.as_deref())?;
+    let model_overridden = cli.model.is_some();
     if let Some(model) = cli.model {
         config.model = model;
     }
@@ -403,26 +411,60 @@ async fn main() -> Result<()> {
             println!("{}", toml::to_string_pretty(&config)?);
             Ok(())
         }
+        Command::Models { json } => list_models(&config, cli.workspace, json).await,
         Command::Doctor => doctor(&config, cli.workspace),
         Command::Sessions => list_sessions().await,
         Command::Run {
             prompt,
             resume,
             no_save,
-        } => execute(config, cli.workspace, resume, prompt.join(" "), no_save)
-            .await
-            .map(|_| ()),
+        } => execute(
+            config,
+            cli.workspace,
+            resume,
+            prompt.join(" "),
+            no_save,
+            model_overridden,
+        )
+        .await
+        .map(|_| ()),
         Command::Chat { resume, plain } => {
             let interactive = io::stdin().is_terminal() && io::stdout().is_terminal();
             let full_screen = interactive
                 && std::env::var("TERM").is_ok_and(|term| !term.is_empty() && term != "dumb");
             if plain || !full_screen {
-                chat(config, cli.workspace, resume, interactive).await
+                chat(config, cli.workspace, resume, interactive, model_overridden).await
             } else {
-                tui_chat(config, cli.workspace, resume).await
+                tui_chat(config, cli.workspace, resume, model_overridden).await
             }
         }
     }
+}
+
+async fn list_models(config: &Config, workspace: Option<PathBuf>, json: bool) -> Result<()> {
+    let workspace = config.resolve_workspace(workspace)?;
+    let provider = provider::from_config(config, workspace)?;
+    let mut models = tokio::time::timeout(config.timeout(), provider.models())
+        .await
+        .context("model discovery timed out")??;
+    if !models.iter().any(|model| model.id == config.model) {
+        models.push(helm::provider::ModelInfo::minimal(config.model.clone()));
+        helm::provider::normalize_models(&mut models);
+    }
+    if json {
+        println!("{}", serde_json::to_string_pretty(&models)?);
+    } else {
+        for model in models {
+            println!(
+                "{}{}\t{}\t{}",
+                if model.id == config.model { "* " } else { "  " },
+                model.id,
+                model.display_name,
+                model.reasoning_efforts.join(",")
+            );
+        }
+    }
+    Ok(())
 }
 
 fn doctor(config: &Config, workspace: Option<PathBuf>) -> Result<()> {
@@ -506,6 +548,7 @@ struct CliSubagentExecutor {
     workspace: PathBuf,
     runtime: OnceLock<Weak<SubagentRuntime>>,
     worktrees: Option<WorktreeManager>,
+    model: Arc<RwLock<String>>,
 }
 #[async_trait]
 impl SubagentExecutor for CliSubagentExecutor {
@@ -515,6 +558,11 @@ impl SubagentExecutor for CliSubagentExecutor {
     ) -> std::result::Result<SubagentResult, String> {
         context.progress("initializing provider and tools").await;
         let mut config = self.config.clone();
+        config.model = self
+            .model
+            .read()
+            .expect("subagent model lock poisoned")
+            .clone();
         config.workspace = Some(
             context
                 .worktree
@@ -603,6 +651,7 @@ impl SubagentExecutor for CliSubagentExecutor {
 struct SubagentBundle {
     runtime: Arc<SubagentRuntime>,
     tool: SubagentTool,
+    model: Arc<RwLock<String>>,
 }
 async fn build_subagents(config: &Config, workspace: &std::path::Path) -> Result<SubagentBundle> {
     let standard = ToolRegistry::standard();
@@ -633,11 +682,13 @@ async fn build_subagents(config: &Config, workspace: &std::path::Path) -> Result
     };
     let workspace_key = hex::encode(Sha256::digest(workspace.as_os_str().as_encoded_bytes()));
     let worktrees = worktree_manager(workspace, &workspace_key);
+    let model = Arc::new(RwLock::new(config.model.clone()));
     let executor = Arc::new(CliSubagentExecutor {
         config: config.clone(),
         workspace: workspace.to_path_buf(),
         runtime: OnceLock::new(),
         worktrees: worktrees.clone(),
+        model: model.clone(),
     });
     let store = helm::subagent::AgentTreeStore::new(
         helm::config::default_data_dir()
@@ -662,7 +713,11 @@ async fn build_subagents(config: &Config, workspace: &std::path::Path) -> Result
         .set(Arc::downgrade(&runtime))
         .map_err(|_| anyhow::anyhow!("subagent runtime already initialized"))?;
     let tool = SubagentTool::new(runtime.clone(), policy, budget).with_worktrees(worktrees);
-    Ok(SubagentBundle { runtime, tool })
+    Ok(SubagentBundle {
+        runtime,
+        tool,
+        model,
+    })
 }
 
 fn worktree_manager(workspace: &std::path::Path, workspace_key: &str) -> Option<WorktreeManager> {
@@ -721,6 +776,7 @@ async fn build_agent(config: &Config, workspace: PathBuf, attended: bool) -> Res
         config.max_tokens,
         config.temperature,
     )
+    .with_model_mirror(subagents.model)
     .with_retry_policy(RetryPolicy {
         max_attempts: config.provider_retry_attempts,
         initial_delay: std::time::Duration::from_millis(config.provider_retry_initial_ms),
@@ -758,9 +814,10 @@ async fn tui_chat(
     config: Config,
     workspace_arg: Option<PathBuf>,
     resume: Option<String>,
+    model_overridden: bool,
 ) -> Result<()> {
     let store = SessionStore::default();
-    let session = if let Some(reference) = resume {
+    let mut session = if let Some(reference) = resume {
         store.load_reference(&reference).await?
     } else {
         Session::new(
@@ -768,41 +825,49 @@ async fn tui_chat(
             config.model.clone(),
         )
     };
+    if model_overridden && session.switch_model(config.model.clone())? {
+        store.save(&mut session).await?;
+    }
     let (bridge, receiver) = helm::tui::bridge();
-    let policy = Arc::new(Policy::new(&config, session.workspace.clone())?);
+    let mut active_config = config.clone();
+    active_config.model = session.model.clone();
+    let policy = Arc::new(Policy::new(&active_config, session.workspace.clone())?);
     let context = ToolContext {
         policy,
         approver: bridge.clone(),
-        timeout: config.timeout(),
-        max_output_bytes: config.max_output_bytes,
-        environment: tool_environment(&config),
+        timeout: active_config.timeout(),
+        max_output_bytes: active_config.max_output_bytes,
+        environment: tool_environment(&active_config),
         cancellation: tokio_util::sync::CancellationToken::new(),
         execution_id: uuid::Uuid::new_v4(),
         interaction: InteractionMode::Attended,
-        redactor: redactor(&config),
+        redactor: redactor(&active_config),
     };
-    let subagents = build_subagents(&config, &session.workspace).await?;
+    let subagents = build_subagents(&active_config, &session.workspace).await?;
     let subagent_runtime = subagents.runtime.clone();
     let todo = todo_tool(&session.workspace);
-    let tools = build_tools(&config, Some(subagents.tool), Some(todo.clone())).await?;
+    let tools = build_tools(&active_config, Some(subagents.tool), Some(todo.clone())).await?;
     let terminals: Arc<dyn helm::terminal::InteractiveTerminals> =
         Arc::new(tools.terminals().unwrap_or_default());
     let agent = Arc::new(
         Agent::new(
-            provider::from_config(&config, session.workspace.clone())?,
+            provider::from_config(&active_config, session.workspace.clone())?,
             tools,
             context,
             bridge.clone(),
-            config.model.clone(),
-            config.system_prompt.clone(),
-            config.max_turns,
-            config.max_tokens,
-            config.temperature,
+            session.model.clone(),
+            active_config.system_prompt.clone(),
+            active_config.max_turns,
+            active_config.max_tokens,
+            active_config.temperature,
         )
+        .with_model_mirror(subagents.model)
         .with_retry_policy(RetryPolicy {
-            max_attempts: config.provider_retry_attempts,
-            initial_delay: std::time::Duration::from_millis(config.provider_retry_initial_ms),
-            max_delay: std::time::Duration::from_millis(config.provider_retry_max_ms),
+            max_attempts: active_config.provider_retry_attempts,
+            initial_delay: std::time::Duration::from_millis(
+                active_config.provider_retry_initial_ms,
+            ),
+            max_delay: std::time::Duration::from_millis(active_config.provider_retry_max_ms),
         }),
     );
     helm::tui::run(
@@ -877,6 +942,7 @@ async fn execute(
     resume: Option<String>,
     prompt: String,
     no_save: bool,
+    model_overridden: bool,
 ) -> Result<Session> {
     let store = SessionStore::default();
     let mut session = if let Some(reference) = resume {
@@ -887,7 +953,12 @@ async fn execute(
             config.model.clone(),
         )
     };
-    let agent = build_agent(&config, session.workspace.clone(), true).await?;
+    if model_overridden {
+        session.switch_model(config.model.clone())?;
+    }
+    let mut active_config = config.clone();
+    active_config.model = session.model.clone();
+    let agent = build_agent(&active_config, session.workspace.clone(), true).await?;
     let outcome = agent.run(session.messages.clone(), prompt).await?;
     session.messages = outcome.messages;
     session.usage.input_tokens += outcome.usage.input_tokens;
@@ -905,6 +976,7 @@ async fn chat(
     workspace_arg: Option<PathBuf>,
     resume: Option<String>,
     interactive: bool,
+    model_overridden: bool,
 ) -> Result<()> {
     let store = SessionStore::default();
     let mut session = if let Some(reference) = resume {
@@ -915,7 +987,10 @@ async fn chat(
             config.model.clone(),
         )
     };
-    let mut agent = None;
+    if model_overridden && session.switch_model(config.model.clone())? {
+        store.save(&mut session).await?;
+    }
+    let mut agent: Option<Agent> = None;
     if interactive {
         eprintln!(
             "Helm · {} · {}\nType /help for commands.",
@@ -939,7 +1014,7 @@ async fn chat(
         match prompt {
             "/quit" | "/exit" => break,
             "/help" => {
-                println!("/help  /session  /clear  /exit");
+                println!("/help  /session  /model [MODEL]  /models  /clear  /exit");
                 continue;
             }
             "/session" => {
@@ -947,6 +1022,10 @@ async fn chat(
                     "{} ({} input, {} output tokens)",
                     session.id, session.usage.input_tokens, session.usage.output_tokens
                 );
+                continue;
+            }
+            "/model" => {
+                println!("{}", session.model);
                 continue;
             }
             "/clear" => {
@@ -957,8 +1036,54 @@ async fn chat(
             }
             _ => {}
         }
+        if let Some(model) = prompt.strip_prefix("/model ") {
+            let model = model.trim();
+            if model.is_empty() {
+                eprintln!("usage: /model MODEL");
+                continue;
+            }
+            session.switch_model(model)?;
+            if let Some(agent) = &agent {
+                agent.set_model(model)?;
+            }
+            store.save(&mut session).await?;
+            println!("model switched to {model}");
+            continue;
+        }
+        if prompt == "/models" {
+            let mut active_config = config.clone();
+            active_config.model = session.model.clone();
+            match provider::from_config(&active_config, session.workspace.clone()) {
+                Ok(provider) => {
+                    match tokio::time::timeout(active_config.timeout(), provider.models()).await {
+                        Ok(Ok(mut models)) => {
+                            helm::provider::normalize_models(&mut models);
+                            for model in models {
+                                println!(
+                                    "{}{}\t{}",
+                                    if model.id == session.model {
+                                        "* "
+                                    } else {
+                                        "  "
+                                    },
+                                    model.id,
+                                    model.display_name
+                                );
+                            }
+                        }
+                        Ok(Err(error)) => eprintln!("model discovery failed: {error}"),
+                        Err(_) => eprintln!("model discovery timed out"),
+                    }
+                }
+                Err(error) => eprintln!("model discovery failed: {error}"),
+            }
+            continue;
+        }
         if agent.is_none() {
-            agent = Some(build_agent(&config, session.workspace.clone(), interactive).await?);
+            let mut active_config = config.clone();
+            active_config.model = session.model.clone();
+            agent =
+                Some(build_agent(&active_config, session.workspace.clone(), interactive).await?);
         }
         match agent
             .as_ref()

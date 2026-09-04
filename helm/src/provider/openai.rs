@@ -2,8 +2,8 @@ use async_trait::async_trait;
 use serde_json::{Value, json};
 
 use super::{
-    Provider, ProviderDelta, ProviderError, ProviderStream, ProviderStreamEvent, checked_json,
-    checked_stream_response,
+    ModelInfo, Provider, ProviderDelta, ProviderError, ProviderStream, ProviderStreamEvent,
+    checked_json, checked_stream_response, normalize_models,
 };
 use crate::model::{Message, ModelRequest, ModelResponse, Role, ToolCall, Usage};
 
@@ -28,6 +28,26 @@ impl OpenAiProvider {
 
 #[async_trait]
 impl Provider for OpenAiProvider {
+    async fn models(&self) -> Result<Vec<ModelInfo>, ProviderError> {
+        let response = self
+            .client
+            .get(format!("{}/models", self.base_url))
+            .bearer_auth(&self.api_key)
+            .send()
+            .await
+            .map_err(map_transport)?;
+        let value = checked_json(response).await?;
+        let data = value.get("data").and_then(Value::as_array).ok_or_else(|| {
+            ProviderError::InvalidResponse("OpenAI models response omitted data".into())
+        })?;
+        let mut models = data
+            .iter()
+            .filter_map(|item| item.get("id").and_then(Value::as_str))
+            .map(ModelInfo::minimal)
+            .collect();
+        normalize_models(&mut models);
+        Ok(models)
+    }
     async fn complete(&self, request: ModelRequest) -> Result<ModelResponse, ProviderError> {
         let body = request_body(request, false);
 

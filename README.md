@@ -49,3 +49,6 @@ The lifecycle and safety contract is documented in [Parallel subagents](docs/sub
 
 Helm also provides durable, dependency-aware task tracking shared by the model and operator.
 See [Task management](docs/task-management.md) for the todo tool contract and workflow.
+
+Available models are discovered from the configured account and can be switched without losing
+the active session. See [Model discovery and switching](docs/model-management.md).

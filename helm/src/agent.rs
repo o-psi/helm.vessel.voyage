@@ -1,12 +1,12 @@
 use async_trait::async_trait;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use std::time::Duration;
 use thiserror::Error;
 use tokio_util::sync::CancellationToken;
 
 use crate::{
     model::{Message, ModelRequest, Usage},
-    provider::{Provider, ProviderError},
+    provider::{ModelInfo, Provider, ProviderError, normalize_models},
     tools::{ToolContext, ToolRegistry},
 };
 
@@ -75,7 +75,9 @@ pub struct Agent {
     tools: ToolRegistry,
     context: ToolContext,
     sink: Arc<dyn EventSink>,
-    model: String,
+    model: RwLock<String>,
+    model_mirror: Option<Arc<RwLock<String>>>,
+    model_cache: tokio::sync::Mutex<Option<(std::time::Instant, Vec<ModelInfo>)>>,
     system_prompt: String,
     max_turns: usize,
     max_tokens: u32,
@@ -135,7 +137,9 @@ impl Agent {
             tools,
             context,
             sink,
-            model,
+            model: RwLock::new(model),
+            model_mirror: None,
+            model_cache: tokio::sync::Mutex::new(None),
             system_prompt,
             max_turns,
             max_tokens,
@@ -147,6 +151,51 @@ impl Agent {
     pub fn with_retry_policy(mut self, retry: RetryPolicy) -> Self {
         self.retry = retry;
         self
+    }
+
+    pub fn with_model_mirror(mut self, mirror: Arc<RwLock<String>>) -> Self {
+        *mirror.write().expect("model mirror lock poisoned") = self.model();
+        self.model_mirror = Some(mirror);
+        self
+    }
+
+    pub fn model(&self) -> String {
+        self.model
+            .read()
+            .expect("agent model lock poisoned")
+            .clone()
+    }
+
+    pub fn set_model(&self, model: impl Into<String>) -> Result<String, AgentError> {
+        let model = model.into();
+        if model.trim().is_empty() {
+            return Err(ProviderError::InvalidResponse("model cannot be empty".into()).into());
+        }
+        *self.model.write().expect("agent model lock poisoned") = model.trim().to_owned();
+        if let Some(mirror) = &self.model_mirror {
+            *mirror.write().expect("model mirror lock poisoned") = model.trim().to_owned();
+        }
+        Ok(model.trim().to_owned())
+    }
+
+    pub async fn models(&self, refresh: bool) -> Result<Vec<ModelInfo>, AgentError> {
+        let mut cache = self.model_cache.lock().await;
+        if !refresh
+            && let Some((created, models)) = cache.as_ref()
+            && created.elapsed() < Duration::from_secs(300)
+        {
+            return Ok(models.clone());
+        }
+        let mut models = tokio::time::timeout(self.context.timeout, self.provider.models())
+            .await
+            .map_err(|_| ProviderError::Timeout("model discovery timed out".into()))??;
+        let current = self.model();
+        if !models.iter().any(|model| model.id == current) {
+            models.push(ModelInfo::minimal(current));
+        }
+        normalize_models(&mut models);
+        *cache = Some((std::time::Instant::now(), models.clone()));
+        Ok(models)
     }
 
     pub async fn run(
@@ -178,7 +227,8 @@ impl Agent {
         let mut context = self.context.clone();
         context.cancellation = cancel.child_token();
         context.execution_id = uuid::Uuid::new_v4();
-        tracing::info!(execution_id = %context.execution_id, model = %self.model, "agent execution started");
+        let active_model = self.model();
+        tracing::info!(execution_id = %context.execution_id, model = %active_model, "agent execution started");
         if history
             .first()
             .is_none_or(|m| m.role != crate::model::Role::System)
@@ -198,7 +248,7 @@ impl Agent {
             }
             self.sink.emit(AgentEvent::Thinking { turn }).await;
             let request = ModelRequest {
-                model: self.model.clone(),
+                model: active_model.clone(),
                 messages: history.clone(),
                 tools: self.tools.definitions(),
                 temperature: self.temperature,

@@ -59,6 +59,11 @@ helm config
 helm doctor
 ```
 
+Discover models from the configured provider/account with `helm models` or
+`helm models --json`. In full-screen chat, `Ctrl+M` opens the searchable model picker. In plain
+chat, use `/model`, `/models`, or `/model MODEL`. The selected model persists with the session and
+applies to its next turn.
+
 ## Use
 
 ```sh

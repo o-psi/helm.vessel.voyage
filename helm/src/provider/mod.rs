@@ -4,6 +4,7 @@ mod openai;
 
 use async_trait::async_trait;
 use futures_util::Stream;
+use serde::{Deserialize, Serialize};
 use std::pin::Pin;
 use thiserror::Error;
 
@@ -55,6 +56,61 @@ pub enum ProviderStreamEvent {
 pub type ProviderStream =
     Pin<Box<dyn Stream<Item = Result<ProviderStreamEvent, ProviderError>> + Send>>;
 
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ModelInfo {
+    pub id: String,
+    pub display_name: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub is_default: bool,
+    #[serde(default)]
+    pub reasoning_efforts: Vec<String>,
+    #[serde(default)]
+    pub input_modalities: Vec<String>,
+}
+
+impl ModelInfo {
+    pub fn minimal(id: impl Into<String>) -> Self {
+        let id = id.into();
+        Self {
+            display_name: id.clone(),
+            id,
+            description: String::new(),
+            is_default: false,
+            reasoning_efforts: Vec::new(),
+            input_modalities: vec!["text".into()],
+        }
+    }
+}
+
+pub fn normalize_models(models: &mut Vec<ModelInfo>) {
+    models.retain(|model| !model.id.trim().is_empty());
+    let mut unique = std::collections::BTreeMap::new();
+    for model in std::mem::take(models) {
+        unique
+            .entry(model.id.clone())
+            .and_modify(|current: &mut ModelInfo| {
+                if model.is_default && !current.is_default {
+                    *current = model.clone();
+                }
+            })
+            .or_insert(model);
+    }
+    models.extend(unique.into_values());
+    models.sort_by(|left, right| {
+        right
+            .is_default
+            .cmp(&left.is_default)
+            .then_with(|| {
+                left.display_name
+                    .to_ascii_lowercase()
+                    .cmp(&right.display_name.to_ascii_lowercase())
+            })
+            .then_with(|| left.id.cmp(&right.id))
+    });
+}
+
 impl ProviderError {
     pub fn is_retryable(&self) -> bool {
         matches!(
@@ -72,6 +128,11 @@ impl ProviderError {
 
 #[async_trait]
 pub trait Provider: Send + Sync {
+    async fn models(&self) -> Result<Vec<ModelInfo>, ProviderError> {
+        Err(ProviderError::Unavailable(
+            "this provider does not expose model discovery".into(),
+        ))
+    }
     async fn complete(&self, request: ModelRequest) -> Result<ModelResponse, ProviderError>;
     async fn stream(&self, request: ModelRequest) -> Result<ProviderStream, ProviderError> {
         let response = self.complete(request).await?;
@@ -146,5 +207,33 @@ pub(crate) async fn checked_stream_response(
             Err(error) => Err(error),
             Ok(_) => unreachable!("non-success response cannot produce successful JSON"),
         }
+    }
+}
+
+#[cfg(test)]
+mod model_tests {
+    use super::*;
+
+    #[test]
+    fn catalog_is_deduplicated_and_default_first() {
+        let mut models = vec![
+            ModelInfo::minimal("z"),
+            ModelInfo {
+                display_name: "Preferred".into(),
+                is_default: true,
+                ..ModelInfo::minimal("z")
+            },
+            ModelInfo::minimal("a"),
+            ModelInfo::minimal(""),
+        ];
+        normalize_models(&mut models);
+        assert_eq!(
+            models
+                .iter()
+                .map(|model| model.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["z", "a"]
+        );
+        assert_eq!(models[0].display_name, "Preferred");
     }
 }

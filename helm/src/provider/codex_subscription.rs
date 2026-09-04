@@ -3,7 +3,10 @@
 //! This adapter opts into the generated experimental dynamic-tools surface. Codex is
 //! used only as the model transport: dynamic tool requests are returned to Helm's
 //! normal agent loop, so Helm remains the authority for policy, approval and execution.
-use super::{Provider, ProviderDelta, ProviderError, ProviderStream, ProviderStreamEvent};
+use super::{
+    ModelInfo, Provider, ProviderDelta, ProviderError, ProviderStream, ProviderStreamEvent,
+    normalize_models,
+};
 use crate::model::{Message, ModelRequest, ModelResponse, Role, ToolCall, Usage};
 use async_trait::async_trait;
 use serde_json::{Value, json};
@@ -37,6 +40,7 @@ pub struct CodexSubscriptionProvider {
 
 struct State {
     client: Option<Arc<AppClient>>,
+    initialized: bool,
     thread_id: Option<String>,
     turn_id: Option<String>,
     pending_tool: Option<PendingTool>,
@@ -70,6 +74,7 @@ impl CodexSubscriptionProvider {
         Self {
             state: Arc::new(Mutex::new(State {
                 client: None,
+                initialized: false,
                 thread_id: None,
                 turn_id: None,
                 pending_tool: None,
@@ -85,6 +90,100 @@ impl CodexSubscriptionProvider {
 
 #[async_trait]
 impl Provider for CodexSubscriptionProvider {
+    async fn models(&self) -> Result<Vec<ModelInfo>, ProviderError> {
+        let mut state = self.state.lock().await;
+        if state.active {
+            return Err(ProviderError::Unavailable(
+                "model discovery is unavailable during an active turn".into(),
+            ));
+        }
+        if state.client.is_none() {
+            let client = AppClient::spawn(&self.program, &self.args).await?;
+            client.initialize().await?;
+            state.initialized = true;
+            state.client = Some(client);
+        }
+        let client = state.client.as_ref().expect("client initialized").clone();
+        let mut cursor: Option<String> = None;
+        let mut models = Vec::new();
+        loop {
+            let response = client
+                .request(
+                    "model/list",
+                    json!({"cursor":cursor,"limit":100,"includeHidden":false}),
+                )
+                .await?;
+            let result = response.get("result").ok_or_else(|| {
+                ProviderError::InvalidResponse("model/list omitted result".into())
+            })?;
+            let data = result
+                .get("data")
+                .and_then(Value::as_array)
+                .ok_or_else(|| {
+                    ProviderError::InvalidResponse("model/list omitted result.data".into())
+                })?;
+            for value in data {
+                if value
+                    .get("hidden")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false)
+                {
+                    continue;
+                }
+                let id = value
+                    .get("model")
+                    .or_else(|| value.get("id"))
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| {
+                        ProviderError::InvalidResponse("model/list entry omitted model".into())
+                    })?;
+                let reasoning_efforts = value
+                    .get("supportedReasoningEfforts")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|entry| entry.get("reasoningEffort").and_then(Value::as_str))
+                    .map(str::to_owned)
+                    .collect();
+                let input_modalities = value
+                    .get("inputModalities")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(Value::as_str)
+                    .map(str::to_owned)
+                    .collect();
+                models.push(ModelInfo {
+                    id: id.to_owned(),
+                    display_name: value
+                        .get("displayName")
+                        .and_then(Value::as_str)
+                        .unwrap_or(id)
+                        .to_owned(),
+                    description: value
+                        .get("description")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_owned(),
+                    is_default: value
+                        .get("isDefault")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false),
+                    reasoning_efforts,
+                    input_modalities,
+                });
+            }
+            cursor = result
+                .get("nextCursor")
+                .and_then(Value::as_str)
+                .map(str::to_owned);
+            if cursor.is_none() {
+                break;
+            }
+        }
+        normalize_models(&mut models);
+        Ok(models)
+    }
     async fn complete(&self, request: ModelRequest) -> Result<ModelResponse, ProviderError> {
         use futures_util::StreamExt;
         let mut stream = self.stream(request).await?;
@@ -105,12 +204,12 @@ impl Provider for CodexSubscriptionProvider {
         let cancelled = self.cancelled.clone();
         Ok(Box::pin(async_stream::try_stream! {
             let mut state=state.lock().await;
-            if cancelled.swap(false,Ordering::SeqCst) { state.client=None;state.thread_id=None;state.active=false;state.pending_tool=None;state.turn_id=None; }
+            if cancelled.swap(false,Ordering::SeqCst) { state.client=None;state.initialized=false;state.thread_id=None;state.active=false;state.pending_tool=None;state.turn_id=None; }
             if state.client.is_none() { state.client=Some(AppClient::spawn(&program,&args).await?); }
             let client=state.client.as_ref().expect("client initialized").clone();
             let mut startup_guard=StartupGuard { client:client.clone(),cancelled:cancelled.clone(),armed:true };
             if state.thread_id.is_none() {
-                client.initialize().await?;
+                if !state.initialized { client.initialize().await?; state.initialized=true; }
                 let tools=request.tools.iter().map(|tool|json!({"type":"function","name":tool.name,"description":tool.description,"inputSchema":tool.input_schema,"deferLoading":false})).collect::<Vec<_>>();
                 let system=request.messages.iter().filter(|m|m.role==Role::System).map(|m|m.content.as_str()).collect::<Vec<_>>().join("\n\n");
                 let result=client.request("thread/start",json!({"cwd":workspace,"model":request.model,"approvalPolicy":"never","sandbox":"read-only","ephemeral":true,"baseInstructions":system,"developerInstructions":"You are the model inside Helm. Never use built-in command, filesystem, web, MCP, app, or patch tools. Use only the client-provided dynamic tools; Helm enforces all tool policy and executes every action.","dynamicTools":tools})).await?;
@@ -520,6 +619,30 @@ mod tests {
             .unwrap();
         let again = completed(&mut stream).await;
         assert_eq!(again.message.content, "again");
+    }
+    #[tokio::test]
+    async fn discovers_models_then_reuses_initialized_client_for_a_turn() {
+        let script = r#"read init; echo '{"id":1,"result":{"userAgent":"fake","platformFamily":"unix","platformOs":"linux","codexHome":"/tmp"}}'; read initialized; read models; echo '{"id":2,"result":{"data":[{"id":"catalog-id","model":"model-a","displayName":"Model A","description":"A model","hidden":false,"isDefault":true,"defaultReasoningEffort":"medium","supportedReasoningEfforts":[{"reasoningEffort":"low","description":"fast"}],"inputModalities":["text"]}],"nextCursor":null}}'; read thread; echo '{"id":3,"result":{"thread":{"id":"th1"}}}'; read turn; echo '{"id":4,"result":{"turn":{"id":"tu1","status":"inProgress","items":[]}}}'; echo '{"method":"item/agentMessage/delta","params":{"threadId":"th1","turnId":"tu1","itemId":"i","delta":"ok"}}'; echo '{"method":"turn/completed","params":{"threadId":"th1","turn":{"id":"tu1","status":"completed","items":[]}}}'"#;
+        let provider = CodexSubscriptionProvider::with_command(
+            "sh".into(),
+            vec!["-c".into(), script.into()],
+            PathBuf::from("/tmp"),
+        );
+        let models = provider.models().await.unwrap();
+        assert_eq!(models[0].id, "model-a");
+        assert!(models[0].is_default);
+        assert_eq!(models[0].reasoning_efforts, vec!["low"]);
+        let mut stream = provider
+            .stream(ModelRequest {
+                model: "model-a".into(),
+                messages: vec![Message::new(Role::User, "hello")],
+                tools: Vec::new(),
+                temperature: None,
+                max_tokens: None,
+            })
+            .await
+            .unwrap();
+        assert_eq!(completed(&mut stream).await.message.content, "ok");
     }
     #[tokio::test]
     async fn rejects_oversized_fixture_lines() {

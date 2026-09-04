@@ -29,6 +29,7 @@ use unicode_width::UnicodeWidthChar;
 use crate::{
     Agent, AgentEvent, EventSink,
     model::Role,
+    provider::ModelInfo,
     session::{Session, SessionStore, compact_messages},
     supervision::{
         AgentEvent as SupervisionEvent, AgentEventKind as SupervisionEventKind, AgentId,
@@ -53,6 +54,7 @@ pub enum UiEvent {
     SupervisorAction(Result<String, String>),
     TodoSnapshot(Result<TodoList, String>),
     TodoAction(Result<String, String>),
+    Models(Result<Vec<ModelInfo>, String>),
 }
 
 #[derive(Debug)]
@@ -219,6 +221,11 @@ struct App {
     selected_todo: usize,
     todo_scroll: u16,
     todo_input: Composer,
+    model_picker: bool,
+    models: Vec<ModelInfo>,
+    selected_model: usize,
+    model_filter: Composer,
+    model_manual: bool,
     quit: bool,
 }
 
@@ -295,6 +302,11 @@ impl App {
             selected_todo: 0,
             todo_scroll: 0,
             todo_input: Composer::default(),
+            model_picker: false,
+            models: Vec::new(),
+            selected_model: 0,
+            model_filter: Composer::default(),
+            model_manual: false,
             quit: false,
         }
     }
@@ -359,7 +371,10 @@ pub async fn run(
                             }
                         } else if !app.is_running() && !app.terminal_picker {
                             let text = text.replace("\r\n", "\n").replace('\r', "\n");
-                            if matches!(app.supervisor_mode, Some(SupervisorMode::Message { .. })) {
+                            if app.model_picker {
+                                app.model_filter.insert_str(&text);
+                                app.selected_model = 0;
+                            } else if matches!(app.supervisor_mode, Some(SupervisorMode::Message { .. })) {
                                 app.supervisor_input.insert_str(&text);
                             } else if matches!(app.todo_mode, Some(TodoMode::Input { .. })) {
                                 app.todo_input.insert_str(&text);
@@ -554,6 +569,16 @@ async fn handle_ui_event(
         UiEvent::TodoAction(result) => {
             app.status = result.unwrap_or_else(|error| format!("Todo action failed: {error}"));
         }
+        UiEvent::Models(result) => match result {
+            Ok(models) => {
+                app.models = models;
+                app.selected_model = 0;
+                app.status = format!("{} model(s) available", app.models.len());
+            }
+            Err(error) => {
+                app.status = format!("Model discovery failed: {error}; Tab enters an ID manually")
+            }
+        },
     }
     Ok(())
 }
@@ -589,6 +614,10 @@ async fn handle_key(
     }
     if let Some(id) = app.attached_terminal {
         handle_attached_key(id, key, app, terminals).await;
+        return Ok(());
+    }
+    if app.model_picker {
+        handle_model_key(key, app, agent, store, tx).await?;
         return Ok(());
     }
     if app.supervisor_mode.is_some() {
@@ -636,6 +665,7 @@ async fn handle_key(
             KeyCode::Enter if !app.is_running() => {
                 if let Some(session) = app.sessions.get(app.selected_session).cloned() {
                     app.session = session;
+                    agent.set_model(app.session.model.clone())?;
                     app.activity.clear();
                     app.status = "Session opened".into();
                     app.show_sessions = false;
@@ -668,6 +698,13 @@ async fn handle_key(
                 app.todo_mode = Some(TodoMode::List);
                 request_todo_snapshot(tx, todos);
             }
+            KeyCode::Char('m') if !app.is_running() => {
+                app.model_picker = true;
+                app.model_manual = false;
+                app.model_filter = Composer::default();
+                app.selected_model = 0;
+                request_models(tx, agent.clone(), false);
+            }
             KeyCode::Char('n') if !app.is_running() => {
                 app.session =
                     Session::new(app.session.workspace.clone(), app.session.model.clone());
@@ -699,7 +736,7 @@ async fn handle_key(
         KeyCode::Enter if !app.is_running() => {
             let prompt = app.composer.take();
             if !prompt.trim().is_empty() {
-                if handle_command(&prompt, app, store).await? {
+                if handle_command(&prompt, app, store, Some(agent.as_ref())).await? {
                     return Ok(());
                 }
                 if app.session.messages.len() > 96 {
@@ -1059,6 +1096,107 @@ async fn handle_todo_key(
     }
 }
 
+fn filtered_models(app: &App) -> Vec<&ModelInfo> {
+    let query = app.model_filter.text.trim().to_ascii_lowercase();
+    app.models
+        .iter()
+        .filter(|model| {
+            query.is_empty()
+                || model.id.to_ascii_lowercase().contains(&query)
+                || model.display_name.to_ascii_lowercase().contains(&query)
+                || model.description.to_ascii_lowercase().contains(&query)
+        })
+        .collect()
+}
+
+async fn handle_model_key(
+    key: KeyEvent,
+    app: &mut App,
+    agent: &Arc<Agent>,
+    store: &SessionStore,
+    tx: &mpsc::UnboundedSender<UiEvent>,
+) -> Result<()> {
+    match key.code {
+        KeyCode::Esc => {
+            app.model_picker = false;
+            app.model_filter = Composer::default();
+        }
+        KeyCode::Tab => {
+            app.model_manual = !app.model_manual;
+            app.selected_model = 0;
+            app.status = if app.model_manual {
+                "Manual model ID · type an ID and press Enter".into()
+            } else {
+                "Model search".into()
+            };
+        }
+        KeyCode::Up if !app.model_manual => {
+            app.selected_model = app.selected_model.saturating_sub(1)
+        }
+        KeyCode::Down if !app.model_manual => {
+            let count = filtered_models(app).len();
+            app.selected_model = (app.selected_model + 1).min(count.saturating_sub(1));
+        }
+        KeyCode::Enter => {
+            let selected = if app.model_manual {
+                (!app.model_filter.text.trim().is_empty())
+                    .then(|| app.model_filter.text.trim().to_owned())
+            } else {
+                filtered_models(app)
+                    .get(app.selected_model)
+                    .map(|model| model.id.clone())
+            };
+            if let Some(model) = selected {
+                app.session.switch_model(&model)?;
+                agent.set_model(&model)?;
+                store.save(&mut app.session).await?;
+                app.status = format!("Model switched to {model}");
+                app.model_picker = false;
+                app.model_filter = Composer::default();
+            }
+        }
+        KeyCode::Char('r') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            request_models(tx, agent.clone(), true)
+        }
+        KeyCode::Char(character) => {
+            app.model_filter.insert(character);
+            app.selected_model = 0;
+        }
+        KeyCode::Backspace => {
+            app.model_filter.backspace();
+            app.selected_model = 0;
+        }
+        KeyCode::Delete => app.model_filter.delete(),
+        KeyCode::Left if app.model_filter.cursor > 0 => {
+            app.model_filter.cursor = app.model_filter.text[..app.model_filter.cursor]
+                .char_indices()
+                .next_back()
+                .map_or(0, |(index, _)| index);
+        }
+        KeyCode::Right => {
+            if let Some(character) = app.model_filter.text[app.model_filter.cursor..]
+                .chars()
+                .next()
+            {
+                app.model_filter.cursor += character.len_utf8();
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+fn request_models(tx: &mpsc::UnboundedSender<UiEvent>, agent: Arc<Agent>, refresh: bool) {
+    let tx = tx.clone();
+    tokio::spawn(async move {
+        let result = agent
+            .models(refresh)
+            .await
+            .map_err(|error| error.to_string());
+        let _ = tx.send(UiEvent::Models(result));
+    });
+}
+
 fn open_todo_input(app: &mut App, target: Option<TodoId>, action: TodoInput, initial: &str) {
     app.todo_input = Composer::default();
     app.todo_input.insert_str(initial);
@@ -1329,6 +1467,10 @@ fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
         );
         return;
     }
+    if app.model_picker {
+        draw_model_picker(frame, area, app);
+        return;
+    }
     if app.supervisor_mode.is_some() {
         draw_supervisor(frame, area, app);
         if let Some(approval) = &app.approval {
@@ -1415,7 +1557,7 @@ fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
     );
     frame.render_widget(
         Paragraph::new(format!(
-            "{}  │  ^D todos  ^A agents  ^T terminals  ^S sessions  ^N new  ^B branch  ^K compact  ^E export",
+            "{}  │  ^D todos  ^A agents  ^M models  ^T terminals  ^S sessions  ^N new  ^B branch  ^K compact  ^E export",
             app.status
         ))
         .style(Style::default().fg(Color::Gray)),
@@ -1516,6 +1658,92 @@ fn draw_todos(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
         Paragraph::new(help).style(Style::default().fg(Color::Gray)),
         chunks[3],
     );
+}
+
+fn draw_model_picker(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
+    let chunks = Layout::vertical([
+        Constraint::Length(3),
+        Constraint::Length(3),
+        Constraint::Min(3),
+        Constraint::Length(1),
+    ])
+    .split(area);
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled(
+                " HELM MODELS ",
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(format!("  current: {}", app.session.model)),
+        ]))
+        .block(Block::default().borders(Borders::BOTTOM)),
+        chunks[0],
+    );
+    frame.render_widget(
+        Paragraph::new(app.model_filter.text.as_str()).block(
+            Block::default()
+                .title(if app.model_manual {
+                    " Manual model ID "
+                } else {
+                    " Search models "
+                })
+                .borders(Borders::ALL),
+        ),
+        chunks[1],
+    );
+    let models = filtered_models(app);
+    let visible = chunks[2].height.saturating_sub(2).max(1) as usize;
+    let start = app
+        .selected_model
+        .saturating_sub(visible.saturating_sub(1))
+        .min(models.len().saturating_sub(visible));
+    let items = if app.model_manual {
+        vec![ListItem::new("Press Enter to use this exact model ID")]
+    } else if models.is_empty() {
+        vec![ListItem::new(
+            "No matching discovered models · Tab enters an ID manually",
+        )]
+    } else {
+        models
+            .iter()
+            .enumerate()
+            .skip(start)
+            .take(visible)
+            .map(|(index, model)| {
+                ListItem::new(format!(
+                    "{}{} {} · {}",
+                    if index == app.selected_model {
+                        "▶ "
+                    } else {
+                        "  "
+                    },
+                    if model.is_default { "★" } else { " " },
+                    model.display_name,
+                    model.id
+                ))
+            })
+            .collect()
+    };
+    frame.render_widget(
+        List::new(items).block(Block::default().title(" Available ").borders(Borders::ALL)),
+        chunks[2],
+    );
+    frame.render_widget(
+        Paragraph::new(if area.width < 60 {
+            "type filter · ↑↓ Enter · Tab manual · Esc"
+        } else {
+            "type to search · ↑↓ select · Enter switch · Tab manual ID · Ctrl+R refresh · Esc return"
+        })
+        .style(Style::default().fg(Color::Gray)),
+        chunks[3],
+    );
+    frame.set_cursor_position((
+        (chunks[1].x + 1 + app.model_filter.cursor as u16).min(chunks[1].right().saturating_sub(2)),
+        chunks[1].y + 1,
+    ));
 }
 
 fn draw_todo_list(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
@@ -2285,7 +2513,12 @@ fn export_path(session: &Session) -> PathBuf {
         .join(format!("helm-session-{}.md", session.id))
 }
 
-async fn handle_command(command: &str, app: &mut App, store: &SessionStore) -> Result<bool> {
+async fn handle_command(
+    command: &str,
+    app: &mut App,
+    store: &SessionStore,
+    agent: Option<&Agent>,
+) -> Result<bool> {
     let Some(command) = command.strip_prefix('/') else {
         return Ok(false);
     };
@@ -2293,8 +2526,20 @@ async fn handle_command(command: &str, app: &mut App, store: &SessionStore) -> R
     match name {
         "help" => {
             app.status =
-                "/name TITLE · /branch [TITLE] · /compact [KEEP] · /export [PATH] · /clear confirm"
+                "/model [ID] · /name TITLE · /branch [TITLE] · /compact [KEEP] · /export [PATH] · /clear confirm"
                     .into()
+        }
+        "model" if argument.trim().is_empty() => {
+            app.status = format!("Current model: {} · Ctrl+M opens the model picker", app.session.model)
+        }
+        "model" => {
+            let model = argument.trim();
+            app.session.switch_model(model)?;
+            if let Some(agent) = agent {
+                agent.set_model(model)?;
+            }
+            store.save(&mut app.session).await?;
+            app.status = format!("Model switched to {model}");
         }
         "name" if !argument.trim().is_empty() => {
             app.session.name = Some(argument.trim().into());
@@ -2647,6 +2892,33 @@ mod tests {
             .collect();
         assert!(rendered.contains(&selected_id));
         assert!(rendered.contains("Esc return"));
+    }
+
+    #[test]
+    fn model_picker_filters_and_renders_manual_fallback() {
+        let mut app = App::new(
+            Session::new(PathBuf::from("/tmp"), "gpt-current".into()),
+            Vec::new(),
+        );
+        app.model_picker = true;
+        app.models = vec![
+            ModelInfo::minimal("gpt-fast"),
+            ModelInfo::minimal("gpt-careful"),
+        ];
+        app.model_filter.insert_str("care");
+        assert_eq!(filtered_models(&app)[0].id, "gpt-careful");
+        let backend = ratatui::backend::TestBackend::new(60, 16);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let rendered: String = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect();
+        assert!(rendered.contains("gpt-careful"));
+        assert!(rendered.contains("current: gpt-current"));
     }
 
     #[tokio::test]
@@ -3103,9 +3375,11 @@ mod tests {
             .messages
             .push(crate::Message::new(Role::User, "keep me"));
         let mut app = App::new(session, Vec::new());
-        handle_command("/clear", &mut app, &store).await.unwrap();
+        handle_command("/clear", &mut app, &store, None)
+            .await
+            .unwrap();
         assert_eq!(app.session.messages.len(), 1);
-        handle_command("/clear confirm", &mut app, &store)
+        handle_command("/clear confirm", &mut app, &store, None)
             .await
             .unwrap();
         assert!(app.session.messages.is_empty());
@@ -3118,15 +3392,20 @@ mod tests {
         let session = Session::new(directory.path().into(), "test-model".into());
         let mut app = App::new(session, Vec::new());
         assert!(
-            handle_command("/name field work", &mut app, &store)
+            handle_command("/name field work", &mut app, &store, None)
                 .await
                 .unwrap()
         );
         assert_eq!(app.session.name.as_deref(), Some("field work"));
         let export = directory.path().join("export.md");
-        handle_command(&format!("/export {}", export.display()), &mut app, &store)
-            .await
-            .unwrap();
+        handle_command(
+            &format!("/export {}", export.display()),
+            &mut app,
+            &store,
+            None,
+        )
+        .await
+        .unwrap();
         assert!(export.exists());
     }
 }

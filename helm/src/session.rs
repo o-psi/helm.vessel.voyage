@@ -52,6 +52,8 @@ pub struct Session {
     pub workspace: PathBuf,
     pub model: String,
     #[serde(default)]
+    pub model_history: Vec<ModelChange>,
+    #[serde(default)]
     pub name: Option<String>,
     #[serde(default)]
     pub parent_id: Option<Uuid>,
@@ -59,6 +61,13 @@ pub struct Session {
     pub usage: Usage,
     #[serde(default)]
     pub terminals: Vec<crate::terminal::TerminalSummary>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ModelChange {
+    pub from: String,
+    pub to: String,
+    pub changed_at: DateTime<Utc>,
 }
 
 impl Session {
@@ -70,12 +79,29 @@ impl Session {
             updated_at: now,
             workspace,
             model,
+            model_history: Vec::new(),
             name: None,
             parent_id: None,
             messages: Vec::new(),
             usage: Usage::default(),
             terminals: Vec::new(),
         }
+    }
+
+    pub fn switch_model(&mut self, model: impl Into<String>) -> Result<bool> {
+        let model = model.into();
+        let model = model.trim();
+        anyhow::ensure!(!model.is_empty(), "model cannot be empty");
+        if self.model == model {
+            return Ok(false);
+        }
+        self.model_history.push(ModelChange {
+            from: self.model.clone(),
+            to: model.to_owned(),
+            changed_at: Utc::now(),
+        });
+        self.model = model.to_owned();
+        Ok(true)
     }
 }
 
@@ -261,6 +287,22 @@ mod tests {
                 0o600
             );
         }
+    }
+
+    #[tokio::test]
+    async fn model_switch_history_survives_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = SessionStore::new(dir.path().into());
+        let mut session = Session::new(dir.path().into(), "first".into());
+        assert!(session.switch_model("second").unwrap());
+        assert!(!session.switch_model("second").unwrap());
+        assert_eq!(session.model_history.len(), 1);
+        assert_eq!(session.model_history[0].from, "first");
+        assert_eq!(session.model_history[0].to, "second");
+        store.save(&mut session).await.unwrap();
+        let restored = store.load(session.id).await.unwrap();
+        assert_eq!(restored.model, "second");
+        assert_eq!(restored.model_history, session.model_history);
     }
 
     #[test]
