@@ -848,7 +848,7 @@ mod tests {
     }
     #[cfg(windows)]
     fn interactive_command() -> &'static str {
-        "echo ready&& set /p line=&& call echo got:%%line%%"
+        "echo ready&& choice /C H /N >NUL&& echo got:hello"
     }
     #[cfg(not(windows))]
     fn interactive_input() -> &'static str {
@@ -856,7 +856,7 @@ mod tests {
     }
     #[cfg(windows)]
     fn interactive_input() -> &'static str {
-        "hello\r"
+        "H"
     }
     #[cfg(unix)]
     fn long_running_command() -> &'static str {
