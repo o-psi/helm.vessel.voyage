@@ -5,11 +5,14 @@ use clap_complete::Shell;
 use helm::{
     Agent, AgentEvent, Config, EventSink,
     agent::RetryPolicy,
-    config::ApprovalMode,
+    config::{ApprovalMode, UnattendedApprovalMode},
     policy::Policy,
     provider,
     session::{Session, SessionStore},
-    tools::{Approver, ToolContext, ToolRegistry},
+    tools::{
+        ApprovalOutcome, ApprovalRequest, Approver, InteractionMode, Redactor, ToolContext,
+        ToolRegistry, UnattendedApprover,
+    },
     voyage::{Enrollment, EnrollmentStore, normalize_vessel_url},
 };
 use std::{
@@ -36,6 +39,8 @@ struct Cli {
     approval: Option<ApprovalArg>,
     #[arg(short, long, global = true)]
     verbose: bool,
+    #[arg(long, global = true, value_enum, default_value = "text")]
+    log_format: LogFormat,
     /// Pair with Vessel and work over an outbound connection.
     #[arg(long, global = true, num_args = 0..=1, default_missing_value = "http://127.0.0.1:9480")]
     voyage: Option<String>,
@@ -123,7 +128,7 @@ async fn voyage_worker(
         descriptor.id
     );
 
-    let agent = build_agent(&config, workspace.clone()).await?;
+    let agent = build_agent(&config, workspace.clone(), false).await?;
     let store = SessionStore::default();
     let mut last_heartbeat = std::time::Instant::now() - std::time::Duration::from_secs(60);
     let mut reconnect_delay = std::time::Duration::from_secs(1);
@@ -208,14 +213,15 @@ async fn voyage_worker(
                     .error_for_status()?;
             }
             Err(error) => {
-                eprintln!("task {} failed: {error:#}", task.id);
+                let safe_error = redactor(&config).redact(format!("{error:#}"));
+                eprintln!("task {} failed: {safe_error}", task.id);
                 let _ = client
                     .post(format!("{vessel}/v1/worker/tasks/{}/failure", task.id))
                     .bearer_auth(&enrollment.worker_token)
                     .json(&TaskFailure {
                         task_id: task.id,
                         lease_id: task.lease_id,
-                        error: format!("{error:#}"),
+                        error: safe_error,
                         retryable: true,
                     })
                     .send()
@@ -230,6 +236,11 @@ enum ApprovalArg {
     Always,
     OnRisk,
     Never,
+}
+#[derive(Clone, clap::ValueEnum)]
+enum LogFormat {
+    Text,
+    Json,
 }
 #[derive(Subcommand)]
 enum Command {
@@ -257,19 +268,34 @@ enum Command {
     },
     /// Generate a roff manpage on stdout.
     Manpage,
+    /// Check configuration and local runtime dependencies without contacting a model.
+    Doctor,
 }
 
 struct Terminal;
 #[async_trait]
 impl Approver for Terminal {
-    async fn approve(&self, reason: &str) -> bool {
-        eprint!("\nApproval required: {reason}\nProceed? [y/N] ");
+    async fn approve(&self, request: &ApprovalRequest) -> ApprovalOutcome {
+        eprint!(
+            "\nApproval {} required for {} on {}:\n{}\nProceed? [y/N] ",
+            request.id, request.action, request.target, request.reason
+        );
         let _ = io::stderr().flush();
         let mut answer = String::new();
-        io::stdin().read_line(&mut answer).is_ok()
+        let outcome = if io::stdin().read_line(&mut answer).is_ok()
             && matches!(answer.trim().to_lowercase().as_str(), "y" | "yes")
+        {
+            ApprovalOutcome::Approved
+        } else {
+            ApprovalOutcome::Denied
+        };
+        tracing::info!(approval_id = %request.id, execution_id = %request.execution_id,
+            action = %request.action, target = %request.target, outcome = ?outcome,
+            "approval decided");
+        outcome
     }
 }
+
 #[async_trait]
 impl EventSink for Terminal {
     async fn emit(&self, event: AgentEvent) {
@@ -311,10 +337,18 @@ async fn main() -> Result<()> {
     } else {
         "helm=warn"
     };
-    tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| filter.into()))
-        .with_writer(io::stderr)
-        .init();
+    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| filter.into());
+    match cli.log_format {
+        LogFormat::Text => tracing_subscriber::fmt()
+            .with_env_filter(env_filter)
+            .with_writer(io::stderr)
+            .init(),
+        LogFormat::Json => tracing_subscriber::fmt()
+            .json()
+            .with_env_filter(env_filter)
+            .with_writer(io::stderr)
+            .init(),
+    }
     let mut config = Config::load(cli.config.as_deref())?;
     if let Some(model) = cli.model {
         config.model = model;
@@ -345,6 +379,7 @@ async fn main() -> Result<()> {
             println!("{}", toml::to_string_pretty(&config)?);
             Ok(())
         }
+        Command::Doctor => doctor(&config, cli.workspace),
         Command::Sessions => list_sessions().await,
         Command::Run {
             prompt,
@@ -363,16 +398,48 @@ async fn main() -> Result<()> {
     }
 }
 
-async fn build_agent(config: &Config, workspace: PathBuf) -> Result<Agent> {
+fn doctor(config: &Config, workspace: Option<PathBuf>) -> Result<()> {
+    let workspace = config.resolve_workspace(workspace)?;
+    let report = serde_json::json!({
+        "status": "ok",
+        "version": env!("CARGO_PKG_VERSION"),
+        "workspace": workspace,
+        "workspace_readable": workspace.is_dir(),
+        "provider_credential_present": std::env::var_os(&config.api_key_env).is_some(),
+        "sessions_directory": helm::config::default_data_dir().join("sessions"),
+        "approval": config.approval,
+        "unattended_approval": config.unattended_approval,
+        "inherited_environment": config.inherit_env,
+        "mcp_servers": config.mcp_servers.keys().collect::<Vec<_>>(),
+    });
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    Ok(())
+}
+
+async fn build_agent(config: &Config, workspace: PathBuf, attended: bool) -> Result<Agent> {
     let policy = Arc::new(Policy::new(config, workspace)?);
     let terminal = Arc::new(Terminal);
+    let approver: Arc<dyn Approver> = if attended {
+        terminal.clone()
+    } else {
+        Arc::new(UnattendedApprover {
+            allow: config.unattended_approval == UnattendedApprovalMode::Allow,
+        })
+    };
     let context = ToolContext {
         policy,
-        approver: terminal.clone(),
+        approver,
         timeout: config.timeout(),
         max_output_bytes: config.max_output_bytes,
-        environment: config.env.clone(),
+        environment: tool_environment(config),
         cancellation: tokio_util::sync::CancellationToken::new(),
+        execution_id: uuid::Uuid::new_v4(),
+        interaction: if attended {
+            InteractionMode::Attended
+        } else {
+            InteractionMode::Unattended
+        },
+        redactor: redactor(config),
     };
     let mut tools = ToolRegistry::standard();
     for (name, server) in &config.mcp_servers {
@@ -406,6 +473,32 @@ async fn build_agent(config: &Config, workspace: PathBuf) -> Result<Agent> {
     }))
 }
 
+fn tool_environment(config: &Config) -> std::collections::BTreeMap<String, String> {
+    let mut environment = config
+        .inherit_env
+        .iter()
+        .filter_map(|name| std::env::var(name).ok().map(|value| (name.clone(), value)))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    environment.extend(config.env.clone());
+    environment
+}
+
+fn redactor(config: &Config) -> Arc<Redactor> {
+    let secrets = config
+        .redact_values
+        .iter()
+        .cloned()
+        .chain(config.env.values().cloned())
+        .chain(
+            config
+                .mcp_servers
+                .values()
+                .flat_map(|server| server.env.values().cloned()),
+        )
+        .chain(config.api_key().ok());
+    Arc::new(Redactor::new(secrets))
+}
+
 async fn tui_chat(
     config: Config,
     workspace_arg: Option<PathBuf>,
@@ -427,8 +520,11 @@ async fn tui_chat(
         approver: bridge.clone(),
         timeout: config.timeout(),
         max_output_bytes: config.max_output_bytes,
-        environment: config.env.clone(),
+        environment: tool_environment(&config),
         cancellation: tokio_util::sync::CancellationToken::new(),
+        execution_id: uuid::Uuid::new_v4(),
+        interaction: InteractionMode::Attended,
+        redactor: redactor(&config),
     };
     let agent = Arc::new(
         Agent::new(
@@ -467,7 +563,7 @@ async fn execute(
             config.model.clone(),
         )
     };
-    let agent = build_agent(&config, session.workspace.clone()).await?;
+    let agent = build_agent(&config, session.workspace.clone(), true).await?;
     let outcome = agent.run(session.messages.clone(), prompt).await?;
     session.messages = outcome.messages;
     session.usage.input_tokens += outcome.usage.input_tokens;
@@ -493,7 +589,7 @@ async fn chat(
             config.model.clone(),
         )
     };
-    let agent = build_agent(&config, session.workspace.clone()).await?;
+    let agent = build_agent(&config, session.workspace.clone(), true).await?;
     eprintln!(
         "Helm · {} · {}\nType /help for commands.",
         config.model,

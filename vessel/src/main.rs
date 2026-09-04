@@ -1,8 +1,12 @@
 use anyhow::Result;
 use axum::{
     Json, Router,
+    body::Body,
     extract::{Path, State},
-    http::{HeaderMap, StatusCode},
+    http::{HeaderMap, HeaderValue, Request, StatusCode},
+    middleware,
+    middleware::Next,
+    response::Response,
     routing::{get, post},
 };
 use chrono::{Duration as ChronoDuration, Utc};
@@ -18,6 +22,7 @@ use std::{
     time::Duration,
 };
 use tokio::sync::RwLock;
+use tracing::Instrument;
 use uuid::Uuid;
 use voyage_protocol::{
     ApiError, FleetSummary, HealthResponse, HeartbeatRequest, HelmStatus, PAIRING_PREFIX,
@@ -37,6 +42,8 @@ struct Cli {
     database: PathBuf,
     #[arg(long, default_value_t = 60)]
     lease_secs: u64,
+    #[arg(long, global = true, value_enum, default_value = "text")]
+    log_format: LogFormat,
     #[command(subcommand)]
     command: Option<Command>,
 }
@@ -61,6 +68,12 @@ enum Command {
     },
     /// Generate a roff manpage on stdout.
     Manpage,
+}
+
+#[derive(Clone, clap::ValueEnum)]
+enum LogFormat {
+    Text,
+    Json,
 }
 
 #[derive(Clone)]
@@ -89,13 +102,16 @@ type ApiResult<T> = Result<Json<T>, (StatusCode, Json<ApiError>)>;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "vessel=info".into()),
-        )
-        .init();
     let cli = Cli::parse();
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| "vessel=info".into());
+    match cli.log_format {
+        LogFormat::Text => tracing_subscriber::fmt().with_env_filter(filter).init(),
+        LogFormat::Json => tracing_subscriber::fmt()
+            .json()
+            .with_env_filter(filter)
+            .init(),
+    }
     match &cli.command {
         Some(Command::Completions { shell }) => {
             clap_complete::generate(
@@ -164,6 +180,9 @@ async fn main() -> Result<()> {
     spawn_reaper(state.clone(), Duration::from_secs(cli.stale_after_secs));
     let app = Router::new()
         .route("/health", get(health))
+        .route("/ready", get(readiness))
+        .route("/metrics", get(metrics))
+        .route("/v1/diagnostics", get(diagnostics))
         .route("/v1/pairings/start", post(start_pairing))
         .route("/v1/pairings/claim", post(claim_pairing))
         .route("/v1/pairings/{code}", get(pairing_status))
@@ -178,6 +197,7 @@ async fn main() -> Result<()> {
         .route("/v1/tasks", get(list_tasks))
         .route("/v1/tasks/{id}/cancel", post(cancel_task))
         .route("/v1/fleet/summary", get(fleet_summary))
+        .layer(middleware::from_fn(correlate))
         .with_state(state);
     let listener = tokio::net::TcpListener::bind(&cli.bind).await?;
     tracing::info!(address = %cli.bind, "Vessel ready for outbound Helm workers");
@@ -194,6 +214,87 @@ async fn health() -> Json<HealthResponse> {
         status: "ok".into(),
         version: env!("CARGO_PKG_VERSION").into(),
     })
+}
+
+async fn readiness(State(state): State<AppState>) -> ApiResult<HealthResponse> {
+    state
+        .database
+        .lock()
+        .map_err(|error| internal_error(anyhow::anyhow!(error.to_string())))?
+        .query_row("SELECT 1", [], |_| Ok(()))
+        .map_err(|error| internal_error(error.into()))?;
+    Ok(Json(HealthResponse {
+        status: "ready".into(),
+        version: env!("CARGO_PKG_VERSION").into(),
+    }))
+}
+
+async fn metrics(State(state): State<AppState>) -> String {
+    let inner = state.inner.read().await;
+    let online = inner
+        .helms
+        .values()
+        .filter(|helm| helm.status == HelmStatus::Online)
+        .count();
+    let queued = inner
+        .tasks
+        .values()
+        .filter(|task| task.state == TaskState::Queued)
+        .count();
+    let running = inner
+        .tasks
+        .values()
+        .filter(|task| task.state == TaskState::Running)
+        .count();
+    let failed = inner
+        .tasks
+        .values()
+        .filter(|task| task.state == TaskState::Failed)
+        .count();
+    format!(
+        "# TYPE voyage_helms gauge\nvoyage_helms{{status=\"online\"}} {online}\nvoyage_helms{{status=\"total\"}} {}\n# TYPE voyage_tasks gauge\nvoyage_tasks{{state=\"queued\"}} {queued}\nvoyage_tasks{{state=\"running\"}} {running}\nvoyage_tasks{{state=\"failed\"}} {failed}\n",
+        inner.helms.len()
+    )
+}
+
+async fn diagnostics(State(state): State<AppState>) -> Json<serde_json::Value> {
+    let inner = state.inner.read().await;
+    Json(serde_json::json!({
+        "version": env!("CARGO_PKG_VERSION"),
+        "protocol_version": PROTOCOL_VERSION,
+        "helms": inner.helms.len(),
+        "pending_pairings": inner.pairings.values().filter(|pairing| !pairing.claimed).count(),
+        "tasks": {
+            "total": inner.tasks.len(),
+            "queued": inner.tasks.values().filter(|task| task.state == TaskState::Queued).count(),
+            "running": inner.tasks.values().filter(|task| task.state == TaskState::Running).count(),
+            "failed": inner.tasks.values().filter(|task| task.state == TaskState::Failed).count()
+        }
+    }))
+}
+
+async fn correlate(mut request: Request<Body>, next: Next) -> Response {
+    let request_id = request
+        .headers()
+        .get("x-request-id")
+        .and_then(|value| value.to_str().ok())
+        .filter(|value| {
+            value.len() <= 128
+                && value
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        })
+        .map(str::to_owned)
+        .unwrap_or_else(|| Uuid::new_v4().to_string());
+    request.extensions_mut().insert(request_id.clone());
+    let method = request.method().clone();
+    let path = request.uri().path().to_owned();
+    let span = tracing::info_span!("http.request", request_id = %request_id, %method, %path);
+    let mut response = next.run(request).instrument(span).await;
+    if let Ok(value) = HeaderValue::from_str(&request_id) {
+        response.headers_mut().insert("x-request-id", value);
+    }
+    response
 }
 
 async fn start_pairing(

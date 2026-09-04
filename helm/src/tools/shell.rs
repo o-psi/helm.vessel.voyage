@@ -30,7 +30,13 @@ impl Tool for Shell {
             .map_err(|e| ToolError::InvalidArguments(e.to_string()))?;
         match ctx.policy.command(&args.command) {
             Decision::Deny(reason) => return Err(ToolError::Denied(reason)),
-            Decision::Ask(reason) if !ctx.approver.approve(&reason).await => {
+            Decision::Ask(reason)
+                if !ctx
+                    .approver
+                    .approve(&ctx.approval("shell", &args.command, reason.clone()))
+                    .await
+                    .approved() =>
+            {
                 return Err(ToolError::Denied("user declined approval".into()));
             }
             _ => {}
@@ -40,6 +46,7 @@ impl Tool for Shell {
             .arg("-lc")
             .arg(&args.command)
             .current_dir(ctx.policy.workspace())
+            .env_clear()
             .kill_on_drop(true);
         command.envs(&ctx.environment);
         let output = tokio::select! {

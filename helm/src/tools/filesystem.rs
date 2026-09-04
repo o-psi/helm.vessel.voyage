@@ -86,7 +86,17 @@ impl Tool for ApplyPatch {
         }
         match ctx.policy.write(&path, exists) {
             Decision::Deny(reason) => return Err(ToolError::Denied(reason)),
-            Decision::Ask(reason) if !ctx.approver.approve(&reason).await => {
+            Decision::Ask(reason)
+                if !ctx
+                    .approver
+                    .approve(&ctx.approval(
+                        "filesystem.patch",
+                        path.display().to_string(),
+                        reason.clone(),
+                    ))
+                    .await
+                    .approved() =>
+            {
                 return Err(ToolError::Denied("user declined approval".into()));
             }
             _ => {}
@@ -126,7 +136,17 @@ impl Tool for WriteFile {
         let path = ctx.policy.resolve_write(&args.path).map_err(denied)?;
         match ctx.policy.write(&path, path.exists()) {
             Decision::Deny(reason) => return Err(ToolError::Denied(reason)),
-            Decision::Ask(reason) if !ctx.approver.approve(&reason).await => {
+            Decision::Ask(reason)
+                if !ctx
+                    .approver
+                    .approve(&ctx.approval(
+                        "filesystem.write",
+                        path.display().to_string(),
+                        reason.clone(),
+                    ))
+                    .await
+                    .approved() =>
+            {
                 return Err(ToolError::Denied("user declined approval".into()));
             }
             _ => {}
@@ -223,6 +243,8 @@ impl Tool for SearchFiles {
             .arg("--")
             .arg(args.query)
             .arg(path)
+            .env_clear()
+            .envs(&ctx.environment)
             .kill_on_drop(true);
         let output = tokio::time::timeout(ctx.timeout, command.output())
             .await
@@ -266,8 +288,11 @@ mod tests {
     struct Yes;
     #[async_trait]
     impl Approver for Yes {
-        async fn approve(&self, _: &str) -> bool {
-            true
+        async fn approve(
+            &self,
+            _: &crate::tools::ApprovalRequest,
+        ) -> crate::tools::ApprovalOutcome {
+            crate::tools::ApprovalOutcome::Approved
         }
     }
     fn context(root: &std::path::Path) -> ToolContext {
@@ -282,6 +307,9 @@ mod tests {
             max_output_bytes: 4096,
             environment: BTreeMap::new(),
             cancellation: tokio_util::sync::CancellationToken::new(),
+            execution_id: uuid::Uuid::new_v4(),
+            interaction: crate::tools::InteractionMode::Attended,
+            redactor: Arc::new(crate::tools::Redactor::default()),
         }
     }
     #[tokio::test]

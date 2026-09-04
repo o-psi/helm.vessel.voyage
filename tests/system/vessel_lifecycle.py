@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import json
+import os
 import pathlib
 import socket
 import subprocess
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -35,7 +37,10 @@ def main() -> int:
         candidate.bind(("127.0.0.1", 0))
         port = candidate.getsockname()[1]
     base = f"http://127.0.0.1:{port}"
-    server = subprocess.Popen([str(BINARY), "--bind", f"127.0.0.1:{port}"], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+    descriptor, database_name = tempfile.mkstemp(prefix="vessel-system-", suffix=".db")
+    os.close(descriptor)
+    pathlib.Path(database_name).unlink()
+    server = subprocess.Popen([str(BINARY), "--bind", f"127.0.0.1:{port}", "--database", database_name], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
     try:
         for _ in range(50):
             try:
@@ -45,21 +50,29 @@ def main() -> int:
                 time.sleep(0.1)
         else:
             raise AssertionError("Vessel failed to become healthy")
+        assert request(base, "GET", "/ready")["status"] == "ready"
+        diagnostics = request(base, "GET", "/v1/diagnostics")
+        assert diagnostics["protocol_version"] >= 1
+        with urllib.request.urlopen(base + "/metrics", timeout=2) as response:
+            assert response.headers.get("X-Request-ID")
+            assert "voyage_tasks" in response.read().decode()
 
         helm_id = str(uuid.uuid4())
         pairing = request(base, "POST", "/v1/pairings/start", {
-            "helm": {"id": helm_id, "name": "system-test", "version": "test", "model": "mock", "capabilities": ["shell"]}
+            "helm": {"id": helm_id, "name": "system-test", "version": "test", "model": "mock", "capabilities": ["shell"]},
+            "protocol_version": 1
         })
         token = pairing["worker_token"]
         request(base, "GET", f"/v1/pairings/{pairing['code']}", token="wrong", expected=401)
         request(base, "POST", "/v1/pairings/claim", {"connection_string": f"voyage:v1:{pairing['code']}"})
         request(base, "GET", f"/v1/pairings/{pairing['code']}", token=token)
-        request(base, "POST", "/v1/worker/heartbeat", {"status": "online"}, token=token)
+        request(base, "POST", "/v1/worker/heartbeat", {"status": "online", "protocol_version": 1}, token=token)
         task = request(base, "POST", f"/v1/helms/{helm_id}/tasks", {"prompt": "test task", "session_id": None})
         envelope = request(base, "GET", "/v1/worker/tasks/next", token=token)
         assert envelope["id"] == task["id"]
         completed = request(base, "POST", f"/v1/worker/tasks/{task['id']}/result", {
-            "task_id": task["id"], "session_id": str(uuid.uuid4()), "answer": "done", "input_tokens": 1, "output_tokens": 1
+            "lease_id": envelope["lease_id"],
+            "result": {"task_id": task["id"], "session_id": str(uuid.uuid4()), "answer": "done", "input_tokens": 1, "output_tokens": 1}
         }, token=token)
         assert completed["state"] == "completed" and completed["result"]["answer"] == "done"
         print("Vessel lifecycle passed: pairing, auth rejection, heartbeat, dispatch, completion")
@@ -70,6 +83,8 @@ def main() -> int:
             server.wait(timeout=5)
         except subprocess.TimeoutExpired:
             server.kill()
+        for suffix in ("", "-shm", "-wal"):
+            pathlib.Path(database_name + suffix).unlink(missing_ok=True)
 
 
 if __name__ == "__main__":

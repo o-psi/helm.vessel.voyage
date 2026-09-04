@@ -148,6 +148,8 @@ impl Agent {
     ) -> Result<AgentOutcome, AgentError> {
         let mut context = self.context.clone();
         context.cancellation = cancel.child_token();
+        context.execution_id = uuid::Uuid::new_v4();
+        tracing::info!(execution_id = %context.execution_id, model = %self.model, "agent execution started");
         if history
             .first()
             .is_none_or(|m| m.role != crate::model::Role::System)
@@ -193,13 +195,18 @@ impl Agent {
                 self.sink
                     .emit(AgentEvent::ToolStarted {
                         name: call.name.clone(),
-                        arguments: call.arguments.clone(),
+                        arguments: serde_json::from_str(
+                            &context.redactor.redact(call.arguments.to_string()),
+                        )
+                        .unwrap_or_else(|_| serde_json::Value::String("[REDACTED]".into())),
                     })
                     .await;
                 let result = tokio::select! {
                     _ = cancel.cancelled() => { self.sink.emit(AgentEvent::Cancelled).await; return Err(AgentError::Cancelled); }
                     value = self.tools.execute(&call.name, call.arguments, &context) => value,
                 };
+                tracing::info!(execution_id = %context.execution_id, tool = %call.name,
+                    success = result.is_ok(), "tool execution finished");
                 let (content, success) = match result {
                     Ok(value) => (value, true),
                     Err(error) => (error.to_string(), false),
@@ -270,8 +277,11 @@ mod tests {
     struct Yes;
     #[async_trait]
     impl Approver for Yes {
-        async fn approve(&self, _: &str) -> bool {
-            true
+        async fn approve(
+            &self,
+            _: &crate::tools::ApprovalRequest,
+        ) -> crate::tools::ApprovalOutcome {
+            crate::tools::ApprovalOutcome::Approved
         }
     }
     struct Flaky {
@@ -314,6 +324,9 @@ mod tests {
                 max_output_bytes: 4096,
                 environment: Default::default(),
                 cancellation: CancellationToken::new(),
+                execution_id: uuid::Uuid::new_v4(),
+                interaction: crate::tools::InteractionMode::Attended,
+                redactor: Arc::new(crate::tools::Redactor::default()),
             },
             Arc::new(SilentSink),
             "test".into(),

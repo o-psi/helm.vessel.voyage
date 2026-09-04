@@ -66,12 +66,17 @@ impl Policy {
 
     pub fn command(&self, command: &str) -> Decision {
         let parsed = shell_words::split(command).unwrap_or_default();
-        let executable = parsed
-            .first()
-            .and_then(|p| Path::new(p).file_name())
-            .and_then(|p| p.to_str())
-            .unwrap_or("");
-        if self.deny_commands.iter().any(|d| d == executable) {
+        if parsed.is_empty() {
+            return Decision::Deny("command could not be parsed safely".into());
+        }
+        let denied = parsed.iter().find_map(|word| {
+            let executable = Path::new(word).file_name()?.to_str()?;
+            self.deny_commands
+                .iter()
+                .any(|denied| denied == executable)
+                .then_some(executable)
+        });
+        if let Some(executable) = denied {
             return Decision::Deny(format!("command `{executable}` is denied by policy"));
         }
         let risky = looks_risky(command, &parsed);
@@ -185,5 +190,16 @@ mod tests {
     #[test]
     fn normalizes_parent() {
         assert_eq!(normalize(Path::new("/a/b/../c")), PathBuf::from("/a/c"));
+    }
+    #[test]
+    fn deny_list_cannot_be_bypassed_with_a_command_chain() {
+        let directory = tempfile::tempdir().unwrap();
+        let config = Config::default();
+        let policy = Policy::new(&config, directory.path().to_owned()).unwrap();
+        assert!(matches!(
+            policy.command("echo ok; shutdown now"),
+            Decision::Deny(_)
+        ));
+        assert!(matches!(policy.command("'unterminated"), Decision::Deny(_)));
     }
 }

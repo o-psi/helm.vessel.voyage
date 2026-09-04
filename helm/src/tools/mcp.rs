@@ -43,6 +43,7 @@ impl McpServer {
         let mut command = Command::new(program);
         command
             .args(args)
+            .env_clear()
             .envs(environment)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -231,8 +232,11 @@ mod tests {
     struct Yes;
     #[async_trait]
     impl Approver for Yes {
-        async fn approve(&self, _: &str) -> bool {
-            true
+        async fn approve(
+            &self,
+            _: &crate::tools::ApprovalRequest,
+        ) -> crate::tools::ApprovalOutcome {
+            crate::tools::ApprovalOutcome::Approved
         }
     }
     #[tokio::test]
@@ -267,6 +271,9 @@ printf '%s\n' '{"jsonrpc":"2.0","id":3,"result":{"content":[{"type":"text","text
             max_output_bytes: 4096,
             environment: BTreeMap::new(),
             cancellation: tokio_util::sync::CancellationToken::new(),
+            execution_id: uuid::Uuid::new_v4(),
+            interaction: crate::tools::InteractionMode::Attended,
+            redactor: Arc::new(crate::tools::Redactor::default()),
         };
         assert_eq!(
             tools[0]

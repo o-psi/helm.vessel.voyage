@@ -92,7 +92,13 @@ impl Tool for ProcessTool {
             } => {
                 match ctx.policy.command(&command) {
                     Decision::Deny(reason) => return Err(ToolError::Denied(reason)),
-                    Decision::Ask(reason) if !ctx.approver.approve(&reason).await => {
+                    Decision::Ask(reason)
+                        if !ctx
+                            .approver
+                            .approve(&ctx.approval("process.start", &command, reason.clone()))
+                            .await
+                            .approved() =>
+                    {
                         return Err(ToolError::Denied("user declined approval".into()));
                     }
                     _ => {}
@@ -125,6 +131,7 @@ impl ProcessTool {
             })
             .map_err(failed)?;
         let mut builder = CommandBuilder::new("sh");
+        builder.env_clear();
         builder.arg("-lc");
         builder.arg(command);
         builder.cwd(ctx.policy.workspace());
@@ -256,8 +263,11 @@ mod tests {
     struct Yes;
     #[async_trait]
     impl Approver for Yes {
-        async fn approve(&self, _: &str) -> bool {
-            true
+        async fn approve(
+            &self,
+            _: &crate::tools::ApprovalRequest,
+        ) -> crate::tools::ApprovalOutcome {
+            crate::tools::ApprovalOutcome::Approved
         }
     }
     fn context(root: &std::path::Path) -> ToolContext {
@@ -265,13 +275,20 @@ mod tests {
             approval: ApprovalMode::Never,
             ..Config::default()
         };
+        let mut environment = BTreeMap::new();
+        if let Ok(path) = std::env::var("PATH") {
+            environment.insert("PATH".into(), path);
+        }
         ToolContext {
             policy: Arc::new(Policy::new(&config, root.to_owned()).unwrap()),
             approver: Arc::new(Yes),
             timeout: Duration::from_secs(2),
             max_output_bytes: 4096,
-            environment: BTreeMap::new(),
+            environment,
             cancellation: tokio_util::sync::CancellationToken::new(),
+            execution_id: uuid::Uuid::new_v4(),
+            interaction: crate::tools::InteractionMode::Attended,
+            redactor: Arc::new(crate::tools::Redactor::default()),
         }
     }
     #[tokio::test]
