@@ -109,7 +109,9 @@ Typing `/` opens the slash-command palette above the composer. Continue typing t
 use the arrow keys to select, and press `Enter` or `Tab` to complete a command. The palette stays
 contextual after the command name: `/access ` offers authority modes, `/model ` and `/models `
 show the provider's discovered models, `/resume ` shows saved sessions, and commands with
-enumerated arguments show their valid values.
+enumerated arguments show their valid values. Path arguments browse from the active workspace,
+multi-stage commands continue suggesting their next flags or values, and `/set ` is generated
+from the same complete configuration schema used to validate runtime overrides.
 
 Every startup capability also has a slash-command path. `/provider`, `/workspace`, `/access`,
 and `/config PATH` safely save the session and relaunch with a rebuilt provider, tool registry,

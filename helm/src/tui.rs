@@ -2,7 +2,12 @@
 //! agent's event and approval contracts, so providers can add finer-grained
 //! streaming without changing the UI.
 
-use std::{collections::BTreeSet, io, path::PathBuf, sync::Arc};
+use std::{
+    collections::BTreeSet,
+    io,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
@@ -26,7 +31,7 @@ use ratatui::{
 use tokio::sync::{mpsc, oneshot};
 use unicode_width::UnicodeWidthChar;
 
-use crate::config::AccessMode;
+use crate::config::{AccessMode, CONFIG_OVERRIDE_SPECS, ConfigValueKind};
 use crate::{
     Agent, AgentEvent, EventSink,
     markdown::{MarkdownTheme, RenderOptions, render_markdown},
@@ -1951,6 +1956,375 @@ fn slash_palette_matches(app: &App) -> Vec<SlashCommand> {
         .collect()
 }
 
+fn fixed_suggestions(prefix: &str, query: &str, values: &[(&str, &str)]) -> Vec<SlashPaletteItem> {
+    let query = query.trim().to_ascii_lowercase();
+    values
+        .iter()
+        .filter(|(value, _)| value.to_ascii_lowercase().contains(&query))
+        .map(|(value, description)| SlashPaletteItem {
+            usage: (*value).into(),
+            description: (*description).into(),
+            completion: format!("{prefix}{value}"),
+        })
+        .collect()
+}
+
+fn argument_hint(usage: &str, description: &str) -> SlashPaletteItem {
+    SlashPaletteItem {
+        usage: usage.into(),
+        description: description.into(),
+        completion: String::new(),
+    }
+}
+
+fn expand_user_path(raw: &str) -> PathBuf {
+    if raw == "~" {
+        return dirs::home_dir().unwrap_or_else(|| PathBuf::from(raw));
+    }
+    if let Some(suffix) = raw.strip_prefix("~/")
+        && let Some(home) = dirs::home_dir()
+    {
+        return home.join(suffix);
+    }
+    PathBuf::from(raw)
+}
+
+fn filesystem_suggestions<F>(
+    raw: &str,
+    workspace: &Path,
+    directories_only: bool,
+    completion: F,
+) -> Vec<SlashPaletteItem>
+where
+    F: Fn(&str, bool) -> String,
+{
+    let raw = raw.trim();
+    let (scan_input, rendered_prefix) = if raw == "~" || raw.starts_with("~/") {
+        let suffix = raw
+            .strip_prefix('~')
+            .unwrap_or_default()
+            .trim_start_matches('/');
+        let Some(home) = dirs::home_dir() else {
+            return Vec::new();
+        };
+        (home.join(suffix), "~/")
+    } else {
+        (PathBuf::from(raw), "")
+    };
+    let trailing_separator = raw == "~" || raw.ends_with(std::path::MAIN_SEPARATOR);
+    let (directory, needle, display_parent) = if raw.is_empty() {
+        (workspace.to_path_buf(), String::new(), String::new())
+    } else if trailing_separator {
+        let directory = if scan_input.is_absolute() {
+            scan_input.clone()
+        } else {
+            workspace.join(&scan_input)
+        };
+        (
+            directory,
+            String::new(),
+            if raw == "~" {
+                "~/".into()
+            } else {
+                raw.to_owned()
+            },
+        )
+    } else {
+        let parent = scan_input
+            .parent()
+            .unwrap_or_else(|| std::path::Path::new(""));
+        let directory = if scan_input.is_absolute() {
+            parent.to_path_buf()
+        } else {
+            workspace.join(parent)
+        };
+        let needle = scan_input
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let display_parent = if rendered_prefix.is_empty() {
+            parent.to_string_lossy().into_owned()
+        } else {
+            let suffix = parent
+                .strip_prefix(dirs::home_dir().unwrap_or_default())
+                .unwrap_or(parent)
+                .to_string_lossy();
+            if suffix.is_empty() {
+                rendered_prefix.into()
+            } else {
+                format!("{rendered_prefix}{suffix}/")
+            }
+        };
+        (directory, needle, display_parent)
+    };
+    let mut entries = match std::fs::read_dir(directory) {
+        Ok(entries) => entries.filter_map(Result::ok).collect::<Vec<_>>(),
+        Err(_) => return Vec::new(),
+    };
+    entries.sort_by_key(|entry| {
+        (
+            !entry.file_type().is_ok_and(|kind| kind.is_dir()),
+            entry.file_name().to_string_lossy().to_ascii_lowercase(),
+        )
+    });
+    entries
+        .into_iter()
+        .filter_map(|entry| {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if !name
+                .to_ascii_lowercase()
+                .starts_with(&needle.to_ascii_lowercase())
+                || (name.starts_with('.') && !needle.starts_with('.'))
+            {
+                return None;
+            }
+            let is_directory = entry.file_type().ok()?.is_dir();
+            if directories_only && !is_directory {
+                return None;
+            }
+            let separator = if !display_parent.is_empty()
+                && !display_parent.ends_with(std::path::MAIN_SEPARATOR)
+            {
+                std::path::MAIN_SEPARATOR_STR
+            } else {
+                ""
+            };
+            let mut value = format!("{display_parent}{separator}{name}");
+            if is_directory {
+                value.push(std::path::MAIN_SEPARATOR);
+            }
+            Some(SlashPaletteItem {
+                usage: value.clone(),
+                description: if is_directory { "directory" } else { "file" }.into(),
+                completion: completion(&value, is_directory),
+            })
+        })
+        .take(100)
+        .collect()
+}
+
+fn model_suggestions(app: &App, query: &str, prefix: &str) -> Vec<SlashPaletteItem> {
+    let query = query.trim().to_ascii_lowercase();
+    app.models
+        .iter()
+        .filter(|model| {
+            query.is_empty()
+                || model.id.to_ascii_lowercase().contains(&query)
+                || model.display_name.to_ascii_lowercase().contains(&query)
+        })
+        .map(|model| SlashPaletteItem {
+            usage: model.id.clone(),
+            description: model.display_name.clone(),
+            completion: format!("{prefix}{}", model.id),
+        })
+        .collect()
+}
+
+fn environment_name_suggestions(query: &str, prefix: &str) -> Vec<SlashPaletteItem> {
+    let query = query.to_ascii_lowercase();
+    let mut names = std::env::vars_os()
+        .filter_map(|(name, _)| name.into_string().ok())
+        .filter(|name| name.to_ascii_lowercase().contains(&query))
+        .collect::<Vec<_>>();
+    names.sort();
+    names.dedup();
+    names
+        .into_iter()
+        .take(100)
+        .map(|name| SlashPaletteItem {
+            usage: name.clone(),
+            description: "environment variable".into(),
+            completion: format!("{prefix}{name} "),
+        })
+        .collect()
+}
+
+fn set_value_suggestions(app: &App, key: &str, value: &str) -> Vec<SlashPaletteItem> {
+    let root_key = key.split('.').next().unwrap_or(key);
+    let Some(spec) = CONFIG_OVERRIDE_SPECS
+        .iter()
+        .find(|spec| spec.key == root_key)
+    else {
+        return Vec::new();
+    };
+    let prefix = format!("/set {key} ");
+    match spec.kind {
+        ConfigValueKind::Provider => fixed_suggestions(&prefix, value, PROVIDER_VALUES),
+        ConfigValueKind::Model => model_suggestions(app, value, &prefix),
+        ConfigValueKind::EnvironmentName => fixed_suggestions(
+            &prefix,
+            value,
+            &[
+                ("OPENAI_API_KEY", "OpenAI API credential"),
+                ("ANTHROPIC_API_KEY", "Anthropic API credential"),
+            ],
+        ),
+        ConfigValueKind::Url => fixed_suggestions(
+            &prefix,
+            value,
+            &[
+                ("https://api.openai.com/v1", "OpenAI public API"),
+                ("https://api.anthropic.com", "Anthropic public API"),
+            ],
+        ),
+        ConfigValueKind::PositiveInteger | ConfigValueKind::NonNegativeInteger => {
+            let values: &[(&str, &str)] = match key {
+                "max_turns" => &[
+                    ("16", "short"),
+                    ("32", "standard"),
+                    ("64", "extended"),
+                    ("128", "large"),
+                ],
+                "max_tokens" => &[
+                    ("2048", "small"),
+                    ("4096", "standard"),
+                    ("8192", "large"),
+                    ("16384", "very large"),
+                ],
+                "provider_retry_attempts" => &[
+                    ("0", "disabled"),
+                    ("2", "light"),
+                    ("4", "standard"),
+                    ("8", "persistent"),
+                ],
+                "provider_retry_initial_ms" => {
+                    &[("250", "fast"), ("500", "standard"), ("1000", "one second")]
+                }
+                "provider_retry_max_ms" => &[
+                    ("4000", "four seconds"),
+                    ("8000", "standard"),
+                    ("16000", "sixteen seconds"),
+                ],
+                "command_timeout_secs" => &[
+                    ("30", "short"),
+                    ("120", "standard"),
+                    ("300", "five minutes"),
+                    ("900", "fifteen minutes"),
+                ],
+                "max_output_bytes" | "terminal_max_unread_bytes" => &[
+                    ("65536", "64 KiB"),
+                    ("131072", "128 KiB"),
+                    ("1048576", "1 MiB"),
+                    ("8388608", "8 MiB"),
+                ],
+                "terminal_max_count" | "subagent_max_concurrency" => &[
+                    ("1", "one"),
+                    ("4", "four"),
+                    ("8", "eight"),
+                    ("16", "sixteen"),
+                ],
+                "subagent_max_agents" => &[
+                    ("16", "small"),
+                    ("32", "standard"),
+                    ("64", "large"),
+                    ("128", "very large"),
+                ],
+                "subagent_event_history" => {
+                    &[("512", "small"), ("2048", "standard"), ("8192", "large")]
+                }
+                _ => &[("1", "minimum"), ("16", "small"), ("64", "standard")],
+            };
+            fixed_suggestions(&prefix, value, values)
+        }
+        ConfigValueKind::Temperature => fixed_suggestions(
+            &prefix,
+            value,
+            &[
+                ("0", "deterministic"),
+                ("0.2", "focused"),
+                ("0.7", "creative"),
+                ("1.0", "high variance"),
+            ],
+        ),
+        ConfigValueKind::Access => fixed_suggestions(&prefix, value, ACCESS_VALUES),
+        ConfigValueKind::Approval => fixed_suggestions(
+            &prefix,
+            value,
+            &[
+                ("always", "approve every action"),
+                ("on-risk", "approve risky actions"),
+                ("never", "never prompt"),
+            ],
+        ),
+        ConfigValueKind::UnattendedApproval => fixed_suggestions(
+            &prefix,
+            value,
+            &[
+                ("deny", "deny without a user"),
+                ("allow", "allow without a user"),
+            ],
+        ),
+        ConfigValueKind::Path => {
+            filesystem_suggestions(value, &app.session.workspace, true, |path, _| {
+                format!("{prefix}{}", expand_user_path(path).display())
+            })
+        }
+        ConfigValueKind::PathList => filesystem_suggestions(
+            value.trim_matches(|ch| matches!(ch, '[' | ']' | '"')),
+            &app.session.workspace,
+            true,
+            |path, _| format!("{prefix}[\"{}\"]", expand_user_path(path).display()),
+        ),
+        ConfigValueKind::StringList => match key {
+            "deny_commands" => fixed_suggestions(
+                &prefix,
+                value,
+                &[(
+                    "[\"shutdown\", \"reboot\", \"mkfs\"]",
+                    "safe default deny list",
+                )],
+            ),
+            "inherit_env" => fixed_suggestions(
+                &prefix,
+                value,
+                &[(
+                    "[\"PATH\", \"LANG\", \"LC_ALL\", \"TERM\"]",
+                    "safe terminal environment",
+                )],
+            ),
+            _ if value.trim().is_empty() => vec![argument_hint(
+                "[\"VALUE\", ...]",
+                "Enter a TOML string array",
+            )],
+            _ => Vec::new(),
+        },
+        ConfigValueKind::Executable => fixed_suggestions(
+            &prefix,
+            value,
+            &[("codex", "Codex compatibility executable")],
+        ),
+        ConfigValueKind::Text if value.trim().is_empty() => {
+            vec![argument_hint("<TEXT>", "Enter a free-form value")]
+        }
+        ConfigValueKind::StringMap if value.trim().is_empty() => {
+            vec![argument_hint("<VALUE>", "Enter the map entry value")]
+        }
+        ConfigValueKind::McpServers if value.trim().is_empty() => vec![argument_hint(
+            "<VALUE>",
+            "Enter a string, TOML array, or map entry value",
+        )],
+        ConfigValueKind::Text | ConfigValueKind::StringMap | ConfigValueKind::McpServers => {
+            Vec::new()
+        }
+    }
+}
+
+const ACCESS_VALUES: &[(&str, &str)] = &[
+    ("read-only", "Inspect without mutations"),
+    ("approval", "Ask before consequential actions"),
+    ("unrestricted", "Proceed without approval prompts"),
+];
+
+const PROVIDER_VALUES: &[(&str, &str)] = &[
+    ("openai-responses", "OpenAI Responses API"),
+    ("openai-chat", "OpenAI-compatible Chat Completions"),
+    ("chatgpt-oauth", "Native ChatGPT subscription"),
+    ("anthropic", "Anthropic Messages API"),
+    ("codex-compatibility", "External Codex compatibility bridge"),
+    ("openai", "Legacy alias for openai-chat"),
+    ("codex-subscription", "Legacy alias for codex-compatibility"),
+];
+
 fn slash_argument_suggestions(app: &App) -> Vec<SlashPaletteItem> {
     let Some(input) = app.composer.text.strip_prefix('/') else {
         return Vec::new();
@@ -1958,83 +2332,142 @@ fn slash_argument_suggestions(app: &App) -> Vec<SlashPaletteItem> {
     let Some((command, argument)) = input.split_once(char::is_whitespace) else {
         return Vec::new();
     };
-    if command == "set"
-        && let Some((key, value)) = argument.split_once(char::is_whitespace)
-    {
-        let query = value.trim().to_ascii_lowercase();
-        let values: &[(&str, &str)] = match key {
-            "access" => &[
-                ("read-only", "Inspect without mutations"),
-                ("approval", "Ask before consequential actions"),
-                ("unrestricted", "Proceed without approval prompts"),
-            ],
-            "provider" => &[
-                ("openai-responses", "OpenAI Responses API"),
-                ("openai-chat", "OpenAI-compatible Chat Completions"),
-                ("chatgpt-oauth", "Native ChatGPT subscription"),
-                ("anthropic", "Anthropic Messages API"),
-                ("codex-compatibility", "External Codex compatibility bridge"),
-            ],
-            "approval" => &[
-                ("always", "Approve every tool action"),
-                ("on-risk", "Approve risky actions"),
-                ("never", "Never prompt"),
-            ],
-            "unattended_approval" => &[
-                ("deny", "Deny when no user can answer"),
-                ("allow", "Allow unattended actions"),
-            ],
-            _ => &[],
-        };
-        let mut suggestions = values
-            .iter()
-            .filter(|(value, _)| value.to_ascii_lowercase().contains(&query))
-            .map(|(value, description)| SlashPaletteItem {
-                usage: (*value).into(),
-                description: (*description).into(),
-                completion: format!("/set {key} {value}"),
-            })
-            .collect::<Vec<_>>();
-        if key == "model" {
-            suggestions.extend(
-                app.models
-                    .iter()
-                    .filter(|model| {
-                        query.is_empty()
-                            || model.id.to_ascii_lowercase().contains(&query)
-                            || model.display_name.to_ascii_lowercase().contains(&query)
-                    })
-                    .map(|model| SlashPaletteItem {
-                        usage: model.id.clone(),
-                        description: model.display_name.clone(),
-                        completion: format!("/set model {}", model.id),
-                    }),
+    if command == "set" {
+        if let Some((key, value)) = argument.split_once(char::is_whitespace) {
+            return set_value_suggestions(app, key, value);
+        }
+        if let Some(query) = argument.strip_prefix("env.") {
+            let suggestions = environment_name_suggestions(query, "/set env.");
+            return if suggestions.is_empty() && query.is_empty() {
+                vec![argument_hint(
+                    "<NAME>",
+                    "Enter an environment variable name",
+                )]
+            } else {
+                suggestions
+            };
+        }
+        if let Some(rest) = argument.strip_prefix("mcp_servers.") {
+            if let Some((server, query)) = rest.split_once(".env.") {
+                return environment_name_suggestions(
+                    query,
+                    &format!("/set mcp_servers.{server}.env."),
+                );
+            }
+            let (server, field_query) = rest.split_once('.').unwrap_or((rest, ""));
+            if server.is_empty() {
+                return vec![argument_hint("<NAME>", "Enter an MCP server name")];
+            }
+            return fixed_suggestions(
+                &format!("/set mcp_servers.{server}."),
+                field_query,
+                &[
+                    ("command ", "Server executable"),
+                    ("args ", "TOML argument array"),
+                    ("env.", "Server environment variable"),
+                ],
             );
         }
-        return suggestions;
+        let query = argument.trim().to_ascii_lowercase();
+        return CONFIG_OVERRIDE_SPECS
+            .iter()
+            .filter(|spec| spec.key.contains(&query))
+            .map(|spec| SlashPaletteItem {
+                usage: spec.key.into(),
+                description: spec.description.into(),
+                completion: format!(
+                    "/set {}{}",
+                    spec.key,
+                    if matches!(
+                        spec.kind,
+                        ConfigValueKind::StringMap | ConfigValueKind::McpServers
+                    ) {
+                        "."
+                    } else {
+                        " "
+                    }
+                ),
+            })
+            .collect();
+    }
+    if command == "workspace" {
+        let suggestions =
+            filesystem_suggestions(argument, &app.session.workspace, true, |path, _| {
+                format!("/workspace {path}")
+            });
+        return if suggestions.is_empty() && argument.trim().is_empty() {
+            vec![argument_hint("<PATH>", "Enter a workspace directory")]
+        } else {
+            suggestions
+        };
+    }
+    if matches!(command, "config" | "export") {
+        let suggestions =
+            filesystem_suggestions(argument, &app.session.workspace, false, |path, _| {
+                format!("/{command} {path}")
+            });
+        return if suggestions.is_empty() && argument.trim().is_empty() {
+            vec![argument_hint("<PATH>", "Enter a file path")]
+        } else {
+            suggestions
+        };
+    }
+    if command == "auth" && argument.starts_with("import-codex --path ") {
+        let path = argument.trim_start_matches("import-codex --path ");
+        return filesystem_suggestions(path, &app.session.workspace, false, |path, _| {
+            let path = expand_user_path(path).to_string_lossy().into_owned();
+            format!("/auth import-codex --path {}", shell_words::quote(&path))
+        });
+    }
+    if command == "auth" && argument.starts_with("import-codex --force --path ") {
+        let path = argument.trim_start_matches("import-codex --force --path ");
+        return filesystem_suggestions(path, &app.session.workspace, false, |path, _| {
+            let path = expand_user_path(path).to_string_lossy().into_owned();
+            format!(
+                "/auth import-codex --force --path {}",
+                shell_words::quote(&path)
+            )
+        });
+    }
+    if command == "run"
+        && let Some(prompt) = argument.strip_prefix("--no-save ")
+    {
+        return if prompt.trim().is_empty() {
+            vec![argument_hint("<PROMPT>", "Enter the unsaved task to run")]
+        } else {
+            Vec::new()
+        };
     }
     let query = argument.trim().to_ascii_lowercase();
     let fixed: &[(&str, &str)] = match command {
-        "access" => &[
-            ("read-only", "Inspect without mutations"),
-            ("approval", "Ask before consequential actions"),
-            ("unrestricted", "Proceed without approval prompts"),
-        ],
-        "provider" => &[
-            ("openai-responses", "OpenAI Responses API"),
-            ("openai-chat", "OpenAI-compatible Chat Completions"),
-            ("chatgpt-oauth", "Native ChatGPT subscription"),
-            ("anthropic", "Anthropic Messages API"),
-            ("codex-compatibility", "External Codex compatibility bridge"),
-        ],
+        "access" => ACCESS_VALUES,
+        "provider" => PROVIDER_VALUES,
         "activity" | "verbose" => &[("on", "Enable"), ("off", "Disable")],
         "log-format" => &[("text", "Human-readable logs"), ("json", "JSON logs")],
+        "compact" => &[
+            ("24", "keep recent context"),
+            ("64", "keep extended context"),
+            ("96", "keep large context"),
+        ],
+        "run" => &[("--no-save ", "Run without saving the result")],
+        "voyage" => &[("http://127.0.0.1:9480", "Local Vessel")],
         "completions" => &[
             ("bash", "Bash"),
             ("elvish", "Elvish"),
             ("fish", "Fish"),
             ("powershell", "PowerShell"),
             ("zsh", "Zsh"),
+        ],
+        "auth" if argument.starts_with("login ") => {
+            &[("login --device", "Sign in with a device code")]
+        }
+        "auth" if argument.starts_with("import-codex ") => &[
+            ("import-codex --path ", "Choose a Codex auth file"),
+            ("import-codex --force", "Replace existing Helm credentials"),
+            (
+                "import-codex --force --path ",
+                "Replace credentials using a selected file",
+            ),
         ],
         "auth" => &[
             ("status", "Show credential status"),
@@ -2044,51 +2477,25 @@ fn slash_argument_suggestions(app: &App) -> Vec<SlashPaletteItem> {
             ("import-codex", "Import an existing Codex login once"),
         ],
         "models" => &[("json", "Print the provider model catalog as JSON")],
-        "set" => &[
-            ("model", "Default model"),
-            ("max_turns", "Maximum model turns"),
-            ("max_tokens", "Maximum response tokens"),
-            ("temperature", "Sampling temperature"),
-            ("command_timeout_secs", "Shell command timeout"),
-            ("access", "Default access mode"),
-            ("provider", "Provider transport"),
-            ("approval", "Legacy approval policy"),
-            ("unattended_approval", "Unattended approval policy"),
-            ("workspace", "Default workspace"),
-            ("allow_read", "Additional readable roots"),
-            ("allow_write", "Additional writable roots"),
-            ("env", "Tool environment variable"),
-            ("mcp_servers", "MCP server configuration"),
-        ],
         _ => &[],
     };
-    let mut suggestions = fixed
-        .iter()
-        .filter(|(value, _)| value.to_ascii_lowercase().contains(&query))
-        .map(|(value, description)| SlashPaletteItem {
-            usage: (*value).into(),
-            description: (*description).into(),
-            completion: format!(
-                "/{command} {value}{}",
-                if command == "set" { " " } else { "" }
-            ),
-        })
-        .collect::<Vec<_>>();
+    let prefix = format!("/{command} ");
+    let mut suggestions = fixed_suggestions(&prefix, &query, fixed);
+    if argument.trim().is_empty() {
+        match command {
+            "name" | "branch" => {
+                suggestions.push(argument_hint("<TITLE>", "Enter a session title"))
+            }
+            "run" => suggestions.push(argument_hint("<PROMPT>", "Enter the task to run")),
+            "voyage" => suggestions.push(argument_hint(
+                "<URL> [NAME]",
+                "Enter a Vessel URL and optional Helm name",
+            )),
+            _ => {}
+        }
+    }
     if matches!(command, "model" | "models") {
-        suggestions.extend(
-            app.models
-                .iter()
-                .filter(|model| {
-                    query.is_empty()
-                        || model.id.to_ascii_lowercase().contains(&query)
-                        || model.display_name.to_ascii_lowercase().contains(&query)
-                })
-                .map(|model| SlashPaletteItem {
-                    usage: model.id.clone(),
-                    description: model.display_name.clone(),
-                    completion: format!("/model {}", model.id),
-                }),
-        );
+        suggestions.extend(model_suggestions(app, &query, "/model "));
     }
     if command == "resume" {
         suggestions.extend(
@@ -2150,6 +2557,9 @@ fn complete_selected_slash_command(app: &mut App) {
     let Some(item) = items.get(app.selected_slash_command) else {
         return;
     };
+    if item.completion.is_empty() {
+        return;
+    }
     app.composer.text.clone_from(&item.completion);
     app.composer.cursor = app.composer.text.len();
     reset_slash_palette(app);
@@ -3439,7 +3849,7 @@ async fn handle_command(
             app.status = format!("Current workspace: {}", app.session.workspace.display())
         }
         "workspace" => {
-            let path = PathBuf::from(argument.trim());
+            let path = expand_user_path(argument.trim());
             match path.canonicalize() {
                 Ok(path) if path.is_dir() => {
                     request_cli(
@@ -3462,7 +3872,7 @@ async fn handle_command(
             request_cli(app, store, vec!["config".into()], true, true).await?;
         }
         "config" => {
-            let path = PathBuf::from(argument.trim());
+            let path = expand_user_path(argument.trim());
             if !path.is_file() {
                 app.status = format!("Config file does not exist: {}", path.display());
             } else {
@@ -3602,7 +4012,7 @@ async fn handle_command(
             let path = if argument.trim().is_empty() {
                 export_path(&app.session)
             } else {
-                PathBuf::from(argument.trim())
+                expand_user_path(argument.trim())
             };
             store.export_markdown(&app.session, &path).await?;
             app.status = format!("Exported to {}", path.display());
@@ -4853,6 +5263,15 @@ mod tests {
         assert_eq!(sessions[0].completion, format!("/resume {}", first.id));
 
         app.composer = Composer::default();
+        app.composer.insert_str("/set ");
+        assert_eq!(slash_palette_items(&app).len(), CONFIG_OVERRIDE_SPECS.len());
+        assert!(
+            slash_palette_items(&app)
+                .iter()
+                .any(|item| item.usage == "codex_command")
+        );
+
+        app.composer = Composer::default();
         app.composer.insert_str("/set access ");
         assert_eq!(
             slash_palette_items(&app)
@@ -4861,6 +5280,55 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["read-only", "approval", "unrestricted"]
         );
+
+        for input in ["/name ", "/branch ", "/run ", "/voyage "] {
+            app.composer = Composer::default();
+            app.composer.insert_str(input);
+            assert!(
+                !slash_palette_items(&app).is_empty(),
+                "{input} should explain or suggest its next argument"
+            );
+        }
+
+        app.composer = Composer::default();
+        app.composer.insert_str("/set provider_retry_attempts ");
+        assert!(
+            slash_palette_items(&app)
+                .iter()
+                .any(|item| item.usage == "0")
+        );
+
+        app.composer = Composer::default();
+        app.composer.insert_str("/provider codex-");
+        assert!(
+            slash_palette_items(&app)
+                .iter()
+                .any(|item| item.usage == "codex-subscription")
+        );
+
+        app.composer = Composer::default();
+        app.composer.insert_str("/run --no-save ");
+        assert_eq!(slash_palette_items(&app)[0].usage, "<PROMPT>");
+    }
+
+    #[test]
+    fn slash_palette_completes_filesystem_arguments() {
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::create_dir(directory.path().join("project-alpha")).unwrap();
+        std::fs::write(directory.path().join("helm-special.toml"), "model = 'test'").unwrap();
+        let session = Session::new(directory.path().into(), "test-model".into());
+        let mut app = App::new(session, Vec::new());
+
+        app.composer.insert_str("/workspace pro");
+        let workspace = slash_palette_items(&app);
+        assert_eq!(workspace.len(), 1);
+        assert_eq!(workspace[0].completion, "/workspace project-alpha/");
+
+        app.composer = Composer::default();
+        app.composer.insert_str("/config helm-");
+        let config = slash_palette_items(&app);
+        assert_eq!(config.len(), 1);
+        assert_eq!(config[0].completion, "/config helm-special.toml");
     }
 
     #[test]

@@ -133,6 +133,192 @@ pub struct McpServerConfig {
     pub env: BTreeMap<String, String>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ConfigValueKind {
+    Provider,
+    Model,
+    EnvironmentName,
+    Url,
+    Text,
+    PositiveInteger,
+    NonNegativeInteger,
+    Temperature,
+    Access,
+    Approval,
+    UnattendedApproval,
+    Path,
+    PathList,
+    StringList,
+    StringMap,
+    McpServers,
+    Executable,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ConfigOverrideSpec {
+    pub key: &'static str,
+    pub description: &'static str,
+    pub kind: ConfigValueKind,
+}
+
+pub const CONFIG_OVERRIDE_SPECS: &[ConfigOverrideSpec] = &[
+    ConfigOverrideSpec {
+        key: "provider",
+        description: "Provider transport",
+        kind: ConfigValueKind::Provider,
+    },
+    ConfigOverrideSpec {
+        key: "model",
+        description: "Default model",
+        kind: ConfigValueKind::Model,
+    },
+    ConfigOverrideSpec {
+        key: "api_key_env",
+        description: "API-key environment variable",
+        kind: ConfigValueKind::EnvironmentName,
+    },
+    ConfigOverrideSpec {
+        key: "base_url",
+        description: "Provider API base URL",
+        kind: ConfigValueKind::Url,
+    },
+    ConfigOverrideSpec {
+        key: "chatgpt_base_url",
+        description: "ChatGPT API base URL",
+        kind: ConfigValueKind::Url,
+    },
+    ConfigOverrideSpec {
+        key: "system_prompt",
+        description: "Agent system guidance",
+        kind: ConfigValueKind::Text,
+    },
+    ConfigOverrideSpec {
+        key: "max_turns",
+        description: "Maximum model turns",
+        kind: ConfigValueKind::PositiveInteger,
+    },
+    ConfigOverrideSpec {
+        key: "max_tokens",
+        description: "Maximum response tokens",
+        kind: ConfigValueKind::PositiveInteger,
+    },
+    ConfigOverrideSpec {
+        key: "temperature",
+        description: "Sampling temperature",
+        kind: ConfigValueKind::Temperature,
+    },
+    ConfigOverrideSpec {
+        key: "provider_retry_attempts",
+        description: "Provider retry attempts",
+        kind: ConfigValueKind::NonNegativeInteger,
+    },
+    ConfigOverrideSpec {
+        key: "provider_retry_initial_ms",
+        description: "Initial provider retry delay",
+        kind: ConfigValueKind::NonNegativeInteger,
+    },
+    ConfigOverrideSpec {
+        key: "provider_retry_max_ms",
+        description: "Maximum provider retry delay",
+        kind: ConfigValueKind::NonNegativeInteger,
+    },
+    ConfigOverrideSpec {
+        key: "command_timeout_secs",
+        description: "Shell command timeout",
+        kind: ConfigValueKind::PositiveInteger,
+    },
+    ConfigOverrideSpec {
+        key: "max_output_bytes",
+        description: "Maximum captured tool output",
+        kind: ConfigValueKind::PositiveInteger,
+    },
+    ConfigOverrideSpec {
+        key: "terminal_max_count",
+        description: "Maximum persistent terminals",
+        kind: ConfigValueKind::PositiveInteger,
+    },
+    ConfigOverrideSpec {
+        key: "terminal_max_unread_bytes",
+        description: "Maximum unread terminal output",
+        kind: ConfigValueKind::PositiveInteger,
+    },
+    ConfigOverrideSpec {
+        key: "subagent_max_concurrency",
+        description: "Concurrent subagent limit",
+        kind: ConfigValueKind::PositiveInteger,
+    },
+    ConfigOverrideSpec {
+        key: "subagent_max_agents",
+        description: "Total subagent limit",
+        kind: ConfigValueKind::PositiveInteger,
+    },
+    ConfigOverrideSpec {
+        key: "subagent_event_history",
+        description: "Retained subagent events",
+        kind: ConfigValueKind::PositiveInteger,
+    },
+    ConfigOverrideSpec {
+        key: "access",
+        description: "Default access mode",
+        kind: ConfigValueKind::Access,
+    },
+    ConfigOverrideSpec {
+        key: "approval",
+        description: "Legacy approval policy",
+        kind: ConfigValueKind::Approval,
+    },
+    ConfigOverrideSpec {
+        key: "unattended_approval",
+        description: "Unattended approval policy",
+        kind: ConfigValueKind::UnattendedApproval,
+    },
+    ConfigOverrideSpec {
+        key: "workspace",
+        description: "Default workspace",
+        kind: ConfigValueKind::Path,
+    },
+    ConfigOverrideSpec {
+        key: "allow_read",
+        description: "Additional readable roots",
+        kind: ConfigValueKind::PathList,
+    },
+    ConfigOverrideSpec {
+        key: "allow_write",
+        description: "Additional writable roots",
+        kind: ConfigValueKind::PathList,
+    },
+    ConfigOverrideSpec {
+        key: "deny_commands",
+        description: "Blocked command names",
+        kind: ConfigValueKind::StringList,
+    },
+    ConfigOverrideSpec {
+        key: "env",
+        description: "Tool environment map",
+        kind: ConfigValueKind::StringMap,
+    },
+    ConfigOverrideSpec {
+        key: "inherit_env",
+        description: "Inherited environment names",
+        kind: ConfigValueKind::StringList,
+    },
+    ConfigOverrideSpec {
+        key: "redact_values",
+        description: "Additional values to redact",
+        kind: ConfigValueKind::StringList,
+    },
+    ConfigOverrideSpec {
+        key: "mcp_servers",
+        description: "MCP server configuration",
+        kind: ConfigValueKind::McpServers,
+    },
+    ConfigOverrideSpec {
+        key: "codex_command",
+        description: "Compatibility bridge executable",
+        kind: ConfigValueKind::Executable,
+    },
+];
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum ApprovalMode {
@@ -308,40 +494,10 @@ impl Config {
         let root = document
             .as_table_mut()
             .ok_or_else(|| anyhow::anyhow!("configuration root is not a table"))?;
-        const CONFIG_KEYS: &[&str] = &[
-            "provider",
-            "model",
-            "api_key_env",
-            "base_url",
-            "chatgpt_base_url",
-            "system_prompt",
-            "max_turns",
-            "max_tokens",
-            "temperature",
-            "provider_retry_attempts",
-            "provider_retry_initial_ms",
-            "provider_retry_max_ms",
-            "command_timeout_secs",
-            "max_output_bytes",
-            "terminal_max_count",
-            "terminal_max_unread_bytes",
-            "subagent_max_concurrency",
-            "subagent_max_agents",
-            "subagent_event_history",
-            "access",
-            "approval",
-            "unattended_approval",
-            "workspace",
-            "allow_read",
-            "allow_write",
-            "deny_commands",
-            "env",
-            "inherit_env",
-            "redact_values",
-            "mcp_servers",
-            "codex_command",
-        ];
-        if !CONFIG_KEYS.contains(&segments[0]) {
+        if !CONFIG_OVERRIDE_SPECS
+            .iter()
+            .any(|spec| spec.key == segments[0])
+        {
             bail!("unknown configuration key `{}`", segments[0]);
         }
         let parsed = toml::from_str::<toml::Value>(&format!("value = {raw_value}"))
@@ -450,6 +606,25 @@ mod tests {
         );
         assert!(config.apply_override("not_a_setting", "true").is_err());
         assert!(config.apply_override("max_turns", "0").is_err());
+    }
+
+    #[test]
+    fn runtime_override_schema_has_unique_keys() {
+        let keys = CONFIG_OVERRIDE_SPECS
+            .iter()
+            .map(|spec| spec.key)
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(keys.len(), CONFIG_OVERRIDE_SPECS.len());
+        assert!(keys.contains("provider"));
+        assert!(keys.contains("mcp_servers"));
+        assert!(keys.contains("codex_command"));
+        let document = toml::Value::try_from(Config::default()).unwrap();
+        for key in document.as_table().unwrap().keys() {
+            assert!(
+                keys.contains(key.as_str()),
+                "schema omitted config key {key}"
+            );
+        }
     }
 
     #[test]
