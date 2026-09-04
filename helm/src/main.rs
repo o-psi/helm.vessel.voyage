@@ -10,7 +10,7 @@ use helm::{
     tools::{Approver, ToolContext, ToolRegistry},
 };
 use std::{
-    io::{self, Write},
+    io::{self, IsTerminal, Write},
     path::PathBuf,
     sync::Arc,
 };
@@ -182,6 +182,9 @@ enum Command {
     Chat {
         #[arg(long)]
         resume: Option<String>,
+        /// Use the line-oriented interface, even when attached to a terminal.
+        #[arg(long)]
+        plain: bool,
     },
     Sessions,
     Config,
@@ -248,7 +251,10 @@ async fn main() -> Result<()> {
     if let Some(vessel) = cli.voyage {
         return voyage_worker(config, cli.workspace, vessel, cli.name).await;
     }
-    match cli.command.unwrap_or(Command::Chat { resume: None }) {
+    match cli.command.unwrap_or(Command::Chat {
+        resume: None,
+        plain: false,
+    }) {
         Command::Config => {
             println!("{}", toml::to_string_pretty(&config)?);
             Ok(())
@@ -261,7 +267,13 @@ async fn main() -> Result<()> {
         } => execute(config, cli.workspace, resume, prompt.join(" "), no_save)
             .await
             .map(|_| ()),
-        Command::Chat { resume } => chat(config, cli.workspace, resume).await,
+        Command::Chat { resume, plain } => {
+            if plain || !io::stdin().is_terminal() || !io::stdout().is_terminal() {
+                chat(config, cli.workspace, resume).await
+            } else {
+                tui_chat(config, cli.workspace, resume).await
+            }
+        }
     }
 }
 
@@ -286,6 +298,43 @@ async fn build_agent(config: &Config, workspace: PathBuf) -> Result<Agent> {
         config.max_tokens,
         config.temperature,
     ))
+}
+
+async fn tui_chat(
+    config: Config,
+    workspace_arg: Option<PathBuf>,
+    resume: Option<String>,
+) -> Result<()> {
+    let store = SessionStore::default();
+    let session = if let Some(reference) = resume {
+        store.load_reference(&reference).await?
+    } else {
+        Session::new(
+            config.resolve_workspace(workspace_arg)?,
+            config.model.clone(),
+        )
+    };
+    let (bridge, receiver) = helm::tui::bridge();
+    let policy = Arc::new(Policy::new(&config, session.workspace.clone())?);
+    let context = ToolContext {
+        policy,
+        approver: bridge.clone(),
+        timeout: config.timeout(),
+        max_output_bytes: config.max_output_bytes,
+        environment: config.env.clone(),
+    };
+    let agent = Arc::new(Agent::new(
+        provider::from_config(&config)?,
+        ToolRegistry::standard(),
+        context,
+        bridge.clone(),
+        config.model.clone(),
+        config.system_prompt.clone(),
+        config.max_turns,
+        config.max_tokens,
+        config.temperature,
+    ));
+    helm::tui::run(agent, store, session, receiver, bridge.sender()).await
 }
 
 async fn execute(
@@ -385,9 +434,10 @@ async fn chat(
 async fn list_sessions() -> Result<()> {
     for session in SessionStore::default().list().await? {
         println!(
-            "{}  {}  {}  {} messages",
+            "{}  {}  {:<24}  {}  {} messages",
             session.id,
             session.updated_at.format("%Y-%m-%d %H:%M UTC"),
+            session.name.as_deref().unwrap_or("untitled"),
             session.workspace.display(),
             session.messages.len()
         );
