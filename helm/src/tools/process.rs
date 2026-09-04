@@ -20,9 +20,16 @@ struct Managed {
     master: Box<dyn MasterPty + Send>,
     child: Box<dyn Child + Send + Sync>,
     writer: Box<dyn Write + Send>,
-    output: Arc<Mutex<Vec<u8>>>,
+    output: Arc<Mutex<Capture>>,
     cursor: usize,
 }
+
+#[derive(Default)]
+struct Capture {
+    bytes: Vec<u8>,
+    base: usize,
+}
+const MAX_CAPTURE_BYTES: usize = 8 * 1024 * 1024;
 
 impl Drop for Managed {
     fn drop(&mut self) {
@@ -128,7 +135,7 @@ impl ProcessTool {
         drop(pair.slave);
         let mut reader = pair.master.try_clone_reader().map_err(failed)?;
         let writer = pair.master.take_writer().map_err(failed)?;
-        let output = Arc::new(Mutex::new(Vec::new()));
+        let output = Arc::new(Mutex::new(Capture::default()));
         let sink = output.clone();
         std::thread::Builder::new()
             .name("helm-pty-reader".into())
@@ -137,10 +144,15 @@ impl ProcessTool {
                 loop {
                     match std::io::Read::read(&mut reader, &mut buffer) {
                         Ok(0) | Err(_) => break,
-                        Ok(n) => sink
-                            .lock()
-                            .expect("PTY buffer poisoned")
-                            .extend_from_slice(&buffer[..n]),
+                        Ok(n) => {
+                            let mut capture = sink.lock().expect("PTY buffer poisoned");
+                            capture.bytes.extend_from_slice(&buffer[..n]);
+                            if capture.bytes.len() > MAX_CAPTURE_BYTES {
+                                let remove = capture.bytes.len() - MAX_CAPTURE_BYTES;
+                                capture.bytes.drain(..remove);
+                                capture.base += remove;
+                            }
+                        }
                     }
                 }
             })
@@ -163,9 +175,13 @@ impl ProcessTool {
         let process = processes
             .get_mut(&id)
             .ok_or_else(|| ToolError::Failed(format!("unknown process {id}")))?;
-        let bytes = process.output.lock().map_err(failed)?;
-        let result = truncate(bytes[process.cursor..].to_vec(), max);
-        process.cursor = bytes.len();
+        let capture = process.output.lock().map_err(failed)?;
+        let offset = process
+            .cursor
+            .saturating_sub(capture.base)
+            .min(capture.bytes.len());
+        let result = truncate(capture.bytes[offset..].to_vec(), max);
+        process.cursor = capture.base + capture.bytes.len();
         let status = process
             .child
             .try_wait()
