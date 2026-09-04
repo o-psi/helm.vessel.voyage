@@ -6,7 +6,8 @@ use axum::{
     routing::{get, post},
 };
 use chrono::{Duration as ChronoDuration, Utc};
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
+use clap_complete::Shell;
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -53,6 +54,13 @@ enum Command {
         #[arg(long, default_value = "http://127.0.0.1:9480")]
         vessel: String,
     },
+    /// Generate a shell completion script on stdout.
+    Completions {
+        #[arg(value_enum)]
+        shell: Shell,
+    },
+    /// Generate a roff manpage on stdout.
+    Manpage,
 }
 
 #[derive(Clone)]
@@ -88,6 +96,22 @@ async fn main() -> Result<()> {
         )
         .init();
     let cli = Cli::parse();
+    match &cli.command {
+        Some(Command::Completions { shell }) => {
+            clap_complete::generate(
+                *shell,
+                &mut Cli::command(),
+                "vessel",
+                &mut std::io::stdout(),
+            );
+            return Ok(());
+        }
+        Some(Command::Manpage) => {
+            clap_mangen::Man::new(Cli::command()).render(&mut std::io::stdout())?;
+            return Ok(());
+        }
+        _ => {}
+    }
     if let Some(Command::Pair {
         connection_string,
         vessel,
