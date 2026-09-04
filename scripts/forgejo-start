@@ -1,0 +1,33 @@
+#!/bin/sh
+set -eu
+
+root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+state="$root/.local-git/forgejo"
+pid_file="$state/forgejo.pid"
+log_file="$state/forgejo.log"
+
+if [ -f "$pid_file" ] && kill -0 "$(cat "$pid_file")" 2>/dev/null; then
+  echo "Forgejo is already running (PID $(cat "$pid_file"))"
+  exit 0
+fi
+
+nohup "$root/scripts/forgejo-server" >"$log_file" 2>&1 &
+pid=$!
+echo "$pid" >"$pid_file"
+
+i=0
+while [ "$i" -lt 50 ]; do
+  if curl -fsS http://127.0.0.1:3000/ >/dev/null 2>&1; then
+    echo "Forgejo started at http://127.0.0.1:3000 (PID $pid)"
+    exit 0
+  fi
+  if ! kill -0 "$pid" 2>/dev/null; then
+    echo "Forgejo exited during startup; inspect $log_file" >&2
+    exit 1
+  fi
+  i=$((i + 1))
+  sleep 0.1
+done
+
+echo "Forgejo did not become ready; inspect $log_file" >&2
+exit 1

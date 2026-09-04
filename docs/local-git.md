@@ -4,11 +4,14 @@ Voyage uses Forgejo for local repositories, issues, pull requests, projects, rel
 and code review. Start it with:
 
 ```sh
-./scripts/forgejo-server
+./scripts/forgejo-start
 ```
 
 Open `http://127.0.0.1:3000`. Runtime data, SQLite state, repositories, and the pinned
 Forgejo binary live under ignored `.local-git/forgejo/` storage.
+
+Stop it with `./scripts/forgejo-stop`. Logs are written to
+`.local-git/forgejo/forgejo.log`.
 
 The original lightweight Git daemon remains available for recovery or environments
 where the web forge is unnecessary.
