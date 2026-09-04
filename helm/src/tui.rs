@@ -363,6 +363,8 @@ pub async fn run(
                         if let Some(id) = app.attached_terminal {
                             let _ = terminals.resize(id, columns, rows.saturating_sub(1)).await;
                         }
+                        // Discard any stale cells after the terminal changes its backing grid.
+                        terminal.clear()?;
                     }
                     Some(Ok(Event::Paste(text))) if app.approval.is_none() && !app.show_sessions => {
                         if let Some(id) = app.attached_terminal {
@@ -2381,7 +2383,7 @@ fn transcript(app: &App) -> Text<'static> {
             message
                 .content
                 .lines()
-                .map(|line| Line::raw(line.to_owned())),
+                .map(|line| Line::raw(display_safe(line))),
         );
         lines.push(Line::raw(""));
     }
@@ -2398,7 +2400,7 @@ fn transcript(app: &App) -> Text<'static> {
                 .rev()
                 .take(6)
                 .rev()
-                .map(|line| Line::styled(line.clone(), Style::default().fg(Color::DarkGray))),
+                .map(|line| Line::styled(display_safe(line), Style::default().fg(Color::DarkGray))),
         );
     }
     Text::from(lines)
@@ -2446,7 +2448,10 @@ fn draw_approval(frame: &mut ratatui::Frame<'_>, area: Rect, approval: &Approval
     frame.render_widget(
         Paragraph::new(format!(
             "Action: {}\nTarget: {}\nRequest: {}\n\n{}\n\n[y] approve    [n/Esc] deny",
-            approval.action, approval.target, approval.id, approval.reason
+            display_safe(&approval.action),
+            display_safe(&approval.target),
+            approval.id,
+            display_safe(&approval.reason)
         ))
         .wrap(Wrap { trim: false })
         .block(
@@ -2457,6 +2462,16 @@ fn draw_approval(frame: &mut ratatui::Frame<'_>, area: Rect, approval: &Approval
         ),
         popup,
     );
+}
+
+fn display_safe(text: &str) -> String {
+    text.chars()
+        .map(|character| match character {
+            '\n' | '\t' => character,
+            _ if character.is_control() => '�',
+            _ => character,
+        })
+        .collect()
 }
 
 fn centered(area: Rect, width: u16, height: u16) -> Rect {
@@ -3289,6 +3304,15 @@ mod tests {
             KeyCode::Char('\u{1d}'),
             KeyModifiers::NONE
         )));
+    }
+
+    #[test]
+    fn display_text_cannot_emit_terminal_control_sequences() {
+        assert_eq!(display_safe("before\u{1b}[2Jafter\r"), "before�[2Jafter�");
+        assert_eq!(
+            display_safe("line one\nline two\tvalue"),
+            "line one\nline two\tvalue"
+        );
     }
 
     #[tokio::test]

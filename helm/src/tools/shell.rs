@@ -6,6 +6,7 @@ use crate::{
 use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::{Value, json};
+use std::process::Stdio;
 use tokio::process::Command;
 
 pub struct Shell;
@@ -47,7 +48,10 @@ impl Tool for Shell {
             .arg(&args.command)
             .current_dir(ctx.policy.workspace())
             .env_clear()
-            .kill_on_drop(true);
+            .kill_on_drop(true)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
         command.envs(&ctx.environment);
         #[cfg(unix)]
         command.process_group(0);

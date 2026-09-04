@@ -47,7 +47,9 @@ impl McpServer {
             .envs(environment)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
+            // An MCP server shares the parent terminal. Its diagnostics must not write through
+            // Helm's alternate-screen TUI and corrupt cursor state.
+            .stderr(Stdio::null())
             .kill_on_drop(true);
         let mut child = command.spawn().map_err(failed)?;
         let stdin = child
