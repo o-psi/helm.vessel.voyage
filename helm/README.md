@@ -15,6 +15,7 @@ administer scoped systems, and maintain a durable working conversation.
 - Workspace confinement with explicit extra read/write roots and symlink-aware checks
 - Configurable approvals, deny list, command timeout, and output limits
 - Full-screen Ratatui chat, one-shot/plain modes, session management, and token accounting
+- Bounded parallel subagents with messaging, cancellation, durable results, and Git worktrees
 - `helm --voyage` short-lived pairing and authenticated outbound task worker
 - Atomic JSON session persistence under the platform data directory
 - Library interfaces for custom providers, event sinks, approvers, and tools
@@ -156,6 +157,11 @@ systemd, or a container rather than assuming Helm can resurrect a process.
 Press `Ctrl+A` in the full-screen UI to supervise concurrent agent work. The tree,
 inspection, messaging, follow-up, and confirmed cancellation controls are described
 in the [agent supervision guide](../docs/agent-supervision.md).
+The model-facing `subagent` tool supports `spawn`, `status`, `list`, `wait`, `wait_many`,
+`cancel`, `message`, `follow_up`, conflict inspection, guarded integration, and
+safe cleanup. A spawn can request `worktree: true` when the workspace is a
+supported Git repository; Helm records the managed branch and path and refuses
+destructive cleanup of dirty work.
 
 ## Development
 

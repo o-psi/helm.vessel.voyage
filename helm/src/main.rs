@@ -11,7 +11,7 @@ use helm::{
     session::{Session, SessionStore},
     subagent::{
         AgentBudget, AgentPolicy, ApprovalPolicy, ExecutionContext, RuntimeLimits,
-        SubagentExecutor, SubagentResult, SubagentRuntime, SubagentTool,
+        SubagentExecutor, SubagentResult, SubagentRuntime, SubagentTool, WorktreeManager,
     },
     tools::{
         ApprovalOutcome, ApprovalRequest, Approver, InteractionMode, Redactor, ToolContext,
@@ -504,6 +504,7 @@ struct CliSubagentExecutor {
     config: Config,
     workspace: PathBuf,
     runtime: OnceLock<Weak<SubagentRuntime>>,
+    worktrees: Option<WorktreeManager>,
 }
 #[async_trait]
 impl SubagentExecutor for CliSubagentExecutor {
@@ -549,7 +550,9 @@ impl SubagentExecutor for CliSubagentExecutor {
             .and_then(Weak::upgrade)
             .filter(|_| context.budget.max_children > 0)
             .map(|runtime| {
-                SubagentTool::new(runtime, child_policy, child_budget).with_parent(context.id)
+                SubagentTool::new(runtime, child_policy, child_budget)
+                    .with_parent(context.id)
+                    .with_worktrees(self.worktrees.clone())
             });
         let mut tools = build_tools(&config, child_tool)
             .await
@@ -624,12 +627,14 @@ async fn build_subagents(config: &Config, workspace: &std::path::Path) -> Result
         approval: ApprovalPolicy::Deny,
         budget: budget.clone(),
     };
+    let workspace_key = hex::encode(Sha256::digest(workspace.as_os_str().as_encoded_bytes()));
+    let worktrees = worktree_manager(workspace, &workspace_key);
     let executor = Arc::new(CliSubagentExecutor {
         config: config.clone(),
         workspace: workspace.to_path_buf(),
         runtime: OnceLock::new(),
+        worktrees: worktrees.clone(),
     });
-    let workspace_key = hex::encode(Sha256::digest(workspace.as_os_str().as_encoded_bytes()));
     let store = helm::subagent::AgentTreeStore::new(
         helm::config::default_data_dir()
             .join("subagents")
@@ -652,8 +657,25 @@ async fn build_subagents(config: &Config, workspace: &std::path::Path) -> Result
         .runtime
         .set(Arc::downgrade(&runtime))
         .map_err(|_| anyhow::anyhow!("subagent runtime already initialized"))?;
-    let tool = SubagentTool::new(runtime.clone(), policy, budget);
+    let tool = SubagentTool::new(runtime.clone(), policy, budget).with_worktrees(worktrees);
     Ok(SubagentBundle { runtime, tool })
+}
+
+fn worktree_manager(workspace: &std::path::Path, workspace_key: &str) -> Option<WorktreeManager> {
+    let repository = if workspace.join(".git").exists() {
+        workspace.to_path_buf()
+    } else if workspace.join(".local-git/worktree.git/HEAD").is_file() {
+        workspace.join(".local-git/worktree.git")
+    } else {
+        return None;
+    };
+    WorktreeManager::new(
+        repository,
+        helm::config::default_data_dir()
+            .join("worktrees")
+            .join(workspace_key),
+    )
+    .ok()
 }
 
 async fn build_agent(config: &Config, workspace: PathBuf, attended: bool) -> Result<Agent> {

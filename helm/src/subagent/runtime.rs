@@ -429,6 +429,21 @@ impl SubagentRuntime {
         }
         Ok(())
     }
+    pub async fn clear_worktree(&self, id: AgentId) -> Result<(), RuntimeError> {
+        let control = self.control(id).await?;
+        {
+            let mut record = control.record.write().await;
+            if !record.status.is_terminal() {
+                return Err(RuntimeError::Invalid(
+                    "cannot clean up a running subagent worktree".into(),
+                ));
+            }
+            record.worktree = None;
+            record.updated_at = Utc::now();
+        }
+        self.persist(&control).await;
+        Ok(())
+    }
     pub async fn send_message(
         &self,
         id: AgentId,
