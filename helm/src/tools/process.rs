@@ -867,7 +867,7 @@ mod tests {
     }
     #[cfg(windows)]
     fn interactive_command() -> &'static str {
-        "echo ready&& powershell.exe -NoProfile -Command \"$line = [Console]::In.ReadLine(); Write-Output ('got:' + $line)\""
+        "echo ready&& set /p line=&& call echo got:%%line%%"
     }
     #[cfg(not(windows))]
     fn interactive_input() -> &'static str {
