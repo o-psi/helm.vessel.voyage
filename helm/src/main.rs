@@ -19,6 +19,7 @@ use helm::{
     },
     voyage::{Enrollment, EnrollmentStore, normalize_vessel_url},
 };
+use sha2::{Digest, Sha256};
 use std::{
     io::{self, IsTerminal, Write},
     path::PathBuf,
@@ -628,8 +629,11 @@ async fn build_subagents(config: &Config, workspace: &std::path::Path) -> Result
         workspace: workspace.to_path_buf(),
         runtime: OnceLock::new(),
     });
+    let workspace_key = hex::encode(Sha256::digest(workspace.as_os_str().as_encoded_bytes()));
     let store = helm::subagent::AgentTreeStore::new(
-        helm::config::default_data_dir().join("subagents.json"),
+        helm::config::default_data_dir()
+            .join("subagents")
+            .join(format!("{workspace_key}.json")),
     );
     let runtime = Arc::new(
         SubagentRuntime::new_persistent(

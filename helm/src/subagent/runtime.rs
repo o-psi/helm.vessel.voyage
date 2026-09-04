@@ -151,6 +151,22 @@ impl ProgressReporter {
     }
 }
 
+fn terminal_outcome(record: &AgentRecord) -> Option<Result<SubagentResult, String>> {
+    match record.status {
+        AgentStatus::Completed => Some(Ok(SubagentResult {
+            summary: record.result.clone().unwrap_or_default(),
+        })),
+        AgentStatus::Failed
+        | AgentStatus::Cancelled
+        | AgentStatus::Interrupted
+        | AgentStatus::TimedOut => Some(Err(record
+            .error
+            .clone()
+            .unwrap_or_else(|| format!("subagent ended with status {:?}", record.status)))),
+        AgentStatus::Queued | AgentStatus::Running | AgentStatus::Waiting => None,
+    }
+}
+
 impl SubagentRuntime {
     pub fn new(
         executor: Arc<dyn SubagentExecutor>,
@@ -187,7 +203,28 @@ impl SubagentRuntime {
             .recover_after_restart()
             .await
             .map_err(|error| RuntimeError::Persistence(error.to_string()))?;
-        Self::new(executor, limits, Some(store))
+        let records = store
+            .list()
+            .await
+            .map_err(|error| RuntimeError::Persistence(error.to_string()))?;
+        let runtime = Self::new(executor, limits, Some(store))?;
+        let mut agents = runtime.inner.agents.write().await;
+        for record in records {
+            let (inbox, _) = mpsc::channel(1);
+            let initial = terminal_outcome(&record);
+            let (outcome, _) = watch::channel(initial);
+            agents.insert(
+                record.id,
+                Arc::new(Control {
+                    record: RwLock::new(record),
+                    cancel: CancellationToken::new(),
+                    inbox,
+                    outcome,
+                }),
+            );
+        }
+        drop(agents);
+        Ok(runtime)
     }
 
     pub fn subscribe(&self) -> broadcast::Receiver<SubagentEvent> {
@@ -239,7 +276,14 @@ impl SubagentRuntime {
                 .map_err(|e| RuntimeError::Invalid(e.to_string()))?;
         }
         let mut agents = self.inner.agents.write().await;
-        if agents.len() >= self.inner.limits.max_agents {
+        let controls: Vec<_> = agents.values().cloned().collect();
+        let mut active = 0;
+        for control in controls {
+            if !control.record.read().await.status.is_terminal() {
+                active += 1;
+            }
+        }
+        if active >= self.inner.limits.max_agents {
             return Err(RuntimeError::Capacity(self.inner.limits.max_agents));
         }
         if let Some(parent) = request.parent_id {
@@ -789,5 +833,40 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(result.summary, "done");
+    }
+
+    #[tokio::test]
+    async fn persistent_runtime_hydrates_completed_records_and_results() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = AgentTreeStore::new(directory.path().join("agents.json"));
+        let executor = Arc::new(GateExecutor::new());
+        let runtime = SubagentRuntime::new_persistent(
+            executor.clone(),
+            RuntimeLimits::default(),
+            store.clone(),
+        )
+        .await
+        .unwrap();
+        let id = runtime.spawn(request("persisted")).await.unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            while executor.entered.load(Ordering::SeqCst) < 1 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        executor.gate.notify_one();
+        runtime.wait(id).await.unwrap().unwrap();
+        drop(runtime);
+
+        let reopened = SubagentRuntime::new_persistent(
+            Arc::new(GateExecutor::new()),
+            RuntimeLimits::default(),
+            store,
+        )
+        .await
+        .unwrap();
+        assert_eq!(reopened.list().await.len(), 1);
+        assert_eq!(reopened.wait(id).await.unwrap().unwrap().summary, "done");
     }
 }
