@@ -234,6 +234,7 @@ struct App {
     selected_model: usize,
     model_filter: Composer,
     model_manual: bool,
+    shortcut_help: bool,
     quit: bool,
 }
 
@@ -321,6 +322,7 @@ impl App {
             selected_model: 0,
             model_filter: Composer::default(),
             model_manual: false,
+            shortcut_help: false,
             quit: false,
         }
     }
@@ -656,6 +658,9 @@ async fn handle_key(
         handle_attached_key(id, key, app, terminals).await;
         return Ok(());
     }
+    if handle_shortcut_help_key(key, app) {
+        return Ok(());
+    }
     if app.model_picker {
         handle_model_key(key, app, agent, store, tx).await?;
         return Ok(());
@@ -829,6 +834,20 @@ async fn handle_key(
         _ => {}
     }
     Ok(())
+}
+
+fn handle_shortcut_help_key(key: KeyEvent, app: &mut App) -> bool {
+    if app.shortcut_help {
+        if matches!(key.code, KeyCode::F(1) | KeyCode::Esc) {
+            app.shortcut_help = false;
+        }
+        return true;
+    }
+    if key.code == KeyCode::F(1) {
+        app.shortcut_help = true;
+        return true;
+    }
+    false
 }
 
 async fn handle_attached_key(
@@ -1513,6 +1532,10 @@ fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
         );
         return;
     }
+    if app.shortcut_help && app.approval.is_none() {
+        draw_shortcut_help(frame, area, app);
+        return;
+    }
     if app.model_picker {
         draw_model_picker(frame, area, app);
         return;
@@ -1604,11 +1627,8 @@ fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
         chunks[2],
     );
     frame.render_widget(
-        Paragraph::new(format!(
-            "{}  │  ^D todos  ^A agents  ^M models  ^T terminals  ^S sessions  ^N new  ^B branch  ^K compact  ^E export",
-            app.status
-        ))
-        .style(Style::default().fg(Color::Gray)),
+        Paragraph::new(format!("F1 shortcuts  │  {}", app.status))
+            .style(Style::default().fg(Color::Gray)),
         chunks[3],
     );
     if !app.is_running() {
@@ -2605,6 +2625,57 @@ fn draw_approval(frame: &mut ratatui::Frame<'_>, area: Rect, approval: &Approval
                 .title(" Approval required ")
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(Color::Yellow)),
+        ),
+        popup,
+    );
+}
+
+fn draw_shortcut_help(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
+    let (context, detailed, compact) = if app.model_picker {
+        (
+            "Models",
+            "type: filter\n↑/↓: select\nEnter: switch\nTab: enter model ID manually\nCtrl+R: refresh models\nEsc: return",
+            "type filter · ↑↓ select · Enter switch · Tab manual · Ctrl+R refresh",
+        )
+    } else if app.supervisor_mode.is_some() {
+        (
+            "Agents",
+            "↑/↓: select\nEnter: inspect\nm: message\nf: follow-up\nc twice: cancel\nr: refresh\nPageUp/PageDown: progress\nEsc: return",
+            "↑↓ select · Enter inspect · m message · f follow-up · c,c cancel · Esc",
+        )
+    } else if app.todo_mode.is_some() {
+        (
+            "Todos",
+            "↑/↓: select\nEnter: inspect\nn: new\ne: edit\nt: next status\nb/u: block/unblock\na: assign\nd: dependencies\np/o/v: progress/note/evidence\nJ/K: reorder\nx: archive\nr: reload\nEsc: return",
+            "↑↓ select · Enter inspect · n new · e edit · t status · Esc",
+        )
+    } else if app.terminal_picker {
+        (
+            "Terminals",
+            "↑/↓: select\nEnter: attach\nr: refresh\nEsc: return\n\nWhile attached, Ctrl+T or Ctrl+] detaches without stopping the process.",
+            "↑↓ select · Enter attach · r refresh · Esc return",
+        )
+    } else if app.show_sessions {
+        (
+            "Sessions",
+            "↑/↓: select\nEnter: open\nEsc: return",
+            "↑↓ select · Enter open · Esc return",
+        )
+    } else {
+        (
+            "Conversation",
+            "Enter: send\nAlt+Enter: newline\nPageUp/PageDown: scroll\nEsc: cancel active work\nCtrl+D: todos\nCtrl+A: agents\nCtrl+M: models\nCtrl+T: terminals\nCtrl+S: sessions\nCtrl+N: new session\nCtrl+B: branch\nCtrl+K: compact\nCtrl+E: export\nCtrl+C: cancel or quit\nCtrl+Q: quit",
+            "^D todos · ^A agents · ^M models · ^T terminals · ^S sessions · ^N new · ^B branch · ^K compact · ^E export",
+        )
+    };
+    let content = if area.height < 18 { compact } else { detailed };
+    let popup = centered(area, 82, if area.height < 18 { 55 } else { 82 });
+    frame.render_widget(Clear, popup);
+    frame.render_widget(
+        Paragraph::new(content).wrap(Wrap { trim: false }).block(
+            Block::default()
+                .title(format!(" {context} shortcuts · F1/Esc close "))
+                .borders(Borders::ALL),
         ),
         popup,
     );
@@ -3629,6 +3700,53 @@ mod tests {
         assert!(snapshot.contains("one"));
         assert!(snapshot.contains("Conversation"));
         assert!(rows.iter().all(|row| row.chars().count() == 48));
+    }
+
+    #[test]
+    fn global_ctrl_shortcuts_are_hidden_until_f1_help_is_opened() {
+        let session = Session::new(PathBuf::from("/tmp"), "test-model".into());
+        let mut app = App::new(session, Vec::new());
+        let backend = ratatui::backend::TestBackend::new(100, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let normal: String = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect();
+        assert!(normal.contains("F1 shortcuts"));
+        assert!(!normal.contains("Ctrl+D"));
+        assert!(!normal.contains("^D todos"));
+
+        assert!(handle_shortcut_help_key(
+            KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE),
+            &mut app,
+        ));
+        assert!(app.shortcut_help);
+        assert!(handle_shortcut_help_key(
+            KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE),
+            &mut app,
+        ));
+        assert!(app.composer.text.is_empty());
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let help: String = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect();
+        assert!(help.contains("Conversation shortcuts"));
+        assert!(help.contains("Ctrl+D: todos"));
+
+        assert!(handle_shortcut_help_key(
+            KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
+            &mut app,
+        ));
+        assert!(!app.shortcut_help);
     }
 
     #[test]
