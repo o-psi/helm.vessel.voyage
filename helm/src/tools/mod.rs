@@ -188,6 +188,12 @@ impl ToolRegistry {
     pub fn definitions(&self) -> Vec<ToolDefinition> {
         self.tools.values().map(|t| t.definition()).collect()
     }
+    pub fn retain_allowed(&mut self, allowed: &std::collections::BTreeSet<String>) {
+        self.tools.retain(|name, _| allowed.contains(name));
+        if !allowed.contains("process") {
+            self.terminals = None;
+        }
+    }
     pub async fn execute(
         &self,
         name: &str,

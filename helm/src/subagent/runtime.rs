@@ -96,6 +96,7 @@ pub enum SubagentEventKind {
     FollowUpQueued,
     Completed { result: SubagentResult },
     Failed { error: String },
+    TimedOut,
     Cancelled,
 }
 
@@ -157,7 +158,7 @@ impl SubagentRuntime {
                 "runtime limits must be greater than zero".into(),
             ));
         }
-        let (events, _) = broadcast::channel(limits.event_history.min(4096).max(16));
+        let (events, _) = broadcast::channel(limits.event_history.clamp(16, 4096));
         Ok(Self {
             inner: Arc::new(Inner {
                 executor,
@@ -170,6 +171,19 @@ impl SubagentRuntime {
                 store,
             }),
         })
+    }
+
+    /// Opens a durable runtime and explicitly reconciles executions left live by a prior process.
+    pub async fn new_persistent(
+        executor: Arc<dyn SubagentExecutor>,
+        limits: RuntimeLimits,
+        store: AgentTreeStore,
+    ) -> Result<Self, RuntimeError> {
+        store
+            .recover_after_restart()
+            .await
+            .map_err(|error| RuntimeError::Persistence(error.to_string()))?;
+        Self::new(executor, limits, Some(store))
     }
 
     pub fn subscribe(&self) -> broadcast::Receiver<SubagentEvent> {
@@ -219,16 +233,29 @@ impl SubagentRuntime {
                 .policy
                 .validate_child(&request.policy)
                 .map_err(|e| RuntimeError::Invalid(e.to_string()))?;
-            let children = self.tree(Some(parent)).await;
-            if children.len() >= parent_record.budget.max_children as usize {
-                return Err(RuntimeError::Capacity(
-                    parent_record.budget.max_children as usize,
-                ));
-            }
         }
         let mut agents = self.inner.agents.write().await;
         if agents.len() >= self.inner.limits.max_agents {
             return Err(RuntimeError::Capacity(self.inner.limits.max_agents));
+        }
+        if let Some(parent) = request.parent_id {
+            let max_children = agents
+                .get(&parent)
+                .expect("parent existence checked while retained agents are never removed")
+                .record
+                .read()
+                .await
+                .budget
+                .max_children as usize;
+            let mut child_count = 0;
+            for control in agents.values() {
+                if control.record.read().await.parent_id == Some(parent) {
+                    child_count += 1;
+                }
+            }
+            if child_count >= max_children {
+                return Err(RuntimeError::Capacity(max_children));
+            }
         }
         let id = AgentId::new();
         let now = Utc::now();
@@ -297,7 +324,7 @@ impl SubagentRuntime {
             id,
             task: request.task,
             policy: request.policy,
-            budget: request.budget,
+            budget: request.budget.clone(),
             worktree: request.worktree,
             cancellation: control.cancel.clone(),
             inbox,
@@ -306,12 +333,22 @@ impl SubagentRuntime {
                 id,
             },
         };
-        let result = tokio::select! { _=control.cancel.cancelled()=>None, r=self.inner.executor.execute(context)=>Some(r) };
+        enum End {
+            Cancelled,
+            TimedOut,
+            Result(Result<SubagentResult, String>),
+        }
+        let result = tokio::select! {
+            _=control.cancel.cancelled()=>End::Cancelled,
+            _=tokio::time::sleep(request.budget.runtime())=>End::TimedOut,
+            r=self.inner.executor.execute(context)=>End::Result(r)
+        };
         drop(permit);
         match result {
-            None => self.finish_cancelled(id, &control).await,
-            Some(Ok(value)) => self.finish_completed(id, &control, value).await,
-            Some(Err(error)) => self.finish_failed(id, &control, error).await,
+            End::Cancelled => self.finish_cancelled(id, &control).await,
+            End::TimedOut => self.finish_timed_out(id, &control).await,
+            End::Result(Ok(value)) => self.finish_completed(id, &control, value).await,
+            End::Result(Err(error)) => self.finish_failed(id, &control, error).await,
         }
     }
 
@@ -329,10 +366,19 @@ impl SubagentRuntime {
     }
     pub async fn cancel(&self, id: AgentId) -> Result<(), RuntimeError> {
         let c = self.control(id).await?;
-        if c.record.read().await.status.is_terminal() {
-            return Ok(());
+        if !c.record.read().await.status.is_terminal() {
+            c.cancel.cancel();
         }
-        c.cancel.cancel();
+        let descendants: Vec<_> = self
+            .list()
+            .await
+            .into_iter()
+            .filter(|record| record.parent_id == Some(id))
+            .map(|record| record.id)
+            .collect();
+        for child in descendants {
+            Box::pin(self.cancel(child)).await?;
+        }
         Ok(())
     }
     pub async fn send_message(
@@ -351,13 +397,39 @@ impl SubagentRuntime {
         &self,
         id: AgentId,
         message: impl Into<String>,
-    ) -> Result<(), RuntimeError> {
-        self.send(
-            id,
-            InboxMessage::FollowUp(message.into()),
-            SubagentEventKind::FollowUpQueued,
-        )
+    ) -> Result<AgentId, RuntimeError> {
+        let message = message.into();
+        let record = self.get(id).await?;
+        if !record.status.is_terminal() {
+            self.send(
+                id,
+                InboxMessage::FollowUp(message),
+                SubagentEventKind::FollowUpQueued,
+            )
+            .await?;
+            return Ok(id);
+        }
+        self.spawn(SpawnRequest {
+            parent_id: Some(id),
+            name: format!("{}-follow-up", record.name),
+            task: message,
+            policy: record.policy.clone(),
+            budget: record.budget.clone(),
+            worktree: record.worktree,
+            branch: record.branch,
+        })
         .await
+    }
+
+    pub async fn wait_many(
+        &self,
+        ids: &[AgentId],
+    ) -> Result<Vec<Result<SubagentResult, String>>, RuntimeError> {
+        let mut results = Vec::with_capacity(ids.len());
+        for id in ids {
+            results.push(self.wait(*id).await?);
+        }
+        Ok(results)
     }
     async fn send(
         &self,
@@ -444,6 +516,21 @@ impl SubagentRuntime {
         let _ = c.outcome.send(Some(Err(error)));
         self.emit(id, SubagentEventKind::Cancelled).await;
     }
+    async fn finish_timed_out(&self, id: AgentId, c: &Control) {
+        {
+            let mut r = c.record.write().await;
+            if r.status.is_terminal() {
+                return;
+            }
+            r.status = AgentStatus::TimedOut;
+            r.error = Some("runtime budget exhausted".into());
+            r.finished_at = Some(Utc::now());
+            r.updated_at = Utc::now();
+        }
+        self.persist(c).await;
+        let _ = c.outcome.send(Some(Err("runtime budget exhausted".into())));
+        self.emit(id, SubagentEventKind::TimedOut).await;
+    }
     async fn persist(&self, c: &Control) {
         if let Some(store) = &self.inner.store {
             let record = c.record.read().await.clone();
@@ -472,47 +559,198 @@ impl SubagentRuntime {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{collections::BTreeSet, sync::atomic::{AtomicUsize, Ordering}};
+    use std::{
+        collections::BTreeSet,
+        sync::atomic::{AtomicUsize, Ordering},
+    };
     use tokio::sync::Notify;
 
-    struct GateExecutor { entered: AtomicUsize, active: AtomicUsize, peak: AtomicUsize, gate: Notify }
-    impl GateExecutor { fn new()->Self{Self{entered:AtomicUsize::new(0),active:AtomicUsize::new(0),peak:AtomicUsize::new(0),gate:Notify::new()}} }
-    #[async_trait]
-    impl SubagentExecutor for GateExecutor {
-        async fn execute(&self, mut context:ExecutionContext)->Result<SubagentResult,String>{
-            self.entered.fetch_add(1,Ordering::SeqCst);let active=self.active.fetch_add(1,Ordering::SeqCst)+1;self.peak.fetch_max(active,Ordering::SeqCst);
-            context.progress(format!("started {}",context.id)).await;
-            tokio::select! {_=self.gate.notified()=>{}, message=context.recv()=>if let Some(InboxMessage::Message(text))=message {context.progress(text).await}}
-            self.active.fetch_sub(1,Ordering::SeqCst);Ok(SubagentResult{summary:"done".into()})
+    struct GateExecutor {
+        entered: AtomicUsize,
+        active: AtomicUsize,
+        peak: AtomicUsize,
+        gate: Notify,
+    }
+    impl GateExecutor {
+        fn new() -> Self {
+            Self {
+                entered: AtomicUsize::new(0),
+                active: AtomicUsize::new(0),
+                peak: AtomicUsize::new(0),
+                gate: Notify::new(),
+            }
         }
     }
-    fn policy()->AgentPolicy{let budget=budget();AgentPolicy{readable_roots:vec![],writable_roots:vec![],allowed_tools:BTreeSet::new(),approval:super::super::ApprovalPolicy::Deny,budget}}
-    fn budget()->AgentBudget{AgentBudget{max_turns:10,max_tokens:1000,max_runtime_secs:60,max_children:8,max_terminals:1}}
-    fn request(name:&str)->SpawnRequest{SpawnRequest{parent_id:None,name:name.into(),task:"task".into(),policy:policy(),budget:budget(),worktree:None,branch:None}}
-
-    #[tokio::test]
-    async fn enforces_concurrency_and_cancels_queued_work(){
-        let executor=Arc::new(GateExecutor::new());let runtime=SubagentRuntime::new(executor.clone(),RuntimeLimits{max_concurrency:1,max_agents:3,event_history:64},None).unwrap();
-        let first=runtime.spawn(request("first")).await.unwrap();let second=runtime.spawn(request("second")).await.unwrap();
-        tokio::time::timeout(std::time::Duration::from_secs(1),async{while executor.entered.load(Ordering::SeqCst)<1{tokio::task::yield_now().await}}).await.unwrap();
-        runtime.cancel(second).await.unwrap();assert_eq!(runtime.wait(second).await.unwrap(),Err("cancelled".into()));assert_eq!(executor.entered.load(Ordering::SeqCst),1);
-        executor.gate.notify_one();assert_eq!(runtime.wait(first).await.unwrap().unwrap().summary,"done");assert_eq!(executor.peak.load(Ordering::SeqCst),1);
+    #[async_trait]
+    impl SubagentExecutor for GateExecutor {
+        async fn execute(&self, mut context: ExecutionContext) -> Result<SubagentResult, String> {
+            self.entered.fetch_add(1, Ordering::SeqCst);
+            let active = self.active.fetch_add(1, Ordering::SeqCst) + 1;
+            self.peak.fetch_max(active, Ordering::SeqCst);
+            context.progress(format!("started {}", context.id)).await;
+            tokio::select! {_=self.gate.notified()=>{}, message=context.recv()=>if let Some(InboxMessage::Message(text))=message {context.progress(text).await}}
+            self.active.fetch_sub(1, Ordering::SeqCst);
+            Ok(SubagentResult {
+                summary: "done".into(),
+            })
+        }
+    }
+    fn policy() -> AgentPolicy {
+        let budget = budget();
+        AgentPolicy {
+            readable_roots: vec![],
+            writable_roots: vec![],
+            allowed_tools: BTreeSet::new(),
+            approval: super::super::ApprovalPolicy::Deny,
+            budget,
+        }
+    }
+    fn budget() -> AgentBudget {
+        AgentBudget {
+            max_turns: 10,
+            max_tokens: 1000,
+            max_runtime_secs: 60,
+            max_children: 8,
+            max_terminals: 1,
+        }
+    }
+    fn request(name: &str) -> SpawnRequest {
+        SpawnRequest {
+            parent_id: None,
+            name: name.into(),
+            task: "task".into(),
+            policy: policy(),
+            budget: budget(),
+            worktree: None,
+            branch: None,
+        }
     }
 
     #[tokio::test]
-    async fn messages_progress_events_and_terminal_rules_are_structured(){
-        let executor=Arc::new(GateExecutor::new());let runtime=SubagentRuntime::new(executor.clone(),RuntimeLimits::default(),None).unwrap();let id=runtime.spawn(request("worker")).await.unwrap();
-        tokio::time::timeout(std::time::Duration::from_secs(1),async{while runtime.get(id).await.unwrap().status!=AgentStatus::Running{tokio::task::yield_now().await}}).await.unwrap();
-        runtime.send_message(id,"checkpoint").await.unwrap();assert!(runtime.wait(id).await.unwrap().is_ok());
-        assert!(matches!(runtime.send_message(id,"late").await,Err(RuntimeError::Terminal(_))));
-        let events=runtime.events_after(0).await;assert!(events.windows(2).all(|w|w[0].sequence<w[1].sequence));
-        assert!(events.iter().any(|e|matches!(&e.kind,SubagentEventKind::Progress{text} if text=="checkpoint")));
-        assert_eq!(runtime.get(id).await.unwrap().status,AgentStatus::Completed);
+    async fn enforces_concurrency_and_cancels_queued_work() {
+        let executor = Arc::new(GateExecutor::new());
+        let runtime = SubagentRuntime::new(
+            executor.clone(),
+            RuntimeLimits {
+                max_concurrency: 1,
+                max_agents: 3,
+                event_history: 64,
+            },
+            None,
+        )
+        .unwrap();
+        let first = runtime.spawn(request("first")).await.unwrap();
+        let second = runtime.spawn(request("second")).await.unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            while executor.entered.load(Ordering::SeqCst) < 1 {
+                tokio::task::yield_now().await
+            }
+        })
+        .await
+        .unwrap();
+        runtime.cancel(second).await.unwrap();
+        assert_eq!(runtime.wait(second).await.unwrap(), Err("cancelled".into()));
+        assert_eq!(executor.entered.load(Ordering::SeqCst), 1);
+        executor.gate.notify_one();
+        assert_eq!(runtime.wait(first).await.unwrap().unwrap().summary, "done");
+        assert_eq!(executor.peak.load(Ordering::SeqCst), 1);
     }
 
     #[tokio::test]
-    async fn child_policy_and_capacity_are_enforced(){
-        let executor=Arc::new(GateExecutor::new());let runtime=SubagentRuntime::new(executor,RuntimeLimits{max_concurrency:1,max_agents:1,event_history:16},None).unwrap();
-        runtime.spawn(request("one")).await.unwrap();assert_eq!(runtime.spawn(request("two")).await.unwrap_err(),RuntimeError::Capacity(1));
+    async fn messages_progress_events_and_terminal_rules_are_structured() {
+        let executor = Arc::new(GateExecutor::new());
+        let runtime =
+            SubagentRuntime::new(executor.clone(), RuntimeLimits::default(), None).unwrap();
+        let id = runtime.spawn(request("worker")).await.unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            while runtime.get(id).await.unwrap().status != AgentStatus::Running {
+                tokio::task::yield_now().await
+            }
+        })
+        .await
+        .unwrap();
+        runtime.send_message(id, "checkpoint").await.unwrap();
+        assert!(runtime.wait(id).await.unwrap().is_ok());
+        assert!(matches!(
+            runtime.send_message(id, "late").await,
+            Err(RuntimeError::Terminal(_))
+        ));
+        let events = runtime.events_after(0).await;
+        assert!(events.windows(2).all(|w| w[0].sequence < w[1].sequence));
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(&e.kind,SubagentEventKind::Progress{text} if text=="checkpoint"))
+        );
+        assert_eq!(
+            runtime.get(id).await.unwrap().status,
+            AgentStatus::Completed
+        );
+    }
+
+    #[tokio::test]
+    async fn child_policy_and_capacity_are_enforced() {
+        let executor = Arc::new(GateExecutor::new());
+        let runtime = SubagentRuntime::new(
+            executor,
+            RuntimeLimits {
+                max_concurrency: 1,
+                max_agents: 1,
+                event_history: 16,
+            },
+            None,
+        )
+        .unwrap();
+        runtime.spawn(request("one")).await.unwrap();
+        assert_eq!(
+            runtime.spawn(request("two")).await.unwrap_err(),
+            RuntimeError::Capacity(1)
+        );
+    }
+
+    #[tokio::test]
+    async fn runtime_budget_produces_a_typed_timeout() {
+        let executor = Arc::new(GateExecutor::new());
+        let runtime = SubagentRuntime::new(executor, RuntimeLimits::default(), None).unwrap();
+        let mut request = request("short");
+        request.budget.max_runtime_secs = 0;
+        let id = runtime.spawn(request).await.unwrap();
+        assert_eq!(
+            runtime.wait(id).await.unwrap(),
+            Err("runtime budget exhausted".into())
+        );
+        assert_eq!(runtime.get(id).await.unwrap().status, AgentStatus::TimedOut);
+        assert!(
+            runtime
+                .events_after(0)
+                .await
+                .iter()
+                .any(|event| matches!(event.kind, SubagentEventKind::TimedOut))
+        );
+    }
+
+    #[tokio::test]
+    async fn completed_agents_accept_follow_up_as_linked_execution() {
+        let executor = Arc::new(GateExecutor::new());
+        let runtime =
+            SubagentRuntime::new(executor.clone(), RuntimeLimits::default(), None).unwrap();
+        let parent = runtime.spawn(request("original")).await.unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            while executor.entered.load(Ordering::SeqCst) < 1 {
+                tokio::task::yield_now().await
+            }
+        })
+        .await
+        .unwrap();
+        executor.gate.notify_one();
+        runtime.wait(parent).await.unwrap().unwrap();
+        let child = runtime
+            .follow_up(parent, "continue the work")
+            .await
+            .unwrap();
+        assert_ne!(child, parent);
+        assert_eq!(runtime.get(child).await.unwrap().parent_id, Some(parent));
+        executor.gate.notify_one();
+        runtime.wait(child).await.unwrap().unwrap();
     }
 }

@@ -118,11 +118,12 @@ impl Tool for SubagentTool {
                 json!({"id":id,"queued":true})
             }
             Args::FollowUp { id, message } => {
-                self.runtime
+                let follow_up_id = self
+                    .runtime
                     .follow_up(AgentId(id), message)
                     .await
                     .map_err(failed)?;
-                json!({"id":id,"queued":true})
+                json!({"id":follow_up_id,"queued":true})
             }
         };
         serde_json::to_string(&value).map_err(json_error)

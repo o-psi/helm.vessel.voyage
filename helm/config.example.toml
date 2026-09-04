@@ -13,6 +13,9 @@ command_timeout_secs = 120
 max_output_bytes = 131072
 terminal_max_count = 16
 terminal_max_unread_bytes = 8388608
+subagent_max_concurrency = 4
+subagent_max_agents = 64
+subagent_event_history = 2048
 approval = "on-risk"
 # Remote Vessel tasks cannot display prompts. "deny" fails approval-required tools
 # immediately; "allow" is an explicit high-trust override.

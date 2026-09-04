@@ -36,6 +36,9 @@ pub struct Config {
     pub max_output_bytes: usize,
     pub terminal_max_count: usize,
     pub terminal_max_unread_bytes: usize,
+    pub subagent_max_concurrency: usize,
+    pub subagent_max_agents: usize,
+    pub subagent_event_history: usize,
     pub approval: ApprovalMode,
     pub unattended_approval: UnattendedApprovalMode,
     pub workspace: Option<PathBuf>,
@@ -93,6 +96,9 @@ impl Default for Config {
             max_output_bytes: 128 * 1024,
             terminal_max_count: 16,
             terminal_max_unread_bytes: 8 * 1024 * 1024,
+            subagent_max_concurrency: 4,
+            subagent_max_agents: 64,
+            subagent_event_history: 2048,
             approval: ApprovalMode::OnRisk,
             unattended_approval: UnattendedApprovalMode::Deny,
             workspace: None,
@@ -162,6 +168,12 @@ impl Config {
         }
         if self.terminal_max_count == 0 || self.terminal_max_unread_bytes < 1024 {
             bail!("terminal limits require a positive count and at least 1024 unread bytes");
+        }
+        if self.subagent_max_concurrency == 0
+            || self.subagent_max_agents == 0
+            || self.subagent_event_history == 0
+        {
+            bail!("subagent limits must be greater than zero");
         }
         if self.provider_retry_attempts == 0 {
             bail!("provider_retry_attempts must be greater than zero");

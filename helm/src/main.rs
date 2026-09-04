@@ -9,6 +9,10 @@ use helm::{
     policy::Policy,
     provider,
     session::{Session, SessionStore},
+    subagent::{
+        AgentBudget, AgentPolicy, ApprovalPolicy, ExecutionContext, RuntimeLimits,
+        SubagentExecutor, SubagentResult, SubagentRuntime, SubagentTool,
+    },
     tools::{
         ApprovalOutcome, ApprovalRequest, Approver, InteractionMode, Redactor, ToolContext,
         ToolRegistry, UnattendedApprover,
@@ -495,8 +499,120 @@ fn probe_codex_subscription(command: &str) -> CodexSubscriptionProbe {
     }
 }
 
+struct CliSubagentExecutor {
+    config: Config,
+    workspace: PathBuf,
+}
+#[async_trait]
+impl SubagentExecutor for CliSubagentExecutor {
+    async fn execute(
+        &self,
+        context: ExecutionContext,
+    ) -> std::result::Result<SubagentResult, String> {
+        context.progress("initializing provider and tools").await;
+        let mut config = self.config.clone();
+        config.workspace = Some(
+            context
+                .worktree
+                .clone()
+                .unwrap_or_else(|| self.workspace.clone()),
+        );
+        config.allow_read = context.policy.readable_roots.clone();
+        config.allow_write = context.policy.writable_roots.clone();
+        config.max_turns = (context.budget.max_turns as usize).min(config.max_turns);
+        config.max_tokens =
+            (context.budget.max_tokens.min(u32::MAX as u64) as u32).min(config.max_tokens);
+        let workspace = config.resolve_workspace(None).map_err(|e| e.to_string())?;
+        let policy = Arc::new(Policy::new(&config, workspace.clone()).map_err(|e| e.to_string())?);
+        let tool_context = ToolContext {
+            policy,
+            approver: Arc::new(UnattendedApprover { allow: false }),
+            timeout: config.timeout(),
+            max_output_bytes: config.max_output_bytes,
+            environment: tool_environment(&config),
+            cancellation: context.cancellation.clone(),
+            execution_id: uuid::Uuid::new_v4(),
+            interaction: InteractionMode::Unattended,
+            redactor: redactor(&config),
+        };
+        let mut tools = build_tools(&config, None)
+            .await
+            .map_err(|e| e.to_string())?;
+        tools.retain_allowed(&context.policy.allowed_tools);
+        let agent = Agent::new(
+            provider::from_config(&config, workspace).map_err(|e| e.to_string())?,
+            tools,
+            tool_context,
+            Arc::new(helm::agent::SilentSink),
+            config.model.clone(),
+            config.system_prompt.clone(),
+            config.max_turns,
+            config.max_tokens,
+            config.temperature,
+        )
+        .with_retry_policy(RetryPolicy {
+            max_attempts: config.provider_retry_attempts,
+            initial_delay: std::time::Duration::from_millis(config.provider_retry_initial_ms),
+            max_delay: std::time::Duration::from_millis(config.provider_retry_max_ms),
+        });
+        let outcome = agent
+            .run_with_cancel(Vec::new(), context.task, context.cancellation)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(SubagentResult {
+            summary: outcome.answer,
+        })
+    }
+}
+
+async fn build_subagents(config: &Config, workspace: &std::path::Path) -> Result<SubagentTool> {
+    let standard = ToolRegistry::standard();
+    let allowed_tools = standard
+        .definitions()
+        .into_iter()
+        .map(|definition| definition.name)
+        .collect();
+    let budget = AgentBudget {
+        max_turns: config.max_turns.min(u32::MAX as usize) as u32,
+        max_tokens: config.max_tokens as u64,
+        max_runtime_secs: config.command_timeout_secs,
+        max_children: 8,
+        max_terminals: config.terminal_max_count.min(u32::MAX as usize) as u32,
+    };
+    let policy = AgentPolicy {
+        readable_roots: std::iter::once(workspace.to_path_buf())
+            .chain(config.allow_read.clone())
+            .collect(),
+        writable_roots: std::iter::once(workspace.to_path_buf())
+            .chain(config.allow_write.clone())
+            .collect(),
+        allowed_tools,
+        approval: ApprovalPolicy::Deny,
+        budget: budget.clone(),
+    };
+    let executor = Arc::new(CliSubagentExecutor {
+        config: config.clone(),
+        workspace: workspace.to_path_buf(),
+    });
+    let store = helm::subagent::AgentTreeStore::new(
+        helm::config::default_data_dir().join("subagents.json"),
+    );
+    let runtime = SubagentRuntime::new_persistent(
+        executor,
+        RuntimeLimits {
+            max_concurrency: config.subagent_max_concurrency,
+            max_agents: config.subagent_max_agents,
+            event_history: config.subagent_event_history,
+        },
+        store,
+    )
+    .await
+    .map_err(anyhow::Error::msg)?;
+    Ok(SubagentTool::new(Arc::new(runtime), policy, budget))
+}
+
 async fn build_agent(config: &Config, workspace: PathBuf, attended: bool) -> Result<Agent> {
-    let policy = Arc::new(Policy::new(config, workspace)?);
+    let policy = Arc::new(Policy::new(config, workspace.clone())?);
     let terminal = Arc::new(Terminal::default());
     let approver: Arc<dyn Approver> = if attended {
         terminal.clone()
@@ -520,7 +636,8 @@ async fn build_agent(config: &Config, workspace: PathBuf, attended: bool) -> Res
         },
         redactor: redactor(config),
     };
-    let tools = build_tools(config).await?;
+    let subagents = build_subagents(config, &workspace).await?;
+    let tools = build_tools(config, Some(subagents)).await?;
     Ok(Agent::new(
         provider::from_config(config, context.policy.workspace().to_owned())?,
         tools,
@@ -592,7 +709,8 @@ async fn tui_chat(
         interaction: InteractionMode::Attended,
         redactor: redactor(&config),
     };
-    let tools = build_tools(&config).await?;
+    let subagents = build_subagents(&config, &session.workspace).await?;
+    let tools = build_tools(&config, Some(subagents)).await?;
     let terminals: Arc<dyn helm::terminal::InteractiveTerminals> =
         Arc::new(tools.terminals().unwrap_or_default());
     let agent = Arc::new(
@@ -616,11 +734,14 @@ async fn tui_chat(
     helm::tui::run(agent, store, session, receiver, bridge.sender(), terminals).await
 }
 
-async fn build_tools(config: &Config) -> Result<ToolRegistry> {
+async fn build_tools(config: &Config, subagents: Option<SubagentTool>) -> Result<ToolRegistry> {
     let mut tools = ToolRegistry::standard_with_terminal_limits(
         config.terminal_max_count,
         config.terminal_max_unread_bytes,
     );
+    if let Some(tool) = subagents {
+        tools.register_subagents(tool)?;
+    }
     for (name, server) in &config.mcp_servers {
         let mut environment = tool_environment(config);
         environment.extend(server.env.clone());
