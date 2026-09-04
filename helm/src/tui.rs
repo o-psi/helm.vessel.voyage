@@ -560,7 +560,11 @@ async fn handle_ui_event(
                     store.save(&mut app.session).await?;
                     app.status = format!("Ready · {} model turn(s)", outcome.turns);
                 }
-                Err(error) => app.status = format!("Error: {error}"),
+                Err(error) => {
+                    let detail = compact_line(&error, 1_000);
+                    app.activity.push(format!("✗ provider error: {detail}"));
+                    app.status = format!("Error: {}", compact_line(&error, 120));
+                }
             }
             app.streaming_response.clear();
             preserve_manual_anchor(app, before);
@@ -2634,6 +2638,16 @@ fn one_line(text: &str, max: usize) -> String {
     output
 }
 
+fn compact_line(text: &str, max: usize) -> String {
+    let safe = display_safe(text);
+    let compact = safe.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut output = compact.chars().take(max).collect::<String>();
+    if compact.chars().count() > max {
+        output.push('…');
+    }
+    output
+}
+
 fn cursor_position(text: &str, width: u16) -> (u16, u16) {
     let width = width.max(1);
     let mut row = 0_u16;
@@ -3402,6 +3416,13 @@ mod tests {
     #[test]
     fn truncation_uses_character_boundaries() {
         assert_eq!(one_line("αβγδε", 3), "αβγ…");
+        assert_eq!(
+            compact_line(
+                "HTTP 400: {\n  \"error\": {\n    \"message\": \"No tool call found\"\n  }\n}",
+                200,
+            ),
+            "HTTP 400: { \"error\": { \"message\": \"No tool call found\" } }"
+        );
     }
 
     #[test]

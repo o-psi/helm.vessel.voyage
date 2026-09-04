@@ -422,7 +422,12 @@ fn runtime_guidance(base: &str, tools: &[ToolDefinition]) -> String {
          list overrides any provider-host, prior-session, plugin, skill, app, MCP, or built-in \
          capability guidance. Never claim access to a tool that is absent from this list. If the \
          user asks what tools are available, report these exact call names and describe them from \
-         this list. Do not translate them into names from another harness.\n\n{inventory}"
+         this list. A capability is not a callable tool unless its exact name appears below. In \
+         particular, do not invent orchestration wrappers such as `multi_tool_use.parallel`, web \
+         search, browser, or provider-host functions. Before answering a tool-inventory question, \
+         check every name in the answer against this list and omit any unmatched name. Do not \
+         translate tools into names from another harness. The local `/tools` command is the \
+         operator's authoritative inventory.\n\n{inventory}"
     )
 }
 
@@ -613,6 +618,8 @@ mod tests {
         }];
         let guidance = runtime_guidance("base", &tools);
         assert!(guidance.contains("`real_tool`: Does real work."));
+        assert!(guidance.contains("do not invent orchestration wrappers"));
+        assert!(guidance.contains("local `/tools` command"));
         assert!(!guidance.contains("functions.exec"));
         assert!(!guidance.contains("collaboration.spawn_agent"));
     }

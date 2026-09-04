@@ -127,7 +127,41 @@ fn encode_message(message: &Message) -> Result<Vec<Value>, ProviderError> {
     if message.role == Role::Assistant
         && let Some(state) = message.provider_state.as_ref()
     {
-        return decode_replay(state);
+        let mut replay = decode_replay(state)?;
+        // Some Responses-compatible streaming endpoints omit `response.output`
+        // from the terminal event. Older Helm sessions consequently contain an
+        // empty replay envelope even though the neutral message still has text
+        // or tool calls. Reconstruct any omitted neutral items so a following
+        // function_call_output can never be orphaned.
+        if !message.content.is_empty()
+            && !replay
+                .iter()
+                .any(|item| item.get("type").and_then(Value::as_str) == Some("message"))
+        {
+            let index = replay
+                .iter()
+                .position(|item| item.get("type").and_then(Value::as_str) == Some("function_call"))
+                .unwrap_or(replay.len());
+            replay.insert(
+                index,
+                json!({"type":"message","role":"assistant","content":[{"type":"output_text","text":message.content}]}),
+            );
+        }
+        for call in &message.tool_calls {
+            let present = replay.iter().any(|item| {
+                item.get("type").and_then(Value::as_str) == Some("function_call")
+                    && item.get("call_id").and_then(Value::as_str) == Some(call.id.as_str())
+            });
+            if !present {
+                replay.push(json!({
+                    "type":"function_call",
+                    "call_id":call.id,
+                    "name":call.name,
+                    "arguments":call.arguments.to_string()
+                }));
+            }
+        }
+        return Ok(replay);
     }
     let role = match message.role {
         Role::System => "system",
@@ -353,7 +387,7 @@ struct Assembly {
     content: String,
     calls: std::collections::BTreeMap<usize, Call>,
     usage: Usage,
-    output: Option<Vec<Value>>,
+    output: std::collections::BTreeMap<usize, Value>,
 }
 #[derive(Default)]
 struct Call {
@@ -381,6 +415,7 @@ where
                     "response.output_text.delta"=>if let Some(delta)=event.get("delta").and_then(Value::as_str){assembly.content.push_str(delta);yield ProviderStreamEvent::Delta(ProviderDelta::Text(delta.into()));},
                     "response.output_item.added"=>if event.pointer("/item/type").and_then(Value::as_str)==Some("function_call"){let index=output_index(&event);let call=assembly.calls.entry(index).or_default();call.id=event.pointer("/item/call_id").and_then(Value::as_str).unwrap_or_default().into();call.name=event.pointer("/item/name").and_then(Value::as_str).unwrap_or_default().into();yield ProviderStreamEvent::Delta(ProviderDelta::ToolCall{index,id:Some(call.id.clone()),name:Some(call.name.clone()),arguments:String::new()});},
                     "response.function_call_arguments.delta"=>{let index=output_index(&event);let call=assembly.calls.entry(index).or_default();let delta=event.get("delta").and_then(Value::as_str).unwrap_or_default();call.arguments.push_str(delta);yield ProviderStreamEvent::Delta(ProviderDelta::ToolCall{index,id:None,name:None,arguments:delta.into()});},
+                    "response.output_item.done"=>merge_output_item(&event,&mut assembly)?,
                     "response.completed"=>{if let Some(response)=event.get("response"){merge_final(response,&mut assembly)?;}yield ProviderStreamEvent::Completed(finish(assembly)?);return},
                     "response.failed"|"response.incomplete"|"response.cancelled"|"error"=>Err(decode_stream_error(&event))?,
                     _=>{}
@@ -389,6 +424,15 @@ where
         }
         Err(ProviderError::InvalidResponse("OpenAI Responses stream ended before response.completed".into()))?;
     }
+}
+fn merge_output_item(event: &Value, assembly: &mut Assembly) -> Result<(), ProviderError> {
+    let item = event.get("item").cloned().ok_or_else(|| {
+        ProviderError::InvalidResponse("Responses output_item.done omitted item".into())
+    })?;
+    let index = output_index(event);
+    merge_call(index, &item, assembly);
+    assembly.output.insert(index, item);
+    Ok(())
 }
 fn output_index(event: &Value) -> usize {
     event
@@ -400,7 +444,6 @@ fn merge_final(response: &Value, assembly: &mut Assembly) -> Result<(), Provider
     if let Some(usage) = response.get("usage") {
         assembly.usage = decode_usage(usage)
     }
-    assembly.output = response.get("output").and_then(Value::as_array).cloned();
     if assembly.content.is_empty() {
         assembly.content = output_text(response)
     }
@@ -411,35 +454,43 @@ fn merge_final(response: &Value, assembly: &mut Assembly) -> Result<(), Provider
         .flatten()
         .enumerate()
     {
-        if item.get("type").and_then(Value::as_str) == Some("function_call") {
-            let call = assembly.calls.entry(index).or_default();
-            if call.id.is_empty() {
-                call.id = item
-                    .get("call_id")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .into()
-            }
-            if call.name.is_empty() {
-                call.name = item
-                    .get("name")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .into()
-            }
-            if call.arguments.is_empty() {
-                call.arguments = item
-                    .get("arguments")
-                    .and_then(Value::as_str)
-                    .unwrap_or("{}")
-                    .into()
-            }
-        }
+        merge_call(index, item, assembly);
+        assembly.output.insert(index, item.clone());
     }
     Ok(())
 }
+fn merge_call(index: usize, item: &Value, assembly: &mut Assembly) {
+    if item.get("type").and_then(Value::as_str) != Some("function_call") {
+        return;
+    }
+    let call = assembly.calls.entry(index).or_default();
+    if call.id.is_empty() {
+        call.id = item
+            .get("call_id")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .into()
+    }
+    if call.name.is_empty() {
+        call.name = item
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .into()
+    }
+    if call.arguments.is_empty() {
+        call.arguments = item
+            .get("arguments")
+            .and_then(Value::as_str)
+            .unwrap_or("{}")
+            .into()
+    }
+}
 fn finish(assembly: Assembly) -> Result<ModelResponse, ProviderError> {
-    let provider_state = assembly.output.as_deref().map(make_replay).transpose()?;
+    let output = assembly.output.into_values().collect::<Vec<_>>();
+    let provider_state = (!output.is_empty())
+        .then(|| make_replay(&output))
+        .transpose()?;
     let calls = assembly
         .calls
         .into_values()
@@ -479,7 +530,6 @@ fn finish(assembly: Assembly) -> Result<ModelResponse, ProviderError> {
 pub(crate) fn decode_response(value: Value) -> Result<ModelResponse, ProviderError> {
     let mut assembly = Assembly {
         usage: value.get("usage").map(decode_usage).unwrap_or_default(),
-        output: value.get("output").and_then(Value::as_array).cloned(),
         ..Assembly::default()
     };
     for (index, item) in value
@@ -489,6 +539,7 @@ pub(crate) fn decode_response(value: Value) -> Result<ModelResponse, ProviderErr
         .flatten()
         .enumerate()
     {
+        assembly.output.insert(index, item.clone());
         match item.get("type").and_then(Value::as_str) {
             Some("message") => {
                 for content in item
@@ -647,14 +698,53 @@ mod tests {
             true,
         ).unwrap();
         assert_eq!(body["input"][1]["type"], "reasoning");
-        assert_eq!(body["input"][2]["type"], "function_call");
-        assert_eq!(body["input"][3]["type"], "function_call_output");
+        assert_eq!(body["input"][2]["type"], "message");
+        assert_eq!(body["input"][3]["type"], "function_call");
+        assert_eq!(body["input"][4]["type"], "function_call_output");
         assert_eq!(body["max_output_tokens"], 20);
         assert_eq!(body["instructions"], "be careful");
         assert_eq!(body["store"], false);
         assert_eq!(body["tool_choice"], "auto");
         assert_eq!(body["parallel_tool_calls"], true);
         assert_eq!(body["include"][0], "reasoning.encrypted_content");
+    }
+
+    #[test]
+    fn empty_legacy_replay_reconstructs_neutral_assistant_items() {
+        let body = request_body(
+            ModelRequest {
+                model: "gpt-5".into(),
+                messages: vec![
+                    Message {
+                        role: Role::Assistant,
+                        content: "working".into(),
+                        tool_call_id: None,
+                        tool_calls: vec![ToolCall {
+                            id: "call_legacy".into(),
+                            name: "shell".into(),
+                            arguments: json!({"command":"pwd"}),
+                        }],
+                        tool_success: None,
+                        provider_state: Some(json!({
+                            "kind":"openai_responses_replay",
+                            "version":1,
+                            "items":[]
+                        })),
+                    },
+                    Message::tool("call_legacy", "/workspace"),
+                ],
+                tools: vec![],
+                temperature: None,
+                max_tokens: None,
+            },
+            false,
+        )
+        .unwrap();
+        assert_eq!(body["input"][0]["type"], "message");
+        assert_eq!(body["input"][1]["type"], "function_call");
+        assert_eq!(body["input"][1]["call_id"], "call_legacy");
+        assert_eq!(body["input"][2]["type"], "function_call_output");
+        assert_eq!(body["input"][2]["call_id"], "call_legacy");
     }
     #[test]
     fn decodes_non_streaming_text_tools_and_usage() {
@@ -707,6 +797,47 @@ mod tests {
             completed.message.provider_state.as_ref().unwrap()["items"][0]["type"],
             "reasoning"
         );
+    }
+
+    #[tokio::test]
+    async fn output_item_done_is_replayed_when_completed_omits_output() {
+        let fixture = concat!(
+            "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"function_call\",\"call_id\":\"call_streamed\",\"name\":\"shell\"}}\n\n",
+            "data: {\"type\":\"response.function_call_arguments.delta\",\"output_index\":0,\"delta\":\"{\\\"command\\\":\\\"pwd\\\"}\"}\n\n",
+            "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"function_call\",\"call_id\":\"call_streamed\",\"name\":\"shell\",\"arguments\":\"{\\\"command\\\":\\\"pwd\\\"}\",\"status\":\"completed\"}}\n\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":2,\"output_tokens\":4}}}\n\n"
+        );
+        let events = responses_stream(futures_util::stream::iter(vec![Ok::<_, reqwest::Error>(
+            bytes::Bytes::copy_from_slice(fixture.as_bytes()),
+        )]))
+        .collect::<Vec<_>>()
+        .await;
+        let completed = events
+            .into_iter()
+            .find_map(|event| match event.unwrap() {
+                ProviderStreamEvent::Completed(value) => Some(value),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(completed.message.tool_calls[0].id, "call_streamed");
+        let body = request_body(
+            ModelRequest {
+                model: "gpt-5".into(),
+                messages: vec![
+                    completed.message,
+                    Message::tool("call_streamed", "/workspace"),
+                ],
+                tools: vec![],
+                temperature: None,
+                max_tokens: None,
+            },
+            true,
+        )
+        .unwrap();
+        assert_eq!(body["input"][0]["type"], "function_call");
+        assert_eq!(body["input"][0]["call_id"], "call_streamed");
+        assert_eq!(body["input"][1]["type"], "function_call_output");
+        assert_eq!(body["input"][1]["call_id"], "call_streamed");
     }
     #[tokio::test]
     async fn retryable_stream_errors_remain_typed() {

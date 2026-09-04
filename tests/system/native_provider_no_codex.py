@@ -24,6 +24,10 @@ def completed(output: list[dict[str, object]], input_tokens: int = 3) -> bytes:
     return f"data: {json.dumps(frame)}\n\n".encode()
 
 
+def event(frame: dict[str, object]) -> bytes:
+    return f"data: {json.dumps(frame)}\n\n".encode()
+
+
 class ProviderFixture(BaseHTTPRequestHandler):
     requests: list[dict[str, object]] = []
     model_requests: list[dict[str, object]] = []
@@ -62,21 +66,57 @@ class ProviderFixture(BaseHTTPRequestHandler):
         )
         request_number = len(self.requests)
         if request_number == 1:
-            encoded = completed(
+            # The ChatGPT Responses stream sends authoritative output items in
+            # output_item.done events while response.completed may omit them.
+            # A function result is invalid unless Helm retains this call item.
+            encoded = b"".join(
                 [
-                    {
-                        "type": "reasoning",
-                        "id": "rs_fixture_first",
-                        "encrypted_content": "encrypted-fixture-first",
-                        "summary": [],
-                    },
-                    {
-                        "type": "function_call",
-                        "id": "fc_fixture_first",
-                        "call_id": "call_fixture_first",
-                        "name": "list_directory",
-                        "arguments": '{"path":".","recursive":false}',
-                    },
+                    event(
+                        {
+                            "type": "response.output_item.done",
+                            "output_index": 0,
+                            "item": {
+                                "type": "reasoning",
+                                "id": "rs_fixture_first",
+                                "encrypted_content": "encrypted-fixture-first",
+                                "summary": [],
+                            },
+                        }
+                    ),
+                    event(
+                        {
+                            "type": "response.output_item.added",
+                            "output_index": 1,
+                            "item": {
+                                "type": "function_call",
+                                "id": "fc_fixture_first",
+                                "call_id": "call_fixture_first",
+                                "name": "list_directory",
+                            },
+                        }
+                    ),
+                    event(
+                        {
+                            "type": "response.function_call_arguments.delta",
+                            "output_index": 1,
+                            "delta": '{"path":".","recursive":false}',
+                        }
+                    ),
+                    event(
+                        {
+                            "type": "response.output_item.done",
+                            "output_index": 1,
+                            "item": {
+                                "type": "function_call",
+                                "id": "fc_fixture_first",
+                                "call_id": "call_fixture_first",
+                                "name": "list_directory",
+                                "arguments": '{"path":".","recursive":false}',
+                                "status": "completed",
+                            },
+                        }
+                    ),
+                    completed([], input_tokens=3),
                 ]
             )
         elif request_number == 2:
@@ -286,6 +326,20 @@ def main() -> None:
             assert not codex_marker.exists(), "subscription provider executed codex"
 
         assert len(ProviderFixture.requests) == 4, ProviderFixture.requests
+        second_input = ProviderFixture.requests[1]["body"]["input"]
+        call_index = next(
+            index
+            for index, item in enumerate(second_input)
+            if item.get("type") == "function_call"
+            and item.get("call_id") == "call_fixture_first"
+        )
+        output_index = next(
+            index
+            for index, item in enumerate(second_input)
+            if item.get("type") == "function_call_output"
+            and item.get("call_id") == "call_fixture_first"
+        )
+        assert call_index < output_index, second_input
         for request in ProviderFixture.requests[:3]:
             assert request["authorization"] == "Bearer offline-fixture-not-a-real-secret"
             assert request["account"] is None
