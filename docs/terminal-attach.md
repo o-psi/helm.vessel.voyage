@@ -11,7 +11,7 @@ Press `Ctrl+T` to list all terminals, use the arrow keys to select one, and pres
 keys, function keys, and resize events are forwarded to that terminal. This supports
 interactive shells, SSH, `sudo`, REPLs, pagers, and alternate-screen programs.
 
-Detach with **Ctrl+]**. Detaching, opening another view, or switching sessions never
+Detach with **Ctrl+T** (or **Ctrl+]**). Detaching, opening another view, or switching sessions never
 terminates the terminal or its child process. Termination is a separate, explicit
 runtime operation. The header always displays the detach chord while attached.
 If an agent requests approval while a terminal is attached, Helm returns
@@ -19,7 +19,7 @@ If an agent requests approval while a terminal is attached, Helm returns
 
 For screen readers or terminals which cannot run Helm's full-screen UI, the runtime
 adapter should expose a raw/plain attach command using `PlainDetachFilter`. It copies
-PTY bytes directly between stdio and the selected terminal, reserves Ctrl+] locally,
+PTY bytes directly between stdio and the selected terminal, reserves Ctrl+T and Ctrl+] locally,
 and restores the outer terminal on exit or signal.
 
 ## Runtime integration contract

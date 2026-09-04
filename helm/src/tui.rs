@@ -616,7 +616,7 @@ async fn handle_attached_key(
 }
 
 fn is_terminal_detach_key(key: KeyEvent) -> bool {
-    (key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char(']'))
+    (key.modifiers.contains(KeyModifiers::CONTROL) && matches!(key.code, KeyCode::Char('t' | ']')))
         || key.code == KeyCode::Char('\u{1d}')
 }
 
@@ -740,7 +740,7 @@ fn draw_attached_terminal(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App)
         .unwrap_or(("loading", "unknown".into()));
     frame.render_widget(
         Paragraph::new(format!(
-            " HELM TERMINAL · {title} · {state}{} · Ctrl+] detach (process keeps running)",
+            " HELM TERMINAL · {title} · {state}{} · Ctrl+T detach (process keeps running)",
             app.terminal_snapshot
                 .as_ref()
                 .filter(|snapshot| snapshot.dropped_unread_bytes > 0)
@@ -1265,6 +1265,10 @@ mod tests {
 
     #[test]
     fn detach_accepts_both_crossterm_control_encodings() {
+        assert!(is_terminal_detach_key(KeyEvent::new(
+            KeyCode::Char('t'),
+            KeyModifiers::CONTROL
+        )));
         assert!(is_terminal_detach_key(KeyEvent::new(
             KeyCode::Char(']'),
             KeyModifiers::CONTROL
