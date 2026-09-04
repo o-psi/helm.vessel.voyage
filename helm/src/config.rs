@@ -33,11 +33,14 @@ pub struct Config {
     pub command_timeout_secs: u64,
     pub max_output_bytes: usize,
     pub approval: ApprovalMode,
+    pub unattended_approval: UnattendedApprovalMode,
     pub workspace: Option<PathBuf>,
     pub allow_read: Vec<PathBuf>,
     pub allow_write: Vec<PathBuf>,
     pub deny_commands: Vec<String>,
     pub env: BTreeMap<String, String>,
+    pub inherit_env: Vec<String>,
+    pub redact_values: Vec<String>,
     pub mcp_servers: BTreeMap<String, McpServerConfig>,
 }
 
@@ -59,6 +62,14 @@ pub enum ApprovalMode {
     Never,
 }
 
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum UnattendedApprovalMode {
+    #[default]
+    Deny,
+    Allow,
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -76,11 +87,14 @@ impl Default for Config {
             command_timeout_secs: 120,
             max_output_bytes: 128 * 1024,
             approval: ApprovalMode::OnRisk,
+            unattended_approval: UnattendedApprovalMode::Deny,
             workspace: None,
             allow_read: Vec::new(),
             allow_write: Vec::new(),
             deny_commands: vec!["shutdown".into(), "reboot".into(), "mkfs".into()],
             env: BTreeMap::new(),
+            inherit_env: vec!["PATH".into(), "LANG".into(), "LC_ALL".into(), "TERM".into()],
+            redact_values: Vec::new(),
             mcp_servers: BTreeMap::new(),
         }
     }
@@ -146,6 +160,15 @@ impl Config {
         {
             bail!("provider retry delays must be positive and max must be >= initial");
         }
+        for name in &self.inherit_env {
+            let upper = name.to_ascii_uppercase();
+            if ["KEY", "TOKEN", "SECRET", "PASSWORD", "CREDENTIAL"]
+                .iter()
+                .any(|marker| upper.contains(marker))
+            {
+                bail!("refusing to inherit secret-like environment variable `{name}`");
+            }
+        }
         Ok(())
     }
 }
@@ -158,4 +181,22 @@ pub fn default_data_dir() -> PathBuf {
     dirs::data_local_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join("helm")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn refuses_secret_environment_inheritance() {
+        let mut config = Config::default();
+        config.inherit_env.push("DEPLOY_TOKEN".into());
+        assert!(
+            config
+                .validate()
+                .unwrap_err()
+                .to_string()
+                .contains("DEPLOY_TOKEN")
+        );
+    }
 }

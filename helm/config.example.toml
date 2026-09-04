@@ -11,11 +11,20 @@ provider_retry_max_ms = 8000
 command_timeout_secs = 120
 max_output_bytes = 131072
 approval = "on-risk"
+# Remote Vessel tasks cannot display prompts. "deny" fails approval-required tools
+# immediately; "allow" is an explicit high-trust override.
+unattended_approval = "deny"
 
 # Extra roots must already exist. The active workspace is always readable/writable.
 allow_read = []
 allow_write = []
 deny_commands = ["shutdown", "reboot", "mkfs"]
+
+# Child tools start with an empty environment. Only these host variables plus [env]
+# are passed through. Secret-like names are rejected.
+inherit_env = ["PATH", "LANG", "LC_ALL", "TERM"]
+# Literal values to remove from tool output, errors, and approval records.
+redact_values = []
 
 [env]
 # LANG = "C.UTF-8"

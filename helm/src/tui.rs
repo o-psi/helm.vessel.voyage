@@ -26,7 +26,7 @@ use crate::{
     Agent, AgentEvent, EventSink,
     model::Role,
     session::{Session, SessionStore, compact_messages},
-    tools::Approver,
+    tools::{ApprovalOutcome, ApprovalRequest as ToolApprovalRequest, Approver},
 };
 
 #[derive(Debug)]
@@ -41,7 +41,7 @@ pub enum UiEvent {
 #[doc(hidden)]
 pub struct ApprovalRequest {
     reason: String,
-    response: oneshot::Sender<bool>,
+    response: oneshot::Sender<ApprovalOutcome>,
 }
 
 #[derive(Clone)]
@@ -58,19 +58,23 @@ impl EventSink for UiBridge {
 
 #[async_trait]
 impl Approver for UiBridge {
-    async fn approve(&self, reason: &str) -> bool {
+    async fn approve(&self, request: &ToolApprovalRequest) -> ApprovalOutcome {
         let (response, receive) = oneshot::channel();
         if self
             .tx
             .send(UiEvent::Approval(ApprovalRequest {
-                reason: reason.to_owned(),
+                reason: request.reason.clone(),
                 response,
             }))
             .is_err()
         {
-            return false;
+            return ApprovalOutcome::Unavailable;
         }
-        receive.await.unwrap_or(false)
+        let outcome = receive.await.unwrap_or(ApprovalOutcome::Unavailable);
+        tracing::info!(approval_id = %request.id, execution_id = %request.execution_id,
+            action = %request.action, target = %request.target, outcome = ?outcome,
+            "approval decided");
+        outcome
     }
 }
 
@@ -189,7 +193,7 @@ impl App {
             self.status = "Cancelling; partial output will not be committed".into();
         }
         if let Some(approval) = self.approval.take() {
-            let _ = approval.response.send(false);
+            let _ = approval.response.send(ApprovalOutcome::Denied);
         }
     }
 }
@@ -320,7 +324,11 @@ async fn handle_key(
             key.code,
             KeyCode::Char('y' | 'Y' | 'n' | 'N') | KeyCode::Esc
         ) {
-            let _ = approval.response.send(approved);
+            let _ = approval.response.send(if approved {
+                ApprovalOutcome::Approved
+            } else {
+                ApprovalOutcome::Denied
+            });
             app.status = if approved { "Approved" } else { "Denied" }.into();
         } else {
             app.approval = Some(approval);

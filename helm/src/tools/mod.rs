@@ -4,6 +4,7 @@ mod process;
 mod shell;
 
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
 use thiserror::Error;
@@ -29,7 +30,79 @@ pub enum ToolError {
 
 #[async_trait]
 pub trait Approver: Send + Sync {
-    async fn approve(&self, reason: &str) -> bool;
+    async fn approve(&self, request: &ApprovalRequest) -> ApprovalOutcome;
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum InteractionMode {
+    Attended,
+    Unattended,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ApprovalRequest {
+    pub id: uuid::Uuid,
+    pub execution_id: uuid::Uuid,
+    pub action: String,
+    pub target: String,
+    pub reason: String,
+    pub mode: InteractionMode,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ApprovalOutcome {
+    Approved,
+    Denied,
+    Unavailable,
+}
+
+pub struct UnattendedApprover {
+    pub allow: bool,
+}
+
+#[async_trait]
+impl Approver for UnattendedApprover {
+    async fn approve(&self, request: &ApprovalRequest) -> ApprovalOutcome {
+        let outcome = if self.allow {
+            ApprovalOutcome::Approved
+        } else {
+            ApprovalOutcome::Unavailable
+        };
+        tracing::warn!(approval_id = %request.id, execution_id = %request.execution_id,
+            action = %request.action, target = %request.target, outcome = ?outcome,
+            "unattended approval decided without prompting");
+        outcome
+    }
+}
+
+impl ApprovalOutcome {
+    pub fn approved(&self) -> bool {
+        *self == Self::Approved
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct Redactor {
+    secrets: Vec<String>,
+}
+
+impl Redactor {
+    pub fn new(secrets: impl IntoIterator<Item = String>) -> Self {
+        Self {
+            secrets: secrets
+                .into_iter()
+                .filter(|value| value.len() >= 4)
+                .collect(),
+        }
+    }
+
+    pub fn redact(&self, input: impl Into<String>) -> String {
+        self.secrets.iter().fold(input.into(), |text, secret| {
+            text.replace(secret, "[REDACTED]")
+        })
+    }
 }
 
 #[derive(Clone)]
@@ -40,6 +113,27 @@ pub struct ToolContext {
     pub max_output_bytes: usize,
     pub environment: BTreeMap<String, String>,
     pub cancellation: tokio_util::sync::CancellationToken,
+    pub execution_id: uuid::Uuid,
+    pub interaction: InteractionMode,
+    pub redactor: Arc<Redactor>,
+}
+
+impl ToolContext {
+    pub fn approval(
+        &self,
+        action: &str,
+        target: impl Into<String>,
+        reason: String,
+    ) -> ApprovalRequest {
+        ApprovalRequest {
+            id: uuid::Uuid::new_v4(),
+            execution_id: self.execution_id,
+            action: action.into(),
+            target: self.redactor.redact(target.into()),
+            reason: self.redactor.redact(reason),
+            mode: self.interaction.clone(),
+        }
+    }
 }
 
 #[async_trait]
@@ -80,11 +174,15 @@ impl ToolRegistry {
         arguments: Value,
         context: &ToolContext,
     ) -> Result<String, ToolError> {
-        self.tools
+        let result = self
+            .tools
             .get(name)
             .ok_or_else(|| ToolError::Failed(format!("unknown tool `{name}`")))?
             .execute(arguments, context)
-            .await
+            .await;
+        result
+            .map(|output| context.redactor.redact(output))
+            .map_err(|error| ToolError::Failed(context.redactor.redact(error.to_string())))
     }
 }
 
@@ -97,4 +195,37 @@ pub(crate) fn truncate(mut bytes: Vec<u8>, max: usize) -> String {
         "{}\n\n[output truncated at {max} bytes]",
         String::from_utf8_lossy(&bytes)
     )
+}
+
+#[cfg(test)]
+mod security_tests {
+    use super::*;
+
+    #[test]
+    fn redacts_all_occurrences_without_echoing_short_values() {
+        let redactor = Redactor::new(["long-secret".into(), "abc".into()]);
+        assert_eq!(
+            redactor.redact("long-secret / long-secret / abc"),
+            "[REDACTED] / [REDACTED] / abc"
+        );
+    }
+
+    #[tokio::test]
+    async fn unattended_denial_is_immediate_and_explicit() {
+        let request = ApprovalRequest {
+            id: uuid::Uuid::new_v4(),
+            execution_id: uuid::Uuid::new_v4(),
+            action: "test".into(),
+            target: "target".into(),
+            reason: "risk".into(),
+            mode: InteractionMode::Unattended,
+        };
+        let outcome = tokio::time::timeout(
+            Duration::from_millis(50),
+            UnattendedApprover { allow: false }.approve(&request),
+        )
+        .await
+        .unwrap();
+        assert_eq!(outcome, ApprovalOutcome::Unavailable);
+    }
 }

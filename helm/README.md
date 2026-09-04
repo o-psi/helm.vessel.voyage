@@ -40,6 +40,7 @@ Inspect the resolved configuration without contacting a provider:
 
 ```sh
 helm config
+helm doctor
 ```
 
 ## Use
@@ -102,6 +103,10 @@ but the command deny list and filesystem roots remain enforced.
 
 Vessel queues work and Helm retrieves it over authenticated outbound requests. A Helm
 can therefore operate behind NAT or a firewall without being publicly reachable.
+Remote work is non-interactive: approval-required actions are denied immediately by
+default rather than blocking on an invisible prompt. See the [security and operations
+guide](../docs/security-operations.md) for unattended overrides, environment
+isolation, redaction, structured logs, and diagnostics.
 
 This is capability control, not an OS sandbox. Shell commands inherit the user's OS
 permissions and can access resources available to that account. For hostile prompts

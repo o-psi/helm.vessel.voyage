@@ -17,7 +17,13 @@ def start(database, pairing_ttl=30):
     base=f"http://127.0.0.1:{port}"; process=subprocess.Popen([str(BINARY),"--bind",f"127.0.0.1:{port}","--database",str(database),"--lease-secs","1","--stale-after-secs","1","--pairing-ttl-secs",str(pairing_ttl)],stdout=subprocess.DEVNULL,stderr=subprocess.PIPE)
     for _ in range(50):
         try:
-            if request(base,"GET","/health",timeout=1)["status"]=="ok": return process,base
+            if request(base,"GET","/health",timeout=1)["status"]=="ok":
+                assert request(base,"GET","/ready",timeout=1)["status"]=="ready"
+                diagnostics=request(base,"GET","/v1/diagnostics",timeout=1)
+                assert diagnostics["protocol_version"] >= 1
+                with urllib.request.urlopen(base+"/metrics",timeout=1) as response:
+                    assert response.headers.get("X-Request-ID") and "voyage_tasks" in response.read().decode()
+                return process,base
         except Exception: time.sleep(.1)
     raise AssertionError("Vessel failed to become healthy")
 
