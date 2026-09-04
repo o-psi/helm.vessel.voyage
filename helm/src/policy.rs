@@ -22,6 +22,13 @@ pub struct Policy {
 
 impl Policy {
     pub fn new(config: &Config, workspace: PathBuf) -> Result<Self> {
+        // macOS exposes temporary directories through `/var`, which resolves to
+        // `/private/var`. Keep the policy root in the same canonical namespace
+        // used by `resolve_read` and `resolve_write`; otherwise legitimate paths
+        // beneath a symlinked system root are incorrectly rejected.
+        let workspace = workspace.canonicalize().map_err(|error| {
+            anyhow::anyhow!("cannot resolve workspace {}: {error}", workspace.display())
+        })?;
         let mut readable = vec![workspace.clone()];
         readable.extend(canonical_roots(&config.allow_read)?);
         let mut writable = vec![workspace.clone()];
