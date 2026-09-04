@@ -140,10 +140,14 @@ or untrusted data, run Helm in a container or restricted service account as well
 The `process` tool manages concurrent PTY terminals for the lifetime of Helm. Each
 has a stable UUID and may have a name, workspace-confined cwd, extra environment,
 and independent size. It supports start, read, write, resize, interrupt, rename,
-list, and terminate; launches still pass command policy and approval. The separate
+select, list, and terminate; launches still pass command policy and approval. Reads,
+writes, resize, interrupt, rename, and terminate accept an ID, name, or the selected
+terminal. `terminal_max_count` and `terminal_max_unread_bytes` bound resources. The separate
 `shell` tool remains the explicit isolated one-shot path.
 
 PTYs do not survive a Helm or host restart, and missing IDs are reported honestly.
+Saved sessions retain terminal metadata but mark every entry `stale_after_restart`
+when loaded; metadata is not treated as a live attachment.
 For reconnectable workflows use a policy-approved external supervisor such as tmux,
 systemd, or a container rather than assuming Helm can resurrect a process.
 

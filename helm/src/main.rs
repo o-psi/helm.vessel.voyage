@@ -592,10 +592,13 @@ async fn tui_chat(
         interaction: InteractionMode::Attended,
         redactor: redactor(&config),
     };
+    let tools = build_tools(&config).await?;
+    let terminals: Arc<dyn helm::terminal::InteractiveTerminals> =
+        Arc::new(tools.terminals().unwrap_or_default());
     let agent = Arc::new(
         Agent::new(
             provider::from_config(&config, session.workspace.clone())?,
-            build_tools(&config).await?,
+            tools,
             context,
             bridge.clone(),
             config.model.clone(),
@@ -610,15 +613,7 @@ async fn tui_chat(
             max_delay: std::time::Duration::from_millis(config.provider_retry_max_ms),
         }),
     );
-    helm::tui::run(
-        agent,
-        store,
-        session,
-        receiver,
-        bridge.sender(),
-        Arc::new(helm::terminal::NoInteractiveTerminals::default()),
-    )
-    .await
+    helm::tui::run(agent, store, session, receiver, bridge.sender(), terminals).await
 }
 
 async fn build_tools(config: &Config) -> Result<ToolRegistry> {
@@ -670,6 +665,7 @@ async fn execute(
     session.messages = outcome.messages;
     session.usage.input_tokens += outcome.usage.input_tokens;
     session.usage.output_tokens += outcome.usage.output_tokens;
+    session.terminals = agent.terminal_metadata();
     if !no_save {
         store.save(&mut session).await?;
         eprintln!("[session {}]", session.id);
@@ -747,6 +743,10 @@ async fn chat(
                 session.messages = outcome.messages;
                 session.usage.input_tokens += outcome.usage.input_tokens;
                 session.usage.output_tokens += outcome.usage.output_tokens;
+                session.terminals = agent
+                    .as_ref()
+                    .expect("agent initialized")
+                    .terminal_metadata();
                 store.save(&mut session).await?;
             }
             Err(error) => eprintln!("error: {error:#}"),

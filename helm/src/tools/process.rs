@@ -1,4 +1,8 @@
 use super::{Tool, ToolContext, ToolError};
+use crate::terminal::{
+    InteractiveTerminals, TerminalCell, TerminalError, TerminalEvent, TerminalId, TerminalSnapshot,
+    TerminalState as UiState, TerminalSummary,
+};
 use crate::{model::ToolDefinition, policy::Decision};
 use async_trait::async_trait;
 use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system};
@@ -9,6 +13,7 @@ use std::{
     io::Write,
     sync::{Arc, Mutex},
 };
+use tokio::sync::broadcast;
 use uuid::Uuid;
 
 #[derive(Clone)]
@@ -17,6 +22,7 @@ pub struct ProcessTool {
     selected: Arc<Mutex<Option<Uuid>>>,
     max_count: usize,
     max_unread_bytes: usize,
+    events: broadcast::Sender<TerminalEvent>,
 }
 pub type TerminalManager = ProcessTool;
 
@@ -126,7 +132,7 @@ impl Tool for ProcessTool {
         ToolDefinition {
         name: "process".into(),
         description: "Manage multiple persistent PTY-backed terminals with stable IDs and optional names, cwd, and environment. Start, read, write, resize, interrupt, rename, list, or terminate. Use shell for isolated one-shot commands.".into(),
-        input_schema: json!({"type":"object","properties":{"action":{"enum":["start","read","write","resize","interrupt","rename","terminate","list"]},"command":{"type":"string"},"id":{"type":"string"},"name":{"type":["string","null"]},"cwd":{"type":"string"},"env":{"type":"object"},"data":{"type":"string"},"rows":{"type":"integer","minimum":1},"cols":{"type":"integer","minimum":1}},"required":["action"]}),
+        input_schema: json!({"type":"object","properties":{"action":{"enum":["start","read","write","resize","interrupt","rename","select","terminate","list"]},"command":{"type":"string"},"id":{"type":["string","null"]},"name":{"type":["string","null"]},"current_name":{"type":["string","null"]},"cwd":{"type":"string"},"env":{"type":"object"},"data":{"type":"string"},"rows":{"type":"integer","minimum":1},"cols":{"type":"integer","minimum":1}},"required":["action"]}),
     }
     }
 
@@ -186,11 +192,13 @@ impl Tool for ProcessTool {
 
 impl ProcessTool {
     pub fn with_limits(max_count: usize, max_unread_bytes: usize) -> Self {
+        let (events, _) = broadcast::channel(64);
         Self {
             processes: Arc::new(Mutex::new(BTreeMap::new())),
             selected: Arc::new(Mutex::new(None)),
             max_count: max_count.max(1),
             max_unread_bytes: max_unread_bytes.max(1024),
+            events,
         }
     }
     pub fn metadata(&self) -> Result<Vec<TerminalMetadata>, ToolError> {
@@ -296,6 +304,8 @@ impl ProcessTool {
         let output = Arc::new(Mutex::new(Capture::default()));
         let max_unread_bytes = self.max_unread_bytes;
         let sink = output.clone();
+        let id = Uuid::new_v4();
+        let events = self.events.clone();
         std::thread::Builder::new()
             .name("helm-pty-reader".into())
             .spawn(move || {
@@ -311,12 +321,12 @@ impl ProcessTool {
                                 capture.bytes.drain(..remove);
                                 capture.base += remove;
                             }
+                            let _ = events.send(TerminalEvent::Changed(TerminalId(id)));
                         }
                     }
                 }
             })
             .map_err(failed)?;
-        let id = Uuid::new_v4();
         self.processes.lock().map_err(failed)?.insert(
             id,
             Managed {
@@ -333,6 +343,7 @@ impl ProcessTool {
             },
         );
         *self.selected.lock().map_err(failed)? = Some(id);
+        let _ = self.events.send(TerminalEvent::Added(TerminalId(id)));
         Ok(format!("started PTY process {id}"))
     }
     fn read(&self, id: Uuid, max: usize) -> Result<String, ToolError> {
@@ -412,6 +423,7 @@ impl ProcessTool {
             terminate_process_group(p.child.process_id());
             p.child.kill().map_err(failed)?;
         }
+        let _ = self.events.send(TerminalEvent::Removed(TerminalId(id)));
         Ok(format!("terminated {id}"))
     }
     fn list(&self) -> Result<String, ToolError> {
@@ -434,6 +446,90 @@ impl ProcessTool {
         }
         Ok(rows.join("\n"))
     }
+}
+
+#[async_trait]
+impl InteractiveTerminals for ProcessTool {
+    async fn list(&self) -> Result<Vec<TerminalSummary>, TerminalError> {
+        self.metadata().map_err(terminal_error).map(|items| {
+            items
+                .into_iter()
+                .map(|item| TerminalSummary {
+                    id: TerminalId(item.id),
+                    title: item.name.unwrap_or(item.command),
+                    state: if item.state == "running" {
+                        UiState::Running
+                    } else {
+                        UiState::Exited { code: None }
+                    },
+                })
+                .collect()
+        })
+    }
+    async fn snapshot(&self, id: TerminalId) -> Result<TerminalSnapshot, TerminalError> {
+        let mut map = self
+            .processes
+            .lock()
+            .map_err(|e| TerminalError::Failed(e.to_string()))?;
+        let p = map.get_mut(&id.0).ok_or(TerminalError::NotFound(id))?;
+        let state = p
+            .child
+            .try_wait()
+            .map_err(|e| TerminalError::Failed(e.to_string()))?
+            .map_or(UiState::Running, |_| UiState::Exited { code: None });
+        let capture = p
+            .output
+            .lock()
+            .map_err(|e| TerminalError::Failed(e.to_string()))?;
+        let text = String::from_utf8_lossy(&capture.bytes);
+        let cells = text
+            .lines()
+            .rev()
+            .take(p.rows as usize)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .map(|line| {
+                line.chars()
+                    .take(p.cols as usize)
+                    .map(|ch| TerminalCell {
+                        text: ch.to_string(),
+                        ..TerminalCell::default()
+                    })
+                    .collect()
+            })
+            .collect();
+        Ok(TerminalSnapshot {
+            id,
+            title: p.name.clone().unwrap_or_else(|| p.command.clone()),
+            state,
+            revision: (capture.base + capture.bytes.len()) as u64,
+            cells,
+            cursor: None,
+        })
+    }
+    async fn write(&self, id: TerminalId, bytes: Vec<u8>) -> Result<(), TerminalError> {
+        let mut map = self
+            .processes
+            .lock()
+            .map_err(|e| TerminalError::Failed(e.to_string()))?;
+        let p = map.get_mut(&id.0).ok_or(TerminalError::NotFound(id))?;
+        p.writer
+            .write_all(&bytes)
+            .and_then(|_| p.writer.flush())
+            .map_err(|e| TerminalError::Failed(e.to_string()))
+    }
+    async fn resize(&self, id: TerminalId, columns: u16, rows: u16) -> Result<(), TerminalError> {
+        self.resize(id.0, rows, columns)
+            .map(|_| ())
+            .map_err(terminal_error)
+    }
+    fn subscribe(&self) -> broadcast::Receiver<TerminalEvent> {
+        self.events.subscribe()
+    }
+}
+fn terminal_error(error: ToolError) -> TerminalError {
+    TerminalError::Failed(error.to_string())
 }
 #[cfg(unix)]
 fn platform_command(command: &str) -> CommandBuilder {

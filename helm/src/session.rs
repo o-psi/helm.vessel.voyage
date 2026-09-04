@@ -57,6 +57,8 @@ pub struct Session {
     pub parent_id: Option<Uuid>,
     pub messages: Vec<Message>,
     pub usage: Usage,
+    #[serde(default)]
+    pub terminals: Vec<crate::tools::TerminalMetadata>,
 }
 
 impl Session {
@@ -72,6 +74,7 @@ impl Session {
             parent_id: None,
             messages: Vec::new(),
             usage: Usage::default(),
+            terminals: Vec::new(),
         }
     }
 }
@@ -218,7 +221,12 @@ async fn load_path(path: &Path) -> Result<Session> {
     let data = fs::read(path)
         .await
         .with_context(|| format!("failed to read session {}", path.display()))?;
-    serde_json::from_slice(&data).with_context(|| format!("invalid session {}", path.display()))
+    let mut session: Session = serde_json::from_slice(&data)
+        .with_context(|| format!("invalid session {}", path.display()))?;
+    for terminal in &mut session.terminals {
+        terminal.state = "stale_after_restart".into();
+    }
+    Ok(session)
 }
 fn nonce() -> u128 {
     SystemTime::now()

@@ -11,7 +11,7 @@ use thiserror::Error;
 
 use crate::{model::ToolDefinition, policy::Policy};
 pub use filesystem::{ApplyPatch, ListDirectory, ReadFile, SearchFiles, WriteFile};
-pub use process::ProcessTool;
+pub use process::{ProcessTool, TerminalManager, TerminalMetadata};
 pub use shell::Shell;
 
 #[derive(Debug, Error)]
@@ -145,6 +145,7 @@ pub trait Tool: Send + Sync {
 #[derive(Default)]
 pub struct ToolRegistry {
     tools: BTreeMap<String, Arc<dyn Tool>>,
+    terminals: Option<ProcessTool>,
 }
 
 impl ToolRegistry {
@@ -159,8 +160,13 @@ impl ToolRegistry {
         registry.register(SearchFiles);
         registry.register(Shell);
         registry.register(ApplyPatch);
-        registry.register(ProcessTool::with_limits(max_count, max_unread_bytes));
+        let terminals = ProcessTool::with_limits(max_count, max_unread_bytes);
+        registry.terminals = Some(terminals.clone());
+        registry.register(terminals);
         registry
+    }
+    pub fn terminals(&self) -> Option<ProcessTool> {
+        self.terminals.clone()
     }
     pub fn register<T: Tool + 'static>(&mut self, tool: T) {
         self.tools.insert(tool.definition().name, Arc::new(tool));

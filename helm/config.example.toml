@@ -11,6 +11,8 @@ provider_retry_initial_ms = 500
 provider_retry_max_ms = 8000
 command_timeout_secs = 120
 max_output_bytes = 131072
+terminal_max_count = 16
+terminal_max_unread_bytes = 8388608
 approval = "on-risk"
 # Remote Vessel tasks cannot display prompts. "deny" fails approval-required tools
 # immediately; "allow" is an explicit high-trust override.

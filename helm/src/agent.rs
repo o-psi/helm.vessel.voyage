@@ -101,6 +101,12 @@ impl Default for RetryPolicy {
 }
 
 impl Agent {
+    pub fn terminal_metadata(&self) -> Vec<crate::tools::TerminalMetadata> {
+        self.tools
+            .terminals()
+            .and_then(|manager| manager.metadata().ok())
+            .unwrap_or_default()
+    }
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         provider: Box<dyn Provider>,
