@@ -121,6 +121,71 @@ pub fn bridge() -> (Arc<UiBridge>, mpsc::UnboundedReceiver<UiEvent>) {
 
 struct TerminalGuard;
 
+#[derive(Clone, Copy)]
+struct SlashCommand {
+    name: &'static str,
+    usage: &'static str,
+    description: &'static str,
+    completion: &'static str,
+}
+
+const SLASH_COMMANDS: &[SlashCommand] = &[
+    SlashCommand {
+        name: "help",
+        usage: "/help",
+        description: "Show command help",
+        completion: "/help",
+    },
+    SlashCommand {
+        name: "access",
+        usage: "/access",
+        description: "Show the current access mode",
+        completion: "/access",
+    },
+    SlashCommand {
+        name: "tools",
+        usage: "/tools",
+        description: "List available tool calls",
+        completion: "/tools",
+    },
+    SlashCommand {
+        name: "model",
+        usage: "/model [ID]",
+        description: "Show or switch the model",
+        completion: "/model ",
+    },
+    SlashCommand {
+        name: "name",
+        usage: "/name TITLE",
+        description: "Rename the current session",
+        completion: "/name ",
+    },
+    SlashCommand {
+        name: "branch",
+        usage: "/branch [TITLE]",
+        description: "Branch the current session",
+        completion: "/branch ",
+    },
+    SlashCommand {
+        name: "compact",
+        usage: "/compact [KEEP]",
+        description: "Compact older context",
+        completion: "/compact ",
+    },
+    SlashCommand {
+        name: "export",
+        usage: "/export [PATH]",
+        description: "Export the session as Markdown",
+        completion: "/export ",
+    },
+    SlashCommand {
+        name: "clear",
+        usage: "/clear confirm",
+        description: "Permanently clear the conversation",
+        completion: "/clear confirm",
+    },
+];
+
 impl TerminalGuard {
     fn enter() -> Result<Self> {
         enable_raw_mode()?;
@@ -250,6 +315,8 @@ struct App {
     selected_model: usize,
     model_filter: Composer,
     model_manual: bool,
+    selected_slash_command: usize,
+    slash_palette_dismissed: bool,
     shortcut_help: bool,
     quit: bool,
 }
@@ -338,6 +405,8 @@ impl App {
             selected_model: 0,
             model_filter: Composer::default(),
             model_manual: false,
+            selected_slash_command: 0,
+            slash_palette_dismissed: false,
             shortcut_help: false,
             quit: false,
         }
@@ -428,6 +497,7 @@ pub async fn run(
                                 app.todo_input.insert_str(&text);
                             } else if app.supervisor_mode.is_none() {
                                 app.composer.insert_str(&text);
+                                reset_slash_palette(&mut app);
                             }
                         }
                     }
@@ -798,11 +868,38 @@ async fn handle_key(
         }
         return Ok(());
     }
+    if !slash_palette_matches(app).is_empty() {
+        match key.code {
+            KeyCode::Up => {
+                app.selected_slash_command = app.selected_slash_command.saturating_sub(1);
+                return Ok(());
+            }
+            KeyCode::Down => {
+                app.selected_slash_command = (app.selected_slash_command + 1)
+                    .min(slash_palette_matches(app).len().saturating_sub(1));
+                return Ok(());
+            }
+            KeyCode::Tab => {
+                complete_selected_slash_command(app);
+                return Ok(());
+            }
+            KeyCode::Enter if !slash_command_is_exact(app) => {
+                complete_selected_slash_command(app);
+                return Ok(());
+            }
+            KeyCode::Esc => {
+                app.slash_palette_dismissed = true;
+                return Ok(());
+            }
+            _ => {}
+        }
+    }
     match key.code {
         KeyCode::Esc if app.is_running() => app.cancel(),
         KeyCode::Enter if key.modifiers.contains(KeyModifiers::ALT) => app.composer.insert('\n'),
         KeyCode::Enter if !app.is_running() => {
             let prompt = app.composer.take();
+            reset_slash_palette(app);
             if !prompt.trim().is_empty() {
                 if handle_command(&prompt, app, store, Some(agent.as_ref())).await? {
                     return Ok(());
@@ -828,9 +925,18 @@ async fn handle_key(
                 app.running = Some(Running { task, cancel });
             }
         }
-        KeyCode::Char(character) if !app.is_running() => app.composer.insert(character),
-        KeyCode::Backspace if !app.is_running() => app.composer.backspace(),
-        KeyCode::Delete if !app.is_running() => app.composer.delete(),
+        KeyCode::Char(character) if !app.is_running() => {
+            app.composer.insert(character);
+            reset_slash_palette(app);
+        }
+        KeyCode::Backspace if !app.is_running() => {
+            app.composer.backspace();
+            reset_slash_palette(app);
+        }
+        KeyCode::Delete if !app.is_running() => {
+            app.composer.delete();
+            reset_slash_palette(app);
+        }
         KeyCode::Home if !app.is_running() => app.composer.line_start(),
         KeyCode::End if !app.is_running() => app.composer.line_end(),
         KeyCode::Left if !app.is_running() => {
@@ -1648,6 +1754,7 @@ fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
             .style(Style::default().fg(Color::Gray)),
         chunks[3],
     );
+    draw_slash_palette(frame, chunks[2], app);
     if !app.is_running() {
         frame.set_cursor_position((
             (chunks[2].x + composer_column).min(chunks[2].right().saturating_sub(1)),
@@ -1664,6 +1771,91 @@ fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
     if let Some(approval) = &app.approval {
         draw_approval(frame, area, approval);
     }
+}
+
+fn slash_command_query(app: &App) -> Option<&str> {
+    if app.is_running() || app.slash_palette_dismissed {
+        return None;
+    }
+    let query = app.composer.text.strip_prefix('/')?;
+    (!query.chars().any(char::is_whitespace)).then_some(query)
+}
+
+fn slash_palette_matches(app: &App) -> Vec<SlashCommand> {
+    let Some(query) = slash_command_query(app) else {
+        return Vec::new();
+    };
+    SLASH_COMMANDS
+        .iter()
+        .copied()
+        .filter(|command| command.name.starts_with(query))
+        .collect()
+}
+
+fn slash_command_is_exact(app: &App) -> bool {
+    let Some(query) = slash_command_query(app) else {
+        return false;
+    };
+    SLASH_COMMANDS.iter().any(|command| command.name == query)
+}
+
+fn reset_slash_palette(app: &mut App) {
+    app.selected_slash_command = 0;
+    app.slash_palette_dismissed = false;
+}
+
+fn complete_selected_slash_command(app: &mut App) {
+    let commands = slash_palette_matches(app);
+    let Some(command) = commands.get(app.selected_slash_command).copied() else {
+        return;
+    };
+    app.composer.text = command.completion.into();
+    app.composer.cursor = app.composer.text.len();
+    reset_slash_palette(app);
+}
+
+fn draw_slash_palette(frame: &mut ratatui::Frame<'_>, composer_area: Rect, app: &App) {
+    let commands = slash_palette_matches(app);
+    if commands.is_empty() || composer_area.y < 3 || composer_area.width < 8 {
+        return;
+    }
+    let height = (commands.len() as u16 + 2).min(composer_area.y);
+    let visible = height.saturating_sub(2) as usize;
+    let selected = app
+        .selected_slash_command
+        .min(commands.len().saturating_sub(1));
+    let start = selected.saturating_add(1).saturating_sub(visible);
+    let items = commands
+        .iter()
+        .enumerate()
+        .skip(start)
+        .take(visible)
+        .map(|(index, command)| {
+            let style = if index == selected {
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default()
+            };
+            ListItem::new(format!("{:<20} {}", command.usage, command.description)).style(style)
+        })
+        .collect::<Vec<_>>();
+    let popup = Rect {
+        x: composer_area.x,
+        y: composer_area.y.saturating_sub(height),
+        width: composer_area.width,
+        height,
+    };
+    frame.render_widget(Clear, popup);
+    frame.render_widget(
+        List::new(items).block(
+            Block::default()
+                .title(" Commands · ↑↓ select · Enter/Tab complete · Esc close ")
+                .borders(Borders::ALL),
+        ),
+        popup,
+    );
 }
 
 fn draw_todos(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
@@ -2806,6 +2998,14 @@ fn export_path(session: &Session) -> PathBuf {
         .join(format!("helm-session-{}.md", session.id))
 }
 
+fn slash_command_summary() -> String {
+    SLASH_COMMANDS
+        .iter()
+        .map(|command| command.usage)
+        .collect::<Vec<_>>()
+        .join(" · ")
+}
+
 async fn handle_command(
     command: &str,
     app: &mut App,
@@ -2817,11 +3017,7 @@ async fn handle_command(
     };
     let (name, argument) = command.split_once(' ').unwrap_or((command, ""));
     match name {
-        "help" => {
-            app.status =
-                "/access · /tools · /model [ID] · /name TITLE · /branch [TITLE] · /compact [KEEP] · /export [PATH] · /clear confirm"
-                    .into()
-        }
+        "help" => app.status = slash_command_summary(),
         "access" => app.status = format!("Current access mode: {}", app.access_mode),
         "tools" => {
             if let Some(agent) = agent {
@@ -2838,7 +3034,10 @@ async fn handle_command(
             }
         }
         "model" if argument.trim().is_empty() => {
-            app.status = format!("Current model: {} · Ctrl+M opens the model picker", app.session.model)
+            app.status = format!(
+                "Current model: {} · Ctrl+M opens the model picker",
+                app.session.model
+            )
         }
         "model" => {
             let model = argument.trim();
@@ -3902,6 +4101,61 @@ mod tests {
             .map(|x| buffer[(x, 24)].symbol())
             .collect::<String>();
         assert!(separator.chars().all(|character| character == '─'));
+    }
+
+    #[test]
+    fn slash_palette_lists_all_commands_above_the_composer_and_filters() {
+        let session = Session::new(PathBuf::from("/tmp"), "test-model".into());
+        let mut app = App::new(session, Vec::new());
+        app.composer.insert('/');
+        assert_eq!(slash_palette_matches(&app).len(), SLASH_COMMANDS.len());
+
+        let backend = ratatui::backend::TestBackend::new(100, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let buffer = terminal.backend().buffer();
+        let rows = (0..buffer.area.height)
+            .map(|y| {
+                (0..buffer.area.width)
+                    .map(|x| buffer[(x, y)].symbol())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>();
+        let snapshot = rows.join("\n");
+        assert!(snapshot.contains("Commands"));
+        assert!(snapshot.contains("/help"));
+        assert!(snapshot.contains("/clear confirm"));
+        let palette_row = rows
+            .iter()
+            .position(|row| row.contains("Commands"))
+            .unwrap();
+        assert!(palette_row < 24);
+
+        app.composer.text = "/co".into();
+        app.composer.cursor = app.composer.text.len();
+        let matches = slash_palette_matches(&app);
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].name, "compact");
+    }
+
+    #[test]
+    fn slash_palette_completion_and_dismissal_preserve_composer_input() {
+        let session = Session::new(PathBuf::from("/tmp"), "test-model".into());
+        let mut app = App::new(session, Vec::new());
+        app.composer.insert_str("/na");
+        complete_selected_slash_command(&mut app);
+        assert_eq!(app.composer.text, "/name ");
+        assert_eq!(app.composer.cursor, app.composer.text.len());
+        assert!(slash_palette_matches(&app).is_empty());
+
+        app.composer = Composer::default();
+        app.composer.insert_str("/help");
+        assert!(slash_command_is_exact(&app));
+        app.slash_palette_dismissed = true;
+        assert!(slash_palette_matches(&app).is_empty());
+        assert_eq!(app.composer.text, "/help");
+        reset_slash_palette(&mut app);
+        assert_eq!(slash_palette_matches(&app).len(), 1);
     }
 
     #[test]

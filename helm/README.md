@@ -101,6 +101,8 @@ The conversation footer shows current status rather than permanently listing glo
 press `F1` to open contextual keyboard help and `F1` or `Esc` to close it.
 Scroll the conversation with the mouse wheel or `PageUp` and `PageDown`; a divider keeps the
 composer visually distinct without enclosing it in a permanent box.
+Typing `/` opens the slash-command palette above the composer. Continue typing to filter it,
+use the arrow keys to select, and press `Enter` or `Tab` to complete a command.
 
 Choose agent authority with `--access read-only|approval|unrestricted` or the `access`
 configuration key. Read-only permits filesystem and terminal inspection but blocks commands,
