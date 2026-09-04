@@ -124,9 +124,10 @@ async fn voyage_worker(
     let agent = build_agent(&config, workspace.clone()).await?;
     let store = SessionStore::default();
     let mut last_heartbeat = std::time::Instant::now() - std::time::Duration::from_secs(60);
+    let mut reconnect_delay = std::time::Duration::from_secs(1);
     loop {
         if last_heartbeat.elapsed() >= std::time::Duration::from_secs(20) {
-            client
+            let heartbeat = client
                 .post(format!("{vessel}/v1/worker/heartbeat"))
                 .bearer_auth(&enrollment.worker_token)
                 .json(&HeartbeatRequest {
@@ -134,18 +135,40 @@ async fn voyage_worker(
                     protocol_version: PROTOCOL_VERSION,
                 })
                 .send()
-                .await?
-                .error_for_status()?;
+                .await
+                .and_then(reqwest::Response::error_for_status);
+            if let Err(error) = heartbeat {
+                eprintln!("Vessel connection lost: {error}; retrying in {reconnect_delay:?}");
+                tokio::time::sleep(reconnect_delay).await;
+                reconnect_delay = (reconnect_delay * 2).min(std::time::Duration::from_secs(30));
+                continue;
+            }
             last_heartbeat = std::time::Instant::now();
+            reconnect_delay = std::time::Duration::from_secs(1);
         }
-        let task: Option<TaskEnvelope> = client
+        let response = match client
             .get(format!("{vessel}/v1/worker/tasks/next"))
             .bearer_auth(&enrollment.worker_token)
             .send()
-            .await?
-            .error_for_status()?
-            .json()
-            .await?;
+            .await
+            .and_then(reqwest::Response::error_for_status)
+        {
+            Ok(response) => response,
+            Err(error) => {
+                eprintln!("could not pull task: {error}; retrying in {reconnect_delay:?}");
+                tokio::time::sleep(reconnect_delay).await;
+                reconnect_delay = (reconnect_delay * 2).min(std::time::Duration::from_secs(30));
+                continue;
+            }
+        };
+        let task: Option<TaskEnvelope> = match response.json().await {
+            Ok(task) => task,
+            Err(error) => {
+                eprintln!("invalid task response: {error}");
+                continue;
+            }
+        };
+        reconnect_delay = std::time::Duration::from_secs(1);
         let Some(task) = task else {
             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
             continue;
