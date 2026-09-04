@@ -486,7 +486,7 @@ impl SubagentRuntime {
             r.updated_at = Utc::now();
         }
         self.persist(c).await;
-        let _ = c.outcome.send(Some(Ok(value.clone())));
+        c.outcome.send_replace(Some(Ok(value.clone())));
         self.emit(id, SubagentEventKind::Completed { result: value })
             .await;
     }
@@ -502,7 +502,7 @@ impl SubagentRuntime {
             r.updated_at = Utc::now();
         }
         self.persist(c).await;
-        let _ = c.outcome.send(Some(Err(error.clone())));
+        c.outcome.send_replace(Some(Err(error.clone())));
         self.emit(id, SubagentEventKind::Failed { error }).await;
     }
     async fn finish_cancelled(&self, id: AgentId, c: &Control) {
@@ -517,7 +517,7 @@ impl SubagentRuntime {
         }
         self.persist(c).await;
         let error = "cancelled".to_string();
-        let _ = c.outcome.send(Some(Err(error)));
+        c.outcome.send_replace(Some(Err(error)));
         self.emit(id, SubagentEventKind::Cancelled).await;
     }
     async fn finish_timed_out(&self, id: AgentId, c: &Control) {
@@ -532,7 +532,8 @@ impl SubagentRuntime {
             r.updated_at = Utc::now();
         }
         self.persist(c).await;
-        let _ = c.outcome.send(Some(Err("runtime budget exhausted".into())));
+        c.outcome
+            .send_replace(Some(Err("runtime budget exhausted".into())));
         self.emit(id, SubagentEventKind::TimedOut).await;
     }
     async fn persist(&self, c: &Control) {
@@ -758,5 +759,35 @@ mod tests {
         assert_eq!(runtime.get(child).await.unwrap().parent_id, Some(parent));
         executor.gate.notify_one();
         runtime.wait(child).await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn completion_is_retained_before_any_waiter_subscribes() {
+        let executor = Arc::new(GateExecutor::new());
+        let runtime =
+            SubagentRuntime::new(executor.clone(), RuntimeLimits::default(), None).unwrap();
+        let id = runtime.spawn(request("early-finish")).await.unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            while executor.entered.load(Ordering::SeqCst) < 1 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        executor.gate.notify_one();
+        tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            while runtime.get(id).await.unwrap().status != AgentStatus::Completed {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+
+        let result = tokio::time::timeout(std::time::Duration::from_millis(100), runtime.wait(id))
+            .await
+            .expect("late wait must not hang")
+            .unwrap()
+            .unwrap();
+        assert_eq!(result.summary, "done");
     }
 }
