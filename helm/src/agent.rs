@@ -5,7 +5,7 @@ use thiserror::Error;
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    model::{Message, ModelRequest, Usage},
+    model::{Message, ModelRequest, ToolDefinition, Usage},
     provider::{ModelInfo, Provider, ProviderError, normalize_models},
     tools::{ToolContext, ToolRegistry},
 };
@@ -103,6 +103,9 @@ impl Default for RetryPolicy {
 }
 
 impl Agent {
+    fn effective_system_prompt(&self) -> String {
+        runtime_guidance(&self.system_prompt, &self.tools.definitions())
+    }
     pub fn terminal_metadata(&self) -> Vec<crate::terminal::TerminalSummary> {
         self.tools
             .terminals()
@@ -229,14 +232,16 @@ impl Agent {
         context.execution_id = uuid::Uuid::new_v4();
         let active_model = self.model();
         tracing::info!(execution_id = %context.execution_id, model = %active_model, "agent execution started");
-        if history
-            .first()
-            .is_none_or(|m| m.role != crate::model::Role::System)
+        let system_prompt = self.effective_system_prompt();
+        if let Some(message) = history
+            .first_mut()
+            .filter(|message| message.role == crate::model::Role::System)
         {
-            history.insert(
-                0,
-                Message::new(crate::model::Role::System, &self.system_prompt),
-            );
+            // Refresh this on every execution. Saved sessions may predate a runtime/tool
+            // upgrade and must not keep stale capability guidance forever.
+            message.content = system_prompt;
+        } else {
+            history.insert(0, Message::new(crate::model::Role::System, system_prompt));
         }
         history.push(Message::new(crate::model::Role::User, prompt));
         let mut usage = Usage::default();
@@ -397,6 +402,26 @@ impl Agent {
     }
 }
 
+fn runtime_guidance(base: &str, tools: &[ToolDefinition]) -> String {
+    let inventory = if tools.is_empty() {
+        "- (none)".to_owned()
+    } else {
+        tools
+            .iter()
+            .map(|tool| format!("- `{}`: {}", tool.name, tool.description))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    format!(
+        "{base}\n\n## Authoritative Helm runtime\n\n\
+         The tool calls available in this execution are exactly the ones below. This generated \
+         list overrides any provider-host, prior-session, plugin, skill, app, MCP, or built-in \
+         capability guidance. Never claim access to a tool that is absent from this list. If the \
+         user asks what tools are available, report these exact call names and describe them from \
+         this list. Do not translate them into names from another harness.\n\n{inventory}"
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -457,6 +482,22 @@ mod tests {
                 .unwrap_or_default();
             Ok(ModelResponse {
                 message: Message::new(Role::Assistant, content),
+                usage: Usage::default(),
+            })
+        }
+    }
+    struct AssertCurrentGuidance;
+    #[async_trait]
+    impl Provider for AssertCurrentGuidance {
+        async fn complete(&self, request: ModelRequest) -> Result<ModelResponse, ProviderError> {
+            let system = request.messages.first().expect("system message");
+            assert_eq!(system.role, Role::System);
+            assert!(system.content.starts_with("current base"));
+            assert!(system.content.contains("Authoritative Helm runtime"));
+            assert!(system.content.contains("- (none)"));
+            assert!(!system.content.contains("obsolete guidance"));
+            Ok(ModelResponse {
+                message: Message::new(Role::Assistant, "done"),
                 usage: Usage::default(),
             })
         }
@@ -548,6 +589,28 @@ mod tests {
             initial_delay: Duration::from_millis(1),
             max_delay: Duration::from_millis(2),
         })
+    }
+
+    #[tokio::test]
+    async fn refreshes_saved_system_guidance_from_the_current_runtime() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut agent = agent(Box::new(AssertCurrentGuidance), &directory);
+        agent.system_prompt = "current base".into();
+        let history = vec![Message::new(Role::System, "obsolete guidance")];
+        agent.run(history, "list tools".into()).await.unwrap();
+    }
+
+    #[test]
+    fn generated_guidance_names_only_the_registered_tools() {
+        let tools = vec![ToolDefinition {
+            name: "real_tool".into(),
+            description: "Does real work.".into(),
+            input_schema: serde_json::json!({"type":"object"}),
+        }];
+        let guidance = runtime_guidance("base", &tools);
+        assert!(guidance.contains("`real_tool`: Does real work."));
+        assert!(!guidance.contains("functions.exec"));
+        assert!(!guidance.contains("collaboration.spawn_agent"));
     }
 
     #[tokio::test]

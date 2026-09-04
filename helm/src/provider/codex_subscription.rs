@@ -212,7 +212,9 @@ impl Provider for CodexSubscriptionProvider {
                 if !state.initialized { client.initialize().await?; state.initialized=true; }
                 let tools=request.tools.iter().map(|tool|json!({"type":"function","name":tool.name,"description":tool.description,"inputSchema":tool.input_schema,"deferLoading":false})).collect::<Vec<_>>();
                 let system=request.messages.iter().filter(|m|m.role==Role::System).map(|m|m.content.as_str()).collect::<Vec<_>>().join("\n\n");
-                let result=client.request("thread/start",json!({"cwd":workspace,"model":request.model,"approvalPolicy":"never","sandbox":"read-only","ephemeral":true,"baseInstructions":system,"developerInstructions":"You are the model inside Helm. Never use built-in command, filesystem, web, MCP, app, or patch tools. Use only the client-provided dynamic tools; Helm enforces all tool policy and executes every action.","dynamicTools":tools})).await?;
+                let tool_names=request.tools.iter().map(|tool|tool.name.as_str()).collect::<Vec<_>>().join(", ");
+                let developer_instructions=format!("You are the model inside Helm, not the Codex host around it. Never use or claim built-in command, filesystem, web, MCP, app, plugin, skill, collaboration, image, document, or patch capabilities. Use only client-provided dynamic tools; Helm enforces all policy and executes every action. The exact available call names are: {tool_names}. If asked about tools, answer from that list only.");
+                let result=client.request("thread/start",json!({"cwd":workspace,"model":request.model,"approvalPolicy":"never","sandbox":"read-only","ephemeral":true,"baseInstructions":system,"developerInstructions":developer_instructions,"dynamicTools":tools})).await?;
                 state.thread_id=Some(result.pointer("/result/thread/id").and_then(Value::as_str).map(str::to_owned).ok_or_else(||ProviderError::InvalidResponse("thread/start omitted result.thread.id".into()))?);
             }
             if let Some(pending)=state.pending_tool.take() {
