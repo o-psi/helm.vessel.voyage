@@ -17,6 +17,11 @@ pub struct ProcessTool {
 }
 
 struct Managed {
+    name: Option<String>,
+    command: String,
+    cwd: std::path::PathBuf,
+    rows: u16,
+    cols: u16,
     master: Box<dyn MasterPty + Send>,
     child: Box<dyn Child + Send + Sync>,
     writer: Box<dyn Write + Send>,
@@ -43,6 +48,10 @@ impl Drop for Managed {
 enum Args {
     Start {
         command: String,
+        name: Option<String>,
+        cwd: Option<std::path::PathBuf>,
+        #[serde(default)]
+        env: BTreeMap<String, String>,
         #[serde(default = "default_rows")]
         rows: u16,
         #[serde(default = "default_cols")]
@@ -63,6 +72,13 @@ enum Args {
     Terminate {
         id: Uuid,
     },
+    Rename {
+        id: Uuid,
+        name: Option<String>,
+    },
+    Interrupt {
+        id: Uuid,
+    },
     List,
 }
 fn default_rows() -> u16 {
@@ -77,8 +93,8 @@ impl Tool for ProcessTool {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
         name: "process".into(),
-        description: "Manage persistent PTY-backed terminal processes. Start, read incremental output, write input, resize, list, or terminate.".into(),
-        input_schema: json!({"type":"object","properties":{"action":{"enum":["start","read","write","resize","terminate","list"]},"command":{"type":"string"},"id":{"type":"string"},"data":{"type":"string"},"rows":{"type":"integer","minimum":1},"cols":{"type":"integer","minimum":1}},"required":["action"]}),
+        description: "Manage multiple persistent PTY-backed terminals with stable IDs and optional names, cwd, and environment. Start, read, write, resize, interrupt, rename, list, or terminate. Use shell for isolated one-shot commands.".into(),
+        input_schema: json!({"type":"object","properties":{"action":{"enum":["start","read","write","resize","interrupt","rename","terminate","list"]},"command":{"type":"string"},"id":{"type":"string"},"name":{"type":["string","null"]},"cwd":{"type":"string"},"env":{"type":"object"},"data":{"type":"string"},"rows":{"type":"integer","minimum":1},"cols":{"type":"integer","minimum":1}},"required":["action"]}),
     }
     }
 
@@ -88,6 +104,9 @@ impl Tool for ProcessTool {
         match args {
             Args::Start {
                 command,
+                name,
+                cwd,
+                env,
                 rows,
                 cols,
             } => {
@@ -104,21 +123,27 @@ impl Tool for ProcessTool {
                     }
                     _ => {}
                 }
-                self.start(command, rows, cols, ctx)
+                self.start(command, name, cwd, env, rows, cols, ctx)
             }
             Args::Read { id } => self.read(id, ctx.max_output_bytes),
             Args::Write { id, data } => self.write(id, &data),
             Args::Resize { id, rows, cols } => self.resize(id, rows, cols),
             Args::Terminate { id } => self.terminate(id),
+            Args::Rename { id, name } => self.rename(id, name),
+            Args::Interrupt { id } => self.interrupt(id),
             Args::List => self.list(),
         }
     }
 }
 
 impl ProcessTool {
+    #[allow(clippy::too_many_arguments)]
     fn start(
         &self,
         command: String,
+        name: Option<String>,
+        cwd: Option<std::path::PathBuf>,
+        environment: BTreeMap<String, String>,
         rows: u16,
         cols: u16,
         ctx: &ToolContext,
@@ -131,12 +156,22 @@ impl ProcessTool {
                 pixel_height: 0,
             })
             .map_err(failed)?;
-        let mut builder = CommandBuilder::new("sh");
+        let mut builder = platform_command(&command);
         builder.env_clear();
-        builder.arg("-lc");
-        builder.arg(command);
-        builder.cwd(ctx.policy.workspace());
+        let cwd = ctx
+            .policy
+            .resolve_read(cwd.as_deref().unwrap_or(ctx.policy.workspace()))
+            .map_err(failed)?;
+        if !cwd.is_dir() {
+            return Err(ToolError::InvalidArguments(
+                "terminal cwd must be a directory".into(),
+            ));
+        }
+        builder.cwd(&cwd);
         for (key, value) in &ctx.environment {
+            builder.env(key, value);
+        }
+        for (key, value) in environment {
             builder.env(key, value);
         }
         let child = pair.slave.spawn_command(builder).map_err(failed)?;
@@ -169,6 +204,11 @@ impl ProcessTool {
         self.processes.lock().map_err(failed)?.insert(
             id,
             Managed {
+                name,
+                command,
+                cwd,
+                rows,
+                cols,
                 master: pair.master,
                 child,
                 writer,
@@ -206,9 +246,9 @@ impl ProcessTool {
         Ok(format!("wrote {} bytes", data.len()))
     }
     fn resize(&self, id: Uuid, rows: u16, cols: u16) -> Result<String, ToolError> {
-        let map = self.processes.lock().map_err(failed)?;
+        let mut map = self.processes.lock().map_err(failed)?;
         let p = map
-            .get(&id)
+            .get_mut(&id)
             .ok_or_else(|| ToolError::Failed(format!("unknown process {id}")))?;
         p.master
             .resize(PtySize {
@@ -218,7 +258,33 @@ impl ProcessTool {
                 pixel_height: 0,
             })
             .map_err(failed)?;
+        p.rows = rows;
+        p.cols = cols;
         Ok(format!("resized to {cols}x{rows}"))
+    }
+    fn rename(&self, id: Uuid, name: Option<String>) -> Result<String, ToolError> {
+        let mut map = self.processes.lock().map_err(failed)?;
+        if let Some(ref name) = name
+            && map
+                .iter()
+                .any(|(other, p)| *other != id && p.name.as_ref() == Some(name))
+        {
+            return Err(ToolError::InvalidArguments(
+                "terminal name already exists".into(),
+            ));
+        }
+        map.get_mut(&id)
+            .ok_or_else(|| ToolError::Failed(format!("unknown process {id}")))?
+            .name = name;
+        Ok(format!("renamed {id}"))
+    }
+    fn interrupt(&self, id: Uuid) -> Result<String, ToolError> {
+        let map = self.processes.lock().map_err(failed)?;
+        let p = map
+            .get(&id)
+            .ok_or_else(|| ToolError::Failed(format!("unknown process {id}")))?;
+        interrupt_process_group(p.child.process_id());
+        Ok(format!("interrupted {id}"))
     }
     fn terminate(&self, id: Uuid) -> Result<String, ToolError> {
         let mut map = self.processes.lock().map_err(failed)?;
@@ -240,10 +306,40 @@ impl ProcessTool {
             } else {
                 "running"
             };
-            rows.push(format!("{id}\t{state}"));
+            rows.push(format!(
+                "{id}\t{state}\tname={}\tcwd={}\tsize={}x{}\tcommand={}",
+                p.name.as_deref().unwrap_or("-"),
+                p.cwd.display(),
+                p.cols,
+                p.rows,
+                p.command
+            ));
         }
         Ok(rows.join("\n"))
     }
+}
+#[cfg(unix)]
+fn platform_command(command: &str) -> CommandBuilder {
+    let mut builder = CommandBuilder::new("/bin/sh");
+    builder.arg("-lc");
+    builder.arg(command);
+    builder
+}
+#[cfg(windows)]
+fn platform_command(command: &str) -> CommandBuilder {
+    let mut builder = CommandBuilder::new("cmd.exe");
+    builder.arg("/D");
+    builder.arg("/S");
+    builder.arg("/C");
+    builder.arg(command);
+    builder
+}
+#[cfg(not(any(unix, windows)))]
+fn platform_command(command: &str) -> CommandBuilder {
+    let mut builder = CommandBuilder::new("sh");
+    builder.arg("-lc");
+    builder.arg(command);
+    builder
 }
 fn unread_chunk(capture: &Capture, cursor: usize, max: usize) -> (String, usize) {
     let offset = cursor.saturating_sub(capture.base).min(capture.bytes.len());
@@ -268,6 +364,16 @@ fn terminate_process_group(process_id: Option<u32>) {
         }
     }
 }
+#[cfg(unix)]
+fn interrupt_process_group(process_id: Option<u32>) {
+    if let Some(id) = process_id {
+        unsafe {
+            libc::kill(-(id as i32), libc::SIGINT);
+        }
+    }
+}
+#[cfg(not(unix))]
+fn interrupt_process_group(_: Option<u32>) {}
 #[cfg(not(unix))]
 fn terminate_process_group(_: Option<u32>) {}
 
@@ -316,7 +422,13 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let ctx = context(directory.path());
         let tool = ProcessTool::default();
-        let started = tool.execute(json!({"action":"start","command":"printf ready; read line; printf 'got:%s' \"$line\""}), &ctx).await.unwrap();
+        let started = tool
+            .execute(
+                json!({"action":"start","command":interactive_command()}),
+                &ctx,
+            )
+            .await
+            .unwrap();
         let id = Uuid::parse_str(started.split_whitespace().last().unwrap()).unwrap();
         let mut first = String::new();
         for _ in 0..100 {
@@ -369,5 +481,13 @@ mod tests {
         let (third, cursor) = unread_chunk(&capture, cursor, 3);
         assert_eq!(third, "gh");
         assert_eq!(cursor, 18);
+    }
+    #[cfg(unix)]
+    fn interactive_command() -> &'static str {
+        "printf ready; read line; printf 'got:%s' \"$line\""
+    }
+    #[cfg(windows)]
+    fn interactive_command() -> &'static str {
+        "set /p line=ready&& echo got:%line%"
     }
 }

@@ -135,6 +135,18 @@ This is capability control, not an OS sandbox. Shell commands inherit the user's
 permissions and can access resources available to that account. For hostile prompts
 or untrusted data, run Helm in a container or restricted service account as well.
 
+### Managed terminals
+
+The `process` tool manages concurrent PTY terminals for the lifetime of Helm. Each
+has a stable UUID and may have a name, workspace-confined cwd, extra environment,
+and independent size. It supports start, read, write, resize, interrupt, rename,
+list, and terminate; launches still pass command policy and approval. The separate
+`shell` tool remains the explicit isolated one-shot path.
+
+PTYs do not survive a Helm or host restart, and missing IDs are reported honestly.
+For reconnectable workflows use a policy-approved external supervisor such as tmux,
+systemd, or a container rather than assuming Helm can resurrect a process.
+
 ## Development
 
 ```sh
