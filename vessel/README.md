@@ -10,6 +10,21 @@ vessel pair voyage:v1:PAIRINGCODE
 vessel fleet
 ```
 
+## Operator console
+
+Set `VESSEL_OPERATOR_TOKEN` to enable the embedded web console, then open `/ui`.
+The browser uses HTTP Basic authentication: any username is accepted and the token
+is the password. Bearer authentication is also supported for scripted UI checks.
+Serve Vessel behind TLS whenever it is not bound exclusively to loopback; Basic and
+Bearer credentials must not traverse plaintext networks.
+
+The console refreshes every five seconds and provides fleet totals, worker status,
+version, model, capabilities and last-seen time; recent task inventory; full task
+state, attempt, lease, error, result, token usage and session details; task creation;
+cancellation; and explicit retry of failed or cancelled tasks. Task UUIDs are the
+durable correlation identifiers shown in logs and the console. Empty, missing,
+disabled-auth and validation states produce explicit operator messages.
+
 Task delivery uses ownership leases: every pull creates a unique lease, stale
 completions are rejected, expired work is requeued up to three attempts, and
 explicit failures can be retryable or terminal. `POST /v1/tasks/{id}/cancel`

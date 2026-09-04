@@ -48,6 +48,13 @@ Do not expose diagnostics or metrics publicly without network-layer authenticati
 They contain no credentials or prompts but reveal operational topology. Retain JSON
 logs according to local policy and restrict them as potentially sensitive metadata.
 
+The embedded Vessel operator console at `/ui` is disabled unless
+`VESSEL_OPERATOR_TOKEN` (or `--operator-token`) is set. It accepts that secret as an
+HTTP Bearer token or as the password in HTTP Basic authentication. Use a randomly
+generated secret, keep it out of command history by preferring the environment
+variable, and terminate TLS before Vessel outside loopback. The console never emits
+the configured token into HTML, logs, diagnostics, or persisted control-plane state.
+
 ## Incident checklist
 
 1. Capture UTC time, release version, execution/request/approval IDs, and redacted

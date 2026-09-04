@@ -2,13 +2,14 @@ use anyhow::Result;
 use axum::{
     Json, Router,
     body::Body,
-    extract::{Path, State},
+    extract::{Form, Path, State},
     http::{HeaderMap, HeaderValue, Request, StatusCode},
     middleware,
     middleware::Next,
-    response::Response,
+    response::{Html, IntoResponse, Redirect, Response},
     routing::{get, post},
 };
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use chrono::{Duration as ChronoDuration, Utc};
 use clap::{CommandFactory, Parser, Subcommand};
 use clap_complete::Shell;
@@ -44,6 +45,9 @@ struct Cli {
     lease_secs: u64,
     #[arg(long, default_value_t = 600)]
     pairing_ttl_secs: u64,
+    /// Secret required for the operator web console (or VESSEL_OPERATOR_TOKEN).
+    #[arg(long, env = "VESSEL_OPERATOR_TOKEN")]
+    operator_token: Option<String>,
     #[arg(long, global = true, value_enum, default_value = "text")]
     log_format: LogFormat,
     #[command(subcommand)]
@@ -85,6 +89,7 @@ struct AppState {
     lease_duration: Duration,
     task_available: Arc<tokio::sync::Notify>,
     pairing_ttl: ChronoDuration,
+    operator_token_hash: Option<String>,
 }
 #[derive(Default, Serialize, Deserialize)]
 struct ControlPlane {
@@ -180,6 +185,7 @@ async fn main() -> Result<()> {
         lease_duration: Duration::from_secs(cli.lease_secs),
         task_available: Arc::new(tokio::sync::Notify::new()),
         pairing_ttl: ChronoDuration::seconds(cli.pairing_ttl_secs.max(1) as i64),
+        operator_token_hash: cli.operator_token.as_deref().map(token_hash),
     };
     spawn_reaper(state.clone(), Duration::from_secs(cli.stale_after_secs));
     let app = Router::new()
@@ -201,6 +207,12 @@ async fn main() -> Result<()> {
         .route("/v1/tasks", get(list_tasks))
         .route("/v1/tasks/{id}/cancel", post(cancel_task))
         .route("/v1/fleet/summary", get(fleet_summary))
+        .route("/ui", get(operator_dashboard))
+        .route("/ui/helms/{id}", get(operator_helm))
+        .route("/ui/helms/{id}/tasks", post(operator_create_task))
+        .route("/ui/tasks/{id}", get(operator_task))
+        .route("/ui/tasks/{id}/cancel", post(operator_cancel_task))
+        .route("/ui/tasks/{id}/retry", post(operator_retry_task))
         .layer(middleware::from_fn(correlate))
         .with_state(state);
     let listener = tokio::net::TcpListener::bind(&cli.bind).await?;
@@ -653,6 +665,326 @@ async fn fleet_summary(State(state): State<AppState>) -> Json<FleetSummary> {
     })
 }
 
+struct UiError(Box<Response>);
+impl IntoResponse for UiError {
+    fn into_response(self) -> Response {
+        *self.0
+    }
+}
+fn ui_error(value: impl IntoResponse) -> UiError {
+    UiError(Box::new(value.into_response()))
+}
+type UiResult<T> = Result<T, UiError>;
+
+#[derive(Deserialize)]
+struct CreateTaskForm {
+    prompt: String,
+}
+
+fn operator_auth(state: &AppState, headers: &HeaderMap) -> UiResult<()> {
+    let Some(expected) = state.operator_token_hash.as_deref() else {
+        return Err(ui_error((
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Operator UI is disabled. Set VESSEL_OPERATOR_TOKEN.",
+        )));
+    };
+    let supplied = bearer(headers).map(str::to_owned).or_else(|| {
+        let encoded = headers
+            .get(axum::http::header::AUTHORIZATION)?
+            .to_str()
+            .ok()?
+            .strip_prefix("Basic ")?;
+        let decoded = STANDARD.decode(encoded).ok()?;
+        let credentials = std::str::from_utf8(&decoded).ok()?;
+        credentials
+            .split_once(':')
+            .map(|(_, password)| password.to_owned())
+    });
+    if supplied
+        .is_some_and(|token| constant_time_eq(token_hash(&token).as_bytes(), expected.as_bytes()))
+    {
+        Ok(())
+    } else {
+        let mut response =
+            (StatusCode::UNAUTHORIZED, "Operator authentication required").into_response();
+        response.headers_mut().insert(
+            axum::http::header::WWW_AUTHENTICATE,
+            HeaderValue::from_static("Basic realm=\"Vessel operator\", charset=\"UTF-8\""),
+        );
+        Err(ui_error(response))
+    }
+}
+
+fn operator_write_auth(state: &AppState, headers: &HeaderMap) -> UiResult<()> {
+    operator_auth(state, headers)?;
+    let uses_basic = headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.starts_with("Basic "));
+    if uses_basic {
+        let host = headers
+            .get(axum::http::header::HOST)
+            .and_then(|v| v.to_str().ok());
+        let origin_host = headers
+            .get(axum::http::header::ORIGIN)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|origin| {
+                origin
+                    .split_once("://")
+                    .map(|(_, rest)| rest.trim_end_matches('/'))
+            });
+        if host != origin_host {
+            return Err(ui_error((
+                StatusCode::FORBIDDEN,
+                "Cross-origin operator action rejected",
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
+    if left.len() != right.len() {
+        return false;
+    }
+    left.iter()
+        .zip(right)
+        .fold(0_u8, |difference, (left, right)| {
+            difference | (left ^ right)
+        })
+        == 0
+}
+
+fn page(title: &str, body: String) -> Html<String> {
+    Html(format!(
+        r#"<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta http-equiv="refresh" content="5"><title>{title} · Vessel</title><style>
+    :root{{--bg:#0b1020;--panel:#151c30;--text:#e8edf8;--muted:#94a3b8;--line:#28344d;--accent:#67e8f9;--bad:#fda4af;--good:#86efac}}*{{box-sizing:border-box}}body{{margin:0;background:var(--bg);color:var(--text);font:15px system-ui,sans-serif}}main{{max-width:1180px;margin:auto;padding:28px}}a{{color:var(--accent)}}header{{display:flex;justify-content:space-between;align-items:center}}.grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:14px}}.card,table,form{{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px}}table{{width:100%;border-collapse:collapse;margin:16px 0}}th,td{{text-align:left;padding:10px;border-bottom:1px solid var(--line);vertical-align:top}}.muted{{color:var(--muted)}}.state{{font-weight:700}}input,textarea,button{{width:100%;background:#0c1427;color:var(--text);border:1px solid #3a4968;border-radius:6px;padding:10px;margin:5px 0}}button{{cursor:pointer;width:auto}}code{{overflow-wrap:anywhere}}.error{{color:var(--bad)}}.online,.completed{{color:var(--good)}}.offline,.failed,.cancelled{{color:var(--bad)}}
+    </style></head><body><main><header><h1><a href="/ui">Vessel</a> · {title}</h1><span class="muted">auto-refresh 5s · protocol v{PROTOCOL_VERSION}</span></header>{body}</main></body></html>"#
+    ))
+}
+
+fn h(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#39;")
+}
+
+async fn operator_dashboard(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> UiResult<Html<String>> {
+    operator_auth(&state, &headers)?;
+    let inner = state.inner.read().await;
+    let mut helms: Vec<_> = inner.helms.values().collect();
+    helms.sort_by_key(|helm| &helm.descriptor.name);
+    let mut tasks: Vec<_> = inner.tasks.values().collect();
+    tasks.sort_by_key(|task| std::cmp::Reverse(task.created_at));
+    let helm_rows = helms.iter().map(|helm| format!("<tr><td><a href='/ui/helms/{0}'>{1}</a><br><code>{0}</code></td><td class='state'>{2:?}</td><td>{3}</td><td>{4}</td><td>{5}</td></tr>", helm.descriptor.id, h(&helm.descriptor.name), helm.status, h(&helm.descriptor.version), h(&helm.descriptor.model), helm.last_seen_at.to_rfc3339())).collect::<String>();
+    let task_rows = tasks.iter().take(100).map(|task| format!("<tr><td><a href='/ui/tasks/{0}'><code>{0}</code></a></td><td><code>{1}</code></td><td class='state'>{2:?}</td><td>{3}/{4}</td><td>{5}</td></tr>", task.id, task.helm_id, task.state, task.attempt, task.max_attempts, task.updated_at.to_rfc3339())).collect::<String>();
+    let summary = FleetSummary {
+        total_helms: inner.helms.len(),
+        online_helms: inner
+            .helms
+            .values()
+            .filter(|helm| helm.status == HelmStatus::Online)
+            .count(),
+        queued_tasks: inner
+            .tasks
+            .values()
+            .filter(|task| task.state == TaskState::Queued)
+            .count(),
+        running_tasks: inner
+            .tasks
+            .values()
+            .filter(|task| task.state == TaskState::Running)
+            .count(),
+        failed_tasks: inner
+            .tasks
+            .values()
+            .filter(|task| task.state == TaskState::Failed)
+            .count(),
+    };
+    Ok(page(
+        "Fleet",
+        format!(
+            "<section class='grid'><div class='card'><b>{}</b><div class='muted'>Helms ({} online)</div></div><div class='card'><b>{}</b><div class='muted'>Queued tasks</div></div><div class='card'><b>{}</b><div class='muted'>Running tasks</div></div><div class='card'><b>{}</b><div class='muted'>Failed tasks</div></div></section><h2>Workers</h2>{}<table><tr><th>Helm</th><th>Status</th><th>Version</th><th>Model</th><th>Last seen (UTC)</th></tr>{}</table><h2>Recent tasks</h2>{}<table><tr><th>Correlation / task ID</th><th>Helm</th><th>State</th><th>Attempt</th><th>Updated (UTC)</th></tr>{}</table>",
+            summary.total_helms,
+            summary.online_helms,
+            summary.queued_tasks,
+            summary.running_tasks,
+            summary.failed_tasks,
+            if helms.is_empty() {
+                "<p class='muted'>No Helms paired. Run <code>helm --voyage</code> and claim its pairing string.</p>"
+            } else {
+                ""
+            },
+            helm_rows,
+            if tasks.is_empty() {
+                "<p class='muted'>No tasks have been created.</p>"
+            } else {
+                ""
+            },
+            task_rows
+        ),
+    ))
+}
+
+async fn operator_helm(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+) -> UiResult<Html<String>> {
+    operator_auth(&state, &headers)?;
+    let inner = state.inner.read().await;
+    let helm = inner
+        .helms
+        .get(&id)
+        .ok_or_else(|| ui_error((StatusCode::NOT_FOUND, "Helm not found")))?;
+    let caps = helm
+        .descriptor
+        .capabilities
+        .iter()
+        .map(|cap| format!("<code>{}</code> ", h(cap)))
+        .collect::<String>();
+    Ok(page(
+        &h(&helm.descriptor.name),
+        format!(
+            "<div class='grid'><div class='card'><b class='state'>{0:?}</b><div class='muted'>status</div></div><div class='card'><b>{1}</b><div class='muted'>version</div></div><div class='card'><b>{2}</b><div class='muted'>model</div></div></div><p><b>ID:</b> <code>{3}</code><br><b>Paired:</b> {4}<br><b>Last seen:</b> {5}<br><b>Capabilities:</b> {6}</p><h2>Create task</h2><form method='post' action='/ui/helms/{3}/tasks'><label>Prompt<textarea name='prompt' required minlength='1' maxlength='100000' rows='8'></textarea></label><button>Create task</button></form>",
+            helm.status,
+            h(&helm.descriptor.version),
+            h(&helm.descriptor.model),
+            helm.descriptor.id,
+            helm.paired_at.to_rfc3339(),
+            helm.last_seen_at.to_rfc3339(),
+            caps
+        ),
+    ))
+}
+
+async fn operator_create_task(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+    Form(form): Form<CreateTaskForm>,
+) -> UiResult<Redirect> {
+    operator_write_auth(&state, &headers)?;
+    let prompt = form.prompt.trim();
+    if prompt.is_empty() {
+        return Err(ui_error((
+            StatusCode::BAD_REQUEST,
+            "Prompt cannot be empty",
+        )));
+    }
+    let record = enqueue_task(
+        State(state),
+        Path(id),
+        Json(TaskRequest {
+            prompt: prompt.to_owned(),
+            session_id: None,
+        }),
+    )
+    .await
+    .map_err(|(status, Json(error))| ui_error((status, error.error)))?;
+    Ok(Redirect::to(&format!("/ui/tasks/{}", record.0.id)))
+}
+
+async fn operator_task(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+) -> UiResult<Html<String>> {
+    operator_auth(&state, &headers)?;
+    let inner = state.inner.read().await;
+    let task = inner
+        .tasks
+        .get(&id)
+        .ok_or_else(|| ui_error((StatusCode::NOT_FOUND, "Task not found")))?;
+    let result=task.result.as_ref().map(|r|format!("<h2>Result</h2><div class='card'><pre>{}</pre><p>{} input / {} output tokens · session <code>{}</code></p></div>",h(&r.answer),r.input_tokens,r.output_tokens,r.session_id)).unwrap_or_default();
+    let actions = if matches!(task.state, TaskState::Queued | TaskState::Running) {
+        format!(
+            "<form method='post' action='/ui/tasks/{id}/cancel'><button>Cancel task</button></form>"
+        )
+    } else if matches!(task.state, TaskState::Failed | TaskState::Cancelled) {
+        format!(
+            "<form method='post' action='/ui/tasks/{id}/retry'><button>Retry task</button></form>"
+        )
+    } else {
+        String::new()
+    };
+    Ok(page(
+        "Task",
+        format!(
+            "<div class='grid'><div class='card'><b class='state'>{0:?}</b><div class='muted'>state</div></div><div class='card'><b>{1}/{2}</b><div class='muted'>attempts</div></div></div><p><b>Correlation / task ID:</b> <code>{3}</code><br><b>Helm:</b> <a href='/ui/helms/{4}'><code>{4}</code></a><br><b>Created:</b> {5}<br><b>Updated:</b> {6}<br><b>Lease:</b> <code>{7}</code><br><b>Lease expires:</b> {8}</p><h2>Prompt</h2><div class='card'><pre>{9}</pre></div>{10}{11}<p class='error'>{12}</p>",
+            task.state,
+            task.attempt,
+            task.max_attempts,
+            task.id,
+            task.helm_id,
+            task.created_at.to_rfc3339(),
+            task.updated_at.to_rfc3339(),
+            task.lease_id.map_or_else(|| "—".into(), |v| v.to_string()),
+            task.lease_expires_at
+                .map_or_else(|| "—".into(), |v| v.to_rfc3339()),
+            h(&task.request.prompt),
+            result,
+            actions,
+            h(task.last_error.as_deref().unwrap_or(""))
+        ),
+    ))
+}
+
+async fn operator_cancel_task(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+) -> UiResult<Redirect> {
+    operator_write_auth(&state, &headers)?;
+    let _ = cancel_task(State(state), Path(id))
+        .await
+        .map_err(|(s, Json(e))| ui_error((s, e.error)))?;
+    Ok(Redirect::to(&format!("/ui/tasks/{id}")))
+}
+
+async fn operator_retry_task(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+) -> UiResult<Redirect> {
+    operator_write_auth(&state, &headers)?;
+    let mut inner = state.inner.write().await;
+    let record = inner
+        .tasks
+        .get_mut(&id)
+        .ok_or_else(|| ui_error((StatusCode::NOT_FOUND, "Task not found")))?;
+    if !matches!(record.state, TaskState::Failed | TaskState::Cancelled) {
+        return Err(ui_error((
+            StatusCode::CONFLICT,
+            "Only failed or cancelled tasks can be retried",
+        )));
+    }
+    record.state = TaskState::Queued;
+    record.attempt = 0;
+    record.last_error = None;
+    record.result = None;
+    record.updated_at = Utc::now();
+    let helm_id = record.helm_id;
+    let envelope = TaskEnvelope {
+        id,
+        request: record.request.clone(),
+        created_at: record.created_at,
+        attempt: 0,
+        lease_id: Uuid::nil(),
+        lease_expires_at: Utc::now(),
+    };
+    inner.queues.entry(helm_id).or_default().push_back(envelope);
+    persist(&state, &inner).map_err(|error| ui_error(internal_error(error)))?;
+    state.task_available.notify_waiters();
+    Ok(Redirect::to(&format!("/ui/tasks/{id}")))
+}
+
 fn worker_id(
     inner: &ControlPlane,
     headers: &HeaderMap,
@@ -822,6 +1154,7 @@ mod tests {
             lease_duration: Duration::from_secs(10),
             task_available: Arc::new(tokio::sync::Notify::new()),
             pairing_ttl: ChronoDuration::seconds(10),
+            operator_token_hash: None,
         };
         persist(&state, &ControlPlane::default()).unwrap();
         assert!(
@@ -835,5 +1168,20 @@ mod tests {
     fn credentials_are_stored_as_hashes() {
         assert_ne!(token_hash("secret"), "secret");
         assert_eq!(token_hash("secret"), token_hash("secret"));
+    }
+
+    #[test]
+    fn operator_output_escapes_untrusted_content() {
+        assert_eq!(
+            h("<script>alert('x') & \"y\"</script>"),
+            "&lt;script&gt;alert(&#39;x&#39;) &amp; &quot;y&quot;&lt;/script&gt;"
+        );
+    }
+
+    #[test]
+    fn constant_time_comparison_rejects_mismatches() {
+        assert!(constant_time_eq(b"same", b"same"));
+        assert!(!constant_time_eq(b"same", b"diff"));
+        assert!(!constant_time_eq(b"short", b"longer"));
     }
 }

@@ -12,9 +12,17 @@ def request(base, method, path, body=None, token=None, expected=200, timeout=30)
     assert status == expected, f"{method} {path}: expected {expected}, got {status}: {payload!r}"
     return json.loads(payload) if payload else None
 
+def request_text(base, path, token=None, expected=200):
+    headers={} if token is None else {"Authorization":f"Bearer {token}"}
+    try:
+        with urllib.request.urlopen(urllib.request.Request(base+path,headers=headers),timeout=3) as response: status,payload=response.status,response.read()
+    except urllib.error.HTTPError as error: status,payload=error.code,error.read()
+    assert status==expected,f"GET {path}: expected {expected}, got {status}"
+    return payload.decode()
+
 def start(database, pairing_ttl=30):
     with socket.socket() as candidate: candidate.bind(("127.0.0.1",0)); port=candidate.getsockname()[1]
-    base=f"http://127.0.0.1:{port}"; process=subprocess.Popen([str(BINARY),"--bind",f"127.0.0.1:{port}","--database",str(database),"--lease-secs","1","--stale-after-secs","1","--pairing-ttl-secs",str(pairing_ttl)],stdout=subprocess.DEVNULL,stderr=subprocess.PIPE)
+    base=f"http://127.0.0.1:{port}"; process=subprocess.Popen([str(BINARY),"--bind",f"127.0.0.1:{port}","--database",str(database),"--lease-secs","1","--stale-after-secs","1","--pairing-ttl-secs",str(pairing_ttl),"--operator-token","operator-test-secret"],stdout=subprocess.DEVNULL,stderr=subprocess.PIPE)
     for _ in range(50):
         try:
             if request(base,"GET","/health",timeout=1)["status"]=="ok":
@@ -47,6 +55,7 @@ def main():
       try:
         begin(base,version=999); helm_id,pairing=begin(base); token=pairing["worker_token"]
         request(base,"GET",f"/v1/pairings/{pairing['code']}",token="wrong",expected=401); claim(base,pairing)
+        request_text(base,"/ui",expected=401); dashboard=request_text(base,"/ui",token="operator-test-secret"); assert "system-test" in dashboard and "Fleet" in dashboard
         request(base,"POST","/v1/pairings/claim",{"connection_string":pairing["code"]},expected=409); heartbeat(base,token,999,426); heartbeat(base,token)
         with concurrent.futures.ThreadPoolExecutor() as pool:
             started=time.monotonic(); future=pool.submit(request,base,"GET","/v1/worker/tasks/next",None,token); time.sleep(.2); task=enqueue(base,helm_id,"wake"); envelope=future.result(timeout=3)
