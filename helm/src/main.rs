@@ -622,7 +622,10 @@ async fn tui_chat(
 }
 
 async fn build_tools(config: &Config) -> Result<ToolRegistry> {
-    let mut tools = ToolRegistry::standard();
+    let mut tools = ToolRegistry::standard_with_terminal_limits(
+        config.terminal_max_count,
+        config.terminal_max_unread_bytes,
+    );
     for (name, server) in &config.mcp_servers {
         let mut environment = tool_environment(config);
         environment.extend(server.env.clone());

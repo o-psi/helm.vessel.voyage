@@ -2,7 +2,7 @@ use super::{Tool, ToolContext, ToolError};
 use crate::{model::ToolDefinition, policy::Decision};
 use async_trait::async_trait;
 use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
     collections::BTreeMap,
@@ -11,9 +11,31 @@ use std::{
 };
 use uuid::Uuid;
 
-#[derive(Default)]
+#[derive(Clone)]
 pub struct ProcessTool {
     processes: Arc<Mutex<BTreeMap<Uuid, Managed>>>,
+    selected: Arc<Mutex<Option<Uuid>>>,
+    max_count: usize,
+    max_unread_bytes: usize,
+}
+pub type TerminalManager = ProcessTool;
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TerminalMetadata {
+    pub id: Uuid,
+    pub name: Option<String>,
+    pub command: String,
+    pub cwd: std::path::PathBuf,
+    pub rows: u16,
+    pub cols: u16,
+    pub state: String,
+    pub unread_bytes: usize,
+}
+
+impl Default for ProcessTool {
+    fn default() -> Self {
+        Self::with_limits(16, MAX_CAPTURE_BYTES)
+    }
 }
 
 struct Managed {
@@ -58,26 +80,36 @@ enum Args {
         cols: u16,
     },
     Read {
-        id: Uuid,
+        id: Option<Uuid>,
+        name: Option<String>,
     },
     Write {
-        id: Uuid,
+        id: Option<Uuid>,
+        name: Option<String>,
         data: String,
     },
     Resize {
-        id: Uuid,
+        id: Option<Uuid>,
+        name: Option<String>,
         rows: u16,
         cols: u16,
     },
     Terminate {
-        id: Uuid,
+        id: Option<Uuid>,
+        name: Option<String>,
     },
     Rename {
-        id: Uuid,
+        id: Option<Uuid>,
+        current_name: Option<String>,
         name: Option<String>,
     },
     Interrupt {
-        id: Uuid,
+        id: Option<Uuid>,
+        name: Option<String>,
+    },
+    Select {
+        id: Option<Uuid>,
+        name: Option<String>,
     },
     List,
 }
@@ -125,18 +157,85 @@ impl Tool for ProcessTool {
                 }
                 self.start(command, name, cwd, env, rows, cols, ctx)
             }
-            Args::Read { id } => self.read(id, ctx.max_output_bytes),
-            Args::Write { id, data } => self.write(id, &data),
-            Args::Resize { id, rows, cols } => self.resize(id, rows, cols),
-            Args::Terminate { id } => self.terminate(id),
-            Args::Rename { id, name } => self.rename(id, name),
-            Args::Interrupt { id } => self.interrupt(id),
+            Args::Read { id, name } => {
+                self.read(self.resolve(id, name.as_deref())?, ctx.max_output_bytes)
+            }
+            Args::Write { id, name, data } => self.write(self.resolve(id, name.as_deref())?, &data),
+            Args::Resize {
+                id,
+                name,
+                rows,
+                cols,
+            } => self.resize(self.resolve(id, name.as_deref())?, rows, cols),
+            Args::Terminate { id, name } => self.terminate(self.resolve(id, name.as_deref())?),
+            Args::Rename {
+                id,
+                current_name,
+                name,
+            } => self.rename(self.resolve(id, current_name.as_deref())?, name),
+            Args::Interrupt { id, name } => self.interrupt(self.resolve(id, name.as_deref())?),
+            Args::Select { id, name } => {
+                let id = self.resolve(id, name.as_deref())?;
+                *self.selected.lock().map_err(failed)? = Some(id);
+                Ok(format!("selected {id}"))
+            }
             Args::List => self.list(),
         }
     }
 }
 
 impl ProcessTool {
+    pub fn with_limits(max_count: usize, max_unread_bytes: usize) -> Self {
+        Self {
+            processes: Arc::new(Mutex::new(BTreeMap::new())),
+            selected: Arc::new(Mutex::new(None)),
+            max_count: max_count.max(1),
+            max_unread_bytes: max_unread_bytes.max(1024),
+        }
+    }
+    pub fn metadata(&self) -> Result<Vec<TerminalMetadata>, ToolError> {
+        let mut map = self.processes.lock().map_err(failed)?;
+        map.iter_mut()
+            .map(|(id, p)| {
+                let status = p
+                    .child
+                    .try_wait()
+                    .map_err(failed)?
+                    .map_or_else(|| "running".into(), |s| format!("exited: {s:?}"));
+                let unread = p.output.lock().map_err(failed)?.bytes.len().saturating_sub(
+                    p.cursor
+                        .saturating_sub(p.output.lock().map_err(failed)?.base),
+                );
+                Ok(TerminalMetadata {
+                    id: *id,
+                    name: p.name.clone(),
+                    command: p.command.clone(),
+                    cwd: p.cwd.clone(),
+                    rows: p.rows,
+                    cols: p.cols,
+                    state: status,
+                    unread_bytes: unread,
+                })
+            })
+            .collect()
+    }
+    fn resolve(&self, id: Option<Uuid>, name: Option<&str>) -> Result<Uuid, ToolError> {
+        if let Some(id) = id {
+            return Ok(id);
+        }
+        let map = self.processes.lock().map_err(failed)?;
+        if let Some(name) = name {
+            return map
+                .iter()
+                .find(|(_, p)| p.name.as_deref() == Some(name))
+                .map(|(id, _)| *id)
+                .ok_or_else(|| ToolError::Failed(format!("unknown terminal name `{name}`")));
+        }
+        self.selected
+            .lock()
+            .map_err(failed)?
+            .ok_or_else(|| ToolError::Failed("no selected terminal".into()))
+    }
     #[allow(clippy::too_many_arguments)]
     fn start(
         &self,
@@ -148,6 +247,22 @@ impl ProcessTool {
         cols: u16,
         ctx: &ToolContext,
     ) -> Result<String, ToolError> {
+        {
+            let map = self.processes.lock().map_err(failed)?;
+            if map.len() >= self.max_count {
+                return Err(ToolError::Failed(format!(
+                    "terminal limit {} reached",
+                    self.max_count
+                )));
+            }
+            if let Some(ref name) = name
+                && map.values().any(|p| p.name.as_ref() == Some(name))
+            {
+                return Err(ToolError::InvalidArguments(format!(
+                    "terminal name `{name}` already exists"
+                )));
+            }
+        }
         let pair = native_pty_system()
             .openpty(PtySize {
                 rows,
@@ -179,6 +294,7 @@ impl ProcessTool {
         let mut reader = pair.master.try_clone_reader().map_err(failed)?;
         let writer = pair.master.take_writer().map_err(failed)?;
         let output = Arc::new(Mutex::new(Capture::default()));
+        let max_unread_bytes = self.max_unread_bytes;
         let sink = output.clone();
         std::thread::Builder::new()
             .name("helm-pty-reader".into())
@@ -190,8 +306,8 @@ impl ProcessTool {
                         Ok(n) => {
                             let mut capture = sink.lock().expect("PTY buffer poisoned");
                             capture.bytes.extend_from_slice(&buffer[..n]);
-                            if capture.bytes.len() > MAX_CAPTURE_BYTES {
-                                let remove = capture.bytes.len() - MAX_CAPTURE_BYTES;
+                            if capture.bytes.len() > max_unread_bytes {
+                                let remove = capture.bytes.len() - max_unread_bytes;
                                 capture.bytes.drain(..remove);
                                 capture.base += remove;
                             }
@@ -216,6 +332,7 @@ impl ProcessTool {
                 cursor: 0,
             },
         );
+        *self.selected.lock().map_err(failed)? = Some(id);
         Ok(format!("started PTY process {id}"))
     }
     fn read(&self, id: Uuid, max: usize) -> Result<String, ToolError> {

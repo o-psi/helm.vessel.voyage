@@ -34,6 +34,8 @@ pub struct Config {
     pub provider_retry_max_ms: u64,
     pub command_timeout_secs: u64,
     pub max_output_bytes: usize,
+    pub terminal_max_count: usize,
+    pub terminal_max_unread_bytes: usize,
     pub approval: ApprovalMode,
     pub unattended_approval: UnattendedApprovalMode,
     pub workspace: Option<PathBuf>,
@@ -89,6 +91,8 @@ impl Default for Config {
             provider_retry_max_ms: 8000,
             command_timeout_secs: 120,
             max_output_bytes: 128 * 1024,
+            terminal_max_count: 16,
+            terminal_max_unread_bytes: 8 * 1024 * 1024,
             approval: ApprovalMode::OnRisk,
             unattended_approval: UnattendedApprovalMode::Deny,
             workspace: None,
@@ -155,6 +159,9 @@ impl Config {
         }
         if self.max_output_bytes < 1024 {
             bail!("max_output_bytes must be at least 1024");
+        }
+        if self.terminal_max_count == 0 || self.terminal_max_unread_bytes < 1024 {
+            bail!("terminal limits require a positive count and at least 1024 unread bytes");
         }
         if self.provider_retry_attempts == 0 {
             bail!("provider_retry_attempts must be greater than zero");

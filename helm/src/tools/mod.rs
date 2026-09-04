@@ -149,6 +149,9 @@ pub struct ToolRegistry {
 
 impl ToolRegistry {
     pub fn standard() -> Self {
+        Self::standard_with_terminal_limits(16, 8 * 1024 * 1024)
+    }
+    pub fn standard_with_terminal_limits(max_count: usize, max_unread_bytes: usize) -> Self {
         let mut registry = Self::default();
         registry.register(ReadFile);
         registry.register(WriteFile);
@@ -156,7 +159,7 @@ impl ToolRegistry {
         registry.register(SearchFiles);
         registry.register(Shell);
         registry.register(ApplyPatch);
-        registry.register(ProcessTool::default());
+        registry.register(ProcessTool::with_limits(max_count, max_unread_bytes));
         registry
     }
     pub fn register<T: Tool + 'static>(&mut self, tool: T) {
