@@ -1,8 +1,15 @@
 //! Durable coordination primitives for isolated child agents.
 mod persistence;
+mod runtime;
+mod tool;
 mod worktree;
 
 pub use persistence::{AgentTree, AgentTreeStore};
+pub use runtime::{
+    ExecutionContext, InboxMessage, RuntimeError, RuntimeLimits, SpawnRequest, SubagentEvent,
+    SubagentEventKind, SubagentExecutor, SubagentResult, SubagentRuntime,
+};
+pub use tool::SubagentTool;
 pub use worktree::{ConflictReport, IntegrationPlan, WorktreeLease, WorktreeManager};
 
 use chrono::{DateTime, Utc};

@@ -1,0 +1,518 @@
+use super::{AgentBudget, AgentId, AgentPolicy, AgentRecord, AgentStatus, AgentTreeStore};
+use async_trait::async_trait;
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+use std::{
+    collections::{BTreeMap, VecDeque},
+    path::PathBuf,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+};
+use thiserror::Error;
+use tokio::sync::{Mutex, RwLock, Semaphore, broadcast, mpsc, watch};
+use tokio_util::sync::CancellationToken;
+
+#[derive(Clone, Debug)]
+pub struct RuntimeLimits {
+    pub max_concurrency: usize,
+    pub max_agents: usize,
+    pub event_history: usize,
+}
+impl Default for RuntimeLimits {
+    fn default() -> Self {
+        Self {
+            max_concurrency: 4,
+            max_agents: 64,
+            event_history: 2048,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct SpawnRequest {
+    pub parent_id: Option<AgentId>,
+    pub name: String,
+    pub task: String,
+    pub policy: AgentPolicy,
+    pub budget: AgentBudget,
+    pub worktree: Option<PathBuf>,
+    pub branch: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SubagentResult {
+    pub summary: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub enum InboxMessage {
+    Message(String),
+    FollowUp(String),
+}
+
+pub struct ExecutionContext {
+    pub id: AgentId,
+    pub task: String,
+    pub policy: AgentPolicy,
+    pub budget: AgentBudget,
+    pub worktree: Option<PathBuf>,
+    pub cancellation: CancellationToken,
+    inbox: mpsc::Receiver<InboxMessage>,
+    reporter: ProgressReporter,
+}
+impl ExecutionContext {
+    pub async fn recv(&mut self) -> Option<InboxMessage> {
+        self.inbox.recv().await
+    }
+    pub fn try_recv(&mut self) -> Result<InboxMessage, mpsc::error::TryRecvError> {
+        self.inbox.try_recv()
+    }
+    pub async fn progress(&self, text: impl Into<String>) {
+        self.reporter.report(text.into()).await;
+    }
+}
+
+#[async_trait]
+pub trait SubagentExecutor: Send + Sync + 'static {
+    async fn execute(&self, context: ExecutionContext) -> Result<SubagentResult, String>;
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SubagentEvent {
+    pub sequence: u64,
+    pub timestamp: DateTime<Utc>,
+    pub agent_id: AgentId,
+    pub kind: SubagentEventKind,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case", tag = "type")]
+pub enum SubagentEventKind {
+    Queued,
+    Started,
+    Progress { text: String },
+    MessageQueued,
+    FollowUpQueued,
+    Completed { result: SubagentResult },
+    Failed { error: String },
+    Cancelled,
+}
+
+#[derive(Debug, Error, Clone, PartialEq, Eq)]
+pub enum RuntimeError {
+    #[error("unknown subagent {0}")]
+    Unknown(AgentId),
+    #[error("subagent capacity of {0} reached")]
+    Capacity(usize),
+    #[error("subagent {0} is no longer active")]
+    Terminal(AgentId),
+    #[error("invalid request: {0}")]
+    Invalid(String),
+    #[error("persistence failed: {0}")]
+    Persistence(String),
+    #[error("subagent result channel closed")]
+    ResultChannelClosed,
+}
+
+#[derive(Clone)]
+pub struct SubagentRuntime {
+    inner: Arc<Inner>,
+}
+struct Inner {
+    executor: Arc<dyn SubagentExecutor>,
+    limits: RuntimeLimits,
+    permits: Semaphore,
+    agents: RwLock<BTreeMap<AgentId, Arc<Control>>>,
+    history: Mutex<VecDeque<SubagentEvent>>,
+    sequence: AtomicU64,
+    events: broadcast::Sender<SubagentEvent>,
+    store: Option<AgentTreeStore>,
+}
+struct Control {
+    record: RwLock<AgentRecord>,
+    cancel: CancellationToken,
+    inbox: mpsc::Sender<InboxMessage>,
+    outcome: watch::Sender<Option<Result<SubagentResult, String>>>,
+}
+#[derive(Clone)]
+struct ProgressReporter {
+    runtime: SubagentRuntime,
+    id: AgentId,
+}
+impl ProgressReporter {
+    async fn report(&self, text: String) {
+        self.runtime.record_progress(self.id, text).await;
+    }
+}
+
+impl SubagentRuntime {
+    pub fn new(
+        executor: Arc<dyn SubagentExecutor>,
+        limits: RuntimeLimits,
+        store: Option<AgentTreeStore>,
+    ) -> Result<Self, RuntimeError> {
+        if limits.max_concurrency == 0 || limits.max_agents == 0 || limits.event_history == 0 {
+            return Err(RuntimeError::Invalid(
+                "runtime limits must be greater than zero".into(),
+            ));
+        }
+        let (events, _) = broadcast::channel(limits.event_history.min(4096).max(16));
+        Ok(Self {
+            inner: Arc::new(Inner {
+                executor,
+                permits: Semaphore::new(limits.max_concurrency),
+                limits,
+                agents: RwLock::new(BTreeMap::new()),
+                history: Mutex::new(VecDeque::new()),
+                sequence: AtomicU64::new(0),
+                events,
+                store,
+            }),
+        })
+    }
+
+    pub fn subscribe(&self) -> broadcast::Receiver<SubagentEvent> {
+        self.inner.events.subscribe()
+    }
+    pub async fn events_after(&self, sequence: u64) -> Vec<SubagentEvent> {
+        self.inner
+            .history
+            .lock()
+            .await
+            .iter()
+            .filter(|e| e.sequence > sequence)
+            .cloned()
+            .collect()
+    }
+    pub async fn get(&self, id: AgentId) -> Result<AgentRecord, RuntimeError> {
+        let c = self.control(id).await?;
+        let record = c.record.read().await.clone();
+        Ok(record)
+    }
+    pub async fn list(&self) -> Vec<AgentRecord> {
+        let controls: Vec<_> = self.inner.agents.read().await.values().cloned().collect();
+        let mut out = Vec::with_capacity(controls.len());
+        for c in controls {
+            out.push(c.record.read().await.clone());
+        }
+        out.sort_by_key(|r| r.created_at);
+        out
+    }
+    pub async fn tree(&self, parent: Option<AgentId>) -> Vec<AgentRecord> {
+        self.list()
+            .await
+            .into_iter()
+            .filter(|r| r.parent_id == parent)
+            .collect()
+    }
+
+    pub async fn spawn(&self, request: SpawnRequest) -> Result<AgentId, RuntimeError> {
+        if request.task.trim().is_empty() || request.name.trim().is_empty() {
+            return Err(RuntimeError::Invalid(
+                "name and task cannot be empty".into(),
+            ));
+        }
+        if let Some(parent) = request.parent_id {
+            let parent_record = self.get(parent).await?;
+            parent_record
+                .policy
+                .validate_child(&request.policy)
+                .map_err(|e| RuntimeError::Invalid(e.to_string()))?;
+            let children = self.tree(Some(parent)).await;
+            if children.len() >= parent_record.budget.max_children as usize {
+                return Err(RuntimeError::Capacity(
+                    parent_record.budget.max_children as usize,
+                ));
+            }
+        }
+        let mut agents = self.inner.agents.write().await;
+        if agents.len() >= self.inner.limits.max_agents {
+            return Err(RuntimeError::Capacity(self.inner.limits.max_agents));
+        }
+        let id = AgentId::new();
+        let now = Utc::now();
+        let record = AgentRecord {
+            id,
+            parent_id: request.parent_id,
+            name: request.name.clone(),
+            task: request.task.clone(),
+            status: AgentStatus::Queued,
+            policy: request.policy.clone(),
+            budget: request.budget.clone(),
+            worktree: request.worktree.clone(),
+            branch: request.branch.clone(),
+            created_at: now,
+            started_at: None,
+            finished_at: None,
+            updated_at: now,
+            recent_progress: vec![],
+            result: None,
+            error: None,
+        };
+        if let Some(store) = &self.inner.store {
+            store
+                .create(record.clone())
+                .await
+                .map_err(|e| RuntimeError::Persistence(e.to_string()))?;
+        }
+        let (inbox_tx, inbox_rx) = mpsc::channel(64);
+        let (outcome, _) = watch::channel(None);
+        let control = Arc::new(Control {
+            record: RwLock::new(record),
+            cancel: CancellationToken::new(),
+            inbox: inbox_tx,
+            outcome,
+        });
+        agents.insert(id, control.clone());
+        drop(agents);
+        self.emit(id, SubagentEventKind::Queued).await;
+        let runtime = self.clone();
+        tokio::spawn(async move {
+            runtime.run(id, request, inbox_rx, control).await;
+        });
+        Ok(id)
+    }
+
+    async fn run(
+        &self,
+        id: AgentId,
+        request: SpawnRequest,
+        inbox: mpsc::Receiver<InboxMessage>,
+        control: Arc<Control>,
+    ) {
+        let permit = tokio::select! { _=control.cancel.cancelled()=>{self.finish_cancelled(id,&control).await;return}, p=self.inner.permits.acquire()=>match p {Ok(p)=>p,Err(_)=>{self.finish_failed(id,&control,"runtime shut down".into()).await;return}} };
+        {
+            let mut r = control.record.write().await;
+            if r.status.is_terminal() {
+                return;
+            }
+            r.status = AgentStatus::Running;
+            r.started_at = Some(Utc::now());
+            r.updated_at = Utc::now();
+        }
+        self.persist(&control).await;
+        self.emit(id, SubagentEventKind::Started).await;
+        let context = ExecutionContext {
+            id,
+            task: request.task,
+            policy: request.policy,
+            budget: request.budget,
+            worktree: request.worktree,
+            cancellation: control.cancel.clone(),
+            inbox,
+            reporter: ProgressReporter {
+                runtime: self.clone(),
+                id,
+            },
+        };
+        let result = tokio::select! { _=control.cancel.cancelled()=>None, r=self.inner.executor.execute(context)=>Some(r) };
+        drop(permit);
+        match result {
+            None => self.finish_cancelled(id, &control).await,
+            Some(Ok(value)) => self.finish_completed(id, &control, value).await,
+            Some(Err(error)) => self.finish_failed(id, &control, error).await,
+        }
+    }
+
+    pub async fn wait(&self, id: AgentId) -> Result<Result<SubagentResult, String>, RuntimeError> {
+        let c = self.control(id).await?;
+        let mut rx = c.outcome.subscribe();
+        loop {
+            if let Some(value) = rx.borrow().clone() {
+                return Ok(value);
+            }
+            rx.changed()
+                .await
+                .map_err(|_| RuntimeError::ResultChannelClosed)?;
+        }
+    }
+    pub async fn cancel(&self, id: AgentId) -> Result<(), RuntimeError> {
+        let c = self.control(id).await?;
+        if c.record.read().await.status.is_terminal() {
+            return Ok(());
+        }
+        c.cancel.cancel();
+        Ok(())
+    }
+    pub async fn send_message(
+        &self,
+        id: AgentId,
+        message: impl Into<String>,
+    ) -> Result<(), RuntimeError> {
+        self.send(
+            id,
+            InboxMessage::Message(message.into()),
+            SubagentEventKind::MessageQueued,
+        )
+        .await
+    }
+    pub async fn follow_up(
+        &self,
+        id: AgentId,
+        message: impl Into<String>,
+    ) -> Result<(), RuntimeError> {
+        self.send(
+            id,
+            InboxMessage::FollowUp(message.into()),
+            SubagentEventKind::FollowUpQueued,
+        )
+        .await
+    }
+    async fn send(
+        &self,
+        id: AgentId,
+        message: InboxMessage,
+        event: SubagentEventKind,
+    ) -> Result<(), RuntimeError> {
+        let c = self.control(id).await?;
+        if c.record.read().await.status.is_terminal() {
+            return Err(RuntimeError::Terminal(id));
+        }
+        c.inbox
+            .send(message)
+            .await
+            .map_err(|_| RuntimeError::Terminal(id))?;
+        self.emit(id, event).await;
+        Ok(())
+    }
+    async fn control(&self, id: AgentId) -> Result<Arc<Control>, RuntimeError> {
+        self.inner
+            .agents
+            .read()
+            .await
+            .get(&id)
+            .cloned()
+            .ok_or(RuntimeError::Unknown(id))
+    }
+    async fn record_progress(&self, id: AgentId, text: String) {
+        if let Ok(c) = self.control(id).await {
+            let mut r = c.record.write().await;
+            r.recent_progress.push(text.clone());
+            if r.recent_progress.len() > 20 {
+                r.recent_progress.remove(0);
+            }
+            r.updated_at = Utc::now();
+            drop(r);
+            self.persist(&c).await;
+            self.emit(id, SubagentEventKind::Progress { text }).await;
+        }
+    }
+    async fn finish_completed(&self, id: AgentId, c: &Control, value: SubagentResult) {
+        {
+            let mut r = c.record.write().await;
+            if r.status.is_terminal() {
+                return;
+            }
+            r.status = AgentStatus::Completed;
+            r.result = Some(value.summary.clone());
+            r.finished_at = Some(Utc::now());
+            r.updated_at = Utc::now();
+        }
+        self.persist(c).await;
+        let _ = c.outcome.send(Some(Ok(value.clone())));
+        self.emit(id, SubagentEventKind::Completed { result: value })
+            .await;
+    }
+    async fn finish_failed(&self, id: AgentId, c: &Control, error: String) {
+        {
+            let mut r = c.record.write().await;
+            if r.status.is_terminal() {
+                return;
+            }
+            r.status = AgentStatus::Failed;
+            r.error = Some(error.clone());
+            r.finished_at = Some(Utc::now());
+            r.updated_at = Utc::now();
+        }
+        self.persist(c).await;
+        let _ = c.outcome.send(Some(Err(error.clone())));
+        self.emit(id, SubagentEventKind::Failed { error }).await;
+    }
+    async fn finish_cancelled(&self, id: AgentId, c: &Control) {
+        {
+            let mut r = c.record.write().await;
+            if r.status.is_terminal() {
+                return;
+            }
+            r.status = AgentStatus::Cancelled;
+            r.finished_at = Some(Utc::now());
+            r.updated_at = Utc::now();
+        }
+        self.persist(c).await;
+        let error = "cancelled".to_string();
+        let _ = c.outcome.send(Some(Err(error)));
+        self.emit(id, SubagentEventKind::Cancelled).await;
+    }
+    async fn persist(&self, c: &Control) {
+        if let Some(store) = &self.inner.store {
+            let record = c.record.read().await.clone();
+            if let Err(error) = store.update(record).await {
+                tracing::error!(%error,"could not persist subagent state");
+            }
+        }
+    }
+    async fn emit(&self, id: AgentId, kind: SubagentEventKind) {
+        let event = SubagentEvent {
+            sequence: self.inner.sequence.fetch_add(1, Ordering::Relaxed) + 1,
+            timestamp: Utc::now(),
+            agent_id: id,
+            kind,
+        };
+        let mut history = self.inner.history.lock().await;
+        history.push_back(event.clone());
+        while history.len() > self.inner.limits.event_history {
+            history.pop_front();
+        }
+        drop(history);
+        let _ = self.inner.events.send(event);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{collections::BTreeSet, sync::atomic::{AtomicUsize, Ordering}};
+    use tokio::sync::Notify;
+
+    struct GateExecutor { entered: AtomicUsize, active: AtomicUsize, peak: AtomicUsize, gate: Notify }
+    impl GateExecutor { fn new()->Self{Self{entered:AtomicUsize::new(0),active:AtomicUsize::new(0),peak:AtomicUsize::new(0),gate:Notify::new()}} }
+    #[async_trait]
+    impl SubagentExecutor for GateExecutor {
+        async fn execute(&self, mut context:ExecutionContext)->Result<SubagentResult,String>{
+            self.entered.fetch_add(1,Ordering::SeqCst);let active=self.active.fetch_add(1,Ordering::SeqCst)+1;self.peak.fetch_max(active,Ordering::SeqCst);
+            context.progress(format!("started {}",context.id)).await;
+            tokio::select! {_=self.gate.notified()=>{}, message=context.recv()=>if let Some(InboxMessage::Message(text))=message {context.progress(text).await}}
+            self.active.fetch_sub(1,Ordering::SeqCst);Ok(SubagentResult{summary:"done".into()})
+        }
+    }
+    fn policy()->AgentPolicy{let budget=budget();AgentPolicy{readable_roots:vec![],writable_roots:vec![],allowed_tools:BTreeSet::new(),approval:super::super::ApprovalPolicy::Deny,budget}}
+    fn budget()->AgentBudget{AgentBudget{max_turns:10,max_tokens:1000,max_runtime_secs:60,max_children:8,max_terminals:1}}
+    fn request(name:&str)->SpawnRequest{SpawnRequest{parent_id:None,name:name.into(),task:"task".into(),policy:policy(),budget:budget(),worktree:None,branch:None}}
+
+    #[tokio::test]
+    async fn enforces_concurrency_and_cancels_queued_work(){
+        let executor=Arc::new(GateExecutor::new());let runtime=SubagentRuntime::new(executor.clone(),RuntimeLimits{max_concurrency:1,max_agents:3,event_history:64},None).unwrap();
+        let first=runtime.spawn(request("first")).await.unwrap();let second=runtime.spawn(request("second")).await.unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(1),async{while executor.entered.load(Ordering::SeqCst)<1{tokio::task::yield_now().await}}).await.unwrap();
+        runtime.cancel(second).await.unwrap();assert_eq!(runtime.wait(second).await.unwrap(),Err("cancelled".into()));assert_eq!(executor.entered.load(Ordering::SeqCst),1);
+        executor.gate.notify_one();assert_eq!(runtime.wait(first).await.unwrap().unwrap().summary,"done");assert_eq!(executor.peak.load(Ordering::SeqCst),1);
+    }
+
+    #[tokio::test]
+    async fn messages_progress_events_and_terminal_rules_are_structured(){
+        let executor=Arc::new(GateExecutor::new());let runtime=SubagentRuntime::new(executor.clone(),RuntimeLimits::default(),None).unwrap();let id=runtime.spawn(request("worker")).await.unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(1),async{while runtime.get(id).await.unwrap().status!=AgentStatus::Running{tokio::task::yield_now().await}}).await.unwrap();
+        runtime.send_message(id,"checkpoint").await.unwrap();assert!(runtime.wait(id).await.unwrap().is_ok());
+        assert!(matches!(runtime.send_message(id,"late").await,Err(RuntimeError::Terminal(_))));
+        let events=runtime.events_after(0).await;assert!(events.windows(2).all(|w|w[0].sequence<w[1].sequence));
+        assert!(events.iter().any(|e|matches!(&e.kind,SubagentEventKind::Progress{text} if text=="checkpoint")));
+        assert_eq!(runtime.get(id).await.unwrap().status,AgentStatus::Completed);
+    }
+
+    #[tokio::test]
+    async fn child_policy_and_capacity_are_enforced(){
+        let executor=Arc::new(GateExecutor::new());let runtime=SubagentRuntime::new(executor,RuntimeLimits{max_concurrency:1,max_agents:1,event_history:16},None).unwrap();
+        runtime.spawn(request("one")).await.unwrap();assert_eq!(runtime.spawn(request("two")).await.unwrap_err(),RuntimeError::Capacity(1));
+    }
+}

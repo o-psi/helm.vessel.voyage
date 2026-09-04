@@ -168,6 +168,12 @@ impl ToolRegistry {
     pub fn terminals(&self) -> Option<ProcessTool> {
         self.terminals.clone()
     }
+    pub fn register_subagents(
+        &mut self,
+        tool: crate::subagent::SubagentTool,
+    ) -> Result<(), ToolError> {
+        self.register_arc(Arc::new(tool))
+    }
     pub fn register<T: Tool + 'static>(&mut self, tool: T) {
         self.tools.insert(tool.definition().name, Arc::new(tool));
     }
