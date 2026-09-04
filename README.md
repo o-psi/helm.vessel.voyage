@@ -52,3 +52,6 @@ See [Task management](docs/task-management.md) for the todo tool contract and wo
 
 Available models are discovered from the configured account and can be switched without losing
 the active session. See [Model discovery and switching](docs/model-management.md).
+
+Helm derives its model-facing capability contract from the live registry and never persists runtime
+instructions as conversation history. See [Runtime guidance](docs/runtime-guidance.md).

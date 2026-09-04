@@ -1014,7 +1014,7 @@ async fn chat(
         match prompt {
             "/quit" | "/exit" => break,
             "/help" => {
-                println!("/help  /session  /model [MODEL]  /models  /clear  /exit");
+                println!("/help  /session  /tools  /model [MODEL]  /models  /clear  /exit");
                 continue;
             }
             "/session" => {
@@ -1035,6 +1035,19 @@ async fn chat(
                 continue;
             }
             _ => {}
+        }
+        if prompt == "/tools" {
+            if agent.is_none() {
+                let mut active_config = config.clone();
+                active_config.model = session.model.clone();
+                agent = Some(
+                    build_agent(&active_config, session.workspace.clone(), interactive).await?,
+                );
+            }
+            for tool in agent.as_ref().expect("agent initialized").tool_inventory() {
+                println!("{}\t{}", tool.name, tool.description);
+            }
+            continue;
         }
         if let Some(model) = prompt.strip_prefix("/model ") {
             let model = model.trim();

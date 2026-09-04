@@ -2526,8 +2526,22 @@ async fn handle_command(
     match name {
         "help" => {
             app.status =
-                "/model [ID] · /name TITLE · /branch [TITLE] · /compact [KEEP] · /export [PATH] · /clear confirm"
+                "/tools · /model [ID] · /name TITLE · /branch [TITLE] · /compact [KEEP] · /export [PATH] · /clear confirm"
                     .into()
+        }
+        "tools" => {
+            if let Some(agent) = agent {
+                let tools = agent.tool_inventory();
+                app.activity.push("Available Helm tool calls:".into());
+                app.activity.extend(
+                    tools
+                        .iter()
+                        .map(|tool| format!("  {} — {}", tool.name, tool.description)),
+                );
+                app.status = format!("{} tool call(s) available", tools.len());
+            } else {
+                app.status = "Tool inventory unavailable while runtime is starting".into();
+            }
         }
         "model" if argument.trim().is_empty() => {
             app.status = format!("Current model: {} · Ctrl+M opens the model picker", app.session.model)

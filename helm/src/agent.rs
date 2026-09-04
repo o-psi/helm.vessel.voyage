@@ -106,6 +106,10 @@ impl Agent {
     fn effective_system_prompt(&self) -> String {
         runtime_guidance(&self.system_prompt, &self.tools.definitions())
     }
+
+    pub fn tool_inventory(&self) -> Vec<ToolDefinition> {
+        self.tools.definitions()
+    }
     pub fn terminal_metadata(&self) -> Vec<crate::terminal::TerminalSummary> {
         self.tools
             .terminals()

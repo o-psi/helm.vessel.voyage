@@ -131,7 +131,14 @@ impl SessionStore {
             .join(format!(".{}.{}.tmp", session.id, nonce()));
         let mut file = fs::File::create(&temporary).await?;
         secure_file(&temporary).await?;
-        file.write_all(&serde_json::to_vec_pretty(session)?).await?;
+        // System guidance belongs to the current runtime, not durable user history. Keeping it
+        // on disk makes resumed sessions inherit stale tools, policy, or provider identity.
+        let mut persisted = session.clone();
+        persisted
+            .messages
+            .retain(|message| message.role != crate::model::Role::System);
+        file.write_all(&serde_json::to_vec_pretty(&persisted)?)
+            .await?;
         file.sync_all().await?;
         if let Err(error) = fs::rename(&temporary, &destination).await {
             let _ = fs::remove_file(&temporary).await;
@@ -249,6 +256,10 @@ async fn load_path(path: &Path) -> Result<Session> {
         .with_context(|| format!("failed to read session {}", path.display()))?;
     let mut session: Session = serde_json::from_slice(&data)
         .with_context(|| format!("invalid session {}", path.display()))?;
+    // Migrate older session files that embedded the then-current runtime prompt.
+    session
+        .messages
+        .retain(|message| message.role != crate::model::Role::System);
     for terminal in &mut session.terminals {
         terminal.state = crate::terminal::TerminalState::Disconnected;
     }
@@ -287,6 +298,21 @@ mod tests {
                 0o600
             );
         }
+    }
+
+    #[tokio::test]
+    async fn runtime_system_guidance_is_never_persisted() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = SessionStore::new(dir.path().into());
+        let mut session = Session::new(dir.path().into(), "model".into());
+        session.messages = vec![
+            Message::new(crate::model::Role::System, "stale runtime tools"),
+            Message::new(crate::model::Role::User, "hello"),
+        ];
+        store.save(&mut session).await.unwrap();
+        let restored = store.load(session.id).await.unwrap();
+        assert_eq!(restored.messages.len(), 1);
+        assert_eq!(restored.messages[0].role, crate::model::Role::User);
     }
 
     #[tokio::test]
