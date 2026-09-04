@@ -1,6 +1,7 @@
 mod filesystem;
 pub mod mcp;
 mod process;
+mod questions;
 mod shell;
 mod todo;
 
@@ -17,6 +18,7 @@ use crate::{
 };
 pub use filesystem::{ApplyPatch, ListDirectory, ReadFile, SearchFiles, WriteFile};
 pub use process::{ProcessTool, TerminalManager, TerminalMetadata};
+pub use questions::{MAX_ANSWER_BYTES, Question, QuestionAnswer, Questions};
 pub use shell::Shell;
 pub use todo::TodoTool;
 
@@ -37,6 +39,12 @@ pub enum ToolError {
 #[async_trait]
 pub trait Approver: Send + Sync {
     async fn approve(&self, request: &ApprovalRequest) -> ApprovalOutcome;
+
+    /// Optional frontend clarification capability. This does not grant approval.
+    /// The default preserves noninteractive/library frontends without reading stdin.
+    async fn ask_question(&self, _question: &Question) -> QuestionAnswer {
+        QuestionAnswer::Unavailable
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -161,6 +169,7 @@ impl ToolRegistry {
     pub fn standard_with_terminal_limits(max_count: usize, max_unread_bytes: usize) -> Self {
         let mut registry = Self::default();
         registry.register(ReadFile);
+        registry.register(Questions);
         registry.register(WriteFile);
         registry.register(ListDirectory);
         registry.register(SearchFiles);
@@ -207,7 +216,13 @@ impl ToolRegistry {
         self.tools.retain(|name, _| {
             matches!(
                 name.as_str(),
-                "read_file" | "list_directory" | "search_files" | "process" | "subagent" | "todo"
+                "questions"
+                    | "read_file"
+                    | "list_directory"
+                    | "search_files"
+                    | "process"
+                    | "subagent"
+                    | "todo"
             )
         });
     }
@@ -254,7 +269,7 @@ impl ToolRegistry {
 fn allowed_in_read_only(name: &str, arguments: &Value) -> bool {
     let action = arguments.get("action").and_then(Value::as_str);
     match name {
-        "read_file" | "list_directory" | "search_files" => true,
+        "questions" | "read_file" | "list_directory" | "search_files" => true,
         "process" => matches!(action, Some("read" | "list")),
         "todo" => action == Some("list"),
         "subagent" => match action {
@@ -415,7 +430,13 @@ mod security_tests {
             .collect::<Vec<_>>();
         assert_eq!(
             names,
-            vec!["list_directory", "process", "read_file", "search_files"]
+            vec![
+                "list_directory",
+                "process",
+                "questions",
+                "read_file",
+                "search_files"
+            ]
         );
     }
 }

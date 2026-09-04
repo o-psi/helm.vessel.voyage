@@ -218,6 +218,16 @@ when loaded; metadata is not treated as a live attachment.
 For reconnectable workflows use a policy-approved external supervisor such as tmux,
 systemd, or a container rather than assuming Helm can resurrect a process.
 
+### Questions
+
+The model can call `questions` to open a multiple-choice clarification dialog with
+an always-available **Other / custom answer** option. Use arrows/Tab to select,
+Enter to submit, and Esc to cancel. Answers are shared with the model and saved in
+session history—never enter secrets. This is not a security approval. The initial
+interactive frontend is full-screen TUI only; plain and unattended runs return
+`unavailable` without reading stdin. See [Questions](../docs/questions.md) for the
+schema, limits, controls, and lifecycle.
+
 ### Agent supervision
 
 Press `Ctrl+A` in the full-screen UI to supervise concurrent agent work. The tree,

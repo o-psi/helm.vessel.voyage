@@ -55,6 +55,7 @@ use crate::{
 pub enum UiEvent {
     Agent(AgentEvent),
     Approval(ApprovalRequest),
+    Question(QuestionRequest),
     Finished(Result<crate::AgentOutcome, String>),
     SupervisorTree(Result<Vec<AgentView>, String>),
     SupervisorInspect(AgentId, Result<Vec<SupervisionEvent>, String>),
@@ -74,6 +75,91 @@ pub struct ApprovalRequest {
     response: oneshot::Sender<ApprovalOutcome>,
 }
 
+#[derive(Debug)]
+#[doc(hidden)]
+pub struct QuestionRequest {
+    question: crate::tools::Question,
+    response: oneshot::Sender<crate::tools::QuestionAnswer>,
+}
+
+struct QuestionDialog {
+    request: QuestionRequest,
+    selected: usize,
+    custom: Composer,
+    scroll: Option<u16>,
+}
+
+impl QuestionDialog {
+    fn insert(&mut self, text: &str) {
+        if self.selected != self.request.question.options.len() {
+            return;
+        }
+        for ch in text.chars().filter(|ch| !ch.is_control()) {
+            if self.custom.text.len() + ch.len_utf8() > crate::tools::MAX_ANSWER_BYTES {
+                break;
+            }
+            self.custom.insert(ch);
+        }
+        self.scroll = None;
+    }
+
+    fn key(&mut self, key: KeyEvent) -> Option<crate::tools::QuestionAnswer> {
+        use crate::tools::QuestionAnswer;
+        let count = self.request.question.options.len();
+        match key.code {
+            KeyCode::Esc => return Some(QuestionAnswer::Cancelled),
+            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                return Some(QuestionAnswer::Cancelled);
+            }
+            KeyCode::Up => {
+                self.selected = self.selected.saturating_sub(1);
+                self.scroll = None;
+            }
+            KeyCode::Down | KeyCode::Tab => {
+                self.selected = (self.selected + 1) % (count + 1);
+                self.scroll = None;
+            }
+            KeyCode::PageUp => self.scroll = Some(self.scroll.unwrap_or(0).saturating_sub(5)),
+            KeyCode::PageDown => self.scroll = Some(self.scroll.unwrap_or(0).saturating_add(5)),
+            KeyCode::Enter if self.selected < count => {
+                return Some(QuestionAnswer::Selected {
+                    index: self.selected,
+                    answer: self.request.question.options[self.selected].clone(),
+                });
+            }
+            KeyCode::Enter if !self.custom.text.trim().is_empty() => {
+                return Some(QuestionAnswer::Custom {
+                    answer: self.custom.text.clone(),
+                });
+            }
+            KeyCode::Backspace if self.selected == count => self.custom.backspace(),
+            KeyCode::Delete if self.selected == count => self.custom.delete(),
+            KeyCode::Home if self.selected == count => self.custom.line_start(),
+            KeyCode::End if self.selected == count => self.custom.line_end(),
+            KeyCode::Left if self.selected == count => {
+                self.custom.cursor = self.custom.text[..self.custom.cursor]
+                    .char_indices()
+                    .next_back()
+                    .map_or(0, |(i, _)| i);
+            }
+            KeyCode::Right if self.selected == count => {
+                if let Some(ch) = self.custom.text[self.custom.cursor..].chars().next() {
+                    self.custom.cursor += ch.len_utf8();
+                }
+            }
+            KeyCode::Char(ch)
+                if !key
+                    .modifiers
+                    .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+            {
+                self.insert(&ch.to_string())
+            }
+            _ => {}
+        }
+        None
+    }
+}
+
 #[derive(Clone)]
 pub struct UiBridge {
     tx: mpsc::UnboundedSender<UiEvent>,
@@ -88,6 +174,26 @@ impl EventSink for UiBridge {
 
 #[async_trait]
 impl Approver for UiBridge {
+    async fn ask_question(
+        &self,
+        question: &crate::tools::Question,
+    ) -> crate::tools::QuestionAnswer {
+        let (response, receive) = oneshot::channel();
+        if self
+            .tx
+            .send(UiEvent::Question(QuestionRequest {
+                question: question.clone(),
+                response,
+            }))
+            .is_err()
+        {
+            return crate::tools::QuestionAnswer::Unavailable;
+        }
+        receive
+            .await
+            .unwrap_or(crate::tools::QuestionAnswer::Unavailable)
+    }
+
     async fn approve(&self, request: &ToolApprovalRequest) -> ApprovalOutcome {
         let (response, receive) = oneshot::channel();
         if self
@@ -427,6 +533,7 @@ struct App {
     markdown_syntax_highlighting: bool,
     running: Option<Running>,
     approval: Option<ApprovalRequest>,
+    question: Option<QuestionDialog>,
     show_sessions: bool,
     selected_session: usize,
     terminals: Vec<TerminalSummary>,
@@ -520,6 +627,7 @@ impl App {
             markdown_syntax_highlighting: std::env::var_os("NO_COLOR").is_none(),
             running: None,
             approval: None,
+            question: None,
             show_sessions: false,
             selected_session: 0,
             terminals: Vec::new(),
@@ -559,6 +667,12 @@ impl App {
     }
 
     fn cancel(&mut self) {
+        if let Some(question) = self.question.take() {
+            let _ = question
+                .request
+                .response
+                .send(crate::tools::QuestionAnswer::Cancelled);
+        }
         if let Some(running) = &self.running {
             running.cancel.cancel();
             self.status = "Cancelling; partial output will not be committed".into();
@@ -603,6 +717,13 @@ pub async fn run(
     tokio::pin!(termination);
 
     while !app.quit {
+        if app
+            .question
+            .as_ref()
+            .is_some_and(|q| q.request.response.is_closed())
+        {
+            app.question = None;
+        }
         terminal.draw(|frame| draw(frame, &app))?;
         tokio::select! {
             event = input.next() => {
@@ -623,6 +744,9 @@ pub async fn run(
                         terminal.clear()?;
                     }
                     Some(Ok(Event::Mouse(mouse))) => handle_mouse(mouse, &mut app),
+                    Some(Ok(Event::Paste(text))) if app.question.is_some() => {
+                        if let Some(question) = &mut app.question { question.insert(&text); }
+                    }
                     Some(Ok(Event::Paste(text))) if app.approval.is_none() && !app.show_sessions => {
                         if let Some(id) = app.attached_terminal {
                             if let Err(error) = terminals.write(id, text.into_bytes()).await {
@@ -780,8 +904,26 @@ async fn handle_ui_event(
             preserve_manual_anchor(app, before);
             app.status = "Cancelled".into();
         }
+        UiEvent::Question(request) => {
+            if request.response.is_closed() {
+                return Ok(());
+            }
+            if app.attached_terminal.is_some() || app.approval.is_some() || app.question.is_some() {
+                let _ = request
+                    .response
+                    .send(crate::tools::QuestionAnswer::Unavailable);
+            } else {
+                app.status = "Answer a question · answers are shared with the model".into();
+                app.question = Some(QuestionDialog {
+                    request,
+                    selected: 0,
+                    custom: Composer::default(),
+                    scroll: None,
+                });
+            }
+        }
         UiEvent::Approval(request) => {
-            if app.attached_terminal.is_some() {
+            if app.attached_terminal.is_some() || app.question.is_some() {
                 let _ = request.response.send(ApprovalOutcome::Unavailable);
                 app.status = "Agent approval denied while direct terminal input is attached".into();
             } else {
@@ -790,6 +932,7 @@ async fn handle_ui_event(
             }
         }
         UiEvent::Finished(result) => {
+            app.question = None;
             let before = transcript_height(app, app.conversation_width);
             app.running = None;
             match result {
@@ -859,6 +1002,27 @@ async fn handle_ui_event(
     Ok(())
 }
 
+fn handle_question_key(key: KeyEvent, app: &mut App) -> bool {
+    if let Some(mut question) = app.question.take() {
+        if !question.request.response.is_closed() {
+            if let Some(answer) = question.key(key) {
+                let cancelled = answer == crate::tools::QuestionAnswer::Cancelled;
+                let _ = question.request.response.send(answer);
+                app.status = if cancelled {
+                    "Question cancelled"
+                } else {
+                    "Answer sent"
+                }
+                .into();
+            } else {
+                app.question = Some(question);
+            }
+        }
+        return true;
+    }
+    false
+}
+
 // Keeping these explicit makes modal input routing auditable (especially PTY isolation).
 #[allow(clippy::too_many_arguments)]
 async fn handle_key(
@@ -871,6 +1035,9 @@ async fn handle_key(
     supervisor: Arc<dyn AgentSupervisor>,
     todos: Arc<TodoStore>,
 ) -> Result<()> {
+    if handle_question_key(key, app) {
+        return Ok(());
+    }
     if let Some(approval) = app.approval.take() {
         let approved = matches!(key.code, KeyCode::Char('y') | KeyCode::Char('Y'));
         if matches!(
@@ -1826,6 +1993,10 @@ fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
     let area = frame.area();
     if app.attached_terminal.is_some() {
         draw_attached_terminal(frame, area, app);
+        return;
+    }
+    if let Some(question) = &app.question {
+        draw_question(frame, area, question);
         return;
     }
     if area.width < 32 || area.height < 10 {
@@ -3540,7 +3711,8 @@ fn scroll_conversation(app: &mut App, lines: i16) {
 }
 
 fn handle_mouse(mouse: MouseEvent, app: &mut App) {
-    let conversation_is_visible = app.attached_terminal.is_none()
+    let conversation_is_visible = app.question.is_none()
+        && app.attached_terminal.is_none()
         && app.approval.is_none()
         && !app.show_sessions
         && !app.terminal_picker
@@ -3623,6 +3795,96 @@ fn draw_sessions(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
         ),
         popup,
     );
+}
+
+// Wrap as plain terminal-safe text, never interpret model options as Markdown.
+fn question_lines(text: &str, width: usize) -> Vec<Line<'static>> {
+    use unicode_segmentation::UnicodeSegmentation;
+    use unicode_width::UnicodeWidthStr;
+    let mut lines = Vec::new();
+    let mut current = String::new();
+    let mut used = 0;
+    for grapheme in text.graphemes(true) {
+        let size = grapheme.width();
+        if used + size > width.max(1) && !current.is_empty() {
+            lines.push(Line::from(std::mem::take(&mut current)));
+            used = 0;
+        }
+        current.push_str(grapheme);
+        used += size;
+    }
+    lines.push(Line::from(current));
+    lines
+}
+
+fn draw_question(frame: &mut ratatui::Frame<'_>, area: Rect, dialog: &QuestionDialog) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(1), Constraint::Length(3)])
+        .split(area);
+    let width = chunks[0].width.saturating_sub(2).max(1) as usize;
+    let height = chunks[0].height.saturating_sub(2).max(1) as usize;
+    let mut lines = question_lines(&display_safe(&dialog.request.question.question), width);
+    lines.push(Line::from(""));
+    let mut selected_line = 0;
+    for (index, option) in dialog
+        .request
+        .question
+        .options
+        .iter()
+        .map(String::as_str)
+        .chain(std::iter::once("Other / custom answer"))
+        .enumerate()
+    {
+        let selected = index == dialog.selected;
+        if selected {
+            selected_line = lines.len();
+        }
+        let prefix = if selected { "▶" } else { " " };
+        let mut option_lines = question_lines(
+            &format!("{prefix} {}. {}", index + 1, display_safe(option)),
+            width,
+        );
+        if selected {
+            for line in &mut option_lines {
+                *line = line.clone().style(
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                );
+            }
+        }
+        lines.extend(option_lines);
+    }
+    if dialog.selected == dialog.request.question.options.len() {
+        lines.push(Line::from(""));
+        let (before, after) = dialog.custom.text.split_at(dialog.custom.cursor);
+        let input = format!("Answer: {}▏{}", display_safe(before), display_safe(after));
+        let cursor_line = question_lines(&format!("Answer: {}▏", display_safe(before)), width)
+            .len()
+            .saturating_sub(1);
+        selected_line = lines.len() + cursor_line;
+        lines.extend(question_lines(&input, width));
+    }
+    let max_scroll = lines.len().saturating_sub(height);
+    let scroll = dialog
+        .scroll
+        .map(usize::from)
+        .unwrap_or_else(|| selected_line.saturating_sub(height.saturating_sub(2)))
+        .min(max_scroll);
+    frame.render_widget(Clear, area);
+    frame.render_widget(
+        Paragraph::new(lines)
+            .scroll((scroll.min(u16::MAX as usize) as u16, 0))
+            .block(
+                Block::default()
+                    .title(" Question · shared with model ")
+                    .borders(Borders::ALL),
+            ),
+        chunks[0],
+    );
+    frame.render_widget(Paragraph::new("↑/↓/Tab choose · Enter submit · Esc cancel · PgUp/PgDn scroll. Answers are saved; do not enter secrets.")
+        .wrap(Wrap { trim: true }), chunks[1]);
 }
 
 fn draw_approval(frame: &mut ratatui::Frame<'_>, area: Rect, approval: &ApprovalRequest) {
@@ -5533,5 +5795,225 @@ mod tests {
         .await
         .unwrap();
         assert!(export.exists());
+    }
+    fn question_dialog() -> (
+        QuestionDialog,
+        oneshot::Receiver<crate::tools::QuestionAnswer>,
+    ) {
+        let (response, receive) = oneshot::channel();
+        (
+            QuestionDialog {
+                request: QuestionRequest {
+                    question: crate::tools::Question {
+                        question: "Which format?".into(),
+                        options: vec!["JSON".into(), "Markdown".into()],
+                    },
+                    response,
+                },
+                selected: 0,
+                custom: Composer::default(),
+                scroll: None,
+            },
+            receive,
+        )
+    }
+
+    #[test]
+    fn questions_keyboard_selection_custom_editing_paste_and_limits() {
+        use crate::tools::QuestionAnswer;
+        let (mut dialog, _receive) = question_dialog();
+        let key = |code| KeyEvent::new(code, KeyModifiers::NONE);
+        dialog.insert("not on custom");
+        assert!(dialog.custom.text.is_empty());
+        dialog.key(key(KeyCode::Down));
+        assert_eq!(
+            dialog.key(key(KeyCode::Enter)),
+            Some(QuestionAnswer::Selected {
+                index: 1,
+                answer: "Markdown".into()
+            })
+        );
+        dialog.key(key(KeyCode::Tab));
+        assert!(dialog.key(key(KeyCode::Enter)).is_none());
+        dialog.insert("日本語\n\u{001b}🛶");
+        assert_eq!(dialog.custom.text, "日本語🛶");
+        dialog.key(key(KeyCode::Left));
+        dialog.key(key(KeyCode::Backspace));
+        dialog.key(key(KeyCode::Char('文')));
+        assert_eq!(dialog.custom.text, "日本文🛶");
+        assert_eq!(
+            dialog.key(key(KeyCode::Enter)),
+            Some(QuestionAnswer::Custom {
+                answer: "日本文🛶".into()
+            })
+        );
+        dialog.key(key(KeyCode::Up));
+        dialog.key(key(KeyCode::Down));
+        assert_eq!(dialog.custom.text, "日本文🛶");
+        dialog.insert(&"x".repeat(5000));
+        assert!(dialog.custom.text.len() <= crate::tools::MAX_ANSWER_BYTES);
+        assert_eq!(
+            dialog.key(key(KeyCode::Esc)),
+            Some(QuestionAnswer::Cancelled)
+        );
+    }
+
+    #[tokio::test]
+    async fn questions_modal_routes_keys_without_touching_draft_or_other_views() {
+        use crate::tools::QuestionAnswer;
+        let mut app = App::new(Session::new(PathBuf::from("/tmp"), "test".into()), vec![]);
+        app.composer.insert_str("unsent draft");
+        app.shortcut_help = true;
+        app.model_picker = true;
+        let (dialog, receive) = question_dialog();
+        app.question = Some(dialog);
+        for code in [
+            KeyCode::F(1),
+            KeyCode::Char('x'),
+            KeyCode::Down,
+            KeyCode::Enter,
+        ] {
+            assert!(handle_question_key(
+                KeyEvent::new(code, KeyModifiers::NONE),
+                &mut app
+            ));
+        }
+        assert_eq!(
+            receive.await.unwrap(),
+            QuestionAnswer::Selected {
+                index: 1,
+                answer: "Markdown".into()
+            }
+        );
+        assert_eq!(app.composer.text, "unsent draft");
+        assert!(app.shortcut_help && app.model_picker);
+        assert!(app.question.is_none());
+        let (dialog, receive) = question_dialog();
+        app.question = Some(dialog);
+        app.cancel();
+        assert_eq!(receive.await.unwrap(), QuestionAnswer::Cancelled);
+        let (dialog, receive) = question_dialog();
+        drop(receive);
+        app.question = Some(dialog);
+        assert!(handle_question_key(
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+            &mut app
+        ));
+        assert!(app.question.is_none());
+        assert_eq!(app.composer.text, "unsent draft");
+    }
+
+    #[tokio::test]
+    async fn questions_reject_concurrent_requests_and_attached_terminal_input() {
+        use crate::tools::QuestionAnswer;
+        let directory = tempfile::tempdir().unwrap();
+        let store = SessionStore::new(directory.path().join("sessions"));
+        let terminals = FakeTerminals::new();
+        let mut app = App::new(Session::new(directory.path().into(), "test".into()), vec![]);
+        app.attached_terminal = Some(terminals.id);
+        let (dialog, receive) = question_dialog();
+        handle_ui_event(
+            UiEvent::Question(dialog.request),
+            &mut app,
+            &store,
+            &terminals,
+        )
+        .await
+        .unwrap();
+        assert_eq!(receive.await.unwrap(), QuestionAnswer::Unavailable);
+        assert!(app.question.is_none());
+        app.attached_terminal = None;
+        let (dialog, first) = question_dialog();
+        handle_ui_event(
+            UiEvent::Question(dialog.request),
+            &mut app,
+            &store,
+            &terminals,
+        )
+        .await
+        .unwrap();
+        let (dialog, second) = question_dialog();
+        handle_ui_event(
+            UiEvent::Question(dialog.request),
+            &mut app,
+            &store,
+            &terminals,
+        )
+        .await
+        .unwrap();
+        assert_eq!(second.await.unwrap(), QuestionAnswer::Unavailable);
+        app.cancel();
+        assert_eq!(first.await.unwrap(), QuestionAnswer::Cancelled);
+        let (dialog, stale) = question_dialog();
+        drop(stale);
+        handle_ui_event(
+            UiEvent::Question(dialog.request),
+            &mut app,
+            &store,
+            &terminals,
+        )
+        .await
+        .unwrap();
+        assert!(app.question.is_none());
+        assert!(terminals.writes.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn questions_bridge_delivers_answers_and_handles_closed_frontend() {
+        let (bridge, mut events) = bridge();
+        let (dialog, _) = question_dialog();
+        let task_bridge = bridge.clone();
+        let question = dialog.request.question;
+        let task = tokio::spawn(async move { task_bridge.ask_question(&question).await });
+        let Some(UiEvent::Question(request)) = events.recv().await else {
+            panic!("missing question event")
+        };
+        assert_eq!(request.question.question, "Which format?");
+        request
+            .response
+            .send(crate::tools::QuestionAnswer::Custom {
+                answer: "CSV".into(),
+            })
+            .unwrap();
+        assert_eq!(
+            task.await.unwrap(),
+            crate::tools::QuestionAnswer::Custom {
+                answer: "CSV".into()
+            }
+        );
+        drop(events);
+        let (dialog, _) = question_dialog();
+        assert_eq!(
+            bridge.ask_question(&dialog.request.question).await,
+            crate::tools::QuestionAnswer::Unavailable
+        );
+    }
+
+    #[test]
+    fn questions_render_safely_and_remain_visible_over_other_views_at_all_sizes() {
+        use ratatui::backend::TestBackend;
+        let mut app = App::new(Session::new(PathBuf::from("/tmp"), "test".into()), vec![]);
+        let (mut dialog, _receive) = question_dialog();
+        dialog.request.question.question = "Untrusted \u{001b}[2J 日本語 é ".repeat(30);
+        dialog.selected = 2;
+        dialog.insert("custom-text");
+        app.question = Some(dialog);
+        app.model_picker = true;
+        app.shortcut_help = true;
+        for (width, height) in [(1, 1), (20, 6), (32, 10), (80, 24), (120, 40)] {
+            let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+            terminal.draw(|frame| draw(frame, &app)).unwrap();
+            let rendered = terminal
+                .backend()
+                .buffer()
+                .content
+                .iter()
+                .map(|cell| cell.symbol())
+                .collect::<String>();
+            assert!(!rendered.contains('\u{001b}'));
+            if width >= 32 {
+                assert!(rendered.contains("custom-text"));
+            }
+        }
     }
 }

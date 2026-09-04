@@ -69,5 +69,13 @@
     "seed_files": {"alpha.txt": "Alpha has 3 active tasks.\n", "beta.txt": "Beta has 5 active tasks.\n"},
     "expect_files": {"alpha-summary.md": "3", "beta-summary.md": "5"},
     "expect_output": ["completed"]
+  },
+  {
+    "id": "questions-unavailable-no-invented-answer",
+    "category": "research",
+    "prompt": "Use the questions tool to ask me which output format I want, offering JSON and Markdown. If interactive questions are unavailable, say exactly 'awaiting format choice' and do not choose a format or create files.",
+    "expect_output": [
+      "awaiting format choice"
+    ]
   }
 ]
