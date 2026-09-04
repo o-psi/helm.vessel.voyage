@@ -54,3 +54,12 @@ Release validation covers bounded parallel execution, result synthesis, messagin
 cancellation, timeouts, policy denial, conflicting edits, child failure, restart
 recovery, and non-Git general work. The parent conversation must remain responsive
 through every scenario.
+
+## Implementation boundaries
+
+`AgentTreeStore` persists records through a synced temporary file and atomic rename.
+The runtime calls `recover_after_restart` once during startup. `AgentPolicy` validates
+that child roots, tools, approvals, and budgets only narrow parent authority.
+`WorktreeManager::conflicts` identifies files changed independently by sibling
+branches before guarded integration. Clean worktrees may be removed, but their
+branches and commits remain recoverable.

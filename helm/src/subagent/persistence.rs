@@ -62,6 +62,22 @@ mod tests {
         assert_eq!(restored.status, AgentStatus::Interrupted);
         assert!(restored.finished_at.is_some());
     }
+    #[test]
+    fn terminal_states_cannot_transition() {
+        for status in [
+            AgentStatus::Completed,
+            AgentStatus::Failed,
+            AgentStatus::Cancelled,
+            AgentStatus::Interrupted,
+            AgentStatus::TimedOut,
+        ] {
+            let item = record(status);
+            let id = item.id;
+            let mut tree = AgentTree::default();
+            tree.insert(item).unwrap();
+            assert!(tree.transition(id, AgentStatus::Running, None).is_err());
+        }
+    }
 }
 impl AgentTree {
     pub fn insert(&mut self, record: AgentRecord) -> Result<()> {
@@ -89,13 +105,7 @@ impl AgentTree {
             .agents
             .get_mut(&id)
             .with_context(|| format!("unknown agent {id}"))?;
-        anyhow::ensure!(
-            !matches!(
-                record.status,
-                AgentStatus::Completed | AgentStatus::Cancelled
-            ),
-            "agent is terminal"
-        );
+        anyhow::ensure!(!record.status.is_terminal(), "agent is terminal");
         record.status = status;
         record.error = error;
         record.updated_at = Utc::now();
@@ -148,9 +158,11 @@ impl AgentTreeStore {
     pub async fn save(&self, tree: &AgentTree) -> Result<()> {
         let parent = self.path.parent().context("invalid agent tree path")?;
         tokio::fs::create_dir_all(parent).await?;
+        secure(parent, 0o700).await?;
         let temp = self.path.with_extension(format!("tmp-{}", Uuid::new_v4()));
         let mut file = tokio::fs::File::create(&temp).await?;
         file.write_all(&serde_json::to_vec_pretty(tree)?).await?;
+        secure(&temp, 0o600).await?;
         file.sync_all().await?;
         tokio::fs::rename(&temp, &self.path).await?;
         Ok(())
@@ -187,4 +199,14 @@ impl AgentTreeStore {
         }
         Ok(count)
     }
+}
+#[cfg(unix)]
+async fn secure(path: &std::path::Path, mode: u32) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    tokio::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).await?;
+    Ok(())
+}
+#[cfg(not(unix))]
+async fn secure(_: &std::path::Path, _: u32) -> Result<()> {
+    Ok(())
 }

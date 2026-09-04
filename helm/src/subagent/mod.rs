@@ -3,7 +3,7 @@ mod persistence;
 mod worktree;
 
 pub use persistence::{AgentTree, AgentTreeStore};
-pub use worktree::{WorktreeLease, WorktreeManager};
+pub use worktree::{ConflictReport, IntegrationPlan, WorktreeLease, WorktreeManager};
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -38,12 +38,13 @@ pub enum AgentStatus {
     Failed,
     Cancelled,
     Interrupted,
+    TimedOut,
 }
 impl AgentStatus {
     pub fn is_terminal(&self) -> bool {
         matches!(
             self,
-            Self::Completed | Self::Failed | Self::Cancelled | Self::Interrupted
+            Self::Completed | Self::Failed | Self::Cancelled | Self::Interrupted | Self::TimedOut
         )
     }
 }
