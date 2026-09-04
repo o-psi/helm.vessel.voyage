@@ -37,3 +37,8 @@ See [Helm's README](helm/README.md) for provider, policy, session, and CLI detai
 
 For self-hosted source control and issue management, see [the local Forgejo guide](docs/local-git.md).
 The comprehensive 0.1 work breakdown is tracked in [the delivery map](docs/roadmap.md).
+
+Release and replacement readiness are executable, not informal. The repository ships
+cross-platform CI/release workflows, a representative [evaluation suite](eval/README.md),
+the [release procedure](docs/releasing.md), and the operator [cutover and rollback
+runbook](docs/cutover.md).

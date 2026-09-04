@@ -1,6 +1,7 @@
 use anyhow::{Context, Result, bail};
 use async_trait::async_trait;
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
+use clap_complete::Shell;
 use helm::{
     Agent, AgentEvent, Config, EventSink,
     config::ApprovalMode,
@@ -185,6 +186,13 @@ enum Command {
     },
     Sessions,
     Config,
+    /// Generate a shell completion script on stdout.
+    Completions {
+        #[arg(value_enum)]
+        shell: Shell,
+    },
+    /// Generate a roff manpage on stdout.
+    Manpage,
 }
 
 struct Terminal;
@@ -249,6 +257,14 @@ async fn main() -> Result<()> {
         return voyage_worker(config, cli.workspace, vessel, cli.name).await;
     }
     match cli.command.unwrap_or(Command::Chat { resume: None }) {
+        Command::Completions { shell } => {
+            clap_complete::generate(shell, &mut Cli::command(), "helm", &mut io::stdout());
+            Ok(())
+        }
+        Command::Manpage => {
+            clap_mangen::Man::new(Cli::command()).render(&mut io::stdout())?;
+            Ok(())
+        }
         Command::Config => {
             println!("{}", toml::to_string_pretty(&config)?);
             Ok(())
