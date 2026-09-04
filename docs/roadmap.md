@@ -6,11 +6,11 @@ into streams with explicit ownership so they can progress in separate Git worktr
 | Stream | Branch | Issues | Primary ownership |
 | --- | --- | --- | --- |
 | Helm UI | `work/helm-ui` | #1–#4 | Ratatui frontend, streaming UX, sessions and artifacts |
-| Helm runtime | `work/helm-runtime` | #5–#7 | Agent reliability, PTYs, tools and MCP |
+| Helm runtime | `work/helm-runtime` | #5–#7, #20 | Agent reliability, PTYs, tools, MCP and patch editing |
 | Helm connectivity | `work/helm-serve` | #8–#10 | Pairing, outbound task protocol, identity and enrollment |
 | Vessel | `work/vessel` | #11–#14 | Persistence, scheduler, leases and operations UI |
-| Security and operations | `work/security-observability` | #15–#16 | Isolation, audit, metrics and diagnostics |
-| Quality and release | `work/quality-release` | #17–#18 | Tests, evals, CI, packaging and deployment |
+| Security and operations | `work/security-observability` | #15–#16, #21 | Isolation, approvals, audit, metrics and diagnostics |
+| Quality and release | `work/quality-release` | #17–#19, #22 | Tests, evals, readiness gates, dogfood, packaging and deployment |
 
 ## Integration rules
 
@@ -28,3 +28,7 @@ The milestone is complete only when Helm provides its full-screen terminal exper
 remote execution has a versioned authenticated lifecycle, Vessel survives restart and
 manages queued work, policy is defense-in-depth, operators can diagnose the system,
 and supported platforms receive reproducible, documented release artifacts.
+
+Issue #19 is the explicit incumbent-harness replacement gate. Completing individual
+features is insufficient until #22 demonstrates the representative workload suite and
+dogfood period without critical fallbacks.
