@@ -1,4 +1,19 @@
-# Local Git server
+# Local Forgejo server
+
+Voyage uses Forgejo for local repositories, issues, pull requests, projects, releases,
+and code review. Start it with:
+
+```sh
+./scripts/forgejo-server
+```
+
+Open `http://127.0.0.1:3000`. Runtime data, SQLite state, repositories, and the pinned
+Forgejo binary live under ignored `.local-git/forgejo/` storage.
+
+The original lightweight Git daemon remains available for recovery or environments
+where the web forge is unnecessary.
+
+## Lightweight server
 
 Voyage includes a loopback-only Git server for development without an external forge.
 Its canonical bare repository and working-copy metadata live in `.local-git/`, which is

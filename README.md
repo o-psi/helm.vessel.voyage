@@ -36,4 +36,4 @@ execution. Set `HELM_SERVER_TOKEN` when exposing a Helm beyond a trusted network
 
 See [Helm's README](helm/README.md) for provider, policy, session, and CLI details.
 
-For self-hosted source control, see [the local Git server guide](docs/local-git.md).
+For self-hosted source control and issue management, see [the local Forgejo guide](docs/local-git.md).

@@ -1,0 +1,13 @@
+#!/bin/sh
+set -eu
+
+root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+forgejo="$root/.local-git/forgejo/bin/forgejo-16.0.3-linux-amd64"
+config="$root/.local-git/forgejo/custom/conf/app.ini"
+
+if [ ! -x "$forgejo" ]; then
+  echo "Forgejo is not installed; see docs/local-git.md" >&2
+  exit 1
+fi
+
+exec "$forgejo" web --config "$config"
