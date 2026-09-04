@@ -46,3 +46,6 @@ runbook](docs/cutover.md).
 Helm also supports bounded parallel child agents with explicit permissions,
 supervision, result collection, persistence, and optional Git worktree isolation.
 The lifecycle and safety contract is documented in [Parallel subagents](docs/subagents.md).
+
+Helm also provides durable, dependency-aware task tracking shared by the model and operator.
+See [Task management](docs/task-management.md) for the todo tool contract and workflow.

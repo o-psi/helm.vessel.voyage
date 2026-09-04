@@ -47,6 +47,14 @@
     "expect_output": ["checkpoint"]
   },
   {
+    "id": "durable-task-management",
+    "category": "task_management",
+    "prompt": "Use the todo tool to create a three-step plan for inspecting inventory.txt and writing inventory-report.md. Make the report depend on inspection, record evidence for completed work, complete the plan, and leave the durable task list available for review.",
+    "seed_files": {"inventory.txt": "routers=4\nswitches=2\n"},
+    "expect_files": {"inventory-report.md": "routers"},
+    "expect_output": ["completed"]
+  },
+  {
     "id": "parallel-synthesis",
     "category": "parallel",
     "prompt": "Delegate the independent inspection of north.txt and south.txt to two subagents in parallel, wait for both, and synthesize their attributed results into regional-summary.md.",

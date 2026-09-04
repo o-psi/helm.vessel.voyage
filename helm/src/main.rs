@@ -13,9 +13,10 @@ use helm::{
         AgentBudget, AgentPolicy, ApprovalPolicy, ExecutionContext, RuntimeLimits,
         SubagentExecutor, SubagentResult, SubagentRuntime, SubagentTool, WorktreeManager,
     },
+    todo::{TodoScope, TodoStore},
     tools::{
-        ApprovalOutcome, ApprovalRequest, Approver, InteractionMode, Redactor, ToolContext,
-        ToolRegistry, UnattendedApprover,
+        ApprovalOutcome, ApprovalRequest, Approver, InteractionMode, Redactor, TodoTool,
+        ToolContext, ToolRegistry, UnattendedApprover,
     },
     voyage::{Enrollment, EnrollmentStore, normalize_vessel_url},
 };
@@ -554,7 +555,9 @@ impl SubagentExecutor for CliSubagentExecutor {
                     .with_parent(context.id)
                     .with_worktrees(self.worktrees.clone())
             });
-        let mut tools = build_tools(&config, child_tool)
+        // Worktree-isolated children still coordinate through the parent's workspace plan.
+        // Keying todos by the temporary worktree would silently fork task state.
+        let mut tools = build_tools(&config, child_tool, Some(todo_tool(&self.workspace)))
             .await
             .map_err(|e| e.to_string())?;
         tools.retain_allowed(&context.policy.allowed_tools);
@@ -609,6 +612,7 @@ async fn build_subagents(config: &Config, workspace: &std::path::Path) -> Result
         .map(|definition| definition.name)
         .collect();
     allowed_tools.insert("subagent".to_string());
+    allowed_tools.insert("todo".to_string());
     let budget = AgentBudget {
         max_turns: config.max_turns.min(u32::MAX as usize) as u32,
         max_tokens: config.max_tokens as u64,
@@ -705,7 +709,7 @@ async fn build_agent(config: &Config, workspace: PathBuf, attended: bool) -> Res
     };
     let subagents = build_subagents(config, &workspace).await?;
     let _runtime = subagents.runtime.clone();
-    let tools = build_tools(config, Some(subagents.tool)).await?;
+    let tools = build_tools(config, Some(subagents.tool), Some(todo_tool(&workspace))).await?;
     Ok(Agent::new(
         provider::from_config(config, context.policy.workspace().to_owned())?,
         tools,
@@ -779,7 +783,8 @@ async fn tui_chat(
     };
     let subagents = build_subagents(&config, &session.workspace).await?;
     let subagent_runtime = subagents.runtime.clone();
-    let tools = build_tools(&config, Some(subagents.tool)).await?;
+    let todo = todo_tool(&session.workspace);
+    let tools = build_tools(&config, Some(subagents.tool), Some(todo.clone())).await?;
     let terminals: Arc<dyn helm::terminal::InteractiveTerminals> =
         Arc::new(tools.terminals().unwrap_or_default());
     let agent = Arc::new(
@@ -810,17 +815,38 @@ async fn tui_chat(
         Arc::new(helm::supervision::RuntimeAgentSupervisor::new(
             subagent_runtime,
         )),
+        todo.store(),
     )
     .await
 }
 
-async fn build_tools(config: &Config, subagents: Option<SubagentTool>) -> Result<ToolRegistry> {
+fn todo_tool(workspace: &std::path::Path) -> TodoTool {
+    let workspace = workspace
+        .canonicalize()
+        .unwrap_or_else(|_| workspace.to_path_buf());
+    let key = hex::encode(Sha256::digest(workspace.as_os_str().as_encoded_bytes()));
+    TodoTool::new(Arc::new(TodoStore::new(
+        helm::config::default_data_dir()
+            .join("todos")
+            .join(format!("{key}.json")),
+        TodoScope::workspace(workspace),
+    )))
+}
+
+async fn build_tools(
+    config: &Config,
+    subagents: Option<SubagentTool>,
+    todos: Option<TodoTool>,
+) -> Result<ToolRegistry> {
     let mut tools = ToolRegistry::standard_with_terminal_limits(
         config.terminal_max_count,
         config.terminal_max_unread_bytes,
     );
     if let Some(tool) = subagents {
         tools.register_subagents(tool)?;
+    }
+    if let Some(tool) = todos {
+        tools.register_todos(tool)?;
     }
     for (name, server) in &config.mcp_servers {
         let mut environment = tool_environment(config);

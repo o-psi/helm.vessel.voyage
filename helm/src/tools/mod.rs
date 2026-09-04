@@ -2,6 +2,7 @@ mod filesystem;
 pub mod mcp;
 mod process;
 mod shell;
+mod todo;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -13,6 +14,7 @@ use crate::{model::ToolDefinition, policy::Policy};
 pub use filesystem::{ApplyPatch, ListDirectory, ReadFile, SearchFiles, WriteFile};
 pub use process::{ProcessTool, TerminalManager, TerminalMetadata};
 pub use shell::Shell;
+pub use todo::TodoTool;
 
 #[derive(Debug, Error)]
 pub enum ToolError {
@@ -172,6 +174,9 @@ impl ToolRegistry {
         &mut self,
         tool: crate::subagent::SubagentTool,
     ) -> Result<(), ToolError> {
+        self.register_arc(Arc::new(tool))
+    }
+    pub fn register_todos(&mut self, tool: TodoTool) -> Result<(), ToolError> {
         self.register_arc(Arc::new(tool))
     }
     pub fn register<T: Tool + 'static>(&mut self, tool: T) {

@@ -2,7 +2,7 @@
 //! agent's event and approval contracts, so providers can add finer-grained
 //! streaming without changing the UI.
 
-use std::{io, path::PathBuf, sync::Arc};
+use std::{collections::BTreeSet, io, path::PathBuf, sync::Arc};
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
@@ -38,6 +38,7 @@ use crate::{
         InteractiveTerminals, TerminalColor, TerminalEvent, TerminalId, TerminalSnapshot,
         TerminalSummary,
     },
+    todo::{EntryKind, NewTodo, Priority, TodoId, TodoItem, TodoList, TodoStatus, TodoStore},
     tools::{ApprovalOutcome, ApprovalRequest as ToolApprovalRequest, Approver},
 };
 
@@ -50,6 +51,8 @@ pub enum UiEvent {
     SupervisorTree(Result<Vec<AgentView>, String>),
     SupervisorInspect(AgentId, Result<Vec<SupervisionEvent>, String>),
     SupervisorAction(Result<String, String>),
+    TodoSnapshot(Result<TodoList, String>),
+    TodoAction(Result<String, String>),
 }
 
 #[derive(Debug)]
@@ -210,6 +213,12 @@ struct App {
     supervisor_input: Composer,
     cancel_armed: Option<AgentId>,
     supervisor_scroll: u16,
+    todo_mode: Option<TodoMode>,
+    todos: Vec<TodoItem>,
+    todo_revision: u64,
+    selected_todo: usize,
+    todo_scroll: u16,
+    todo_input: Composer,
     quit: bool,
 }
 
@@ -218,6 +227,28 @@ enum SupervisorMode {
     Tree,
     Inspect(AgentId),
     Message { target: AgentId, follow_up: bool },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TodoMode {
+    List,
+    Inspect(TodoId),
+    Input {
+        target: Option<TodoId>,
+        action: TodoInput,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TodoInput {
+    Add,
+    Edit,
+    Block,
+    Assign,
+    Dependencies,
+    Progress,
+    Note,
+    Evidence,
 }
 
 struct Running {
@@ -258,6 +289,12 @@ impl App {
             supervisor_input: Composer::default(),
             cancel_armed: None,
             supervisor_scroll: 0,
+            todo_mode: None,
+            todos: Vec::new(),
+            todo_revision: 0,
+            selected_todo: 0,
+            todo_scroll: 0,
+            todo_input: Composer::default(),
             quit: false,
         }
     }
@@ -277,6 +314,8 @@ impl App {
     }
 }
 
+// Each argument is a distinct lifecycle-owned channel/backend assembled by the CLI.
+#[allow(clippy::too_many_arguments)]
 pub async fn run(
     agent: Arc<Agent>,
     store: SessionStore,
@@ -285,12 +324,14 @@ pub async fn run(
     tx: mpsc::UnboundedSender<UiEvent>,
     terminals: Arc<dyn InteractiveTerminals>,
     supervisor: Arc<dyn AgentSupervisor>,
+    todos: Arc<TodoStore>,
 ) -> Result<()> {
     let sessions = store.list().await?;
     let mut app = App::new(session, sessions);
     refresh_terminals(&mut app, terminals.as_ref()).await;
     let mut terminal_events = Some(terminals.subscribe());
     let mut supervisor_events = Some(supervisor.subscribe());
+    let mut todo_refresh = tokio::time::interval(std::time::Duration::from_secs(1));
     let _guard = TerminalGuard::enter().context("failed to initialize terminal")?;
     let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
     terminal.clear()?;
@@ -304,7 +345,7 @@ pub async fn run(
             event = input.next() => {
                 match event {
                     Some(Ok(Event::Key(key))) if key.is_press() => {
-                        handle_key(key, &mut app, &agent, &store, &tx, terminals.as_ref(), supervisor.clone()).await?;
+                        handle_key(key, &mut app, &agent, &store, &tx, terminals.as_ref(), supervisor.clone(), todos.clone()).await?;
                     }
                     Some(Ok(Event::Resize(columns, rows))) => {
                         if let Some(id) = app.attached_terminal {
@@ -320,6 +361,8 @@ pub async fn run(
                             let text = text.replace("\r\n", "\n").replace('\r', "\n");
                             if matches!(app.supervisor_mode, Some(SupervisorMode::Message { .. })) {
                                 app.supervisor_input.insert_str(&text);
+                            } else if matches!(app.todo_mode, Some(TodoMode::Input { .. })) {
+                                app.todo_input.insert_str(&text);
                             } else if app.supervisor_mode.is_none() {
                                 app.composer.insert_str(&text);
                             }
@@ -366,6 +409,7 @@ pub async fn run(
                     }
                 }
             }
+            _ = todo_refresh.tick(), if app.todo_mode.is_some() => request_todo_snapshot(&tx, todos.clone()),
         }
     }
     app.cancel();
@@ -495,10 +539,27 @@ async fn handle_ui_event(
                 result.unwrap_or_else(|error| format!("Supervisor action failed: {error}"));
             app.cancel_armed = None;
         }
+        UiEvent::TodoSnapshot(result) => match result {
+            Ok(list) if list.revision != app.todo_revision || app.todos.is_empty() => {
+                let selected = app.todos.get(app.selected_todo).map(|item| item.id);
+                app.todo_revision = list.revision;
+                app.todos = list.ordered().into_iter().cloned().collect();
+                app.selected_todo = selected
+                    .and_then(|id| app.todos.iter().position(|item| item.id == id))
+                    .unwrap_or_else(|| app.selected_todo.min(app.todos.len().saturating_sub(1)));
+            }
+            Ok(_) => {}
+            Err(error) => app.status = format!("Todo refresh failed: {error}"),
+        },
+        UiEvent::TodoAction(result) => {
+            app.status = result.unwrap_or_else(|error| format!("Todo action failed: {error}"));
+        }
     }
     Ok(())
 }
 
+// Keeping these explicit makes modal input routing auditable (especially PTY isolation).
+#[allow(clippy::too_many_arguments)]
 async fn handle_key(
     key: KeyEvent,
     app: &mut App,
@@ -507,6 +568,7 @@ async fn handle_key(
     tx: &mpsc::UnboundedSender<UiEvent>,
     terminals: &dyn InteractiveTerminals,
     supervisor: Arc<dyn AgentSupervisor>,
+    todos: Arc<TodoStore>,
 ) -> Result<()> {
     if let Some(approval) = app.approval.take() {
         let approved = matches!(key.code, KeyCode::Char('y') | KeyCode::Char('Y'));
@@ -531,6 +593,10 @@ async fn handle_key(
     }
     if app.supervisor_mode.is_some() {
         handle_supervisor_key(key, app, tx, supervisor).await;
+        return Ok(());
+    }
+    if app.todo_mode.is_some() {
+        handle_todo_key(key, app, tx, todos).await;
         return Ok(());
     }
     if app.terminal_picker {
@@ -597,6 +663,10 @@ async fn handle_key(
             KeyCode::Char('a') => {
                 app.supervisor_mode = Some(SupervisorMode::Tree);
                 request_supervisor_tree(tx, supervisor);
+            }
+            KeyCode::Char('d') => {
+                app.todo_mode = Some(TodoMode::List);
+                request_todo_snapshot(tx, todos);
             }
             KeyCode::Char('n') if !app.is_running() => {
                 app.session =
@@ -744,7 +814,6 @@ async fn handle_supervisor_key(
         }
         return;
     }
-
     let selected = match mode {
         SupervisorMode::Inspect(id) => Some(id),
         SupervisorMode::Tree => app.agents.get(app.selected_agent).map(|agent| agent.id),
@@ -816,6 +885,327 @@ async fn handle_supervisor_key(
         }
         _ => app.cancel_armed = None,
     }
+}
+
+async fn handle_todo_key(
+    key: KeyEvent,
+    app: &mut App,
+    tx: &mpsc::UnboundedSender<UiEvent>,
+    store: Arc<TodoStore>,
+) {
+    let Some(mode) = app.todo_mode else { return };
+    if let TodoMode::Input { target, action } = mode {
+        match key.code {
+            KeyCode::Esc => {
+                app.todo_input = Composer::default();
+                app.todo_mode =
+                    target.map_or(Some(TodoMode::List), |id| Some(TodoMode::Inspect(id)));
+            }
+            KeyCode::Enter if key.modifiers.contains(KeyModifiers::ALT) => {
+                app.todo_input.insert('\n')
+            }
+            KeyCode::Enter => {
+                let value = app.todo_input.take();
+                if !value.trim().is_empty()
+                    || matches!(
+                        action,
+                        TodoInput::Block | TodoInput::Assign | TodoInput::Dependencies
+                    )
+                {
+                    request_todo_input(tx, store, target, action, value);
+                    app.todo_mode =
+                        target.map_or(Some(TodoMode::List), |id| Some(TodoMode::Inspect(id)));
+                }
+            }
+            KeyCode::Char(character) => app.todo_input.insert(character),
+            KeyCode::Backspace => app.todo_input.backspace(),
+            KeyCode::Delete => app.todo_input.delete(),
+            KeyCode::Home => app.todo_input.line_start(),
+            KeyCode::End => app.todo_input.line_end(),
+            KeyCode::Left if app.todo_input.cursor > 0 => {
+                app.todo_input.cursor = app.todo_input.text[..app.todo_input.cursor]
+                    .char_indices()
+                    .next_back()
+                    .map_or(0, |(index, _)| index);
+            }
+            KeyCode::Right => {
+                if let Some(character) = app.todo_input.text[app.todo_input.cursor..].chars().next()
+                {
+                    app.todo_input.cursor += character.len_utf8();
+                }
+            }
+            _ => {}
+        }
+        return;
+    }
+    let selected = match mode {
+        TodoMode::List => app.todos.get(app.selected_todo).map(|item| item.id),
+        TodoMode::Inspect(id) => Some(id),
+        TodoMode::Input { .. } => unreachable!(),
+    };
+    match key.code {
+        KeyCode::Esc => match mode {
+            TodoMode::Inspect(_) => app.todo_mode = Some(TodoMode::List),
+            TodoMode::List => app.todo_mode = None,
+            TodoMode::Input { .. } => unreachable!(),
+        },
+        KeyCode::Up if mode == TodoMode::List => {
+            app.selected_todo = app.selected_todo.saturating_sub(1)
+        }
+        KeyCode::Down if mode == TodoMode::List => {
+            app.selected_todo = (app.selected_todo + 1).min(app.todos.len().saturating_sub(1));
+        }
+        KeyCode::Enter if mode == TodoMode::List => {
+            if let Some(id) = selected {
+                app.todo_mode = Some(TodoMode::Inspect(id));
+            }
+        }
+        KeyCode::PageUp if matches!(mode, TodoMode::Inspect(_)) => {
+            app.todo_scroll = app.todo_scroll.saturating_add(8)
+        }
+        KeyCode::PageDown if matches!(mode, TodoMode::Inspect(_)) => {
+            app.todo_scroll = app.todo_scroll.saturating_sub(8)
+        }
+        KeyCode::Char('r') => request_todo_snapshot(tx, store),
+        KeyCode::Char('n') => open_todo_input(app, None, TodoInput::Add, ""),
+        KeyCode::Char('e') if selected.is_some() => {
+            let item = app.todos.iter().find(|item| Some(item.id) == selected);
+            let initial = item.map_or(String::new(), |item| {
+                format!("{}\n{}", item.title, item.description)
+            });
+            open_todo_input(app, selected, TodoInput::Edit, &initial);
+        }
+        KeyCode::Char('b') if selected.is_some() => {
+            open_todo_input(app, selected, TodoInput::Block, "")
+        }
+        KeyCode::Char('a') if selected.is_some() => {
+            let initial = app
+                .todos
+                .iter()
+                .find(|item| Some(item.id) == selected)
+                .map(|item| {
+                    item.assignees
+                        .iter()
+                        .cloned()
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                })
+                .unwrap_or_default();
+            open_todo_input(app, selected, TodoInput::Assign, &initial);
+        }
+        KeyCode::Char('d') if selected.is_some() => {
+            let initial = app
+                .todos
+                .iter()
+                .find(|item| Some(item.id) == selected)
+                .map(|item| {
+                    item.dependencies
+                        .iter()
+                        .map(|id| id.0.to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                })
+                .unwrap_or_default();
+            open_todo_input(app, selected, TodoInput::Dependencies, &initial);
+        }
+        KeyCode::Char('p') if selected.is_some() => {
+            open_todo_input(app, selected, TodoInput::Progress, "")
+        }
+        KeyCode::Char('o') if selected.is_some() => {
+            open_todo_input(app, selected, TodoInput::Note, "")
+        }
+        KeyCode::Char('v') if selected.is_some() => {
+            open_todo_input(app, selected, TodoInput::Evidence, "")
+        }
+        KeyCode::Char('u') if let Some(id) = selected => {
+            request_todo_action(tx, store.clone(), async move {
+                store
+                    .set_blockers(id, Vec::new())
+                    .await
+                    .map(|_| "Blockers cleared".into())
+            })
+        }
+        KeyCode::Char('t') if let Some(id) = selected => {
+            if let Some(item) = app.todos.iter().find(|item| item.id == id) {
+                let status = match item.status {
+                    TodoStatus::Pending | TodoStatus::Blocked => TodoStatus::InProgress,
+                    TodoStatus::InProgress => TodoStatus::Completed,
+                    TodoStatus::Completed | TodoStatus::Cancelled => TodoStatus::Pending,
+                };
+                request_todo_action(tx, store.clone(), async move {
+                    store
+                        .set_status(id, status)
+                        .await
+                        .map(|_| format!("Todo is {}", todo_status_label(status)))
+                });
+            }
+        }
+        KeyCode::Char('c') if let Some(id) = selected => {
+            request_todo_action(tx, store.clone(), async move {
+                store
+                    .set_status(id, TodoStatus::Cancelled)
+                    .await
+                    .map(|_| "Todo cancelled".into())
+            })
+        }
+        KeyCode::Char('K') if let Some(id) = selected => reorder_todo(app, tx, store, id, -1),
+        KeyCode::Char('J') if let Some(id) = selected => reorder_todo(app, tx, store, id, 1),
+        KeyCode::Char('x') if let Some(id) = selected => {
+            request_todo_action(tx, store.clone(), async move {
+                store.archive(id).await.map(|_| "Todo archived".into())
+            })
+        }
+        _ => {}
+    }
+}
+
+fn open_todo_input(app: &mut App, target: Option<TodoId>, action: TodoInput, initial: &str) {
+    app.todo_input = Composer::default();
+    app.todo_input.insert_str(initial);
+    app.todo_mode = Some(TodoMode::Input { target, action });
+}
+
+fn request_todo_snapshot(tx: &mpsc::UnboundedSender<UiEvent>, store: Arc<TodoStore>) {
+    let tx = tx.clone();
+    tokio::spawn(async move {
+        let _ = tx.send(UiEvent::TodoSnapshot(
+            store.snapshot().await.map_err(|error| error.to_string()),
+        ));
+    });
+}
+
+fn request_todo_action<F>(tx: &mpsc::UnboundedSender<UiEvent>, store: Arc<TodoStore>, future: F)
+where
+    F: std::future::Future<Output = anyhow::Result<String>> + Send + 'static,
+{
+    let tx = tx.clone();
+    tokio::spawn(async move {
+        let result = future.await.map_err(|error| error.to_string());
+        let _ = tx.send(UiEvent::TodoAction(result));
+        let _ = tx.send(UiEvent::TodoSnapshot(
+            store.snapshot().await.map_err(|error| error.to_string()),
+        ));
+    });
+}
+
+fn request_todo_input(
+    tx: &mpsc::UnboundedSender<UiEvent>,
+    store: Arc<TodoStore>,
+    target: Option<TodoId>,
+    action: TodoInput,
+    value: String,
+) {
+    let operation_store = store.clone();
+    request_todo_action(tx, store, async move {
+        match (action, target) {
+            (TodoInput::Add, None) => {
+                let (title, description) = value.split_once('\n').unwrap_or((&value, ""));
+                operation_store
+                    .create(NewTodo {
+                        title: title.to_owned(),
+                        description: description.to_owned(),
+                        priority: Priority::Normal,
+                        order: None,
+                        assignees: BTreeSet::new(),
+                    })
+                    .await
+                    .map(|item| format!("Added {}", item.title))
+            }
+            (TodoInput::Edit, Some(id)) => {
+                let (title, description) = value.split_once('\n').unwrap_or((&value, ""));
+                operation_store
+                    .edit(
+                        id,
+                        Some(title.to_owned()),
+                        Some(description.to_owned()),
+                        None,
+                    )
+                    .await
+                    .map(|_| "Todo updated".into())
+            }
+            (TodoInput::Block, Some(id)) => operation_store
+                .set_blockers(id, split_values(&value))
+                .await
+                .map(|_| "Blockers updated".into()),
+            (TodoInput::Assign, Some(id)) => operation_store
+                .assign(id, split_values(&value).into_iter().collect())
+                .await
+                .map(|_| "Assignees updated".into()),
+            (TodoInput::Dependencies, Some(id)) => {
+                let desired = parse_todo_ids(&value)?;
+                let snapshot = operation_store.snapshot().await?;
+                let current = snapshot
+                    .items
+                    .get(&id)
+                    .ok_or_else(|| anyhow::anyhow!("unknown todo"))?
+                    .dependencies
+                    .clone();
+                let add = desired.difference(&current).copied().collect();
+                let remove = current.difference(&desired).copied().collect();
+                operation_store.update_dependencies(id, add, remove).await?;
+                Ok("Dependencies updated".into())
+            }
+            (TodoInput::Progress, Some(id)) => operation_store
+                .append_note(id, EntryKind::Progress, value, Some("user".into()))
+                .await
+                .map(|_| "Progress added".into()),
+            (TodoInput::Note, Some(id)) => operation_store
+                .append_note(id, EntryKind::Note, value, Some("user".into()))
+                .await
+                .map(|_| "Note added".into()),
+            (TodoInput::Evidence, Some(id)) => operation_store
+                .append_note(id, EntryKind::Evidence, value, Some("user".into()))
+                .await
+                .map(|_| "Evidence added".into()),
+            _ => anyhow::bail!("invalid todo action"),
+        }
+    });
+}
+
+fn split_values(value: &str) -> Vec<String> {
+    value
+        .split([',', '\n'])
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+
+fn parse_todo_ids(value: &str) -> anyhow::Result<BTreeSet<TodoId>> {
+    split_values(value)
+        .into_iter()
+        .map(|value| {
+            uuid::Uuid::parse_str(&value)
+                .map(TodoId)
+                .map_err(|_| anyhow::anyhow!("invalid todo UUID: {value}"))
+        })
+        .collect()
+}
+
+fn reorder_todo(
+    app: &App,
+    tx: &mpsc::UnboundedSender<UiEvent>,
+    store: Arc<TodoStore>,
+    id: TodoId,
+    direction: isize,
+) {
+    let Some(index) = app.todos.iter().position(|item| item.id == id) else {
+        return;
+    };
+    let other = index
+        .saturating_add_signed(direction)
+        .min(app.todos.len().saturating_sub(1));
+    if other == index {
+        return;
+    }
+    let original_order = app.todos[index].order;
+    let other_id = app.todos[other].id;
+    let other_order = app.todos[other].order;
+    request_todo_action(tx, store.clone(), async move {
+        store.reorder(id, other_order).await?;
+        store.reorder(other_id, original_order).await?;
+        Ok("Todo reordered".into())
+    });
 }
 
 fn request_supervisor_tree(
@@ -946,6 +1336,13 @@ fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
         }
         return;
     }
+    if app.todo_mode.is_some() {
+        draw_todos(frame, area, app);
+        if let Some(approval) = &app.approval {
+            draw_approval(frame, area, approval);
+        }
+        return;
+    }
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -1018,7 +1415,7 @@ fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
     );
     frame.render_widget(
         Paragraph::new(format!(
-            "{}  │  ^A agents  ^T terminals  ^S sessions  ^N new  ^B branch  ^K compact  ^E export",
+            "{}  │  ^D todos  ^A agents  ^T terminals  ^S sessions  ^N new  ^B branch  ^K compact  ^E export",
             app.status
         ))
         .style(Style::default().fg(Color::Gray)),
@@ -1039,6 +1436,240 @@ fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
     }
     if let Some(approval) = &app.approval {
         draw_approval(frame, area, approval);
+    }
+}
+
+fn draw_todos(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
+    let input = matches!(app.todo_mode, Some(TodoMode::Input { .. }));
+    let chunks = Layout::vertical([
+        Constraint::Length(3),
+        Constraint::Min(4),
+        Constraint::Length(if input { 5 } else { 0 }),
+        Constraint::Length(1),
+    ])
+    .split(area);
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled(
+                " HELM TODOS ",
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(format!(
+                "  {} active · revision {}",
+                app.todos.len(),
+                app.todo_revision
+            )),
+        ]))
+        .block(Block::default().borders(Borders::BOTTOM)),
+        chunks[0],
+    );
+    match app.todo_mode {
+        Some(TodoMode::List) => draw_todo_list(frame, chunks[1], app),
+        Some(TodoMode::Inspect(id))
+        | Some(TodoMode::Input {
+            target: Some(id), ..
+        }) => draw_todo_inspect(frame, chunks[1], app, id),
+        Some(TodoMode::Input { target: None, .. }) => draw_todo_list(frame, chunks[1], app),
+        None => {}
+    }
+    if let Some(TodoMode::Input { action, .. }) = app.todo_mode {
+        let title = match action {
+            TodoInput::Add => " Add · title ",
+            TodoInput::Edit => " Edit · title then description on next line ",
+            TodoInput::Block => " Blockers · comma/newline separated ",
+            TodoInput::Assign => " Assignees · comma/newline separated ",
+            TodoInput::Dependencies => " Prerequisite UUIDs · comma/newline separated ",
+            TodoInput::Progress => " Progress update ",
+            TodoInput::Note => " Note ",
+            TodoInput::Evidence => " Evidence ",
+        };
+        frame.render_widget(
+            Paragraph::new(app.todo_input.text.as_str())
+                .wrap(Wrap { trim: false })
+                .block(
+                    Block::default()
+                        .title(format!(
+                            "{title}· Enter save · Alt+Enter newline · Esc return "
+                        ))
+                        .borders(Borders::ALL),
+                ),
+            chunks[2],
+        );
+        let (row, column) = cursor_position(
+            &app.todo_input.text[..app.todo_input.cursor],
+            chunks[2].width.saturating_sub(2).max(1),
+        );
+        frame.set_cursor_position((
+            (chunks[2].x + 1 + column).min(chunks[2].right().saturating_sub(2)),
+            (chunks[2].y + 1 + row).min(chunks[2].bottom().saturating_sub(2)),
+        ));
+    }
+    let help = if area.width < 60 {
+        "↑↓ Enter · n new · t next · Esc return"
+    } else {
+        "↑↓ · Enter inspect · n new · e edit · t next · b/u block · a assign · d deps · p progress · o note · v evidence · J/K reorder · c cancel · x archive · r reload · Esc"
+    };
+    frame.render_widget(
+        Paragraph::new(help).style(Style::default().fg(Color::Gray)),
+        chunks[3],
+    );
+}
+
+fn draw_todo_list(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
+    let visible = area.height.saturating_sub(2).max(1) as usize;
+    let start = app
+        .selected_todo
+        .saturating_sub(visible.saturating_sub(1))
+        .min(app.todos.len().saturating_sub(visible));
+    let items: Vec<_> = app
+        .todos
+        .iter()
+        .enumerate()
+        .skip(start)
+        .take(visible)
+        .map(|(index, item)| {
+            let marker = if index == app.selected_todo {
+                "▶"
+            } else {
+                " "
+            };
+            let blockers = if item.blockers.is_empty() {
+                String::new()
+            } else {
+                format!(" · {} blocker(s)", item.blockers.len())
+            };
+            ListItem::new(format!(
+                "{marker} [{}|{}] {}{}",
+                todo_status_label(item.status),
+                priority_label(item.priority),
+                one_line(&item.title, 80),
+                blockers
+            ))
+        })
+        .collect();
+    frame.render_widget(
+        List::new(if items.is_empty() {
+            vec![ListItem::new("No active todos · press n to add one")]
+        } else {
+            items
+        })
+        .block(
+            Block::default()
+                .title(" Workspace plan ")
+                .borders(Borders::ALL),
+        ),
+        area,
+    );
+}
+
+fn draw_todo_inspect(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App, id: TodoId) {
+    let Some(item) = app.todos.iter().find(|item| item.id == id) else {
+        frame.render_widget(
+            Paragraph::new("Todo was archived or removed; Esc returns to the list.")
+                .block(Block::default().borders(Borders::ALL)),
+            area,
+        );
+        return;
+    };
+    let mut lines = vec![
+        Line::raw(format!(
+            "{} [{} · {}]",
+            item.title,
+            todo_status_label(item.status),
+            priority_label(item.priority)
+        )),
+        Line::raw(format!("ID: {} · order {}", item.id.0, item.order)),
+        Line::raw(format!(
+            "Assignees: {}",
+            if item.assignees.is_empty() {
+                "—".into()
+            } else {
+                item.assignees
+                    .iter()
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            }
+        )),
+        Line::raw(format!(
+            "Dependencies: {}",
+            if item.dependencies.is_empty() {
+                "—".into()
+            } else {
+                item.dependencies
+                    .iter()
+                    .map(|id| id.0.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            }
+        )),
+        Line::raw(""),
+        Line::raw(item.description.clone()),
+    ];
+    for blocker in &item.blockers {
+        lines.push(Line::styled(
+            format!("BLOCKED: {blocker}"),
+            Style::default().fg(Color::Red),
+        ));
+    }
+    for (label, entries) in [
+        ("Progress", &item.progress),
+        ("Evidence", &item.evidence),
+        ("Notes", &item.notes),
+    ] {
+        if !entries.is_empty() {
+            lines.push(Line::raw(""));
+            lines.push(Line::styled(
+                label,
+                Style::default().add_modifier(Modifier::BOLD),
+            ));
+        }
+        lines.extend(entries.iter().map(|entry| {
+            Line::raw(format!(
+                "{} {}{}",
+                entry.at.format("%Y-%m-%d %H:%M"),
+                entry
+                    .author
+                    .as_deref()
+                    .map_or(String::new(), |author| format!("{author}: ")),
+                entry.text
+            ))
+        }));
+    }
+    let bottom = lines
+        .len()
+        .saturating_sub(area.height.saturating_sub(2) as usize) as u16;
+    frame.render_widget(
+        Paragraph::new(lines)
+            .wrap(Wrap { trim: false })
+            .scroll((bottom.saturating_sub(app.todo_scroll), 0))
+            .block(
+                Block::default()
+                    .title(" Todo detail ")
+                    .borders(Borders::ALL),
+            ),
+        area,
+    );
+}
+
+fn todo_status_label(status: TodoStatus) -> &'static str {
+    match status {
+        TodoStatus::Pending => "pending",
+        TodoStatus::InProgress => "in progress",
+        TodoStatus::Blocked => "blocked",
+        TodoStatus::Completed => "completed",
+        TodoStatus::Cancelled => "cancelled",
+    }
+}
+fn priority_label(priority: Priority) -> &'static str {
+    match priority {
+        Priority::Low => "low",
+        Priority::Normal => "normal",
+        Priority::High => "high",
+        Priority::Critical => "critical",
     }
 }
 
@@ -1804,6 +2435,24 @@ mod tests {
         }
     }
 
+    fn todo_store(directory: &tempfile::TempDir) -> Arc<TodoStore> {
+        Arc::new(TodoStore::new(
+            directory.path().join("todos.json"),
+            crate::todo::TodoScope {
+                workspace: directory.path().into(),
+                session_id: None,
+            },
+        ))
+    }
+
+    async fn receive_todo_action(rx: &mut mpsc::UnboundedReceiver<UiEvent>) {
+        assert!(matches!(rx.recv().await, Some(UiEvent::TodoAction(Ok(_)))));
+        assert!(matches!(
+            rx.recv().await,
+            Some(UiEvent::TodoSnapshot(Ok(_)))
+        ));
+    }
+
     struct FakeTerminals {
         id: TerminalId,
         writes: Mutex<Vec<Vec<u8>>>,
@@ -1998,6 +2647,297 @@ mod tests {
             .collect();
         assert!(rendered.contains(&selected_id));
         assert!(rendered.contains("Esc return"));
+    }
+
+    #[tokio::test]
+    async fn todo_composer_actions_are_async_and_do_not_enter_chat() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = todo_store(&directory);
+        let mut app = App::new(
+            Session::new(directory.path().into(), "test-model".into()),
+            Vec::new(),
+        );
+        app.todo_mode = Some(TodoMode::List);
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        handle_todo_key(
+            KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE),
+            &mut app,
+            &tx,
+            store.clone(),
+        )
+        .await;
+        app.todo_input.insert_str("Ship it\nRelease evidence");
+        handle_todo_key(
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+            &mut app,
+            &tx,
+            store.clone(),
+        )
+        .await;
+        assert!(matches!(rx.recv().await, Some(UiEvent::TodoAction(Ok(_)))));
+        let Some(UiEvent::TodoSnapshot(Ok(snapshot))) = rx.recv().await else {
+            panic!("todo action must trigger a live snapshot refresh")
+        };
+        let item = snapshot.ordered()[0];
+        assert_eq!(item.title, "Ship it");
+        assert_eq!(item.description, "Release evidence");
+        assert!(app.session.messages.is_empty());
+    }
+
+    #[tokio::test]
+    async fn todo_view_renders_selected_item_and_complete_inspection() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = todo_store(&directory);
+        for index in 0..20 {
+            store
+                .create(NewTodo {
+                    title: format!("todo {index}"),
+                    description: format!("description {index}"),
+                    priority: Priority::Normal,
+                    order: None,
+                    assignees: BTreeSet::new(),
+                })
+                .await
+                .unwrap();
+        }
+        let snapshot = store.snapshot().await.unwrap();
+        let mut app = App::new(
+            Session::new(directory.path().into(), "test-model".into()),
+            Vec::new(),
+        );
+        app.todo_mode = Some(TodoMode::List);
+        app.todos = snapshot.ordered().into_iter().cloned().collect();
+        app.selected_todo = 19;
+        let backend = ratatui::backend::TestBackend::new(40, 10);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let rendered: String = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect();
+        assert!(rendered.contains("todo 19"));
+        assert!(rendered.contains("Esc return"));
+
+        app.todo_mode = Some(TodoMode::Inspect(app.todos[19].id));
+        let backend = ratatui::backend::TestBackend::new(60, 16);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let rendered: String = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect();
+        assert!(rendered.contains("description 19"));
+        assert!(rendered.contains("Assignees"));
+    }
+
+    #[tokio::test]
+    async fn todo_ui_maps_edit_block_assign_evidence_reorder_transition_and_archive() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = todo_store(&directory);
+        let first = store
+            .create(NewTodo {
+                title: "first".into(),
+                description: String::new(),
+                priority: Priority::Normal,
+                order: None,
+                assignees: BTreeSet::new(),
+            })
+            .await
+            .unwrap();
+        let second = store
+            .create(NewTodo {
+                title: "second".into(),
+                description: String::new(),
+                priority: Priority::Normal,
+                order: None,
+                assignees: BTreeSet::new(),
+            })
+            .await
+            .unwrap();
+        let (tx, mut rx) = mpsc::unbounded_channel();
+
+        request_todo_input(
+            &tx,
+            store.clone(),
+            Some(first.id),
+            TodoInput::Edit,
+            "renamed\ndetails".into(),
+        );
+        receive_todo_action(&mut rx).await;
+        request_todo_input(
+            &tx,
+            store.clone(),
+            Some(first.id),
+            TodoInput::Block,
+            "waiting on access".into(),
+        );
+        receive_todo_action(&mut rx).await;
+        request_todo_input(
+            &tx,
+            store.clone(),
+            Some(first.id),
+            TodoInput::Assign,
+            "alice, bob".into(),
+        );
+        receive_todo_action(&mut rx).await;
+        request_todo_input(
+            &tx,
+            store.clone(),
+            Some(first.id),
+            TodoInput::Evidence,
+            "report.txt".into(),
+        );
+        receive_todo_action(&mut rx).await;
+        request_todo_input(
+            &tx,
+            store.clone(),
+            Some(first.id),
+            TodoInput::Progress,
+            "halfway".into(),
+        );
+        receive_todo_action(&mut rx).await;
+        request_todo_input(
+            &tx,
+            store.clone(),
+            Some(first.id),
+            TodoInput::Note,
+            "remember rollback".into(),
+        );
+        receive_todo_action(&mut rx).await;
+        request_todo_input(
+            &tx,
+            store.clone(),
+            Some(first.id),
+            TodoInput::Dependencies,
+            second.id.0.to_string(),
+        );
+        receive_todo_action(&mut rx).await;
+
+        let snapshot = store.snapshot().await.unwrap();
+        let item = snapshot.items.get(&first.id).unwrap();
+        assert_eq!(item.title, "renamed");
+        assert_eq!(item.description, "details");
+        assert_eq!(item.status, TodoStatus::Blocked);
+        assert_eq!(item.assignees.len(), 2);
+        assert_eq!(item.evidence[0].text, "report.txt");
+        assert_eq!(item.progress[0].text, "halfway");
+        assert_eq!(item.notes[0].text, "remember rollback");
+        assert!(item.dependencies.contains(&second.id));
+
+        request_todo_input(
+            &tx,
+            store.clone(),
+            Some(first.id),
+            TodoInput::Dependencies,
+            "not-a-uuid".into(),
+        );
+        assert!(matches!(rx.recv().await, Some(UiEvent::TodoAction(Err(_)))));
+        assert!(matches!(
+            rx.recv().await,
+            Some(UiEvent::TodoSnapshot(Ok(_)))
+        ));
+        assert!(
+            store.snapshot().await.unwrap().items[&first.id]
+                .dependencies
+                .contains(&second.id)
+        );
+        request_todo_input(
+            &tx,
+            store.clone(),
+            Some(first.id),
+            TodoInput::Dependencies,
+            String::new(),
+        );
+        receive_todo_action(&mut rx).await;
+        assert!(
+            store.snapshot().await.unwrap().items[&first.id]
+                .dependencies
+                .is_empty()
+        );
+
+        let mut app = App::new(
+            Session::new(directory.path().into(), "test-model".into()),
+            Vec::new(),
+        );
+        app.todos = snapshot.ordered().into_iter().cloned().collect();
+        reorder_todo(&app, &tx, store.clone(), first.id, 1);
+        receive_todo_action(&mut rx).await;
+        let snapshot = store.snapshot().await.unwrap();
+        assert!(snapshot.items[&first.id].order >= snapshot.items[&second.id].order);
+
+        store
+            .set_status(second.id, TodoStatus::Completed)
+            .await
+            .unwrap();
+        store.set_blockers(first.id, Vec::new()).await.unwrap();
+        let mut app = App::new(
+            Session::new(directory.path().into(), "test-model".into()),
+            Vec::new(),
+        );
+        app.todo_mode = Some(TodoMode::Inspect(first.id));
+        app.todos = store
+            .snapshot()
+            .await
+            .unwrap()
+            .ordered()
+            .into_iter()
+            .cloned()
+            .collect();
+        handle_todo_key(
+            KeyEvent::new(KeyCode::Char('t'), KeyModifiers::NONE),
+            &mut app,
+            &tx,
+            store.clone(),
+        )
+        .await;
+        receive_todo_action(&mut rx).await;
+        assert_eq!(
+            store.snapshot().await.unwrap().items[&first.id].status,
+            TodoStatus::InProgress
+        );
+        app.todos = store
+            .snapshot()
+            .await
+            .unwrap()
+            .ordered()
+            .into_iter()
+            .cloned()
+            .collect();
+        handle_todo_key(
+            KeyEvent::new(KeyCode::Char('t'), KeyModifiers::NONE),
+            &mut app,
+            &tx,
+            store.clone(),
+        )
+        .await;
+        receive_todo_action(&mut rx).await;
+        assert_eq!(
+            store.snapshot().await.unwrap().items[&first.id].status,
+            TodoStatus::Completed
+        );
+        app.todos = store
+            .snapshot()
+            .await
+            .unwrap()
+            .ordered()
+            .into_iter()
+            .cloned()
+            .collect();
+        handle_todo_key(
+            KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE),
+            &mut app,
+            &tx,
+            store.clone(),
+        )
+        .await;
+        receive_todo_action(&mut rx).await;
+        assert!(store.snapshot().await.unwrap().items[&first.id].archived());
     }
 
     #[test]

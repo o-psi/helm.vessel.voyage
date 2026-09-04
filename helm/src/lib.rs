@@ -7,6 +7,7 @@ pub mod session;
 pub mod subagent;
 pub mod supervision;
 pub mod terminal;
+pub mod todo;
 pub mod tools;
 pub mod tui;
 pub mod voyage;

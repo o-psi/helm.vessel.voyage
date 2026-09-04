@@ -19,7 +19,8 @@ import time
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 MANIFEST = ROOT / "eval" / "scenarios.json"
 REQUIRED_CATEGORIES = {
-    "coding", "administration", "research", "writing", "data", "interruption", "parallel"
+    "coding", "administration", "research", "writing", "data", "interruption", "parallel",
+    "task_management"
 }
 
 
