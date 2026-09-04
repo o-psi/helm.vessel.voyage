@@ -784,15 +784,25 @@ mod tests {
             .await
             .unwrap();
         let id = TerminalId(Uuid::parse_str(started.split_whitespace().last().unwrap()).unwrap());
+
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if matches!(events.recv().await, Ok(TerminalEvent::Changed(_))) {
+                    break;
+                }
+            }
+        })
+        .await
+        .expect("burst must produce an output notification");
         tokio::time::sleep(Duration::from_millis(200)).await;
-        let mut changed = 0;
+        let mut additional_changed = 0;
         while let Ok(event) = events.try_recv() {
             if matches!(event, TerminalEvent::Changed(_)) {
-                changed += 1
+                additional_changed += 1
             }
         }
         assert_eq!(
-            changed, 1,
+            additional_changed, 0,
             "output events must be coalesced to keep TUI input responsive"
         );
         let _ = tool.snapshot(id).await.unwrap();
