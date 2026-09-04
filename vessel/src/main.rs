@@ -37,6 +37,8 @@ struct Cli {
     database: PathBuf,
     #[arg(long, default_value_t = 60)]
     lease_secs: u64,
+    #[arg(long, default_value_t = 600)]
+    pairing_ttl_secs: u64,
     #[command(subcommand)]
     command: Option<Command>,
 }
@@ -69,6 +71,7 @@ struct AppState {
     database: Arc<Mutex<Connection>>,
     lease_duration: Duration,
     task_available: Arc<tokio::sync::Notify>,
+    pairing_ttl: ChronoDuration,
 }
 #[derive(Default, Serialize, Deserialize)]
 struct ControlPlane {
@@ -160,6 +163,7 @@ async fn main() -> Result<()> {
         database: Arc::new(Mutex::new(database)),
         lease_duration: Duration::from_secs(cli.lease_secs),
         task_available: Arc::new(tokio::sync::Notify::new()),
+        pairing_ttl: ChronoDuration::seconds(cli.pairing_ttl_secs.max(1) as i64),
     };
     spawn_reaper(state.clone(), Duration::from_secs(cli.stale_after_secs));
     let app = Router::new()
@@ -205,7 +209,7 @@ async fn start_pairing(
     }
     let code = Uuid::new_v4().simple().to_string()[..10].to_ascii_uppercase();
     let worker_token = Uuid::new_v4().as_simple().to_string();
-    let expires_at = Utc::now() + ChronoDuration::minutes(10);
+    let expires_at = Utc::now() + state.pairing_ttl;
     state.inner.write().await.pairings.insert(
         code.clone(),
         PendingPairing {
@@ -238,6 +242,9 @@ async fn claim_pairing(
     let pending = inner.pairings.get_mut(&code).ok_or_else(not_found)?;
     if pending.expires_at <= Utc::now() {
         return api_error(StatusCode::GONE, "pairing code expired");
+    }
+    if pending.claimed {
+        return api_error(StatusCode::CONFLICT, "pairing code was already claimed");
     }
     pending.claimed = true;
     let helm_id = pending.helm.id;
@@ -713,6 +720,7 @@ mod tests {
             database: Arc::new(Mutex::new(database)),
             lease_duration: Duration::from_secs(10),
             task_available: Arc::new(tokio::sync::Notify::new()),
+            pairing_ttl: ChronoDuration::seconds(10),
         };
         persist(&state, &ControlPlane::default()).unwrap();
         assert!(
