@@ -296,7 +296,76 @@ impl Config {
         }
     }
 
-    fn validate(&self) -> Result<()> {
+    pub fn apply_override(&mut self, key: &str, raw_value: &str) -> Result<()> {
+        let segments = key
+            .split('.')
+            .filter(|segment| !segment.is_empty())
+            .collect::<Vec<_>>();
+        if segments.is_empty() || raw_value.trim().is_empty() {
+            bail!("configuration overrides require KEY and VALUE");
+        }
+        let mut document = toml::Value::try_from(self.clone())?;
+        let root = document
+            .as_table_mut()
+            .ok_or_else(|| anyhow::anyhow!("configuration root is not a table"))?;
+        const CONFIG_KEYS: &[&str] = &[
+            "provider",
+            "model",
+            "api_key_env",
+            "base_url",
+            "chatgpt_base_url",
+            "system_prompt",
+            "max_turns",
+            "max_tokens",
+            "temperature",
+            "provider_retry_attempts",
+            "provider_retry_initial_ms",
+            "provider_retry_max_ms",
+            "command_timeout_secs",
+            "max_output_bytes",
+            "terminal_max_count",
+            "terminal_max_unread_bytes",
+            "subagent_max_concurrency",
+            "subagent_max_agents",
+            "subagent_event_history",
+            "access",
+            "approval",
+            "unattended_approval",
+            "workspace",
+            "allow_read",
+            "allow_write",
+            "deny_commands",
+            "env",
+            "inherit_env",
+            "redact_values",
+            "mcp_servers",
+            "codex_command",
+        ];
+        if !CONFIG_KEYS.contains(&segments[0]) {
+            bail!("unknown configuration key `{}`", segments[0]);
+        }
+        let parsed = toml::from_str::<toml::Value>(&format!("value = {raw_value}"))
+            .ok()
+            .and_then(|mut value| value.as_table_mut()?.remove("value"))
+            .unwrap_or_else(|| toml::Value::String(raw_value.to_owned()));
+        let mut table = root;
+        for segment in &segments[..segments.len() - 1] {
+            let value = table
+                .entry((*segment).to_owned())
+                .or_insert_with(|| toml::Value::Table(Default::default()));
+            table = value
+                .as_table_mut()
+                .ok_or_else(|| anyhow::anyhow!("configuration key `{segment}` is not a table"))?;
+        }
+        table.insert(segments[segments.len() - 1].to_owned(), parsed);
+        let mut updated: Self = document.try_into()?;
+        updated.apply_provider_defaults();
+        updated.validate()?;
+        *self = updated;
+        Ok(())
+    }
+
+    pub fn validate(&self) -> Result<()> {
         if self.model.trim().is_empty() {
             bail!("model cannot be empty");
         }
@@ -365,6 +434,22 @@ mod tests {
                 .to_string()
                 .contains("DEPLOY_TOKEN")
         );
+    }
+
+    #[test]
+    fn validated_runtime_overrides_support_scalars_and_nested_maps() {
+        let mut config = Config::default();
+        config.apply_override("max_turns", "32").unwrap();
+        config.apply_override("access", "unrestricted").unwrap();
+        config.apply_override("env.HELM_TEST", "enabled").unwrap();
+        assert_eq!(config.max_turns, 32);
+        assert_eq!(config.access, Some(AccessMode::Unrestricted));
+        assert_eq!(
+            config.env.get("HELM_TEST").map(String::as_str),
+            Some("enabled")
+        );
+        assert!(config.apply_override("not_a_setting", "true").is_err());
+        assert!(config.apply_override("max_turns", "0").is_err());
     }
 
     #[test]

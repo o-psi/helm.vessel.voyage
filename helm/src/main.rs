@@ -22,6 +22,7 @@ use helm::{
 };
 use sha2::{Digest, Sha256};
 use std::{
+    fs::{File, OpenOptions},
     io::{self, IsTerminal, Write},
     path::PathBuf,
     sync::{Arc, OnceLock, RwLock, Weak},
@@ -37,6 +38,9 @@ use voyage_protocol::{
 struct Cli {
     #[arg(long, global = true)]
     config: Option<PathBuf>,
+    /// Override a configuration value for this invocation (`KEY=VALUE`).
+    #[arg(long = "set", global = true, value_name = "KEY=VALUE")]
+    set: Vec<String>,
     #[arg(long, global = true)]
     model: Option<String>,
     /// Provider transport (`openai` retains its legacy Chat Completions behavior).
@@ -290,7 +294,7 @@ impl From<ProviderArg> for helm::ProviderKind {
         }
     }
 }
-#[derive(Clone, clap::ValueEnum)]
+#[derive(Clone, Copy, clap::ValueEnum)]
 enum LogFormat {
     Text,
     Json,
@@ -505,22 +509,55 @@ async fn main() -> Result<()> {
         "helm=warn"
     };
     let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| filter.into());
-    match cli.log_format {
-        LogFormat::Text => tracing_subscriber::fmt()
-            .with_env_filter(env_filter)
-            .with_writer(io::stderr)
-            .init(),
-        LogFormat::Json => tracing_subscriber::fmt()
-            .json()
-            .with_env_filter(env_filter)
-            .with_writer(io::stderr)
-            .init(),
+    let term = std::env::var("TERM").ok();
+    if command_uses_full_screen_tui(
+        &cli,
+        io::stdin().is_terminal(),
+        io::stdout().is_terminal(),
+        term.as_deref(),
+    ) {
+        let log = tui_log_file()?;
+        match cli.log_format {
+            LogFormat::Text => tracing_subscriber::fmt()
+                .with_env_filter(env_filter)
+                .with_writer(log)
+                .init(),
+            LogFormat::Json => tracing_subscriber::fmt()
+                .json()
+                .with_env_filter(env_filter)
+                .with_writer(log)
+                .init(),
+        }
+    } else {
+        match cli.log_format {
+            LogFormat::Text => tracing_subscriber::fmt()
+                .with_env_filter(env_filter)
+                .with_writer(io::stderr)
+                .init(),
+            LogFormat::Json => tracing_subscriber::fmt()
+                .json()
+                .with_env_filter(env_filter)
+                .with_writer(io::stderr)
+                .init(),
+        }
     }
     let mut config = Config::load(cli.config.as_deref())?;
+    let set_overrides_model = cli.set.iter().any(|assignment| {
+        assignment
+            .split_once('=')
+            .is_some_and(|(key, _)| matches!(key.trim(), "model" | "provider"))
+    });
+    for assignment in &cli.set {
+        let (key, value) = assignment
+            .split_once('=')
+            .with_context(|| format!("invalid --set `{assignment}`; expected KEY=VALUE"))?;
+        config.apply_override(key.trim(), value.trim())?;
+    }
+    let provider_overridden = cli.provider.is_some();
     if let Some(provider) = cli.provider {
         config.select_provider(provider.into());
     }
-    let model_overridden = cli.model.is_some();
+    let model_overridden = cli.model.is_some() || provider_overridden || set_overrides_model;
     if let Some(model) = cli.model {
         config.model = model;
     }
@@ -579,10 +616,62 @@ async fn main() -> Result<()> {
             if plain || !full_screen {
                 chat(config, cli.workspace, resume, interactive, model_overridden).await
             } else {
-                tui_chat(config, cli.workspace, resume, model_overridden).await
+                tui_chat(
+                    config,
+                    cli.workspace,
+                    resume,
+                    model_overridden,
+                    cli.verbose,
+                    cli.log_format,
+                )
+                .await
             }
         }
     }
+}
+
+fn command_uses_full_screen_tui(
+    cli: &Cli,
+    stdin_terminal: bool,
+    stdout_terminal: bool,
+    term: Option<&str>,
+) -> bool {
+    cli.voyage.is_none()
+        && stdin_terminal
+        && stdout_terminal
+        && term.is_some_and(|term| !term.is_empty() && term != "dumb")
+        && matches!(
+            &cli.command,
+            None | Some(Command::Chat { plain: false, .. })
+        )
+}
+
+fn tui_log_file() -> Result<File> {
+    let directory = helm::config::default_data_dir().join("logs");
+    std::fs::create_dir_all(&directory).with_context(|| {
+        format!(
+            "failed to create Helm log directory {}",
+            directory.display()
+        )
+    })?;
+    let path = directory.join("helm.log");
+    let mut options = OpenOptions::new();
+    options.create(true).append(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let file = options
+        .open(&path)
+        .with_context(|| format!("failed to open Helm TUI log {}", path.display()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))
+            .with_context(|| format!("failed to secure Helm TUI log {}", path.display()))?;
+    }
+    Ok(file)
 }
 
 fn print_config(config: &Config) -> Result<()> {
@@ -1087,6 +1176,8 @@ async fn tui_chat(
     workspace_arg: Option<PathBuf>,
     resume: Option<String>,
     model_overridden: bool,
+    verbose: bool,
+    log_format: LogFormat,
 ) -> Result<()> {
     let store = SessionStore::default();
     let mut session = if let Some(reference) = resume {
@@ -1152,7 +1243,8 @@ async fn tui_chat(
             max_delay: std::time::Duration::from_millis(active_config.provider_retry_max_ms),
         }),
     );
-    helm::tui::run(
+    let session_id = session.id;
+    let exit = helm::tui::run(
         agent,
         store,
         session,
@@ -1166,7 +1258,104 @@ async fn tui_chat(
         provider_label,
         active_config.access_mode(),
     )
-    .await
+    .await?;
+    match exit {
+        helm::tui::TuiExit::Quit => Ok(()),
+        helm::tui::TuiExit::Launch(request) => {
+            launch_from_tui(&active_config, session_id, request, verbose, log_format).await
+        }
+    }
+}
+
+fn write_runtime_config(config: &Config) -> Result<tempfile::NamedTempFile> {
+    let directory = helm::config::default_data_dir();
+    std::fs::create_dir_all(&directory)?;
+    let contents = toml::to_string_pretty(config)?;
+    let mut file = tempfile::Builder::new()
+        .prefix("runtime-config-")
+        .suffix(".toml")
+        .tempfile_in(directory)?;
+    file.write_all(contents.as_bytes())?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        file.as_file()
+            .set_permissions(std::fs::Permissions::from_mode(0o600))?;
+    }
+    Ok(file)
+}
+
+async fn run_helm_child(config_path: Option<&std::path::Path>, arguments: &[String]) -> Result<()> {
+    let executable = std::env::current_exe().context("cannot locate the Helm executable")?;
+    let mut command = tokio::process::Command::new(executable);
+    if let Some(path) = config_path {
+        command.arg("--config").arg(path);
+    }
+    let status = command
+        .args(arguments)
+        .status()
+        .await
+        .context("could not launch Helm command")?;
+    if !status.success() {
+        bail!("Helm command exited with {status}");
+    }
+    Ok(())
+}
+
+async fn launch_from_tui(
+    config: &Config,
+    session_id: uuid::Uuid,
+    request: helm::tui::CliRequest,
+    verbose: bool,
+    log_format: LogFormat,
+) -> Result<()> {
+    let runtime_config = request
+        .use_active_config
+        .then(|| write_runtime_config(config))
+        .transpose()?;
+    let active_verbose = request.verbose.unwrap_or(verbose);
+    let active_log_format = request.log_format.as_deref().unwrap_or(match log_format {
+        LogFormat::Text => "text",
+        LogFormat::Json => "json",
+    });
+    let mut arguments = Vec::new();
+    if active_verbose {
+        arguments.push("--verbose".into());
+    }
+    arguments.extend(["--log-format".into(), active_log_format.into()]);
+    arguments.extend(request.arguments);
+    let result = run_helm_child(
+        runtime_config.as_ref().map(tempfile::NamedTempFile::path),
+        &arguments,
+    )
+    .await;
+    if request.resume_after || result.is_err() {
+        if let Err(error) = &result {
+            eprintln!("\nRequested Helm command failed: {error:#}");
+        }
+        eprint!("\nPress Enter to return to session {session_id}…");
+        io::stderr().flush()?;
+        let mut input = String::new();
+        io::stdin().read_line(&mut input)?;
+        let mut resume_arguments = Vec::new();
+        if active_verbose {
+            resume_arguments.push("--verbose".into());
+        }
+        resume_arguments.extend([
+            "--log-format".into(),
+            active_log_format.into(),
+            "chat".into(),
+            "--resume".into(),
+            session_id.to_string(),
+        ]);
+        run_helm_child(
+            runtime_config.as_ref().map(tempfile::NamedTempFile::path),
+            &resume_arguments,
+        )
+        .await?;
+        return Ok(());
+    }
+    result
 }
 
 fn todo_tool(workspace: &std::path::Path) -> TodoTool {
@@ -1530,6 +1719,37 @@ mod cli_tests {
     use super::*;
 
     #[test]
+    fn only_interactive_full_screen_chat_routes_logs_away_from_stderr() {
+        let chat = Cli::try_parse_from(["helm", "chat"]).unwrap();
+        assert!(command_uses_full_screen_tui(
+            &chat,
+            true,
+            true,
+            Some("xterm-256color")
+        ));
+        assert!(!command_uses_full_screen_tui(
+            &chat,
+            true,
+            true,
+            Some("dumb")
+        ));
+        let plain = Cli::try_parse_from(["helm", "chat", "--plain"]).unwrap();
+        assert!(!command_uses_full_screen_tui(
+            &plain,
+            true,
+            true,
+            Some("xterm")
+        ));
+        let doctor = Cli::try_parse_from(["helm", "doctor"]).unwrap();
+        assert!(!command_uses_full_screen_tui(
+            &doctor,
+            true,
+            true,
+            Some("xterm")
+        ));
+    }
+
+    #[test]
     fn accepts_canonical_and_legacy_provider_names() {
         let cli =
             Cli::try_parse_from(["helm", "--provider", "openai-responses", "config"]).unwrap();
@@ -1547,6 +1767,20 @@ mod cli_tests {
                 Some(ProviderArg::CodexCompatibility)
             ));
         }
+    }
+
+    #[test]
+    fn accepts_runtime_configuration_overrides() {
+        let cli = Cli::try_parse_from([
+            "helm",
+            "--set",
+            "max_turns=32",
+            "--set",
+            "access=unrestricted",
+            "config",
+        ])
+        .unwrap();
+        assert_eq!(cli.set, ["max_turns=32", "access=unrestricted"]);
     }
 
     #[test]

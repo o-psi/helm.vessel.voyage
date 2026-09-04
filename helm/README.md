@@ -91,8 +91,12 @@ helm sessions
 helm run --resume 0198... "continue, but export the findings as markdown"
 ```
 
-The full-screen chat shows model turns and tool activity as they happen. `Esc` cancels
-active work and tool approvals appear as keyboard-driven modals. Use `Ctrl+S` to browse
+The full-screen chat keeps the user/assistant conversation in focus. A sent prompt appears
+immediately, and remains in saved history even when a run is cancelled or fails. Tool activity
+is hidden by default; toggle its compact summaries with `Ctrl+L` or `/activity [on|off]`.
+Helm's own diagnostics are written to the owner-only `logs/helm.log` under Helm's data directory,
+so tracing output cannot corrupt the alternate-screen UI. `Esc` cancels active work and tool
+approvals appear as keyboard-driven modals. Use `Ctrl+S` to browse
 and restore sessions, `Ctrl+N` for a new session, `Ctrl+B` to branch, `Ctrl+K` to
 compact context, and `Ctrl+E` to export Markdown. `/name TITLE`, `/branch [TITLE]`,
 `/compact [KEEP]`, `/export [PATH]`, and `/clear confirm` provide explicit session operations.
@@ -103,6 +107,21 @@ Scroll the conversation with the mouse wheel or `PageUp` and `PageDown`; a divid
 composer visually distinct without enclosing it in a permanent box.
 Typing `/` opens the slash-command palette above the composer. Continue typing to filter it,
 use the arrow keys to select, and press `Enter` or `Tab` to complete a command.
+
+Every startup capability also has a slash-command path. `/provider`, `/workspace`, `/access`,
+and `/config PATH` safely save the session and relaunch with a rebuilt provider, tool registry,
+and security policy. `/set KEY VALUE` changes any validated configuration field, including
+limits, environment, allowed roots, MCP servers, retries, and redaction settings. `/verbose`,
+`/log-format`, and `/plain` relaunch into the requested presentation mode. `/auth`, `/doctor`,
+`/config`, `/models json`, `/completions`, and `/manpage` temporarily leave the full-screen view,
+run the corresponding Helm operation, and offer to return to the current session. `/run` runs a
+one-shot prompt and can then return; `/voyage [URL] [NAME]` hands off to Vessel worker mode.
+`/sessions`, `/resume REF`, `/models`, `/model ID`, and `/activity` operate directly inside the TUI.
+
+Runtime configuration used during a safe relaunch is held in a securely created temporary file
+in Helm's data directory, with owner-only Unix permissions, and removed when the handoff ends.
+Provider, workspace, access, environment, MCP, and other policy changes never mutate an
+already-running agent in place.
 
 Choose agent authority with `--access read-only|approval|unrestricted` or the `access`
 configuration key. Read-only permits filesystem and terminal inspection but blocks commands,

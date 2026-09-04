@@ -119,6 +119,22 @@ pub fn bridge() -> (Arc<UiBridge>, mpsc::UnboundedReceiver<UiEvent>) {
     (Arc::new(UiBridge { tx }), rx)
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CliRequest {
+    pub arguments: Vec<String>,
+    pub use_active_config: bool,
+    pub resume_after: bool,
+    pub verbose: Option<bool>,
+    pub log_format: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum TuiExit {
+    #[default]
+    Quit,
+    Launch(CliRequest),
+}
+
 struct TerminalGuard;
 
 #[derive(Clone, Copy)]
@@ -138,15 +154,45 @@ const SLASH_COMMANDS: &[SlashCommand] = &[
     },
     SlashCommand {
         name: "access",
-        usage: "/access",
-        description: "Show the current access mode",
-        completion: "/access",
+        usage: "/access [MODE]",
+        description: "Show or change access mode",
+        completion: "/access ",
+    },
+    SlashCommand {
+        name: "provider",
+        usage: "/provider [ID]",
+        description: "Show or change provider",
+        completion: "/provider ",
+    },
+    SlashCommand {
+        name: "workspace",
+        usage: "/workspace [PATH]",
+        description: "Show or change workspace",
+        completion: "/workspace ",
+    },
+    SlashCommand {
+        name: "config",
+        usage: "/config [PATH]",
+        description: "Show config or relaunch with a file",
+        completion: "/config ",
+    },
+    SlashCommand {
+        name: "set",
+        usage: "/set KEY VALUE",
+        description: "Set any validated config value",
+        completion: "/set ",
     },
     SlashCommand {
         name: "tools",
         usage: "/tools",
         description: "List available tool calls",
         completion: "/tools",
+    },
+    SlashCommand {
+        name: "activity",
+        usage: "/activity [on|off]",
+        description: "Show or hide tool activity",
+        completion: "/activity ",
     },
     SlashCommand {
         name: "model",
@@ -183,6 +229,78 @@ const SLASH_COMMANDS: &[SlashCommand] = &[
         usage: "/clear confirm",
         description: "Permanently clear the conversation",
         completion: "/clear confirm",
+    },
+    SlashCommand {
+        name: "auth",
+        usage: "/auth ACTION",
+        description: "Login, logout, status, or import",
+        completion: "/auth ",
+    },
+    SlashCommand {
+        name: "doctor",
+        usage: "/doctor",
+        description: "Run runtime diagnostics",
+        completion: "/doctor",
+    },
+    SlashCommand {
+        name: "sessions",
+        usage: "/sessions",
+        description: "Browse saved sessions",
+        completion: "/sessions",
+    },
+    SlashCommand {
+        name: "models",
+        usage: "/models [json]",
+        description: "Browse or print available models",
+        completion: "/models",
+    },
+    SlashCommand {
+        name: "resume",
+        usage: "/resume REF",
+        description: "Open a saved session",
+        completion: "/resume ",
+    },
+    SlashCommand {
+        name: "verbose",
+        usage: "/verbose on|off",
+        description: "Relaunch with debug logging",
+        completion: "/verbose ",
+    },
+    SlashCommand {
+        name: "log-format",
+        usage: "/log-format text|json",
+        description: "Relaunch with a log format",
+        completion: "/log-format ",
+    },
+    SlashCommand {
+        name: "plain",
+        usage: "/plain",
+        description: "Continue in line-oriented chat",
+        completion: "/plain",
+    },
+    SlashCommand {
+        name: "run",
+        usage: "/run [--no-save] PROMPT",
+        description: "Run a one-shot task",
+        completion: "/run ",
+    },
+    SlashCommand {
+        name: "voyage",
+        usage: "/voyage [URL] [NAME]",
+        description: "Connect this Helm to Vessel",
+        completion: "/voyage ",
+    },
+    SlashCommand {
+        name: "completions",
+        usage: "/completions SHELL",
+        description: "Generate shell completions",
+        completion: "/completions ",
+    },
+    SlashCommand {
+        name: "manpage",
+        usage: "/manpage",
+        description: "Generate the Helm manpage",
+        completion: "/manpage",
     },
 ];
 
@@ -281,6 +399,7 @@ struct App {
     access_mode: AccessMode,
     composer: Composer,
     activity: Vec<String>,
+    show_activity: bool,
     streaming_response: String,
     status: String,
     scroll: u16,
@@ -318,6 +437,7 @@ struct App {
     selected_slash_command: usize,
     slash_palette_dismissed: bool,
     shortcut_help: bool,
+    exit: Option<TuiExit>,
     quit: bool,
 }
 
@@ -371,6 +491,7 @@ impl App {
             access_mode: AccessMode::Approval,
             composer: Composer::default(),
             activity: Vec::new(),
+            show_activity: false,
             streaming_response: String::new(),
             status: "Ready".into(),
             scroll: 0,
@@ -408,6 +529,7 @@ impl App {
             selected_slash_command: 0,
             slash_palette_dismissed: false,
             shortcut_help: false,
+            exit: None,
             quit: false,
         }
     }
@@ -440,7 +562,7 @@ pub async fn run(
     todos: Arc<TodoStore>,
     provider_label: String,
     access_mode: AccessMode,
-) -> Result<()> {
+) -> Result<TuiExit> {
     let sessions = store.list().await?;
     let mut app = App::new(session, sessions);
     app.provider_label = provider_label;
@@ -453,8 +575,8 @@ pub async fn run(
     let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
     terminal.clear()?;
     if let Ok(size) = terminal.size() {
-        app.conversation_width = size.width.saturating_sub(2).max(1) as usize;
-        app.conversation_height = size.height.saturating_sub(11).max(1) as usize;
+        app.conversation_width = size.width.max(1) as usize;
+        app.conversation_height = size.height.saturating_sub(9).max(1) as usize;
     }
     let mut input = EventStream::new();
     let termination = termination_signal();
@@ -471,8 +593,8 @@ pub async fn run(
                     Some(Ok(Event::Resize(columns, rows))) => {
                         resize_conversation(
                             &mut app,
-                            columns.saturating_sub(2) as usize,
-                            rows.saturating_sub(11).max(1) as usize,
+                            columns.max(1) as usize,
+                            rows.saturating_sub(9).max(1) as usize,
                         );
                         if let Some(id) = app.attached_terminal {
                             let _ = terminals.resize(id, columns, rows.saturating_sub(1)).await;
@@ -547,7 +669,7 @@ pub async fn run(
     }
     app.cancel();
     terminal.show_cursor()?;
-    Ok(())
+    Ok(app.exit.unwrap_or_default())
 }
 
 #[cfg(unix)]
@@ -596,7 +718,11 @@ async fn handle_ui_event(
         }
         UiEvent::Agent(AgentEvent::ToolStarted { name, arguments }) => {
             let before = transcript_height(app, app.conversation_width);
-            app.activity.push(format!("▶ {name} {arguments}"));
+            app.activity.push(format!(
+                "▶ {}: {}",
+                compact_line(&name, 40),
+                compact_line(&arguments.to_string(), 100)
+            ));
             preserve_manual_anchor(app, before);
             app.status = format!("Running {name}…  Esc cancels");
         }
@@ -609,7 +735,7 @@ async fn handle_ui_event(
             app.activity.push(format!(
                 "{} {name}: {}",
                 if success { "✓" } else { "✗" },
-                one_line(&result, 160)
+                compact_line(&result, 120)
             ));
             preserve_manual_anchor(app, before);
         }
@@ -622,7 +748,7 @@ async fn handle_ui_event(
             app.activity.push(format!(
                 "↻ provider retry {attempt} in {:.1}s: {}",
                 delay.as_secs_f32(),
-                one_line(&error, 160)
+                compact_line(&error, 120)
             ));
             preserve_manual_anchor(app, before);
             app.status = format!("Provider retry {attempt}…  Esc cancels");
@@ -795,14 +921,9 @@ async fn handle_key(
                     (app.selected_session + 1).min(app.sessions.len().saturating_sub(1));
             }
             KeyCode::Enter if !app.is_running() => {
-                if let Some(session) = app.sessions.get(app.selected_session).cloned() {
-                    app.session = session;
-                    agent.set_model(app.session.model.clone())?;
-                    app.activity.clear();
-                    app.streaming_response.clear();
-                    app.scroll = 0;
-                    app.status = "Session opened".into();
-                    app.show_sessions = false;
+                if let Some(session) = app.sessions.get(app.selected_session) {
+                    let arguments = vec!["chat".into(), "--resume".into(), session.id.to_string()];
+                    request_cli(app, store, arguments, true, false).await?;
                 }
             }
             _ => {}
@@ -823,6 +944,15 @@ async fn handle_key(
             KeyCode::Char('t') => {
                 refresh_terminals(app, terminals).await;
                 app.terminal_picker = true;
+            }
+            KeyCode::Char('l') => {
+                app.show_activity = !app.show_activity;
+                app.status = if app.show_activity {
+                    "Activity visible · Ctrl+L hides it"
+                } else {
+                    "Activity hidden · Ctrl+L shows it"
+                }
+                .into();
             }
             KeyCode::Char('a') => {
                 app.supervisor_mode = Some(SupervisorMode::Tree);
@@ -901,7 +1031,7 @@ async fn handle_key(
             let prompt = app.composer.take();
             reset_slash_palette(app);
             if !prompt.trim().is_empty() {
-                if handle_command(&prompt, app, store, Some(agent.as_ref())).await? {
+                if handle_command(&prompt, app, store, Some(agent), Some(tx)).await? {
                     return Ok(());
                 }
                 if app.session.messages.len() > 96 {
@@ -910,6 +1040,10 @@ async fn handle_key(
                         .push(format!("context: compacted {removed} older messages"));
                 }
                 let history = app.session.messages.clone();
+                app.session
+                    .messages
+                    .push(crate::Message::new(Role::User, prompt.clone()));
+                store.save(&mut app.session).await?;
                 let agent = agent.clone();
                 let events = tx.clone();
                 app.status = "Starting…  Esc cancels".into();
@@ -1708,8 +1842,8 @@ fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
         chunks[0],
     );
     let transcript = transcript(app, viewport_width_for(chunks[1]));
-    let viewport_height = chunks[1].height.saturating_sub(2) as usize;
-    let viewport_width = chunks[1].width.saturating_sub(2) as usize;
+    let viewport_height = chunks[1].height as usize;
+    let viewport_width = chunks[1].width.max(1) as usize;
     let rendered_lines = transcript
         .lines
         .iter()
@@ -1720,12 +1854,7 @@ fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
     frame.render_widget(
         Paragraph::new(transcript)
             .wrap(Wrap { trim: false })
-            .scroll((offset, 0))
-            .block(
-                Block::default()
-                    .title(" Conversation ")
-                    .borders(Borders::ALL),
-            ),
+            .scroll((offset, 0)),
         chunks[1],
     );
     let composer_width = chunks[2].width.max(1);
@@ -1819,18 +1948,28 @@ fn draw_slash_palette(frame: &mut ratatui::Frame<'_>, composer_area: Rect, app: 
     if commands.is_empty() || composer_area.y < 3 || composer_area.width < 8 {
         return;
     }
-    let height = (commands.len() as u16 + 2).min(composer_area.y);
-    let visible = height.saturating_sub(2) as usize;
     let selected = app
         .selected_slash_command
         .min(commands.len().saturating_sub(1));
-    let start = selected.saturating_add(1).saturating_sub(visible);
-    let items = commands
-        .iter()
-        .enumerate()
-        .skip(start)
-        .take(visible)
-        .map(|(index, command)| {
+    let available_rows = composer_area.y.saturating_sub(2).max(1) as usize;
+    let columns = usize::from(commands.len() > available_rows && composer_area.width >= 72) + 1;
+    let rows_needed = commands.len().div_ceil(columns);
+    let visible_rows = rows_needed.min(available_rows);
+    let capacity = visible_rows * columns;
+    let start = (selected / capacity) * capacity;
+    let cell_width = (composer_area.width.saturating_sub(2) as usize / columns).max(1);
+    let mut lines = Vec::with_capacity(visible_rows);
+    for row in 0..visible_rows {
+        let mut spans = Vec::new();
+        for column in 0..columns {
+            let index = start + row + column * visible_rows;
+            let Some(command) = commands.get(index) else {
+                continue;
+            };
+            let content = format!("{:<18} {}", command.usage, command.description);
+            let mut content = one_line(&content, cell_width.saturating_sub(1));
+            let padding = cell_width.saturating_sub(content.chars().count());
+            content.extend(std::iter::repeat_n(' ', padding));
             let style = if index == selected {
                 Style::default()
                     .fg(Color::Cyan)
@@ -1838,9 +1977,11 @@ fn draw_slash_palette(frame: &mut ratatui::Frame<'_>, composer_area: Rect, app: 
             } else {
                 Style::default()
             };
-            ListItem::new(format!("{:<20} {}", command.usage, command.description)).style(style)
-        })
-        .collect::<Vec<_>>();
+            spans.push(Span::styled(content, style));
+        }
+        lines.push(Line::from(spans));
+    }
+    let height = visible_rows as u16 + 2;
     let popup = Rect {
         x: composer_area.x,
         y: composer_area.y.saturating_sub(height),
@@ -1849,7 +1990,7 @@ fn draw_slash_palette(frame: &mut ratatui::Frame<'_>, composer_area: Rect, app: 
     };
     frame.render_widget(Clear, popup);
     frame.render_widget(
-        List::new(items).block(
+        Paragraph::new(Text::from(lines)).block(
             Block::default()
                 .title(" Commands · ↑↓ select · Enter/Tab complete · Esc close ")
                 .borders(Borders::ALL),
@@ -2698,7 +2839,7 @@ fn transcript(app: &App, width: usize) -> Text<'static> {
         );
         lines.push(Line::raw(""));
     }
-    if !app.activity.is_empty() {
+    if app.show_activity && !app.activity.is_empty() {
         lines.push(Line::styled(
             "activity",
             Style::default()
@@ -2718,7 +2859,7 @@ fn transcript(app: &App, width: usize) -> Text<'static> {
 }
 
 fn viewport_width_for(area: Rect) -> usize {
-    area.width.saturating_sub(2).max(1) as usize
+    area.width.max(1) as usize
 }
 
 fn markdown_theme() -> MarkdownTheme {
@@ -2907,8 +3048,8 @@ fn draw_shortcut_help(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
     } else {
         (
             "Conversation",
-            "Enter: send\nAlt+Enter: newline\nPageUp/PageDown: scroll\nEsc: cancel active work\nCtrl+D: todos\nCtrl+A: agents\nCtrl+M: models\nCtrl+T: terminals\nCtrl+S: sessions\nCtrl+N: new session\nCtrl+B: branch\nCtrl+K: compact\nCtrl+E: export\nCtrl+C: cancel or quit\nCtrl+Q: quit",
-            "^D todos · ^A agents · ^M models · ^T terminals · ^S sessions · ^N new · ^B branch · ^K compact · ^E export",
+            "Enter: send\nAlt+Enter: newline\nPageUp/PageDown: scroll\nEsc: cancel active work\nCtrl+D: todos\nCtrl+A: agents\nCtrl+M: models\nCtrl+T: terminals\nCtrl+L: activity\nCtrl+S: sessions\nCtrl+N: new session\nCtrl+B: branch\nCtrl+K: compact\nCtrl+E: export\nCtrl+C: cancel or quit\nCtrl+Q: quit",
+            "^D todos · ^A agents · ^M models · ^T terminals · ^L activity · ^S sessions · ^N new · ^B branch · ^K compact · ^E export",
         )
     };
     let content = if area.height < 18 { compact } else { detailed };
@@ -2998,29 +3139,138 @@ fn export_path(session: &Session) -> PathBuf {
         .join(format!("helm-session-{}.md", session.id))
 }
 
-fn slash_command_summary() -> String {
-    SLASH_COMMANDS
-        .iter()
-        .map(|command| command.usage)
-        .collect::<Vec<_>>()
-        .join(" · ")
+async fn request_cli(
+    app: &mut App,
+    store: &SessionStore,
+    arguments: Vec<String>,
+    use_active_config: bool,
+    resume_after: bool,
+) -> Result<()> {
+    store.save(&mut app.session).await?;
+    app.exit = Some(TuiExit::Launch(CliRequest {
+        arguments,
+        use_active_config,
+        resume_after,
+        verbose: None,
+        log_format: None,
+    }));
+    app.quit = true;
+    Ok(())
+}
+
+fn resume_chat_arguments(app: &App) -> Vec<String> {
+    vec!["chat".into(), "--resume".into(), app.session.id.to_string()]
+}
+
+fn parse_words(argument: &str, usage: &str) -> Result<Vec<String>> {
+    shell_words::split(argument).with_context(|| format!("invalid arguments; usage: {usage}"))
 }
 
 async fn handle_command(
     command: &str,
     app: &mut App,
     store: &SessionStore,
-    agent: Option<&Agent>,
+    agent: Option<&Arc<Agent>>,
+    tx: Option<&mpsc::UnboundedSender<UiEvent>>,
 ) -> Result<bool> {
     let Some(command) = command.strip_prefix('/') else {
         return Ok(false);
     };
     let (name, argument) = command.split_once(' ').unwrap_or((command, ""));
     match name {
-        "help" => app.status = slash_command_summary(),
-        "access" => app.status = format!("Current access mode: {}", app.access_mode),
+        "help" => {
+            app.show_activity = true;
+            app.activity.push("Slash commands:".into());
+            app.activity.extend(
+                SLASH_COMMANDS
+                    .iter()
+                    .map(|command| format!("  {:<24} {}", command.usage, command.description)),
+            );
+            app.status = "Slash command help added to the conversation".into();
+        }
+        "access" if argument.trim().is_empty() => {
+            app.status = format!("Current access mode: {}", app.access_mode)
+        }
+        "access" => {
+            let mode = argument.trim();
+            if !matches!(mode, "read-only" | "approval" | "unrestricted") {
+                app.status = "Usage: /access read-only|approval|unrestricted".into();
+            } else {
+                let mut arguments = vec!["--access".into(), mode.into()];
+                arguments.extend(resume_chat_arguments(app));
+                request_cli(app, store, arguments, true, false).await?;
+            }
+        }
+        "provider" if argument.trim().is_empty() => {
+            app.status = format!("Current provider: {}", app.provider_label)
+        }
+        "provider" => {
+            let provider = argument.trim();
+            if !matches!(
+                provider,
+                "openai-responses"
+                    | "openai-chat"
+                    | "openai"
+                    | "chatgpt-oauth"
+                    | "anthropic"
+                    | "codex-compatibility"
+                    | "codex-subscription"
+            ) {
+                app.status = "Usage: /provider openai-responses|openai-chat|chatgpt-oauth|anthropic|codex-compatibility".into();
+            } else {
+                let mut arguments = vec!["--provider".into(), provider.into()];
+                arguments.extend(resume_chat_arguments(app));
+                request_cli(app, store, arguments, true, false).await?;
+            }
+        }
+        "workspace" if argument.trim().is_empty() => {
+            app.status = format!("Current workspace: {}", app.session.workspace.display())
+        }
+        "workspace" => {
+            let path = PathBuf::from(argument.trim());
+            match path.canonicalize() {
+                Ok(path) if path.is_dir() => {
+                    request_cli(
+                        app,
+                        store,
+                        vec![
+                            "--workspace".into(),
+                            path.to_string_lossy().into_owned(),
+                            "chat".into(),
+                        ],
+                        true,
+                        false,
+                    )
+                    .await?;
+                }
+                _ => app.status = format!("Workspace does not exist: {}", path.display()),
+            }
+        }
+        "config" if argument.trim().is_empty() => {
+            request_cli(app, store, vec!["config".into()], true, true).await?;
+        }
+        "config" => {
+            let path = PathBuf::from(argument.trim());
+            if !path.is_file() {
+                app.status = format!("Config file does not exist: {}", path.display());
+            } else {
+                let mut arguments = vec!["--config".into(), path.to_string_lossy().into_owned()];
+                arguments.extend(resume_chat_arguments(app));
+                request_cli(app, store, arguments, false, false).await?;
+            }
+        }
+        "set" => {
+            let Some((key, value)) = argument.trim().split_once(char::is_whitespace) else {
+                app.status = "Usage: /set KEY VALUE".into();
+                return Ok(true);
+            };
+            let mut arguments = vec!["--set".into(), format!("{}={}", key.trim(), value.trim())];
+            arguments.extend(resume_chat_arguments(app));
+            request_cli(app, store, arguments, true, false).await?;
+        }
         "tools" => {
             if let Some(agent) = agent {
+                app.show_activity = true;
                 let tools = agent.tool_inventory();
                 app.activity.push("Available Helm tool calls:".into());
                 app.activity.extend(
@@ -3032,6 +3282,23 @@ async fn handle_command(
             } else {
                 app.status = "Tool inventory unavailable while runtime is starting".into();
             }
+        }
+        "activity" => {
+            app.show_activity = match argument.trim() {
+                "" => !app.show_activity,
+                "on" => true,
+                "off" => false,
+                _ => {
+                    app.status = "Usage: /activity [on|off]".into();
+                    return Ok(true);
+                }
+            };
+            app.status = if app.show_activity {
+                "Activity visible · Ctrl+L hides it"
+            } else {
+                "Activity hidden · Ctrl+L shows it"
+            }
+            .into();
         }
         "model" if argument.trim().is_empty() => {
             app.status = format!(
@@ -3048,6 +3315,49 @@ async fn handle_command(
             store.save(&mut app.session).await?;
             app.status = format!("Model switched to {model}");
         }
+        "models" if argument.trim().is_empty() => {
+            if let (Some(agent), Some(tx)) = (agent, tx) {
+                app.model_picker = true;
+                app.model_manual = false;
+                app.model_filter = Composer::default();
+                app.selected_model = 0;
+                request_models(tx, (*agent).clone(), false);
+            } else {
+                app.status = "Model picker unavailable while runtime is starting".into();
+            }
+        }
+        "models" if argument.trim() == "json" => {
+            request_cli(
+                app,
+                store,
+                vec!["models".into(), "--json".into()],
+                true,
+                true,
+            )
+            .await?;
+        }
+        "models" => app.status = "Usage: /models [json]".into(),
+        "sessions" => {
+            app.sessions = store.list().await?;
+            app.selected_session = 0;
+            app.show_sessions = true;
+        }
+        "resume" if !argument.trim().is_empty() => {
+            match store.load_reference(argument.trim()).await {
+                Ok(session) => {
+                    request_cli(
+                        app,
+                        store,
+                        vec!["chat".into(), "--resume".into(), session.id.to_string()],
+                        true,
+                        false,
+                    )
+                    .await?;
+                }
+                Err(error) => app.status = format!("Cannot resume session: {error}"),
+            }
+        }
+        "resume" => app.status = "Usage: /resume SESSION".into(),
         "name" if !argument.trim().is_empty() => {
             app.session.name = Some(argument.trim().into());
             store.save(&mut app.session).await?;
@@ -3084,6 +3394,109 @@ async fn handle_command(
             };
             store.export_markdown(&app.session, &path).await?;
             app.status = format!("Exported to {}", path.display());
+        }
+        "auth" => {
+            let words = parse_words(
+                argument,
+                "/auth status|login [--device]|logout|import-codex",
+            )?;
+            let valid = matches!(words.as_slice(), [action] if matches!(action.as_str(), "status" | "logout"))
+                || matches!(words.as_slice(), [action] if action == "login")
+                || matches!(words.as_slice(), [action, flag] if action == "login" && flag == "--device")
+                || words.first().is_some_and(|action| action == "import-codex");
+            if !valid {
+                app.status =
+                    "Usage: /auth status|login [--device]|logout|import-codex [--path PATH] [--force]"
+                        .into();
+            } else {
+                let mut arguments = vec!["auth".into()];
+                arguments.extend(words);
+                request_cli(app, store, arguments, true, true).await?;
+            }
+        }
+        "doctor" => {
+            request_cli(app, store, vec!["doctor".into()], true, true).await?;
+        }
+        "verbose" => {
+            let value = argument.trim();
+            if !matches!(value, "on" | "off") {
+                app.status = "Usage: /verbose on|off".into();
+            } else {
+                let arguments = resume_chat_arguments(app);
+                request_cli(app, store, arguments, true, false).await?;
+                if let Some(TuiExit::Launch(request)) = &mut app.exit {
+                    request.verbose = Some(value == "on");
+                }
+            }
+        }
+        "log-format" => {
+            let format = argument.trim();
+            if !matches!(format, "text" | "json") {
+                app.status = "Usage: /log-format text|json".into();
+            } else {
+                let arguments = resume_chat_arguments(app);
+                request_cli(app, store, arguments, true, false).await?;
+                if let Some(TuiExit::Launch(request)) = &mut app.exit {
+                    request.log_format = Some(format.into());
+                }
+            }
+        }
+        "plain" => {
+            let mut arguments = resume_chat_arguments(app);
+            arguments.push("--plain".into());
+            request_cli(app, store, arguments, true, false).await?;
+        }
+        "run" if !argument.trim().is_empty() => {
+            let mut words = parse_words(argument, "/run [--no-save] PROMPT")?;
+            let no_save = words.first().is_some_and(|word| word == "--no-save");
+            if no_save {
+                words.remove(0);
+            }
+            if words.is_empty() {
+                app.status = "Usage: /run [--no-save] PROMPT".into();
+            } else {
+                let mut arguments =
+                    vec!["run".into(), "--resume".into(), app.session.id.to_string()];
+                if no_save {
+                    arguments.push("--no-save".into());
+                }
+                arguments.extend(words);
+                request_cli(app, store, arguments, true, true).await?;
+            }
+        }
+        "run" => app.status = "Usage: /run [--no-save] PROMPT".into(),
+        "voyage" => {
+            let words = parse_words(argument, "/voyage [URL] [NAME]")?;
+            if words.len() > 2 {
+                app.status = "Usage: /voyage [URL] [NAME]".into();
+            } else {
+                let mut arguments = vec![match words.first() {
+                    Some(url) => format!("--voyage={url}"),
+                    None => "--voyage".into(),
+                }];
+                if let Some(name) = words.get(1) {
+                    arguments.extend(["--name".into(), name.clone()]);
+                }
+                request_cli(app, store, arguments, true, false).await?;
+            }
+        }
+        "completions" => {
+            let shell = argument.trim();
+            if !matches!(shell, "bash" | "elvish" | "fish" | "powershell" | "zsh") {
+                app.status = "Usage: /completions bash|elvish|fish|powershell|zsh".into();
+            } else {
+                request_cli(
+                    app,
+                    store,
+                    vec!["completions".into(), shell.into()],
+                    true,
+                    true,
+                )
+                .await?;
+            }
+        }
+        "manpage" => {
+            request_cli(app, store, vec!["manpage".into()], true, true).await?;
         }
         "clear" if argument.trim() == "confirm" => {
             app.session.messages.clear();
@@ -3910,6 +4323,51 @@ mod tests {
     }
 
     #[test]
+    fn submitted_prompt_is_visible_while_activity_is_opt_in() {
+        let mut session = Session::new(PathBuf::from("/tmp"), "test-model".into());
+        session
+            .messages
+            .push(crate::Message::new(Role::User, "inspect this now"));
+        let mut app = App::new(session, Vec::new());
+        app.activity.push("▶ shell: noisy internal detail".into());
+
+        let hidden = transcript(&app, 60).to_string();
+        assert!(hidden.contains("inspect this now"));
+        assert!(!hidden.contains("noisy internal detail"));
+
+        app.show_activity = true;
+        let visible = transcript(&app, 60).to_string();
+        assert!(visible.contains("noisy internal detail"));
+    }
+
+    #[tokio::test]
+    async fn failed_run_does_not_remove_submitted_prompt_from_session() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut session = Session::new(directory.path().into(), "test-model".into());
+        session
+            .messages
+            .push(crate::Message::new(Role::User, "keep this request"));
+        let mut app = App::new(session, Vec::new());
+        let store = SessionStore::new(directory.path().join("sessions"));
+        store.save(&mut app.session).await.unwrap();
+
+        handle_ui_event(
+            UiEvent::Finished(Err("provider unavailable".into())),
+            &mut app,
+            &store,
+            &crate::terminal::NoInteractiveTerminals::default(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(app.session.messages.last().unwrap().role, Role::User);
+        assert_eq!(
+            app.session.messages.last().unwrap().content,
+            "keep this request"
+        );
+    }
+
+    #[test]
     fn no_color_markdown_theme_has_no_foreground_or_background_colors() {
         let theme = markdown_theme_for(true);
         assert_eq!(theme.text, Color::Reset);
@@ -3923,7 +4381,7 @@ mod tests {
     }
 
     #[test]
-    fn markdown_full_screen_buffer_keeps_borders_and_inner_width() {
+    fn markdown_full_screen_buffer_uses_borderless_chat_regions() {
         let mut session = Session::new(PathBuf::from("/tmp"), "test-model".into());
         session
             .messages
@@ -3948,7 +4406,8 @@ mod tests {
         assert!(snapshot.contains("# literal user"));
         assert!(snapshot.contains("Rendered"));
         assert!(snapshot.contains("one"));
-        assert!(snapshot.contains("Conversation"));
+        assert!(!snapshot.contains("Conversation"));
+        assert!(!snapshot.contains("Prompt"));
         assert!(rows.iter().all(|row| row.chars().count() == 48));
     }
 
@@ -4123,8 +4582,13 @@ mod tests {
             .collect::<Vec<_>>();
         let snapshot = rows.join("\n");
         assert!(snapshot.contains("Commands"));
-        assert!(snapshot.contains("/help"));
-        assert!(snapshot.contains("/clear confirm"));
+        for command in SLASH_COMMANDS {
+            assert!(
+                snapshot.contains(command.usage),
+                "palette omitted {}",
+                command.usage
+            );
+        }
         let palette_row = rows
             .iter()
             .position(|row| row.contains("Commands"))
@@ -4134,8 +4598,13 @@ mod tests {
         app.composer.text = "/co".into();
         app.composer.cursor = app.composer.text.len();
         let matches = slash_palette_matches(&app);
-        assert_eq!(matches.len(), 1);
-        assert_eq!(matches[0].name, "compact");
+        assert_eq!(
+            matches
+                .iter()
+                .map(|command| command.name)
+                .collect::<Vec<_>>(),
+            ["config", "compact", "completions"]
+        );
     }
 
     #[test]
@@ -4156,6 +4625,63 @@ mod tests {
         assert_eq!(app.composer.text, "/help");
         reset_slash_palette(&mut app);
         assert_eq!(slash_palette_matches(&app).len(), 1);
+    }
+
+    #[tokio::test]
+    async fn startup_only_controls_create_explicit_session_preserving_handoffs() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = SessionStore::new(directory.path().join("sessions"));
+
+        let mut access = App::new(
+            Session::new(directory.path().into(), "test-model".into()),
+            Vec::new(),
+        );
+        let access_id = access.session.id.to_string();
+        handle_command("/access unrestricted", &mut access, &store, None, None)
+            .await
+            .unwrap();
+        assert_eq!(
+            access.exit,
+            Some(TuiExit::Launch(CliRequest {
+                arguments: vec![
+                    "--access".into(),
+                    "unrestricted".into(),
+                    "chat".into(),
+                    "--resume".into(),
+                    access_id,
+                ],
+                use_active_config: true,
+                resume_after: false,
+                verbose: None,
+                log_format: None,
+            }))
+        );
+
+        let mut setting = App::new(
+            Session::new(directory.path().into(), "test-model".into()),
+            Vec::new(),
+        );
+        handle_command("/set max_turns 32", &mut setting, &store, None, None)
+            .await
+            .unwrap();
+        let Some(TuiExit::Launch(request)) = setting.exit else {
+            panic!("expected CLI handoff");
+        };
+        assert_eq!(request.arguments[0..2], ["--set", "max_turns=32"]);
+        assert!(request.use_active_config);
+
+        let mut doctor = App::new(
+            Session::new(directory.path().into(), "test-model".into()),
+            Vec::new(),
+        );
+        handle_command("/doctor", &mut doctor, &store, None, None)
+            .await
+            .unwrap();
+        let Some(TuiExit::Launch(request)) = doctor.exit else {
+            panic!("expected CLI handoff");
+        };
+        assert_eq!(request.arguments, ["doctor"]);
+        assert!(request.resume_after);
     }
 
     #[test]
@@ -4184,11 +4710,11 @@ mod tests {
             .messages
             .push(crate::Message::new(Role::User, "keep me"));
         let mut app = App::new(session, Vec::new());
-        handle_command("/clear", &mut app, &store, None)
+        handle_command("/clear", &mut app, &store, None, None)
             .await
             .unwrap();
         assert_eq!(app.session.messages.len(), 1);
-        handle_command("/clear confirm", &mut app, &store, None)
+        handle_command("/clear confirm", &mut app, &store, None, None)
             .await
             .unwrap();
         assert!(app.session.messages.is_empty());
@@ -4201,7 +4727,7 @@ mod tests {
         let session = Session::new(directory.path().into(), "test-model".into());
         let mut app = App::new(session, Vec::new());
         assert!(
-            handle_command("/name field work", &mut app, &store, None)
+            handle_command("/name field work", &mut app, &store, None, None)
                 .await
                 .unwrap()
         );
@@ -4211,6 +4737,7 @@ mod tests {
             &format!("/export {}", export.display()),
             &mut app,
             &store,
+            None,
             None,
         )
         .await
