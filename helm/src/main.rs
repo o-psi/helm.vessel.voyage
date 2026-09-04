@@ -8,6 +8,7 @@ use helm::{
     provider,
     session::{Session, SessionStore},
     tools::{Approver, ToolContext, ToolRegistry},
+    voyage::{Enrollment, EnrollmentStore, normalize_vessel_url},
 };
 use std::{
     io::{self, Write},
@@ -16,8 +17,8 @@ use std::{
 };
 use tracing_subscriber::EnvFilter;
 use voyage_protocol::{
-    HeartbeatRequest, HelmDescriptor, HelmStatus, PairingStartRequest, PairingStartResponse,
-    PairingStatus, TaskEnvelope, TaskResult,
+    HeartbeatRequest, HelmDescriptor, HelmStatus, PROTOCOL_VERSION, PairingStartRequest,
+    PairingStartResponse, PairingStatus, TaskCompletion, TaskEnvelope, TaskFailure, TaskResult,
 };
 
 #[derive(Parser)]
@@ -48,54 +49,73 @@ async fn voyage_worker(
     vessel: String,
     name: String,
 ) -> Result<()> {
-    let vessel = vessel.trim_end_matches('/');
+    let vessel = normalize_vessel_url(&vessel)?;
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
         .build()?;
     let workspace = config.resolve_workspace(workspace_arg)?;
+    let enrollment_store = EnrollmentStore::new(EnrollmentStore::default_path()?);
+    let saved = enrollment_store.load().await?;
     let descriptor = HelmDescriptor {
-        id: uuid::Uuid::new_v4(),
+        id: saved
+            .as_ref()
+            .filter(|e| e.vessel_url == vessel)
+            .map_or_else(uuid::Uuid::new_v4, |e| e.helm_id),
         name,
         version: env!("CARGO_PKG_VERSION").into(),
         model: config.model.clone(),
         capabilities: vec!["shell".into(), "filesystem".into(), "search".into()],
     };
-    let pairing: PairingStartResponse = client
-        .post(format!("{vessel}/v1/pairings/start"))
-        .json(&PairingStartRequest {
-            helm: descriptor.clone(),
-        })
-        .send()
-        .await
-        .context("could not reach Vessel")?
-        .error_for_status()
-        .context("Vessel rejected pairing")?
-        .json()
-        .await
-        .context("invalid pairing response")?;
-
-    println!("{}", pairing.connection_string());
-    eprintln!(
-        "Give this one-time string to Vessel. Waiting for approval until {}…",
-        pairing.expires_at
-    );
-    loop {
-        if chrono::Utc::now() >= pairing.expires_at {
-            bail!("pairing code expired");
-        }
-        let status: PairingStatus = client
-            .get(format!("{vessel}/v1/pairings/{}", pairing.code))
-            .bearer_auth(&pairing.worker_token)
+    let enrollment = if let Some(saved) = saved.filter(|e| e.vessel_url == vessel) {
+        eprintln!("Reconnecting to Vessel as {}", saved.helm_id);
+        saved
+    } else {
+        let pairing: PairingStartResponse = client
+            .post(format!("{vessel}/v1/pairings/start"))
+            .json(&PairingStartRequest {
+                helm: descriptor.clone(),
+                protocol_version: PROTOCOL_VERSION,
+            })
             .send()
-            .await?
-            .error_for_status()?
+            .await
+            .context("could not reach Vessel")?
+            .error_for_status()
+            .context("Vessel rejected pairing")?
             .json()
-            .await?;
-        if status.claimed {
-            break;
+            .await
+            .context("invalid pairing response")?;
+
+        println!("{}", pairing.connection_string());
+        eprintln!(
+            "Give this one-time string to Vessel. Waiting for approval until {}…",
+            pairing.expires_at
+        );
+        loop {
+            if chrono::Utc::now() >= pairing.expires_at {
+                bail!("pairing code expired");
+            }
+            let status: PairingStatus = client
+                .get(format!("{vessel}/v1/pairings/{}", pairing.code))
+                .bearer_auth(&pairing.worker_token)
+                .send()
+                .await?
+                .error_for_status()?
+                .json()
+                .await?;
+            if status.claimed {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
         }
-        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-    }
+        let enrollment = Enrollment {
+            helm_id: descriptor.id,
+            vessel_url: vessel.clone(),
+            worker_token: pairing.worker_token,
+            name: descriptor.name.clone(),
+        };
+        enrollment_store.save(&enrollment).await?;
+        enrollment
+    };
     eprintln!(
         "Paired with Vessel as {}. Helm uses outbound connections only.",
         descriptor.id
@@ -108,9 +128,10 @@ async fn voyage_worker(
         if last_heartbeat.elapsed() >= std::time::Duration::from_secs(20) {
             client
                 .post(format!("{vessel}/v1/worker/heartbeat"))
-                .bearer_auth(&pairing.worker_token)
+                .bearer_auth(&enrollment.worker_token)
                 .json(&HeartbeatRequest {
                     status: HelmStatus::Online,
+                    protocol_version: PROTOCOL_VERSION,
                 })
                 .send()
                 .await?
@@ -119,7 +140,7 @@ async fn voyage_worker(
         }
         let task: Option<TaskEnvelope> = client
             .get(format!("{vessel}/v1/worker/tasks/next"))
-            .bearer_auth(&pairing.worker_token)
+            .bearer_auth(&enrollment.worker_token)
             .send()
             .await?
             .error_for_status()?
@@ -152,13 +173,29 @@ async fn voyage_worker(
                 };
                 client
                     .post(format!("{vessel}/v1/worker/tasks/{}/result", task.id))
-                    .bearer_auth(&pairing.worker_token)
-                    .json(&result)
+                    .bearer_auth(&enrollment.worker_token)
+                    .json(&TaskCompletion {
+                        lease_id: task.lease_id,
+                        result,
+                    })
                     .send()
                     .await?
                     .error_for_status()?;
             }
-            Err(error) => eprintln!("task {} failed: {error:#}", task.id),
+            Err(error) => {
+                eprintln!("task {} failed: {error:#}", task.id);
+                let _ = client
+                    .post(format!("{vessel}/v1/worker/tasks/{}/failure", task.id))
+                    .bearer_auth(&enrollment.worker_token)
+                    .json(&TaskFailure {
+                        task_id: task.id,
+                        lease_id: task.lease_id,
+                        error: format!("{error:#}"),
+                        retryable: true,
+                    })
+                    .send()
+                    .await;
+            }
         }
     }
 }
