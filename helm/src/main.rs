@@ -3,6 +3,7 @@ use async_trait::async_trait;
 use clap::{Parser, Subcommand};
 use helm::{
     Agent, AgentEvent, Config, EventSink,
+    agent::RetryPolicy,
     config::ApprovalMode,
     policy::Policy,
     provider,
@@ -218,6 +219,15 @@ impl EventSink for Terminal {
                 if success { "done" } else { "error" },
                 summarize(&result)
             ),
+            AgentEvent::ProviderRetry {
+                attempt,
+                delay,
+                error,
+            } => eprintln!(
+                "[provider retry {attempt} in {:.1}s] {error}",
+                delay.as_secs_f32()
+            ),
+            AgentEvent::Cancelled => eprintln!("[cancelled]"),
         }
     }
 }
@@ -274,10 +284,25 @@ async fn build_agent(config: &Config, workspace: PathBuf) -> Result<Agent> {
         timeout: config.timeout(),
         max_output_bytes: config.max_output_bytes,
         environment: config.env.clone(),
+        cancellation: tokio_util::sync::CancellationToken::new(),
     };
+    let mut tools = ToolRegistry::standard();
+    for (name, server) in &config.mcp_servers {
+        let mcp =
+            helm::tools::mcp::McpServer::connect(name, &server.command, &server.args, &server.env)
+                .await
+                .with_context(|| format!("failed to initialize MCP server `{name}`"))?;
+        for tool in mcp
+            .discover()
+            .await
+            .with_context(|| format!("failed to discover tools from MCP server `{name}`"))?
+        {
+            tools.register_arc(tool);
+        }
+    }
     Ok(Agent::new(
         provider::from_config(config)?,
-        ToolRegistry::standard(),
+        tools,
         context,
         terminal,
         config.model.clone(),
@@ -285,7 +310,12 @@ async fn build_agent(config: &Config, workspace: PathBuf) -> Result<Agent> {
         config.max_turns,
         config.max_tokens,
         config.temperature,
-    ))
+    )
+    .with_retry_policy(RetryPolicy {
+        max_attempts: config.provider_retry_attempts,
+        initial_delay: std::time::Duration::from_millis(config.provider_retry_initial_ms),
+        max_delay: std::time::Duration::from_millis(config.provider_retry_max_ms),
+    }))
 }
 
 async fn execute(

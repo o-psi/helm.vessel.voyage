@@ -42,15 +42,10 @@ impl Tool for Shell {
             .current_dir(ctx.policy.workspace())
             .kill_on_drop(true);
         command.envs(&ctx.environment);
-        let output = tokio::time::timeout(ctx.timeout, command.output())
-            .await
-            .map_err(|_| {
-                ToolError::Failed(format!(
-                    "command timed out after {}s",
-                    ctx.timeout.as_secs()
-                ))
-            })?
-            .map_err(|e| ToolError::Failed(e.to_string()))?;
+        let output = tokio::select! {
+            _ = ctx.cancellation.cancelled() => return Err(ToolError::Cancelled),
+            result = tokio::time::timeout(ctx.timeout, command.output()) => result.map_err(|_| ToolError::Timeout(ctx.timeout))?.map_err(|e| ToolError::Failed(e.to_string()))?,
+        };
         let combined = format!(
             "exit: {}\nstdout:\n{}\nstderr:\n{}",
             output

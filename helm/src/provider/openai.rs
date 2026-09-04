@@ -49,9 +49,19 @@ impl Provider for OpenAiProvider {
             .json(&body)
             .send()
             .await
-            .map_err(|e| ProviderError::Request(e.to_string()))?;
+            .map_err(map_transport)?;
         let value = checked_json(response).await?;
         decode_response(value)
+    }
+}
+
+fn map_transport(error: reqwest::Error) -> ProviderError {
+    if error.is_timeout() {
+        ProviderError::Timeout(error.to_string())
+    } else if error.is_connect() {
+        ProviderError::Unavailable(error.to_string())
+    } else {
+        ProviderError::Request(error.to_string())
     }
 }
 
