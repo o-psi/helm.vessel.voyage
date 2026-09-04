@@ -10,6 +10,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 use tokio::fs;
+use tokio::io::AsyncWriteExt;
 use uuid::Uuid;
 
 /// Shrink a conversation without breaking tool-call groups. The system message and
@@ -94,14 +95,19 @@ impl SessionStore {
     pub async fn save(&self, session: &mut Session) -> Result<()> {
         session.updated_at = Utc::now();
         fs::create_dir_all(&self.directory).await?;
+        secure_directory(&self.directory).await?;
         let destination = self.path(session.id);
         let temporary = self
             .directory
             .join(format!(".{}.{}.tmp", session.id, nonce()));
-        fs::write(&temporary, serde_json::to_vec_pretty(session)?).await?;
-        fs::rename(&temporary, &destination)
-            .await
-            .with_context(|| format!("failed to save session {}", session.id))?;
+        let mut file = fs::File::create(&temporary).await?;
+        secure_file(&temporary).await?;
+        file.write_all(&serde_json::to_vec_pretty(session)?).await?;
+        file.sync_all().await?;
+        if let Err(error) = fs::rename(&temporary, &destination).await {
+            let _ = fs::remove_file(&temporary).await;
+            return Err(error).with_context(|| format!("failed to save session {}", session.id));
+        }
         Ok(())
     }
     pub async fn load(&self, id: Uuid) -> Result<Session> {
@@ -186,6 +192,28 @@ impl SessionStore {
     }
 }
 
+#[cfg(unix)]
+async fn secure_directory(path: &Path) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(path, std::fs::Permissions::from_mode(0o700)).await?;
+    Ok(())
+}
+#[cfg(not(unix))]
+async fn secure_directory(_: &Path) -> Result<()> {
+    Ok(())
+}
+
+#[cfg(unix)]
+async fn secure_file(path: &Path) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).await?;
+    Ok(())
+}
+#[cfg(not(unix))]
+async fn secure_file(_: &Path) -> Result<()> {
+    Ok(())
+}
+
 async fn load_path(path: &Path) -> Result<Session> {
     let data = fs::read(path)
         .await
@@ -209,6 +237,22 @@ mod tests {
         let mut session = Session::new(dir.path().into(), "test".into());
         store.save(&mut session).await.unwrap();
         assert_eq!(store.load(session.id).await.unwrap().id, session.id);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(dir.path()).unwrap().permissions().mode() & 0o777,
+                0o700
+            );
+            assert_eq!(
+                std::fs::metadata(store.path(session.id))
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o600
+            );
+        }
     }
 
     #[test]

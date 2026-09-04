@@ -112,6 +112,21 @@ impl Tool for ApplyPatch {
         let mut temporary = tempfile::NamedTempFile::new_in(parent).map_err(failed)?;
         std::io::Write::write_all(&mut temporary, updated.as_bytes()).map_err(failed)?;
         temporary.as_file().sync_all().map_err(failed)?;
+        // Revalidate after patch construction and approval so a concurrent writer is
+        // not silently overwritten during a long attended approval.
+        if exists {
+            let current = fs::read(&path).await.map_err(failed)?;
+            if Sha256::digest(&current) != Sha256::digest(original.as_bytes()) {
+                return Err(ToolError::Failed(
+                    "file changed while the patch was being prepared; retry from a fresh read"
+                        .into(),
+                ));
+            }
+        } else if path.exists() {
+            return Err(ToolError::Failed(
+                "target was created concurrently; refusing to replace it".into(),
+            ));
+        }
         temporary.persist(&path).map_err(failed)?;
         Ok(format!(
             "patched {} ({} -> {} bytes, sha256 {})",
@@ -191,16 +206,20 @@ impl Tool for ListDirectory {
         let mut pending = vec![root.clone()];
         let mut lines = Vec::new();
         while let Some(dir) = pending.pop() {
+            if ctx.cancellation.is_cancelled() {
+                return Err(ToolError::Cancelled);
+            }
             let mut entries = fs::read_dir(&dir).await.map_err(failed)?;
             while let Some(entry) = entries.next_entry().await.map_err(failed)? {
                 let path = entry.path();
+                let file_type = entry.file_type().await.map_err(failed)?;
                 let suffix = path.strip_prefix(&root).unwrap_or(&path);
                 lines.push(format!(
                     "{}{}",
                     suffix.display(),
-                    if path.is_dir() { "/" } else { "" }
+                    if file_type.is_dir() { "/" } else { "" }
                 ));
-                if args.recursive && path.is_dir() && lines.len() < 10_000 {
+                if args.recursive && file_type.is_dir() && lines.len() < 10_000 {
                     pending.push(path);
                 }
             }
@@ -246,10 +265,10 @@ impl Tool for SearchFiles {
             .env_clear()
             .envs(&ctx.environment)
             .kill_on_drop(true);
-        let output = tokio::time::timeout(ctx.timeout, command.output())
-            .await
-            .map_err(|_| ToolError::Timeout(ctx.timeout))?
-            .map_err(failed)?;
+        let output = tokio::select! {
+            _ = ctx.cancellation.cancelled() => return Err(ToolError::Cancelled),
+            result = tokio::time::timeout(ctx.timeout, command.output()) => result.map_err(|_| ToolError::Timeout(ctx.timeout))?.map_err(failed)?,
+        };
         if !output.status.success() && output.status.code() != Some(1) {
             return Err(ToolError::Failed(
                 String::from_utf8_lossy(&output.stderr).into(),
@@ -338,5 +357,24 @@ mod tests {
                 .is_err()
         );
         assert_eq!(std::fs::read_to_string(path).unwrap(), "current\n");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn recursive_listing_does_not_follow_directory_symlinks() {
+        use std::os::unix::fs::symlink;
+        let workspace = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::write(outside.path().join("secret.txt"), "secret").unwrap();
+        symlink(outside.path(), workspace.path().join("outside-link")).unwrap();
+        let listing = ListDirectory
+            .execute(
+                json!({"path":".","recursive":true}),
+                &context(workspace.path()),
+            )
+            .await
+            .unwrap();
+        assert!(listing.contains("outside-link"));
+        assert!(!listing.contains("secret.txt"));
     }
 }

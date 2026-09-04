@@ -49,9 +49,21 @@ impl Tool for Shell {
             .env_clear()
             .kill_on_drop(true);
         command.envs(&ctx.environment);
+        #[cfg(unix)]
+        command.process_group(0);
+        let child = command
+            .spawn()
+            .map_err(|error| ToolError::Failed(error.to_string()))?;
+        let process_id = child.id();
         let output = tokio::select! {
-            _ = ctx.cancellation.cancelled() => return Err(ToolError::Cancelled),
-            result = tokio::time::timeout(ctx.timeout, command.output()) => result.map_err(|_| ToolError::Timeout(ctx.timeout))?.map_err(|e| ToolError::Failed(e.to_string()))?,
+            _ = ctx.cancellation.cancelled() => {
+                terminate_process_group(process_id);
+                return Err(ToolError::Cancelled);
+            },
+            result = tokio::time::timeout(ctx.timeout, child.wait_with_output()) => match result {
+                Ok(output) => output.map_err(|error| ToolError::Failed(error.to_string()))?,
+                Err(_) => { terminate_process_group(process_id); return Err(ToolError::Timeout(ctx.timeout)); }
+            },
         };
         let combined = format!(
             "exit: {}\nstdout:\n{}\nstderr:\n{}",
@@ -66,3 +78,15 @@ impl Tool for Shell {
         Ok(truncate(combined.into_bytes(), ctx.max_output_bytes))
     }
 }
+
+#[cfg(unix)]
+fn terminate_process_group(process_id: Option<u32>) {
+    if let Some(process_id) = process_id {
+        // SAFETY: a negative PID targets only the process group created above.
+        unsafe {
+            libc::kill(-(process_id as i32), libc::SIGKILL);
+        }
+    }
+}
+#[cfg(not(unix))]
+fn terminate_process_group(_: Option<u32>) {}

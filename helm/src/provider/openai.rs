@@ -82,6 +82,7 @@ struct StreamAssembly {
     content: String,
     calls: Vec<CallAssembly>,
     usage: Usage,
+    saw_finish: bool,
 }
 #[derive(Default)]
 struct CallAssembly {
@@ -102,6 +103,9 @@ where
         let mut assembly = StreamAssembly::default();
         while let Some(chunk) = source.next().await {
             pending.extend_from_slice(&chunk.map_err(map_transport)?);
+            if pending.len() > MAX_SSE_BUFFER_BYTES {
+                Err(ProviderError::InvalidResponse("OpenAI stream event exceeded 4 MiB".into()))?;
+            }
             while let Some(frame) = take_sse_frame(&mut pending) {
                 let data = sse_data(&frame);
                 if data.is_empty() {
@@ -115,6 +119,10 @@ where
                     yield ProviderStreamEvent::Delta(event);
                 }
             }
+        }
+        if assembly.saw_finish {
+            yield ProviderStreamEvent::Completed(finish_stream(assembly)?);
+            return;
         }
         Err(ProviderError::InvalidResponse("OpenAI stream ended before [DONE]".into()))?;
     }
@@ -138,6 +146,12 @@ fn apply_stream_chunk(
     let Some(delta) = value.pointer("/choices/0/delta") else {
         return Ok(events);
     };
+    if value
+        .pointer("/choices/0/finish_reason")
+        .is_some_and(|value| !value.is_null())
+    {
+        assembly.saw_finish = true;
+    }
     if let Some(text) = delta.get("content").and_then(Value::as_str) {
         assembly.content.push_str(text);
         events.push(ProviderDelta::Text(text.into()));
@@ -184,6 +198,11 @@ fn finish_stream(assembly: StreamAssembly) -> Result<ModelResponse, ProviderErro
         .calls
         .into_iter()
         .map(|c| {
+            if c.id.is_empty() || c.name.is_empty() {
+                return Err(ProviderError::InvalidResponse(
+                    "streamed tool call omitted id or name".into(),
+                ));
+            }
             Ok(ToolCall {
                 id: c.id,
                 name: c.name,
@@ -208,6 +227,7 @@ fn finish_stream(assembly: StreamAssembly) -> Result<ModelResponse, ProviderErro
         usage: assembly.usage,
     })
 }
+const MAX_SSE_BUFFER_BYTES: usize = 4 * 1024 * 1024;
 pub(crate) fn take_sse_frame(pending: &mut Vec<u8>) -> Option<Vec<u8>> {
     let (at, width) = pending
         .windows(2)

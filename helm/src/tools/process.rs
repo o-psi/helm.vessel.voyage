@@ -1,4 +1,4 @@
-use super::{Tool, ToolContext, ToolError, truncate};
+use super::{Tool, ToolContext, ToolError};
 use crate::{model::ToolDefinition, policy::Decision};
 use async_trait::async_trait;
 use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system};
@@ -33,6 +33,7 @@ const MAX_CAPTURE_BYTES: usize = 8 * 1024 * 1024;
 
 impl Drop for Managed {
     fn drop(&mut self) {
+        terminate_process_group(self.child.process_id());
         let _ = self.child.kill();
     }
 }
@@ -183,12 +184,8 @@ impl ProcessTool {
             .get_mut(&id)
             .ok_or_else(|| ToolError::Failed(format!("unknown process {id}")))?;
         let capture = process.output.lock().map_err(failed)?;
-        let offset = process
-            .cursor
-            .saturating_sub(capture.base)
-            .min(capture.bytes.len());
-        let result = truncate(capture.bytes[offset..].to_vec(), max);
-        process.cursor = capture.base + capture.bytes.len();
+        let (result, cursor) = unread_chunk(&capture, process.cursor, max);
+        process.cursor = cursor;
         let status = process
             .child
             .try_wait()
@@ -229,6 +226,7 @@ impl ProcessTool {
             .remove(&id)
             .ok_or_else(|| ToolError::Failed(format!("unknown process {id}")))?;
         if p.child.try_wait().map_err(failed)?.is_none() {
+            terminate_process_group(p.child.process_id());
             p.child.kill().map_err(failed)?;
         }
         Ok(format!("terminated {id}"))
@@ -247,9 +245,31 @@ impl ProcessTool {
         Ok(rows.join("\n"))
     }
 }
+fn unread_chunk(capture: &Capture, cursor: usize, max: usize) -> (String, usize) {
+    let offset = cursor.saturating_sub(capture.base).min(capture.bytes.len());
+    let end = offset.saturating_add(max).min(capture.bytes.len());
+    let remaining = capture.bytes.len() - end;
+    let mut result = String::from_utf8_lossy(&capture.bytes[offset..end]).into_owned();
+    if remaining > 0 {
+        result.push_str(&format!("\n\n[{remaining} unread bytes remain]"));
+    }
+    (result, capture.base + end)
+}
 fn failed(error: impl std::fmt::Display) -> ToolError {
     ToolError::Failed(error.to_string())
 }
+
+#[cfg(unix)]
+fn terminate_process_group(process_id: Option<u32>) {
+    if let Some(process_id) = process_id {
+        // portable-pty starts the child in its own process group on Unix.
+        unsafe {
+            libc::kill(-(process_id as i32), libc::SIGKILL);
+        }
+    }
+}
+#[cfg(not(unix))]
+fn terminate_process_group(_: Option<u32>) {}
 
 #[cfg(test)]
 mod tests {
@@ -332,5 +352,22 @@ mod tests {
         tool.execute(json!({"action":"terminate","id":id}), &ctx)
             .await
             .unwrap();
+    }
+
+    #[test]
+    fn truncated_reads_preserve_the_unread_tail() {
+        let capture = Capture {
+            bytes: b"abcdefgh".to_vec(),
+            base: 10,
+        };
+        let (first, cursor) = unread_chunk(&capture, 10, 3);
+        assert!(first.starts_with("abc"));
+        assert_eq!(cursor, 13);
+        let (second, cursor) = unread_chunk(&capture, cursor, 3);
+        assert!(second.starts_with("def"));
+        assert_eq!(cursor, 16);
+        let (third, cursor) = unread_chunk(&capture, cursor, 3);
+        assert_eq!(third, "gh");
+        assert_eq!(cursor, 18);
     }
 }

@@ -558,16 +558,23 @@ async fn tui_chat(
 async fn build_tools(config: &Config) -> Result<ToolRegistry> {
     let mut tools = ToolRegistry::standard();
     for (name, server) in &config.mcp_servers {
-        let mcp =
-            helm::tools::mcp::McpServer::connect(name, &server.command, &server.args, &server.env)
-                .await
-                .with_context(|| format!("failed to initialize MCP server `{name}`"))?;
-        for tool in mcp
-            .discover()
+        let mut environment = tool_environment(config);
+        environment.extend(server.env.clone());
+        let mcp = tokio::time::timeout(
+            config.timeout(),
+            helm::tools::mcp::McpServer::connect(name, &server.command, &server.args, &environment),
+        )
+        .await
+        .with_context(|| format!("MCP server `{name}` initialization timed out"))?
+        .with_context(|| format!("failed to initialize MCP server `{name}`"))?;
+        let discovered = tokio::time::timeout(config.timeout(), mcp.discover())
             .await
-            .with_context(|| format!("failed to discover tools from MCP server `{name}`"))?
-        {
-            tools.register_arc(tool);
+            .with_context(|| format!("MCP server `{name}` discovery timed out"))?
+            .with_context(|| format!("failed to discover tools from MCP server `{name}`"))?;
+        for tool in discovered {
+            tools
+                .register_arc(tool)
+                .with_context(|| format!("MCP server `{name}` exposed a duplicate tool"))?;
         }
     }
     Ok(tools)

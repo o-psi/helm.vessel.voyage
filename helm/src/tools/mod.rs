@@ -162,8 +162,13 @@ impl ToolRegistry {
     pub fn register<T: Tool + 'static>(&mut self, tool: T) {
         self.tools.insert(tool.definition().name, Arc::new(tool));
     }
-    pub fn register_arc(&mut self, tool: Arc<dyn Tool>) {
-        self.tools.insert(tool.definition().name, tool);
+    pub fn register_arc(&mut self, tool: Arc<dyn Tool>) -> Result<(), ToolError> {
+        let name = tool.definition().name;
+        if self.tools.contains_key(&name) {
+            return Err(ToolError::Failed(format!("duplicate tool name `{name}`")));
+        }
+        self.tools.insert(name, tool);
+        Ok(())
     }
     pub fn definitions(&self) -> Vec<ToolDefinition> {
         self.tools.values().map(|t| t.definition()).collect()
@@ -182,7 +187,19 @@ impl ToolRegistry {
             .await;
         result
             .map(|output| context.redactor.redact(output))
-            .map_err(|error| ToolError::Failed(context.redactor.redact(error.to_string())))
+            .map_err(|error| error.redacted(&context.redactor))
+    }
+}
+
+impl ToolError {
+    fn redacted(self, redactor: &Redactor) -> Self {
+        match self {
+            Self::InvalidArguments(message) => Self::InvalidArguments(redactor.redact(message)),
+            Self::Denied(message) => Self::Denied(redactor.redact(message)),
+            Self::Failed(message) => Self::Failed(redactor.redact(message)),
+            Self::Timeout(duration) => Self::Timeout(duration),
+            Self::Cancelled => Self::Cancelled,
+        }
     }
 }
 
@@ -227,5 +244,42 @@ mod security_tests {
         .await
         .unwrap();
         assert_eq!(outcome, ApprovalOutcome::Unavailable);
+    }
+
+    struct DeniedTool;
+    #[async_trait]
+    impl Tool for DeniedTool {
+        fn definition(&self) -> ToolDefinition {
+            ToolDefinition {
+                name: "denied".into(),
+                description: String::new(),
+                input_schema: serde_json::json!({}),
+            }
+        }
+        async fn execute(&self, _: Value, _: &ToolContext) -> Result<String, ToolError> {
+            Err(ToolError::Denied("long-secret".into()))
+        }
+    }
+
+    #[tokio::test]
+    async fn registry_preserves_typed_errors_while_redacting() {
+        let directory = tempfile::tempdir().unwrap();
+        let config = crate::config::Config::default();
+        let context = ToolContext {
+            policy: Arc::new(Policy::new(&config, directory.path().to_owned()).unwrap()),
+            approver: Arc::new(UnattendedApprover { allow: false }),
+            timeout: Duration::from_secs(1),
+            max_output_bytes: 1024,
+            environment: BTreeMap::new(),
+            cancellation: tokio_util::sync::CancellationToken::new(),
+            execution_id: uuid::Uuid::new_v4(),
+            interaction: InteractionMode::Unattended,
+            redactor: Arc::new(Redactor::new(["long-secret".into()])),
+        };
+        let mut registry = ToolRegistry::default();
+        registry.register(DeniedTool);
+        assert!(
+            matches!(registry.execute("denied",serde_json::json!({}),&context).await,Err(ToolError::Denied(message)) if message=="[REDACTED]")
+        );
     }
 }

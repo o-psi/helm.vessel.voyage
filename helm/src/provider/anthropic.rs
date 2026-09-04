@@ -110,8 +110,24 @@ where
 {
     use futures_util::StreamExt;
     async_stream::try_stream! {
-        let mut pending=Vec::new(); let mut assembly=StreamAssembly::default();
-        while let Some(chunk)=source.next().await { pending.extend_from_slice(&chunk.map_err(map_transport)?); while let Some(frame)=super::openai::take_sse_frame(&mut pending) { let data=super::openai::sse_data(&frame); if data.is_empty(){continue;} let value:Value=serde_json::from_slice(data).map_err(|e|ProviderError::InvalidResponse(format!("invalid Anthropic stream event: {e}")))?; if value.get("type").and_then(Value::as_str)==Some("message_stop") { yield ProviderStreamEvent::Completed(finish_stream(assembly)?); return; } for event in apply_stream_event(&value,&mut assembly){yield ProviderStreamEvent::Delta(event);} } }
+        let mut pending=Vec::new();
+        let mut assembly=StreamAssembly::default();
+        while let Some(chunk)=source.next().await {
+            pending.extend_from_slice(&chunk.map_err(map_transport)?);
+            if pending.len() > 4 * 1024 * 1024 {
+                Err(ProviderError::InvalidResponse("Anthropic stream event exceeded 4 MiB".into()))?;
+            }
+            while let Some(frame)=super::openai::take_sse_frame(&mut pending) {
+                let data=super::openai::sse_data(&frame);
+                if data.is_empty(){continue;}
+                let value:Value=serde_json::from_slice(data).map_err(|e|ProviderError::InvalidResponse(format!("invalid Anthropic stream event: {e}")))?;
+                if value.get("type").and_then(Value::as_str)==Some("message_stop") {
+                    yield ProviderStreamEvent::Completed(finish_stream(assembly)?);
+                    return;
+                }
+                for event in apply_stream_event(&value,&mut assembly){yield ProviderStreamEvent::Delta(event);}
+            }
+        }
         Err(ProviderError::InvalidResponse("Anthropic stream ended before message_stop".into()))?;
     }
 }
@@ -194,6 +210,11 @@ fn finish_stream(assembly: StreamAssembly) -> Result<ModelResponse, ProviderErro
         .into_iter()
         .filter(|call| !call.name.is_empty())
         .map(|c| {
+            if c.id.is_empty() || c.name.is_empty() {
+                return Err(ProviderError::InvalidResponse(
+                    "streamed tool call omitted id or name".into(),
+                ));
+            }
             Ok(ToolCall {
                 id: c.id,
                 name: c.name,

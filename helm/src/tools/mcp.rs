@@ -91,7 +91,7 @@ impl McpServer {
                     .ok_or_else(|| failed("MCP tool omitted name"))?
                     .to_owned();
                 let definition = ToolDefinition {
-                    name: format!("mcp_{}_{}", self.name, sanitize(&remote_name)),
+                    name: tool_name(&self.name, &remote_name),
                     description: tool
                         .get("description")
                         .and_then(Value::as_str)
@@ -135,7 +135,7 @@ impl Tool for McpTool {
     async fn execute(&self, arguments: Value, context: &ToolContext) -> Result<String, ToolError> {
         let response = tokio::select! {
             _ = context.cancellation.cancelled() => return Err(ToolError::Cancelled),
-            result = self.transport.request("tools/call", json!({"name":self.remote_name,"arguments":arguments})) => result?,
+            result = tokio::time::timeout(context.timeout, self.transport.request("tools/call", json!({"name":self.remote_name,"arguments":arguments}))) => result.map_err(|_| ToolError::Timeout(context.timeout))??,
         };
         if let Some(error) = response.get("error") {
             return Err(failed(format!("MCP error: {error}")));
@@ -202,7 +202,8 @@ fn extract_content(result: &Value) -> String {
         .unwrap_or_else(|| result.to_string())
 }
 fn sanitize(name: &str) -> String {
-    name.chars()
+    let value: String = name
+        .chars()
         .map(|c| {
             if c.is_ascii_alphanumeric() || c == '_' {
                 c.to_ascii_lowercase()
@@ -210,7 +211,21 @@ fn sanitize(name: &str) -> String {
                 '_'
             }
         })
-        .collect()
+        .collect();
+    if value.is_empty() {
+        "unnamed".into()
+    } else {
+        value
+    }
+}
+fn tool_name(server: &str, remote: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let full = format!("mcp_{}_{}", sanitize(server), sanitize(remote));
+    if full.len() <= 64 {
+        return full;
+    }
+    let digest = hex::encode(Sha256::digest(full.as_bytes()));
+    format!("{}_{}", &full[..55], &digest[..8])
 }
 fn failed(error: impl std::fmt::Display) -> ToolError {
     ToolError::Failed(error.to_string())
@@ -228,6 +243,7 @@ mod tests {
     #[test]
     fn namespaces_safely() {
         assert_eq!(sanitize("Git Tools!"), "git_tools_");
+        assert!(tool_name(&"a".repeat(80), &"b".repeat(80)).len() <= 64);
     }
     struct Yes;
     #[async_trait]

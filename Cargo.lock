@@ -792,6 +792,7 @@ dependencies = [
  "dirs",
  "futures-util",
  "hex",
+ "libc",
  "portable-pty",
  "ratatui",
  "reqwest",
