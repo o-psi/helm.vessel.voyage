@@ -2,6 +2,8 @@ mod anthropic;
 mod openai;
 
 use async_trait::async_trait;
+use futures_util::Stream;
+use std::pin::Pin;
 use thiserror::Error;
 
 use crate::{
@@ -31,6 +33,26 @@ pub enum ProviderError {
     InvalidResponse(String),
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ProviderDelta {
+    Text(String),
+    ToolCall {
+        index: usize,
+        id: Option<String>,
+        name: Option<String>,
+        arguments: String,
+    },
+}
+
+#[derive(Debug)]
+pub enum ProviderStreamEvent {
+    Delta(ProviderDelta),
+    Completed(ModelResponse),
+}
+
+pub type ProviderStream =
+    Pin<Box<dyn Stream<Item = Result<ProviderStreamEvent, ProviderError>> + Send>>;
+
 impl ProviderError {
     pub fn is_retryable(&self) -> bool {
         matches!(
@@ -49,6 +71,12 @@ impl ProviderError {
 #[async_trait]
 pub trait Provider: Send + Sync {
     async fn complete(&self, request: ModelRequest) -> Result<ModelResponse, ProviderError>;
+    async fn stream(&self, request: ModelRequest) -> Result<ProviderStream, ProviderError> {
+        let response = self.complete(request).await?;
+        Ok(Box::pin(futures_util::stream::once(async move {
+            Ok(ProviderStreamEvent::Completed(response))
+        })))
+    }
 }
 
 pub fn from_config(config: &Config) -> Result<Box<dyn Provider>, ProviderError> {
@@ -92,5 +120,18 @@ pub(crate) async fn checked_json(
         Err(ProviderError::Unavailable(format!("HTTP {status}: {body}")))
     } else {
         Err(ProviderError::Request(format!("HTTP {status}: {body}")))
+    }
+}
+
+pub(crate) async fn checked_stream_response(
+    response: reqwest::Response,
+) -> Result<reqwest::Response, ProviderError> {
+    if response.status().is_success() {
+        Ok(response)
+    } else {
+        match checked_json(response).await {
+            Err(error) => Err(error),
+            Ok(_) => unreachable!("non-success response cannot produce successful JSON"),
+        }
     }
 }

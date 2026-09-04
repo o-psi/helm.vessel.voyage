@@ -139,13 +139,26 @@ struct App {
     sessions: Vec<Session>,
     composer: Composer,
     activity: Vec<String>,
+    streaming_activity: Option<usize>,
     status: String,
     scroll: u16,
-    running: Option<tokio::task::JoinHandle<()>>,
+    running: Option<Running>,
     approval: Option<ApprovalRequest>,
     show_sessions: bool,
     selected_session: usize,
     quit: bool,
+}
+
+struct Running {
+    task: tokio::task::JoinHandle<()>,
+    cancel: tokio_util::sync::CancellationToken,
+}
+
+impl Drop for Running {
+    fn drop(&mut self) {
+        self.cancel.cancel();
+        self.task.abort();
+    }
 }
 
 impl App {
@@ -155,6 +168,7 @@ impl App {
             sessions,
             composer: Composer::default(),
             activity: Vec::new(),
+            streaming_activity: None,
             status: "Ready".into(),
             scroll: 0,
             running: None,
@@ -170,9 +184,9 @@ impl App {
     }
 
     fn cancel(&mut self) {
-        if let Some(task) = self.running.take() {
-            task.abort();
-            self.status = "Cancelled; partial output was not committed".into();
+        if let Some(running) = &self.running {
+            running.cancel.cancel();
+            self.status = "Cancelling; partial output will not be committed".into();
         }
         if let Some(approval) = self.approval.take() {
             let _ = approval.response.send(false);
@@ -225,12 +239,23 @@ async fn handle_ui_event(event: UiEvent, app: &mut App, store: &SessionStore) ->
         UiEvent::Agent(AgentEvent::Thinking { turn }) => {
             app.status = format!("Model turn {turn}…  Esc cancels");
         }
+        UiEvent::Agent(AgentEvent::AssistantTextDelta(text)) => {
+            let index = *app.streaming_activity.get_or_insert_with(|| {
+                app.activity.push("assistant: ".into());
+                app.activity.len() - 1
+            });
+            app.activity[index].push_str(&text);
+            app.status = "Receiving response…  Esc cancels".into();
+        }
         UiEvent::Agent(AgentEvent::AssistantText(text)) => {
-            app.activity
-                .push(format!("assistant: {}", one_line(&text, 240)));
+            if app.streaming_activity.take().is_none() {
+                app.activity
+                    .push(format!("assistant: {}", one_line(&text, 240)));
+            }
             app.status = "Receiving response…  Esc cancels".into();
         }
         UiEvent::Agent(AgentEvent::ToolStarted { name, arguments }) => {
+            app.streaming_activity = None;
             app.activity.push(format!("▶ {name} {arguments}"));
             app.status = format!("Running {name}…  Esc cancels");
         }
@@ -376,13 +401,16 @@ async fn handle_key(
                 let agent = agent.clone();
                 let events = tx.clone();
                 app.status = "Starting…  Esc cancels".into();
-                app.running = Some(tokio::spawn(async move {
+                let cancel = tokio_util::sync::CancellationToken::new();
+                let run_cancel = cancel.clone();
+                let task = tokio::spawn(async move {
                     let result = agent
-                        .run(history, prompt)
+                        .run_with_cancel(history, prompt, run_cancel)
                         .await
                         .map_err(|error| error.to_string());
                     let _ = events.send(UiEvent::Finished(result));
-                }));
+                });
+                app.running = Some(Running { task, cancel });
             }
         }
         KeyCode::Char(character) if !app.is_running() => app.composer.insert(character),
