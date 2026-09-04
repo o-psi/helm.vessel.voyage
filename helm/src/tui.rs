@@ -7,7 +7,10 @@ use std::{io, path::PathBuf, sync::Arc};
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use crossterm::{
-    event::{Event, EventStream, KeyCode, KeyEvent, KeyModifiers},
+    event::{
+        DisableBracketedPaste, EnableBracketedPaste, Event, EventStream, KeyCode, KeyEvent,
+        KeyModifiers,
+    },
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
@@ -21,6 +24,7 @@ use ratatui::{
     widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap},
 };
 use tokio::sync::{mpsc, oneshot};
+use unicode_width::UnicodeWidthChar;
 
 use crate::{
     Agent, AgentEvent, EventSink,
@@ -40,6 +44,9 @@ pub enum UiEvent {
 #[derive(Debug)]
 #[doc(hidden)]
 pub struct ApprovalRequest {
+    id: uuid::Uuid,
+    action: String,
+    target: String,
     reason: String,
     response: oneshot::Sender<ApprovalOutcome>,
 }
@@ -63,6 +70,9 @@ impl Approver for UiBridge {
         if self
             .tx
             .send(UiEvent::Approval(ApprovalRequest {
+                id: request.id,
+                action: request.action.clone(),
+                target: request.target.clone(),
                 reason: request.reason.clone(),
                 response,
             }))
@@ -96,7 +106,10 @@ struct TerminalGuard;
 impl TerminalGuard {
     fn enter() -> Result<Self> {
         enable_raw_mode()?;
-        execute!(io::stdout(), EnterAlternateScreen)?;
+        if let Err(error) = execute!(io::stdout(), EnterAlternateScreen, EnableBracketedPaste) {
+            let _ = disable_raw_mode();
+            return Err(error.into());
+        }
         Ok(Self)
     }
 }
@@ -104,7 +117,7 @@ impl TerminalGuard {
 impl Drop for TerminalGuard {
     fn drop(&mut self) {
         let _ = disable_raw_mode();
-        let _ = execute!(io::stdout(), LeaveAlternateScreen);
+        let _ = execute!(io::stdout(), DisableBracketedPaste, LeaveAlternateScreen);
     }
 }
 
@@ -120,6 +133,11 @@ impl Composer {
         self.cursor += character.len_utf8();
     }
 
+    fn insert_str(&mut self, text: &str) {
+        self.text.insert_str(self.cursor, text);
+        self.cursor += text.len();
+    }
+
     fn backspace(&mut self) {
         if self.cursor == 0 {
             return;
@@ -130,6 +148,25 @@ impl Composer {
             .map_or(0, |(index, _)| index);
         self.text.drain(previous..self.cursor);
         self.cursor = previous;
+    }
+
+    fn delete(&mut self) {
+        if let Some(character) = self.text[self.cursor..].chars().next() {
+            self.text
+                .drain(self.cursor..self.cursor + character.len_utf8());
+        }
+    }
+
+    fn line_start(&mut self) {
+        self.cursor = self.text[..self.cursor]
+            .rfind('\n')
+            .map_or(0, |index| index + 1);
+    }
+
+    fn line_end(&mut self) {
+        self.cursor += self.text[self.cursor..]
+            .find('\n')
+            .unwrap_or(self.text.len() - self.cursor);
     }
 
     fn take(&mut self) -> String {
@@ -211,6 +248,8 @@ pub async fn run(
     let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
     terminal.clear()?;
     let mut input = EventStream::new();
+    let termination = termination_signal();
+    tokio::pin!(termination);
 
     while !app.quit {
         terminal.draw(|frame| draw(frame, &app))?;
@@ -221,6 +260,9 @@ pub async fn run(
                         handle_key(key, &mut app, &agent, &store, &tx).await?;
                     }
                     Some(Ok(Event::Resize(_, _))) => {}
+                    Some(Ok(Event::Paste(text))) if !app.is_running() && app.approval.is_none() && !app.show_sessions => {
+                        app.composer.insert_str(&text.replace("\r\n", "\n").replace('\r', "\n"));
+                    }
                     Some(Err(error)) => return Err(error.into()),
                     None => break,
                     _ => {}
@@ -230,12 +272,37 @@ pub async fn run(
                 let Some(event) = event else { break };
                 handle_ui_event(event, &mut app, &store).await?;
             }
+            _ = &mut termination => {
+                app.status = "Terminal closing; cancelling active work".into();
+                app.quit = true;
+            }
         }
     }
     app.cancel();
-    store.save(&mut app.session).await?;
     terminal.show_cursor()?;
     Ok(())
+}
+
+#[cfg(unix)]
+async fn termination_signal() {
+    use tokio::signal::unix::{SignalKind, signal};
+    let Ok(mut terminate) = signal(SignalKind::terminate()) else {
+        std::future::pending::<()>().await;
+        return;
+    };
+    let Ok(mut hangup) = signal(SignalKind::hangup()) else {
+        terminate.recv().await;
+        return;
+    };
+    tokio::select! {
+        _ = terminate.recv() => {}
+        _ = hangup.recv() => {}
+    }
+}
+
+#[cfg(not(unix))]
+async fn termination_signal() {
+    std::future::pending::<()>().await;
 }
 
 async fn handle_ui_event(event: UiEvent, app: &mut App, store: &SessionStore) -> Result<()> {
@@ -423,6 +490,9 @@ async fn handle_key(
         }
         KeyCode::Char(character) if !app.is_running() => app.composer.insert(character),
         KeyCode::Backspace if !app.is_running() => app.composer.backspace(),
+        KeyCode::Delete if !app.is_running() => app.composer.delete(),
+        KeyCode::Home if !app.is_running() => app.composer.line_start(),
+        KeyCode::End if !app.is_running() => app.composer.line_end(),
         KeyCode::Left if !app.is_running() => {
             if app.composer.cursor > 0 {
                 app.composer.cursor = app.composer.text[..app.composer.cursor]
@@ -445,6 +515,15 @@ async fn handle_key(
 
 fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
     let area = frame.area();
+    if area.width < 32 || area.height < 10 {
+        frame.render_widget(
+            Paragraph::new("Helm needs a terminal of at least 32×10. Resize the window or use `helm chat --plain`.")
+                .wrap(Wrap { trim: true })
+                .block(Block::default().title(" Helm ").borders(Borders::ALL)),
+            area,
+        );
+        return;
+    }
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -475,7 +554,13 @@ fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
     );
     let transcript = transcript(app);
     let viewport_height = chunks[1].height.saturating_sub(2) as usize;
-    let bottom = transcript.lines.len().saturating_sub(viewport_height) as u16;
+    let viewport_width = chunks[1].width.saturating_sub(2) as usize;
+    let rendered_lines = transcript
+        .lines
+        .iter()
+        .map(|line| line.width().max(1).div_ceil(viewport_width.max(1)))
+        .sum::<usize>();
+    let bottom = rendered_lines.saturating_sub(viewport_height) as u16;
     let offset = bottom.saturating_sub(app.scroll);
     frame.render_widget(
         Paragraph::new(transcript)
@@ -488,9 +573,15 @@ fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
             ),
         chunks[1],
     );
+    let composer_width = chunks[2].width.saturating_sub(2).max(1);
+    let composer_height = chunks[2].height.saturating_sub(2).max(1);
+    let (composer_row, composer_column) =
+        cursor_position(&app.composer.text[..app.composer.cursor], composer_width);
+    let composer_scroll = composer_row.saturating_sub(composer_height - 1);
     frame.render_widget(
         Paragraph::new(app.composer.text.as_str())
             .wrap(Wrap { trim: false })
+            .scroll((composer_scroll, 0))
             .style(if app.is_running() {
                 Style::default().fg(Color::DarkGray)
             } else {
@@ -512,24 +603,17 @@ fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
         chunks[3],
     );
     if !app.is_running() {
-        let prefix = app.composer.text[..app.composer.cursor]
-            .lines()
-            .last()
-            .unwrap_or_default();
-        let row = app.composer.text[..app.composer.cursor]
-            .chars()
-            .filter(|character| *character == '\n')
-            .count() as u16;
         frame.set_cursor_position((
-            chunks[2].x + 1 + prefix.chars().count() as u16,
-            chunks[2].y + 1 + row.min(2),
+            (chunks[2].x + 1 + composer_column).min(chunks[2].right().saturating_sub(2)),
+            (chunks[2].y + 1 + composer_row.saturating_sub(composer_scroll))
+                .min(chunks[2].bottom().saturating_sub(2)),
         ));
     }
     if app.show_sessions {
         draw_sessions(frame, area, app);
     }
     if let Some(approval) = &app.approval {
-        draw_approval(frame, area, &approval.reason);
+        draw_approval(frame, area, approval);
     }
 }
 
@@ -595,6 +679,11 @@ fn draw_sessions(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
             ))
         })
         .collect();
+    let items = if items.is_empty() {
+        vec![ListItem::new("No saved sessions yet")]
+    } else {
+        items
+    };
     frame.render_widget(Clear, popup);
     frame.render_widget(
         List::new(items).block(
@@ -606,18 +695,21 @@ fn draw_sessions(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
     );
 }
 
-fn draw_approval(frame: &mut ratatui::Frame<'_>, area: Rect, reason: &str) {
+fn draw_approval(frame: &mut ratatui::Frame<'_>, area: Rect, approval: &ApprovalRequest) {
     let popup = centered(area, 70, 35);
     frame.render_widget(Clear, popup);
     frame.render_widget(
-        Paragraph::new(format!("{reason}\n\n[y] approve    [n/Esc] deny"))
-            .wrap(Wrap { trim: false })
-            .block(
-                Block::default()
-                    .title(" Approval required ")
-                    .borders(Borders::ALL)
-                    .border_style(Style::default().fg(Color::Yellow)),
-            ),
+        Paragraph::new(format!(
+            "Action: {}\nTarget: {}\nRequest: {}\n\n{}\n\n[y] approve    [n/Esc] deny",
+            approval.action, approval.target, approval.id, approval.reason
+        ))
+        .wrap(Wrap { trim: false })
+        .block(
+            Block::default()
+                .title(" Approval required ")
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Yellow)),
+        ),
         popup,
     );
 }
@@ -646,6 +738,30 @@ fn one_line(text: &str, max: usize) -> String {
     output
 }
 
+fn cursor_position(text: &str, width: u16) -> (u16, u16) {
+    let width = width.max(1);
+    let mut row = 0_u16;
+    let mut column = 0_u16;
+    for character in text.chars() {
+        if character == '\n' {
+            row = row.saturating_add(1);
+            column = 0;
+            continue;
+        }
+        let character_width = character.width().unwrap_or(0) as u16;
+        if column.saturating_add(character_width) > width {
+            row = row.saturating_add(1);
+            column = 0;
+        }
+        column = column.saturating_add(character_width);
+        if column == width {
+            row = row.saturating_add(1);
+            column = 0;
+        }
+    }
+    (row, column)
+}
+
 fn export_path(session: &Session) -> PathBuf {
     session
         .workspace
@@ -660,7 +776,8 @@ async fn handle_command(command: &str, app: &mut App, store: &SessionStore) -> R
     match name {
         "help" => {
             app.status =
-                "/name TITLE · /branch [TITLE] · /compact [KEEP] · /export [PATH] · /clear".into()
+                "/name TITLE · /branch [TITLE] · /compact [KEEP] · /export [PATH] · /clear confirm"
+                    .into()
         }
         "name" if !argument.trim().is_empty() => {
             app.session.name = Some(argument.trim().into());
@@ -696,12 +813,13 @@ async fn handle_command(command: &str, app: &mut App, store: &SessionStore) -> R
             store.export_markdown(&app.session, &path).await?;
             app.status = format!("Exported to {}", path.display());
         }
-        "clear" => {
+        "clear" if argument.trim() == "confirm" => {
             app.session.messages.clear();
             store.save(&mut app.session).await?;
             app.activity.clear();
             app.status = "Conversation cleared".into();
         }
+        "clear" => app.status = "Clearing is permanent; use /clear confirm".into(),
         _ => app.status = format!("Unknown or incomplete command: /{name}"),
     }
     Ok(true)
@@ -720,11 +838,24 @@ mod tests {
         assert_eq!(composer.text, "λ");
         composer.backspace();
         assert!(composer.text.is_empty());
+        composer.insert_str("one\nλtwo");
+        composer.line_start();
+        assert_eq!(&composer.text[composer.cursor..], "λtwo");
+        composer.line_end();
+        composer.delete();
+        assert_eq!(composer.cursor, composer.text.len());
     }
 
     #[test]
     fn truncation_uses_character_boundaries() {
         assert_eq!(one_line("αβγδε", 3), "αβγ…");
+    }
+
+    #[test]
+    fn cursor_tracks_wrapping_and_wide_characters() {
+        assert_eq!(cursor_position("abcd", 4), (1, 0));
+        assert_eq!(cursor_position("ab\n界", 4), (1, 2));
+        assert_eq!(cursor_position("abcde", 4), (1, 1));
     }
 
     #[test]
@@ -736,6 +867,40 @@ mod tests {
         terminal.draw(|frame| draw(frame, &app)).unwrap();
         let rendered = terminal.backend().buffer().content();
         assert!(rendered.iter().any(|cell| cell.symbol() == "H"));
+    }
+
+    #[test]
+    fn renders_tiny_terminal_with_resize_guidance() {
+        let session = Session::new(PathBuf::from("/tmp"), "test-model".into());
+        let app = App::new(session, Vec::new());
+        let backend = ratatui::backend::TestBackend::new(20, 5);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let rendered: String = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect();
+        assert!(rendered.contains("Helm"));
+    }
+
+    #[tokio::test]
+    async fn clear_requires_explicit_confirmation() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = SessionStore::new(directory.path().join("sessions"));
+        let mut session = Session::new(directory.path().into(), "test-model".into());
+        session
+            .messages
+            .push(crate::Message::new(Role::User, "keep me"));
+        let mut app = App::new(session, Vec::new());
+        handle_command("/clear", &mut app, &store).await.unwrap();
+        assert_eq!(app.session.messages.len(), 1);
+        handle_command("/clear confirm", &mut app, &store)
+            .await
+            .unwrap();
+        assert!(app.session.messages.is_empty());
     }
 
     #[tokio::test]

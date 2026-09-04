@@ -407,8 +407,11 @@ async fn main() -> Result<()> {
             .await
             .map(|_| ()),
         Command::Chat { resume, plain } => {
-            if plain || !io::stdin().is_terminal() || !io::stdout().is_terminal() {
-                chat(config, cli.workspace, resume).await
+            let interactive = io::stdin().is_terminal() && io::stdout().is_terminal();
+            let full_screen = interactive
+                && std::env::var("TERM").is_ok_and(|term| !term.is_empty() && term != "dumb");
+            if plain || !full_screen {
+                chat(config, cli.workspace, resume, interactive).await
             } else {
                 tui_chat(config, cli.workspace, resume).await
             }
@@ -602,6 +605,7 @@ async fn chat(
     config: Config,
     workspace_arg: Option<PathBuf>,
     resume: Option<String>,
+    interactive: bool,
 ) -> Result<()> {
     let store = SessionStore::default();
     let mut session = if let Some(reference) = resume {
@@ -612,15 +616,19 @@ async fn chat(
             config.model.clone(),
         )
     };
-    let agent = build_agent(&config, session.workspace.clone(), true).await?;
-    eprintln!(
-        "Helm · {} · {}\nType /help for commands.",
-        config.model,
-        session.workspace.display()
-    );
+    let mut agent = None;
+    if interactive {
+        eprintln!(
+            "Helm · {} · {}\nType /help for commands.",
+            config.model,
+            session.workspace.display()
+        );
+    }
     loop {
-        print!("\nhelm> ");
-        io::stdout().flush()?;
+        if interactive {
+            print!("\nhelm> ");
+            io::stdout().flush()?;
+        }
         let mut prompt = String::new();
         if io::stdin().read_line(&mut prompt)? == 0 {
             break;
@@ -644,12 +652,21 @@ async fn chat(
             }
             "/clear" => {
                 session.messages.clear();
+                store.save(&mut session).await?;
                 println!("conversation cleared");
                 continue;
             }
             _ => {}
         }
-        match agent.run(session.messages.clone(), prompt.to_owned()).await {
+        if agent.is_none() {
+            agent = Some(build_agent(&config, session.workspace.clone(), interactive).await?);
+        }
+        match agent
+            .as_ref()
+            .expect("agent initialized")
+            .run(session.messages.clone(), prompt.to_owned())
+            .await
+        {
             Ok(outcome) => {
                 session.messages = outcome.messages;
                 session.usage.input_tokens += outcome.usage.input_tokens;
@@ -659,8 +676,9 @@ async fn chat(
             Err(error) => eprintln!("error: {error:#}"),
         }
     }
-    store.save(&mut session).await?;
-    eprintln!("Session saved as {}", session.id);
+    if interactive && !session.messages.is_empty() {
+        eprintln!("Session saved as {}", session.id);
+    }
     Ok(())
 }
 
