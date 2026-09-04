@@ -60,6 +60,7 @@ struct AppState {
     inner: Arc<RwLock<ControlPlane>>,
     database: Arc<Mutex<Connection>>,
     lease_duration: Duration,
+    task_available: Arc<tokio::sync::Notify>,
 }
 #[derive(Default, Serialize, Deserialize)]
 struct ControlPlane {
@@ -134,6 +135,7 @@ async fn main() -> Result<()> {
         inner: Arc::new(RwLock::new(initial)),
         database: Arc::new(Mutex::new(database)),
         lease_duration: Duration::from_secs(cli.lease_secs),
+        task_available: Arc::new(tokio::sync::Notify::new()),
     };
     spawn_reaper(state.clone(), Duration::from_secs(cli.stale_after_secs));
     let app = Router::new()
@@ -263,6 +265,7 @@ async fn worker_heartbeat(
     helm.status = request.status;
     let response = helm.clone();
     persist(&state, &inner).map_err(internal_error)?;
+    state.task_available.notify_waiters();
     Ok(Json(response))
 }
 
@@ -270,6 +273,21 @@ async fn next_task(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> ApiResult<Option<TaskEnvelope>> {
+    let worker = {
+        let inner = state.inner.read().await;
+        worker_id(&inner, &headers)?
+    };
+    let notified = state.task_available.notified();
+    if !state
+        .inner
+        .read()
+        .await
+        .queues
+        .get(&worker)
+        .is_some_and(|queue| !queue.is_empty())
+    {
+        let _ = tokio::time::timeout(Duration::from_secs(25), notified).await;
+    }
     let mut inner = state.inner.write().await;
     let id = worker_id(&inner, &headers)?;
     let task = inner.queues.entry(id).or_default().pop_front();
@@ -390,6 +408,7 @@ async fn enqueue_task(
     inner.queues.entry(helm_id).or_default().push_back(envelope);
     inner.tasks.insert(id, record.clone());
     persist(&state, &inner).map_err(internal_error)?;
+    state.task_available.notify_waiters();
     Ok(Json(record))
 }
 async fn get_task(State(state): State<AppState>, Path(id): Path<Uuid>) -> ApiResult<TaskRecord> {
@@ -453,6 +472,7 @@ async fn fail_task(
     }
     let response = inner.tasks[&id].clone();
     persist(&state, &inner).map_err(internal_error)?;
+    state.task_available.notify_waiters();
     Ok(Json(response))
 }
 
@@ -650,6 +670,7 @@ fn spawn_reaper(state: AppState, stale_after: Duration) {
             if let Err(error) = persist(&state, &inner) {
                 tracing::error!(%error, "could not persist reaper state");
             }
+            state.task_available.notify_waiters();
         }
     });
 }
@@ -667,6 +688,7 @@ mod tests {
             inner: Arc::new(RwLock::new(ControlPlane::default())),
             database: Arc::new(Mutex::new(database)),
             lease_duration: Duration::from_secs(10),
+            task_available: Arc::new(tokio::sync::Notify::new()),
         };
         persist(&state, &ControlPlane::default()).unwrap();
         assert!(
