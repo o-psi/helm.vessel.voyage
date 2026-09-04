@@ -221,10 +221,11 @@ impl ProcessTool {
                     .try_wait()
                     .map_err(failed)?
                     .map_or_else(|| "running".into(), |s| format!("exited: {s:?}"));
-                let unread = p.output.lock().map_err(failed)?.bytes.len().saturating_sub(
-                    p.cursor
-                        .saturating_sub(p.output.lock().map_err(failed)?.base),
-                );
+                let capture = p.output.lock().map_err(failed)?;
+                let unread = capture
+                    .bytes
+                    .len()
+                    .saturating_sub(p.cursor.saturating_sub(capture.base));
                 Ok(TerminalMetadata {
                     id: *id,
                     name: p.name.clone(),
@@ -702,6 +703,32 @@ mod tests {
             }
         }
         assert!(second.contains("got:hello"));
+        tool.execute(json!({"action":"terminate","id":id}), &ctx)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn live_process_metadata_does_not_deadlock() {
+        let directory = tempfile::tempdir().unwrap();
+        let ctx = context(directory.path());
+        let tool = ProcessTool::default();
+        let started = tool
+            .execute(
+                json!({"action":"start","command":interactive_command()}),
+                &ctx,
+            )
+            .await
+            .unwrap();
+        let id = Uuid::parse_str(started.split_whitespace().last().unwrap()).unwrap();
+
+        let metadata = tokio::time::timeout(Duration::from_secs(1), async { tool.metadata() })
+            .await
+            .expect("metadata must not deadlock")
+            .unwrap();
+        assert_eq!(metadata.len(), 1);
+        assert_eq!(metadata[0].id, id);
+
         tool.execute(json!({"action":"terminate","id":id}), &ctx)
             .await
             .unwrap();
