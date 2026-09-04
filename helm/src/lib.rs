@@ -4,6 +4,7 @@ pub mod model;
 pub mod policy;
 pub mod provider;
 pub mod session;
+pub mod terminal;
 pub mod tools;
 pub mod tui;
 pub mod voyage;

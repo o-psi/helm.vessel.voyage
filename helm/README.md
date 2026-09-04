@@ -72,6 +72,10 @@ compact context, and `Ctrl+E` to export Markdown. `/name TITLE`, `/branch [TITLE
 `/compact [KEEP]`, `/export [PATH]`, and `/clear confirm` provide explicit session operations.
 Long conversations compact automatically while retaining recent turns.
 
+`Ctrl+T` opens the interactive-terminal picker. Once attached, all keyboard and paste
+input belongs exclusively to the selected terminal; detach with `Ctrl+]` without
+stopping its process. See the [direct terminal attachment contract](../docs/terminal-attach.md).
+
 When input or output is redirected, Helm selects the plain interface automatically.
 It also falls back when `TERM` is unset or `dumb`; `helm chat --plain` forces this
 behavior. Redirected EOF exits without contacting a provider or creating an empty

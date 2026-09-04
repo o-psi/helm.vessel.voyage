@@ -552,7 +552,15 @@ async fn tui_chat(
             max_delay: std::time::Duration::from_millis(config.provider_retry_max_ms),
         }),
     );
-    helm::tui::run(agent, store, session, receiver, bridge.sender()).await
+    helm::tui::run(
+        agent,
+        store,
+        session,
+        receiver,
+        bridge.sender(),
+        Arc::new(helm::terminal::NoInteractiveTerminals::default()),
+    )
+    .await
 }
 
 async fn build_tools(config: &Config) -> Result<ToolRegistry> {

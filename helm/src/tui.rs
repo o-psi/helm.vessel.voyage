@@ -30,6 +30,10 @@ use crate::{
     Agent, AgentEvent, EventSink,
     model::Role,
     session::{Session, SessionStore, compact_messages},
+    terminal::{
+        InteractiveTerminals, TerminalColor, TerminalEvent, TerminalId, TerminalSnapshot,
+        TerminalSummary,
+    },
     tools::{ApprovalOutcome, ApprovalRequest as ToolApprovalRequest, Approver},
 };
 
@@ -187,6 +191,11 @@ struct App {
     approval: Option<ApprovalRequest>,
     show_sessions: bool,
     selected_session: usize,
+    terminals: Vec<TerminalSummary>,
+    terminal_picker: bool,
+    selected_terminal: usize,
+    attached_terminal: Option<TerminalId>,
+    terminal_snapshot: Option<TerminalSnapshot>,
     quit: bool,
 }
 
@@ -216,6 +225,11 @@ impl App {
             approval: None,
             show_sessions: false,
             selected_session: 0,
+            terminals: Vec::new(),
+            terminal_picker: false,
+            selected_terminal: 0,
+            attached_terminal: None,
+            terminal_snapshot: None,
             quit: false,
         }
     }
@@ -241,9 +255,12 @@ pub async fn run(
     session: Session,
     mut rx: mpsc::UnboundedReceiver<UiEvent>,
     tx: mpsc::UnboundedSender<UiEvent>,
+    terminals: Arc<dyn InteractiveTerminals>,
 ) -> Result<()> {
     let sessions = store.list().await?;
     let mut app = App::new(session, sessions);
+    refresh_terminals(&mut app, terminals.as_ref()).await;
+    let mut terminal_events = terminals.subscribe();
     let _guard = TerminalGuard::enter().context("failed to initialize terminal")?;
     let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
     terminal.clear()?;
@@ -257,11 +274,21 @@ pub async fn run(
             event = input.next() => {
                 match event {
                     Some(Ok(Event::Key(key))) if key.is_press() => {
-                        handle_key(key, &mut app, &agent, &store, &tx).await?;
+                        handle_key(key, &mut app, &agent, &store, &tx, terminals.as_ref()).await?;
                     }
-                    Some(Ok(Event::Resize(_, _))) => {}
-                    Some(Ok(Event::Paste(text))) if !app.is_running() && app.approval.is_none() && !app.show_sessions => {
-                        app.composer.insert_str(&text.replace("\r\n", "\n").replace('\r', "\n"));
+                    Some(Ok(Event::Resize(columns, rows))) => {
+                        if let Some(id) = app.attached_terminal {
+                            let _ = terminals.resize(id, columns, rows.saturating_sub(1)).await;
+                        }
+                    }
+                    Some(Ok(Event::Paste(text))) if app.approval.is_none() && !app.show_sessions => {
+                        if let Some(id) = app.attached_terminal {
+                            if let Err(error) = terminals.write(id, text.into_bytes()).await {
+                                app.status = format!("Terminal input failed: {error}");
+                            }
+                        } else if !app.is_running() && !app.terminal_picker {
+                            app.composer.insert_str(&text.replace("\r\n", "\n").replace('\r', "\n"));
+                        }
                     }
                     Some(Err(error)) => return Err(error.into()),
                     None => break,
@@ -275,6 +302,17 @@ pub async fn run(
             _ = &mut termination => {
                 app.status = "Terminal closing; cancelling active work".into();
                 app.quit = true;
+            }
+            event = terminal_events.recv() => {
+                match event {
+                    Ok(event) => handle_terminal_event(event, &mut app, terminals.as_ref()).await,
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => refresh_terminals(&mut app, terminals.as_ref()).await,
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                        app.attached_terminal = None;
+                        app.terminal_snapshot = None;
+                        app.status = "Terminal manager disconnected".into();
+                    }
+                }
             }
         }
     }
@@ -358,8 +396,13 @@ async fn handle_ui_event(event: UiEvent, app: &mut App, store: &SessionStore) ->
             app.status = "Cancelled".into();
         }
         UiEvent::Approval(request) => {
-            app.status = "Approval required".into();
-            app.approval = Some(request);
+            if app.attached_terminal.is_some() {
+                let _ = request.response.send(ApprovalOutcome::Unavailable);
+                app.status = "Agent approval denied while direct terminal input is attached".into();
+            } else {
+                app.status = "Approval required".into();
+                app.approval = Some(request);
+            }
         }
         UiEvent::Finished(result) => {
             app.running = None;
@@ -384,6 +427,7 @@ async fn handle_key(
     agent: &Arc<Agent>,
     store: &SessionStore,
     tx: &mpsc::UnboundedSender<UiEvent>,
+    terminals: &dyn InteractiveTerminals,
 ) -> Result<()> {
     if let Some(approval) = app.approval.take() {
         let approved = matches!(key.code, KeyCode::Char('y') | KeyCode::Char('Y'));
@@ -399,6 +443,36 @@ async fn handle_key(
             app.status = if approved { "Approved" } else { "Denied" }.into();
         } else {
             app.approval = Some(approval);
+        }
+        return Ok(());
+    }
+    if let Some(id) = app.attached_terminal {
+        handle_attached_key(id, key, app, terminals).await;
+        return Ok(());
+    }
+    if app.terminal_picker {
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('t') => app.terminal_picker = false,
+            KeyCode::Up => app.selected_terminal = app.selected_terminal.saturating_sub(1),
+            KeyCode::Down => {
+                app.selected_terminal =
+                    (app.selected_terminal + 1).min(app.terminals.len().saturating_sub(1));
+            }
+            KeyCode::Enter => {
+                if let Some(summary) = app.terminals.get(app.selected_terminal) {
+                    let id = summary.id;
+                    match terminals.snapshot(id).await {
+                        Ok(snapshot) => {
+                            app.attached_terminal = Some(id);
+                            app.terminal_snapshot = Some(snapshot);
+                            app.terminal_picker = false;
+                        }
+                        Err(error) => app.status = format!("Cannot attach: {error}"),
+                    }
+                }
+            }
+            KeyCode::Char('r') => refresh_terminals(app, terminals).await,
+            _ => {}
         }
         return Ok(());
     }
@@ -433,6 +507,10 @@ async fn handle_key(
             }
             KeyCode::Char('q') => app.quit = true,
             KeyCode::Char('s') => app.show_sessions = true,
+            KeyCode::Char('t') => {
+                refresh_terminals(app, terminals).await;
+                app.terminal_picker = true;
+            }
             KeyCode::Char('n') if !app.is_running() => {
                 app.session =
                     Session::new(app.session.workspace.clone(), app.session.model.clone());
@@ -513,8 +591,29 @@ async fn handle_key(
     Ok(())
 }
 
+async fn handle_attached_key(
+    id: TerminalId,
+    key: KeyEvent,
+    app: &mut App,
+    terminals: &dyn InteractiveTerminals,
+) {
+    if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char(']') {
+        app.attached_terminal = None;
+        app.terminal_snapshot = None;
+        app.status = "Detached; terminal is still running".into();
+    } else if let Some(bytes) = encode_terminal_key(key)
+        && let Err(error) = terminals.write(id, bytes).await
+    {
+        app.status = format!("Terminal input failed: {error}");
+    }
+}
+
 fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
     let area = frame.area();
+    if app.attached_terminal.is_some() {
+        draw_attached_terminal(frame, area, app);
+        return;
+    }
     if area.width < 32 || area.height < 10 {
         frame.render_widget(
             Paragraph::new("Helm needs a terminal of at least 32×10. Resize the window or use `helm chat --plain`.")
@@ -596,7 +695,7 @@ fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
     );
     frame.render_widget(
         Paragraph::new(format!(
-            "{}  │  ^S sessions  ^N new  ^B branch  ^K compact  ^E export  ^Q quit  /help",
+            "{}  │  ^T terminals  ^S sessions  ^N new  ^B branch  ^K compact  ^E export  ^Q quit",
             app.status
         ))
         .style(Style::default().fg(Color::Gray)),
@@ -612,9 +711,204 @@ fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
     if app.show_sessions {
         draw_sessions(frame, area, app);
     }
+    if app.terminal_picker {
+        draw_terminal_picker(frame, area, app);
+    }
     if let Some(approval) = &app.approval {
         draw_approval(frame, area, approval);
     }
+}
+
+fn draw_attached_terminal(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
+    let chunks = Layout::vertical([Constraint::Length(1), Constraint::Min(1)]).split(area);
+    let (title, state) = app
+        .terminal_snapshot
+        .as_ref()
+        .map(|snapshot| (snapshot.title.as_str(), format!("{:?}", snapshot.state)))
+        .unwrap_or(("loading", "unknown".into()));
+    frame.render_widget(
+        Paragraph::new(format!(
+            " HELM TERMINAL · {title} · {state} · Ctrl+] detach (process keeps running)"
+        ))
+        .style(Style::default().fg(Color::Black).bg(Color::Cyan)),
+        chunks[0],
+    );
+    if let Some(snapshot) = &app.terminal_snapshot {
+        let screen = Text::from(
+            snapshot
+                .cells
+                .iter()
+                .map(|row| {
+                    Line::from(
+                        row.iter()
+                            .map(|cell| {
+                                let mut style = Style::default()
+                                    .fg(terminal_color(cell.foreground))
+                                    .bg(terminal_color(cell.background));
+                                if cell.bold {
+                                    style = style.add_modifier(Modifier::BOLD);
+                                }
+                                if cell.dim {
+                                    style = style.add_modifier(Modifier::DIM);
+                                }
+                                if cell.italic {
+                                    style = style.add_modifier(Modifier::ITALIC);
+                                }
+                                if cell.underlined {
+                                    style = style.add_modifier(Modifier::UNDERLINED);
+                                }
+                                if cell.reversed {
+                                    style = style.add_modifier(Modifier::REVERSED);
+                                }
+                                Span::styled(cell.text.clone(), style)
+                            })
+                            .collect::<Vec<_>>(),
+                    )
+                })
+                .collect::<Vec<_>>(),
+        );
+        frame.render_widget(Paragraph::new(screen), chunks[1]);
+        if let Some((column, row)) = snapshot.cursor {
+            frame.set_cursor_position((
+                chunks[1]
+                    .x
+                    .saturating_add(column)
+                    .min(chunks[1].right().saturating_sub(1)),
+                chunks[1]
+                    .y
+                    .saturating_add(row)
+                    .min(chunks[1].bottom().saturating_sub(1)),
+            ));
+        }
+    } else {
+        frame.render_widget(Paragraph::new("Waiting for terminal screen…"), chunks[1]);
+    }
+}
+
+fn terminal_color(color: TerminalColor) -> Color {
+    match color {
+        TerminalColor::Default => Color::Reset,
+        TerminalColor::Indexed(index) => Color::Indexed(index),
+        TerminalColor::Rgb(red, green, blue) => Color::Rgb(red, green, blue),
+    }
+}
+
+fn draw_terminal_picker(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
+    let popup = centered(area, 80, 70);
+    let items: Vec<_> = app
+        .terminals
+        .iter()
+        .enumerate()
+        .map(|(index, terminal)| {
+            ListItem::new(format!(
+                "{} {}  {}  {:?}",
+                if index == app.selected_terminal {
+                    "▶"
+                } else {
+                    " "
+                },
+                terminal.id,
+                terminal.title,
+                terminal.state
+            ))
+        })
+        .collect();
+    let items = if items.is_empty() {
+        vec![ListItem::new(
+            "No interactive terminals · r refresh · Esc close",
+        )]
+    } else {
+        items
+    };
+    frame.render_widget(Clear, popup);
+    frame.render_widget(
+        List::new(items).block(
+            Block::default()
+                .title(" Terminals · ↑↓ select · Enter attach · r refresh · Esc close ")
+                .borders(Borders::ALL),
+        ),
+        popup,
+    );
+}
+
+async fn refresh_terminals(app: &mut App, terminals: &dyn InteractiveTerminals) {
+    match terminals.list().await {
+        Ok(list) => {
+            app.terminals = list;
+            app.selected_terminal = app
+                .selected_terminal
+                .min(app.terminals.len().saturating_sub(1));
+        }
+        Err(error) => app.status = format!("Cannot list terminals: {error}"),
+    }
+}
+
+async fn handle_terminal_event(
+    event: TerminalEvent,
+    app: &mut App,
+    terminals: &dyn InteractiveTerminals,
+) {
+    let id = match event {
+        TerminalEvent::Changed(id) | TerminalEvent::Added(id) | TerminalEvent::Removed(id) => id,
+    };
+    refresh_terminals(app, terminals).await;
+    if app.attached_terminal == Some(id) {
+        match terminals.snapshot(id).await {
+            Ok(snapshot) => app.terminal_snapshot = Some(snapshot),
+            Err(_) => {
+                app.attached_terminal = None;
+                app.terminal_snapshot = None;
+                app.status = "Attached terminal disappeared".into();
+            }
+        }
+    }
+}
+
+fn encode_terminal_key(key: KeyEvent) -> Option<Vec<u8>> {
+    let mut bytes = Vec::new();
+    if key.modifiers.contains(KeyModifiers::ALT) {
+        bytes.push(0x1b);
+    }
+    match key.code {
+        KeyCode::Char(character) if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            let upper = character.to_ascii_uppercase() as u32;
+            if (64..=95).contains(&upper) {
+                bytes.push((upper - 64) as u8);
+            } else {
+                return None;
+            }
+        }
+        KeyCode::Char(character) => {
+            let mut encoded = [0; 4];
+            bytes.extend_from_slice(character.encode_utf8(&mut encoded).as_bytes());
+        }
+        KeyCode::Enter => bytes.push(b'\r'),
+        KeyCode::Tab => bytes.push(b'\t'),
+        KeyCode::BackTab => bytes.extend_from_slice(b"\x1b[Z"),
+        KeyCode::Backspace => bytes.push(0x7f),
+        KeyCode::Esc => bytes.push(0x1b),
+        KeyCode::Up => bytes.extend_from_slice(b"\x1b[A"),
+        KeyCode::Down => bytes.extend_from_slice(b"\x1b[B"),
+        KeyCode::Right => bytes.extend_from_slice(b"\x1b[C"),
+        KeyCode::Left => bytes.extend_from_slice(b"\x1b[D"),
+        KeyCode::Home => bytes.extend_from_slice(b"\x1b[H"),
+        KeyCode::End => bytes.extend_from_slice(b"\x1b[F"),
+        KeyCode::Delete => bytes.extend_from_slice(b"\x1b[3~"),
+        KeyCode::Insert => bytes.extend_from_slice(b"\x1b[2~"),
+        KeyCode::PageUp => bytes.extend_from_slice(b"\x1b[5~"),
+        KeyCode::PageDown => bytes.extend_from_slice(b"\x1b[6~"),
+        KeyCode::F(number) if (1..=4).contains(&number) => {
+            bytes.extend_from_slice(&[0x1b, b'O', b'P' + number - 1]);
+        }
+        KeyCode::F(number) if (5..=12).contains(&number) => {
+            const CODES: [&[u8]; 8] = [b"15", b"17", b"18", b"19", b"20", b"21", b"23", b"24"];
+            bytes.extend_from_slice(b"\x1b[");
+            bytes.extend_from_slice(CODES[(number - 5) as usize]);
+            bytes.push(b'~');
+        }
+        _ => return None,
+    }
+    Some(bytes)
 }
 
 fn transcript(app: &App) -> Text<'static> {
@@ -828,6 +1122,76 @@ async fn handle_command(command: &str, app: &mut App, store: &SessionStore) -> R
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::terminal::{TerminalCell, TerminalError, TerminalState};
+    use std::sync::Mutex;
+
+    struct FakeTerminals {
+        id: TerminalId,
+        writes: Mutex<Vec<Vec<u8>>>,
+        resizes: Mutex<Vec<(u16, u16)>>,
+        events: tokio::sync::broadcast::Sender<TerminalEvent>,
+    }
+
+    impl FakeTerminals {
+        fn new() -> Self {
+            let (events, _) = tokio::sync::broadcast::channel(8);
+            Self {
+                id: TerminalId(uuid::Uuid::new_v4()),
+                writes: Mutex::new(Vec::new()),
+                resizes: Mutex::new(Vec::new()),
+                events,
+            }
+        }
+    }
+
+    #[async_trait]
+    impl InteractiveTerminals for FakeTerminals {
+        async fn list(&self) -> Result<Vec<TerminalSummary>, TerminalError> {
+            Ok(vec![TerminalSummary {
+                id: self.id,
+                title: "shell".into(),
+                state: TerminalState::Running,
+            }])
+        }
+        async fn snapshot(&self, id: TerminalId) -> Result<TerminalSnapshot, TerminalError> {
+            if id != self.id {
+                return Err(TerminalError::NotFound(id));
+            }
+            Ok(TerminalSnapshot {
+                id,
+                title: "shell".into(),
+                state: TerminalState::Running,
+                revision: 1,
+                cells: vec![vec![TerminalCell {
+                    text: "$ ready".into(),
+                    ..TerminalCell::default()
+                }]],
+                cursor: Some((2, 0)),
+            })
+        }
+        async fn write(&self, id: TerminalId, bytes: Vec<u8>) -> Result<(), TerminalError> {
+            if id != self.id {
+                return Err(TerminalError::NotFound(id));
+            }
+            self.writes.lock().unwrap().push(bytes);
+            Ok(())
+        }
+        async fn resize(
+            &self,
+            id: TerminalId,
+            columns: u16,
+            rows: u16,
+        ) -> Result<(), TerminalError> {
+            if id != self.id {
+                return Err(TerminalError::NotFound(id));
+            }
+            self.resizes.lock().unwrap().push((columns, rows));
+            Ok(())
+        }
+        fn subscribe(&self) -> tokio::sync::broadcast::Receiver<TerminalEvent> {
+            self.events.subscribe()
+        }
+    }
 
     #[test]
     fn composer_edits_utf8_safely() {
@@ -856,6 +1220,86 @@ mod tests {
         assert_eq!(cursor_position("abcd", 4), (1, 0));
         assert_eq!(cursor_position("ab\n界", 4), (1, 2));
         assert_eq!(cursor_position("abcde", 4), (1, 1));
+    }
+
+    #[test]
+    fn encodes_terminal_keys_without_text_transformation() {
+        assert_eq!(
+            encode_terminal_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)),
+            Some(vec![3])
+        );
+        assert_eq!(
+            encode_terminal_key(KeyEvent::new(KeyCode::Char('界'), KeyModifiers::NONE)),
+            Some("界".as_bytes().to_vec())
+        );
+        assert_eq!(
+            encode_terminal_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE)),
+            Some(b"\x1b[A".to_vec())
+        );
+        assert_eq!(
+            encode_terminal_key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::ALT)),
+            Some(b"\x1bx".to_vec())
+        );
+    }
+
+    #[tokio::test]
+    async fn attached_input_is_isolated_and_detach_does_not_close_terminal() {
+        let directory = tempfile::tempdir().unwrap();
+        let session = Session::new(directory.path().into(), "test-model".into());
+        let mut app = App::new(session, Vec::new());
+        let terminals = FakeTerminals::new();
+        app.attached_terminal = Some(terminals.id);
+        app.terminal_snapshot = Some(terminals.snapshot(terminals.id).await.unwrap());
+        let key = KeyEvent::new(KeyCode::Char('p'), KeyModifiers::NONE);
+        handle_attached_key(terminals.id, key, &mut app, &terminals).await;
+        assert_eq!(
+            terminals.writes.lock().unwrap().as_slice(),
+            &[b"p".to_vec()]
+        );
+        assert!(app.composer.text.is_empty());
+        assert!(app.session.messages.is_empty());
+        handle_attached_key(
+            terminals.id,
+            KeyEvent::new(KeyCode::Char(']'), KeyModifiers::CONTROL),
+            &mut app,
+            &terminals,
+        )
+        .await;
+        assert!(app.attached_terminal.is_none());
+        assert_eq!(
+            terminals.writes.lock().unwrap().len(),
+            1,
+            "detach chord must not reach the PTY"
+        );
+        assert_eq!(
+            terminals.list().await.unwrap()[0].state,
+            TerminalState::Running
+        );
+    }
+
+    #[tokio::test]
+    async fn attached_keystrokes_can_never_answer_agent_approvals() {
+        let directory = tempfile::tempdir().unwrap();
+        let session = Session::new(directory.path().into(), "test-model".into());
+        let mut app = App::new(session, Vec::new());
+        app.attached_terminal = Some(TerminalId(uuid::Uuid::new_v4()));
+        let (response, receive) = oneshot::channel();
+        let store = SessionStore::new(directory.path().join("sessions"));
+        handle_ui_event(
+            UiEvent::Approval(ApprovalRequest {
+                id: uuid::Uuid::new_v4(),
+                action: "shell".into(),
+                target: "dangerous".into(),
+                reason: "test".into(),
+                response,
+            }),
+            &mut app,
+            &store,
+        )
+        .await
+        .unwrap();
+        assert_eq!(receive.await.unwrap(), ApprovalOutcome::Unavailable);
+        assert!(app.approval.is_none());
     }
 
     #[test]
