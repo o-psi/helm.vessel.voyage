@@ -828,7 +828,7 @@ mod tests {
     }
     #[cfg(windows)]
     fn interactive_command() -> &'static str {
-        "set /p line=ready&& echo got:%line%"
+        "echo ready&& set /p line=&& call echo got:%%line%%"
     }
     #[cfg(unix)]
     fn long_running_command() -> &'static str {
