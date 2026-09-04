@@ -214,6 +214,8 @@ def main() -> None:
             )
             codex.chmod(0o700)
             (root / "fixture-file.txt").write_text("tool-visible", encoding="utf-8")
+            guidance = root / "AGENTS.md"
+            guidance.write_text("project-guidance-initial-雪", encoding="utf-8")
             config = root / "config.toml"
             config.write_text(
                 "\n".join(
@@ -262,6 +264,9 @@ def main() -> None:
             assert "encrypted-fixture-second" in serialized
             assert "provider_state" in serialized
 
+            assert "project-guidance-initial" not in serialized
+            guidance.write_text("project-guidance-refreshed-雪", encoding="utf-8")
+
             resumed = run_helm(
                 helm,
                 config,
@@ -278,6 +283,9 @@ def main() -> None:
                     f"stdout: {resumed.stdout}\nstderr: {resumed.stderr}"
                 )
             assert "resume-provider-ok" in resumed.stdout, resumed.stdout
+            saved_text = session_path.read_text(encoding="utf-8")
+            assert "project-guidance-initial" not in saved_text
+            assert "project-guidance-refreshed" not in saved_text
             assert not codex_marker.exists(), "native provider attempted to execute codex"
 
             token_path = root / "data" / "helm" / "chatgpt-oauth.json"
@@ -358,6 +366,14 @@ def main() -> None:
             expected_model = (
                 "fixture-subscription" if index == 3 else "fixture-native"
             )
+            wire_text = json.dumps(body, ensure_ascii=False)
+            expected_guidance = (
+                "project-guidance-initial-雪" if index < 2
+                else "project-guidance-refreshed-雪"
+            )
+            assert expected_guidance in wire_text, body
+            if index >= 2:
+                assert "project-guidance-initial" not in wire_text, body
             assert body["model"] == expected_model
             assert body["stream"] is True
             assert body["store"] is False
@@ -382,3 +398,7 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+    from no_turn_limit import run_no_turn_limit
+
+    repository = Path(__file__).resolve().parents[2]
+    run_no_turn_limit(Path(os.environ.get("HELM_BIN", repository / "target/debug/helm")).resolve())

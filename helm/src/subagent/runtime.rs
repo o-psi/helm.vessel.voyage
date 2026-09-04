@@ -133,6 +133,8 @@ struct Inner {
     sequence: AtomicU64,
     events: broadcast::Sender<SubagentEvent>,
     store: Option<AgentTreeStore>,
+    mutations: Mutex<()>,
+    archive: RwLock<BTreeMap<AgentId, super::ArchivedAgent>>,
 }
 struct Control {
     record: RwLock<AgentRecord>,
@@ -189,6 +191,8 @@ impl SubagentRuntime {
                 sequence: AtomicU64::new(0),
                 events,
                 store,
+                mutations: Mutex::new(()),
+                archive: RwLock::new(BTreeMap::new()),
             }),
         })
     }
@@ -204,7 +208,7 @@ impl SubagentRuntime {
             .await
             .map_err(|error| RuntimeError::Persistence(error.to_string()))?;
         store
-            .prune_terminal_leaves(limits.max_agents, None)
+            .prune_terminal_leaves(0, None)
             .await
             .map_err(|error| RuntimeError::Persistence(error.to_string()))?;
         let records = store
@@ -245,9 +249,67 @@ impl SubagentRuntime {
             .collect()
     }
     pub async fn get(&self, id: AgentId) -> Result<AgentRecord, RuntimeError> {
+        match self.get_retained(id).await {
+            Ok(record) => Ok(record),
+            Err(RuntimeError::Unknown(_)) => self
+                .archived(id)
+                .await?
+                .map(|value| value.record)
+                .ok_or(RuntimeError::Unknown(id)),
+            Err(error) => Err(error),
+        }
+    }
+    pub async fn is_archived(&self, id: AgentId) -> Result<bool, RuntimeError> {
+        if self.inner.agents.read().await.contains_key(&id) {
+            return Ok(false);
+        }
+        Ok(self.archived(id).await?.is_some())
+    }
+    pub async fn get_retained(&self, id: AgentId) -> Result<AgentRecord, RuntimeError> {
         let c = self.control(id).await?;
         let record = c.record.read().await.clone();
         Ok(record)
+    }
+    async fn archived(&self, id: AgentId) -> Result<Option<super::ArchivedAgent>, RuntimeError> {
+        if let Some(store) = &self.inner.store {
+            store
+                .get_archived(id)
+                .await
+                .map_err(|e| RuntimeError::Persistence(e.to_string()))
+        } else {
+            Ok(self.inner.archive.read().await.get(&id).cloned())
+        }
+    }
+    pub async fn list_archived(
+        &self,
+        after: Option<AgentId>,
+        limit: usize,
+    ) -> Result<super::ArchivePage, RuntimeError> {
+        super::ArchivePage::validate_limit(limit)
+            .map_err(|e| RuntimeError::Invalid(e.to_string()))?;
+        if let Some(store) = &self.inner.store {
+            return store
+                .list_archived(after, limit)
+                .await
+                .map_err(|e| RuntimeError::Persistence(e.to_string()));
+        }
+        let archive = self.inner.archive.read().await;
+        let mut records = archive
+            .iter()
+            .filter(|(id, _)| after.is_none_or(|cursor| **id > cursor));
+        let agents: Vec<_> = records
+            .by_ref()
+            .take(limit)
+            .map(|(_, value)| value.clone().into())
+            .collect();
+        let next_after = if records.next().is_some() {
+            agents
+                .last()
+                .map(|record: &super::archive::ArchiveSummary| record.id)
+        } else {
+            None
+        };
+        Ok(super::ArchivePage { agents, next_after })
     }
     pub async fn list(&self) -> Vec<AgentRecord> {
         let controls: Vec<_> = self.inner.agents.read().await.values().cloned().collect();
@@ -267,13 +329,14 @@ impl SubagentRuntime {
     }
 
     pub async fn spawn(&self, request: SpawnRequest) -> Result<AgentId, RuntimeError> {
+        let _mutation = self.inner.mutations.lock().await;
         if request.task.trim().is_empty() || request.name.trim().is_empty() {
             return Err(RuntimeError::Invalid(
                 "name and task cannot be empty".into(),
             ));
         }
         if let Some(parent) = request.parent_id {
-            let parent_record = self.get(parent).await?;
+            let parent_record = self.get_retained(parent).await?;
             parent_record
                 .policy
                 .validate_child(&request.policy)
@@ -291,7 +354,7 @@ impl SubagentRuntime {
         if let Some(parent) = request.parent_id {
             let max_children = agents
                 .get(&parent)
-                .expect("pending spawn parent is protected from history pruning")
+                .ok_or(RuntimeError::Unknown(parent))?
                 .record
                 .read()
                 .await
@@ -364,6 +427,7 @@ impl SubagentRuntime {
         for record in records {
             tree.agents.insert(record.id, record);
         }
+        let original = tree.clone();
         let removable = tree.prune_terminal_leaves(max_records, protected);
         if removable.is_empty() {
             return Ok(());
@@ -374,6 +438,10 @@ impl SubagentRuntime {
                 .await
                 .map_err(|error| RuntimeError::Persistence(error.to_string()))?
         } else {
+            let mut archive = self.inner.archive.write().await;
+            for id in &removable {
+                archive.insert(*id, super::ArchivedAgent::new(original.agents[id].clone()));
+            }
             removable
         };
         let mut agents = self.inner.agents.write().await;
@@ -435,7 +503,13 @@ impl SubagentRuntime {
     }
 
     pub async fn wait(&self, id: AgentId) -> Result<Result<SubagentResult, String>, RuntimeError> {
-        let c = self.control(id).await?;
+        let c = match self.control(id).await {
+            Ok(control) => control,
+            Err(RuntimeError::Unknown(_)) => {
+                return terminal_outcome(&self.get(id).await?).ok_or(RuntimeError::Unknown(id));
+            }
+            Err(error) => return Err(error),
+        };
         let mut rx = c.outcome.subscribe();
         loop {
             if let Some(value) = rx.borrow().clone() {
@@ -447,7 +521,11 @@ impl SubagentRuntime {
         }
     }
     pub async fn cancel(&self, id: AgentId) -> Result<(), RuntimeError> {
-        let c = self.control(id).await?;
+        let c = match self.control(id).await {
+            Ok(c) => c,
+            Err(RuntimeError::Unknown(_)) if self.archived(id).await?.is_some() => return Ok(()),
+            Err(error) => return Err(error),
+        };
         if !c.record.read().await.status.is_terminal() {
             c.cancel.cancel();
         }
@@ -463,8 +541,27 @@ impl SubagentRuntime {
         }
         Ok(())
     }
+    pub(crate) async fn worktree_record(&self, id: AgentId) -> Result<AgentRecord, RuntimeError> {
+        let record = self.get_retained(id).await?;
+        if self.archived(id).await?.is_some() || !record.status.is_terminal() {
+            return Err(RuntimeError::Invalid("worktree mutation requires a retained terminal agent with no archive transaction pending".into()));
+        }
+        Ok(record)
+    }
+    pub(crate) async fn mutation_guard(&self) -> tokio::sync::MutexGuard<'_, ()> {
+        self.inner.mutations.lock().await
+    }
     pub async fn clear_worktree(&self, id: AgentId) -> Result<(), RuntimeError> {
+        let _mutation = self.mutation_guard().await;
+        self.clear_worktree_locked(id).await
+    }
+    pub(crate) async fn clear_worktree_locked(&self, id: AgentId) -> Result<(), RuntimeError> {
         let control = self.control(id).await?;
+        if self.archived(id).await?.is_some() {
+            return Err(RuntimeError::Invalid(
+                "agent archive already exists; retained evidence cannot be changed".into(),
+            ));
+        }
         {
             let mut record = control.record.write().await;
             if !record.status.is_terminal() {
@@ -496,7 +593,10 @@ impl SubagentRuntime {
         message: impl Into<String>,
     ) -> Result<AgentId, RuntimeError> {
         let message = message.into();
-        let record = self.get(id).await?;
+        let record = self.get_retained(id).await.map_err(|error| match error {
+            RuntimeError::Unknown(_) => RuntimeError::Invalid("agent is archived or unknown; use spawn for new work and reference its original ID".into()),
+            other => other,
+        })?;
         if !record.status.is_terminal() {
             self.send(
                 id,
@@ -534,7 +634,13 @@ impl SubagentRuntime {
         message: InboxMessage,
         event: SubagentEventKind,
     ) -> Result<(), RuntimeError> {
-        let c = self.control(id).await?;
+        let c = match self.control(id).await {
+            Ok(c) => c,
+            Err(RuntimeError::Unknown(_)) if self.archived(id).await?.is_some() => {
+                return Err(RuntimeError::Terminal(id));
+            }
+            Err(error) => return Err(error),
+        };
         if c.record.read().await.status.is_terminal() {
             return Err(RuntimeError::Terminal(id));
         }
@@ -555,8 +661,12 @@ impl SubagentRuntime {
             .ok_or(RuntimeError::Unknown(id))
     }
     async fn record_progress(&self, id: AgentId, text: String) {
+        let _mutation = self.inner.mutations.lock().await;
         if let Ok(c) = self.control(id).await {
             let mut r = c.record.write().await;
+            if r.status.is_terminal() {
+                return;
+            }
             r.recent_progress.push(text.clone());
             if r.recent_progress.len() > 20 {
                 r.recent_progress.remove(0);
@@ -568,6 +678,7 @@ impl SubagentRuntime {
         }
     }
     async fn finish_completed(&self, id: AgentId, c: &Control, value: SubagentResult) {
+        let _mutation = self.inner.mutations.lock().await;
         {
             let mut r = c.record.write().await;
             if r.status.is_terminal() {
@@ -579,11 +690,18 @@ impl SubagentRuntime {
             r.updated_at = Utc::now();
         }
         self.persist(c).await;
-        c.outcome.send_replace(Some(Ok(value.clone())));
-        self.emit(id, SubagentEventKind::Completed { result: value })
-            .await;
+        self.emit(
+            id,
+            SubagentEventKind::Completed {
+                result: value.clone(),
+            },
+        )
+        .await;
+        self.archive_finished().await;
+        c.outcome.send_replace(Some(Ok(value)));
     }
     async fn finish_failed(&self, id: AgentId, c: &Control, error: String) {
+        let _mutation = self.inner.mutations.lock().await;
         {
             let mut r = c.record.write().await;
             if r.status.is_terminal() {
@@ -595,25 +713,36 @@ impl SubagentRuntime {
             r.updated_at = Utc::now();
         }
         self.persist(c).await;
-        c.outcome.send_replace(Some(Err(error.clone())));
-        self.emit(id, SubagentEventKind::Failed { error }).await;
+        self.emit(
+            id,
+            SubagentEventKind::Failed {
+                error: error.clone(),
+            },
+        )
+        .await;
+        self.archive_finished().await;
+        c.outcome.send_replace(Some(Err(error)));
     }
     async fn finish_cancelled(&self, id: AgentId, c: &Control) {
+        let _mutation = self.inner.mutations.lock().await;
         {
             let mut r = c.record.write().await;
             if r.status.is_terminal() {
                 return;
             }
             r.status = AgentStatus::Cancelled;
+            r.error = Some("cancelled".into());
             r.finished_at = Some(Utc::now());
             r.updated_at = Utc::now();
         }
         self.persist(c).await;
         let error = "cancelled".to_string();
-        c.outcome.send_replace(Some(Err(error)));
         self.emit(id, SubagentEventKind::Cancelled).await;
+        self.archive_finished().await;
+        c.outcome.send_replace(Some(Err(error)));
     }
     async fn finish_timed_out(&self, id: AgentId, c: &Control) {
+        let _mutation = self.inner.mutations.lock().await;
         {
             let mut r = c.record.write().await;
             if r.status.is_terminal() {
@@ -625,9 +754,15 @@ impl SubagentRuntime {
             r.updated_at = Utc::now();
         }
         self.persist(c).await;
+        self.emit(id, SubagentEventKind::TimedOut).await;
+        self.archive_finished().await;
         c.outcome
             .send_replace(Some(Err("runtime budget exhausted".into())));
-        self.emit(id, SubagentEventKind::TimedOut).await;
+    }
+    async fn archive_finished(&self) {
+        if let Err(error) = self.prune_terminal_history(0, None).await {
+            tracing::error!(%error, "could not archive finished subagents; records remain retained");
+        }
     }
     async fn persist(&self, c: &Control) {
         if let Some(store) = &self.inner.store {
@@ -704,7 +839,6 @@ mod tests {
     }
     fn budget() -> AgentBudget {
         AgentBudget {
-            max_turns: 10,
             max_tokens: 1000,
             max_runtime_secs: 60,
             max_children: 8,
@@ -831,9 +965,14 @@ mod tests {
 
         let third = runtime.spawn(request("third")).await.unwrap();
         let retained = runtime.list().await;
-        assert_eq!(retained.len(), 2);
+        assert_eq!(retained.len(), 1);
         assert!(!retained.iter().any(|record| record.id == first));
-        assert!(retained.iter().any(|record| record.id == second));
+        assert!(!retained.iter().any(|record| record.id == second));
+        assert_eq!(runtime.wait(first).await.unwrap().unwrap().summary, "done");
+        assert_eq!(
+            runtime.list_archived(None, 20).await.unwrap().agents.len(),
+            2
+        );
         assert!(retained.iter().any(|record| record.id == third));
         runtime.cancel(third).await.unwrap();
     }
@@ -860,7 +999,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn completed_agents_accept_follow_up_as_linked_execution() {
+    async fn archived_agents_require_fresh_spawn_for_new_work() {
         let executor = Arc::new(GateExecutor::new());
         let runtime =
             SubagentRuntime::new(executor.clone(), RuntimeLimits::default(), None).unwrap();
@@ -874,14 +1013,21 @@ mod tests {
         .unwrap();
         executor.gate.notify_one();
         runtime.wait(parent).await.unwrap().unwrap();
-        let child = runtime
-            .follow_up(parent, "continue the work")
-            .await
-            .unwrap();
-        assert_ne!(child, parent);
-        assert_eq!(runtime.get(child).await.unwrap().parent_id, Some(parent));
-        executor.gate.notify_one();
-        runtime.wait(child).await.unwrap().unwrap();
+        assert!(matches!(
+            runtime.follow_up(parent, "continue the work").await,
+            Err(RuntimeError::Invalid(_))
+        ));
+        let mut child = request("invalid-child");
+        child.parent_id = Some(parent);
+        assert_eq!(
+            runtime.spawn(child).await.unwrap_err(),
+            RuntimeError::Unknown(parent)
+        );
+        assert!(runtime.list().await.is_empty());
+        assert_eq!(
+            runtime.get(parent).await.unwrap().result.as_deref(),
+            Some("done")
+        );
     }
 
     #[tokio::test]
@@ -945,7 +1091,141 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(reopened.list().await.len(), 1);
+        assert!(reopened.list().await.is_empty());
+        assert!(reopened.is_archived(id).await.unwrap());
         assert_eq!(reopened.wait(id).await.unwrap().unwrap().summary, "done");
+    }
+    struct ImmediateExecutor;
+    #[async_trait]
+    impl SubagentExecutor for ImmediateExecutor {
+        async fn execute(&self, context: ExecutionContext) -> Result<SubagentResult, String> {
+            if context.task == "fail" {
+                Err("expected failure".into())
+            } else {
+                Ok(SubagentResult {
+                    summary: context.task,
+                })
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn concurrent_completions_archive_without_losing_waiters_or_records() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = AgentTreeStore::new(directory.path().join("agents.json"));
+        let runtime = SubagentRuntime::new_persistent(
+            Arc::new(ImmediateExecutor),
+            RuntimeLimits::default(),
+            store.clone(),
+        )
+        .await
+        .unwrap();
+        let mut handles = Vec::new();
+        for i in 0..24 {
+            let runtime = runtime.clone();
+            handles.push(tokio::spawn(async move {
+                let mut item = request(&format!("child-{i}"));
+                item.task = if i % 2 == 0 {
+                    "fail".into()
+                } else {
+                    format!("result-{i}")
+                };
+                let id = runtime.spawn(item).await.unwrap();
+                let outcome = runtime.wait(id).await.unwrap();
+                (id, outcome)
+            }));
+        }
+        let mut expected = Vec::new();
+        for handle in handles {
+            expected.push(handle.await.unwrap());
+        }
+        // Synchronize with archival when a late waiter read the finished record directly.
+        {
+            let _guard = runtime.mutation_guard().await;
+        }
+        assert!(runtime.list().await.is_empty());
+        assert_eq!(
+            runtime.list_archived(None, 100).await.unwrap().agents.len(),
+            24
+        );
+        let reopened = SubagentRuntime::new_persistent(
+            Arc::new(ImmediateExecutor),
+            RuntimeLimits::default(),
+            store,
+        )
+        .await
+        .unwrap();
+        for (id, outcome) in expected {
+            assert_eq!(reopened.wait(id).await.unwrap(), outcome);
+            assert!(reopened.is_archived(id).await.unwrap());
+        }
+        assert_eq!(
+            reopened
+                .wait(AgentId::new())
+                .await
+                .unwrap_err()
+                .to_string()
+                .split_whitespace()
+                .next(),
+            Some("unknown")
+        );
+    }
+
+    #[tokio::test]
+    async fn auto_archive_preserves_live_ancestry_until_tree_settles() {
+        let executor = Arc::new(GateExecutor::new());
+        let runtime = SubagentRuntime::new(executor, RuntimeLimits::default(), None).unwrap();
+        let parent = runtime.spawn(request("parent")).await.unwrap();
+        let mut child_request = request("child");
+        child_request.parent_id = Some(parent);
+        let child = runtime.spawn(child_request).await.unwrap();
+        runtime.send_message(child, "child evidence").await.unwrap();
+        assert_eq!(
+            runtime.wait(child).await.unwrap().unwrap().summary,
+            "child evidence"
+        );
+        assert!(!runtime.is_archived(child).await.unwrap());
+        assert_eq!(runtime.list().await.len(), 2);
+        runtime.cancel(parent).await.unwrap();
+        assert!(runtime.wait(parent).await.unwrap().is_err());
+        assert!(runtime.list().await.is_empty());
+        assert_eq!(runtime.get(child).await.unwrap().parent_id, Some(parent));
+        assert_eq!(
+            runtime.wait(child).await.unwrap().unwrap().summary,
+            "child evidence"
+        );
+    }
+
+    #[tokio::test]
+    async fn archive_failure_keeps_finished_evidence_and_capacity_retry_is_safe() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("agents.json");
+        let runtime = SubagentRuntime::new_persistent(
+            Arc::new(ImmediateExecutor),
+            RuntimeLimits {
+                max_agents: 1,
+                ..RuntimeLimits::default()
+            },
+            AgentTreeStore::new(path.clone()),
+        )
+        .await
+        .unwrap();
+        std::fs::write(path.with_extension("archive"), "blocked").unwrap();
+        let first = runtime.spawn(request("first")).await.unwrap();
+        assert!(runtime.wait(first).await.unwrap().is_ok());
+        assert_eq!(runtime.list().await.len(), 1);
+        assert!(matches!(
+            runtime.spawn(request("second")).await,
+            Err(RuntimeError::Persistence(_))
+        ));
+        assert_eq!(
+            runtime.get(first).await.unwrap().result.as_deref(),
+            Some("task")
+        );
+        std::fs::remove_file(path.with_extension("archive")).unwrap();
+        let second = runtime.spawn(request("second")).await.unwrap();
+        runtime.wait(second).await.unwrap().unwrap();
+        assert!(runtime.is_archived(first).await.unwrap());
+        assert_eq!(runtime.wait(first).await.unwrap().unwrap().summary, "task");
     }
 }

@@ -62,3 +62,11 @@ instructions as conversation history. See [Runtime guidance](docs/runtime-guidan
 Assistant responses use safe, streaming-aware Markdown presentation without changing the canonical
 session text. See [Markdown rendering](docs/markdown-rendering.md) for syntax, fallback, and terminal
 safety behavior.
+
+## Planned Vessel session management
+
+The agreed [Vessel-managed session design](docs/vessel-session-management.md) specifies
+`helm attach VESSEL_URL JOIN_KEY`, outbound interactive control, explicit sharing,
+and phased service/approval support. These are planned capabilities, not current
+CLI commands; existing pairing and task interfaces remain unchanged. Delivery is
+tracked in [#77](https://github.com/o-psi/voyage/issues/77).

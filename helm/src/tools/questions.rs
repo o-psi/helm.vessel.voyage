@@ -365,7 +365,6 @@ mod tests {
                 Arc::new(crate::agent::SilentSink),
                 "fixture".into(),
                 "Ask for clarification".into(),
-                4,
                 1024,
                 None,
             );

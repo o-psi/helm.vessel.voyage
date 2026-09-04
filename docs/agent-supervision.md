@@ -7,10 +7,12 @@ conversation to open it. If a direct terminal is attached, detach with `Ctrl+T`
 
 The tree shows each retained agent's short ID, explicit state, elapsed time, task,
 hierarchy, and latest progress. Its header and refresh status distinguish active
-agents from retained terminal history. Terminal leaves are retired oldest-first as
-needed so the total stays within `subagent_max_agents`; active agents and ancestors
-required by retained children are never pruned, nor are completed descendants of an
-active agent. The selected row remains visible as the tree grows. `Enter`
+agents from retained terminal history. Finished terminal leaves archive automatically;
+active agents and ancestors required by retained children stay retained, as do
+completed descendants of an active agent until that tree settles. Archived records
+consume no `subagent_max_agents` slots. Models can browse them with `subagent` action
+`archive` and retrieve their original IDs with `status` or `wait`; see
+[archive behavior and retention](subagents.md#automatic-archive). The selected row remains visible as the tree grows. `Enter`
 opens the complete agent record, including parent, worktree, recent progress,
 sequenced events, result, and error. `PageUp` and `PageDown` scroll that record.
 The layout falls back to Helm's resize guidance below 32 columns by 10 rows.
@@ -18,7 +20,7 @@ The layout falls back to Helm's resize guidance below 32 columns by 10 rows.
 Controls in tree and inspection views:
 
 - `m` composes a message for the selected agent.
-- `f` composes a follow-up task. `Alt+Enter` inserts a newline and `Enter` sends.
+- `f` composes a follow-up task. `Shift+Enter` inserts a newline and `Enter` sends.
 - `c`, then `c` again, requests cancellation. Terminal agents cannot be cancelled.
 - `r` refreshes the snapshot and, while inspecting, its event history.
 - `Esc` returns from composer to inspection, inspection to tree, and tree to chat.

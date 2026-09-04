@@ -71,11 +71,17 @@
     "expect_output": ["completed"]
   },
   {
+    "id": "automatic-project-guidance",
+    "category": "research",
+    "prompt": "Without calling any tools, report the workspace verification phrase from the project instructions already in your context. If none were supplied, say they are missing.",
+    "seed_files": {"AGENTS.md": "# Project instructions\nThe workspace verification phrase is guidance-loaded-cobalt. When asked, report that exact phrase.\n"},
+    "expect_output": ["guidance-loaded-cobalt"]
+  },
+  {
     "id": "questions-unavailable-no-invented-answer",
     "category": "research",
     "prompt": "Use the questions tool to ask me which output format I want, offering JSON and Markdown. If interactive questions are unavailable, say exactly 'awaiting format choice' and do not choose a format or create files.",
-    "expect_output": [
-      "awaiting format choice"
-    ]
+    "expect_output": ["awaiting format choice"]
   }
+
 ]

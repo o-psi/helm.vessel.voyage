@@ -45,6 +45,7 @@ struct State {
     turn_id: Option<String>,
     pending_tool: Option<PendingTool>,
     active: bool,
+    system_instructions: Option<String>,
 }
 struct PendingTool {
     request_id: Value,
@@ -79,6 +80,7 @@ impl CodexSubscriptionProvider {
                 turn_id: None,
                 pending_tool: None,
                 active: false,
+                system_instructions: None,
             })),
             program,
             args,
@@ -208,14 +210,22 @@ impl Provider for CodexSubscriptionProvider {
             if state.client.is_none() { state.client=Some(AppClient::spawn(&program,&args).await?); }
             let client=state.client.as_ref().expect("client initialized").clone();
             let mut startup_guard=StartupGuard { client:client.clone(),cancelled:cancelled.clone(),armed:true };
+            let system=request.messages.iter().filter(|m|m.role==Role::System).map(|m|m.content.as_str()).collect::<Vec<_>>().join("\n\n");
+            // Thread instructions are immutable in the compatibility bridge. Rebuild only
+            // between completed turns, replaying canonical history into the new thread.
+            if !state.active && state.pending_tool.is_none()
+                && state.system_instructions.as_ref().is_some_and(|old| old != &system) {
+                state.thread_id=None;
+                state.turn_id=None;
+            }
             if state.thread_id.is_none() {
                 if !state.initialized { client.initialize().await?; state.initialized=true; }
                 let tools=request.tools.iter().map(|tool|json!({"type":"function","name":tool.name,"description":tool.description,"inputSchema":tool.input_schema,"deferLoading":false})).collect::<Vec<_>>();
-                let system=request.messages.iter().filter(|m|m.role==Role::System).map(|m|m.content.as_str()).collect::<Vec<_>>().join("\n\n");
                 let tool_names=request.tools.iter().map(|tool|tool.name.as_str()).collect::<Vec<_>>().join(", ");
                 let developer_instructions=format!("You are the model inside Helm, not the Codex host around it. Never use or claim built-in command, filesystem, web, MCP, app, plugin, skill, collaboration, image, document, or patch capabilities. Use only client-provided dynamic tools; Helm enforces all policy and executes every action. The exact available call names are: {tool_names}. If asked about tools, answer from that list only.");
                 let result=client.request("thread/start",json!({"cwd":workspace,"model":request.model,"approvalPolicy":"never","sandbox":"read-only","ephemeral":true,"baseInstructions":system,"developerInstructions":developer_instructions,"dynamicTools":tools})).await?;
                 state.thread_id=Some(result.pointer("/result/thread/id").and_then(Value::as_str).map(str::to_owned).ok_or_else(||ProviderError::InvalidResponse("thread/start omitted result.thread.id".into()))?);
+                state.system_instructions=Some(system);
             }
             if let Some(pending)=state.pending_tool.take() {
                 let message=request.messages.iter().rev().find(|m|m.role==Role::Tool&&m.tool_call_id.as_deref()==Some(&pending.call_id)).ok_or_else(||ProviderError::InvalidResponse(format!("missing Helm result for dynamic tool {}",pending.call_id)))?;
@@ -593,6 +603,9 @@ mod tests {
         assert_eq!(first.message.tool_calls[0].name, "read_file");
         drop(stream);
         let mut messages = request.messages;
+        // A library caller can change guidance while a tool reply is pending.
+        // The thread must keep tracking what was actually installed, not this value.
+        messages[0].content = "deferred-guidance".into();
         messages.push(first.message);
         messages.push(Message::tool_result("c1", "file", true));
         let mut stream = provider
@@ -609,10 +622,17 @@ mod tests {
         assert_eq!(response.message.content, "done");
         assert_eq!(response.usage.input_tokens, 4);
         drop(stream);
+        assert_eq!(
+            provider.state.lock().await.system_instructions.as_deref(),
+            Some("rules")
+        );
         let mut stream = provider
             .stream(ModelRequest {
                 model: "test".into(),
-                messages: vec![Message::new(Role::User, "next")],
+                messages: vec![
+                    Message::new(Role::System, "rules"),
+                    Message::new(Role::User, "next"),
+                ],
                 tools,
                 temperature: None,
                 max_tokens: None,
@@ -622,6 +642,48 @@ mod tests {
         let again = completed(&mut stream).await;
         assert_eq!(again.message.content, "again");
     }
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn changed_instructions_start_a_new_thread_with_history() {
+        let script = r#"
+read init; echo '{"id":1,"result":{}}'
+read initialized
+read thread
+case "$thread" in *old-guidance*) ;; *) exit 1;; esac
+echo '{"id":2,"result":{"thread":{"id":"th1"}}}'
+read turn; echo '{"id":3,"result":{"turn":{"id":"tu1"}}}'
+echo '{"method":"turn/completed","params":{"threadId":"th1","turn":{"id":"tu1","status":"completed"}}}'
+read thread
+case "$thread" in *thread/start*new-guidance*) ;; *) exit 2;; esac
+echo '{"id":4,"result":{"thread":{"id":"th2"}}}'
+read turn
+case "$turn" in *original-question*follow-up*) ;; *) exit 3;; esac
+echo '{"id":5,"result":{"turn":{"id":"tu2"}}}'
+echo '{"method":"item/agentMessage/delta","params":{"threadId":"th2","turnId":"tu2","delta":"refreshed"}}'
+echo '{"method":"turn/completed","params":{"threadId":"th2","turn":{"id":"tu2","status":"completed"}}}'
+"#;
+        let provider = CodexSubscriptionProvider::with_command(
+            "sh".into(),
+            vec!["-c".into(), script.into()],
+            PathBuf::from("/tmp"),
+        );
+        let mut request = ModelRequest {
+            model: "test".into(),
+            messages: vec![
+                Message::new(Role::System, "old-guidance"),
+                Message::new(Role::User, "original-question"),
+            ],
+            tools: vec![],
+            temperature: None,
+            max_tokens: None,
+        };
+        provider.complete(request.clone()).await.unwrap();
+        request.messages[0].content = "new-guidance".into();
+        request.messages.push(Message::new(Role::User, "follow-up"));
+        let response = provider.complete(request).await.unwrap();
+        assert_eq!(response.message.content, "refreshed");
+    }
+
     #[tokio::test]
     async fn discovers_models_then_reuses_initialized_client_for_a_turn() {
         let script = r#"read init; echo '{"id":1,"result":{"userAgent":"fake","platformFamily":"unix","platformOs":"linux","codexHome":"/tmp"}}'; read initialized; read models; echo '{"id":2,"result":{"data":[{"id":"catalog-id","model":"model-a","displayName":"Model A","description":"A model","hidden":false,"isDefault":true,"defaultReasoningEffort":"medium","supportedReasoningEfforts":[{"reasoningEffort":"low","description":"fast"}],"inputModalities":["text"]}],"nextCursor":null}}'; read thread; echo '{"id":3,"result":{"thread":{"id":"th1"}}}'; read turn; echo '{"id":4,"result":{"turn":{"id":"tu1","status":"inProgress","items":[]}}}'; echo '{"method":"item/agentMessage/delta","params":{"threadId":"th1","turnId":"tu1","itemId":"i","delta":"ok"}}'; echo '{"method":"turn/completed","params":{"threadId":"th1","turn":{"id":"tu1","status":"completed","items":[]}}}'"#;

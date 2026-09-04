@@ -55,6 +55,12 @@ enum Args {
         #[serde(default)]
         parent_id: Option<Uuid>,
     },
+    Archive {
+        #[serde(default)]
+        after: Option<Uuid>,
+        #[serde(default = "archive_limit")]
+        limit: usize,
+    },
     Wait {
         id: Uuid,
     },
@@ -92,12 +98,16 @@ enum Args {
     },
 }
 
+fn archive_limit() -> usize {
+    20
+}
+
 #[async_trait]
 impl Tool for SubagentTool {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
-        name:"subagent".into(), description:"Spawn and supervise bounded background Helm agents. Spawn independent agents before waiting. Set worktree=true for isolated Git coding work. Worktree commit, integration, and cleanup are guarded and refuse dirty or conflicting changes. Actions: spawn, status, list, wait, wait_many, cancel, message, follow_up, worktree_status, worktree_conflicts, commit, integrate, cleanup.".into(),
-        input_schema:json!({"type":"object","required":["action"],"properties":{"action":{"enum":["spawn","status","list","wait","wait_many","cancel","message","follow_up","worktree_status","worktree_conflicts","commit","integrate","cleanup"]},"id":{"type":"string","format":"uuid"},"ids":{"type":"array","items":{"type":"string","format":"uuid"},"minItems":1},"other_id":{"type":"string","format":"uuid"},"parent_id":{"type":"string","format":"uuid"},"name":{"type":"string"},"task":{"type":"string"},"message":{"type":"string"},"worktree":{"type":"boolean"},"target":{"type":"string"}},"additionalProperties":false}),
+        name:"subagent".into(), description:"Spawn and supervise bounded background Helm agents. Spawn independent agents before waiting. Set worktree=true for isolated Git coding work. Worktree commit, integration, and cleanup are guarded and refuse dirty or conflicting changes. Finished agents archive automatically. Use archive (after/limit pagination) to find old IDs, then status or wait to read their results. Archived records cannot be restarted; use spawn for new work. Actions: spawn, status, list, archive, wait, wait_many, cancel, message, follow_up, worktree_status, worktree_conflicts, commit, integrate, cleanup.".into(),
+        input_schema:json!({"type":"object","required":["action"],"properties":{"action":{"enum":["spawn","status","list","archive","wait","wait_many","cancel","message","follow_up","worktree_status","worktree_conflicts","commit","integrate","cleanup"]},"id":{"type":"string","format":"uuid"},"ids":{"type":"array","items":{"type":"string","format":"uuid"},"minItems":1},"other_id":{"type":"string","format":"uuid"},"parent_id":{"type":"string","format":"uuid"},"after":{"type":"string","format":"uuid"},"limit":{"type":"integer","minimum":1,"maximum":100},"name":{"type":"string"},"task":{"type":"string"},"message":{"type":"string"},"worktree":{"type":"boolean"},"target":{"type":"string"}},"additionalProperties":false}),
     }
     }
     async fn execute(&self, arguments: Value, context: &ToolContext) -> Result<String, ToolError> {
@@ -145,13 +155,28 @@ impl Tool for SubagentTool {
                 json!({"id":id,"status":"queued"})
             }
             Args::Status { id } => {
-                serde_json::to_value(self.runtime.get(AgentId(id)).await.map_err(failed)?)
-                    .map_err(json_error)?
+                let mut value =
+                    serde_json::to_value(self.runtime.get(AgentId(id)).await.map_err(failed)?)
+                        .map_err(json_error)?;
+                value["archived"] = json!(
+                    self.runtime
+                        .is_archived(AgentId(id))
+                        .await
+                        .map_err(failed)?
+                );
+                value
             }
             Args::List { parent_id } => serde_json::to_value(match parent_id {
                 Some(id) => self.runtime.tree(Some(AgentId(id))).await,
                 None => self.runtime.list().await,
             })
+            .map_err(json_error)?,
+            Args::Archive { after, limit } => serde_json::to_value(
+                self.runtime
+                    .list_archived(after.map(AgentId), limit)
+                    .await
+                    .map_err(failed)?,
+            )
             .map_err(json_error)?,
             Args::Wait { id } => {
                 let outcome = tokio::select! {_ = context.cancellation.cancelled()=>return Err(ToolError::Cancelled), value=self.runtime.wait(AgentId(id))=>value.map_err(failed)?};
@@ -203,6 +228,11 @@ impl Tool for SubagentTool {
             }
             Args::Integrate { id, target } => {
                 approve_git(context, "subagent.integrate", &target).await?;
+                let _mutation = self.runtime.mutation_guard().await;
+                self.runtime
+                    .worktree_record(AgentId(id))
+                    .await
+                    .map_err(failed)?;
                 let manager = self.manager()?;
                 let lease = self.lease(AgentId(id)).await?;
                 let plan = manager.plan_integration(&lease, &target).map_err(failed)?;
@@ -211,6 +241,11 @@ impl Tool for SubagentTool {
             }
             Args::Commit { id, message } => {
                 approve_git(context, "subagent.commit", &id.to_string()).await?;
+                let _mutation = self.runtime.mutation_guard().await;
+                self.runtime
+                    .worktree_record(AgentId(id))
+                    .await
+                    .map_err(failed)?;
                 let manager = self.manager()?;
                 let lease = self.lease(AgentId(id)).await?;
                 let commit = manager.commit(&lease, &message).map_err(failed)?;
@@ -218,11 +253,16 @@ impl Tool for SubagentTool {
             }
             Args::Cleanup { id } => {
                 approve_git(context, "subagent.cleanup", &id.to_string()).await?;
+                let _mutation = self.runtime.mutation_guard().await;
+                self.runtime
+                    .worktree_record(AgentId(id))
+                    .await
+                    .map_err(failed)?;
                 let manager = self.manager()?;
                 let lease = self.lease(AgentId(id)).await?;
                 manager.remove(&lease).map_err(failed)?;
                 self.runtime
-                    .clear_worktree(AgentId(id))
+                    .clear_worktree_locked(AgentId(id))
                     .await
                     .map_err(failed)?;
                 json!({"id":id,"removed":true,"branch_preserved":lease.branch})
@@ -313,5 +353,139 @@ mod tests {
             .unwrap(),
             Args::Cleanup { .. }
         ));
+    }
+    #[test]
+    fn archive_arguments_require_uuid_cursor_and_unsigned_limit() {
+        assert!(matches!(
+            serde_json::from_value::<Args>(json!({"action":"archive"})).unwrap(),
+            Args::Archive {
+                after: None,
+                limit: 20
+            }
+        ));
+        for args in [
+            json!({"action":"archive","after":"../../elsewhere"}),
+            json!({"action":"archive","limit":-1}),
+            json!({"action":"archive","limit":"20"}),
+            json!({"action":"status","id":"../escape"}),
+        ] {
+            assert!(serde_json::from_value::<Args>(args).is_err());
+        }
+    }
+
+    struct GatedExecutor(Arc<tokio::sync::Notify>);
+    #[async_trait]
+    impl super::super::SubagentExecutor for GatedExecutor {
+        async fn execute(
+            &self,
+            _: super::super::ExecutionContext,
+        ) -> Result<super::super::SubagentResult, String> {
+            self.0.notified().await;
+            Ok(super::super::SubagentResult {
+                summary: "evidence".into(),
+            })
+        }
+    }
+    struct PendingApproval {
+        entered: tokio::sync::Notify,
+        release: tokio::sync::Notify,
+    }
+    #[async_trait]
+    impl crate::tools::Approver for PendingApproval {
+        async fn approve(
+            &self,
+            _: &crate::tools::ApprovalRequest,
+        ) -> crate::tools::ApprovalOutcome {
+            self.entered.notify_one();
+            self.release.notified().await;
+            crate::tools::ApprovalOutcome::Approved
+        }
+    }
+
+    #[tokio::test]
+    async fn pending_git_approval_does_not_block_completion_and_rechecks_archive() {
+        use std::{
+            collections::{BTreeMap, BTreeSet},
+            time::Duration,
+        };
+        let directory = tempfile::tempdir().unwrap();
+        let gate = Arc::new(tokio::sync::Notify::new());
+        let runtime = Arc::new(
+            SubagentRuntime::new(
+                Arc::new(GatedExecutor(gate.clone())),
+                super::super::RuntimeLimits::default(),
+                None,
+            )
+            .unwrap(),
+        );
+        let budget = AgentBudget {
+            max_tokens: 100,
+            max_runtime_secs: 30,
+            max_children: 2,
+            max_terminals: 1,
+        };
+        let policy = AgentPolicy {
+            readable_roots: vec![directory.path().into()],
+            writable_roots: vec![],
+            allowed_tools: BTreeSet::new(),
+            approval: super::super::ApprovalPolicy::Deny,
+            budget: budget.clone(),
+        };
+        let id = runtime
+            .spawn(SpawnRequest {
+                parent_id: None,
+                name: "worker".into(),
+                task: "work".into(),
+                policy: policy.clone(),
+                budget: budget.clone(),
+                worktree: None,
+                branch: None,
+            })
+            .await
+            .unwrap();
+        let approver = Arc::new(PendingApproval {
+            entered: tokio::sync::Notify::new(),
+            release: tokio::sync::Notify::new(),
+        });
+        let config = crate::config::Config {
+            access: Some(crate::config::AccessMode::Approval),
+            ..crate::config::Config::default()
+        };
+        let context = ToolContext {
+            policy: Arc::new(crate::policy::Policy::new(&config, directory.path().into()).unwrap()),
+            approver: approver.clone(),
+            timeout: Duration::from_secs(2),
+            max_output_bytes: 1024,
+            environment: BTreeMap::new(),
+            cancellation: tokio_util::sync::CancellationToken::new(),
+            execution_id: Uuid::new_v4(),
+            interaction: crate::tools::InteractionMode::Attended,
+            redactor: Arc::new(crate::tools::Redactor::default()),
+        };
+        let tool = SubagentTool::new(runtime.clone(), policy, budget);
+        let operation = tokio::spawn(async move {
+            tool.execute(json!({"action":"cleanup","id":id}), &context)
+                .await
+        });
+        tokio::time::timeout(Duration::from_secs(2), approver.entered.notified())
+            .await
+            .unwrap();
+        gate.notify_one();
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(2), runtime.wait(id))
+                .await
+                .expect("approval must not hold runtime mutation lock")
+                .unwrap()
+                .unwrap()
+                .summary,
+            "evidence"
+        );
+        assert!(runtime.is_archived(id).await.unwrap());
+        approver.release.notify_one();
+        let error = operation.await.unwrap().unwrap_err().to_string();
+        assert!(
+            error.contains("unknown subagent"),
+            "must reject archived record before worktree effects: {error}"
+        );
     }
 }

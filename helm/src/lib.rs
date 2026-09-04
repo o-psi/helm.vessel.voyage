@@ -1,4 +1,5 @@
 pub mod agent;
+pub mod completion;
 pub mod config;
 pub mod markdown;
 pub mod model;
@@ -16,3 +17,5 @@ pub mod voyage;
 pub use agent::{Agent, AgentEvent, AgentOutcome, EventSink};
 pub use config::{Config, ProviderKind};
 pub use model::{Message, Role};
+
+mod workspace_instructions;

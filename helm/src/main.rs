@@ -932,7 +932,6 @@ impl SubagentExecutor for CliSubagentExecutor {
         );
         config.allow_read = context.policy.readable_roots.clone();
         config.allow_write = context.policy.writable_roots.clone();
-        config.max_turns = (context.budget.max_turns as usize).min(config.max_turns);
         config.max_tokens =
             (context.budget.max_tokens.min(u32::MAX as u64) as u32).min(config.max_tokens);
         let workspace = config.resolve_workspace(None).map_err(|e| e.to_string())?;
@@ -977,7 +976,6 @@ impl SubagentExecutor for CliSubagentExecutor {
             Arc::new(helm::agent::SilentSink),
             config.model.clone(),
             config.system_prompt.clone(),
-            config.max_turns,
             config.max_tokens,
             config.temperature,
         )
@@ -1024,7 +1022,6 @@ async fn build_subagents(config: &Config, workspace: &std::path::Path) -> Result
     allowed_tools.insert("subagent".to_string());
     allowed_tools.insert("todo".to_string());
     let budget = AgentBudget {
-        max_turns: config.max_turns.min(u32::MAX as usize) as u32,
         max_tokens: config.max_tokens as u64,
         max_runtime_secs: config.command_timeout_secs,
         max_children: 8,
@@ -1133,7 +1130,6 @@ async fn build_agent(config: &Config, workspace: PathBuf, attended: bool) -> Res
         terminal,
         config.model.clone(),
         config.system_prompt.clone(),
-        config.max_turns,
         config.max_tokens,
         config.temperature,
     )
@@ -1230,7 +1226,6 @@ async fn tui_chat(
             bridge.clone(),
             session.model.clone(),
             active_config.system_prompt.clone(),
-            active_config.max_turns,
             active_config.max_tokens,
             active_config.temperature,
         )
@@ -1803,13 +1798,13 @@ mod cli_tests {
         let cli = Cli::try_parse_from([
             "helm",
             "--set",
-            "max_turns=32",
+            "max_tokens=32",
             "--set",
             "access=unrestricted",
             "config",
         ])
         .unwrap();
-        assert_eq!(cli.set, ["max_turns=32", "access=unrestricted"]);
+        assert_eq!(cli.set, ["max_tokens=32", "access=unrestricted"]);
     }
 
     #[test]
