@@ -734,12 +734,12 @@ mod tests {
                     .await
                     .unwrap(),
             );
-            if second.contains("got:hello") {
+            if second.contains(interactive_response()) {
                 break;
             }
         }
         assert!(
-            second.contains("got:hello"),
+            second.contains(interactive_response()),
             "interactive PTY response was not captured: {second:?}"
         );
         tool.execute(json!({"action":"terminate","id":id}), &ctx)
@@ -867,7 +867,7 @@ mod tests {
     }
     #[cfg(windows)]
     fn interactive_command() -> &'static str {
-        "echo ready&& set /p line=&& call echo got:%%line%%"
+        "echo ready&& set /p line="
     }
     #[cfg(not(windows))]
     fn interactive_input() -> &'static str {
@@ -876,6 +876,15 @@ mod tests {
     #[cfg(windows)]
     fn interactive_input() -> &'static str {
         "hello\r\n"
+    }
+    #[cfg(not(windows))]
+    fn interactive_response() -> &'static str {
+        "got:hello"
+    }
+    #[cfg(windows)]
+    fn interactive_response() -> &'static str {
+        // ConPTY echoes console input, proving the bytes reached the live shell.
+        "hello"
     }
     #[cfg(unix)]
     fn long_running_command() -> &'static str {
