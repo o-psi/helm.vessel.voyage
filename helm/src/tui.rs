@@ -145,6 +145,13 @@ struct SlashCommand {
     completion: &'static str,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct SlashPaletteItem {
+    usage: String,
+    description: String,
+    completion: String,
+}
+
 const SLASH_COMMANDS: &[SlashCommand] = &[
     SlashCommand {
         name: "help",
@@ -436,6 +443,7 @@ struct App {
     model_manual: bool,
     selected_slash_command: usize,
     slash_palette_dismissed: bool,
+    slash_models_requested: bool,
     shortcut_help: bool,
     exit: Option<TuiExit>,
     quit: bool,
@@ -528,6 +536,7 @@ impl App {
             model_manual: false,
             selected_slash_command: 0,
             slash_palette_dismissed: false,
+            slash_models_requested: false,
             shortcut_help: false,
             exit: None,
             quit: false,
@@ -620,6 +629,7 @@ pub async fn run(
                             } else if app.supervisor_mode.is_none() {
                                 app.composer.insert_str(&text);
                                 reset_slash_palette(&mut app);
+                                request_slash_models_if_needed(&mut app, &agent, &tx);
                             }
                         }
                     }
@@ -998,7 +1008,7 @@ async fn handle_key(
         }
         return Ok(());
     }
-    if !slash_palette_matches(app).is_empty() {
+    if !slash_palette_items(app).is_empty() {
         match key.code {
             KeyCode::Up => {
                 app.selected_slash_command = app.selected_slash_command.saturating_sub(1);
@@ -1006,14 +1016,14 @@ async fn handle_key(
             }
             KeyCode::Down => {
                 app.selected_slash_command = (app.selected_slash_command + 1)
-                    .min(slash_palette_matches(app).len().saturating_sub(1));
+                    .min(slash_palette_items(app).len().saturating_sub(1));
                 return Ok(());
             }
             KeyCode::Tab => {
                 complete_selected_slash_command(app);
                 return Ok(());
             }
-            KeyCode::Enter if !slash_command_is_exact(app) => {
+            KeyCode::Enter if !slash_input_is_complete(app) => {
                 complete_selected_slash_command(app);
                 return Ok(());
             }
@@ -1062,14 +1072,17 @@ async fn handle_key(
         KeyCode::Char(character) if !app.is_running() => {
             app.composer.insert(character);
             reset_slash_palette(app);
+            request_slash_models_if_needed(app, agent, tx);
         }
         KeyCode::Backspace if !app.is_running() => {
             app.composer.backspace();
             reset_slash_palette(app);
+            request_slash_models_if_needed(app, agent, tx);
         }
         KeyCode::Delete if !app.is_running() => {
             app.composer.delete();
             reset_slash_palette(app);
+            request_slash_models_if_needed(app, agent, tx);
         }
         KeyCode::Home if !app.is_running() => app.composer.line_start(),
         KeyCode::End if !app.is_running() => app.composer.line_end(),
@@ -1519,6 +1532,23 @@ fn request_models(tx: &mpsc::UnboundedSender<UiEvent>, agent: Arc<Agent>, refres
     });
 }
 
+fn request_slash_models_if_needed(
+    app: &mut App,
+    agent: &Arc<Agent>,
+    tx: &mpsc::UnboundedSender<UiEvent>,
+) {
+    let wants_models = app.composer.text.starts_with("/model ")
+        || app.composer.text.starts_with("/models ")
+        || app.composer.text.starts_with("/set model ");
+    if !wants_models {
+        app.slash_models_requested = false;
+    } else if app.models.is_empty() && !app.slash_models_requested {
+        app.slash_models_requested = true;
+        request_models(tx, agent.clone(), false);
+        app.status = "Discovering models…".into();
+    }
+}
+
 fn open_todo_input(app: &mut App, target: Option<TodoId>, action: TodoInput, initial: &str) {
     app.todo_input = Composer::default();
     app.todo_input.insert_str(initial);
@@ -1921,9 +1951,191 @@ fn slash_palette_matches(app: &App) -> Vec<SlashCommand> {
         .collect()
 }
 
-fn slash_command_is_exact(app: &App) -> bool {
+fn slash_argument_suggestions(app: &App) -> Vec<SlashPaletteItem> {
+    let Some(input) = app.composer.text.strip_prefix('/') else {
+        return Vec::new();
+    };
+    let Some((command, argument)) = input.split_once(char::is_whitespace) else {
+        return Vec::new();
+    };
+    if command == "set"
+        && let Some((key, value)) = argument.split_once(char::is_whitespace)
+    {
+        let query = value.trim().to_ascii_lowercase();
+        let values: &[(&str, &str)] = match key {
+            "access" => &[
+                ("read-only", "Inspect without mutations"),
+                ("approval", "Ask before consequential actions"),
+                ("unrestricted", "Proceed without approval prompts"),
+            ],
+            "provider" => &[
+                ("openai-responses", "OpenAI Responses API"),
+                ("openai-chat", "OpenAI-compatible Chat Completions"),
+                ("chatgpt-oauth", "Native ChatGPT subscription"),
+                ("anthropic", "Anthropic Messages API"),
+                ("codex-compatibility", "External Codex compatibility bridge"),
+            ],
+            "approval" => &[
+                ("always", "Approve every tool action"),
+                ("on-risk", "Approve risky actions"),
+                ("never", "Never prompt"),
+            ],
+            "unattended_approval" => &[
+                ("deny", "Deny when no user can answer"),
+                ("allow", "Allow unattended actions"),
+            ],
+            _ => &[],
+        };
+        let mut suggestions = values
+            .iter()
+            .filter(|(value, _)| value.to_ascii_lowercase().contains(&query))
+            .map(|(value, description)| SlashPaletteItem {
+                usage: (*value).into(),
+                description: (*description).into(),
+                completion: format!("/set {key} {value}"),
+            })
+            .collect::<Vec<_>>();
+        if key == "model" {
+            suggestions.extend(
+                app.models
+                    .iter()
+                    .filter(|model| {
+                        query.is_empty()
+                            || model.id.to_ascii_lowercase().contains(&query)
+                            || model.display_name.to_ascii_lowercase().contains(&query)
+                    })
+                    .map(|model| SlashPaletteItem {
+                        usage: model.id.clone(),
+                        description: model.display_name.clone(),
+                        completion: format!("/set model {}", model.id),
+                    }),
+            );
+        }
+        return suggestions;
+    }
+    let query = argument.trim().to_ascii_lowercase();
+    let fixed: &[(&str, &str)] = match command {
+        "access" => &[
+            ("read-only", "Inspect without mutations"),
+            ("approval", "Ask before consequential actions"),
+            ("unrestricted", "Proceed without approval prompts"),
+        ],
+        "provider" => &[
+            ("openai-responses", "OpenAI Responses API"),
+            ("openai-chat", "OpenAI-compatible Chat Completions"),
+            ("chatgpt-oauth", "Native ChatGPT subscription"),
+            ("anthropic", "Anthropic Messages API"),
+            ("codex-compatibility", "External Codex compatibility bridge"),
+        ],
+        "activity" | "verbose" => &[("on", "Enable"), ("off", "Disable")],
+        "log-format" => &[("text", "Human-readable logs"), ("json", "JSON logs")],
+        "completions" => &[
+            ("bash", "Bash"),
+            ("elvish", "Elvish"),
+            ("fish", "Fish"),
+            ("powershell", "PowerShell"),
+            ("zsh", "Zsh"),
+        ],
+        "auth" => &[
+            ("status", "Show credential status"),
+            ("login", "Sign in with a browser callback"),
+            ("login --device", "Sign in with a device code"),
+            ("logout", "Remove Helm credentials"),
+            ("import-codex", "Import an existing Codex login once"),
+        ],
+        "models" => &[("json", "Print the provider model catalog as JSON")],
+        "set" => &[
+            ("model", "Default model"),
+            ("max_turns", "Maximum model turns"),
+            ("max_tokens", "Maximum response tokens"),
+            ("temperature", "Sampling temperature"),
+            ("command_timeout_secs", "Shell command timeout"),
+            ("access", "Default access mode"),
+            ("provider", "Provider transport"),
+            ("approval", "Legacy approval policy"),
+            ("unattended_approval", "Unattended approval policy"),
+            ("workspace", "Default workspace"),
+            ("allow_read", "Additional readable roots"),
+            ("allow_write", "Additional writable roots"),
+            ("env", "Tool environment variable"),
+            ("mcp_servers", "MCP server configuration"),
+        ],
+        _ => &[],
+    };
+    let mut suggestions = fixed
+        .iter()
+        .filter(|(value, _)| value.to_ascii_lowercase().contains(&query))
+        .map(|(value, description)| SlashPaletteItem {
+            usage: (*value).into(),
+            description: (*description).into(),
+            completion: format!(
+                "/{command} {value}{}",
+                if command == "set" { " " } else { "" }
+            ),
+        })
+        .collect::<Vec<_>>();
+    if matches!(command, "model" | "models") {
+        suggestions.extend(
+            app.models
+                .iter()
+                .filter(|model| {
+                    query.is_empty()
+                        || model.id.to_ascii_lowercase().contains(&query)
+                        || model.display_name.to_ascii_lowercase().contains(&query)
+                })
+                .map(|model| SlashPaletteItem {
+                    usage: model.id.clone(),
+                    description: model.display_name.clone(),
+                    completion: format!("/model {}", model.id),
+                }),
+        );
+    }
+    if command == "resume" {
+        suggestions.extend(
+            app.sessions
+                .iter()
+                .filter(|session| {
+                    let id = session.id.to_string();
+                    query.is_empty()
+                        || id.contains(&query)
+                        || session
+                            .name
+                            .as_deref()
+                            .is_some_and(|name| name.to_ascii_lowercase().contains(&query))
+                })
+                .map(|session| SlashPaletteItem {
+                    usage: session.id.to_string(),
+                    description: session
+                        .name
+                        .clone()
+                        .unwrap_or_else(|| "untitled session".into()),
+                    completion: format!("/resume {}", session.id),
+                }),
+        );
+    }
+    suggestions
+}
+
+fn slash_palette_items(app: &App) -> Vec<SlashPaletteItem> {
+    let commands = slash_palette_matches(app);
+    if !commands.is_empty() {
+        return commands
+            .into_iter()
+            .map(|command| SlashPaletteItem {
+                usage: command.usage.into(),
+                description: command.description.into(),
+                completion: command.completion.into(),
+            })
+            .collect();
+    }
+    slash_argument_suggestions(app)
+}
+
+fn slash_input_is_complete(app: &App) -> bool {
     let Some(query) = slash_command_query(app) else {
-        return false;
+        return slash_palette_items(app)
+            .iter()
+            .any(|item| item.completion == app.composer.text);
     };
     SLASH_COMMANDS.iter().any(|command| command.name == query)
 }
@@ -1934,26 +2146,26 @@ fn reset_slash_palette(app: &mut App) {
 }
 
 fn complete_selected_slash_command(app: &mut App) {
-    let commands = slash_palette_matches(app);
-    let Some(command) = commands.get(app.selected_slash_command).copied() else {
+    let items = slash_palette_items(app);
+    let Some(item) = items.get(app.selected_slash_command) else {
         return;
     };
-    app.composer.text = command.completion.into();
+    app.composer.text.clone_from(&item.completion);
     app.composer.cursor = app.composer.text.len();
     reset_slash_palette(app);
 }
 
 fn draw_slash_palette(frame: &mut ratatui::Frame<'_>, composer_area: Rect, app: &App) {
-    let commands = slash_palette_matches(app);
-    if commands.is_empty() || composer_area.y < 3 || composer_area.width < 8 {
+    let items = slash_palette_items(app);
+    if items.is_empty() || composer_area.y < 3 || composer_area.width < 8 {
         return;
     }
     let selected = app
         .selected_slash_command
-        .min(commands.len().saturating_sub(1));
+        .min(items.len().saturating_sub(1));
     let available_rows = composer_area.y.saturating_sub(2).max(1) as usize;
-    let columns = usize::from(commands.len() > available_rows && composer_area.width >= 72) + 1;
-    let rows_needed = commands.len().div_ceil(columns);
+    let columns = usize::from(items.len() > available_rows && composer_area.width >= 72) + 1;
+    let rows_needed = items.len().div_ceil(columns);
     let visible_rows = rows_needed.min(available_rows);
     let capacity = visible_rows * columns;
     let start = (selected / capacity) * capacity;
@@ -1963,10 +2175,10 @@ fn draw_slash_palette(frame: &mut ratatui::Frame<'_>, composer_area: Rect, app: 
         let mut spans = Vec::new();
         for column in 0..columns {
             let index = start + row + column * visible_rows;
-            let Some(command) = commands.get(index) else {
+            let Some(item) = items.get(index) else {
                 continue;
             };
-            let content = format!("{:<18} {}", command.usage, command.description);
+            let content = format!("{:<18} {}", item.usage, item.description);
             let mut content = one_line(&content, cell_width.saturating_sub(1));
             let padding = cell_width.saturating_sub(content.chars().count());
             content.extend(std::iter::repeat_n(' ', padding));
@@ -1992,7 +2204,7 @@ fn draw_slash_palette(frame: &mut ratatui::Frame<'_>, composer_area: Rect, app: 
     frame.render_widget(
         Paragraph::new(Text::from(lines)).block(
             Block::default()
-                .title(" Commands · ↑↓ select · Enter/Tab complete · Esc close ")
+                .title(" Commands and options · ↑↓ select · Enter/Tab complete · Esc close ")
                 .borders(Borders::ALL),
         ),
         popup,
@@ -4608,6 +4820,50 @@ mod tests {
     }
 
     #[test]
+    fn slash_palette_offers_contextual_values_and_dynamic_records() {
+        let mut first = Session::new(PathBuf::from("/tmp"), "test-model".into());
+        first.name = Some("deployment notes".into());
+        let session = Session::new(PathBuf::from("/tmp"), "test-model".into());
+        let mut app = App::new(session, vec![first.clone()]);
+
+        app.composer.insert_str("/access ");
+        assert_eq!(
+            slash_palette_items(&app)
+                .iter()
+                .map(|item| item.usage.as_str())
+                .collect::<Vec<_>>(),
+            ["read-only", "approval", "unrestricted"]
+        );
+        app.selected_slash_command = 1;
+        complete_selected_slash_command(&mut app);
+        assert_eq!(app.composer.text, "/access approval");
+        assert!(slash_input_is_complete(&app));
+
+        app.models = vec![ModelInfo::minimal("gpt-dynamic")];
+        app.composer = Composer::default();
+        app.composer.insert_str("/models dynamic");
+        let models = slash_palette_items(&app);
+        assert_eq!(models.len(), 1);
+        assert_eq!(models[0].completion, "/model gpt-dynamic");
+
+        app.composer = Composer::default();
+        app.composer.insert_str("/resume deploy");
+        let sessions = slash_palette_items(&app);
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].completion, format!("/resume {}", first.id));
+
+        app.composer = Composer::default();
+        app.composer.insert_str("/set access ");
+        assert_eq!(
+            slash_palette_items(&app)
+                .iter()
+                .map(|item| item.usage.as_str())
+                .collect::<Vec<_>>(),
+            ["read-only", "approval", "unrestricted"]
+        );
+    }
+
+    #[test]
     fn slash_palette_completion_and_dismissal_preserve_composer_input() {
         let session = Session::new(PathBuf::from("/tmp"), "test-model".into());
         let mut app = App::new(session, Vec::new());
@@ -4619,7 +4875,7 @@ mod tests {
 
         app.composer = Composer::default();
         app.composer.insert_str("/help");
-        assert!(slash_command_is_exact(&app));
+        assert!(slash_input_is_complete(&app));
         app.slash_palette_dismissed = true;
         assert!(slash_palette_matches(&app).is_empty());
         assert_eq!(app.composer.text, "/help");

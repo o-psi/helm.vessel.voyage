@@ -106,7 +106,10 @@ press `F1` to open contextual keyboard help and `F1` or `Esc` to close it.
 Scroll the conversation with the mouse wheel or `PageUp` and `PageDown`; a divider keeps the
 composer visually distinct without enclosing it in a permanent box.
 Typing `/` opens the slash-command palette above the composer. Continue typing to filter it,
-use the arrow keys to select, and press `Enter` or `Tab` to complete a command.
+use the arrow keys to select, and press `Enter` or `Tab` to complete a command. The palette stays
+contextual after the command name: `/access ` offers authority modes, `/model ` and `/models `
+show the provider's discovered models, `/resume ` shows saved sessions, and commands with
+enumerated arguments show their valid values.
 
 Every startup capability also has a slash-command path. `/provider`, `/workspace`, `/access`,
 and `/config PATH` safely save the session and relaunch with a rebuilt provider, tool registry,
