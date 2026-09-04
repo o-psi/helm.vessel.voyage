@@ -8,7 +8,10 @@ administer scoped systems, and maintain a durable working conversation.
 
 - Provider-neutral agent loop with OpenAI-compatible and Anthropic adapters
 - Native tool calling across repeated model/tool turns
-- File reading/writing, directory traversal, regex search, and shell execution
+- File reading/writing, SHA-guarded atomic patching, directory traversal, and search
+- One-shot shell execution plus persistent PTY processes with incremental I/O and resize
+- MCP stdio server discovery with collision-resistant namespaced tools
+- Typed provider failures, transient retry/backoff, and cancellation-aware execution
 - Workspace confinement with explicit extra read/write roots and symlink-aware checks
 - Configurable approvals, deny list, command timeout, and output limits
 - Interactive chat, one-shot tasks, session resume/listing, and token accounting
@@ -102,7 +105,6 @@ cargo test
 ```
 
 The terminal frontend is currently the functional shell beneath the planned full-screen
-TUI. The next durable layers are that full-screen TUI, streaming output, structured audit logs, resumable
-long-running processes, MCP/tool-server integration, context compaction, and provider
-retry/backoff. They fit behind the existing provider, event, tool, and session
-interfaces without changing the user workflow.
+TUI. Runtime facilities for cancellation, managed terminals, MCP tools, and conflict-safe
+patches are exposed through the library so that frontend can represent them without
+reimplementing execution policy.

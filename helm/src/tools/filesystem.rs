@@ -6,6 +6,7 @@ use crate::{
 use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 use tokio::fs;
 
@@ -28,7 +29,11 @@ impl Tool for ReadFile {
         let args: PathArgs = parse(args)?;
         let path = ctx.policy.resolve_read(&args.path).map_err(denied)?;
         let bytes = fs::read(path).await.map_err(failed)?;
-        Ok(truncate(bytes, ctx.max_output_bytes))
+        let digest = hex::encode(Sha256::digest(&bytes));
+        Ok(format!(
+            "sha256: {digest}\n{}",
+            truncate(bytes, ctx.max_output_bytes)
+        ))
     }
 }
 
@@ -37,6 +42,75 @@ pub struct WriteFile;
 struct WriteArgs {
     path: PathBuf,
     content: String,
+}
+
+pub struct ApplyPatch;
+#[derive(Deserialize)]
+struct PatchArgs {
+    path: PathBuf,
+    patch: String,
+    /// Required for existing files; prevents overwriting content changed since it was read.
+    base_sha256: Option<String>,
+}
+
+#[async_trait]
+impl Tool for ApplyPatch {
+    fn definition(&self) -> ToolDefinition {
+        definition(
+            "apply_patch",
+            "Atomically apply a unified diff to one UTF-8 file. Existing files require the SHA-256 returned by read_file, preventing stale writes.",
+            json!({"type":"object","properties":{"path":{"type":"string"},"patch":{"type":"string"},"base_sha256":{"type":"string","pattern":"^[a-fA-F0-9]{64}$"}},"required":["path","patch"]}),
+        )
+    }
+    async fn execute(&self, value: Value, ctx: &ToolContext) -> Result<String, ToolError> {
+        let args: PatchArgs = parse(value)?;
+        let path = ctx.policy.resolve_write(&args.path).map_err(denied)?;
+        let exists = path.exists();
+        let original = if exists {
+            fs::read_to_string(&path).await.map_err(failed)?
+        } else {
+            String::new()
+        };
+        if exists {
+            let expected = args.base_sha256.as_deref().ok_or_else(|| {
+                ToolError::InvalidArguments(
+                    "base_sha256 is required when patching an existing file".into(),
+                )
+            })?;
+            let actual = hex::encode(Sha256::digest(original.as_bytes()));
+            if !actual.eq_ignore_ascii_case(expected) {
+                return Err(ToolError::Failed(format!(
+                    "file changed since it was read (expected {expected}, actual {actual})"
+                )));
+            }
+        }
+        match ctx.policy.write(&path, exists) {
+            Decision::Deny(reason) => return Err(ToolError::Denied(reason)),
+            Decision::Ask(reason) if !ctx.approver.approve(&reason).await => {
+                return Err(ToolError::Denied("user declined approval".into()));
+            }
+            _ => {}
+        }
+        let patch = diffy::Patch::from_str(&args.patch)
+            .map_err(|e| ToolError::InvalidArguments(format!("invalid unified diff: {e}")))?;
+        let updated = diffy::apply(&original, &patch)
+            .map_err(|e| ToolError::Failed(format!("patch does not apply cleanly: {e}")))?;
+        let parent = path
+            .parent()
+            .ok_or_else(|| ToolError::Failed("target has no parent directory".into()))?;
+        fs::create_dir_all(parent).await.map_err(failed)?;
+        let mut temporary = tempfile::NamedTempFile::new_in(parent).map_err(failed)?;
+        std::io::Write::write_all(&mut temporary, updated.as_bytes()).map_err(failed)?;
+        temporary.as_file().sync_all().map_err(failed)?;
+        temporary.persist(&path).map_err(failed)?;
+        Ok(format!(
+            "patched {} ({} -> {} bytes, sha256 {})",
+            path.display(),
+            original.len(),
+            updated.len(),
+            hex::encode(Sha256::digest(updated.as_bytes()))
+        ))
+    }
 }
 #[async_trait]
 impl Tool for WriteFile {
@@ -152,7 +226,7 @@ impl Tool for SearchFiles {
             .kill_on_drop(true);
         let output = tokio::time::timeout(ctx.timeout, command.output())
             .await
-            .map_err(|_| ToolError::Failed("search timed out".into()))?
+            .map_err(|_| ToolError::Timeout(ctx.timeout))?
             .map_err(failed)?;
         if !output.status.success() && output.status.code() != Some(1) {
             return Err(ToolError::Failed(
@@ -178,4 +252,63 @@ fn failed(error: impl std::fmt::Display) -> ToolError {
 }
 fn denied(error: impl std::fmt::Display) -> ToolError {
     ToolError::Denied(error.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        config::{ApprovalMode, Config},
+        policy::Policy,
+        tools::Approver,
+    };
+    use std::{collections::BTreeMap, sync::Arc, time::Duration};
+    struct Yes;
+    #[async_trait]
+    impl Approver for Yes {
+        async fn approve(&self, _: &str) -> bool {
+            true
+        }
+    }
+    fn context(root: &std::path::Path) -> ToolContext {
+        let config = Config {
+            approval: ApprovalMode::Never,
+            ..Config::default()
+        };
+        ToolContext {
+            policy: Arc::new(Policy::new(&config, root.to_owned()).unwrap()),
+            approver: Arc::new(Yes),
+            timeout: Duration::from_secs(1),
+            max_output_bytes: 4096,
+            environment: BTreeMap::new(),
+            cancellation: tokio_util::sync::CancellationToken::new(),
+        }
+    }
+    #[tokio::test]
+    async fn patch_is_atomic_and_requires_current_hash() {
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::write(directory.path().join("note.txt"), "one\ntwo\n").unwrap();
+        let ctx = context(directory.path());
+        let hash = hex::encode(Sha256::digest(b"one\ntwo\n"));
+        let args = json!({"path":"note.txt","base_sha256":hash,"patch":"--- a/note.txt\n+++ b/note.txt\n@@ -1,2 +1,2 @@\n one\n-two\n+three\n"});
+        ApplyPatch.execute(args, &ctx).await.unwrap();
+        assert_eq!(
+            std::fs::read_to_string(directory.path().join("note.txt")).unwrap(),
+            "one\nthree\n"
+        );
+    }
+    #[tokio::test]
+    async fn stale_patch_never_changes_file() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("note.txt");
+        std::fs::write(&path, "current\n").unwrap();
+        let args = json!({"path":"note.txt","base_sha256":"0000000000000000000000000000000000000000000000000000000000000000","patch":"--- a\n+++ b\n@@ -1 +1 @@\n-current\n+lost\n"});
+        assert!(
+            ApplyPatch
+                .execute(args, &context(directory.path()))
+                .await
+                .is_err()
+        );
+        assert_eq!(std::fs::read_to_string(path).unwrap(), "current\n");
+    }
 }
