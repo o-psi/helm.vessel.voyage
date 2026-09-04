@@ -319,8 +319,8 @@ mod tests {
         let started = tool.execute(json!({"action":"start","command":"printf ready; read line; printf 'got:%s' \"$line\""}), &ctx).await.unwrap();
         let id = Uuid::parse_str(started.split_whitespace().last().unwrap()).unwrap();
         let mut first = String::new();
-        for _ in 0..20 {
-            tokio::time::sleep(Duration::from_millis(25)).await;
+        for _ in 0..100 {
+            tokio::time::sleep(Duration::from_millis(50)).await;
             first.push_str(
                 &tool
                     .execute(json!({"action":"read","id":id}), &ctx)
@@ -336,8 +336,8 @@ mod tests {
             .await
             .unwrap();
         let mut second = String::new();
-        for _ in 0..20 {
-            tokio::time::sleep(Duration::from_millis(25)).await;
+        for _ in 0..100 {
+            tokio::time::sleep(Duration::from_millis(50)).await;
             second.push_str(
                 &tool
                     .execute(json!({"action":"read","id":id}), &ctx)
