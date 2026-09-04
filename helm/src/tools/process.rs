@@ -867,7 +867,7 @@ mod tests {
     }
     #[cfg(windows)]
     fn interactive_command() -> &'static str {
-        "echo ready&& choice /C H /N >NUL&& echo got:hello"
+        "echo ready&& powershell.exe -NoProfile -Command \"$line = [Console]::In.ReadLine(); Write-Output ('got:' + $line)\""
     }
     #[cfg(not(windows))]
     fn interactive_input() -> &'static str {
@@ -875,7 +875,7 @@ mod tests {
     }
     #[cfg(windows)]
     fn interactive_input() -> &'static str {
-        "H\r\n"
+        "hello\r\n"
     }
     #[cfg(unix)]
     fn long_running_command() -> &'static str {
