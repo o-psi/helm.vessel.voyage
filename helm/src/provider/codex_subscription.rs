@@ -15,6 +15,7 @@ use std::{
         Arc, Mutex as StdMutex,
         atomic::{AtomicBool, AtomicU64, Ordering},
     },
+    time::Duration,
 };
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
@@ -24,6 +25,7 @@ use tokio::{
 
 const MAX_MESSAGE_BYTES: usize = 4 * 1024 * 1024;
 const CHANNEL_CAPACITY: usize = 256;
+const CONTROL_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub struct CodexSubscriptionProvider {
     state: Arc<Mutex<State>>,
@@ -192,6 +194,16 @@ impl AppClient {
         self.send(json!({"method":"initialized"})).await
     }
     async fn request(&self, method: &str, params: Value) -> Result<Value, ProviderError> {
+        tokio::time::timeout(CONTROL_TIMEOUT, self.request_inner(method, params))
+            .await
+            .map_err(|_| {
+                ProviderError::Unavailable(format!(
+                    "codex app-server `{method}` timed out after {} seconds",
+                    CONTROL_TIMEOUT.as_secs()
+                ))
+            })?
+    }
+    async fn request_inner(&self, method: &str, params: Value) -> Result<Value, ProviderError> {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         self.send(json!({"id":id,"method":method,"params":params}))
             .await?;

@@ -421,20 +421,20 @@ async fn main() -> Result<()> {
 
 fn doctor(config: &Config, workspace: Option<PathBuf>) -> Result<()> {
     let workspace = config.resolve_workspace(workspace)?;
-    let subscription_transport_available =
-        (config.provider == helm::ProviderKind::CodexSubscription).then(|| {
-            std::process::Command::new(&config.codex_command)
-                .arg("--version")
-                .output()
-                .is_ok_and(|output| output.status.success())
-        });
+    let subscription = (config.provider == helm::ProviderKind::CodexSubscription)
+        .then(|| probe_codex_subscription(&config.codex_command));
+    let provider_ready = match &subscription {
+        Some(probe) => probe.executable && probe.app_server && probe.logged_in,
+        None => std::env::var_os(&config.api_key_env).is_some(),
+    };
     let report = serde_json::json!({
-        "status": "ok",
+        "status": if provider_ready { "ok" } else { "action_required" },
         "version": env!("CARGO_PKG_VERSION"),
         "workspace": workspace,
         "workspace_readable": workspace.is_dir(),
+        "provider_ready": provider_ready,
         "provider_credential_present": if config.provider == helm::ProviderKind::CodexSubscription { serde_json::Value::Null } else { serde_json::Value::Bool(std::env::var_os(&config.api_key_env).is_some()) },
-        "codex_app_server_available": subscription_transport_available,
+        "codex_subscription": subscription,
         "sessions_directory": helm::config::default_data_dir().join("sessions"),
         "approval": config.approval,
         "unattended_approval": config.unattended_approval,
@@ -443,6 +443,56 @@ fn doctor(config: &Config, workspace: Option<PathBuf>) -> Result<()> {
     });
     println!("{}", serde_json::to_string_pretty(&report)?);
     Ok(())
+}
+
+#[derive(serde::Serialize)]
+struct CodexSubscriptionProbe {
+    executable: bool,
+    version: Option<String>,
+    app_server: bool,
+    logged_in: bool,
+    remediation: Option<&'static str>,
+}
+
+fn probe_codex_subscription(command: &str) -> CodexSubscriptionProbe {
+    let version_output = std::process::Command::new(command)
+        .arg("--version")
+        .output();
+    let executable = version_output
+        .as_ref()
+        .is_ok_and(|output| output.status.success());
+    let version = version_output.ok().and_then(|output| {
+        String::from_utf8(output.stdout)
+            .ok()
+            .map(|value| value.trim().to_owned())
+            .filter(|value| !value.is_empty())
+    });
+    let app_server = executable
+        && std::process::Command::new(command)
+            .args(["app-server", "--help"])
+            .output()
+            .is_ok_and(|output| output.status.success());
+    let logged_in = executable
+        && std::process::Command::new(command)
+            .args(["login", "status"])
+            .output()
+            .is_ok_and(|output| output.status.success());
+    let remediation = if !executable {
+        Some("install Codex CLI and ensure codex_command is on PATH")
+    } else if !app_server {
+        Some("upgrade Codex CLI to a version with app-server support")
+    } else if !logged_in {
+        Some("run `codex login` interactively, then rerun `helm doctor`")
+    } else {
+        None
+    };
+    CodexSubscriptionProbe {
+        executable,
+        version,
+        app_server,
+        logged_in,
+        remediation,
+    }
 }
 
 async fn build_agent(config: &Config, workspace: PathBuf, attended: bool) -> Result<Agent> {
