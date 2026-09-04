@@ -70,6 +70,29 @@ impl WorktreeManager {
         let output = git_output(&lease.path, ["status", "--porcelain"])?;
         Ok(output.trim().is_empty())
     }
+    /// Commit all changes owned by one managed worktree without invoking a shell.
+    pub fn commit(&self, lease: &WorktreeLease, message: &str) -> Result<String> {
+        anyhow::ensure!(
+            lease.path.starts_with(&self.root),
+            "refusing worktree outside managed root"
+        );
+        anyhow::ensure!(
+            !message.trim().is_empty()
+                && message.len() <= 200
+                && !message.contains('\n')
+                && !message.contains('\r'),
+            "commit message must be one non-empty line of at most 200 bytes"
+        );
+        anyhow::ensure!(
+            !self.is_clean(lease)?,
+            "agent worktree has no changes to commit"
+        );
+        git(&lease.path, ["add", "--all"])?;
+        git(&lease.path, ["commit", "-m", message])?;
+        Ok(git_output(&lease.path, ["rev-parse", "HEAD"])?
+            .trim()
+            .to_owned())
+    }
     pub fn remove(&self, lease: &WorktreeLease) -> Result<()> {
         anyhow::ensure!(
             lease.path.starts_with(&self.root),
@@ -220,8 +243,9 @@ mod tests {
         std::fs::write(lease.path.join("tracked"), "base").unwrap();
         assert!(manager.is_clean(&lease).unwrap());
         std::fs::write(lease.path.join("tracked"), "child").unwrap();
-        run(&lease.path, &["add", "tracked"]);
-        run(&lease.path, &["commit", "-qm", "child"]);
+        let commit = manager.commit(&lease, "child").unwrap();
+        assert_eq!(commit.len(), 40);
+        assert!(manager.is_clean(&lease).unwrap());
         std::fs::write(repo.path().join("tracked"), "parent").unwrap();
         run(repo.path(), &["add", "tracked"]);
         run(repo.path(), &["commit", "-qm", "parent"]);

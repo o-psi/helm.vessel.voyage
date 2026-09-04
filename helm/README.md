@@ -158,7 +158,7 @@ Press `Ctrl+A` in the full-screen UI to supervise concurrent agent work. The tre
 inspection, messaging, follow-up, and confirmed cancellation controls are described
 in the [agent supervision guide](../docs/agent-supervision.md).
 The model-facing `subagent` tool supports `spawn`, `status`, `list`, `wait`, `wait_many`,
-`cancel`, `message`, `follow_up`, conflict inspection, guarded integration, and
+`cancel`, `message`, `follow_up`, conflict inspection, guarded commit/integration, and
 safe cleanup. A spawn can request `worktree: true` when the workspace is a
 supported Git repository; Helm records the managed branch and path and refuses
 destructive cleanup of dirty work.

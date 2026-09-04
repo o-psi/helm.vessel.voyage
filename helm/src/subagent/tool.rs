@@ -83,6 +83,10 @@ enum Args {
         id: Uuid,
         target: String,
     },
+    Commit {
+        id: Uuid,
+        message: String,
+    },
     Cleanup {
         id: Uuid,
     },
@@ -92,8 +96,8 @@ enum Args {
 impl Tool for SubagentTool {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
-        name:"subagent".into(), description:"Spawn and supervise bounded background Helm agents. Spawn independent agents before waiting. Set worktree=true for isolated Git coding work. Worktree integration and cleanup are guarded and refuse dirty or conflicting changes. Actions: spawn, status, list, wait, wait_many, cancel, message, follow_up, worktree_status, worktree_conflicts, integrate, cleanup.".into(),
-        input_schema:json!({"type":"object","required":["action"],"properties":{"action":{"enum":["spawn","status","list","wait","wait_many","cancel","message","follow_up","worktree_status","worktree_conflicts","integrate","cleanup"]},"id":{"type":"string","format":"uuid"},"ids":{"type":"array","items":{"type":"string","format":"uuid"},"minItems":1},"other_id":{"type":"string","format":"uuid"},"parent_id":{"type":"string","format":"uuid"},"name":{"type":"string"},"task":{"type":"string"},"message":{"type":"string"},"worktree":{"type":"boolean"},"target":{"type":"string"}},"additionalProperties":false}),
+        name:"subagent".into(), description:"Spawn and supervise bounded background Helm agents. Spawn independent agents before waiting. Set worktree=true for isolated Git coding work. Worktree commit, integration, and cleanup are guarded and refuse dirty or conflicting changes. Actions: spawn, status, list, wait, wait_many, cancel, message, follow_up, worktree_status, worktree_conflicts, commit, integrate, cleanup.".into(),
+        input_schema:json!({"type":"object","required":["action"],"properties":{"action":{"enum":["spawn","status","list","wait","wait_many","cancel","message","follow_up","worktree_status","worktree_conflicts","commit","integrate","cleanup"]},"id":{"type":"string","format":"uuid"},"ids":{"type":"array","items":{"type":"string","format":"uuid"},"minItems":1},"other_id":{"type":"string","format":"uuid"},"parent_id":{"type":"string","format":"uuid"},"name":{"type":"string"},"task":{"type":"string"},"message":{"type":"string"},"worktree":{"type":"boolean"},"target":{"type":"string"}},"additionalProperties":false}),
     }
     }
     async fn execute(&self, arguments: Value, context: &ToolContext) -> Result<String, ToolError> {
@@ -205,6 +209,13 @@ impl Tool for SubagentTool {
                 manager.integrate(&lease, &target).map_err(failed)?;
                 json!({"id":id,"source":plan.source,"target":plan.target,"merge_base":plan.merge_base,"integrated":true})
             }
+            Args::Commit { id, message } => {
+                approve_git(context, "subagent.commit", &id.to_string()).await?;
+                let manager = self.manager()?;
+                let lease = self.lease(AgentId(id)).await?;
+                let commit = manager.commit(&lease, &message).map_err(failed)?;
+                json!({"id":id,"branch":lease.branch,"commit":commit})
+            }
             Args::Cleanup { id } => {
                 approve_git(context, "subagent.cleanup", &id.to_string()).await?;
                 let manager = self.manager()?;
@@ -275,6 +286,15 @@ mod tests {
             }))
             .unwrap(),
             Args::Spawn { worktree: true, .. }
+        ));
+        assert!(matches!(
+            serde_json::from_value::<Args>(json!({
+                "action": "commit",
+                "id": Uuid::nil(),
+                "message": "child change"
+            }))
+            .unwrap(),
+            Args::Commit { .. }
         ));
         assert!(matches!(
             serde_json::from_value::<Args>(json!({
