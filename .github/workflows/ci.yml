@@ -16,6 +16,10 @@ jobs:
       - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
       - run: cargo test --workspace --all-features
       - run: cargo build --workspace --release --locked
+      - name: Prove native provider works without Codex
+        env:
+          HELM_BIN: target/release/helm
+        run: python3 tests/system/native_provider_no_codex.py
       - run: python3 tests/system/vessel_lifecycle.py
       - run: python3 eval/run.py validate
       - run: ./scripts/package-release "ci-${{ github.sha }}"

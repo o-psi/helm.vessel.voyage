@@ -9,13 +9,77 @@ use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
 pub enum ProviderKind {
     #[default]
-    Openai,
+    #[serde(rename = "openai-responses")]
+    OpenaiResponses,
+    #[serde(rename = "openai-chat", alias = "openai", alias = "openai-compatible")]
+    OpenaiChat,
+    #[serde(rename = "chatgpt-oauth")]
+    ChatGptOauth,
+    #[serde(rename = "anthropic")]
     Anthropic,
-    #[serde(rename = "codex-subscription")]
+    #[serde(rename = "codex-compatibility", alias = "codex-subscription")]
     CodexSubscription,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderAccess {
+    NativePublicApi,
+    NativeChatgptOauth,
+    ExternalCompatibilityBridge,
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+pub struct ProviderProfile {
+    pub id: &'static str,
+    pub access: ProviderAccess,
+    pub credential: &'static str,
+    pub billing: &'static str,
+    pub compatibility_bridge: bool,
+}
+
+impl ProviderKind {
+    pub fn profile(&self) -> ProviderProfile {
+        match self {
+            Self::OpenaiResponses => ProviderProfile {
+                id: "openai-responses",
+                access: ProviderAccess::NativePublicApi,
+                credential: "OPENAI_API_KEY (or api_key_env override)",
+                billing: "OpenAI API usage is billed separately from ChatGPT subscriptions",
+                compatibility_bridge: false,
+            },
+            Self::OpenaiChat => ProviderProfile {
+                id: "openai-chat",
+                access: ProviderAccess::NativePublicApi,
+                credential: "API key named by api_key_env",
+                billing: "Billing is determined by the configured OpenAI-compatible endpoint",
+                compatibility_bridge: false,
+            },
+            Self::ChatGptOauth => ProviderProfile {
+                id: "chatgpt-oauth",
+                access: ProviderAccess::NativeChatgptOauth,
+                credential: "Helm-managed ChatGPT OAuth tokens; run `helm auth login`",
+                billing: "Uses the authenticated ChatGPT subscription and its plan limits",
+                compatibility_bridge: false,
+            },
+            Self::Anthropic => ProviderProfile {
+                id: "anthropic",
+                access: ProviderAccess::NativePublicApi,
+                credential: "ANTHROPIC_API_KEY (or api_key_env override)",
+                billing: "Anthropic API usage is billed by Anthropic",
+                compatibility_bridge: false,
+            },
+            Self::CodexSubscription => ProviderProfile {
+                id: "codex-compatibility",
+                access: ProviderAccess::ExternalCompatibilityBridge,
+                credential: "this legacy bridge delegates authentication to `codex login`; Helm does not read an API key",
+                billing: "This bridge uses the account and entitlement selected by the external Codex CLI",
+                compatibility_bridge: true,
+            },
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -25,6 +89,9 @@ pub struct Config {
     pub model: String,
     pub api_key_env: String,
     pub base_url: Option<String>,
+    /// Explicit override for the experimental ChatGPT subscription backend.
+    /// Kept separate from `base_url` so provider switching cannot redirect OAuth tokens.
+    pub chatgpt_base_url: Option<String>,
     pub system_prompt: String,
     pub max_turns: usize,
     pub max_tokens: u32,
@@ -81,10 +148,11 @@ pub enum UnattendedApprovalMode {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            provider: ProviderKind::Openai,
+            provider: ProviderKind::OpenaiResponses,
             model: "gpt-5".into(),
             api_key_env: "OPENAI_API_KEY".into(),
             base_url: None,
+            chatgpt_base_url: None,
             system_prompt: include_str!("../prompts/system.md").trim().into(),
             max_turns: 64,
             max_tokens: 8192,
@@ -133,8 +201,43 @@ impl Config {
         env::var(&self.api_key_env).with_context(|| format!("{} is not set", self.api_key_env))
     }
 
+    /// Returns a secret only for transports whose authentication Helm owns.
+    pub fn api_key_for_redaction(&self) -> Option<String> {
+        (!matches!(
+            self.provider,
+            ProviderKind::CodexSubscription | ProviderKind::ChatGptOauth
+        ))
+        .then(|| self.api_key().ok())
+        .flatten()
+    }
+
     pub fn timeout(&self) -> Duration {
         Duration::from_secs(self.command_timeout_secs)
+    }
+
+    pub fn provider_profile(&self) -> ProviderProfile {
+        self.provider.profile()
+    }
+
+    pub fn select_provider(&mut self, provider: ProviderKind) {
+        let previous = self.provider.clone();
+        self.provider = provider;
+        if previous != self.provider {
+            match self.provider {
+                ProviderKind::OpenaiResponses | ProviderKind::OpenaiChat => {
+                    if self.api_key_env == "ANTHROPIC_API_KEY" {
+                        self.api_key_env = "OPENAI_API_KEY".into();
+                    }
+                    if self.model == "claude-sonnet-4-0" {
+                        self.model = "gpt-5".into();
+                    }
+                }
+                ProviderKind::Anthropic => {}
+                ProviderKind::ChatGptOauth => {}
+                ProviderKind::CodexSubscription => {}
+            }
+        }
+        self.apply_provider_defaults();
     }
 
     pub fn resolve_workspace(&self, cli: Option<PathBuf>) -> Result<PathBuf> {
@@ -185,7 +288,7 @@ impl Config {
         }
         if self.provider == ProviderKind::CodexSubscription && self.codex_command.trim().is_empty()
         {
-            bail!("codex_command cannot be empty for the codex-subscription provider");
+            bail!("codex_command cannot be empty for the codex-compatibility provider");
         }
         for name in &self.inherit_env {
             let upper = name.to_ascii_uppercase();
@@ -228,11 +331,55 @@ mod tests {
     }
 
     #[test]
-    fn parses_codex_subscription_without_api_credentials() {
+    fn migrates_legacy_codex_subscription_name() {
         let config: Config =
             toml::from_str("provider = \"codex-subscription\"\nmodel = \"test\"").unwrap();
         assert_eq!(config.provider, ProviderKind::CodexSubscription);
         assert_eq!(config.codex_command, "codex");
         config.validate().unwrap();
+        let serialized = toml::to_string(&config).unwrap();
+        assert!(serialized.contains("provider = \"codex-compatibility\""));
+        assert!(!serialized.contains("codex-subscription"));
+    }
+
+    #[test]
+    fn preserves_legacy_openai_as_chat_completions() {
+        let config: Config = toml::from_str("provider = \"openai\"").unwrap();
+        assert_eq!(config.provider, ProviderKind::OpenaiChat);
+        assert!(
+            toml::to_string(&config)
+                .unwrap()
+                .contains("provider = \"openai-chat\"")
+        );
+        assert_eq!(
+            config.provider_profile().access,
+            ProviderAccess::NativePublicApi
+        );
+    }
+
+    #[test]
+    fn defaults_to_native_responses_without_migrating_legacy_configs() {
+        assert_eq!(Config::default().provider, ProviderKind::OpenaiResponses);
+        let responses: Config = toml::from_str("provider = \"openai-responses\"").unwrap();
+        assert_eq!(responses.provider, ProviderKind::OpenaiResponses);
+        let compatible: Config = toml::from_str("provider = \"openai-compatible\"").unwrap();
+        assert_eq!(compatible.provider, ProviderKind::OpenaiChat);
+        let oauth: Config = toml::from_str("provider = \"chatgpt-oauth\"").unwrap();
+        assert_eq!(oauth.provider, ProviderKind::ChatGptOauth);
+    }
+
+    #[test]
+    fn compatibility_profile_is_truthful_about_credentials_and_billing() {
+        let profile = ProviderKind::CodexSubscription.profile();
+        assert_eq!(profile.access, ProviderAccess::ExternalCompatibilityBridge);
+        assert!(profile.compatibility_bridge);
+        assert!(profile.credential.contains("codex login"));
+        assert!(profile.billing.contains("Codex CLI"));
+        let config = Config {
+            provider: ProviderKind::CodexSubscription,
+            api_key_env: "A_VARIABLE_THE_BRIDGE_MUST_NOT_READ".into(),
+            ..Config::default()
+        };
+        assert_eq!(config.api_key_for_redaction(), None);
     }
 }

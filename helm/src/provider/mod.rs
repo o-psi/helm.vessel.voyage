@@ -1,6 +1,8 @@
 mod anthropic;
+mod chatgpt_oauth;
 mod codex_subscription;
 mod openai;
+mod openai_responses;
 
 use async_trait::async_trait;
 use futures_util::Stream;
@@ -14,8 +16,12 @@ use crate::{
 };
 
 pub use anthropic::AnthropicProvider;
+pub use chatgpt_oauth::{
+    ChatGptOauthProvider, ChatGptTokenStore, DeviceAuthorization, OAuthEndpoints, TokenStatus,
+};
 pub use codex_subscription::CodexSubscriptionProvider;
 pub use openai::OpenAiProvider;
+pub use openai_responses::OpenAiResponsesProvider;
 
 #[derive(Debug, Error)]
 pub enum ProviderError {
@@ -147,12 +153,28 @@ pub fn from_config(
     workspace: std::path::PathBuf,
 ) -> Result<Box<dyn Provider>, ProviderError> {
     match config.provider {
-        ProviderKind::Openai => Ok(Box::new(OpenAiProvider::new(
+        ProviderKind::OpenaiResponses => Ok(Box::new(OpenAiResponsesProvider::new(
             config
                 .api_key()
                 .map_err(|e| ProviderError::Authentication(e.to_string()))?,
             config.base_url.clone(),
         ))),
+        ProviderKind::OpenaiChat => Ok(Box::new(OpenAiProvider::new(
+            config
+                .api_key()
+                .map_err(|e| ProviderError::Authentication(e.to_string()))?,
+            config.base_url.clone(),
+        ))),
+        ProviderKind::ChatGptOauth => {
+            let store = ChatGptTokenStore::new(ChatGptTokenStore::default_path()?);
+            let mut endpoints = OAuthEndpoints::default();
+            if let Some(base) = config.chatgpt_base_url.as_deref() {
+                let base = base.trim_end_matches('/');
+                endpoints.responses = format!("{base}/responses");
+                endpoints.models = format!("{base}/models");
+            }
+            Ok(Box::new(ChatGptOauthProvider::from_store(store, endpoints)))
+        }
         ProviderKind::Anthropic => Ok(Box::new(AnthropicProvider::new(
             config
                 .api_key()

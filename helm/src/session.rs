@@ -100,6 +100,9 @@ impl Session {
             to: model.to_owned(),
             changed_at: Utc::now(),
         });
+        for message in &mut self.messages {
+            message.provider_state = None;
+        }
         self.model = model.to_owned();
         Ok(true)
     }
@@ -320,7 +323,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let store = SessionStore::new(dir.path().into());
         let mut session = Session::new(dir.path().into(), "first".into());
+        let mut message = Message::new(crate::model::Role::Assistant, "answer");
+        message.provider_state = Some(serde_json::json!({"kind":"provider-state"}));
+        session.messages.push(message);
         assert!(session.switch_model("second").unwrap());
+        assert!(session.messages[0].provider_state.is_none());
         assert!(!session.switch_model("second").unwrap());
         assert_eq!(session.model_history.len(), 1);
         assert_eq!(session.model_history[0].from, "first");

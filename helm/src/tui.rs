@@ -194,6 +194,7 @@ impl Composer {
 struct App {
     session: Session,
     sessions: Vec<Session>,
+    provider_label: String,
     composer: Composer,
     activity: Vec<String>,
     streaming_activity: Option<usize>,
@@ -275,6 +276,7 @@ impl App {
         Self {
             session,
             sessions,
+            provider_label: "provider unknown".into(),
             composer: Composer::default(),
             activity: Vec::new(),
             streaming_activity: None,
@@ -337,9 +339,11 @@ pub async fn run(
     terminals: Arc<dyn InteractiveTerminals>,
     supervisor: Arc<dyn AgentSupervisor>,
     todos: Arc<TodoStore>,
+    provider_label: String,
 ) -> Result<()> {
     let sessions = store.list().await?;
     let mut app = App::new(session, sessions);
+    app.provider_label = provider_label;
     refresh_terminals(&mut app, terminals.as_ref()).await;
     let mut terminal_events = Some(terminals.subscribe());
     let mut supervisor_events = Some(supervisor.subscribe());
@@ -1507,8 +1511,9 @@ fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
                     .add_modifier(Modifier::BOLD),
             ),
             Span::raw(format!(
-                "  {title} · {} · {}",
+                "  {title} · {} · {} · {}",
                 app.session.model,
+                app.provider_label,
                 app.session.workspace.display()
             )),
         ]))

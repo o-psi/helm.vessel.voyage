@@ -34,6 +34,9 @@ claimed, Helm authenticates outbound heartbeats, pulls queued tasks, executes th
 under local policy, and posts results to Vessel.
 
 See [Helm's README](helm/README.md) for provider, policy, session, and CLI details.
+Helm's native providers do not require Codex; see [provider architecture and
+migration](docs/providers.md) for transport choices and subscription-versus-API
+billing boundaries.
 
 For self-hosted source control and issue management, see [the local Forgejo guide](docs/local-git.md).
 The comprehensive 0.1 work breakdown is tracked in [the delivery map](docs/roadmap.md).

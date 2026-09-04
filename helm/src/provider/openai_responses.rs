@@ -1,0 +1,802 @@
+use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
+
+use super::{
+    ModelInfo, Provider, ProviderDelta, ProviderError, ProviderStream, ProviderStreamEvent,
+    checked_json, checked_stream_response, normalize_models,
+};
+use crate::model::{Message, ModelRequest, ModelResponse, Role, ToolCall, Usage};
+
+/// Native OpenAI Responses API transport. This is separate from the compatible
+/// Chat Completions adapter because the wire formats and streaming events differ.
+pub struct OpenAiResponsesProvider {
+    client: reqwest::Client,
+    api_key: String,
+    base_url: String,
+}
+
+impl OpenAiResponsesProvider {
+    pub fn new(api_key: String, base_url: Option<String>) -> Self {
+        Self {
+            client: reqwest::Client::new(),
+            api_key,
+            base_url: base_url
+                .unwrap_or_else(|| "https://api.openai.com/v1".into())
+                .trim_end_matches('/')
+                .into(),
+        }
+    }
+}
+
+#[async_trait]
+impl Provider for OpenAiResponsesProvider {
+    async fn models(&self) -> Result<Vec<ModelInfo>, ProviderError> {
+        let response = self
+            .client
+            .get(format!("{}/models", self.base_url))
+            .bearer_auth(&self.api_key)
+            .send()
+            .await
+            .map_err(map_transport)?;
+        let value = checked_json(response).await?;
+        let data = value.get("data").and_then(Value::as_array).ok_or_else(|| {
+            ProviderError::InvalidResponse("OpenAI models response omitted data".into())
+        })?;
+        let mut models = data
+            .iter()
+            .filter_map(|item| item.get("id").and_then(Value::as_str))
+            .map(ModelInfo::minimal)
+            .collect();
+        normalize_models(&mut models);
+        Ok(models)
+    }
+
+    async fn complete(&self, request: ModelRequest) -> Result<ModelResponse, ProviderError> {
+        let response = self
+            .client
+            .post(format!("{}/responses", self.base_url))
+            .bearer_auth(&self.api_key)
+            .json(&request_body(request, false)?)
+            .send()
+            .await
+            .map_err(map_transport)?;
+        decode_response(checked_json(response).await?)
+    }
+
+    async fn stream(&self, request: ModelRequest) -> Result<ProviderStream, ProviderError> {
+        let response = self
+            .client
+            .post(format!("{}/responses", self.base_url))
+            .bearer_auth(&self.api_key)
+            .json(&request_body(request, true)?)
+            .send()
+            .await
+            .map_err(map_transport)?;
+        let response = checked_stream_response(response).await?;
+        Ok(Box::pin(responses_stream(response.bytes_stream())))
+    }
+}
+
+pub(crate) fn request_body(request: ModelRequest, stream: bool) -> Result<Value, ProviderError> {
+    let instructions = request
+        .messages
+        .iter()
+        .filter(|message| message.role == Role::System)
+        .map(|message| message.content.as_str())
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    let input = request
+        .messages
+        .iter()
+        .filter(|message| message.role != Role::System)
+        .map(encode_message)
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
+    let tools=request.tools.into_iter().map(|tool|json!({"type":"function","name":tool.name,"description":tool.description,"parameters":tool.input_schema,"strict":false})).collect::<Vec<_>>();
+    let mut body = json!({"model":request.model,"input":input,"stream":stream,"store":false,"include":["reasoning.encrypted_content"]});
+    if !instructions.is_empty() {
+        body["instructions"] = json!(instructions)
+    }
+    if !tools.is_empty() {
+        body["tools"] = json!(tools);
+        body["tool_choice"] = json!("auto");
+        body["parallel_tool_calls"] = json!(true);
+    }
+    if let Some(max) = request.max_tokens {
+        body["max_output_tokens"] = json!(max)
+    }
+    if let Some(temperature) = request.temperature {
+        body["temperature"] = json!(temperature)
+    }
+    Ok(body)
+}
+
+fn encode_message(message: &Message) -> Result<Vec<Value>, ProviderError> {
+    if message.role == Role::Tool {
+        return Ok(message
+            .tool_call_id
+            .as_ref()
+            .map(|id| {
+                vec![json!({"type":"function_call_output","call_id":id,"output":message.content})]
+            })
+            .unwrap_or_default());
+    }
+    if message.role == Role::Assistant
+        && let Some(state) = message.provider_state.as_ref()
+    {
+        return decode_replay(state);
+    }
+    let role = match message.role {
+        Role::System => "system",
+        Role::User => "user",
+        Role::Assistant => "assistant",
+        Role::Tool => unreachable!(),
+    };
+    let mut values = Vec::new();
+    if !message.content.is_empty() {
+        values.push(json!({"type":"message","role":role,"content":message.content}));
+    }
+    values.extend(message.tool_calls.iter().map(|call|json!({"type":"function_call","call_id":call.id,"name":call.name,"arguments":call.arguments.to_string()})));
+    Ok(values)
+}
+
+const REPLAY_VERSION: u8 = 1;
+const MAX_REPLAY_BYTES: usize = 2 * 1024 * 1024;
+const MAX_REPLAY_ITEMS: usize = 256;
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReplayEnvelope {
+    kind: String,
+    version: u8,
+    items: Vec<ReplayItem>,
+}
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+enum ReplayItem {
+    Reasoning {
+        id: String,
+        encrypted_content: String,
+        #[serde(default)]
+        summary: Vec<ReplaySummary>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        status: Option<String>,
+    },
+    FunctionCall {
+        call_id: String,
+        name: String,
+        arguments: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        status: Option<String>,
+    },
+    Message {
+        role: String,
+        content: Vec<ReplayContent>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        status: Option<String>,
+    },
+}
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+enum ReplaySummary {
+    SummaryText { text: String },
+}
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+enum ReplayContent {
+    OutputText { text: String },
+}
+
+fn make_replay(output: &[Value]) -> Result<Value, ProviderError> {
+    let items = output
+        .iter()
+        .map(parse_replay_item)
+        .collect::<Result<Vec<_>, _>>()?;
+    validate_replay(&items)?;
+    let value = serde_json::to_value(ReplayEnvelope {
+        kind: "openai_responses_replay".into(),
+        version: REPLAY_VERSION,
+        items,
+    })
+    .map_err(|e| ProviderError::InvalidResponse(e.to_string()))?;
+    if serde_json::to_vec(&value)
+        .map_err(|e| ProviderError::InvalidResponse(e.to_string()))?
+        .len()
+        > MAX_REPLAY_BYTES
+    {
+        return Err(ProviderError::InvalidResponse(
+            "Responses replay state exceeds 2 MiB".into(),
+        ));
+    }
+    Ok(value)
+}
+fn parse_replay_item(value: &Value) -> Result<ReplayItem, ProviderError> {
+    let string = |name: &str| value.get(name).and_then(Value::as_str).map(str::to_owned);
+    match value.get("type").and_then(Value::as_str) {
+        Some("reasoning") => {
+            let summary = value
+                .get("summary")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter(|part| part.get("type").and_then(Value::as_str) == Some("summary_text"))
+                .map(|part| ReplaySummary::SummaryText {
+                    text: part
+                        .get("text")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .into(),
+                })
+                .collect();
+            Ok(ReplayItem::Reasoning {
+                id: string("id").unwrap_or_default(),
+                encrypted_content: string("encrypted_content").unwrap_or_default(),
+                summary,
+                status: string("status"),
+            })
+        }
+        Some("function_call") => Ok(ReplayItem::FunctionCall {
+            call_id: string("call_id").unwrap_or_default(),
+            name: string("name").unwrap_or_default(),
+            arguments: string("arguments").unwrap_or_else(|| "{}".into()),
+            id: string("id"),
+            status: string("status"),
+        }),
+        Some("message") => {
+            let content = value
+                .get("content")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter(|part| part.get("type").and_then(Value::as_str) == Some("output_text"))
+                .map(|part| ReplayContent::OutputText {
+                    text: part
+                        .get("text")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .into(),
+                })
+                .collect();
+            Ok(ReplayItem::Message {
+                role: string("role").unwrap_or_default(),
+                content,
+                id: string("id"),
+                status: string("status"),
+            })
+        }
+        Some(kind) => Err(ProviderError::InvalidResponse(format!(
+            "unsupported Responses replay item type `{kind}`"
+        ))),
+        None => Err(ProviderError::InvalidResponse(
+            "Responses replay item omitted type".into(),
+        )),
+    }
+}
+fn decode_replay(value: &Value) -> Result<Vec<Value>, ProviderError> {
+    if serde_json::to_vec(value)
+        .map_err(|e| ProviderError::InvalidResponse(e.to_string()))?
+        .len()
+        > MAX_REPLAY_BYTES
+    {
+        return Err(ProviderError::InvalidResponse(
+            "Responses replay state exceeds 2 MiB".into(),
+        ));
+    }
+    let envelope: ReplayEnvelope = serde_json::from_value(value.clone()).map_err(|e| {
+        ProviderError::InvalidResponse(format!("invalid Responses replay state: {e}"))
+    })?;
+    if envelope.kind != "openai_responses_replay" || envelope.version != REPLAY_VERSION {
+        return Err(ProviderError::InvalidResponse(
+            "unsupported Responses replay state kind/version".into(),
+        ));
+    }
+    validate_replay(&envelope.items)?;
+    envelope
+        .items
+        .into_iter()
+        .map(|item| {
+            serde_json::to_value(item).map_err(|e| ProviderError::InvalidResponse(e.to_string()))
+        })
+        .collect()
+}
+fn validate_replay(items: &[ReplayItem]) -> Result<(), ProviderError> {
+    if items.len() > MAX_REPLAY_ITEMS {
+        return Err(ProviderError::InvalidResponse(
+            "Responses replay state has too many items".into(),
+        ));
+    }
+    for item in items {
+        match item {
+            ReplayItem::Reasoning {
+                id,
+                encrypted_content,
+                ..
+            } if id.is_empty()
+                || encrypted_content.is_empty()
+                || encrypted_content.len() > MAX_REPLAY_BYTES =>
+            {
+                return Err(ProviderError::InvalidResponse(
+                    "reasoning replay omitted id or encrypted_content".into(),
+                ));
+            }
+            ReplayItem::FunctionCall {
+                call_id,
+                name,
+                arguments,
+                ..
+            } if call_id.is_empty() || name.is_empty() || arguments.len() > MAX_REPLAY_BYTES => {
+                return Err(ProviderError::InvalidResponse(
+                    "invalid function-call replay item".into(),
+                ));
+            }
+            ReplayItem::Message { role, content, .. }
+                if role != "assistant" || content.len() > MAX_REPLAY_ITEMS =>
+            {
+                return Err(ProviderError::InvalidResponse(
+                    "invalid message replay item".into(),
+                ));
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+#[derive(Default)]
+struct Assembly {
+    content: String,
+    calls: std::collections::BTreeMap<usize, Call>,
+    usage: Usage,
+    output: Option<Vec<Value>>,
+}
+#[derive(Default)]
+struct Call {
+    id: String,
+    name: String,
+    arguments: String,
+}
+const MAX_SSE_BUFFER_BYTES: usize = 4 * 1024 * 1024;
+
+pub(crate) fn responses_stream<S>(
+    mut source: S,
+) -> impl futures_util::Stream<Item = Result<ProviderStreamEvent, ProviderError>> + Send
+where
+    S: futures_util::Stream<Item = Result<bytes::Bytes, reqwest::Error>> + Send + Unpin + 'static,
+{
+    use futures_util::StreamExt;
+    async_stream::try_stream! {
+        let mut pending=Vec::new();let mut assembly=Assembly::default();
+        while let Some(chunk)=source.next().await {
+            pending.extend_from_slice(&chunk.map_err(map_transport)?);
+            if pending.len()>MAX_SSE_BUFFER_BYTES{Err(ProviderError::InvalidResponse("OpenAI Responses stream event exceeded 4 MiB".into()))?;}
+            while let Some(frame)=super::openai::take_sse_frame(&mut pending){let data=super::openai::sse_data(&frame);if data.is_empty(){continue}let event:Value=serde_json::from_slice(data).map_err(|e|ProviderError::InvalidResponse(format!("invalid OpenAI Responses stream event: {e}")))?;
+                let kind=event.get("type").and_then(Value::as_str).unwrap_or_default();
+                match kind {
+                    "response.output_text.delta"=>if let Some(delta)=event.get("delta").and_then(Value::as_str){assembly.content.push_str(delta);yield ProviderStreamEvent::Delta(ProviderDelta::Text(delta.into()));},
+                    "response.output_item.added"=>if event.pointer("/item/type").and_then(Value::as_str)==Some("function_call"){let index=output_index(&event);let call=assembly.calls.entry(index).or_default();call.id=event.pointer("/item/call_id").and_then(Value::as_str).unwrap_or_default().into();call.name=event.pointer("/item/name").and_then(Value::as_str).unwrap_or_default().into();yield ProviderStreamEvent::Delta(ProviderDelta::ToolCall{index,id:Some(call.id.clone()),name:Some(call.name.clone()),arguments:String::new()});},
+                    "response.function_call_arguments.delta"=>{let index=output_index(&event);let call=assembly.calls.entry(index).or_default();let delta=event.get("delta").and_then(Value::as_str).unwrap_or_default();call.arguments.push_str(delta);yield ProviderStreamEvent::Delta(ProviderDelta::ToolCall{index,id:None,name:None,arguments:delta.into()});},
+                    "response.completed"=>{if let Some(response)=event.get("response"){merge_final(response,&mut assembly)?;}yield ProviderStreamEvent::Completed(finish(assembly)?);return},
+                    "response.failed"|"response.incomplete"|"response.cancelled"|"error"=>Err(decode_stream_error(&event))?,
+                    _=>{}
+                }
+            }
+        }
+        Err(ProviderError::InvalidResponse("OpenAI Responses stream ended before response.completed".into()))?;
+    }
+}
+fn output_index(event: &Value) -> usize {
+    event
+        .get("output_index")
+        .and_then(Value::as_u64)
+        .unwrap_or(0) as usize
+}
+fn merge_final(response: &Value, assembly: &mut Assembly) -> Result<(), ProviderError> {
+    if let Some(usage) = response.get("usage") {
+        assembly.usage = decode_usage(usage)
+    }
+    assembly.output = response.get("output").and_then(Value::as_array).cloned();
+    if assembly.content.is_empty() {
+        assembly.content = output_text(response)
+    }
+    for (index, item) in response
+        .get("output")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .enumerate()
+    {
+        if item.get("type").and_then(Value::as_str) == Some("function_call") {
+            let call = assembly.calls.entry(index).or_default();
+            if call.id.is_empty() {
+                call.id = item
+                    .get("call_id")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .into()
+            }
+            if call.name.is_empty() {
+                call.name = item
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .into()
+            }
+            if call.arguments.is_empty() {
+                call.arguments = item
+                    .get("arguments")
+                    .and_then(Value::as_str)
+                    .unwrap_or("{}")
+                    .into()
+            }
+        }
+    }
+    Ok(())
+}
+fn finish(assembly: Assembly) -> Result<ModelResponse, ProviderError> {
+    let provider_state = assembly.output.as_deref().map(make_replay).transpose()?;
+    let calls = assembly
+        .calls
+        .into_values()
+        .map(|call| {
+            if call.id.is_empty() || call.name.is_empty() {
+                return Err(ProviderError::InvalidResponse(
+                    "Responses function call omitted call_id or name".into(),
+                ));
+            }
+            Ok(ToolCall {
+                id: call.id,
+                name: call.name,
+                arguments: serde_json::from_str(if call.arguments.is_empty() {
+                    "{}"
+                } else {
+                    &call.arguments
+                })
+                .map_err(|e| {
+                    ProviderError::InvalidResponse(format!("bad Responses function arguments: {e}"))
+                })?,
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(ModelResponse {
+        message: Message {
+            role: Role::Assistant,
+            content: assembly.content,
+            tool_call_id: None,
+            tool_calls: calls,
+            tool_success: None,
+            provider_state,
+        },
+        usage: assembly.usage,
+    })
+}
+
+pub(crate) fn decode_response(value: Value) -> Result<ModelResponse, ProviderError> {
+    let mut assembly = Assembly {
+        usage: value.get("usage").map(decode_usage).unwrap_or_default(),
+        output: value.get("output").and_then(Value::as_array).cloned(),
+        ..Assembly::default()
+    };
+    for (index, item) in value
+        .get("output")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .enumerate()
+    {
+        match item.get("type").and_then(Value::as_str) {
+            Some("message") => {
+                for content in item
+                    .get("content")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                {
+                    if content.get("type").and_then(Value::as_str) == Some("output_text") {
+                        assembly.content.push_str(
+                            content
+                                .get("text")
+                                .and_then(Value::as_str)
+                                .unwrap_or_default(),
+                        )
+                    }
+                }
+            }
+            Some("function_call") => {
+                assembly.calls.insert(
+                    index,
+                    Call {
+                        id: item
+                            .get("call_id")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .into(),
+                        name: item
+                            .get("name")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .into(),
+                        arguments: item
+                            .get("arguments")
+                            .and_then(Value::as_str)
+                            .unwrap_or("{}")
+                            .into(),
+                    },
+                );
+            }
+            _ => {}
+        }
+    }
+    finish(assembly)
+}
+fn decode_usage(value: &Value) -> Usage {
+    Usage {
+        input_tokens: value
+            .get("input_tokens")
+            .and_then(Value::as_u64)
+            .unwrap_or(0),
+        output_tokens: value
+            .get("output_tokens")
+            .and_then(Value::as_u64)
+            .unwrap_or(0),
+    }
+}
+fn output_text(response: &Value) -> String {
+    response
+        .get("output")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|item| item.get("type").and_then(Value::as_str) == Some("message"))
+        .flat_map(|item| {
+            item.get("content")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+        })
+        .filter(|part| part.get("type").and_then(Value::as_str) == Some("output_text"))
+        .filter_map(|part| part.get("text").and_then(Value::as_str))
+        .collect()
+}
+fn decode_stream_error(value: &Value) -> ProviderError {
+    let kind = value
+        .get("type")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let error = value
+        .pointer("/response/error")
+        .or_else(|| value.get("error"))
+        .unwrap_or(value);
+    let code = error
+        .get("code")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let message = error
+        .get("message")
+        .and_then(Value::as_str)
+        .or_else(|| {
+            value
+                .pointer("/response/incomplete_details/reason")
+                .and_then(Value::as_str)
+        })
+        .unwrap_or(match kind {
+            "response.incomplete" => "OpenAI response was incomplete",
+            "response.cancelled" => "OpenAI response was cancelled",
+            _ => "OpenAI Responses stream failed",
+        })
+        .to_owned();
+    match code {
+        "rate_limit_exceeded" => ProviderError::RateLimit {
+            message,
+            retry_after: None,
+        },
+        "server_error" | "service_unavailable" => ProviderError::Unavailable(message),
+        _ if kind == "response.incomplete" => ProviderError::InvalidResponse(message),
+        _ => ProviderError::Request(message),
+    }
+}
+fn map_transport(error: reqwest::Error) -> ProviderError {
+    if error.is_timeout() {
+        ProviderError::Timeout(error.to_string())
+    } else if error.is_connect() {
+        ProviderError::Unavailable(error.to_string())
+    } else {
+        ProviderError::Request(error.to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::ToolDefinition;
+    use futures_util::StreamExt;
+    #[test]
+    fn request_replays_function_calls_and_outputs() {
+        let body = request_body(
+            ModelRequest {
+                model: "gpt-5".into(),
+                messages: vec![
+                    Message::new(Role::System, "be careful"),
+                    Message::new(Role::User, "do it"),
+                    Message {
+                        role: Role::Assistant,
+                        content: "checking".into(),
+                        tool_call_id: None,
+                        tool_calls: Vec::new(),
+                        tool_success: None,
+                        provider_state: Some(json!({"kind":"openai_responses_replay","version":1,"items":[
+                            {"type":"reasoning","id":"rs_1","encrypted_content":"encrypted","summary":[]},
+                            {"type":"function_call","call_id":"call_1","name":"read_file","arguments":"{\"path\":\"a\"}"}
+                        ]})),
+                    },
+                    Message::tool("call_1", "contents"),
+                ],
+                tools: vec![ToolDefinition {
+                    name: "read_file".into(),
+                    description: "read".into(),
+                    input_schema: json!({"type":"object"}),
+                }],
+                temperature: None,
+                max_tokens: Some(20),
+            },
+            true,
+        ).unwrap();
+        assert_eq!(body["input"][1]["type"], "reasoning");
+        assert_eq!(body["input"][2]["type"], "function_call");
+        assert_eq!(body["input"][3]["type"], "function_call_output");
+        assert_eq!(body["max_output_tokens"], 20);
+        assert_eq!(body["instructions"], "be careful");
+        assert_eq!(body["store"], false);
+        assert_eq!(body["tool_choice"], "auto");
+        assert_eq!(body["parallel_tool_calls"], true);
+        assert_eq!(body["include"][0], "reasoning.encrypted_content");
+    }
+    #[test]
+    fn decodes_non_streaming_text_tools_and_usage() {
+        let result=decode_response(json!({"output":[{"type":"reasoning","id":"rs_1","encrypted_content":"encrypted","summary":[]},{"type":"message","role":"assistant","content":[{"type":"output_text","text":"done"}]},{"type":"function_call","call_id":"c1","name":"shell","arguments":"{\"command\":\"pwd\"}"}],"usage":{"input_tokens":7,"output_tokens":3}})).unwrap();
+        assert_eq!(result.message.content, "done");
+        assert_eq!(
+            result.message.tool_calls[0].arguments,
+            json!({"command":"pwd"})
+        );
+        assert_eq!(result.usage.input_tokens, 7);
+        let replay = request_body(
+            ModelRequest {
+                model: "gpt-5".into(),
+                messages: vec![result.message, Message::tool("c1", "ok")],
+                tools: vec![],
+                temperature: None,
+                max_tokens: None,
+            },
+            false,
+        )
+        .unwrap();
+        assert_eq!(replay["input"][0]["type"], "reasoning");
+        assert_eq!(replay["input"][2]["type"], "function_call");
+        assert_eq!(replay["input"][3]["type"], "function_call_output");
+    }
+    #[tokio::test]
+    async fn decodes_fragmented_stream() {
+        let fixture=concat!("data: {\"type\":\"response.output_text.delta\",\"delta\":\"hel\"}\n\n","data: {\"type\":\"response.output_item.added\",\"output_index\":1,\"item\":{\"type\":\"function_call\",\"call_id\":\"c1\",\"name\":\"read_file\"}}\n\n","data: {\"type\":\"response.function_call_arguments.delta\",\"output_index\":1,\"delta\":\"{\\\"path\\\":\\\"a\\\"}\"}\n\n","data: {\"type\":\"response.completed\",\"response\":{\"output\":[{\"type\":\"reasoning\",\"id\":\"rs_1\",\"encrypted_content\":\"encrypted\",\"summary\":[]},{\"type\":\"function_call\",\"call_id\":\"c1\",\"name\":\"read_file\",\"arguments\":\"{\\\"path\\\":\\\"a\\\"}\"}],\"usage\":{\"input_tokens\":2,\"output_tokens\":4}}}\n\n").as_bytes();
+        let chunks = fixture
+            .chunks(13)
+            .map(|part| Ok::<_, reqwest::Error>(bytes::Bytes::copy_from_slice(part)))
+            .collect::<Vec<_>>();
+        let events = responses_stream(futures_util::stream::iter(chunks))
+            .collect::<Vec<_>>()
+            .await;
+        let completed = events
+            .into_iter()
+            .find_map(|event| match event.unwrap() {
+                ProviderStreamEvent::Completed(value) => Some(value),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(completed.message.content, "hel");
+        assert_eq!(
+            completed.message.tool_calls[0].arguments,
+            json!({"path":"a"})
+        );
+        assert_eq!(completed.usage.output_tokens, 4);
+        assert_eq!(
+            completed.message.provider_state.as_ref().unwrap()["items"][0]["type"],
+            "reasoning"
+        );
+    }
+    #[tokio::test]
+    async fn retryable_stream_errors_remain_typed() {
+        let data=b"data: {\"type\":\"error\",\"error\":{\"code\":\"server_error\",\"message\":\"later\"}}\n\n";
+        let events = responses_stream(futures_util::stream::iter(vec![Ok::<_, reqwest::Error>(
+            bytes::Bytes::from_static(data),
+        )]))
+        .collect::<Vec<_>>()
+        .await;
+        assert!(matches!(&events[0],Err(error) if error.is_retryable()));
+    }
+
+    #[tokio::test]
+    async fn completion_without_deltas_uses_final_response_text() {
+        let data=b"data: {\"type\":\"response.completed\",\"response\":{\"output\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"final only\"}]}]}}\n\n";
+        let events = responses_stream(futures_util::stream::iter(vec![Ok::<_, reqwest::Error>(
+            bytes::Bytes::from_static(data),
+        )]))
+        .collect::<Vec<_>>()
+        .await;
+        let completed = events
+            .into_iter()
+            .find_map(|event| match event.unwrap() {
+                ProviderStreamEvent::Completed(response) => Some(response),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(completed.message.content, "final only");
+    }
+
+    #[test]
+    fn terminal_failures_decode_nested_response_errors() {
+        assert!(
+            matches!(decode_stream_error(&json!({"type":"response.failed","response":{"error":{"code":"server_error","message":"retry"}}})),ProviderError::Unavailable(message) if message=="retry")
+        );
+        assert!(matches!(
+            decode_stream_error(
+                &json!({"type":"response.incomplete","response":{"incomplete_details":{"reason":"max_output_tokens"}}})
+            ),
+            ProviderError::InvalidResponse(_)
+        ));
+        assert!(matches!(
+            decode_stream_error(&json!({"type":"response.cancelled","response":{}})),
+            ProviderError::Request(_)
+        ));
+    }
+
+    #[tokio::test]
+    async fn replay_survives_session_disk_round_trip() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = crate::session::SessionStore::new(directory.path().join("sessions"));
+        let response=decode_response(json!({"output":[{"type":"reasoning","id":"rs_1","encrypted_content":"encrypted","summary":[]},{"type":"function_call","call_id":"c1","name":"shell","arguments":"{}"}]})).unwrap();
+        let mut session = crate::session::Session::new(directory.path().into(), "gpt-5".into());
+        session.messages.push(response.message);
+        session.messages.push(Message::tool("c1", "ok"));
+        store.save(&mut session).await.unwrap();
+        let restored = store.load(session.id).await.unwrap();
+        let body = request_body(
+            ModelRequest {
+                model: "gpt-5".into(),
+                messages: restored.messages,
+                tools: vec![],
+                temperature: None,
+                max_tokens: None,
+            },
+            false,
+        )
+        .unwrap();
+        assert_eq!(body["input"][0]["type"], "reasoning");
+        assert_eq!(body["input"][1]["type"], "function_call");
+        assert_eq!(body["input"][2]["type"], "function_call_output");
+    }
+
+    #[test]
+    fn oversized_or_unversioned_replay_is_rejected() {
+        let mut message = Message::new(Role::Assistant, "answer");
+        message.provider_state = Some(
+            json!({"kind":"openai_responses_replay","version":1,"items":[{"type":"reasoning","id":"r","encrypted_content":"x".repeat(MAX_REPLAY_BYTES),"summary":[]}]}),
+        );
+        let error = request_body(
+            ModelRequest {
+                model: "gpt-5".into(),
+                messages: vec![message],
+                tools: vec![],
+                temperature: None,
+                max_tokens: None,
+            },
+            false,
+        )
+        .unwrap_err();
+        assert!(matches!(error, ProviderError::InvalidResponse(_)));
+    }
+}

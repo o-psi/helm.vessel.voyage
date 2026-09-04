@@ -20,6 +20,10 @@ pub struct Message {
     pub tool_calls: Vec<ToolCall>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_success: Option<bool>,
+    /// Provider-owned replay metadata persisted with sessions for native continuation.
+    /// Providers must use a typed, versioned, bounded envelope; model switches clear it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_state: Option<Value>,
 }
 
 impl Message {
@@ -30,6 +34,7 @@ impl Message {
             tool_call_id: None,
             tool_calls: Vec::new(),
             tool_success: None,
+            provider_state: None,
         }
     }
 
@@ -47,6 +52,7 @@ impl Message {
             tool_call_id: Some(call_id.into()),
             tool_calls: Vec::new(),
             tool_success: Some(success),
+            provider_state: None,
         }
     }
 }

@@ -39,6 +39,9 @@ struct Cli {
     config: Option<PathBuf>,
     #[arg(long, global = true)]
     model: Option<String>,
+    /// Provider transport (`openai` retains its legacy Chat Completions behavior).
+    #[arg(long, global = true, value_enum)]
+    provider: Option<ProviderArg>,
     #[arg(long, global = true)]
     workspace: Option<PathBuf>,
     #[arg(long, global = true, value_enum)]
@@ -245,12 +248,41 @@ enum ApprovalArg {
     Never,
 }
 #[derive(Clone, clap::ValueEnum)]
+enum ProviderArg {
+    #[value(name = "openai-responses")]
+    OpenaiResponses,
+    #[value(name = "openai-chat", alias = "openai", alias = "openai-compatible")]
+    OpenaiChat,
+    #[value(name = "chatgpt-oauth")]
+    ChatGptOauth,
+    Anthropic,
+    #[value(name = "codex-compatibility", alias = "codex-subscription")]
+    CodexCompatibility,
+}
+
+impl From<ProviderArg> for helm::ProviderKind {
+    fn from(value: ProviderArg) -> Self {
+        match value {
+            ProviderArg::OpenaiResponses => Self::OpenaiResponses,
+            ProviderArg::OpenaiChat => Self::OpenaiChat,
+            ProviderArg::ChatGptOauth => Self::ChatGptOauth,
+            ProviderArg::Anthropic => Self::Anthropic,
+            ProviderArg::CodexCompatibility => Self::CodexSubscription,
+        }
+    }
+}
+#[derive(Clone, clap::ValueEnum)]
 enum LogFormat {
     Text,
     Json,
 }
 #[derive(Subcommand)]
 enum Command {
+    /// Manage Helm's native ChatGPT subscription credentials.
+    Auth {
+        #[command(subcommand)]
+        command: AuthCommand,
+    },
     Run {
         #[arg(required = true)]
         prompt: Vec<String>,
@@ -283,6 +315,25 @@ enum Command {
     Manpage,
     /// Check configuration and local runtime dependencies without contacting a model.
     Doctor,
+}
+
+#[derive(Subcommand)]
+enum AuthCommand {
+    Status,
+    Login {
+        /// Use the headless device-code flow instead of browser callback login.
+        #[arg(long)]
+        device: bool,
+    },
+    Logout,
+    ImportCodex {
+        /// Codex auth.json to import; defaults to ~/.codex/auth.json.
+        #[arg(long)]
+        path: Option<PathBuf>,
+        /// Replace existing Helm credentials.
+        #[arg(long)]
+        force: bool,
+    },
 }
 
 #[derive(Default)]
@@ -381,6 +432,9 @@ async fn main() -> Result<()> {
             .init(),
     }
     let mut config = Config::load(cli.config.as_deref())?;
+    if let Some(provider) = cli.provider {
+        config.select_provider(provider.into());
+    }
     let model_overridden = cli.model.is_some();
     if let Some(model) = cli.model {
         config.model = model;
@@ -408,11 +462,12 @@ async fn main() -> Result<()> {
             Ok(())
         }
         Command::Config => {
-            println!("{}", toml::to_string_pretty(&config)?);
+            print_config(&config)?;
             Ok(())
         }
         Command::Models { json } => list_models(&config, cli.workspace, json).await,
-        Command::Doctor => doctor(&config, cli.workspace),
+        Command::Doctor => doctor(&config, cli.workspace).await,
+        Command::Auth { command } => auth(command, &config).await,
         Command::Sessions => list_sessions().await,
         Command::Run {
             prompt,
@@ -441,6 +496,22 @@ async fn main() -> Result<()> {
     }
 }
 
+fn print_config(config: &Config) -> Result<()> {
+    let profile = config.provider_profile();
+    let access = match profile.access {
+        helm::config::ProviderAccess::NativePublicApi => "native_public_api",
+        helm::config::ProviderAccess::NativeChatgptOauth => "native_chatgpt_oauth",
+        helm::config::ProviderAccess::ExternalCompatibilityBridge => {
+            "external_compatibility_bridge"
+        }
+    };
+    println!("# provider_access = {access}");
+    println!("# credential_requirement = {}", profile.credential);
+    println!("# billing = {}", profile.billing);
+    println!("{}", toml::to_string_pretty(config)?);
+    Ok(())
+}
+
 async fn list_models(config: &Config, workspace: Option<PathBuf>, json: bool) -> Result<()> {
     let workspace = config.resolve_workspace(workspace)?;
     let provider = provider::from_config(config, workspace)?;
@@ -467,22 +538,31 @@ async fn list_models(config: &Config, workspace: Option<PathBuf>, json: bool) ->
     Ok(())
 }
 
-fn doctor(config: &Config, workspace: Option<PathBuf>) -> Result<()> {
+async fn doctor(config: &Config, workspace: Option<PathBuf>) -> Result<()> {
     let workspace = config.resolve_workspace(workspace)?;
     let subscription = (config.provider == helm::ProviderKind::CodexSubscription)
-        .then(|| probe_codex_subscription(&config.codex_command));
-    let provider_ready = match &subscription {
-        Some(probe) => probe.executable && probe.app_server && probe.logged_in,
-        None => std::env::var_os(&config.api_key_env).is_some(),
+        .then(|| probe_codex_compatibility(&config.codex_command));
+    let oauth_status = if config.provider == helm::ProviderKind::ChatGptOauth {
+        Some(chatgpt_token_store()?.status().await?)
+    } else {
+        None
     };
+    let provider_ready = match (&subscription, &oauth_status) {
+        (Some(probe), _) => probe.executable && probe.app_server && probe.logged_in,
+        (_, Some(status)) => status.authenticated && status.refreshable,
+        (None, None) => std::env::var_os(&config.api_key_env).is_some(),
+    };
+    let profile = config.provider_profile();
     let report = serde_json::json!({
         "status": if provider_ready { "ok" } else { "action_required" },
         "version": env!("CARGO_PKG_VERSION"),
         "workspace": workspace,
         "workspace_readable": workspace.is_dir(),
         "provider_ready": provider_ready,
-        "provider_credential_present": if config.provider == helm::ProviderKind::CodexSubscription { serde_json::Value::Null } else { serde_json::Value::Bool(std::env::var_os(&config.api_key_env).is_some()) },
-        "codex_subscription": subscription,
+        "provider": profile,
+        "native_chatgpt_oauth": oauth_status.as_ref().map(token_status_json),
+        "provider_credential_present": if matches!(config.provider, helm::ProviderKind::CodexSubscription) { serde_json::Value::Null } else if let Some(status) = &oauth_status { serde_json::Value::Bool(status.authenticated) } else { serde_json::Value::Bool(std::env::var_os(&config.api_key_env).is_some()) },
+        "codex_compatibility": subscription,
         "sessions_directory": helm::config::default_data_dir().join("sessions"),
         "approval": config.approval,
         "unattended_approval": config.unattended_approval,
@@ -493,8 +573,109 @@ fn doctor(config: &Config, workspace: Option<PathBuf>) -> Result<()> {
     Ok(())
 }
 
+fn chatgpt_token_store() -> Result<helm::provider::ChatGptTokenStore> {
+    Ok(helm::provider::ChatGptTokenStore::new(
+        helm::provider::ChatGptTokenStore::default_path()?,
+    ))
+}
+
+fn chatgpt_provider(config: &Config) -> Result<helm::provider::ChatGptOauthProvider> {
+    let mut endpoints = helm::provider::OAuthEndpoints::default();
+    if let Some(base) = config.chatgpt_base_url.as_deref() {
+        let base = base.trim_end_matches('/');
+        endpoints.responses = format!("{base}/responses");
+        endpoints.models = format!("{base}/models");
+    }
+    Ok(helm::provider::ChatGptOauthProvider::from_store(
+        chatgpt_token_store()?,
+        endpoints,
+    ))
+}
+
+fn token_status_json(status: &helm::provider::TokenStatus) -> serde_json::Value {
+    serde_json::json!({
+        "authenticated": status.authenticated,
+        "expires_at": status.expires_at,
+        "refreshable": status.refreshable,
+    })
+}
+
+async fn auth(command: AuthCommand, config: &Config) -> Result<()> {
+    let store = chatgpt_token_store()?;
+    match command {
+        AuthCommand::Status => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&token_status_json(&store.status().await?))?
+            );
+        }
+        AuthCommand::Logout => {
+            store.clear().await?;
+            println!("ChatGPT credentials removed");
+        }
+        AuthCommand::ImportCodex { path, force } => {
+            match path {
+                Some(path) => store.import_codex(&path, force).await?,
+                None => store.import_default_codex(force).await?,
+            };
+            println!("Imported ChatGPT credentials");
+        }
+        AuthCommand::Login { device } => {
+            let provider = chatgpt_provider(config)?;
+            if device {
+                let authorization = provider.begin_device().await?;
+                eprintln!(
+                    "Open {} and enter code {}",
+                    authorization.verification_uri, authorization.user_code
+                );
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(600);
+                loop {
+                    match provider.poll_device(&authorization).await {
+                        Ok(_) => {
+                            println!("Signed in with ChatGPT");
+                            break;
+                        }
+                        Err(helm::provider::ProviderError::Unavailable(_))
+                            if std::time::Instant::now() < deadline =>
+                        {
+                            tokio::time::sleep(std::time::Duration::from_secs(
+                                authorization.interval.max(1),
+                            ))
+                            .await;
+                        }
+                        Err(error) => return Err(error.into()),
+                    }
+                }
+            } else {
+                provider
+                    .login_browser(std::time::Duration::from_secs(600), |url| {
+                        eprintln!("Open this URL to sign in:\n{url}");
+                        try_open_browser(url);
+                    })
+                    .await?;
+                println!("Signed in with ChatGPT");
+            }
+        }
+    }
+    Ok(())
+}
+
+fn try_open_browser(url: &str) {
+    #[cfg(target_os = "windows")]
+    let result = std::process::Command::new("rundll32")
+        .args(["url.dll,FileProtocolHandler", url])
+        .spawn();
+    #[cfg(target_os = "macos")]
+    let result = std::process::Command::new("open").arg(url).spawn();
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let result = std::process::Command::new("xdg-open").arg(url).spawn();
+    if let Err(error) = result {
+        eprintln!("Could not open a browser automatically: {error}");
+    }
+}
+
 #[derive(serde::Serialize)]
-struct CodexSubscriptionProbe {
+struct CodexCompatibilityProbe {
     executable: bool,
     version: Option<String>,
     app_server: bool,
@@ -502,7 +683,7 @@ struct CodexSubscriptionProbe {
     remediation: Option<&'static str>,
 }
 
-fn probe_codex_subscription(command: &str) -> CodexSubscriptionProbe {
+fn probe_codex_compatibility(command: &str) -> CodexCompatibilityProbe {
     let version_output = std::process::Command::new(command)
         .arg("--version")
         .output();
@@ -534,7 +715,7 @@ fn probe_codex_subscription(command: &str) -> CodexSubscriptionProbe {
     } else {
         None
     };
-    CodexSubscriptionProbe {
+    CodexCompatibilityProbe {
         executable,
         version,
         app_server,
@@ -806,7 +987,7 @@ fn redactor(config: &Config) -> Arc<Redactor> {
                 .values()
                 .flat_map(|server| server.env.values().cloned()),
         )
-        .chain(config.api_key().ok());
+        .chain(config.api_key_for_redaction());
     Arc::new(Redactor::new(secrets))
 }
 
@@ -831,6 +1012,16 @@ async fn tui_chat(
     let (bridge, receiver) = helm::tui::bridge();
     let mut active_config = config.clone();
     active_config.model = session.model.clone();
+    let profile = active_config.provider_profile();
+    let provider_label = format!(
+        "{} ({})",
+        profile.id,
+        if profile.compatibility_bridge {
+            "external bridge"
+        } else {
+            "native"
+        }
+    );
     let policy = Arc::new(Policy::new(&active_config, session.workspace.clone())?);
     let context = ToolContext {
         policy,
@@ -881,6 +1072,7 @@ async fn tui_chat(
             subagent_runtime,
         )),
         todo.store(),
+        provider_label,
     )
     .await
 }
@@ -1142,5 +1334,58 @@ fn summarize(text: &str) -> String {
         format!("{}…", &line[..160])
     } else {
         line.into()
+    }
+}
+
+#[cfg(test)]
+mod cli_tests {
+    use super::*;
+
+    #[test]
+    fn accepts_canonical_and_legacy_provider_names() {
+        let cli =
+            Cli::try_parse_from(["helm", "--provider", "openai-responses", "config"]).unwrap();
+        assert!(matches!(cli.provider, Some(ProviderArg::OpenaiResponses)));
+        for name in ["openai", "openai-chat", "openai-compatible"] {
+            let cli = Cli::try_parse_from(["helm", "--provider", name, "config"]).unwrap();
+            assert!(matches!(cli.provider, Some(ProviderArg::OpenaiChat)));
+        }
+        let cli = Cli::try_parse_from(["helm", "--provider", "chatgpt-oauth", "config"]).unwrap();
+        assert!(matches!(cli.provider, Some(ProviderArg::ChatGptOauth)));
+        for name in ["codex-compatibility", "codex-subscription"] {
+            let cli = Cli::try_parse_from(["helm", "--provider", name, "doctor"]).unwrap();
+            assert!(matches!(
+                cli.provider,
+                Some(ProviderArg::CodexCompatibility)
+            ));
+        }
+    }
+
+    #[test]
+    fn parses_native_auth_lifecycle_commands() {
+        assert!(matches!(
+            Cli::try_parse_from(["helm", "auth", "status"])
+                .unwrap()
+                .command,
+            Some(Command::Auth {
+                command: AuthCommand::Status
+            })
+        ));
+        assert!(matches!(
+            Cli::try_parse_from(["helm", "auth", "login", "--device"])
+                .unwrap()
+                .command,
+            Some(Command::Auth {
+                command: AuthCommand::Login { device: true }
+            })
+        ));
+        assert!(matches!(
+            Cli::try_parse_from(["helm", "auth", "import-codex", "--force"])
+                .unwrap()
+                .command,
+            Some(Command::Auth {
+                command: AuthCommand::ImportCodex { force: true, .. }
+            })
+        ));
     }
 }
