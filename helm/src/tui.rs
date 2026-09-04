@@ -604,7 +604,7 @@ async fn handle_attached_key(
     app: &mut App,
     terminals: &dyn InteractiveTerminals,
 ) {
-    if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char(']') {
+    if is_terminal_detach_key(key) {
         app.attached_terminal = None;
         app.terminal_snapshot = None;
         app.status = "Detached; terminal is still running".into();
@@ -613,6 +613,11 @@ async fn handle_attached_key(
     {
         app.status = format!("Terminal input failed: {error}");
     }
+}
+
+fn is_terminal_detach_key(key: KeyEvent) -> bool {
+    (key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char(']'))
+        || key.code == KeyCode::Char('\u{1d}')
 }
 
 fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
@@ -1256,6 +1261,18 @@ mod tests {
             encode_terminal_key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::ALT)),
             Some(b"\x1bx".to_vec())
         );
+    }
+
+    #[test]
+    fn detach_accepts_both_crossterm_control_encodings() {
+        assert!(is_terminal_detach_key(KeyEvent::new(
+            KeyCode::Char(']'),
+            KeyModifiers::CONTROL
+        )));
+        assert!(is_terminal_detach_key(KeyEvent::new(
+            KeyCode::Char('\u{1d}'),
+            KeyModifiers::NONE
+        )));
     }
 
     #[tokio::test]
