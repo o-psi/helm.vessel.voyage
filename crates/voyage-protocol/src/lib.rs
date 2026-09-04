@@ -3,12 +3,12 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 pub const API_VERSION: &str = "v1";
+pub const PAIRING_PREFIX: &str = "voyage:v1:";
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct HelmDescriptor {
     pub id: Uuid,
     pub name: String,
-    pub endpoint: String,
     pub version: String,
     pub model: String,
     pub capabilities: Vec<String>,
@@ -19,7 +19,7 @@ pub struct RegisteredHelm {
     #[serde(flatten)]
     pub descriptor: HelmDescriptor,
     pub status: HelmStatus,
-    pub registered_at: DateTime<Utc>,
+    pub paired_at: DateTime<Utc>,
     pub last_seen_at: DateTime<Utc>,
 }
 
@@ -32,13 +32,38 @@ pub enum HelmStatus {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct RegistrationRequest {
+pub struct PairingStartRequest {
     pub helm: HelmDescriptor,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PairingStartResponse {
+    pub code: String,
+    pub worker_token: String,
+    pub expires_at: DateTime<Utc>,
+}
+
+impl PairingStartResponse {
+    pub fn connection_string(&self) -> String {
+        format!("{PAIRING_PREFIX}{}", self.code)
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PairingClaimRequest {
+    pub connection_string: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PairingStatus {
+    pub code: String,
+    pub claimed: bool,
+    pub expires_at: DateTime<Utc>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct HeartbeatRequest {
-    pub id: Uuid,
+    pub status: HelmStatus,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -49,11 +74,40 @@ pub struct TaskRequest {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct TaskResponse {
+pub struct TaskEnvelope {
+    pub id: Uuid,
+    pub request: TaskRequest,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TaskResult {
+    pub task_id: Uuid,
     pub session_id: Uuid,
     pub answer: String,
     pub input_tokens: u64,
     pub output_tokens: u64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TaskRecord {
+    pub id: Uuid,
+    pub helm_id: Uuid,
+    pub request: TaskRequest,
+    pub state: TaskState,
+    pub result: Option<TaskResult>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskState {
+    Queued,
+    Running,
+    Completed,
+    Failed,
+    Cancelled,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

@@ -3,7 +3,7 @@ name = "vessel"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Voyage management plane for publicly reachable Helms"
+description = "Voyage management plane for paired outbound Helm workers"
 
 [dependencies]
 anyhow.workspace = true
@@ -17,4 +17,3 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 uuid.workspace = true
 voyage-protocol.workspace = true
-

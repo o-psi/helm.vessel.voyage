@@ -7,7 +7,7 @@ into streams with explicit ownership so they can progress in separate Git worktr
 | --- | --- | --- | --- |
 | Helm UI | `work/helm-ui` | #1–#4 | Ratatui frontend, streaming UX, sessions and artifacts |
 | Helm runtime | `work/helm-runtime` | #5–#7 | Agent reliability, PTYs, tools and MCP |
-| Helm serving | `work/helm-serve` | #8–#10 | Remote task protocol, node identity and enrollment |
+| Helm connectivity | `work/helm-serve` | #8–#10 | Pairing, outbound task protocol, identity and enrollment |
 | Vessel | `work/vessel` | #11–#14 | Persistence, scheduler, leases and operations UI |
 | Security and operations | `work/security-observability` | #15–#16 | Isolation, audit, metrics and diagnostics |
 | Quality and release | `work/quality-release` | #17–#18 | Tests, evals, CI, packaging and deployment |

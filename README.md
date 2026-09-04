@@ -2,16 +2,16 @@
 
 Voyage is a system for general-purpose LLM work across local and remote machines.
 
-- **Helm** is the Rust TUI and agent runtime. `helm serve` makes a Helm remotely
-  reachable while preserving its local tool policy and workspace boundary.
-- **Vessel** is the management plane. It registers Helms, tracks liveness, exposes
-  fleet discovery, and dispatches work to a chosen online Helm.
+- **Helm** is the Rust TUI and agent runtime. `helm --voyage` pairs it with a Vessel;
+  Helm then maintains an outbound worker connection while preserving local policy.
+- **Vessel** is the management plane. It claims pairing strings, tracks liveness,
+  queues work, and dispatches it over connections initiated by Helms.
 - **voyage-protocol** owns the versioned wire types shared by both binaries.
 
 ```text
 operator ── Helm TUI ── local tools
     │
-    └── Vessel API ── registered Helm(s) ── scoped tools/workspaces
+    └── Vessel ◀── outbound paired Helm worker(s) ── scoped tools/workspaces
 ```
 
 ## Run locally
@@ -19,20 +19,19 @@ operator ── Helm TUI ── local tools
 ```sh
 cargo build --workspace
 
-# management plane (token must match protected Helms)
-VESSEL_HELM_TOKEN=... cargo run -p vessel -- --bind 127.0.0.1:9480
+# management plane
+cargo run -p vessel -- --bind 127.0.0.1:9480
 
-# agent node, registered with Vessel
-OPENAI_API_KEY=... cargo run -p helm -- serve \
-  --bind 127.0.0.1:9470 \
-  --public-url http://127.0.0.1:9470 \
-  --vessel http://127.0.0.1:9480 \
-  --name workstation
+# In another terminal: print a one-time pairing string and wait
+OPENAI_API_KEY=... cargo run -p helm -- --voyage --name workstation
+
+# Give the printed string to Vessel
+cargo run -p vessel -- pair voyage:v1:XXXXXXXXXX
 ```
 
-The initial network API is `/v1`: Vessel offers Helm registration, heartbeat,
-inventory, removal, and task dispatch; Helm offers health, metadata, and task
-execution. Set `HELM_SERVER_TOKEN` when exposing a Helm beyond a trusted network.
+Helm does not listen on a public port. Pairing codes expire after ten minutes. Once
+claimed, Helm authenticates outbound heartbeats, pulls queued tasks, executes them
+under local policy, and posts results to Vessel.
 
 See [Helm's README](helm/README.md) for provider, policy, session, and CLI details.
 

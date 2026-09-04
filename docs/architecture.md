@@ -1,48 +1,57 @@
 # Voyage architecture
 
-Voyage separates execution from orchestration. A Helm owns credentials, conversation
-state, policy decisions, and tool execution on one machine. Vessel knows where Helms
-are and whether they are alive, but does not reinterpret agent messages or execute
-their tools.
+Voyage separates execution from orchestration without requiring Helms to accept
+inbound connections. A Helm owns credentials, conversation state, policy decisions,
+and tool execution. Vessel manages identity, liveness, queues, and task history.
+
+```text
+                       one-time pairing string
+Helm operator ─────────────────────────────────────▶ Vessel operator
+
+Helm ── authenticated outbound heartbeat/poll/results ──▶ Vessel
+  │                                                       ▲
+  └── local policy ── tools                         task control
+```
+
+## Pairing and connection
+
+1. `helm --voyage [VESSEL_URL]` creates an ephemeral Helm identity and asks Vessel for
+   a ten-minute pairing code.
+2. Helm prints `voyage:v1:XXXXXXXXXX` and polls only for its pairing status.
+3. An operator passes that string to `vessel pair STRING` or the future Vessel UI.
+4. Vessel claims the pending Helm and activates its private worker credential.
+5. Helm sends outbound heartbeats, pulls queued tasks, and posts results. It never
+   binds an inbound task port and may remain behind NAT or a firewall.
+
+The current transport is authenticated HTTP polling. The protocol boundary permits a
+future WebSocket or HTTP/2 stream without changing the pairing and authority model.
 
 ## Trust boundaries
 
-1. A Helm provider adapter communicates with an LLM API using a local environment
-   secret. Provider credentials are never registered with Vessel.
-2. Helm's policy resolves every native filesystem operation beneath configured roots.
-   Shell remains an OS-level capability and should be paired with container or account
-   isolation for untrusted workloads.
-3. A served Helm can require a bearer token. TLS is expected at a reverse proxy until
-   native TLS and mutual Helm/Vessel identity are added.
-4. Vessel stores public Helm metadata and liveness. The current registry is in memory;
-   a durable repository interface is the next control-plane persistence boundary.
+1. Provider credentials remain exclusively on Helm and are never sent to Vessel.
+2. Every task still passes through Helm's local approvals, filesystem roots, command
+   policy, timeouts, and resource limits.
+3. The pairing code is short-lived and authorizes association, while the unprinted
+   worker credential authenticates subsequent traffic.
+4. Vessel is responsible for operator authorization, durable task state, credential
+   rotation, and encrypted transport in production deployments.
 
 ## Wire contract
 
-`voyage-protocol` defines the `/v1` request and response shapes. Helm exposes:
-
-- `GET /health`
-- `GET /v1/info`
-- `POST /v1/tasks`
-
+`voyage-protocol` defines versioned pairing, Helm inventory, queued tasks, and results.
 Vessel exposes:
 
-- `GET /health`
-- `GET /v1/helms`
-- `POST /v1/helms/register`
-- `POST /v1/helms/heartbeat`
-- `GET|DELETE /v1/helms/{id}`
-- `POST /v1/helms/{id}/tasks`
+- `POST /v1/pairings/start` and `GET /v1/pairings/{code}` for Helm
+- `POST /v1/pairings/claim` for an operator consuming the printed string
+- `POST /v1/worker/heartbeat`, `GET /v1/worker/tasks/next`, and
+  `POST /v1/worker/tasks/{id}/result` for outbound workers
+- `GET /v1/helms`, `GET|DELETE /v1/helms/{id}` for fleet management
+- `POST /v1/helms/{id}/tasks` and `GET /v1/tasks/{id}` for queued work
 
-Registration is followed by a 30-second heartbeat. Vessel marks missed heartbeats
-stale and then offline, while retaining inventory for inspection.
+## Production layers
 
-## Planned production layers
-
-- Ratatui full-screen Helm frontend with streaming events and approval modals
-- Authenticated registration, secret references, TLS/mTLS, and scoped principals
-- SQLite/Postgres Vessel registry and append-only task/audit history
-- Streaming task transport, cancellation, queues, leases, and idempotency keys
-- MCP tool servers and per-Helm capability advertisement
-- Context compaction and artifact-aware session storage
-- Observability, quotas, provider retry/backoff, and deployment packaging
+- Persistent Helm identity and encrypted worker credentials
+- WebSocket/HTTP2 event streaming, cancellation, leases, and reconnection replay
+- Authenticated operator claims, TLS/mTLS, scoped principals, and credential rotation
+- SQLite/Postgres Vessel persistence and append-only task/audit history
+- Ratatui Helm frontend, MCP tools, context compaction, observability, and packaging

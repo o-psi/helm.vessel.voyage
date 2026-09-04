@@ -12,7 +12,7 @@ administer scoped systems, and maintain a durable working conversation.
 - Workspace confinement with explicit extra read/write roots and symlink-aware checks
 - Configurable approvals, deny list, command timeout, and output limits
 - Interactive chat, one-shot tasks, session resume/listing, and token accounting
-- `helm serve` health, identity, authenticated task, and Vessel registration endpoints
+- `helm --voyage` short-lived pairing and authenticated outbound task worker
 - Atomic JSON session persistence under the platform data directory
 - Library interfaces for custom providers, event sinks, approvers, and tools
 
@@ -58,11 +58,11 @@ Inside chat, `/session` shows identity and token use, `/clear` resets conversati
 history, and `/exit` saves and leaves. Tool progress goes to stderr, leaving assistant
 text on stdout for straightforward scripting.
 
-Expose the same Helm runtime to a Vessel:
+Pair the same Helm runtime with a Vessel without exposing an inbound port:
 
 ```sh
-HELM_SERVER_TOKEN=... helm serve --bind 0.0.0.0:9470 \
-  --public-url https://helm.example.com --vessel https://vessel.example.com
+helm --voyage https://vessel.example.com --name workstation
+# prints voyage:v1:XXXXXXXXXX; claim it in Vessel
 ```
 
 ## Architecture
@@ -85,6 +85,9 @@ The active workspace is the default read/write boundary. Add other roots explici
 `on-risk` asks before replacing files and before commands that appear mutating or
 privileged. `always` asks for every shell command and write. `never` suppresses asks,
 but the command deny list and filesystem roots remain enforced.
+
+Vessel queues work and Helm retrieves it over authenticated outbound requests. A Helm
+can therefore operate behind NAT or a firewall without being publicly reachable.
 
 This is capability control, not an OS sandbox. Shell commands inherit the user's OS
 permissions and can access resources available to that account. For hostile prompts

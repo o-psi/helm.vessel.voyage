@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result, bail};
 use async_trait::async_trait;
 use clap::{Parser, Subcommand};
 use helm::{
@@ -16,8 +16,8 @@ use std::{
 };
 use tracing_subscriber::EnvFilter;
 use voyage_protocol::{
-    ApiError, HealthResponse, HeartbeatRequest, HelmDescriptor, RegistrationRequest, TaskRequest,
-    TaskResponse,
+    HeartbeatRequest, HelmDescriptor, HelmStatus, PairingStartRequest, PairingStartResponse,
+    PairingStatus, TaskEnvelope, TaskResult,
 };
 
 #[derive(Parser)]
@@ -33,8 +33,134 @@ struct Cli {
     approval: Option<ApprovalArg>,
     #[arg(short, long, global = true)]
     verbose: bool,
+    /// Pair with Vessel and work over an outbound connection.
+    #[arg(long, global = true, num_args = 0..=1, default_missing_value = "http://127.0.0.1:9480")]
+    voyage: Option<String>,
+    #[arg(long, global = true, default_value = "helm")]
+    name: String,
     #[command(subcommand)]
     command: Option<Command>,
+}
+
+async fn voyage_worker(
+    config: Config,
+    workspace_arg: Option<PathBuf>,
+    vessel: String,
+    name: String,
+) -> Result<()> {
+    let vessel = vessel.trim_end_matches('/');
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()?;
+    let workspace = config.resolve_workspace(workspace_arg)?;
+    let descriptor = HelmDescriptor {
+        id: uuid::Uuid::new_v4(),
+        name,
+        version: env!("CARGO_PKG_VERSION").into(),
+        model: config.model.clone(),
+        capabilities: vec!["shell".into(), "filesystem".into(), "search".into()],
+    };
+    let pairing: PairingStartResponse = client
+        .post(format!("{vessel}/v1/pairings/start"))
+        .json(&PairingStartRequest {
+            helm: descriptor.clone(),
+        })
+        .send()
+        .await
+        .context("could not reach Vessel")?
+        .error_for_status()
+        .context("Vessel rejected pairing")?
+        .json()
+        .await
+        .context("invalid pairing response")?;
+
+    println!("{}", pairing.connection_string());
+    eprintln!(
+        "Give this one-time string to Vessel. Waiting for approval until {}…",
+        pairing.expires_at
+    );
+    loop {
+        if chrono::Utc::now() >= pairing.expires_at {
+            bail!("pairing code expired");
+        }
+        let status: PairingStatus = client
+            .get(format!("{vessel}/v1/pairings/{}", pairing.code))
+            .bearer_auth(&pairing.worker_token)
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?;
+        if status.claimed {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    }
+    eprintln!(
+        "Paired with Vessel as {}. Helm uses outbound connections only.",
+        descriptor.id
+    );
+
+    let agent = build_agent(&config, workspace.clone()).await?;
+    let store = SessionStore::default();
+    let mut last_heartbeat = std::time::Instant::now() - std::time::Duration::from_secs(60);
+    loop {
+        if last_heartbeat.elapsed() >= std::time::Duration::from_secs(20) {
+            client
+                .post(format!("{vessel}/v1/worker/heartbeat"))
+                .bearer_auth(&pairing.worker_token)
+                .json(&HeartbeatRequest {
+                    status: HelmStatus::Online,
+                })
+                .send()
+                .await?
+                .error_for_status()?;
+            last_heartbeat = std::time::Instant::now();
+        }
+        let task: Option<TaskEnvelope> = client
+            .get(format!("{vessel}/v1/worker/tasks/next"))
+            .bearer_auth(&pairing.worker_token)
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?;
+        let Some(task) = task else {
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            continue;
+        };
+        eprintln!("[Vessel task {}]", task.id);
+        let mut session = match task.request.session_id {
+            Some(id) => store.load(id).await?,
+            None => Session::new(workspace.clone(), config.model.clone()),
+        };
+        match agent
+            .run(session.messages.clone(), task.request.prompt)
+            .await
+        {
+            Ok(outcome) => {
+                session.messages = outcome.messages;
+                session.usage.input_tokens += outcome.usage.input_tokens;
+                session.usage.output_tokens += outcome.usage.output_tokens;
+                store.save(&mut session).await?;
+                let result = TaskResult {
+                    task_id: task.id,
+                    session_id: session.id,
+                    answer: outcome.answer,
+                    input_tokens: outcome.usage.input_tokens,
+                    output_tokens: outcome.usage.output_tokens,
+                };
+                client
+                    .post(format!("{vessel}/v1/worker/tasks/{}/result", task.id))
+                    .bearer_auth(&pairing.worker_token)
+                    .json(&result)
+                    .send()
+                    .await?
+                    .error_for_status()?;
+            }
+            Err(error) => eprintln!("task {} failed: {error:#}", task.id),
+        }
+    }
 }
 
 #[derive(Clone, clap::ValueEnum)]
@@ -59,19 +185,6 @@ enum Command {
     },
     Sessions,
     Config,
-    /// Expose this Helm for remote work and optional Vessel management.
-    Serve {
-        #[arg(long, default_value = "127.0.0.1:9470")]
-        bind: String,
-        #[arg(long)]
-        public_url: Option<String>,
-        #[arg(long)]
-        vessel: Option<String>,
-        #[arg(long, env = "HELM_SERVER_TOKEN")]
-        token: Option<String>,
-        #[arg(long, default_value = "helm")]
-        name: String,
-    },
 }
 
 struct Terminal;
@@ -132,19 +245,15 @@ async fn main() -> Result<()> {
             ApprovalArg::Never => ApprovalMode::Never,
         };
     }
+    if let Some(vessel) = cli.voyage {
+        return voyage_worker(config, cli.workspace, vessel, cli.name).await;
+    }
     match cli.command.unwrap_or(Command::Chat { resume: None }) {
         Command::Config => {
             println!("{}", toml::to_string_pretty(&config)?);
             Ok(())
         }
         Command::Sessions => list_sessions().await,
-        Command::Serve {
-            bind,
-            public_url,
-            vessel,
-            token,
-            name,
-        } => serve(config, cli.workspace, bind, public_url, vessel, token, name).await,
         Command::Run {
             prompt,
             resume,
@@ -154,174 +263,6 @@ async fn main() -> Result<()> {
             .map(|_| ()),
         Command::Chat { resume } => chat(config, cli.workspace, resume).await,
     }
-}
-
-#[derive(Clone)]
-struct ServeState {
-    agent: Arc<Agent>,
-    store: SessionStore,
-    descriptor: HelmDescriptor,
-    token: Option<String>,
-}
-
-async fn serve(
-    config: Config,
-    workspace_arg: Option<PathBuf>,
-    bind: String,
-    public_url: Option<String>,
-    vessel: Option<String>,
-    token: Option<String>,
-    name: String,
-) -> Result<()> {
-    use axum::{
-        Router,
-        routing::{get, post},
-    };
-    let workspace = config.resolve_workspace(workspace_arg)?;
-    let listener = tokio::net::TcpListener::bind(&bind).await?;
-    let endpoint = public_url.unwrap_or_else(|| format!("http://{bind}"));
-    let descriptor = HelmDescriptor {
-        id: uuid::Uuid::new_v4(),
-        name,
-        endpoint,
-        version: env!("CARGO_PKG_VERSION").into(),
-        model: config.model.clone(),
-        capabilities: vec!["shell".into(), "filesystem".into(), "search".into()],
-    };
-    let state = ServeState {
-        agent: Arc::new(build_agent(&config, workspace.clone()).await?),
-        store: SessionStore::default(),
-        descriptor,
-        token,
-    };
-    if let Some(vessel_url) = vessel {
-        spawn_registration(vessel_url, state.descriptor.clone());
-    }
-    let app = Router::new()
-        .route("/health", get(health))
-        .route("/v1/info", get(info))
-        .route("/v1/tasks", post(remote_task))
-        .with_state(state.clone());
-    eprintln!(
-        "Helm {} serving {} from {}",
-        state.descriptor.id,
-        bind,
-        workspace.display()
-    );
-    axum::serve(listener, app)
-        .with_graceful_shutdown(async {
-            let _ = tokio::signal::ctrl_c().await;
-        })
-        .await?;
-    Ok(())
-}
-
-async fn health() -> axum::Json<HealthResponse> {
-    axum::Json(HealthResponse {
-        status: "ok".into(),
-        version: env!("CARGO_PKG_VERSION").into(),
-    })
-}
-async fn info(
-    axum::extract::State(state): axum::extract::State<ServeState>,
-) -> axum::Json<HelmDescriptor> {
-    axum::Json(state.descriptor)
-}
-
-async fn remote_task(
-    axum::extract::State(state): axum::extract::State<ServeState>,
-    headers: axum::http::HeaderMap,
-    axum::Json(request): axum::Json<TaskRequest>,
-) -> Result<axum::Json<TaskResponse>, (axum::http::StatusCode, axum::Json<ApiError>)> {
-    authorize(&state, &headers)?;
-    let mut session = match request.session_id {
-        Some(id) => state.store.load(id).await.map_err(internal)?,
-        None => Session::new(
-            state.agent_workspace().to_owned(),
-            state.descriptor.model.clone(),
-        ),
-    };
-    let outcome = state
-        .agent
-        .run(session.messages.clone(), request.prompt)
-        .await
-        .map_err(internal)?;
-    session.messages = outcome.messages;
-    session.usage.input_tokens += outcome.usage.input_tokens;
-    session.usage.output_tokens += outcome.usage.output_tokens;
-    state.store.save(&mut session).await.map_err(internal)?;
-    Ok(axum::Json(TaskResponse {
-        session_id: session.id,
-        answer: outcome.answer,
-        input_tokens: outcome.usage.input_tokens,
-        output_tokens: outcome.usage.output_tokens,
-    }))
-}
-
-impl ServeState {
-    fn agent_workspace(&self) -> &std::path::Path {
-        self.agent.workspace()
-    }
-}
-
-fn authorize(
-    state: &ServeState,
-    headers: &axum::http::HeaderMap,
-) -> Result<(), (axum::http::StatusCode, axum::Json<ApiError>)> {
-    let Some(expected) = &state.token else {
-        return Ok(());
-    };
-    let supplied = headers
-        .get(axum::http::header::AUTHORIZATION)
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.strip_prefix("Bearer "));
-    if supplied == Some(expected) {
-        Ok(())
-    } else {
-        Err((
-            axum::http::StatusCode::UNAUTHORIZED,
-            axum::Json(ApiError {
-                error: "invalid or missing bearer token".into(),
-            }),
-        ))
-    }
-}
-
-fn internal(error: impl std::fmt::Display) -> (axum::http::StatusCode, axum::Json<ApiError>) {
-    (
-        axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-        axum::Json(ApiError {
-            error: error.to_string(),
-        }),
-    )
-}
-
-fn spawn_registration(vessel: String, helm: HelmDescriptor) {
-    tokio::spawn(async move {
-        let client = reqwest::Client::new();
-        let base = vessel.trim_end_matches('/');
-        if let Err(error) = client
-            .post(format!("{base}/v1/helms/register"))
-            .json(&RegistrationRequest { helm: helm.clone() })
-            .send()
-            .await
-        {
-            eprintln!("Vessel registration failed: {error}");
-            return;
-        }
-        let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
-        loop {
-            interval.tick().await;
-            if let Err(error) = client
-                .post(format!("{base}/v1/helms/heartbeat"))
-                .json(&HeartbeatRequest { id: helm.id })
-                .send()
-                .await
-            {
-                eprintln!("Vessel heartbeat failed: {error}");
-            }
-        }
-    });
 }
 
 async fn build_agent(config: &Config, workspace: PathBuf) -> Result<Agent> {
