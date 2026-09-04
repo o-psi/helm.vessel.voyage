@@ -151,6 +151,12 @@ when loaded; metadata is not treated as a live attachment.
 For reconnectable workflows use a policy-approved external supervisor such as tmux,
 systemd, or a container rather than assuming Helm can resurrect a process.
 
+### Agent supervision
+
+Press `Ctrl+A` in the full-screen UI to supervise concurrent agent work. The tree,
+inspection, messaging, follow-up, and confirmed cancellation controls are described
+in the [agent supervision guide](../docs/agent-supervision.md).
+
 ## Development
 
 ```sh

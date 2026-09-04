@@ -30,6 +30,10 @@ use crate::{
     Agent, AgentEvent, EventSink,
     model::Role,
     session::{Session, SessionStore, compact_messages},
+    supervision::{
+        AgentEvent as SupervisionEvent, AgentEventKind as SupervisionEventKind, AgentId,
+        AgentStatus, AgentSupervisor, AgentView,
+    },
     terminal::{
         InteractiveTerminals, TerminalColor, TerminalEvent, TerminalId, TerminalSnapshot,
         TerminalSummary,
@@ -43,6 +47,9 @@ pub enum UiEvent {
     Agent(AgentEvent),
     Approval(ApprovalRequest),
     Finished(Result<crate::AgentOutcome, String>),
+    SupervisorTree(Result<Vec<AgentView>, String>),
+    SupervisorInspect(AgentId, Result<Vec<SupervisionEvent>, String>),
+    SupervisorAction(Result<String, String>),
 }
 
 #[derive(Debug)]
@@ -196,7 +203,21 @@ struct App {
     selected_terminal: usize,
     attached_terminal: Option<TerminalId>,
     terminal_snapshot: Option<TerminalSnapshot>,
+    supervisor_mode: Option<SupervisorMode>,
+    agents: Vec<AgentView>,
+    selected_agent: usize,
+    inspected_events: Vec<SupervisionEvent>,
+    supervisor_input: Composer,
+    cancel_armed: Option<AgentId>,
+    supervisor_scroll: u16,
     quit: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SupervisorMode {
+    Tree,
+    Inspect(AgentId),
+    Message { target: AgentId, follow_up: bool },
 }
 
 struct Running {
@@ -230,6 +251,13 @@ impl App {
             selected_terminal: 0,
             attached_terminal: None,
             terminal_snapshot: None,
+            supervisor_mode: None,
+            agents: Vec::new(),
+            selected_agent: 0,
+            inspected_events: Vec::new(),
+            supervisor_input: Composer::default(),
+            cancel_armed: None,
+            supervisor_scroll: 0,
             quit: false,
         }
     }
@@ -256,11 +284,13 @@ pub async fn run(
     mut rx: mpsc::UnboundedReceiver<UiEvent>,
     tx: mpsc::UnboundedSender<UiEvent>,
     terminals: Arc<dyn InteractiveTerminals>,
+    supervisor: Arc<dyn AgentSupervisor>,
 ) -> Result<()> {
     let sessions = store.list().await?;
     let mut app = App::new(session, sessions);
     refresh_terminals(&mut app, terminals.as_ref()).await;
     let mut terminal_events = Some(terminals.subscribe());
+    let mut supervisor_events = Some(supervisor.subscribe());
     let _guard = TerminalGuard::enter().context("failed to initialize terminal")?;
     let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
     terminal.clear()?;
@@ -274,7 +304,7 @@ pub async fn run(
             event = input.next() => {
                 match event {
                     Some(Ok(Event::Key(key))) if key.is_press() => {
-                        handle_key(key, &mut app, &agent, &store, &tx, terminals.as_ref()).await?;
+                        handle_key(key, &mut app, &agent, &store, &tx, terminals.as_ref(), supervisor.clone()).await?;
                     }
                     Some(Ok(Event::Resize(columns, rows))) => {
                         if let Some(id) = app.attached_terminal {
@@ -287,7 +317,12 @@ pub async fn run(
                                 app.status = format!("Terminal input failed: {error}");
                             }
                         } else if !app.is_running() && !app.terminal_picker {
-                            app.composer.insert_str(&text.replace("\r\n", "\n").replace('\r', "\n"));
+                            let text = text.replace("\r\n", "\n").replace('\r', "\n");
+                            if matches!(app.supervisor_mode, Some(SupervisorMode::Message { .. })) {
+                                app.supervisor_input.insert_str(&text);
+                            } else if app.supervisor_mode.is_none() {
+                                app.composer.insert_str(&text);
+                            }
                         }
                     }
                     Some(Err(error)) => return Err(error.into()),
@@ -312,6 +347,22 @@ pub async fn run(
                         app.attached_terminal = None;
                         app.terminal_snapshot = None;
                         app.status = "Terminal manager disconnected".into();
+                    }
+                }
+            }
+            event = async { supervisor_events.as_mut().expect("guarded supervisor receiver").recv().await }, if supervisor_events.is_some() => {
+                match event {
+                    Ok(event) => {
+                        if matches!(app.supervisor_mode, Some(SupervisorMode::Inspect(id)) if id == event.agent_id) {
+                            app.inspected_events.push(event);
+                            if app.inspected_events.len() > 500 { app.inspected_events.drain(..100); }
+                        }
+                        request_supervisor_tree(&tx, supervisor.clone());
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => request_supervisor_tree(&tx, supervisor.clone()),
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                        supervisor_events = None;
+                        app.status = "Agent supervisor disconnected".into();
                     }
                 }
             }
@@ -424,6 +475,26 @@ async fn handle_ui_event(
                 Err(error) => app.status = format!("Error: {error}"),
             }
         }
+        UiEvent::SupervisorTree(result) => match result {
+            Ok(agents) => {
+                app.agents = flatten_agent_tree(agents);
+                app.selected_agent = app.selected_agent.min(app.agents.len().saturating_sub(1));
+                app.status = format!("Supervising {} agent(s)", app.agents.len());
+            }
+            Err(error) => app.status = format!("Supervisor refresh failed: {error}"),
+        },
+        UiEvent::SupervisorInspect(id, result) => match result {
+            Ok(events) => {
+                app.inspected_events = events;
+                app.supervisor_mode = Some(SupervisorMode::Inspect(id));
+            }
+            Err(error) => app.status = format!("Agent inspection failed: {error}"),
+        },
+        UiEvent::SupervisorAction(result) => {
+            app.status =
+                result.unwrap_or_else(|error| format!("Supervisor action failed: {error}"));
+            app.cancel_armed = None;
+        }
     }
     Ok(())
 }
@@ -435,6 +506,7 @@ async fn handle_key(
     store: &SessionStore,
     tx: &mpsc::UnboundedSender<UiEvent>,
     terminals: &dyn InteractiveTerminals,
+    supervisor: Arc<dyn AgentSupervisor>,
 ) -> Result<()> {
     if let Some(approval) = app.approval.take() {
         let approved = matches!(key.code, KeyCode::Char('y') | KeyCode::Char('Y'));
@@ -455,6 +527,10 @@ async fn handle_key(
     }
     if let Some(id) = app.attached_terminal {
         handle_attached_key(id, key, app, terminals).await;
+        return Ok(());
+    }
+    if app.supervisor_mode.is_some() {
+        handle_supervisor_key(key, app, tx, supervisor).await;
         return Ok(());
     }
     if app.terminal_picker {
@@ -517,6 +593,10 @@ async fn handle_key(
             KeyCode::Char('t') => {
                 refresh_terminals(app, terminals).await;
                 app.terminal_picker = true;
+            }
+            KeyCode::Char('a') => {
+                app.supervisor_mode = Some(SupervisorMode::Tree);
+                request_supervisor_tree(tx, supervisor);
             }
             KeyCode::Char('n') if !app.is_running() => {
                 app.session =
@@ -615,6 +695,230 @@ async fn handle_attached_key(
     }
 }
 
+async fn handle_supervisor_key(
+    key: KeyEvent,
+    app: &mut App,
+    tx: &mpsc::UnboundedSender<UiEvent>,
+    supervisor: Arc<dyn AgentSupervisor>,
+) {
+    let Some(mode) = app.supervisor_mode else {
+        return;
+    };
+    if let SupervisorMode::Message { target, follow_up } = mode {
+        match key.code {
+            KeyCode::Esc => {
+                app.supervisor_input = Composer::default();
+                app.supervisor_mode = Some(SupervisorMode::Inspect(target));
+            }
+            KeyCode::Enter if key.modifiers.contains(KeyModifiers::ALT) => {
+                app.supervisor_input.insert('\n')
+            }
+            KeyCode::Enter => {
+                let message = app.supervisor_input.take();
+                if !message.trim().is_empty() {
+                    request_supervisor_message(tx, supervisor, target, message, follow_up);
+                    app.supervisor_mode = Some(SupervisorMode::Inspect(target));
+                }
+            }
+            KeyCode::Char(character) => app.supervisor_input.insert(character),
+            KeyCode::Backspace => app.supervisor_input.backspace(),
+            KeyCode::Delete => app.supervisor_input.delete(),
+            KeyCode::Home => app.supervisor_input.line_start(),
+            KeyCode::End => app.supervisor_input.line_end(),
+            KeyCode::Left if app.supervisor_input.cursor > 0 => {
+                app.supervisor_input.cursor = app.supervisor_input.text
+                    [..app.supervisor_input.cursor]
+                    .char_indices()
+                    .next_back()
+                    .map_or(0, |(index, _)| index);
+            }
+            KeyCode::Right => {
+                if let Some(character) = app.supervisor_input.text[app.supervisor_input.cursor..]
+                    .chars()
+                    .next()
+                {
+                    app.supervisor_input.cursor += character.len_utf8();
+                }
+            }
+            _ => {}
+        }
+        return;
+    }
+
+    let selected = match mode {
+        SupervisorMode::Inspect(id) => Some(id),
+        SupervisorMode::Tree => app.agents.get(app.selected_agent).map(|agent| agent.id),
+        SupervisorMode::Message { .. } => unreachable!(),
+    };
+    match key.code {
+        KeyCode::Esc => match mode {
+            SupervisorMode::Inspect(_) => {
+                app.supervisor_mode = Some(SupervisorMode::Tree);
+                app.supervisor_scroll = 0;
+            }
+            SupervisorMode::Tree => app.supervisor_mode = None,
+            SupervisorMode::Message { .. } => unreachable!(),
+        },
+        KeyCode::Up if mode == SupervisorMode::Tree => {
+            app.selected_agent = app.selected_agent.saturating_sub(1);
+        }
+        KeyCode::Down if mode == SupervisorMode::Tree => {
+            app.selected_agent = (app.selected_agent + 1).min(app.agents.len().saturating_sub(1));
+        }
+        KeyCode::Enter if mode == SupervisorMode::Tree => {
+            if let Some(id) = selected {
+                app.supervisor_mode = Some(SupervisorMode::Inspect(id));
+                app.supervisor_scroll = 0;
+                request_supervisor_inspect(tx, supervisor, id, None);
+            }
+        }
+        KeyCode::PageUp if matches!(mode, SupervisorMode::Inspect(_)) => {
+            app.supervisor_scroll = app.supervisor_scroll.saturating_add(8);
+        }
+        KeyCode::PageDown if matches!(mode, SupervisorMode::Inspect(_)) => {
+            app.supervisor_scroll = app.supervisor_scroll.saturating_sub(8);
+        }
+        KeyCode::Char('r') => {
+            request_supervisor_tree(tx, supervisor.clone());
+            if let SupervisorMode::Inspect(id) = mode {
+                request_supervisor_inspect(tx, supervisor, id, None);
+            }
+        }
+        KeyCode::Char('m') if selected.is_some() => {
+            app.supervisor_input = Composer::default();
+            app.supervisor_mode = Some(SupervisorMode::Message {
+                target: selected.unwrap(),
+                follow_up: false,
+            });
+        }
+        KeyCode::Char('f') if selected.is_some() => {
+            app.supervisor_input = Composer::default();
+            app.supervisor_mode = Some(SupervisorMode::Message {
+                target: selected.unwrap(),
+                follow_up: true,
+            });
+        }
+        KeyCode::Char('c') if selected.is_some() => {
+            let id = selected.unwrap();
+            if app.cancel_armed == Some(id) {
+                request_supervisor_cancel(tx, supervisor, id);
+                app.cancel_armed = None;
+            } else if app
+                .agents
+                .iter()
+                .any(|agent| agent.id == id && agent.status.is_terminal())
+            {
+                app.status = "Completed agents cannot be cancelled".into();
+            } else {
+                app.cancel_armed = Some(id);
+                app.status = "Press c again to cancel this agent; Esc returns".into();
+            }
+        }
+        _ => app.cancel_armed = None,
+    }
+}
+
+fn request_supervisor_tree(
+    tx: &mpsc::UnboundedSender<UiEvent>,
+    supervisor: Arc<dyn AgentSupervisor>,
+) {
+    let tx = tx.clone();
+    tokio::spawn(async move {
+        let result = supervisor.tree().await.map_err(|error| error.to_string());
+        let _ = tx.send(UiEvent::SupervisorTree(result));
+    });
+}
+
+fn request_supervisor_inspect(
+    tx: &mpsc::UnboundedSender<UiEvent>,
+    supervisor: Arc<dyn AgentSupervisor>,
+    id: AgentId,
+    after: Option<u64>,
+) {
+    let tx = tx.clone();
+    tokio::spawn(async move {
+        let result = supervisor
+            .inspect(id, after)
+            .await
+            .map_err(|error| error.to_string());
+        let _ = tx.send(UiEvent::SupervisorInspect(id, result));
+    });
+}
+
+fn request_supervisor_message(
+    tx: &mpsc::UnboundedSender<UiEvent>,
+    supervisor: Arc<dyn AgentSupervisor>,
+    id: AgentId,
+    message: String,
+    follow_up: bool,
+) {
+    let tx = tx.clone();
+    tokio::spawn(async move {
+        let result = if follow_up {
+            supervisor
+                .follow_up(id, message)
+                .await
+                .map(|child| format!("Follow-up queued as {child}"))
+        } else {
+            supervisor
+                .send_message(id, message)
+                .await
+                .map(|()| "Message queued".into())
+        }
+        .map_err(|error| error.to_string());
+        let _ = tx.send(UiEvent::SupervisorAction(result));
+    });
+}
+
+fn request_supervisor_cancel(
+    tx: &mpsc::UnboundedSender<UiEvent>,
+    supervisor: Arc<dyn AgentSupervisor>,
+    id: AgentId,
+) {
+    let tx = tx.clone();
+    tokio::spawn(async move {
+        let result = supervisor
+            .cancel(id)
+            .await
+            .map(|()| "Cancellation requested".into())
+            .map_err(|error| error.to_string());
+        let _ = tx.send(UiEvent::SupervisorAction(result));
+    });
+}
+
+fn flatten_agent_tree(agents: Vec<AgentView>) -> Vec<AgentView> {
+    fn visit(
+        id: AgentId,
+        all: &[AgentView],
+        visited: &mut std::collections::HashSet<AgentId>,
+        output: &mut Vec<AgentView>,
+    ) {
+        if !visited.insert(id) {
+            return;
+        }
+        if let Some(agent) = all.iter().find(|agent| agent.id == id) {
+            output.push(agent.clone());
+            for child in all.iter().filter(|child| child.parent == Some(id)) {
+                visit(child.id, all, visited, output);
+            }
+        }
+    }
+    let mut output = Vec::with_capacity(agents.len());
+    let mut visited = std::collections::HashSet::new();
+    for root in agents.iter().filter(|agent| {
+        agent.parent.is_none()
+            || !agents
+                .iter()
+                .any(|candidate| Some(candidate.id) == agent.parent)
+    }) {
+        visit(root.id, &agents, &mut visited, &mut output);
+    }
+    for agent in &agents {
+        visit(agent.id, &agents, &mut visited, &mut output);
+    }
+    output
+}
+
 fn is_terminal_detach_key(key: KeyEvent) -> bool {
     (key.modifiers.contains(KeyModifiers::CONTROL) && matches!(key.code, KeyCode::Char('t' | ']')))
         || key.code == KeyCode::Char('\u{1d}')
@@ -633,6 +937,13 @@ fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
                 .block(Block::default().title(" Helm ").borders(Borders::ALL)),
             area,
         );
+        return;
+    }
+    if app.supervisor_mode.is_some() {
+        draw_supervisor(frame, area, app);
+        if let Some(approval) = &app.approval {
+            draw_approval(frame, area, approval);
+        }
         return;
     }
     let chunks = Layout::default()
@@ -707,7 +1018,7 @@ fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
     );
     frame.render_widget(
         Paragraph::new(format!(
-            "{}  │  ^T terminals  ^S sessions  ^N new  ^B branch  ^K compact  ^E export  ^Q quit",
+            "{}  │  ^A agents  ^T terminals  ^S sessions  ^N new  ^B branch  ^K compact  ^E export",
             app.status
         ))
         .style(Style::default().fg(Color::Gray)),
@@ -728,6 +1039,263 @@ fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
     }
     if let Some(approval) = &app.approval {
         draw_approval(frame, area, approval);
+    }
+}
+
+fn draw_supervisor(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
+    let chunks = Layout::vertical([
+        Constraint::Length(3),
+        Constraint::Min(4),
+        Constraint::Length(
+            if matches!(app.supervisor_mode, Some(SupervisorMode::Message { .. })) {
+                5
+            } else {
+                0
+            },
+        ),
+        Constraint::Length(1),
+    ])
+    .split(area);
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled(
+                " HELM AGENTS ",
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(Color::Magenta)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(format!("  {} supervised", app.agents.len())),
+        ]))
+        .block(Block::default().borders(Borders::BOTTOM)),
+        chunks[0],
+    );
+    match app.supervisor_mode {
+        Some(SupervisorMode::Tree) => draw_agent_tree(frame, chunks[1], app),
+        Some(SupervisorMode::Inspect(id)) | Some(SupervisorMode::Message { target: id, .. }) => {
+            draw_agent_inspection(frame, chunks[1], app, id)
+        }
+        None => {}
+    }
+    if let Some(SupervisorMode::Message { follow_up, .. }) = app.supervisor_mode {
+        frame.render_widget(
+            Paragraph::new(app.supervisor_input.text.as_str())
+                .wrap(Wrap { trim: false })
+                .block(
+                    Block::default()
+                        .title(if follow_up {
+                            " Follow-up · Enter send · Alt+Enter newline · Esc return "
+                        } else {
+                            " Message · Enter send · Alt+Enter newline · Esc return "
+                        })
+                        .borders(Borders::ALL),
+                ),
+            chunks[2],
+        );
+        let (row, column) = cursor_position(
+            &app.supervisor_input.text[..app.supervisor_input.cursor],
+            chunks[2].width.saturating_sub(2),
+        );
+        frame.set_cursor_position((
+            (chunks[2].x + 1 + column).min(chunks[2].right().saturating_sub(2)),
+            (chunks[2].y + 1 + row).min(chunks[2].bottom().saturating_sub(2)),
+        ));
+    }
+    let help = match (app.supervisor_mode, area.width < 60) {
+        (Some(SupervisorMode::Tree), true) => "↑↓ Enter · Esc return",
+        (Some(SupervisorMode::Inspect(_)), true) => "PgUp/PgDn · m/f send · Esc tree",
+        (Some(SupervisorMode::Message { .. }), true) => "Enter send · Esc return",
+        (Some(SupervisorMode::Tree), false) => {
+            "↑↓ select · Enter inspect · m message · f follow-up · c,c cancel · r refresh · Esc return"
+        }
+        (Some(SupervisorMode::Inspect(_)), false) => {
+            "m message · f follow-up · c,c cancel · PgUp/PgDn progress · r refresh · Esc tree"
+        }
+        (Some(SupervisorMode::Message { .. }), false) => {
+            "Direct supervisor message; content is sent only to the selected agent"
+        }
+        (None, _) => "",
+    };
+    frame.render_widget(
+        Paragraph::new(help).style(Style::default().fg(Color::Gray)),
+        chunks[3],
+    );
+}
+
+fn draw_agent_tree(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
+    let visible = area.height.saturating_sub(2).max(1) as usize;
+    let start = app
+        .selected_agent
+        .saturating_sub(visible.saturating_sub(1))
+        .min(app.agents.len().saturating_sub(visible));
+    let items: Vec<_> = app
+        .agents
+        .iter()
+        .enumerate()
+        .skip(start)
+        .take(visible)
+        .map(|(index, agent)| {
+            let depth = agent_depth(agent, &app.agents).min(8);
+            let selected = if index == app.selected_agent {
+                "▶"
+            } else {
+                " "
+            };
+            let progress = agent.recent_progress.last().map_or("", String::as_str);
+            ListItem::new(format!(
+                "{selected} {}{} [{}] {} · {} · {}",
+                "  ".repeat(depth),
+                short_id(agent.id),
+                status_label(&agent.status),
+                elapsed_label(agent.elapsed),
+                one_line(&agent.task, 60),
+                one_line(progress, 50)
+            ))
+        })
+        .collect();
+    let items = if items.is_empty() {
+        vec![ListItem::new("No supervised agents")]
+    } else {
+        items
+    };
+    frame.render_widget(
+        List::new(items).block(Block::default().title(" Agent tree ").borders(Borders::ALL)),
+        area,
+    );
+}
+
+fn draw_agent_inspection(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App, id: AgentId) {
+    let Some(agent) = app.agents.iter().find(|agent| agent.id == id) else {
+        frame.render_widget(
+            Paragraph::new("Agent is no longer present; Esc returns to the tree.")
+                .block(Block::default().borders(Borders::ALL)),
+            area,
+        );
+        return;
+    };
+    let mut lines = vec![
+        Line::raw(format!("Task: {}", agent.task)),
+        Line::raw(format!(
+            "State: {} · elapsed {}",
+            status_label(&agent.status),
+            elapsed_label(agent.elapsed)
+        )),
+        Line::raw(format!(
+            "Parent: {}",
+            agent
+                .parent
+                .map_or_else(|| "root".into(), |id| id.to_string())
+        )),
+        Line::raw(format!(
+            "Worktree: {}",
+            agent
+                .worktree
+                .as_ref()
+                .map_or_else(|| "—".into(), |path| path.display().to_string())
+        )),
+        Line::raw(""),
+        Line::styled(
+            "Recent progress",
+            Style::default().add_modifier(Modifier::BOLD),
+        ),
+    ];
+    lines.extend(
+        agent
+            .recent_progress
+            .iter()
+            .map(|progress| Line::raw(format!("• {progress}"))),
+    );
+    lines.extend(app.inspected_events.iter().map(|event| {
+        Line::raw(format!(
+            "{} #{} {}",
+            event.timestamp.format("%H:%M:%S"),
+            event.sequence,
+            supervision_event_label(&event.kind)
+        ))
+    }));
+    if let Some(result) = &agent.result {
+        lines.push(Line::raw(""));
+        lines.push(Line::styled(
+            "Result",
+            Style::default().add_modifier(Modifier::BOLD),
+        ));
+        lines.push(Line::raw(result.clone()));
+    }
+    if let Some(error) = &agent.error {
+        lines.push(Line::raw(""));
+        lines.push(Line::styled(
+            format!("Error: {error}"),
+            Style::default().fg(Color::Red),
+        ));
+    }
+    let height = area.height.saturating_sub(2) as usize;
+    let bottom = lines.len().saturating_sub(height) as u16;
+    frame.render_widget(
+        Paragraph::new(lines)
+            .wrap(Wrap { trim: false })
+            .scroll((bottom.saturating_sub(app.supervisor_scroll), 0))
+            .block(
+                Block::default()
+                    .title(format!(" Agent {} ", short_id(id)))
+                    .borders(Borders::ALL),
+            ),
+        area,
+    );
+}
+
+fn agent_depth(agent: &AgentView, agents: &[AgentView]) -> usize {
+    let mut parent = agent.parent;
+    let mut depth = 0;
+    let mut seen = std::collections::HashSet::new();
+    while let Some(id) = parent {
+        if !seen.insert(id) {
+            break;
+        }
+        depth += 1;
+        parent = agents
+            .iter()
+            .find(|agent| agent.id == id)
+            .and_then(|agent| agent.parent);
+    }
+    depth
+}
+
+fn short_id(id: AgentId) -> String {
+    id.to_string().chars().take(8).collect()
+}
+fn status_label(status: &AgentStatus) -> &'static str {
+    match status {
+        AgentStatus::Queued => "queued",
+        AgentStatus::Running => "running",
+        AgentStatus::Waiting => "waiting",
+        AgentStatus::Completed => "completed",
+        AgentStatus::Failed => "failed",
+        AgentStatus::TimedOut => "timed out",
+        AgentStatus::Cancelled => "cancelled",
+    }
+}
+fn elapsed_label(elapsed: std::time::Duration) -> String {
+    let seconds = elapsed.as_secs();
+    format!("{}:{:02}", seconds / 60, seconds % 60)
+}
+fn supervision_event_label(kind: &SupervisionEventKind) -> String {
+    match kind {
+        SupervisionEventKind::Queued => "queued".into(),
+        SupervisionEventKind::Started => "started".into(),
+        SupervisionEventKind::Progress { text } => text.clone(),
+        SupervisionEventKind::MessageQueued => "message queued".into(),
+        SupervisionEventKind::FollowUpQueued { child } => child.map_or_else(
+            || "follow-up queued".into(),
+            |id| format!("follow-up queued as {}", short_id(id)),
+        ),
+        SupervisionEventKind::Completed { result } => {
+            format!("completed: {}", one_line(result, 120))
+        }
+        SupervisionEventKind::Failed { error } => format!("failed: {}", one_line(error, 120)),
+        SupervisionEventKind::TimedOut { error } => {
+            format!("timed out: {}", one_line(error, 120))
+        }
+        SupervisionEventKind::Cancelled => "cancelled".into(),
     }
 }
 
@@ -1142,8 +1710,95 @@ async fn handle_command(command: &str, app: &mut App, store: &SessionStore) -> R
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::supervision::SupervisionError;
     use crate::terminal::{TerminalCell, TerminalError, TerminalState};
-    use std::sync::Mutex;
+    use chrono::Utc;
+    use std::{sync::Mutex, time::Duration};
+    use uuid::Uuid;
+
+    struct FakeSupervisor {
+        agents: Vec<AgentView>,
+        events: Vec<SupervisionEvent>,
+        actions: Mutex<Vec<String>>,
+        sender: tokio::sync::broadcast::Sender<SupervisionEvent>,
+    }
+
+    impl FakeSupervisor {
+        fn new(agents: Vec<AgentView>) -> Self {
+            let (sender, _) = tokio::sync::broadcast::channel(16);
+            Self {
+                agents,
+                events: Vec::new(),
+                actions: Mutex::new(Vec::new()),
+                sender,
+            }
+        }
+    }
+
+    #[async_trait]
+    impl AgentSupervisor for FakeSupervisor {
+        async fn tree(&self) -> Result<Vec<AgentView>, SupervisionError> {
+            Ok(self.agents.clone())
+        }
+
+        async fn inspect(
+            &self,
+            id: AgentId,
+            after: Option<u64>,
+        ) -> Result<Vec<SupervisionEvent>, SupervisionError> {
+            if !self.agents.iter().any(|agent| agent.id == id) {
+                return Err(SupervisionError::NotFound(id));
+            }
+            Ok(self
+                .events
+                .iter()
+                .filter(|event| {
+                    event.agent_id == id && after.is_none_or(|seq| event.sequence > seq)
+                })
+                .cloned()
+                .collect())
+        }
+
+        async fn send_message(&self, id: AgentId, text: String) -> Result<(), SupervisionError> {
+            self.actions
+                .lock()
+                .unwrap()
+                .push(format!("message:{id}:{text}"));
+            Ok(())
+        }
+
+        async fn follow_up(&self, id: AgentId, text: String) -> Result<AgentId, SupervisionError> {
+            self.actions
+                .lock()
+                .unwrap()
+                .push(format!("follow:{id}:{text}"));
+            Ok(AgentId(Uuid::new_v4()))
+        }
+
+        async fn cancel(&self, id: AgentId) -> Result<(), SupervisionError> {
+            self.actions.lock().unwrap().push(format!("cancel:{id}"));
+            Ok(())
+        }
+
+        fn subscribe(&self) -> tokio::sync::broadcast::Receiver<SupervisionEvent> {
+            self.sender.subscribe()
+        }
+    }
+
+    fn agent(id: AgentId, parent: Option<AgentId>, task: &str) -> AgentView {
+        AgentView {
+            id,
+            parent,
+            task: task.into(),
+            status: AgentStatus::Running,
+            started_at: Some(Utc::now()),
+            elapsed: Duration::from_secs(65),
+            worktree: Some(PathBuf::from("/tmp/worktree")),
+            recent_progress: vec!["running checks".into()],
+            result: None,
+            error: None,
+        }
+    }
 
     struct FakeTerminals {
         id: TerminalId,
@@ -1212,6 +1867,121 @@ mod tests {
         fn subscribe(&self) -> tokio::sync::broadcast::Receiver<TerminalEvent> {
             self.events.subscribe()
         }
+    }
+
+    #[test]
+    fn agent_tree_is_parent_first_and_cycle_safe() {
+        let root = AgentId(Uuid::new_v4());
+        let child = AgentId(Uuid::new_v4());
+        let orphan = AgentId(Uuid::new_v4());
+        let cycle_a = AgentId(Uuid::new_v4());
+        let cycle_b = AgentId(Uuid::new_v4());
+        let flattened = flatten_agent_tree(vec![
+            agent(child, Some(root), "child"),
+            agent(cycle_a, Some(cycle_b), "cycle a"),
+            agent(root, None, "root"),
+            agent(orphan, Some(AgentId(Uuid::new_v4())), "orphan"),
+            agent(cycle_b, Some(cycle_a), "cycle b"),
+        ]);
+        assert_eq!(flattened.len(), 5);
+        assert!(
+            flattened.iter().position(|item| item.id == root)
+                < flattened.iter().position(|item| item.id == child)
+        );
+        assert_eq!(
+            flattened.iter().filter(|item| item.id == cycle_a).count(),
+            1
+        );
+        assert_eq!(
+            flattened.iter().filter(|item| item.id == cycle_b).count(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn supervisor_actions_are_dispatched_without_entering_chat_transcript() {
+        let directory = tempfile::tempdir().unwrap();
+        let id = AgentId(Uuid::new_v4());
+        let supervisor = Arc::new(FakeSupervisor::new(vec![agent(id, None, "research")]));
+        let mut app = App::new(
+            Session::new(directory.path().into(), "test-model".into()),
+            Vec::new(),
+        );
+        app.agents = supervisor.agents.clone();
+        app.supervisor_mode = Some(SupervisorMode::Tree);
+        let (tx, mut rx) = mpsc::unbounded_channel();
+
+        handle_supervisor_key(
+            KeyEvent::new(KeyCode::Char('m'), KeyModifiers::NONE),
+            &mut app,
+            &tx,
+            supervisor.clone(),
+        )
+        .await;
+        app.supervisor_input.insert_str("status please");
+        handle_supervisor_key(
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+            &mut app,
+            &tx,
+            supervisor.clone(),
+        )
+        .await;
+        assert!(matches!(
+            rx.recv().await,
+            Some(UiEvent::SupervisorAction(Ok(_)))
+        ));
+        assert!(app.session.messages.is_empty());
+        assert_eq!(
+            supervisor.actions.lock().unwrap().as_slice(),
+            &[format!("message:{id}:status please")]
+        );
+
+        handle_supervisor_key(
+            KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE),
+            &mut app,
+            &tx,
+            supervisor.clone(),
+        )
+        .await;
+        assert!(supervisor.actions.lock().unwrap().len() == 1);
+        handle_supervisor_key(
+            KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE),
+            &mut app,
+            &tx,
+            supervisor.clone(),
+        )
+        .await;
+        assert!(matches!(
+            rx.recv().await,
+            Some(UiEvent::SupervisorAction(Ok(_)))
+        ));
+        assert_eq!(supervisor.actions.lock().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn agent_view_renders_at_minimum_supported_size_and_keeps_selection_visible() {
+        let mut app = App::new(
+            Session::new(PathBuf::from("/tmp"), "test-model".into()),
+            Vec::new(),
+        );
+        app.supervisor_mode = Some(SupervisorMode::Tree);
+        app.agents = (0..20)
+            .map(|index| agent(AgentId(Uuid::new_v4()), None, &format!("task {index}")))
+            .collect();
+        app.selected_agent = 19;
+        let selected_id = short_id(app.agents[19].id);
+        let backend = ratatui::backend::TestBackend::new(32, 10);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let rendered: String = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect();
+        assert!(rendered.contains(&selected_id));
+        assert!(rendered.contains("Esc return"));
     }
 
     #[test]

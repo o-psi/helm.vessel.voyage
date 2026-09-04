@@ -5,6 +5,7 @@ pub mod policy;
 pub mod provider;
 pub mod session;
 pub mod subagent;
+pub mod supervision;
 pub mod terminal;
 pub mod tools;
 pub mod tui;
