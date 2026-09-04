@@ -14,6 +14,8 @@ pub enum ProviderKind {
     #[default]
     Openai,
     Anthropic,
+    #[serde(rename = "codex-subscription")]
+    CodexSubscription,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -42,6 +44,7 @@ pub struct Config {
     pub inherit_env: Vec<String>,
     pub redact_values: Vec<String>,
     pub mcp_servers: BTreeMap<String, McpServerConfig>,
+    pub codex_command: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -96,6 +99,7 @@ impl Default for Config {
             inherit_env: vec!["PATH".into(), "LANG".into(), "LC_ALL".into(), "TERM".into()],
             redact_values: Vec::new(),
             mcp_servers: BTreeMap::new(),
+            codex_command: "codex".into(),
         }
     }
 }
@@ -160,6 +164,10 @@ impl Config {
         {
             bail!("provider retry delays must be positive and max must be >= initial");
         }
+        if self.provider == ProviderKind::CodexSubscription && self.codex_command.trim().is_empty()
+        {
+            bail!("codex_command cannot be empty for the codex-subscription provider");
+        }
         for name in &self.inherit_env {
             let upper = name.to_ascii_uppercase();
             if ["KEY", "TOKEN", "SECRET", "PASSWORD", "CREDENTIAL"]
@@ -198,5 +206,14 @@ mod tests {
                 .to_string()
                 .contains("DEPLOY_TOKEN")
         );
+    }
+
+    #[test]
+    fn parses_codex_subscription_without_api_credentials() {
+        let config: Config =
+            toml::from_str("provider = \"codex-subscription\"\nmodel = \"test\"").unwrap();
+        assert_eq!(config.provider, ProviderKind::CodexSubscription);
+        assert_eq!(config.codex_command, "codex");
+        config.validate().unwrap();
     }
 }

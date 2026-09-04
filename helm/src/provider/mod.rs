@@ -1,4 +1,5 @@
 mod anthropic;
+mod codex_subscription;
 mod openai;
 
 use async_trait::async_trait;
@@ -12,6 +13,7 @@ use crate::{
 };
 
 pub use anthropic::AnthropicProvider;
+pub use codex_subscription::CodexSubscriptionProvider;
 pub use openai::OpenAiProvider;
 
 #[derive(Debug, Error)]
@@ -79,15 +81,26 @@ pub trait Provider: Send + Sync {
     }
 }
 
-pub fn from_config(config: &Config) -> Result<Box<dyn Provider>, ProviderError> {
-    let key = config
-        .api_key()
-        .map_err(|e| ProviderError::Authentication(e.to_string()))?;
+pub fn from_config(
+    config: &Config,
+    workspace: std::path::PathBuf,
+) -> Result<Box<dyn Provider>, ProviderError> {
     match config.provider {
-        ProviderKind::Openai => Ok(Box::new(OpenAiProvider::new(key, config.base_url.clone()))),
-        ProviderKind::Anthropic => Ok(Box::new(AnthropicProvider::new(
-            key,
+        ProviderKind::Openai => Ok(Box::new(OpenAiProvider::new(
+            config
+                .api_key()
+                .map_err(|e| ProviderError::Authentication(e.to_string()))?,
             config.base_url.clone(),
+        ))),
+        ProviderKind::Anthropic => Ok(Box::new(AnthropicProvider::new(
+            config
+                .api_key()
+                .map_err(|e| ProviderError::Authentication(e.to_string()))?,
+            config.base_url.clone(),
+        ))),
+        ProviderKind::CodexSubscription => Ok(Box::new(CodexSubscriptionProvider::new(
+            config.codex_command.clone(),
+            workspace,
         ))),
     }
 }

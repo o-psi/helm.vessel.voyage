@@ -220,7 +220,7 @@ impl Agent {
                         success,
                     })
                     .await;
-                history.push(Message::tool(call.id, content));
+                history.push(Message::tool_result(call.id, content, success));
             }
         }
         Err(AgentError::MaxTurns(self.max_turns))

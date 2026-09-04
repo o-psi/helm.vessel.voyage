@@ -1,7 +1,8 @@
 # Copy to ~/.config/helm/config.toml.
-provider = "openai" # or "anthropic"
+provider = "openai" # or "anthropic" / "codex-subscription"
 model = "gpt-5"
 api_key_env = "OPENAI_API_KEY"
+# codex_command = "codex"
 # base_url = "http://localhost:11434/v1"
 max_turns = 64
 max_tokens = 8192

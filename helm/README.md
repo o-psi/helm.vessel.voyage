@@ -40,6 +40,17 @@ For Anthropic, set `provider = "anthropic"`, select a Claude model, and export
 `ANTHROPIC_API_KEY`. An OpenAI-compatible local service can be selected with
 `base_url`; its API key variable may contain any value if the service ignores auth.
 
+To use an existing ChatGPT subscription supported by the installed Codex CLI, first
+authenticate with `codex login`, then set `provider = "codex-subscription"`. Helm
+starts `codex app-server --stdio`; it never reads Codex credential files. This adapter
+uses the generated experimental dynamic-tools protocol, requires a compatible Codex
+CLI, and keeps all tool execution and approval inside Helm. Run `helm doctor` after
+Codex CLI upgrades and keep the API-key providers available as a compatibility fallback.
+The app-server thread is forced to `read-only` with elevation disabled, and Helm rejects
+non-dynamic server requests. The adapter does not expose Codex-native web, MCP, app, or
+write tools; use Helm tools for those capabilities. Because dynamic tools are currently
+an experimental app-server field, a future Codex CLI may require an adapter update.
+
 Inspect the resolved configuration without contacting a provider:
 
 ```sh

@@ -421,12 +421,20 @@ async fn main() -> Result<()> {
 
 fn doctor(config: &Config, workspace: Option<PathBuf>) -> Result<()> {
     let workspace = config.resolve_workspace(workspace)?;
+    let subscription_transport_available =
+        (config.provider == helm::ProviderKind::CodexSubscription).then(|| {
+            std::process::Command::new(&config.codex_command)
+                .arg("--version")
+                .output()
+                .is_ok_and(|output| output.status.success())
+        });
     let report = serde_json::json!({
         "status": "ok",
         "version": env!("CARGO_PKG_VERSION"),
         "workspace": workspace,
         "workspace_readable": workspace.is_dir(),
-        "provider_credential_present": std::env::var_os(&config.api_key_env).is_some(),
+        "provider_credential_present": if config.provider == helm::ProviderKind::CodexSubscription { serde_json::Value::Null } else { serde_json::Value::Bool(std::env::var_os(&config.api_key_env).is_some()) },
+        "codex_app_server_available": subscription_transport_available,
         "sessions_directory": helm::config::default_data_dir().join("sessions"),
         "approval": config.approval,
         "unattended_approval": config.unattended_approval,
@@ -464,7 +472,7 @@ async fn build_agent(config: &Config, workspace: PathBuf, attended: bool) -> Res
     };
     let tools = build_tools(config).await?;
     Ok(Agent::new(
-        provider::from_config(config)?,
+        provider::from_config(config, context.policy.workspace().to_owned())?,
         tools,
         context,
         terminal,
@@ -536,7 +544,7 @@ async fn tui_chat(
     };
     let agent = Arc::new(
         Agent::new(
-            provider::from_config(&config)?,
+            provider::from_config(&config, session.workspace.clone())?,
             build_tools(&config).await?,
             context,
             bridge.clone(),

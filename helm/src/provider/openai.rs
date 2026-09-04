@@ -223,6 +223,7 @@ fn finish_stream(assembly: StreamAssembly) -> Result<ModelResponse, ProviderErro
             content: assembly.content,
             tool_call_id: None,
             tool_calls: calls,
+            tool_success: None,
         },
         usage: assembly.usage,
     })
@@ -337,6 +338,7 @@ fn decode_response(value: Value) -> Result<ModelResponse, ProviderError> {
             content,
             tool_call_id: None,
             tool_calls,
+            tool_success: None,
         },
         usage,
     })
