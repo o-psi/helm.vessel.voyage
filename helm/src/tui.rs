@@ -8,8 +8,8 @@ use anyhow::{Context, Result};
 use async_trait::async_trait;
 use crossterm::{
     event::{
-        DisableBracketedPaste, EnableBracketedPaste, Event, EventStream, KeyCode, KeyEvent,
-        KeyModifiers,
+        DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
+        Event, EventStream, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind,
     },
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
@@ -124,7 +124,18 @@ struct TerminalGuard;
 impl TerminalGuard {
     fn enter() -> Result<Self> {
         enable_raw_mode()?;
-        if let Err(error) = execute!(io::stdout(), EnterAlternateScreen, EnableBracketedPaste) {
+        if let Err(error) = execute!(
+            io::stdout(),
+            EnterAlternateScreen,
+            EnableBracketedPaste,
+            EnableMouseCapture
+        ) {
+            let _ = execute!(
+                io::stdout(),
+                DisableMouseCapture,
+                DisableBracketedPaste,
+                LeaveAlternateScreen
+            );
             let _ = disable_raw_mode();
             return Err(error.into());
         }
@@ -135,7 +146,12 @@ impl TerminalGuard {
 impl Drop for TerminalGuard {
     fn drop(&mut self) {
         let _ = disable_raw_mode();
-        let _ = execute!(io::stdout(), DisableBracketedPaste, LeaveAlternateScreen);
+        let _ = execute!(
+            io::stdout(),
+            DisableMouseCapture,
+            DisableBracketedPaste,
+            LeaveAlternateScreen
+        );
     }
 }
 
@@ -395,6 +411,7 @@ pub async fn run(
                         // Discard any stale cells after the terminal changes its backing grid.
                         terminal.clear()?;
                     }
+                    Some(Ok(Event::Mouse(mouse))) => handle_mouse(mouse, &mut app),
                     Some(Ok(Event::Paste(text))) if app.approval.is_none() && !app.show_sessions => {
                         if let Some(id) = app.attached_terminal {
                             if let Err(error) = terminals.write(id, text.into_bytes()).await {
@@ -829,8 +846,8 @@ async fn handle_key(
                 app.composer.cursor += character.len_utf8();
             }
         }
-        KeyCode::PageUp => app.scroll = app.scroll.saturating_add(8),
-        KeyCode::PageDown => app.scroll = app.scroll.saturating_sub(8),
+        KeyCode::PageUp => scroll_conversation(app, 8),
+        KeyCode::PageDown => scroll_conversation(app, -8),
         _ => {}
     }
     Ok(())
@@ -1605,8 +1622,8 @@ fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
             ),
         chunks[1],
     );
-    let composer_width = chunks[2].width.saturating_sub(2).max(1);
-    let composer_height = chunks[2].height.saturating_sub(2).max(1);
+    let composer_width = chunks[2].width.max(1);
+    let composer_height = chunks[2].height.saturating_sub(1).max(1);
     let (composer_row, composer_column) =
         cursor_position(&app.composer.text[..app.composer.cursor], composer_width);
     let composer_scroll = composer_row.saturating_sub(composer_height - 1);
@@ -1614,16 +1631,16 @@ fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
         Paragraph::new(app.composer.text.as_str())
             .wrap(Wrap { trim: false })
             .scroll((composer_scroll, 0))
+            .block(
+                Block::default()
+                    .borders(Borders::TOP)
+                    .border_style(Style::default().fg(Color::DarkGray)),
+            )
             .style(if app.is_running() {
                 Style::default().fg(Color::DarkGray)
             } else {
                 Style::default()
-            })
-            .block(
-                Block::default()
-                    .title(" Prompt · Enter send · Alt+Enter newline ")
-                    .borders(Borders::ALL),
-            ),
+            }),
         chunks[2],
     );
     frame.render_widget(
@@ -1633,9 +1650,9 @@ fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
     );
     if !app.is_running() {
         frame.set_cursor_position((
-            (chunks[2].x + 1 + composer_column).min(chunks[2].right().saturating_sub(2)),
+            (chunks[2].x + composer_column).min(chunks[2].right().saturating_sub(1)),
             (chunks[2].y + 1 + composer_row.saturating_sub(composer_scroll))
-                .min(chunks[2].bottom().saturating_sub(2)),
+                .min(chunks[2].bottom().saturating_sub(1)),
         ));
     }
     if app.show_sessions {
@@ -2539,6 +2556,40 @@ fn transcript_height(app: &App, width: usize) -> usize {
         .iter()
         .map(|line| line.width().max(1).div_ceil(width.max(1)))
         .sum()
+}
+
+fn max_conversation_scroll(app: &App) -> u16 {
+    transcript_height(app, app.conversation_width)
+        .saturating_sub(app.conversation_height)
+        .min(u16::MAX as usize) as u16
+}
+
+fn scroll_conversation(app: &mut App, lines: i16) {
+    let next = if lines >= 0 {
+        app.scroll.saturating_add(lines as u16)
+    } else {
+        app.scroll.saturating_sub(lines.unsigned_abs())
+    };
+    app.scroll = next.min(max_conversation_scroll(app));
+}
+
+fn handle_mouse(mouse: MouseEvent, app: &mut App) {
+    let conversation_is_visible = app.attached_terminal.is_none()
+        && app.approval.is_none()
+        && !app.show_sessions
+        && !app.terminal_picker
+        && !app.model_picker
+        && !app.shortcut_help
+        && app.supervisor_mode.is_none()
+        && app.todo_mode.is_none();
+    if !conversation_is_visible {
+        return;
+    }
+    match mouse.kind {
+        MouseEventKind::ScrollUp => scroll_conversation(app, 3),
+        MouseEventKind::ScrollDown => scroll_conversation(app, -3),
+        _ => {}
+    }
 }
 
 fn preserve_manual_anchor(app: &mut App, previous_height: usize) {
@@ -3799,6 +3850,58 @@ mod tests {
             .saturating_sub(app.conversation_height)
             .saturating_sub(app.scroll as usize);
         assert_eq!(resized_top, before_top);
+    }
+
+    #[test]
+    fn mouse_wheel_scrolls_conversation_within_transcript_bounds() {
+        let mut session = Session::new(PathBuf::from("/tmp"), "test-model".into());
+        session.messages.push(crate::Message::new(
+            Role::Assistant,
+            (0..40)
+                .map(|line| format!("line {line}\n"))
+                .collect::<String>(),
+        ));
+        let mut app = App::new(session, Vec::new());
+        app.conversation_width = 30;
+        app.conversation_height = 8;
+        let wheel_up = MouseEvent {
+            kind: MouseEventKind::ScrollUp,
+            column: 0,
+            row: 0,
+            modifiers: KeyModifiers::NONE,
+        };
+        let wheel_down = MouseEvent {
+            kind: MouseEventKind::ScrollDown,
+            ..wheel_up
+        };
+
+        handle_mouse(wheel_up, &mut app);
+        assert_eq!(app.scroll, 3);
+        for _ in 0..100 {
+            handle_mouse(wheel_up, &mut app);
+        }
+        assert_eq!(app.scroll, max_conversation_scroll(&app));
+        handle_mouse(wheel_down, &mut app);
+        assert_eq!(app.scroll, max_conversation_scroll(&app) - 3);
+
+        app.show_sessions = true;
+        let previous = app.scroll;
+        handle_mouse(wheel_down, &mut app);
+        assert_eq!(app.scroll, previous);
+    }
+
+    #[test]
+    fn composer_has_a_separator_above_its_input_area() {
+        let session = Session::new(PathBuf::from("/tmp"), "test-model".into());
+        let app = App::new(session, Vec::new());
+        let backend = ratatui::backend::TestBackend::new(48, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let buffer = terminal.backend().buffer();
+        let separator = (0..buffer.area.width)
+            .map(|x| buffer[(x, 24)].symbol())
+            .collect::<String>();
+        assert!(separator.chars().all(|character| character == '─'));
     }
 
     #[test]

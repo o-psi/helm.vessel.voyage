@@ -99,6 +99,8 @@ compact context, and `Ctrl+E` to export Markdown. `/name TITLE`, `/branch [TITLE
 Long conversations compact automatically while retaining recent turns.
 The conversation footer shows current status rather than permanently listing global shortcuts;
 press `F1` to open contextual keyboard help and `F1` or `Esc` to close it.
+Scroll the conversation with the mouse wheel or `PageUp` and `PageDown`; a divider keeps the
+composer visually distinct without enclosing it in a permanent box.
 
 Choose agent authority with `--access read-only|approval|unrestricted` or the `access`
 configuration key. Read-only permits filesystem and terminal inspection but blocks commands,
