@@ -33,7 +33,8 @@ and terminal result/error.
 
 The concrete `helm::subagent::SubagentRuntime` exposes corresponding `tree`,
 `events_after`, `send_message`, `follow_up`, `cancel`, and `subscribe` operations;
-the UI has an explicit `TimedOut` status and event. The application currently installs
+the UI preserves distinct `TimedOut`, `Interrupted`, and `Cancelled` terminal states
+and events. The application currently installs
 `NoAgentSupervisor`, so the view is empty until that runtime adapter is connected.
 
 Supervisor composer text is sent only to the selected agent. It is not copied into

@@ -1271,6 +1271,7 @@ fn status_label(status: &AgentStatus) -> &'static str {
         AgentStatus::Completed => "completed",
         AgentStatus::Failed => "failed",
         AgentStatus::TimedOut => "timed out",
+        AgentStatus::Interrupted => "interrupted",
         AgentStatus::Cancelled => "cancelled",
     }
 }
@@ -1294,6 +1295,9 @@ fn supervision_event_label(kind: &SupervisionEventKind) -> String {
         SupervisionEventKind::Failed { error } => format!("failed: {}", one_line(error, 120)),
         SupervisionEventKind::TimedOut { error } => {
             format!("timed out: {}", one_line(error, 120))
+        }
+        SupervisionEventKind::Interrupted { reason } => {
+            format!("interrupted: {}", one_line(reason, 120))
         }
         SupervisionEventKind::Cancelled => "cancelled".into(),
     }
@@ -1895,6 +1899,18 @@ mod tests {
         assert_eq!(
             flattened.iter().filter(|item| item.id == cycle_b).count(),
             1
+        );
+    }
+
+    #[test]
+    fn interrupted_agents_are_terminal_and_render_distinctly() {
+        assert!(AgentStatus::Interrupted.is_terminal());
+        assert_eq!(status_label(&AgentStatus::Interrupted), "interrupted");
+        assert_eq!(
+            supervision_event_label(&SupervisionEventKind::Interrupted {
+                reason: "operator stopped work".into(),
+            }),
+            "interrupted: operator stopped work"
         );
     }
 

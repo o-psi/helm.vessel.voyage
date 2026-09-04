@@ -27,6 +27,7 @@ pub enum AgentStatus {
     Completed,
     Failed,
     TimedOut,
+    Interrupted,
     Cancelled,
 }
 
@@ -34,7 +35,7 @@ impl AgentStatus {
     pub fn is_terminal(&self) -> bool {
         matches!(
             self,
-            Self::Completed | Self::Failed | Self::TimedOut | Self::Cancelled
+            Self::Completed | Self::Failed | Self::TimedOut | Self::Interrupted | Self::Cancelled
         )
     }
 }
@@ -71,6 +72,7 @@ pub enum AgentEventKind {
     Completed { result: String },
     Failed { error: String },
     TimedOut { error: String },
+    Interrupted { reason: String },
     Cancelled,
 }
 
