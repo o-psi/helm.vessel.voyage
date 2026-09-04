@@ -45,5 +45,21 @@
     "seed_files": {"inventory.txt": "alpha\nbeta\ngamma\n"},
     "expect_files": {"checkpoint.md": "alpha"},
     "expect_output": ["checkpoint"]
+  },
+  {
+    "id": "parallel-synthesis",
+    "category": "parallel",
+    "prompt": "Delegate the independent inspection of north.txt and south.txt to two subagents in parallel, wait for both, and synthesize their attributed results into regional-summary.md.",
+    "seed_files": {"north.txt": "incidents=4\nowner=Ada\n", "south.txt": "incidents=7\nowner=Lin\n"},
+    "expect_files": {"regional-summary.md": "11"},
+    "expect_output": ["regional"]
+  },
+  {
+    "id": "parallel-independent-files",
+    "category": "parallel",
+    "prompt": "Use two subagents concurrently: one must summarize alpha.txt into alpha-summary.md and the other must summarize beta.txt into beta-summary.md. Wait for both and report their final states.",
+    "seed_files": {"alpha.txt": "Alpha has 3 active tasks.\n", "beta.txt": "Beta has 5 active tasks.\n"},
+    "expect_files": {"alpha-summary.md": "3", "beta-summary.md": "5"},
+    "expect_output": ["completed"]
   }
 ]

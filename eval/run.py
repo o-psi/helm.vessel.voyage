@@ -18,7 +18,9 @@ import time
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 MANIFEST = ROOT / "eval" / "scenarios.json"
-REQUIRED_CATEGORIES = {"coding", "administration", "research", "writing", "data", "interruption"}
+REQUIRED_CATEGORIES = {
+    "coding", "administration", "research", "writing", "data", "interruption", "parallel"
+}
 
 
 def load() -> list[dict]:
