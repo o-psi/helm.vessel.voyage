@@ -7,7 +7,7 @@ use super::{
     conversation::{transcript, viewport_width_for},
     models::draw_model_picker,
     palette::draw_slash_palette,
-    questions::draw_question,
+    questions::{draw_question, question_height},
     supervisor::draw_supervisor,
     terminals::{draw_attached_terminal, draw_terminal_picker},
     text::{centered, display_safe},
@@ -20,17 +20,43 @@ use ratatui::{
     widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap},
 };
 
+pub(super) fn conversation_layout(area: Rect, app: &App) -> std::rc::Rc<[Rect]> {
+    let constraints = if let Some(question) = &app.question {
+        let header = if area.height >= 14 { 3 } else { 1 }.min(area.height);
+        let status = u16::from(area.height >= 10);
+        let available = area.height.saturating_sub(header + status);
+        // Grow from the composer upward, but reserve at least a third of the
+        // remaining viewport for the conversation, even for oversized prompts.
+        let conversation = (available / 3).max(1).min(available);
+        let question =
+            question_height(question, area.width).min(available.saturating_sub(conversation));
+        [
+            Constraint::Length(header),
+            Constraint::Min(conversation),
+            Constraint::Length(question),
+            Constraint::Length(status),
+        ]
+    } else {
+        [
+            Constraint::Length(3),
+            Constraint::Min(8),
+            Constraint::Length(5),
+            Constraint::Length(1),
+        ]
+    };
+    Layout::default()
+        .direction(Direction::Vertical)
+        .constraints(constraints)
+        .split(area)
+}
+
 pub(super) fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
     let area = frame.area();
     if app.terminal_panel.attached_terminal.is_some() {
         draw_attached_terminal(frame, area, &app.terminal_panel);
         return;
     }
-    if let Some(question) = &app.question {
-        draw_question(frame, area, question);
-        return;
-    }
-    if area.width < 32 || area.height < 10 {
+    if app.question.is_none() && (area.width < 32 || area.height < 10) {
         frame.render_widget(
             Paragraph::new("Helm needs a terminal of at least 32×10. Resize the window or use `helm chat --plain`.")
                 .wrap(Wrap { trim: true })
@@ -39,37 +65,29 @@ pub(super) fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
         );
         return;
     }
-    if app.shortcut_help && app.approval.is_none() {
+    if app.question.is_none() && app.shortcut_help && app.approval.is_none() {
         draw_shortcut_help(frame, area, app);
         return;
     }
-    if app.model_panel.model_picker {
+    if app.question.is_none() && app.model_panel.model_picker {
         draw_model_picker(frame, area, &app.model_panel, &app.session.model);
         return;
     }
-    if app.supervisor_panel.supervisor_mode.is_some() {
+    if app.question.is_none() && app.supervisor_panel.supervisor_mode.is_some() {
         draw_supervisor(frame, area, &app.supervisor_panel);
         if let Some(approval) = &app.approval {
             draw_approval(frame, area, approval);
         }
         return;
     }
-    if app.todo_panel.todo_mode.is_some() {
+    if app.question.is_none() && app.todo_panel.todo_mode.is_some() {
         draw_todos(frame, area, &app.todo_panel);
         if let Some(approval) = &app.approval {
             draw_approval(frame, area, approval);
         }
         return;
     }
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(3),
-            Constraint::Min(8),
-            Constraint::Length(5),
-            Constraint::Length(1),
-        ])
-        .split(area);
+    let chunks = conversation_layout(area, app);
     let title = app.session.display_name();
     frame.render_widget(
         Paragraph::new(Line::from(vec![
@@ -107,6 +125,16 @@ pub(super) fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
             .scroll((offset, 0)),
         chunks[1],
     );
+    if let Some(question) = &app.question {
+        draw_question(frame, chunks[2], question);
+        frame.render_widget(
+            Paragraph::new(app.status.as_str()).style(Style::default().fg(Color::Gray)),
+            chunks[3],
+        );
+        // Questions own input; underlying pickers, palette and draft stay
+        // intact but must not cover either the question or its conversation.
+        return;
+    }
     let composer_width = chunks[2].width.max(1);
     let composer_height = chunks[2].height.saturating_sub(1).max(1);
     let (composer_row, composer_column) =

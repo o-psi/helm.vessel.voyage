@@ -220,3 +220,124 @@ fn questions_render_safely_and_remain_visible_over_other_views_at_all_sizes() {
         }
     }
 }
+
+fn question_screen(app: &App, width: u16, height: u16) -> Vec<String> {
+    let mut terminal = Terminal::new(ratatui::backend::TestBackend::new(width, height)).unwrap();
+    terminal.draw(|frame| draw(frame, app)).unwrap();
+    terminal
+        .backend()
+        .buffer()
+        .content
+        .chunks(width as usize)
+        .map(|row| row.iter().map(|cell| cell.symbol()).collect())
+        .collect()
+}
+
+#[test]
+fn questions_inline_replace_composer_and_restore_each_underlying_view() {
+    for panel in 0..7 {
+        let mut app = App::new(Session::new(PathBuf::from("/tmp"), "test".into()), vec![]);
+        app.session
+            .messages
+            .push(crate::Message::new(Role::User, "TRANSCRIPT-MARKER"));
+        app.composer.insert_str("/unsent-draft-marker");
+        match panel {
+            0 => app.shortcut_help = true,
+            1 => app.model_panel.model_picker = true,
+            2 => app.supervisor_panel.supervisor_mode = Some(SupervisorMode::Tree),
+            3 => app.todo_panel.todo_mode = Some(TodoMode::List),
+            4 => app.show_sessions = true,
+            5 => app.terminal_panel.terminal_picker = true,
+            _ => {}
+        }
+        let before = question_screen(&app, 80, 24);
+        let cursor = app.composer.cursor;
+        let (dialog, _receive) = question_dialog();
+        app.question = Some(dialog);
+        let screen = question_screen(&app, 80, 24);
+        let question_row = screen
+            .iter()
+            .position(|row| row.contains("Which format?"))
+            .unwrap();
+        let transcript_row = screen
+            .iter()
+            .position(|row| row.contains("TRANSCRIPT-MARKER"))
+            .unwrap();
+        assert!(
+            question_row > transcript_row && question_row >= 12,
+            "{screen:?}"
+        );
+        let text = screen.join("\n");
+        assert!(text.contains("Other / custom answer") && text.contains("Enter submit"));
+        assert!(!text.contains("unsent-draft-marker") && !text.contains("Enter send"));
+        // Dismissal removes question state; cancellation also updates the status.
+        if panel % 2 == 0 {
+            handle_question_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), &mut app);
+        } else {
+            app.question = None;
+        }
+        assert_eq!(app.composer.cursor, cursor);
+        if panel % 2 == 0 {
+            assert_eq!(app.status, "Question cancelled");
+            app.status = "Ready".into();
+        }
+        assert_eq!(question_screen(&app, 80, 24), before);
+    }
+}
+
+#[test]
+fn questions_inline_grow_bound_height_reflow_and_keep_custom_selection_visible() {
+    let mut app = App::new(Session::new(PathBuf::from("/tmp"), "test".into()), vec![]);
+    app.session
+        .messages
+        .push(crate::Message::new(Role::User, "CONTEXT"));
+    let (dialog, _receive) = question_dialog();
+    app.question = Some(dialog);
+    let area = ratatui::layout::Rect::new(0, 0, 80, 30);
+    let short = conversation_layout(area, &app)[2].height;
+    let dialog = app.question.as_mut().unwrap();
+    dialog.request.question.question = "long question 日本語 ".repeat(30);
+    dialog.request.question.options = (0..8)
+        .map(|n| format!("Choice {n} {}", "long ".repeat(35)))
+        .collect();
+    dialog.selected = 8;
+    dialog.insert("custom-marker");
+    assert!(conversation_layout(area, &app)[2].height > short);
+    for (width, height) in [(32, 10), (48, 18), (80, 30), (120, 40), (48, 18)] {
+        let layout = conversation_layout(ratatui::layout::Rect::new(0, 0, width, height), &app);
+        assert!(layout[1].height >= (height - layout[0].height - layout[3].height) / 3);
+        assert_eq!(layout[2].bottom(), height - layout[3].height);
+        let screen = question_screen(&app, width, height).join("\n");
+        assert!(screen.contains("CONTEXT"), "{screen}");
+        assert!(screen.contains("custom-marker"), "{screen}");
+        assert!(!screen.contains("Enter send"));
+    }
+}
+
+#[test]
+fn questions_inline_geometry_preserves_manual_anchor_and_bottom_follow() {
+    let mut app = App::new(Session::new(PathBuf::from("/tmp"), "test".into()), vec![]);
+    for n in 0..40 {
+        app.session
+            .messages
+            .push(crate::Message::new(Role::User, format!("line-{n}")));
+    }
+    resize_conversation(&mut app, 80, 21);
+    app.scroll = 10;
+    let top = transcript_height(&app, 80) - app.conversation_height - app.scroll as usize;
+    let (dialog, _receive) = question_dialog();
+    app.question = Some(dialog);
+    for (width, height) in [(80, 30), (48, 18), (120, 40)] {
+        let viewport =
+            conversation_layout(ratatui::layout::Rect::new(0, 0, width, height), &app)[1];
+        resize_conversation(&mut app, viewport.width as usize, viewport.height as usize);
+        assert_eq!(
+            transcript_height(&app, width as usize) - app.conversation_height - app.scroll as usize,
+            top
+        );
+    }
+    app.scroll = 0;
+    app.question = None;
+    resize_conversation(&mut app, 80, 21);
+    assert_eq!(app.scroll, 0);
+}

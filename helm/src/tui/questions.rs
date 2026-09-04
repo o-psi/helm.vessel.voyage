@@ -6,7 +6,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::Line,
-    widgets::{Block, Borders, Clear, Paragraph, Wrap},
+    widgets::{Block, Borders, Paragraph},
 };
 
 pub(super) struct QuestionDialog {
@@ -107,13 +107,10 @@ pub(super) fn question_lines(text: &str, width: usize) -> Vec<Line<'static>> {
     lines
 }
 
-pub(super) fn draw_question(frame: &mut ratatui::Frame<'_>, area: Rect, dialog: &QuestionDialog) {
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Min(1), Constraint::Length(3)])
-        .split(area);
-    let width = chunks[0].width.saturating_sub(2).max(1) as usize;
-    let height = chunks[0].height.saturating_sub(2).max(1) as usize;
+const QUESTION_HELP: &str = "↑/↓/Tab choose · Enter submit · Esc cancel · PgUp/PgDn scroll. Answers are saved; do not enter secrets.";
+
+// Measurement and painting share the same wrapping, including the custom cursor.
+fn question_content(dialog: &QuestionDialog, width: usize) -> (Vec<Line<'static>>, usize) {
     let mut lines = question_lines(&display_safe(&dialog.request.question.question), width);
     lines.push(Line::from(""));
     let mut selected_line = 0;
@@ -156,13 +153,33 @@ pub(super) fn draw_question(frame: &mut ratatui::Frame<'_>, area: Rect, dialog: 
         selected_line = lines.len() + cursor_line;
         lines.extend(question_lines(&input, width));
     }
+    (lines, selected_line)
+}
+
+pub(super) fn question_height(dialog: &QuestionDialog, width: u16) -> u16 {
+    let (lines, _) = question_content(dialog, width.saturating_sub(2).max(1) as usize);
+    let help = question_lines(QUESTION_HELP, width.max(1) as usize);
+    (lines.len() + 2 + help.len()).min(u16::MAX as usize) as u16
+}
+
+pub(super) fn draw_question(frame: &mut ratatui::Frame<'_>, area: Rect, dialog: &QuestionDialog) {
+    let help = question_lines(QUESTION_HELP, area.width.max(1) as usize);
+    // On short terminals keep at least one body row inside the border. The
+    // title still identifies sharing when the full help cannot fit.
+    let help_height = (help.len().min(u16::MAX as usize) as u16).min(area.height.saturating_sub(3));
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(0), Constraint::Length(help_height)])
+        .split(area);
+    let width = chunks[0].width.saturating_sub(2).max(1) as usize;
+    let height = chunks[0].height.saturating_sub(2).max(1) as usize;
+    let (lines, selected_line) = question_content(dialog, width);
     let max_scroll = lines.len().saturating_sub(height);
     let scroll = dialog
         .scroll
         .map(usize::from)
         .unwrap_or_else(|| selected_line.saturating_sub(height.saturating_sub(2)))
         .min(max_scroll);
-    frame.render_widget(Clear, area);
     frame.render_widget(
         Paragraph::new(lines)
             .scroll((scroll.min(u16::MAX as usize) as u16, 0))
@@ -173,6 +190,5 @@ pub(super) fn draw_question(frame: &mut ratatui::Frame<'_>, area: Rect, dialog: 
             ),
         chunks[0],
     );
-    frame.render_widget(Paragraph::new("↑/↓/Tab choose · Enter submit · Esc cancel · PgUp/PgDn scroll. Answers are saved; do not enter secrets.")
-        .wrap(Wrap { trim: true }), chunks[1]);
+    frame.render_widget(Paragraph::new(help), chunks[1]);
 }

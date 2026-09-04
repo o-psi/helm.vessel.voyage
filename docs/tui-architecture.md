@@ -47,8 +47,10 @@ The main keyboard router retains its existing order: questions, approvals,
 attached PTY, shortcut help, model panel, supervisor panel, todo panel, terminal
 picker, session picker, global shortcuts, command palette, then chat editing.
 Paste, mouse and resize routing stay in the coordinator too. Frame composition
-keeps its existing explicit overlay order; this refactor does not redefine modal
-behavior.
+keeps explicit precedence: attached PTYs remain exclusive; questions temporarily
+hide other panels and replace the bottom composer while preserving conversation
+space. The shared conversation layout drives resize/scroll anchoring as question
+height changes. Other panels and drafts reappear unchanged after the question.
 
 - Direct attached-terminal input never becomes chat or model-visible input.
 - Dialog answers do not edit underlying drafts or panels.

@@ -7,8 +7,14 @@ replace a security approval.
 
 ## Operator experience
 
-The question takes focus even when tool activity is hidden or another picker is
-open. The chat draft and other views are preserved.
+The question replaces the input at the bottom, growing upward to fit its wrapped
+content while reserving at least a third of the available body for conversation.
+Oversized content scrolls within that space. It takes keyboard focus even when
+tool activity is hidden or another picker is open. Other pickers are temporarily
+hidden; their state and the unsent chat draft return after the question ends.
+Mouse-wheel conversation scrolling is paused while answering; use PageUp/PageDown
+for question content. Very small terminals show as much as fits; resize for the
+full question and controls.
 
 - **Up / Down / Tab**: select one offered answer or **Other / custom answer**.
 - **Enter**: submit the selected option; on Other, submit nonblank custom text.

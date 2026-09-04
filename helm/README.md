@@ -232,7 +232,8 @@ systemd, or a container rather than assuming Helm can resurrect a process.
 ### Questions
 
 The model can call `questions` to open a multiple-choice clarification dialog with
-an always-available **Other / custom answer** option. Use arrows/Tab to select,
+an always-available **Other / custom answer** option. It replaces the bottom input
+and grows upward as needed while keeping conversation visible. Use arrows/Tab to select,
 Enter to submit, and Esc to cancel. Answers are shared with the model and saved in
 session history—never enter secrets. This is not a security approval. The initial
 interactive frontend is full-screen TUI only; plain and unattended runs return

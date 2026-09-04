@@ -235,6 +235,16 @@ pub async fn run(
         {
             app.question = None;
         }
+        let size = terminal.size()?;
+        let viewport = conversation_layout(
+            ratatui::layout::Rect::new(0, 0, size.width, size.height),
+            &app,
+        )[1];
+        if app.conversation_width != viewport.width.max(1) as usize
+            || app.conversation_height != viewport.height.max(1) as usize
+        {
+            resize_conversation(&mut app, viewport.width as usize, viewport.height as usize);
+        }
         terminal.draw(|frame| draw(frame, &app))?;
         tokio::select! {
             event = input.next() => {
@@ -243,11 +253,10 @@ pub async fn run(
                         handle_key(key, &mut app, &agent, &store, &tx, terminals.as_ref(), supervisor.clone(), todos.clone()).await?;
                     }
                     Some(Ok(Event::Resize(columns, rows))) => {
-                        resize_conversation(
-                            &mut app,
-                            columns.max(1) as usize,
-                            rows.saturating_sub(9).max(1) as usize,
-                        );
+                        let viewport = conversation_layout(
+                            ratatui::layout::Rect::new(0, 0, columns, rows), &app,
+                        )[1];
+                        resize_conversation(&mut app, viewport.width as usize, viewport.height as usize);
                         if let Some(id) = app.terminal_panel.attached_terminal {
                             let _ = terminals.resize(id, columns, rows.saturating_sub(1)).await;
                         }
