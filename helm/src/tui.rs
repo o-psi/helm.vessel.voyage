@@ -297,7 +297,7 @@ pub async fn run(
             }
             event = rx.recv() => {
                 let Some(event) = event else { break };
-                handle_ui_event(event, &mut app, &store).await?;
+                handle_ui_event(event, &mut app, &store, terminals.as_ref()).await?;
             }
             _ = &mut termination => {
                 app.status = "Terminal closing; cancelling active work".into();
@@ -343,7 +343,12 @@ async fn termination_signal() {
     std::future::pending::<()>().await;
 }
 
-async fn handle_ui_event(event: UiEvent, app: &mut App, store: &SessionStore) -> Result<()> {
+async fn handle_ui_event(
+    event: UiEvent,
+    app: &mut App,
+    store: &SessionStore,
+    terminals: &dyn InteractiveTerminals,
+) -> Result<()> {
     match event {
         UiEvent::Agent(AgentEvent::Thinking { turn }) => {
             app.status = format!("Model turn {turn}…  Esc cancels");
@@ -411,6 +416,7 @@ async fn handle_ui_event(event: UiEvent, app: &mut App, store: &SessionStore) ->
                     app.session.messages = outcome.messages;
                     app.session.usage.input_tokens += outcome.usage.input_tokens;
                     app.session.usage.output_tokens += outcome.usage.output_tokens;
+                    app.session.terminals = terminals.list().await.unwrap_or_default();
                     store.save(&mut app.session).await?;
                     app.status = format!("Ready · {} model turn(s)", outcome.turns);
                 }
@@ -728,7 +734,15 @@ fn draw_attached_terminal(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App)
         .unwrap_or(("loading", "unknown".into()));
     frame.render_widget(
         Paragraph::new(format!(
-            " HELM TERMINAL · {title} · {state} · Ctrl+] detach (process keeps running)"
+            " HELM TERMINAL · {title} · {state}{} · Ctrl+] detach (process keeps running)",
+            app.terminal_snapshot
+                .as_ref()
+                .filter(|snapshot| snapshot.dropped_unread_bytes > 0)
+                .map(|snapshot| format!(
+                    " · {} agent-unread bytes evicted",
+                    snapshot.dropped_unread_bytes
+                ))
+                .unwrap_or_default()
         ))
         .style(Style::default().fg(Color::Black).bg(Color::Cyan)),
         chunks[0],
@@ -1167,6 +1181,7 @@ mod tests {
                     ..TerminalCell::default()
                 }]],
                 cursor: Some((2, 0)),
+                dropped_unread_bytes: 0,
             })
         }
         async fn write(&self, id: TerminalId, bytes: Vec<u8>) -> Result<(), TerminalError> {
@@ -1295,6 +1310,7 @@ mod tests {
             }),
             &mut app,
             &store,
+            &crate::terminal::NoInteractiveTerminals::default(),
         )
         .await
         .unwrap();

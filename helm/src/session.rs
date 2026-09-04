@@ -58,7 +58,7 @@ pub struct Session {
     pub messages: Vec<Message>,
     pub usage: Usage,
     #[serde(default)]
-    pub terminals: Vec<crate::tools::TerminalMetadata>,
+    pub terminals: Vec<crate::terminal::TerminalSummary>,
 }
 
 impl Session {
@@ -224,7 +224,7 @@ async fn load_path(path: &Path) -> Result<Session> {
     let mut session: Session = serde_json::from_slice(&data)
         .with_context(|| format!("invalid session {}", path.display()))?;
     for terminal in &mut session.terminals {
-        terminal.state = "stale_after_restart".into();
+        terminal.state = crate::terminal::TerminalState::Disconnected;
     }
     Ok(session)
 }
@@ -288,6 +288,24 @@ mod tests {
         assert_eq!(
             store.load_reference("experiment").await.unwrap().id,
             branch.id
+        );
+    }
+
+    #[tokio::test]
+    async fn restored_terminal_metadata_is_disconnected() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = SessionStore::new(dir.path().into());
+        let mut session = Session::new(dir.path().into(), "test".into());
+        session.terminals.push(crate::terminal::TerminalSummary {
+            id: crate::terminal::TerminalId(Uuid::new_v4()),
+            title: "build".into(),
+            state: crate::terminal::TerminalState::Running,
+        });
+        store.save(&mut session).await.unwrap();
+        let restored = store.load(session.id).await.unwrap();
+        assert_eq!(
+            restored.terminals[0].state,
+            crate::terminal::TerminalState::Disconnected
         );
     }
 }

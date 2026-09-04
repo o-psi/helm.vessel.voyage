@@ -101,11 +101,22 @@ impl Default for RetryPolicy {
 }
 
 impl Agent {
-    pub fn terminal_metadata(&self) -> Vec<crate::tools::TerminalMetadata> {
+    pub fn terminal_metadata(&self) -> Vec<crate::terminal::TerminalSummary> {
         self.tools
             .terminals()
             .and_then(|manager| manager.metadata().ok())
             .unwrap_or_default()
+            .into_iter()
+            .map(|item| crate::terminal::TerminalSummary {
+                id: crate::terminal::TerminalId(item.id),
+                title: item.name.unwrap_or(item.command),
+                state: if item.state == "running" {
+                    crate::terminal::TerminalState::Running
+                } else {
+                    crate::terminal::TerminalState::Exited { code: None }
+                },
+            })
+            .collect()
     }
     #[allow(clippy::too_many_arguments)]
     pub fn new(

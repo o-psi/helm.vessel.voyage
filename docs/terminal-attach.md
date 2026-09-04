@@ -24,6 +24,12 @@ and restores the outer terminal on exit or signal.
 
 ## Runtime integration contract
 
+The built-in runtime uses `vt100` to expose an emulated cell grid, SGR attributes,
+cursor position, wrapping, erase operations, and alternate-screen behavior instead
+of raw escape sequences. Agent unread transcript retention is bounded separately;
+when history is evicted, `TerminalSnapshot.dropped_unread_bytes` increases and the
+TUI displays the gap. Emulated screen state remains intact.
+
 The UI consumes the `InteractiveTerminals` trait in `helm::terminal`; it never owns a
 singleton process. One manager can expose any number of local, SSH, container, or
 privilege-elevated terminals.

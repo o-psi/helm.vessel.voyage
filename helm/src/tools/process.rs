@@ -1,7 +1,7 @@
 use super::{Tool, ToolContext, ToolError};
 use crate::terminal::{
-    InteractiveTerminals, TerminalCell, TerminalError, TerminalEvent, TerminalId, TerminalSnapshot,
-    TerminalState as UiState, TerminalSummary,
+    InteractiveTerminals, TerminalCell, TerminalColor, TerminalError, TerminalEvent, TerminalId,
+    TerminalSnapshot, TerminalState as UiState, TerminalSummary,
 };
 use crate::{model::ToolDefinition, policy::Decision};
 use async_trait::async_trait;
@@ -57,10 +57,21 @@ struct Managed {
     cursor: usize,
 }
 
-#[derive(Default)]
 struct Capture {
     bytes: Vec<u8>,
     base: usize,
+    dropped: u64,
+    parser: vt100::Parser,
+}
+impl Capture {
+    fn new(rows: u16, cols: u16) -> Self {
+        Self {
+            bytes: Vec::new(),
+            base: 0,
+            dropped: 0,
+            parser: vt100::Parser::new(rows, cols, 0),
+        }
+    }
 }
 const MAX_CAPTURE_BYTES: usize = 8 * 1024 * 1024;
 
@@ -301,7 +312,7 @@ impl ProcessTool {
         drop(pair.slave);
         let mut reader = pair.master.try_clone_reader().map_err(failed)?;
         let writer = pair.master.take_writer().map_err(failed)?;
-        let output = Arc::new(Mutex::new(Capture::default()));
+        let output = Arc::new(Mutex::new(Capture::new(rows, cols)));
         let max_unread_bytes = self.max_unread_bytes;
         let sink = output.clone();
         let id = Uuid::new_v4();
@@ -315,11 +326,13 @@ impl ProcessTool {
                         Ok(0) | Err(_) => break,
                         Ok(n) => {
                             let mut capture = sink.lock().expect("PTY buffer poisoned");
+                            capture.parser.process(&buffer[..n]);
                             capture.bytes.extend_from_slice(&buffer[..n]);
                             if capture.bytes.len() > max_unread_bytes {
                                 let remove = capture.bytes.len() - max_unread_bytes;
                                 capture.bytes.drain(..remove);
                                 capture.base += remove;
+                                capture.dropped += remove as u64;
                             }
                             let _ = events.send(TerminalEvent::Changed(TerminalId(id)));
                         }
@@ -386,6 +399,7 @@ impl ProcessTool {
                 pixel_height: 0,
             })
             .map_err(failed)?;
+        p.output.lock().map_err(failed)?.parser.set_size(rows, cols);
         p.rows = rows;
         p.cols = cols;
         Ok(format!("resized to {cols}x{rows}"))
@@ -481,20 +495,23 @@ impl InteractiveTerminals for ProcessTool {
             .output
             .lock()
             .map_err(|e| TerminalError::Failed(e.to_string()))?;
-        let text = String::from_utf8_lossy(&capture.bytes);
-        let cells = text
-            .lines()
-            .rev()
-            .take(p.rows as usize)
-            .collect::<Vec<_>>()
-            .into_iter()
-            .rev()
-            .map(|line| {
-                line.chars()
-                    .take(p.cols as usize)
-                    .map(|ch| TerminalCell {
-                        text: ch.to_string(),
-                        ..TerminalCell::default()
+        let screen = capture.parser.screen();
+        let cells = (0..p.rows)
+            .map(|row| {
+                (0..p.cols)
+                    .map(|col| {
+                        screen
+                            .cell(row, col)
+                            .map_or_else(TerminalCell::default, |cell| TerminalCell {
+                                text: cell.contents(),
+                                foreground: color(cell.fgcolor()),
+                                background: color(cell.bgcolor()),
+                                bold: cell.bold(),
+                                dim: false,
+                                italic: cell.italic(),
+                                underlined: cell.underline(),
+                                reversed: cell.inverse(),
+                            })
                     })
                     .collect()
             })
@@ -505,7 +522,11 @@ impl InteractiveTerminals for ProcessTool {
             state,
             revision: (capture.base + capture.bytes.len()) as u64,
             cells,
-            cursor: None,
+            cursor: Some({
+                let (row, column) = screen.cursor_position();
+                (column, row)
+            }),
+            dropped_unread_bytes: capture.dropped,
         })
     }
     async fn write(&self, id: TerminalId, bytes: Vec<u8>) -> Result<(), TerminalError> {
@@ -530,6 +551,13 @@ impl InteractiveTerminals for ProcessTool {
 }
 fn terminal_error(error: ToolError) -> TerminalError {
     TerminalError::Failed(error.to_string())
+}
+fn color(value: vt100::Color) -> TerminalColor {
+    match value {
+        vt100::Color::Default => TerminalColor::Default,
+        vt100::Color::Idx(value) => TerminalColor::Indexed(value),
+        vt100::Color::Rgb(r, g, b) => TerminalColor::Rgb(r, g, b),
+    }
 }
 #[cfg(unix)]
 fn platform_command(command: &str) -> CommandBuilder {
@@ -684,6 +712,8 @@ mod tests {
         let capture = Capture {
             bytes: b"abcdefgh".to_vec(),
             base: 10,
+            dropped: 10,
+            parser: vt100::Parser::new(24, 80, 0),
         };
         let (first, cursor) = unread_chunk(&capture, 10, 3);
         assert!(first.starts_with("abc"));
@@ -694,6 +724,19 @@ mod tests {
         let (third, cursor) = unread_chunk(&capture, cursor, 3);
         assert_eq!(third, "gh");
         assert_eq!(cursor, 18);
+    }
+    #[test]
+    fn vt_parser_tracks_styles_cursor_and_gap_count() {
+        let mut capture = Capture::new(2, 8);
+        capture.parser.process(b"\x1b[31;1mred\x1b[0m\r\nnext");
+        capture.dropped = 17;
+        let screen = capture.parser.screen();
+        let cell = screen.cell(0, 0).unwrap();
+        assert_eq!(cell.contents(), "r");
+        assert!(cell.bold());
+        assert_eq!(cell.fgcolor(), vt100::Color::Idx(1));
+        assert_eq!(screen.cursor_position(), (1, 4));
+        assert_eq!(capture.dropped, 17);
     }
     #[cfg(unix)]
     fn interactive_command() -> &'static str {

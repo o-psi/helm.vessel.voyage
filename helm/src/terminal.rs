@@ -42,6 +42,8 @@ pub struct TerminalSnapshot {
     pub revision: u64,
     pub cells: Vec<Vec<TerminalCell>>,
     pub cursor: Option<(u16, u16)>,
+    /// Total transcript bytes evicted from the bounded agent-read buffer.
+    pub dropped_unread_bytes: u64,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
