@@ -260,7 +260,7 @@ pub async fn run(
     let sessions = store.list().await?;
     let mut app = App::new(session, sessions);
     refresh_terminals(&mut app, terminals.as_ref()).await;
-    let mut terminal_events = terminals.subscribe();
+    let mut terminal_events = Some(terminals.subscribe());
     let _guard = TerminalGuard::enter().context("failed to initialize terminal")?;
     let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
     terminal.clear()?;
@@ -303,11 +303,12 @@ pub async fn run(
                 app.status = "Terminal closing; cancelling active work".into();
                 app.quit = true;
             }
-            event = terminal_events.recv() => {
+            event = async { terminal_events.as_mut().expect("guarded terminal receiver").recv().await }, if terminal_events.is_some() => {
                 match event {
                     Ok(event) => handle_terminal_event(event, &mut app, terminals.as_ref()).await,
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => refresh_terminals(&mut app, terminals.as_ref()).await,
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                        terminal_events = None;
                         app.attached_terminal = None;
                         app.terminal_snapshot = None;
                         app.status = "Terminal manager disconnected".into();

@@ -11,7 +11,10 @@ use serde_json::{Value, json};
 use std::{
     collections::BTreeMap,
     io::Write,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 use tokio::sync::broadcast;
 use uuid::Uuid;
@@ -54,6 +57,7 @@ struct Managed {
     child: Box<dyn Child + Send + Sync>,
     writer: Box<dyn Write + Send>,
     output: Arc<Mutex<Capture>>,
+    notification_pending: Arc<AtomicBool>,
     cursor: usize,
 }
 
@@ -318,6 +322,8 @@ impl ProcessTool {
         let sink = output.clone();
         let id = Uuid::new_v4();
         let events = self.events.clone();
+        let notification_pending = Arc::new(AtomicBool::new(false));
+        let reader_pending = notification_pending.clone();
         std::thread::Builder::new()
             .name("helm-pty-reader".into())
             .spawn(move || {
@@ -335,7 +341,9 @@ impl ProcessTool {
                                 capture.base += remove;
                                 capture.dropped += remove as u64;
                             }
-                            let _ = events.send(TerminalEvent::Changed(TerminalId(id)));
+                            if !reader_pending.swap(true, Ordering::AcqRel) {
+                                let _ = events.send(TerminalEvent::Changed(TerminalId(id)));
+                            }
                         }
                     }
                 }
@@ -353,6 +361,7 @@ impl ProcessTool {
                 child,
                 writer,
                 output,
+                notification_pending,
                 cursor: 0,
             },
         );
@@ -496,6 +505,7 @@ impl InteractiveTerminals for ProcessTool {
             .output
             .lock()
             .map_err(|e| TerminalError::Failed(e.to_string()))?;
+        p.notification_pending.store(false, Ordering::Release);
         let screen = capture.parser.screen();
         let cells = (0..p.rows)
             .map(|row| {
@@ -734,6 +744,53 @@ mod tests {
             .unwrap();
     }
 
+    #[tokio::test]
+    async fn dropping_manager_with_live_terminal_does_not_hang() {
+        let directory = tempfile::tempdir().unwrap();
+        let ctx = context(directory.path());
+        let tool = ProcessTool::default();
+        tool.execute(
+            json!({"action":"start","command":long_running_command()}),
+            &ctx,
+        )
+        .await
+        .unwrap();
+        let (sent, received) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            drop(tool);
+            let _ = sent.send(());
+        });
+        assert!(
+            received.recv_timeout(Duration::from_secs(2)).is_ok(),
+            "dropping the last terminal manager reference hung"
+        );
+    }
+
+    #[tokio::test]
+    async fn output_notifications_are_coalesced_until_snapshot() {
+        let directory = tempfile::tempdir().unwrap();
+        let ctx = context(directory.path());
+        let tool = ProcessTool::default();
+        let mut events = tool.subscribe();
+        let started = tool
+            .execute(json!({"action":"start","command":burst_command()}), &ctx)
+            .await
+            .unwrap();
+        let id = TerminalId(Uuid::parse_str(started.split_whitespace().last().unwrap()).unwrap());
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        let mut changed = 0;
+        while let Ok(event) = events.try_recv() {
+            if matches!(event, TerminalEvent::Changed(_)) {
+                changed += 1
+            }
+        }
+        assert_eq!(
+            changed, 1,
+            "output events must be coalesced to keep TUI input responsive"
+        );
+        let _ = tool.snapshot(id).await.unwrap();
+    }
+
     #[test]
     fn truncated_reads_preserve_the_unread_tail() {
         let capture = Capture {
@@ -772,5 +829,21 @@ mod tests {
     #[cfg(windows)]
     fn interactive_command() -> &'static str {
         "set /p line=ready&& echo got:%line%"
+    }
+    #[cfg(unix)]
+    fn long_running_command() -> &'static str {
+        "sleep 300 & wait"
+    }
+    #[cfg(windows)]
+    fn long_running_command() -> &'static str {
+        "ping -n 300 127.0.0.1 >NUL"
+    }
+    #[cfg(unix)]
+    fn burst_command() -> &'static str {
+        "i=0; while [ $i -lt 10000 ]; do echo x; i=$((i+1)); done; sleep 1"
+    }
+    #[cfg(windows)]
+    fn burst_command() -> &'static str {
+        "for /L %i in (1,1,10000) do @echo x & ping -n 2 127.0.0.1 >NUL"
     }
 }
