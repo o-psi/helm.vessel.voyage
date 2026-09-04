@@ -2,7 +2,7 @@ use std::path::{Component, Path, PathBuf};
 
 use anyhow::{Result, bail};
 
-use crate::config::{ApprovalMode, Config};
+use crate::config::{AccessMode, Config};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Decision {
@@ -17,7 +17,7 @@ pub struct Policy {
     readable: Vec<PathBuf>,
     writable: Vec<PathBuf>,
     deny_commands: Vec<String>,
-    mode: ApprovalMode,
+    mode: AccessMode,
 }
 
 impl Policy {
@@ -38,12 +38,16 @@ impl Policy {
             readable,
             writable,
             deny_commands: config.deny_commands.clone(),
-            mode: config.approval.clone(),
+            mode: config.access_mode(),
         })
     }
 
     pub fn workspace(&self) -> &Path {
         &self.workspace
+    }
+
+    pub fn access_mode(&self) -> AccessMode {
+        self.mode
     }
 
     pub fn resolve_read(&self, path: &Path) -> Result<PathBuf> {
@@ -87,22 +91,36 @@ impl Policy {
             return Decision::Deny(format!("command `{executable}` is denied by policy"));
         }
         let risky = looks_risky(command, &parsed);
-        match (&self.mode, risky) {
-            (ApprovalMode::Always, _) => Decision::Ask(format!("run shell command: {command}")),
-            (ApprovalMode::OnRisk, true) => {
+        match (self.mode, risky) {
+            (AccessMode::ReadOnly, _) => {
+                Decision::Deny("commands are disabled in read-only access mode".into())
+            }
+            (AccessMode::Approval, true) => {
                 Decision::Ask(format!("run potentially consequential command: {command}"))
             }
-            (ApprovalMode::Never, _) | (ApprovalMode::OnRisk, false) => Decision::Allow,
+            (AccessMode::Approval, false) | (AccessMode::Unrestricted, _) => Decision::Allow,
         }
     }
 
-    pub fn write(&self, path: &Path, replacing: bool) -> Decision {
-        match (&self.mode, replacing) {
-            (ApprovalMode::Always, _) => Decision::Ask(format!("write {}", path.display())),
-            (ApprovalMode::OnRisk, true) => {
-                Decision::Ask(format!("replace existing file {}", path.display()))
+    pub fn write(&self, path: &Path, _replacing: bool) -> Decision {
+        match self.mode {
+            AccessMode::ReadOnly => {
+                Decision::Deny("writes are disabled in read-only access mode".into())
             }
-            _ => Decision::Allow,
+            AccessMode::Approval => Decision::Ask(format!("write {}", path.display())),
+            AccessMode::Unrestricted => Decision::Allow,
+        }
+    }
+
+    /// MCP tools do not expose a trustworthy read/write classification, so the
+    /// access mode must treat each invocation conservatively.
+    pub fn external_tool(&self, name: &str) -> Decision {
+        match self.mode {
+            AccessMode::ReadOnly => Decision::Deny(format!(
+                "external tool `{name}` is disabled in read-only access mode"
+            )),
+            AccessMode::Approval => Decision::Ask(format!("run external MCP tool `{name}`")),
+            AccessMode::Unrestricted => Decision::Allow,
         }
     }
 
@@ -172,7 +190,6 @@ fn looks_risky(command: &str, words: &[String]) -> bool {
         "podman",
         "kubectl",
         "terraform",
-        "git",
     ];
     let contains_mutating_program = words.iter().any(|word| {
         Path::new(word)
@@ -181,9 +198,68 @@ fn looks_risky(command: &str, words: &[String]) -> bool {
             .is_some_and(|name| MUTATING.contains(&name))
     });
     contains_mutating_program
-        || command.contains(">")
+        || command.contains('>')
         || command.contains("sudo ")
         || command.contains("--force")
+        || !confidently_read_only(command, words)
+}
+
+/// Shell is not sandboxed, so approval mode only bypasses a prompt for a
+/// deliberately small set of inspection commands. Anything ambiguous asks.
+fn confidently_read_only(command: &str, words: &[String]) -> bool {
+    if command
+        .chars()
+        .any(|character| matches!(character, '\n' | ';' | '`'))
+        || command.contains("$((")
+        || command.contains("$(")
+        || command.contains("&&")
+        || command.contains("||")
+        || words.is_empty()
+    {
+        return false;
+    }
+    let executable = Path::new(&words[0])
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default();
+    match executable {
+        "pwd" | "ls" | "cat" | "head" | "tail" | "wc" | "stat" | "file" | "du" | "df" | "ps"
+        | "printenv" | "whoami" | "id" | "uname" | "which" | "true" | "false" => true,
+        "env" => words.len() == 1,
+        "rg" | "grep" => !words.iter().any(|word| word.starts_with("--pre")),
+        "find" => !words.iter().any(|word| {
+            matches!(
+                word.as_str(),
+                "-delete"
+                    | "-exec"
+                    | "-execdir"
+                    | "-ok"
+                    | "-okdir"
+                    | "-fls"
+                    | "-fprint"
+                    | "-fprint0"
+                    | "-fprintf"
+            )
+        }),
+        "sed" => safe_sed(words),
+        "git" => words.get(1).is_some_and(|subcommand| {
+            matches!(
+                subcommand.as_str(),
+                "status" | "diff" | "log" | "show" | "rev-parse" | "ls-files" | "grep"
+            ) || (subcommand == "branch"
+                && words.iter().skip(2).all(|word| word == "--show-current"))
+        }),
+        _ => false,
+    }
+}
+
+fn safe_sed(words: &[String]) -> bool {
+    let Some(script) = words.iter().skip(1).find(|word| !word.starts_with('-')) else {
+        return false;
+    };
+    script.chars().all(|character| {
+        character.is_ascii_digit() || matches!(character, ',' | '$' | 'p' | 'q' | 'd' | ' ' | '\t')
+    })
 }
 
 #[cfg(test)]
@@ -192,7 +268,18 @@ mod tests {
     #[test]
     fn recognizes_risk() {
         assert!(looks_risky("rm -rf x", &["rm".into()]));
-        assert!(!looks_risky("cargo test", &["cargo".into(), "test".into()]));
+        assert!(!looks_risky(
+            "sed -n 1,20p file",
+            &["sed".into(), "-n".into(), "1,20p".into(), "file".into()]
+        ));
+        assert!(looks_risky(
+            "python -c pass",
+            &["python".into(), "-c".into(), "pass".into()]
+        ));
+        assert!(looks_risky(
+            "find . -delete",
+            &["find".into(), ".".into(), "-delete".into()]
+        ));
     }
     #[test]
     fn normalizes_parent() {
@@ -208,5 +295,43 @@ mod tests {
             Decision::Deny(_)
         ));
         assert!(matches!(policy.command("'unterminated"), Decision::Deny(_)));
+    }
+
+    #[test]
+    fn access_modes_have_distinct_authority() {
+        let directory = tempfile::tempdir().unwrap();
+        let target = directory.path().join("new.txt");
+
+        let mut config = Config {
+            access: Some(AccessMode::ReadOnly),
+            ..Config::default()
+        };
+        let read_only = Policy::new(&config, directory.path().to_owned()).unwrap();
+        assert!(matches!(read_only.command("pwd"), Decision::Deny(_)));
+        assert!(matches!(read_only.write(&target, false), Decision::Deny(_)));
+
+        config.access = Some(AccessMode::Approval);
+        let approval = Policy::new(&config, directory.path().to_owned()).unwrap();
+        assert_eq!(approval.command("sed -n 1,5p file"), Decision::Allow);
+        assert_eq!(approval.command("git status --short"), Decision::Allow);
+        assert!(matches!(approval.command("rm file"), Decision::Ask(_)));
+        assert!(matches!(approval.write(&target, false), Decision::Ask(_)));
+        assert!(matches!(
+            approval.external_tool("mcp_example_change"),
+            Decision::Ask(_)
+        ));
+
+        config.access = Some(AccessMode::Unrestricted);
+        let unrestricted = Policy::new(&config, directory.path().to_owned()).unwrap();
+        assert_eq!(unrestricted.command("rm file"), Decision::Allow);
+        assert_eq!(unrestricted.write(&target, false), Decision::Allow);
+        assert_eq!(
+            unrestricted.external_tool("mcp_example_change"),
+            Decision::Allow
+        );
+        assert!(matches!(
+            unrestricted.command("shutdown now"),
+            Decision::Deny(_)
+        ));
     }
 }

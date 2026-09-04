@@ -5,7 +5,7 @@ use clap_complete::Shell;
 use helm::{
     Agent, AgentEvent, Config, EventSink,
     agent::RetryPolicy,
-    config::{ApprovalMode, UnattendedApprovalMode},
+    config::{AccessMode, ApprovalMode, UnattendedApprovalMode},
     policy::Policy,
     provider,
     session::{Session, SessionStore},
@@ -44,8 +44,11 @@ struct Cli {
     provider: Option<ProviderArg>,
     #[arg(long, global = true)]
     workspace: Option<PathBuf>,
-    #[arg(long, global = true, value_enum)]
+    #[arg(long, global = true, value_enum, hide = true)]
     approval: Option<ApprovalArg>,
+    /// Agent authority: inspect only, ask on consequential actions, or proceed without prompts.
+    #[arg(long, global = true, value_enum, conflicts_with = "approval")]
+    access: Option<AccessArg>,
     #[arg(short, long, global = true)]
     verbose: bool,
     #[arg(long, global = true, value_enum, default_value = "text")]
@@ -246,6 +249,22 @@ enum ApprovalArg {
     Always,
     OnRisk,
     Never,
+}
+#[derive(Clone, Copy, clap::ValueEnum)]
+enum AccessArg {
+    ReadOnly,
+    Approval,
+    Unrestricted,
+}
+
+impl From<AccessArg> for AccessMode {
+    fn from(value: AccessArg) -> Self {
+        match value {
+            AccessArg::ReadOnly => Self::ReadOnly,
+            AccessArg::Approval => Self::Approval,
+            AccessArg::Unrestricted => Self::Unrestricted,
+        }
+    }
 }
 #[derive(Clone, clap::ValueEnum)]
 enum ProviderArg {
@@ -506,11 +525,15 @@ async fn main() -> Result<()> {
         config.model = model;
     }
     if let Some(approval) = cli.approval {
+        config.access = None;
         config.approval = match approval {
             ApprovalArg::Always => ApprovalMode::Always,
             ApprovalArg::OnRisk => ApprovalMode::OnRisk,
             ApprovalArg::Never => ApprovalMode::Never,
         };
+    }
+    if let Some(access) = cli.access {
+        config.access = Some(access.into());
     }
     if let Some(vessel) = cli.voyage {
         return voyage_worker(config, cli.workspace, vessel, cli.name).await;
@@ -574,7 +597,9 @@ fn print_config(config: &Config) -> Result<()> {
     println!("# provider_access = {access}");
     println!("# credential_requirement = {}", profile.credential);
     println!("# billing = {}", profile.billing);
-    println!("{}", toml::to_string_pretty(config)?);
+    let mut displayed = config.clone();
+    displayed.access = Some(config.access_mode());
+    println!("{}", toml::to_string_pretty(&displayed)?);
     Ok(())
 }
 
@@ -630,7 +655,7 @@ async fn doctor(config: &Config, workspace: Option<PathBuf>) -> Result<()> {
         "provider_credential_present": if matches!(config.provider, helm::ProviderKind::CodexSubscription) { serde_json::Value::Null } else if let Some(status) = &oauth_status { serde_json::Value::Bool(status.authenticated) } else { serde_json::Value::Bool(std::env::var_os(&config.api_key_env).is_some()) },
         "codex_compatibility": subscription,
         "sessions_directory": helm::config::default_data_dir().join("sessions"),
-        "approval": config.approval,
+        "access": config.access_mode(),
         "unattended_approval": config.unattended_approval,
         "inherited_environment": config.inherit_env,
         "mcp_servers": config.mcp_servers.keys().collect::<Vec<_>>(),
@@ -1139,6 +1164,7 @@ async fn tui_chat(
         )),
         todo.store(),
         provider_label,
+        active_config.access_mode(),
     )
     .await
 }
@@ -1170,6 +1196,12 @@ async fn build_tools(
     }
     if let Some(tool) = todos {
         tools.register_todos(tool)?;
+    }
+    if config.access_mode() == AccessMode::ReadOnly {
+        // Do not even start external MCP servers in read-only mode: their
+        // initialization and tool contracts are outside Helm's authority model.
+        tools.retain_read_only();
+        return Ok(tools);
     }
     for (name, server) in &config.mcp_servers {
         let mut environment = tool_environment(config);
@@ -1251,8 +1283,9 @@ async fn chat(
     let mut agent: Option<Agent> = None;
     if interactive {
         eprintln!(
-            "Helm · {} · {}\nType /help for commands.",
+            "Helm · {} · access: {} · {}\nType /help for commands.",
             config.model,
+            config.access_mode(),
             session.workspace.display()
         );
     }
@@ -1272,7 +1305,13 @@ async fn chat(
         match prompt {
             "/quit" | "/exit" => break,
             "/help" => {
-                println!("/help  /session  /tools  /model [MODEL]  /models  /clear  /exit");
+                println!(
+                    "/help  /session  /access  /tools  /model [MODEL]  /models  /clear  /exit"
+                );
+                continue;
+            }
+            "/access" => {
+                println!("{}", config.access_mode());
                 continue;
             }
             "/session" => {
@@ -1508,6 +1547,29 @@ mod cli_tests {
                 Some(ProviderArg::CodexCompatibility)
             ));
         }
+    }
+
+    #[test]
+    fn parses_access_modes_and_rejects_conflicting_legacy_flag() {
+        for (name, expected) in [
+            ("read-only", AccessArg::ReadOnly),
+            ("approval", AccessArg::Approval),
+            ("unrestricted", AccessArg::Unrestricted),
+        ] {
+            let cli = Cli::try_parse_from(["helm", "--access", name, "config"]).unwrap();
+            assert_eq!(cli.access.map(AccessMode::from), Some(expected.into()));
+        }
+        assert!(
+            Cli::try_parse_from([
+                "helm",
+                "--access",
+                "approval",
+                "--approval",
+                "never",
+                "config",
+            ])
+            .is_err()
+        );
     }
 
     #[test]

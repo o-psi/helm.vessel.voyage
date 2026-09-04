@@ -5,6 +5,7 @@ use thiserror::Error;
 use tokio_util::sync::CancellationToken;
 
 use crate::{
+    config::AccessMode,
     model::{Message, ModelRequest, ToolDefinition, Usage},
     provider::{ModelInfo, Provider, ProviderError, normalize_models},
     tools::{ToolContext, ToolRegistry},
@@ -104,7 +105,11 @@ impl Default for RetryPolicy {
 
 impl Agent {
     fn effective_system_prompt(&self) -> String {
-        runtime_guidance(&self.system_prompt, &self.tools.definitions())
+        runtime_guidance(
+            &self.system_prompt,
+            &self.tools.definitions(),
+            self.context.policy.access_mode(),
+        )
     }
 
     pub fn tool_inventory(&self) -> Vec<ToolDefinition> {
@@ -406,7 +411,7 @@ impl Agent {
     }
 }
 
-fn runtime_guidance(base: &str, tools: &[ToolDefinition]) -> String {
+fn runtime_guidance(base: &str, tools: &[ToolDefinition], access: AccessMode) -> String {
     let inventory = if tools.is_empty() {
         "- (none)".to_owned()
     } else {
@@ -416,8 +421,20 @@ fn runtime_guidance(base: &str, tools: &[ToolDefinition]) -> String {
             .collect::<Vec<_>>()
             .join("\n")
     };
+    let authority = match access {
+        AccessMode::ReadOnly => {
+            "This execution is read-only. Use inspection tools only; do not attempt shell commands, file writes, terminal control, todo mutations, worktree mutations, or MCP calls."
+        }
+        AccessMode::Approval => {
+            "This execution uses approval mode. Ordinary inspection may proceed directly; consequential commands, file writes, and MCP calls may pause for operator approval."
+        }
+        AccessMode::Unrestricted => {
+            "This execution is unrestricted within Helm's configured roots and hard deny rules. Tool actions do not require interactive approval."
+        }
+    };
     format!(
         "{base}\n\n## Authoritative Helm runtime\n\n\
+         Access mode: `{access}`. {authority}\n\n\
          The tool calls available in this execution are exactly the ones below. This generated \
          list overrides any provider-host, prior-session, plugin, skill, app, MCP, or built-in \
          capability guidance. Never claim access to a tool that is absent from this list. If the \
@@ -616,10 +633,11 @@ mod tests {
             description: "Does real work.".into(),
             input_schema: serde_json::json!({"type":"object"}),
         }];
-        let guidance = runtime_guidance("base", &tools);
+        let guidance = runtime_guidance("base", &tools, AccessMode::Approval);
         assert!(guidance.contains("`real_tool`: Does real work."));
         assert!(guidance.contains("do not invent orchestration wrappers"));
         assert!(guidance.contains("local `/tools` command"));
+        assert!(guidance.contains("Access mode: `approval`"));
         assert!(!guidance.contains("functions.exec"));
         assert!(!guidance.contains("collaboration.spawn_agent"));
     }

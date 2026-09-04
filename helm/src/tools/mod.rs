@@ -10,7 +10,11 @@ use serde_json::Value;
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
 use thiserror::Error;
 
-use crate::{model::ToolDefinition, policy::Policy};
+use crate::{
+    config::AccessMode,
+    model::ToolDefinition,
+    policy::{Decision, Policy},
+};
 pub use filesystem::{ApplyPatch, ListDirectory, ReadFile, SearchFiles, WriteFile};
 pub use process::{ProcessTool, TerminalManager, TerminalMetadata};
 pub use shell::Shell;
@@ -199,12 +203,42 @@ impl ToolRegistry {
             self.terminals = None;
         }
     }
+    pub fn retain_read_only(&mut self) {
+        self.tools.retain(|name, _| {
+            matches!(
+                name.as_str(),
+                "read_file" | "list_directory" | "search_files" | "process" | "subagent" | "todo"
+            )
+        });
+    }
     pub async fn execute(
         &self,
         name: &str,
         arguments: Value,
         context: &ToolContext,
     ) -> Result<String, ToolError> {
+        if context.policy.access_mode() == AccessMode::ReadOnly
+            && !allowed_in_read_only(name, &arguments)
+        {
+            return Err(ToolError::Denied(format!(
+                "`{name}` action is disabled in read-only access mode"
+            )));
+        }
+        if name.starts_with("mcp_") {
+            match context.policy.external_tool(name) {
+                Decision::Deny(reason) => return Err(ToolError::Denied(reason)),
+                Decision::Ask(reason)
+                    if !context
+                        .approver
+                        .approve(&context.approval("mcp.call", name, reason.clone()))
+                        .await
+                        .approved() =>
+                {
+                    return Err(ToolError::Denied("user declined approval".into()));
+                }
+                _ => {}
+            }
+        }
         let result = self
             .tools
             .get(name)
@@ -214,6 +248,27 @@ impl ToolRegistry {
         result
             .map(|output| context.redactor.redact(output))
             .map_err(|error| error.redacted(&context.redactor))
+    }
+}
+
+fn allowed_in_read_only(name: &str, arguments: &Value) -> bool {
+    let action = arguments.get("action").and_then(Value::as_str);
+    match name {
+        "read_file" | "list_directory" | "search_files" => true,
+        "process" => matches!(action, Some("read" | "list")),
+        "todo" => action == Some("list"),
+        "subagent" => match action {
+            Some(
+                "status" | "list" | "wait" | "wait_many" | "message" | "follow_up"
+                | "worktree_status" | "worktree_conflicts" | "cancel",
+            ) => true,
+            Some("spawn") => !arguments
+                .get("worktree")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+            _ => false,
+        },
+        _ => false,
     }
 }
 
@@ -306,6 +361,61 @@ mod security_tests {
         registry.register(DeniedTool);
         assert!(
             matches!(registry.execute("denied",serde_json::json!({}),&context).await,Err(ToolError::Denied(message)) if message=="[REDACTED]")
+        );
+    }
+
+    #[tokio::test]
+    async fn read_only_registry_blocks_mutations_before_tool_dispatch() {
+        let directory = tempfile::tempdir().unwrap();
+        let config = crate::config::Config {
+            access: Some(AccessMode::ReadOnly),
+            ..crate::config::Config::default()
+        };
+        let context = ToolContext {
+            policy: Arc::new(Policy::new(&config, directory.path().to_owned()).unwrap()),
+            approver: Arc::new(UnattendedApprover { allow: true }),
+            timeout: Duration::from_secs(1),
+            max_output_bytes: 1024,
+            environment: BTreeMap::new(),
+            cancellation: tokio_util::sync::CancellationToken::new(),
+            execution_id: uuid::Uuid::new_v4(),
+            interaction: InteractionMode::Unattended,
+            redactor: Arc::new(Redactor::default()),
+        };
+        let registry = ToolRegistry::standard();
+        assert!(matches!(
+            registry
+                .execute("shell", serde_json::json!({"command":"pwd"}), &context)
+                .await,
+            Err(ToolError::Denied(message)) if message.contains("read-only")
+        ));
+        assert!(matches!(
+            registry
+                .execute(
+                    "process",
+                    serde_json::json!({"action":"write","data":"secret"}),
+                    &context,
+                )
+                .await,
+            Err(ToolError::Denied(message)) if message.contains("read-only")
+        ));
+        assert!(
+            registry
+                .execute("list_directory", serde_json::json!({"path":"."}), &context)
+                .await
+                .is_ok()
+        );
+
+        let mut visible = ToolRegistry::standard();
+        visible.retain_read_only();
+        let names = visible
+            .definitions()
+            .into_iter()
+            .map(|tool| tool.name)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            names,
+            vec!["list_directory", "process", "read_file", "search_files"]
         );
     }
 }

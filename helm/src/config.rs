@@ -106,6 +106,11 @@ pub struct Config {
     pub subagent_max_concurrency: usize,
     pub subagent_max_agents: usize,
     pub subagent_event_history: usize,
+    /// User-facing authority level. When omitted, the legacy `approval` setting
+    /// is translated for backwards compatibility.
+    pub access: Option<AccessMode>,
+    /// Deprecated compatibility setting. Prefer `access`.
+    #[serde(skip_serializing_if = "approval_is_default")]
     pub approval: ApprovalMode,
     pub unattended_approval: UnattendedApprovalMode,
     pub workspace: Option<PathBuf>,
@@ -135,6 +140,29 @@ pub enum ApprovalMode {
     #[default]
     OnRisk,
     Never,
+}
+
+fn approval_is_default(mode: &ApprovalMode) -> bool {
+    *mode == ApprovalMode::OnRisk
+}
+
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum AccessMode {
+    ReadOnly,
+    #[default]
+    Approval,
+    Unrestricted,
+}
+
+impl std::fmt::Display for AccessMode {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::ReadOnly => "read-only",
+            Self::Approval => "approval",
+            Self::Unrestricted => "unrestricted",
+        })
+    }
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -167,6 +195,7 @@ impl Default for Config {
             subagent_max_concurrency: 4,
             subagent_max_agents: 64,
             subagent_event_history: 2048,
+            access: None,
             approval: ApprovalMode::OnRisk,
             unattended_approval: UnattendedApprovalMode::Deny,
             workspace: None,
@@ -213,6 +242,14 @@ impl Config {
 
     pub fn timeout(&self) -> Duration {
         Duration::from_secs(self.command_timeout_secs)
+    }
+
+    /// Resolve the new access model, translating old configuration files.
+    pub fn access_mode(&self) -> AccessMode {
+        self.access.unwrap_or(match self.approval {
+            ApprovalMode::Never => AccessMode::Unrestricted,
+            ApprovalMode::Always | ApprovalMode::OnRisk => AccessMode::Approval,
+        })
     }
 
     pub fn provider_profile(&self) -> ProviderProfile {
@@ -366,6 +403,18 @@ mod tests {
         assert_eq!(compatible.provider, ProviderKind::OpenaiChat);
         let oauth: Config = toml::from_str("provider = \"chatgpt-oauth\"").unwrap();
         assert_eq!(oauth.provider, ProviderKind::ChatGptOauth);
+    }
+
+    #[test]
+    fn resolves_access_and_translates_legacy_approval_settings() {
+        assert_eq!(Config::default().access_mode(), AccessMode::Approval);
+        let always: Config = toml::from_str("approval = \"always\"").unwrap();
+        assert_eq!(always.access_mode(), AccessMode::Approval);
+        let never: Config = toml::from_str("approval = \"never\"").unwrap();
+        assert_eq!(never.access_mode(), AccessMode::Unrestricted);
+        let explicit: Config =
+            toml::from_str("access = \"read-only\"\napproval = \"never\"").unwrap();
+        assert_eq!(explicit.access_mode(), AccessMode::ReadOnly);
     }
 
     #[test]

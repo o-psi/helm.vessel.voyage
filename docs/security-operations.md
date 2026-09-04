@@ -1,5 +1,22 @@
 # Security, approvals, and operations
 
+## Access modes
+
+Set `access = "approval"` in configuration or pass
+`--access read-only|approval|unrestricted` for a single invocation:
+
+- `read-only` allows file, directory, search, todo-list, and terminal-output inspection. It
+  rejects shell commands, file writes, persistent-terminal mutation, mutating todo actions,
+  worktree changes, and unknown external MCP tools.
+- `approval` allows ordinary inspection without prompts, asks before every file write and before
+  commands classified as consequential, and keeps explicit denials in force.
+- `unrestricted` does not ask for tool approval. Workspace read/write roots and `deny_commands`
+  remain enforced; this mode is not an OS sandbox bypass.
+
+Subagents inherit the same Helm configuration and therefore cannot use commands or writes when
+the parent is read-only. Unattended Vessel work cannot display an approval prompt, so actions
+that require one follow `unattended_approval`.
+
 ## Execution boundary
 
 Helm confines filesystem tools to canonical readable and writable roots. Existing

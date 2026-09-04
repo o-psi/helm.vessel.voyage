@@ -83,7 +83,8 @@ helm chat --plain
 
 # One-shot work and an explicit workspace
 helm run "inventory the log files and summarize unusual failures"
-helm --workspace /srv/example --approval always run "inspect service health"
+helm --workspace /srv/example --access read-only run "inspect service health"
+helm --access unrestricted chat
 
 # Find and continue durable sessions
 helm sessions
@@ -96,6 +97,14 @@ and restore sessions, `Ctrl+N` for a new session, `Ctrl+B` to branch, `Ctrl+K` t
 compact context, and `Ctrl+E` to export Markdown. `/name TITLE`, `/branch [TITLE]`,
 `/compact [KEEP]`, `/export [PATH]`, and `/clear confirm` provide explicit session operations.
 Long conversations compact automatically while retaining recent turns.
+
+Choose agent authority with `--access read-only|approval|unrestricted` or the `access`
+configuration key. Read-only permits filesystem and terminal inspection but blocks commands,
+writes, and mutating tool actions. Approval permits inspection without interruption and asks
+before writes or potentially consequential commands. Unrestricted skips those prompts while
+still enforcing workspace roots and the explicit command deny list. The active mode is shown in
+the full-screen header. The older `--approval` flag and `approval` configuration key remain
+accepted for compatibility.
 
 `Ctrl+T` opens the interactive-terminal picker. Once attached, all keyboard and paste
 input belongs exclusively to the selected terminal; detach with `Ctrl+]` without

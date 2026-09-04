@@ -26,6 +26,7 @@ use ratatui::{
 use tokio::sync::{mpsc, oneshot};
 use unicode_width::UnicodeWidthChar;
 
+use crate::config::AccessMode;
 use crate::{
     Agent, AgentEvent, EventSink,
     markdown::{MarkdownTheme, RenderOptions, render_markdown},
@@ -196,6 +197,7 @@ struct App {
     session: Session,
     sessions: Vec<Session>,
     provider_label: String,
+    access_mode: AccessMode,
     composer: Composer,
     activity: Vec<String>,
     streaming_response: String,
@@ -282,6 +284,7 @@ impl App {
             session,
             sessions,
             provider_label: "provider unknown".into(),
+            access_mode: AccessMode::Approval,
             composer: Composer::default(),
             activity: Vec::new(),
             streaming_response: String::new(),
@@ -349,10 +352,12 @@ pub async fn run(
     supervisor: Arc<dyn AgentSupervisor>,
     todos: Arc<TodoStore>,
     provider_label: String,
+    access_mode: AccessMode,
 ) -> Result<()> {
     let sessions = store.list().await?;
     let mut app = App::new(session, sessions);
     app.provider_label = provider_label;
+    app.access_mode = access_mode;
     refresh_terminals(&mut app, terminals.as_ref()).await;
     let mut terminal_events = Some(terminals.subscribe());
     let mut supervisor_events = Some(supervisor.subscribe());
@@ -1546,9 +1551,10 @@ fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
                     .add_modifier(Modifier::BOLD),
             ),
             Span::raw(format!(
-                "  {title} · {} · {} · {}",
+                "  {title} · {} · {} · access: {} · {}",
                 app.session.model,
                 app.provider_label,
+                app.access_mode,
                 app.session.workspace.display()
             )),
         ]))
@@ -2691,9 +2697,10 @@ async fn handle_command(
     match name {
         "help" => {
             app.status =
-                "/tools · /model [ID] · /name TITLE · /branch [TITLE] · /compact [KEEP] · /export [PATH] · /clear confirm"
+                "/access · /tools · /model [ID] · /name TITLE · /branch [TITLE] · /compact [KEEP] · /export [PATH] · /clear confirm"
                     .into()
         }
+        "access" => app.status = format!("Current access mode: {}", app.access_mode),
         "tools" => {
             if let Some(agent) = agent {
                 let tools = agent.tool_inventory();
