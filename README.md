@@ -42,3 +42,7 @@ Release and replacement readiness are executable, not informal. The repository s
 cross-platform CI/release workflows, a representative [evaluation suite](eval/README.md),
 the [release procedure](docs/releasing.md), and the operator [cutover and rollback
 runbook](docs/cutover.md).
+
+Helm also supports bounded parallel child agents with explicit permissions,
+supervision, result collection, persistence, and optional Git worktree isolation.
+The lifecycle and safety contract is documented in [Parallel subagents](docs/subagents.md).

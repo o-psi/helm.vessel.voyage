@@ -36,6 +36,14 @@ future WebSocket or HTTP/2 stream without changing the pairing and authority mod
 4. Vessel is responsible for operator authorization, durable task state, credential
    rotation, and encrypted transport in production deployments.
 
+## Local parallel agents
+
+Helm can supervise a bounded tree of local child agents for independent work. The
+parent owns orchestration while each child has an explicit task, budget, tool
+policy, cancellation scope, and durable record. Coding children can use isolated
+Git worktrees; non-coding children can use ordinary policy-scoped directories.
+See [Parallel subagents](subagents.md) for lifecycle and safety requirements.
+
 ## Wire contract
 
 `voyage-protocol` defines versioned pairing, Helm inventory, queued tasks, and results.
