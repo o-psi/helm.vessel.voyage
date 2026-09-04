@@ -1,0 +1,32 @@
+[package]
+name = "helm"
+version = "0.1.0"
+edition = "2024"
+description = "A provider-neutral LLM harness for general terminal work"
+license = "MIT OR Apache-2.0"
+
+[[bin]]
+name = "helm"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1.0"
+async-trait = "0.1"
+axum.workspace = true
+chrono = { version = "0.4", features = ["serde"] }
+clap = { version = "4.5", features = ["derive", "env"] }
+dirs = "6.0"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+shell-words = "1.1"
+thiserror = "2.0"
+tokio = { version = "1.47", features = ["fs", "io-util", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
+toml = "0.9"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+uuid = { version = "1.18", features = ["v4", "serde"] }
+voyage-protocol.workspace = true
+
+[dev-dependencies]
+tempfile = "3.21"

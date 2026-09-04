@@ -1,0 +1,136 @@
+use std::{
+    collections::BTreeMap,
+    env, fs,
+    path::{Path, PathBuf},
+    time::Duration,
+};
+
+use anyhow::{Context, Result, bail};
+use serde::{Deserialize, Serialize};
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ProviderKind {
+    #[default]
+    Openai,
+    Anthropic,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Config {
+    pub provider: ProviderKind,
+    pub model: String,
+    pub api_key_env: String,
+    pub base_url: Option<String>,
+    pub system_prompt: String,
+    pub max_turns: usize,
+    pub max_tokens: u32,
+    pub temperature: Option<f32>,
+    pub command_timeout_secs: u64,
+    pub max_output_bytes: usize,
+    pub approval: ApprovalMode,
+    pub workspace: Option<PathBuf>,
+    pub allow_read: Vec<PathBuf>,
+    pub allow_write: Vec<PathBuf>,
+    pub deny_commands: Vec<String>,
+    pub env: BTreeMap<String, String>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum ApprovalMode {
+    Always,
+    #[default]
+    OnRisk,
+    Never,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            provider: ProviderKind::Openai,
+            model: "gpt-5".into(),
+            api_key_env: "OPENAI_API_KEY".into(),
+            base_url: None,
+            system_prompt: include_str!("../prompts/system.md").trim().into(),
+            max_turns: 64,
+            max_tokens: 8192,
+            temperature: None,
+            command_timeout_secs: 120,
+            max_output_bytes: 128 * 1024,
+            approval: ApprovalMode::OnRisk,
+            workspace: None,
+            allow_read: Vec::new(),
+            allow_write: Vec::new(),
+            deny_commands: vec!["shutdown".into(), "reboot".into(), "mkfs".into()],
+            env: BTreeMap::new(),
+        }
+    }
+}
+
+impl Config {
+    pub fn load(explicit: Option<&Path>) -> Result<Self> {
+        let path = explicit.map(PathBuf::from).or_else(default_config_path);
+        let mut config = if let Some(path) = path.filter(|p| p.exists()) {
+            let text = fs::read_to_string(&path)
+                .with_context(|| format!("failed to read config {}", path.display()))?;
+            toml::from_str(&text).with_context(|| format!("invalid config {}", path.display()))?
+        } else {
+            Self::default()
+        };
+        config.apply_provider_defaults();
+        config.validate()?;
+        Ok(config)
+    }
+
+    pub fn api_key(&self) -> Result<String> {
+        env::var(&self.api_key_env).with_context(|| format!("{} is not set", self.api_key_env))
+    }
+
+    pub fn timeout(&self) -> Duration {
+        Duration::from_secs(self.command_timeout_secs)
+    }
+
+    pub fn resolve_workspace(&self, cli: Option<PathBuf>) -> Result<PathBuf> {
+        let raw = cli
+            .or_else(|| self.workspace.clone())
+            .unwrap_or(env::current_dir()?);
+        raw.canonicalize()
+            .with_context(|| format!("workspace does not exist: {}", raw.display()))
+    }
+
+    fn apply_provider_defaults(&mut self) {
+        if self.provider == ProviderKind::Anthropic {
+            if self.api_key_env == "OPENAI_API_KEY" {
+                self.api_key_env = "ANTHROPIC_API_KEY".into();
+            }
+            if self.model == "gpt-5" {
+                self.model = "claude-sonnet-4-0".into();
+            }
+        }
+    }
+
+    fn validate(&self) -> Result<()> {
+        if self.model.trim().is_empty() {
+            bail!("model cannot be empty");
+        }
+        if self.max_turns == 0 {
+            bail!("max_turns must be greater than zero");
+        }
+        if self.max_output_bytes < 1024 {
+            bail!("max_output_bytes must be at least 1024");
+        }
+        Ok(())
+    }
+}
+
+pub fn default_config_path() -> Option<PathBuf> {
+    dirs::config_dir().map(|p| p.join("helm/config.toml"))
+}
+
+pub fn default_data_dir() -> PathBuf {
+    dirs::data_local_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("helm")
+}

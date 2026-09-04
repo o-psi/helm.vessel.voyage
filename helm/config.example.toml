@@ -1,0 +1,18 @@
+# Copy to ~/.config/helm/config.toml.
+provider = "openai" # or "anthropic"
+model = "gpt-5"
+api_key_env = "OPENAI_API_KEY"
+# base_url = "http://localhost:11434/v1"
+max_turns = 64
+max_tokens = 8192
+command_timeout_secs = 120
+max_output_bytes = 131072
+approval = "on-risk"
+
+# Extra roots must already exist. The active workspace is always readable/writable.
+allow_read = []
+allow_write = []
+deny_commands = ["shutdown", "reboot", "mkfs"]
+
+[env]
+# LANG = "C.UTF-8"

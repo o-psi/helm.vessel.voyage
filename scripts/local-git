@@ -1,0 +1,5 @@
+#!/bin/sh
+set -eu
+
+root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+exec git --git-dir="$root/.local-git/worktree.git" --work-tree="$root" "$@"
