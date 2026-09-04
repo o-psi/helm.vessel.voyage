@@ -22,7 +22,7 @@ use helm::{
 use std::{
     io::{self, IsTerminal, Write},
     path::PathBuf,
-    sync::Arc,
+    sync::{Arc, OnceLock, Weak},
 };
 use tracing_subscriber::EnvFilter;
 use voyage_protocol::{
@@ -502,12 +502,13 @@ fn probe_codex_subscription(command: &str) -> CodexSubscriptionProbe {
 struct CliSubagentExecutor {
     config: Config,
     workspace: PathBuf,
+    runtime: OnceLock<Weak<SubagentRuntime>>,
 }
 #[async_trait]
 impl SubagentExecutor for CliSubagentExecutor {
     async fn execute(
         &self,
-        context: ExecutionContext,
+        mut context: ExecutionContext,
     ) -> std::result::Result<SubagentResult, String> {
         context.progress("initializing provider and tools").await;
         let mut config = self.config.clone();
@@ -535,7 +536,21 @@ impl SubagentExecutor for CliSubagentExecutor {
             interaction: InteractionMode::Unattended,
             redactor: redactor(&config),
         };
-        let mut tools = build_tools(&config, None)
+        let child_budget = AgentBudget {
+            max_children: context.budget.max_children.saturating_sub(1),
+            ..context.budget.clone()
+        };
+        let mut child_policy = context.policy.clone();
+        child_policy.budget = child_budget.clone();
+        let child_tool = self
+            .runtime
+            .get()
+            .and_then(Weak::upgrade)
+            .filter(|_| context.budget.max_children > 0)
+            .map(|runtime| {
+                SubagentTool::new(runtime, child_policy, child_budget).with_parent(context.id)
+            });
+        let mut tools = build_tools(&config, child_tool)
             .await
             .map_err(|e| e.to_string())?;
         tools.retain_allowed(&context.policy.allowed_tools);
@@ -555,8 +570,21 @@ impl SubagentExecutor for CliSubagentExecutor {
             initial_delay: std::time::Duration::from_millis(config.provider_retry_initial_ms),
             max_delay: std::time::Duration::from_millis(config.provider_retry_max_ms),
         });
+        let mut inbox = context.take_inbox();
+        let (input_tx, input_rx) = tokio::sync::mpsc::channel(64);
+        let input_cancel = context.cancellation.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::select! {_=input_cancel.cancelled()=>break,message=inbox.recv()=>match message{Some(helm::subagent::InboxMessage::Message(text))=>{if input_tx.send(format!("Message from supervisor: {text}")).await.is_err(){break}},Some(helm::subagent::InboxMessage::FollowUp(text))=>{if input_tx.send(format!("Follow-up instruction: {text}")).await.is_err(){break}},None=>break}}
+            }
+        });
         let outcome = agent
-            .run_with_cancel(Vec::new(), context.task, context.cancellation)
+            .run_with_cancel_and_input(
+                Vec::new(),
+                context.task,
+                context.cancellation,
+                Some(input_rx),
+            )
             .await
             .map_err(|e| e.to_string())?;
         Ok(SubagentResult {
@@ -565,13 +593,18 @@ impl SubagentExecutor for CliSubagentExecutor {
     }
 }
 
-async fn build_subagents(config: &Config, workspace: &std::path::Path) -> Result<SubagentTool> {
+struct SubagentBundle {
+    runtime: Arc<SubagentRuntime>,
+    tool: SubagentTool,
+}
+async fn build_subagents(config: &Config, workspace: &std::path::Path) -> Result<SubagentBundle> {
     let standard = ToolRegistry::standard();
-    let allowed_tools = standard
+    let mut allowed_tools: std::collections::BTreeSet<String> = standard
         .definitions()
         .into_iter()
         .map(|definition| definition.name)
         .collect();
+    allowed_tools.insert("subagent".to_string());
     let budget = AgentBudget {
         max_turns: config.max_turns.min(u32::MAX as usize) as u32,
         max_tokens: config.max_tokens as u64,
@@ -593,22 +626,30 @@ async fn build_subagents(config: &Config, workspace: &std::path::Path) -> Result
     let executor = Arc::new(CliSubagentExecutor {
         config: config.clone(),
         workspace: workspace.to_path_buf(),
+        runtime: OnceLock::new(),
     });
     let store = helm::subagent::AgentTreeStore::new(
         helm::config::default_data_dir().join("subagents.json"),
     );
-    let runtime = SubagentRuntime::new_persistent(
-        executor,
-        RuntimeLimits {
-            max_concurrency: config.subagent_max_concurrency,
-            max_agents: config.subagent_max_agents,
-            event_history: config.subagent_event_history,
-        },
-        store,
-    )
-    .await
-    .map_err(anyhow::Error::msg)?;
-    Ok(SubagentTool::new(Arc::new(runtime), policy, budget))
+    let runtime = Arc::new(
+        SubagentRuntime::new_persistent(
+            executor.clone(),
+            RuntimeLimits {
+                max_concurrency: config.subagent_max_concurrency,
+                max_agents: config.subagent_max_agents,
+                event_history: config.subagent_event_history,
+            },
+            store,
+        )
+        .await
+        .map_err(anyhow::Error::msg)?,
+    );
+    executor
+        .runtime
+        .set(Arc::downgrade(&runtime))
+        .map_err(|_| anyhow::anyhow!("subagent runtime already initialized"))?;
+    let tool = SubagentTool::new(runtime.clone(), policy, budget);
+    Ok(SubagentBundle { runtime, tool })
 }
 
 async fn build_agent(config: &Config, workspace: PathBuf, attended: bool) -> Result<Agent> {
@@ -637,7 +678,8 @@ async fn build_agent(config: &Config, workspace: PathBuf, attended: bool) -> Res
         redactor: redactor(config),
     };
     let subagents = build_subagents(config, &workspace).await?;
-    let tools = build_tools(config, Some(subagents)).await?;
+    let _runtime = subagents.runtime.clone();
+    let tools = build_tools(config, Some(subagents.tool)).await?;
     Ok(Agent::new(
         provider::from_config(config, context.policy.workspace().to_owned())?,
         tools,
@@ -710,7 +752,8 @@ async fn tui_chat(
         redactor: redactor(&config),
     };
     let subagents = build_subagents(&config, &session.workspace).await?;
-    let tools = build_tools(&config, Some(subagents)).await?;
+    let subagent_runtime = subagents.runtime.clone();
+    let tools = build_tools(&config, Some(subagents.tool)).await?;
     let terminals: Arc<dyn helm::terminal::InteractiveTerminals> =
         Arc::new(tools.terminals().unwrap_or_default());
     let agent = Arc::new(
@@ -738,7 +781,9 @@ async fn tui_chat(
         receiver,
         bridge.sender(),
         terminals,
-        Arc::new(helm::supervision::NoAgentSupervisor::default()),
+        Arc::new(helm::supervision::RuntimeAgentSupervisor::new(
+            subagent_runtime,
+        )),
     )
     .await
 }

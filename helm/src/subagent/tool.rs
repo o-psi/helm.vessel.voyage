@@ -15,6 +15,7 @@ pub struct SubagentTool {
     runtime: Arc<SubagentRuntime>,
     policy: AgentPolicy,
     budget: AgentBudget,
+    parent_id: Option<AgentId>,
 }
 impl SubagentTool {
     pub fn new(runtime: Arc<SubagentRuntime>, policy: AgentPolicy, budget: AgentBudget) -> Self {
@@ -22,7 +23,12 @@ impl SubagentTool {
             runtime,
             policy,
             budget,
+            parent_id: None,
         }
+    }
+    pub fn with_parent(mut self, parent_id: AgentId) -> Self {
+        self.parent_id = Some(parent_id);
+        self
     }
 }
 
@@ -32,8 +38,6 @@ enum Args {
     Spawn {
         name: String,
         task: String,
-        #[serde(default)]
-        parent_id: Option<Uuid>,
     },
     Status {
         id: Uuid,
@@ -70,15 +74,11 @@ impl Tool for SubagentTool {
         let args: Args = serde_json::from_value(arguments)
             .map_err(|e| ToolError::InvalidArguments(e.to_string()))?;
         let value = match args {
-            Args::Spawn {
-                name,
-                task,
-                parent_id,
-            } => {
+            Args::Spawn { name, task } => {
                 let id = self
                     .runtime
                     .spawn(SpawnRequest {
-                        parent_id: parent_id.map(AgentId),
+                        parent_id: self.parent_id,
                         name,
                         task,
                         policy: self.policy.clone(),

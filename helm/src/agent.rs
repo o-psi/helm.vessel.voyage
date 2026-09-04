@@ -160,9 +160,20 @@ impl Agent {
 
     pub async fn run_with_cancel(
         &self,
+        history: Vec<Message>,
+        prompt: String,
+        cancel: CancellationToken,
+    ) -> Result<AgentOutcome, AgentError> {
+        self.run_with_cancel_and_input(history, prompt, cancel, None)
+            .await
+    }
+
+    pub async fn run_with_cancel_and_input(
+        &self,
         mut history: Vec<Message>,
         prompt: String,
         cancel: CancellationToken,
+        mut input: Option<tokio::sync::mpsc::Receiver<String>>,
     ) -> Result<AgentOutcome, AgentError> {
         let mut context = self.context.clone();
         context.cancellation = cancel.child_token();
@@ -180,6 +191,11 @@ impl Agent {
         history.push(Message::new(crate::model::Role::User, prompt));
         let mut usage = Usage::default();
         for turn in 1..=self.max_turns {
+            if let Some(receiver) = &mut input {
+                while let Ok(message) = receiver.try_recv() {
+                    history.push(Message::new(crate::model::Role::User, message));
+                }
+            }
             self.sink.emit(AgentEvent::Thinking { turn }).await;
             let request = ModelRequest {
                 model: self.model.clone(),
@@ -202,6 +218,16 @@ impl Agent {
             let answer = assistant.content.clone();
             history.push(assistant);
             if calls.is_empty() {
+                let mut received_supervisor_input = false;
+                if let Some(receiver) = &mut input {
+                    while let Ok(message) = receiver.try_recv() {
+                        history.push(Message::new(crate::model::Role::User, message));
+                        received_supervisor_input = true;
+                    }
+                }
+                if received_supervisor_input {
+                    continue;
+                }
                 return Ok(AgentOutcome {
                     messages: history,
                     answer,
@@ -368,6 +394,23 @@ mod tests {
             std::future::pending().await
         }
     }
+    struct EchoLatestUser;
+    #[async_trait]
+    impl Provider for EchoLatestUser {
+        async fn complete(&self, request: ModelRequest) -> Result<ModelResponse, ProviderError> {
+            let content = request
+                .messages
+                .iter()
+                .rev()
+                .find(|message| message.role == Role::User)
+                .map(|message| message.content.clone())
+                .unwrap_or_default();
+            Ok(ModelResponse {
+                message: Message::new(Role::Assistant, content),
+                usage: Usage::default(),
+            })
+        }
+    }
     struct PartialFailure {
         calls: Arc<AtomicUsize>,
     }
@@ -483,6 +526,26 @@ mod tests {
             .await
             .unwrap_err();
         assert!(matches!(error, AgentError::Cancelled));
+    }
+
+    #[tokio::test]
+    async fn injected_supervisor_input_changes_the_model_result() {
+        let directory = tempfile::tempdir().unwrap();
+        let (sender, receiver) = tokio::sync::mpsc::channel(2);
+        sender
+            .send("new supervisor direction".into())
+            .await
+            .unwrap();
+        let outcome = agent(Box::new(EchoLatestUser), &directory)
+            .run_with_cancel_and_input(
+                vec![],
+                "original task".into(),
+                CancellationToken::new(),
+                Some(receiver),
+            )
+            .await
+            .unwrap();
+        assert_eq!(outcome.answer, "new supervisor direction");
     }
 
     #[tokio::test]

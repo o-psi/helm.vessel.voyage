@@ -69,6 +69,10 @@ impl ExecutionContext {
     pub fn try_recv(&mut self) -> Result<InboxMessage, mpsc::error::TryRecvError> {
         self.inbox.try_recv()
     }
+    pub fn take_inbox(&mut self) -> mpsc::Receiver<InboxMessage> {
+        let (_sender, receiver) = mpsc::channel(1);
+        std::mem::replace(&mut self.inbox, receiver)
+    }
     pub async fn progress(&self, text: impl Into<String>) {
         self.reporter.report(text.into()).await;
     }
@@ -588,11 +592,10 @@ mod tests {
             let active = self.active.fetch_add(1, Ordering::SeqCst) + 1;
             self.peak.fetch_max(active, Ordering::SeqCst);
             context.progress(format!("started {}", context.id)).await;
-            tokio::select! {_=self.gate.notified()=>{}, message=context.recv()=>if let Some(InboxMessage::Message(text))=message {context.progress(text).await}}
+            let mut summary = "done".to_string();
+            tokio::select! {_=self.gate.notified()=>{}, message=context.recv()=>if let Some(InboxMessage::Message(text))=message {context.progress(text.clone()).await; summary=text}}
             self.active.fetch_sub(1, Ordering::SeqCst);
-            Ok(SubagentResult {
-                summary: "done".into(),
-            })
+            Ok(SubagentResult { summary })
         }
     }
     fn policy() -> AgentPolicy {
@@ -670,7 +673,10 @@ mod tests {
         .await
         .unwrap();
         runtime.send_message(id, "checkpoint").await.unwrap();
-        assert!(runtime.wait(id).await.unwrap().is_ok());
+        assert_eq!(
+            runtime.wait(id).await.unwrap().unwrap().summary,
+            "checkpoint"
+        );
         assert!(matches!(
             runtime.send_message(id, "late").await,
             Err(RuntimeError::Terminal(_))
