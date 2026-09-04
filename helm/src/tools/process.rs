@@ -703,9 +703,12 @@ mod tests {
         #[cfg(windows)]
         tokio::time::sleep(Duration::from_millis(100)).await;
 
-        tool.execute(json!({"action":"write","id":id,"data":"hello\n"}), &ctx)
-            .await
-            .unwrap();
+        tool.execute(
+            json!({"action":"write","id":id,"data":interactive_input()}),
+            &ctx,
+        )
+        .await
+        .unwrap();
         let mut second = String::new();
         for _ in 0..100 {
             tokio::time::sleep(Duration::from_millis(50)).await;
@@ -846,6 +849,14 @@ mod tests {
     #[cfg(windows)]
     fn interactive_command() -> &'static str {
         "echo ready&& set /p line=&& call echo got:%%line%%"
+    }
+    #[cfg(not(windows))]
+    fn interactive_input() -> &'static str {
+        "hello\n"
+    }
+    #[cfg(windows)]
+    fn interactive_input() -> &'static str {
+        "hello\r"
     }
     #[cfg(unix)]
     fn long_running_command() -> &'static str {
