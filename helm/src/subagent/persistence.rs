@@ -78,6 +78,68 @@ mod tests {
             assert!(tree.transition(id, AgentStatus::Running, None).is_err());
         }
     }
+
+    #[test]
+    fn pruning_terminal_history_preserves_active_agents_and_tree_integrity() {
+        let mut tree = AgentTree::default();
+        let mut root = record(AgentStatus::Running);
+        root.finished_at = None;
+        let root_id = root.id;
+        tree.insert(root).unwrap();
+
+        let mut child = record(AgentStatus::Completed);
+        child.parent_id = Some(root_id);
+        let child_id = child.id;
+        tree.insert(child).unwrap();
+
+        let old_terminal = record(AgentStatus::TimedOut);
+        let old_terminal_id = old_terminal.id;
+        tree.insert(old_terminal).unwrap();
+
+        let removed = tree.prune_terminal_leaves(1, None);
+        assert_eq!(removed, vec![old_terminal_id]);
+        assert!(!removed.contains(&child_id));
+        assert!(removed.contains(&old_terminal_id));
+        assert_eq!(tree.agents.len(), 2);
+        assert!(tree.agents.contains_key(&root_id));
+        assert!(tree.agents.contains_key(&child_id));
+        assert!(tree.agents.values().all(|agent| {
+            agent
+                .parent_id
+                .is_none_or(|parent| tree.agents.contains_key(&parent))
+        }));
+    }
+
+    #[test]
+    fn pruning_does_not_remove_a_protected_terminal_parent() {
+        let mut tree = AgentTree::default();
+        let parent = record(AgentStatus::Completed);
+        let parent_id = parent.id;
+        tree.insert(parent).unwrap();
+        let removed = tree.prune_terminal_leaves(0, Some(parent_id));
+        assert!(removed.is_empty());
+        assert!(tree.agents.contains_key(&parent_id));
+    }
+
+    #[tokio::test]
+    async fn store_pruning_is_durable() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = AgentTreeStore::new(directory.path().join("tree.json"));
+        for _ in 0..3 {
+            store.create(record(AgentStatus::Completed)).await.unwrap();
+        }
+
+        assert_eq!(store.prune_terminal_leaves(2, None).await.unwrap().len(), 1);
+        assert_eq!(store.list().await.unwrap().len(), 2);
+        assert_eq!(
+            AgentTreeStore::new(directory.path().join("tree.json"))
+                .list()
+                .await
+                .unwrap()
+                .len(),
+            2
+        );
+    }
 }
 impl AgentTree {
     pub fn insert(&mut self, record: AgentRecord) -> Result<()> {
@@ -134,6 +196,61 @@ impl AgentTree {
             .filter(|r| r.parent_id == Some(parent))
             .collect()
     }
+
+    /// Removes the oldest terminal leaves until the retained tree fits the limit.
+    ///
+    /// Only leaves are removed so every retained child continues to have its
+    /// parent available for tree rendering and follow-up policy checks. A
+    /// protected record (normally the parent of a pending spawn) is retained.
+    pub fn prune_terminal_leaves(
+        &mut self,
+        max_records: usize,
+        protected: Option<AgentId>,
+    ) -> Vec<AgentId> {
+        let mut removed = Vec::new();
+        while self.agents.len() > max_records {
+            let candidate = self
+                .agents
+                .values()
+                .filter(|record| {
+                    record.status.is_terminal()
+                        && Some(record.id) != protected
+                        && !self.has_active_ancestor(record)
+                        && !self
+                            .agents
+                            .values()
+                            .any(|child| child.parent_id == Some(record.id))
+                })
+                .min_by_key(|record| {
+                    (
+                        record.finished_at.unwrap_or(record.updated_at),
+                        record.created_at,
+                        record.id,
+                    )
+                })
+                .map(|record| record.id);
+            let Some(id) = candidate else {
+                break;
+            };
+            self.agents.remove(&id);
+            removed.push(id);
+        }
+        removed
+    }
+
+    fn has_active_ancestor(&self, record: &AgentRecord) -> bool {
+        let mut parent = record.parent_id;
+        while let Some(id) = parent {
+            let Some(ancestor) = self.agents.get(&id) else {
+                break;
+            };
+            if !ancestor.status.is_terminal() {
+                return true;
+            }
+            parent = ancestor.parent_id;
+        }
+        false
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -189,6 +306,19 @@ impl AgentTreeStore {
     }
     pub async fn list(&self) -> Result<Vec<AgentRecord>> {
         Ok(self.load().await?.agents.into_values().collect())
+    }
+    pub async fn prune_terminal_leaves(
+        &self,
+        max_records: usize,
+        protected: Option<AgentId>,
+    ) -> Result<Vec<AgentId>> {
+        let _guard = self.gate.lock().await;
+        let mut tree = self.load().await?;
+        let removed = tree.prune_terminal_leaves(max_records, protected);
+        if !removed.is_empty() {
+            self.save(&tree).await?;
+        }
+        Ok(removed)
     }
     pub async fn recover_after_restart(&self) -> Result<usize> {
         let _guard = self.gate.lock().await;

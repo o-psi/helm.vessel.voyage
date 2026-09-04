@@ -203,6 +203,10 @@ impl SubagentRuntime {
             .recover_after_restart()
             .await
             .map_err(|error| RuntimeError::Persistence(error.to_string()))?;
+        store
+            .prune_terminal_leaves(limits.max_agents, None)
+            .await
+            .map_err(|error| RuntimeError::Persistence(error.to_string()))?;
         let records = store
             .list()
             .await
@@ -275,21 +279,19 @@ impl SubagentRuntime {
                 .validate_child(&request.policy)
                 .map_err(|e| RuntimeError::Invalid(e.to_string()))?;
         }
+        self.prune_terminal_history(
+            self.inner.limits.max_agents.saturating_sub(1),
+            request.parent_id,
+        )
+        .await?;
         let mut agents = self.inner.agents.write().await;
-        let controls: Vec<_> = agents.values().cloned().collect();
-        let mut active = 0;
-        for control in controls {
-            if !control.record.read().await.status.is_terminal() {
-                active += 1;
-            }
-        }
-        if active >= self.inner.limits.max_agents {
+        if agents.len() >= self.inner.limits.max_agents {
             return Err(RuntimeError::Capacity(self.inner.limits.max_agents));
         }
         if let Some(parent) = request.parent_id {
             let max_children = agents
                 .get(&parent)
-                .expect("parent existence checked while retained agents are never removed")
+                .expect("pending spawn parent is protected from history pruning")
                 .record
                 .read()
                 .await
@@ -347,6 +349,38 @@ impl SubagentRuntime {
             runtime.run(id, request, inbox_rx, control).await;
         });
         Ok(id)
+    }
+
+    async fn prune_terminal_history(
+        &self,
+        max_records: usize,
+        protected: Option<AgentId>,
+    ) -> Result<(), RuntimeError> {
+        let records = self.list().await;
+        if records.len() <= max_records {
+            return Ok(());
+        }
+        let mut tree = super::AgentTree::default();
+        for record in records {
+            tree.agents.insert(record.id, record);
+        }
+        let removable = tree.prune_terminal_leaves(max_records, protected);
+        if removable.is_empty() {
+            return Ok(());
+        }
+        let removed = if let Some(store) = &self.inner.store {
+            store
+                .prune_terminal_leaves(max_records, protected)
+                .await
+                .map_err(|error| RuntimeError::Persistence(error.to_string()))?
+        } else {
+            removable
+        };
+        let mut agents = self.inner.agents.write().await;
+        for id in removed {
+            agents.remove(&id);
+        }
+        Ok(())
     }
 
     async fn run(
@@ -772,6 +806,36 @@ mod tests {
             runtime.spawn(request("two")).await.unwrap_err(),
             RuntimeError::Capacity(1)
         );
+    }
+
+    #[tokio::test]
+    async fn spawning_prunes_old_terminal_records_to_the_total_limit() {
+        let executor = Arc::new(GateExecutor::new());
+        let runtime = SubagentRuntime::new(
+            executor.clone(),
+            RuntimeLimits {
+                max_concurrency: 1,
+                max_agents: 2,
+                event_history: 16,
+            },
+            None,
+        )
+        .unwrap();
+
+        let first = runtime.spawn(request("first")).await.unwrap();
+        executor.gate.notify_one();
+        runtime.wait(first).await.unwrap().unwrap();
+        let second = runtime.spawn(request("second")).await.unwrap();
+        executor.gate.notify_one();
+        runtime.wait(second).await.unwrap().unwrap();
+
+        let third = runtime.spawn(request("third")).await.unwrap();
+        let retained = runtime.list().await;
+        assert_eq!(retained.len(), 2);
+        assert!(!retained.iter().any(|record| record.id == first));
+        assert!(retained.iter().any(|record| record.id == second));
+        assert!(retained.iter().any(|record| record.id == third));
+        runtime.cancel(third).await.unwrap();
     }
 
     #[tokio::test]

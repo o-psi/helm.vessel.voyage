@@ -213,6 +213,12 @@ const SLASH_COMMANDS: &[SlashCommand] = &[
         completion: "/model ",
     },
     SlashCommand {
+        name: "new",
+        usage: "/new [TITLE]",
+        description: "Start a new session",
+        completion: "/new",
+    },
+    SlashCommand {
         name: "name",
         usage: "/name TITLE",
         description: "Rename the current session",
@@ -808,7 +814,7 @@ async fn handle_ui_event(
             Ok(agents) => {
                 app.agents = flatten_agent_tree(agents);
                 app.selected_agent = app.selected_agent.min(app.agents.len().saturating_sub(1));
-                app.status = format!("Supervising {} agent(s)", app.agents.len());
+                app.status = supervisor_summary(&app.agents);
             }
             Err(error) => app.status = format!("Supervisor refresh failed: {error}"),
         },
@@ -984,14 +990,7 @@ async fn handle_key(
                 app.selected_model = 0;
                 request_models(tx, agent.clone(), false);
             }
-            KeyCode::Char('n') if !app.is_running() => {
-                app.session =
-                    Session::new(app.session.workspace.clone(), app.session.model.clone());
-                app.activity.clear();
-                app.streaming_response.clear();
-                app.scroll = 0;
-                app.status = "New session".into();
-            }
+            KeyCode::Char('n') if !app.is_running() => start_new_session(app, None),
             KeyCode::Char('b') if !app.is_running() => {
                 app.session = store.branch(&app.session, None).await?;
                 app.sessions = store.list().await?;
@@ -1804,6 +1803,20 @@ fn flatten_agent_tree(agents: Vec<AgentView>) -> Vec<AgentView> {
     output
 }
 
+fn supervisor_counts(agents: &[AgentView]) -> (usize, usize) {
+    let active = agents
+        .iter()
+        .filter(|agent| !agent.status.is_terminal())
+        .count();
+    (active, agents.len().saturating_sub(active))
+}
+
+fn supervisor_summary(agents: &[AgentView]) -> String {
+    let (active, retained) = supervisor_counts(agents);
+    let noun = if active == 1 { "agent" } else { "agents" };
+    format!("Supervising {active} active {noun} · {retained} retained")
+}
+
 fn is_terminal_detach_key(key: KeyEvent) -> bool {
     (key.modifiers.contains(KeyModifiers::CONTROL) && matches!(key.code, KeyCode::Char('t' | ']')))
         || key.code == KeyCode::Char('\u{1d}')
@@ -1855,7 +1868,7 @@ fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
             Constraint::Length(1),
         ])
         .split(area);
-    let title = app.session.name.as_deref().unwrap_or("untitled");
+    let title = app.session.display_name();
     frame.render_widget(
         Paragraph::new(Line::from(vec![
             Span::styled(
@@ -2483,7 +2496,7 @@ fn slash_argument_suggestions(app: &App) -> Vec<SlashPaletteItem> {
     let mut suggestions = fixed_suggestions(&prefix, &query, fixed);
     if argument.trim().is_empty() {
         match command {
-            "name" | "branch" => {
+            "new" | "name" | "branch" => {
                 suggestions.push(argument_hint("<TITLE>", "Enter a session title"))
             }
             "run" => suggestions.push(argument_hint("<PROMPT>", "Enter the task to run")),
@@ -2512,10 +2525,7 @@ fn slash_argument_suggestions(app: &App) -> Vec<SlashPaletteItem> {
                 })
                 .map(|session| SlashPaletteItem {
                     usage: session.id.to_string(),
-                    description: session
-                        .name
-                        .clone()
-                        .unwrap_or_else(|| "untitled session".into()),
+                    description: session.display_name(),
                     completion: format!("/resume {}", session.id),
                 }),
         );
@@ -2942,6 +2952,7 @@ fn priority_label(priority: Priority) -> &'static str {
 }
 
 fn draw_supervisor(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
+    let (active, retained) = supervisor_counts(&app.agents);
     let chunks = Layout::vertical([
         Constraint::Length(3),
         Constraint::Min(4),
@@ -2964,7 +2975,7 @@ fn draw_supervisor(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
                     .bg(Color::Magenta)
                     .add_modifier(Modifier::BOLD),
             ),
-            Span::raw(format!("  {} supervised", app.agents.len())),
+            Span::raw(format!("  {active} active · {retained} retained")),
         ]))
         .block(Block::default().borders(Borders::BOTTOM)),
         chunks[0],
@@ -3592,7 +3603,7 @@ fn draw_sessions(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
             };
             ListItem::new(format!(
                 "{marker} {}  {}  {} messages",
-                session.name.as_deref().unwrap_or("untitled"),
+                session.display_name(),
                 session.updated_at.format("%Y-%m-%d %H:%M"),
                 session.messages.len()
             ))
@@ -3788,6 +3799,19 @@ fn parse_words(argument: &str, usage: &str) -> Result<Vec<String>> {
     shell_words::split(argument).with_context(|| format!("invalid arguments; usage: {usage}"))
 }
 
+fn start_new_session(app: &mut App, name: Option<&str>) {
+    let mut session = Session::new(app.session.workspace.clone(), app.session.model.clone());
+    if let Some(name) = name.filter(|name| !name.trim().is_empty()) {
+        session.name = Some(name.trim().to_owned());
+    }
+    let name = session.display_name();
+    app.session = session;
+    app.activity.clear();
+    app.streaming_response.clear();
+    app.scroll = 0;
+    app.status = format!("New session: {name}");
+}
+
 async fn handle_command(
     command: &str,
     app: &mut App,
@@ -3980,6 +4004,10 @@ async fn handle_command(
             }
         }
         "resume" => app.status = "Usage: /resume SESSION".into(),
+        "new" => start_new_session(
+            app,
+            (!argument.trim().is_empty()).then_some(argument.trim()),
+        ),
         "name" if !argument.trim().is_empty() => {
             app.session.name = Some(argument.trim().into());
             store.save(&mut app.session).await?;
@@ -4352,6 +4380,22 @@ mod tests {
                 reason: "operator stopped work".into(),
             }),
             "interrupted: operator stopped work"
+        );
+    }
+
+    #[test]
+    fn supervisor_summary_separates_active_agents_from_retained_history() {
+        let running = agent(AgentId(Uuid::new_v4()), None, "running");
+        let mut completed = agent(AgentId(Uuid::new_v4()), None, "completed");
+        completed.status = AgentStatus::Completed;
+        let mut timed_out = agent(AgentId(Uuid::new_v4()), None, "timed out");
+        timed_out.status = AgentStatus::TimedOut;
+        let agents = vec![running, completed, timed_out];
+
+        assert_eq!(supervisor_counts(&agents), (1, 2));
+        assert_eq!(
+            supervisor_summary(&agents),
+            "Supervising 1 active agent · 2 retained"
         );
     }
 
@@ -5442,6 +5486,28 @@ mod tests {
             .await
             .unwrap();
         assert!(app.session.messages.is_empty());
+    }
+
+    #[tokio::test]
+    async fn new_command_starts_named_empty_session() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = SessionStore::new(directory.path().join("sessions"));
+        let mut session = Session::new(directory.path().into(), "test-model".into());
+        session
+            .messages
+            .push(crate::Message::new(Role::User, "old conversation"));
+        let old_id = session.id;
+        let mut app = App::new(session, Vec::new());
+
+        handle_command("/new field work", &mut app, &store, None, None)
+            .await
+            .unwrap();
+
+        assert_ne!(app.session.id, old_id);
+        assert_eq!(app.session.name.as_deref(), Some("field work"));
+        assert!(app.session.messages.is_empty());
+        assert_eq!(app.session.model, "test-model");
+        assert_eq!(app.session.workspace, directory.path());
     }
 
     #[tokio::test]

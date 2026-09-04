@@ -5,8 +5,12 @@ without blocking the conversation or an attached terminal. Press `Ctrl+A` from t
 conversation to open it. If a direct terminal is attached, detach with `Ctrl+T`
 (`Ctrl+]` is also accepted) first; detaching leaves the process running.
 
-The tree shows every agent's short ID, explicit state, elapsed time, task, hierarchy,
-and latest progress. The selected row remains visible as the tree grows. `Enter`
+The tree shows each retained agent's short ID, explicit state, elapsed time, task,
+hierarchy, and latest progress. Its header and refresh status distinguish active
+agents from retained terminal history. Terminal leaves are retired oldest-first as
+needed so the total stays within `subagent_max_agents`; active agents and ancestors
+required by retained children are never pruned, nor are completed descendants of an
+active agent. The selected row remains visible as the tree grows. `Enter`
 opens the complete agent record, including parent, worktree, recent progress,
 sequenced events, result, and error. `PageUp` and `PageDown` scroll that record.
 The layout falls back to Helm's resize guidance below 32 columns by 10 rows.

@@ -1472,8 +1472,9 @@ async fn chat(
     let mut agent: Option<Agent> = None;
     if interactive {
         eprintln!(
-            "Helm · {} · access: {} · {}\nType /help for commands.",
-            config.model,
+            "Helm · {} · {} · access: {} · {}\nType /help for commands.",
+            session.display_name(),
+            session.model,
             config.access_mode(),
             session.workspace.display()
         );
@@ -1495,7 +1496,7 @@ async fn chat(
             "/quit" | "/exit" => break,
             "/help" => {
                 println!(
-                    "/help  /session  /access  /tools  /model [MODEL]  /models  /clear  /exit"
+                    "/help  /session  /new [TITLE]  /name TITLE  /access  /tools  /model [MODEL]  /models  /clear  /exit"
                 );
                 continue;
             }
@@ -1503,10 +1504,17 @@ async fn chat(
                 println!("{}", config.access_mode());
                 continue;
             }
+            "/name" => {
+                eprintln!("usage: /name TITLE");
+                continue;
+            }
             "/session" => {
                 println!(
-                    "{} ({} input, {} output tokens)",
-                    session.id, session.usage.input_tokens, session.usage.output_tokens
+                    "{} · {} ({} input, {} output tokens)",
+                    session.display_name(),
+                    session.id,
+                    session.usage.input_tokens,
+                    session.usage.output_tokens
                 );
                 continue;
             }
@@ -1521,6 +1529,27 @@ async fn chat(
                 continue;
             }
             _ => {}
+        }
+        if prompt == "/new" || prompt.starts_with("/new ") {
+            let name = prompt.strip_prefix("/new").unwrap_or_default().trim();
+            let mut next = Session::new(session.workspace.clone(), session.model.clone());
+            if !name.is_empty() {
+                next.name = Some(name.to_owned());
+            }
+            session = next;
+            println!("new session: {}", session.display_name());
+            continue;
+        }
+        if let Some(name) = prompt.strip_prefix("/name ") {
+            let name = name.trim();
+            if name.is_empty() {
+                eprintln!("usage: /name TITLE");
+            } else {
+                session.name = Some(name.to_owned());
+                store.save(&mut session).await?;
+                println!("session renamed to {name}");
+            }
+            continue;
         }
         if prompt == "/tools" {
             if agent.is_none() {
@@ -1604,7 +1633,7 @@ async fn chat(
         }
     }
     if interactive && !session.messages.is_empty() {
-        eprintln!("Session saved as {}", session.id);
+        eprintln!("Session {} saved as {}", session.display_name(), session.id);
     }
     Ok(())
 }
@@ -1615,7 +1644,7 @@ async fn list_sessions() -> Result<()> {
             "{}  {}  {:<24}  {}  {} messages",
             session.id,
             session.updated_at.format("%Y-%m-%d %H:%M UTC"),
-            session.name.as_deref().unwrap_or("untitled"),
+            session.display_name(),
             session.workspace.display(),
             session.messages.len()
         );

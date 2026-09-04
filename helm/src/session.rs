@@ -27,9 +27,14 @@ pub fn compact_messages(messages: &mut Vec<Message>, retain: usize) -> usize {
     let keep = retain.max(2).saturating_sub(usize::from(system.is_some()));
     let nominal_split = messages.len().saturating_sub(keep);
     // Never retain a tool result without the user turn which led to its call.
-    let split = (nominal_split..messages.len())
+    let mut split = (nominal_split..messages.len())
         .find(|index| messages[*index].role == crate::model::Role::User)
         .unwrap_or(nominal_split);
+    // A long tool loop may have no later user turn. Keep the assistant
+    // call together with all of its results at the fallback boundary.
+    while split > 0 && messages[split].role == crate::model::Role::Tool {
+        split -= 1;
+    }
     let removed = split.saturating_sub(usize::from(system.is_some()));
     let mut recent = messages.split_off(split);
     messages.clear();
@@ -73,18 +78,38 @@ pub struct ModelChange {
 impl Session {
     pub fn new(workspace: PathBuf, model: String) -> Self {
         let now = Utc::now();
+        let id = Uuid::new_v4();
         Self {
-            id: Uuid::new_v4(),
+            id,
             created_at: now,
             updated_at: now,
             workspace,
             model,
             model_history: Vec::new(),
-            name: None,
+            name: Some(generated_name(id)),
             parent_id: None,
             messages: Vec::new(),
             usage: Usage::default(),
             terminals: Vec::new(),
+        }
+    }
+
+    /// Return the durable name, generating the same stable fallback used to migrate old sessions.
+    pub fn display_name(&self) -> String {
+        self.name
+            .as_deref()
+            .filter(|name| !name.trim().is_empty())
+            .map(str::to_owned)
+            .unwrap_or_else(|| generated_name(self.id))
+    }
+
+    fn ensure_name(&mut self) {
+        if self
+            .name
+            .as_deref()
+            .is_none_or(|name| name.trim().is_empty())
+        {
+            self.name = Some(generated_name(self.id));
         }
     }
 
@@ -125,6 +150,7 @@ impl SessionStore {
         Self { directory }
     }
     pub async fn save(&self, session: &mut Session) -> Result<()> {
+        session.ensure_name();
         session.updated_at = Utc::now();
         fs::create_dir_all(&self.directory).await?;
         secure_directory(&self.directory).await?;
@@ -204,7 +230,9 @@ impl SessionStore {
         branch.created_at = now;
         branch.updated_at = now;
         branch.parent_id = Some(source.id);
-        branch.name = name;
+        branch.name = name
+            .filter(|name| !name.trim().is_empty())
+            .or_else(|| Some(generated_name(branch.id)));
         self.save(&mut branch).await?;
         Ok(branch)
     }
@@ -212,7 +240,7 @@ impl SessionStore {
     pub async fn export_markdown(&self, session: &Session, path: &Path) -> Result<()> {
         let mut output = format!(
             "# {}\n\n- Session: `{}`\n- Model: `{}`\n- Workspace: `{}`\n- Updated: {}\n\n",
-            session.name.as_deref().unwrap_or("Helm session"),
+            session.display_name(),
             session.id,
             session.model,
             session.workspace.display(),
@@ -259,6 +287,7 @@ async fn load_path(path: &Path) -> Result<Session> {
         .with_context(|| format!("failed to read session {}", path.display()))?;
     let mut session: Session = serde_json::from_slice(&data)
         .with_context(|| format!("invalid session {}", path.display()))?;
+    session.ensure_name();
     // Migrate older session files that embedded the then-current runtime prompt.
     session
         .messages
@@ -268,6 +297,10 @@ async fn load_path(path: &Path) -> Result<Session> {
     }
     Ok(session)
 }
+fn generated_name(id: Uuid) -> String {
+    format!("session-{}", &id.simple().to_string()[..8])
+}
+
 fn nonce() -> u128 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -301,6 +334,39 @@ mod tests {
                 0o600
             );
         }
+    }
+
+    #[test]
+    fn new_sessions_have_stable_generated_names() {
+        let session = Session::new(PathBuf::from("/tmp"), "model".into());
+        let expected = format!("session-{}", &session.id.simple().to_string()[..8]);
+        assert_eq!(session.name.as_deref(), Some(expected.as_str()));
+        assert_eq!(session.display_name(), expected);
+    }
+
+    #[tokio::test]
+    async fn old_unnamed_sessions_receive_a_name_when_loaded() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = SessionStore::new(dir.path().into());
+        let mut session = Session::new(dir.path().into(), "model".into());
+        session.name = None;
+        std::fs::write(
+            store.path(session.id),
+            serde_json::to_vec_pretty(&session).unwrap(),
+        )
+        .unwrap();
+
+        let restored = store.load(session.id).await.unwrap();
+        assert!(
+            restored
+                .name
+                .as_deref()
+                .is_some_and(|name| !name.is_empty())
+        );
+        assert_eq!(
+            restored.name.as_deref(),
+            Some(restored.display_name().as_str())
+        );
     }
 
     #[tokio::test]
@@ -355,6 +421,21 @@ mod tests {
     }
 
     #[test]
+    fn compaction_keeps_parallel_results_with_their_assistant() {
+        use crate::model::Role;
+        let mut messages = vec![
+            Message::new(Role::User, "work"),
+            Message::new(Role::Assistant, "calling tools"),
+            Message::tool("a", "first"),
+            Message::tool("b", "second"),
+            Message::tool("c", "third"),
+        ];
+        assert_eq!(compact_messages(&mut messages, 2), 1);
+        assert_eq!(messages[1].role, Role::Assistant);
+        assert_eq!(messages.len(), 5);
+    }
+
+    #[test]
     fn compaction_retains_system_and_tail() {
         let mut messages = vec![Message::new(crate::model::Role::System, "rules")];
         for i in 0..10 {
@@ -380,6 +461,12 @@ mod tests {
             store.load_reference("experiment").await.unwrap().id,
             branch.id
         );
+        let unnamed_branch = store.branch(&original, None).await.unwrap();
+        assert_eq!(
+            unnamed_branch.name.as_deref(),
+            Some(unnamed_branch.display_name().as_str())
+        );
+        assert_ne!(unnamed_branch.name, original.name);
     }
 
     #[tokio::test]

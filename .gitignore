@@ -2,6 +2,8 @@
 .env
 *.tmp
 /.local-git/
+/.config/gh/
+/.local/state/gh/
 /dist/
 __pycache__/
 *.py[cod]

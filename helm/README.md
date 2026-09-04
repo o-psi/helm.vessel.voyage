@@ -98,7 +98,9 @@ Helm's own diagnostics are written to the owner-only `logs/helm.log` under Helm'
 so tracing output cannot corrupt the alternate-screen UI. `Esc` cancels active work and tool
 approvals appear as keyboard-driven modals. Use `Ctrl+S` to browse
 and restore sessions, `Ctrl+N` for a new session, `Ctrl+B` to branch, `Ctrl+K` to
-compact context, and `Ctrl+E` to export Markdown. `/name TITLE`, `/branch [TITLE]`,
+compact context, and `Ctrl+E` to export Markdown. Every session receives a stable generated
+name; use `/new [TITLE]` to start a fresh session and optionally name it immediately.
+`/name TITLE`, `/branch [TITLE]`,
 `/compact [KEEP]`, `/export [PATH]`, and `/clear confirm` provide explicit session operations.
 Long conversations compact automatically while retaining recent turns.
 The conversation footer shows current status rather than permanently listing global shortcuts;
@@ -145,8 +147,9 @@ It also falls back when `TERM` is unset or `dumb`; `helm chat --plain` forces th
 behavior. Redirected EOF exits without contacting a provider or creating an empty
 session. The full-screen frontend restores raw mode, alternate-screen state, and
 bracketed paste on normal exit, error, panic unwind, `SIGHUP`, or `SIGTERM`.
-Inside plain chat, `/session` shows identity and token use, `/clear` resets history,
-and `/exit` saves and leaves. Tool progress goes to stderr, leaving assistant text on
+Inside plain chat, `/session` shows its name, identity, and token use; `/new [TITLE]` starts a
+fresh session, `/name TITLE` renames it, `/clear` resets history, and `/exit` saves and leaves.
+Tool progress goes to stderr, leaving assistant text on
 stdout for straightforward scripting.
 
 In line-oriented mode, assistant Markdown is rendered only when stdout is an interactive terminal.

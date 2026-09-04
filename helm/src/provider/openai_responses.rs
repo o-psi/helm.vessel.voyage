@@ -86,7 +86,7 @@ pub(crate) fn request_body(request: ModelRequest, stream: bool) -> Result<Value,
         .map(|message| message.content.as_str())
         .collect::<Vec<_>>()
         .join("\n\n");
-    let input = request
+    let mut input = request
         .messages
         .iter()
         .filter(|message| message.role != Role::System)
@@ -95,6 +95,27 @@ pub(crate) fn request_body(request: ModelRequest, stream: bool) -> Result<Value,
         .into_iter()
         .flatten()
         .collect::<Vec<_>>();
+    // Older compacted sessions can begin with results whose calls were lost.
+    // Preserve their context without sending an invalid function_call_output.
+    let mut calls = std::collections::HashSet::new();
+    for item in &mut input {
+        match item["type"].as_str() {
+            Some("function_call") => {
+                if let Some(id) = item["call_id"].as_str() {
+                    calls.insert(id.to_owned());
+                }
+            }
+            Some("function_call_output") => {
+                if !item["call_id"].as_str().is_some_and(|id| calls.remove(id)) {
+                    *item = json!({"type":"message","role":"user","content":format!(
+                        "[Tool result retained from earlier history; original call unavailable]\n{}",
+                        item["output"].as_str().unwrap_or_default()
+                    )});
+                }
+            }
+            _ => {}
+        }
+    }
     let tools=request.tools.into_iter().map(|tool|json!({"type":"function","name":tool.name,"description":tool.description,"parameters":tool.input_schema,"strict":false})).collect::<Vec<_>>();
     let mut body = json!({"model":request.model,"input":input,"stream":stream,"store":false,"include":["reasoning.encrypted_content"]});
     if !instructions.is_empty() {
@@ -666,6 +687,32 @@ mod tests {
     use super::*;
     use crate::model::ToolDefinition;
     use futures_util::StreamExt;
+    #[test]
+    fn orphaned_tool_results_are_preserved_as_context() {
+        let body = request_body(
+            ModelRequest {
+                model: "test".into(),
+                messages: vec![
+                    Message::tool("missing", "valuable result"),
+                    Message::new(Role::User, "continue"),
+                ],
+                tools: vec![],
+                temperature: None,
+                max_tokens: None,
+            },
+            false,
+        )
+        .unwrap();
+        assert_eq!(body["input"][0]["type"], "message");
+        assert!(
+            body["input"][0]["content"]
+                .as_str()
+                .unwrap()
+                .contains("valuable result")
+        );
+        assert_eq!(body["input"][1]["content"], "continue");
+    }
+
     #[test]
     fn request_replays_function_calls_and_outputs() {
         let body = request_body(
