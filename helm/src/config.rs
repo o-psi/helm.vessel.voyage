@@ -27,6 +27,9 @@ pub struct Config {
     pub max_turns: usize,
     pub max_tokens: u32,
     pub temperature: Option<f32>,
+    pub provider_retry_attempts: usize,
+    pub provider_retry_initial_ms: u64,
+    pub provider_retry_max_ms: u64,
     pub command_timeout_secs: u64,
     pub max_output_bytes: usize,
     pub approval: ApprovalMode,
@@ -34,6 +37,16 @@ pub struct Config {
     pub allow_read: Vec<PathBuf>,
     pub allow_write: Vec<PathBuf>,
     pub deny_commands: Vec<String>,
+    pub env: BTreeMap<String, String>,
+    pub mcp_servers: BTreeMap<String, McpServerConfig>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct McpServerConfig {
+    pub command: String,
+    #[serde(default)]
+    pub args: Vec<String>,
+    #[serde(default)]
     pub env: BTreeMap<String, String>,
 }
 
@@ -57,6 +70,9 @@ impl Default for Config {
             max_turns: 64,
             max_tokens: 8192,
             temperature: None,
+            provider_retry_attempts: 4,
+            provider_retry_initial_ms: 500,
+            provider_retry_max_ms: 8000,
             command_timeout_secs: 120,
             max_output_bytes: 128 * 1024,
             approval: ApprovalMode::OnRisk,
@@ -65,6 +81,7 @@ impl Default for Config {
             allow_write: Vec::new(),
             deny_commands: vec!["shutdown".into(), "reboot".into(), "mkfs".into()],
             env: BTreeMap::new(),
+            mcp_servers: BTreeMap::new(),
         }
     }
 }
@@ -120,6 +137,14 @@ impl Config {
         }
         if self.max_output_bytes < 1024 {
             bail!("max_output_bytes must be at least 1024");
+        }
+        if self.provider_retry_attempts == 0 {
+            bail!("provider_retry_attempts must be greater than zero");
+        }
+        if self.provider_retry_initial_ms == 0
+            || self.provider_retry_max_ms < self.provider_retry_initial_ms
+        {
+            bail!("provider retry delays must be positive and max must be >= initial");
         }
         Ok(())
     }

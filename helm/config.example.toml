@@ -5,6 +5,9 @@ api_key_env = "OPENAI_API_KEY"
 # base_url = "http://localhost:11434/v1"
 max_turns = 64
 max_tokens = 8192
+provider_retry_attempts = 4
+provider_retry_initial_ms = 500
+provider_retry_max_ms = 8000
 command_timeout_secs = 120
 max_output_bytes = 131072
 approval = "on-risk"
@@ -16,3 +19,9 @@ deny_commands = ["shutdown", "reboot", "mkfs"]
 
 [env]
 # LANG = "C.UTF-8"
+
+# [mcp_servers.files]
+# command = "mcp-server-filesystem"
+# args = ["/path/to/allowed/root"]
+# [mcp_servers.files.env]
+# LOG_LEVEL = "warn"

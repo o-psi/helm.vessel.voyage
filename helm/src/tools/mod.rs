@@ -1,4 +1,6 @@
 mod filesystem;
+pub mod mcp;
+mod process;
 mod shell;
 
 use async_trait::async_trait;
@@ -7,7 +9,8 @@ use std::{collections::BTreeMap, sync::Arc, time::Duration};
 use thiserror::Error;
 
 use crate::{model::ToolDefinition, policy::Policy};
-pub use filesystem::{ListDirectory, ReadFile, SearchFiles, WriteFile};
+pub use filesystem::{ApplyPatch, ListDirectory, ReadFile, SearchFiles, WriteFile};
+pub use process::ProcessTool;
 pub use shell::Shell;
 
 #[derive(Debug, Error)]
@@ -16,6 +19,10 @@ pub enum ToolError {
     InvalidArguments(String),
     #[error("denied: {0}")]
     Denied(String),
+    #[error("tool timed out after {0:?}")]
+    Timeout(Duration),
+    #[error("tool was cancelled")]
+    Cancelled,
     #[error("tool failed: {0}")]
     Failed(String),
 }
@@ -32,6 +39,7 @@ pub struct ToolContext {
     pub timeout: Duration,
     pub max_output_bytes: usize,
     pub environment: BTreeMap<String, String>,
+    pub cancellation: tokio_util::sync::CancellationToken,
 }
 
 #[async_trait]
@@ -53,10 +61,15 @@ impl ToolRegistry {
         registry.register(ListDirectory);
         registry.register(SearchFiles);
         registry.register(Shell);
+        registry.register(ApplyPatch);
+        registry.register(ProcessTool::default());
         registry
     }
     pub fn register<T: Tool + 'static>(&mut self, tool: T) {
         self.tools.insert(tool.definition().name, Arc::new(tool));
+    }
+    pub fn register_arc(&mut self, tool: Arc<dyn Tool>) {
+        self.tools.insert(tool.definition().name, tool);
     }
     pub fn definitions(&self) -> Vec<ToolDefinition> {
         self.tools.values().map(|t| t.definition()).collect()
