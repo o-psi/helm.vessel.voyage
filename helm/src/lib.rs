@@ -5,6 +5,8 @@ pub mod policy;
 pub mod provider;
 pub mod session;
 pub mod tools;
+pub mod tui;
+pub mod voyage;
 
 pub use agent::{Agent, AgentEvent, AgentOutcome, EventSink};
 pub use config::{Config, ProviderKind};

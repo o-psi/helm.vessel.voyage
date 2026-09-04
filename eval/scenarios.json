@@ -1,0 +1,49 @@
+[
+  {
+    "id": "coding-change",
+    "category": "coding",
+    "prompt": "Create hello.txt containing exactly 'hello voyage' and then read it back.",
+    "expect_files": {"hello.txt": "hello voyage"},
+    "expect_output": ["hello"]
+  },
+  {
+    "id": "admin-diagnosis",
+    "category": "administration",
+    "prompt": "Inspect service.log, identify the failed unit and write a remediation plan to admin-report.md. Do not change system state.",
+    "seed_files": {"service.log": "api.service: failed: address already in use on 8080\n"},
+    "expect_files": {"admin-report.md": "8080"},
+    "expect_output": ["api"]
+  },
+  {
+    "id": "local-research",
+    "category": "research",
+    "prompt": "Compare source-a.txt and source-b.txt. Write findings.md with agreements, conflicts, and explicit source attribution.",
+    "seed_files": {"source-a.txt": "Launch was Tuesday; cost was 12.\n", "source-b.txt": "Launch was Wednesday; cost was 12.\n"},
+    "expect_files": {"findings.md": "conflict"},
+    "expect_output": ["source"]
+  },
+  {
+    "id": "writing-revision",
+    "category": "writing",
+    "prompt": "Rewrite draft.md into final.md as concise professional prose while preserving every factual number.",
+    "seed_files": {"draft.md": "We had 17 incidents. Basically, 16 got fixed in 2 hours.\n"},
+    "expect_files": {"final.md": "17"},
+    "expect_output": ["final"]
+  },
+  {
+    "id": "data-summary",
+    "category": "data",
+    "prompt": "Analyze data.csv, calculate the exact total by region, and save a reproducible explanation in totals.md.",
+    "seed_files": {"data.csv": "region,value\nnorth,4\nsouth,7\nnorth,6\n"},
+    "expect_files": {"totals.md": "10"},
+    "expect_output": ["north"]
+  },
+  {
+    "id": "interruption-recovery",
+    "category": "interruption",
+    "prompt": "Run a multi-step inspection, checkpoint useful findings in checkpoint.md before long work, and remain safe if interrupted.",
+    "seed_files": {"inventory.txt": "alpha\nbeta\ngamma\n"},
+    "expect_files": {"checkpoint.md": "alpha"},
+    "expect_output": ["checkpoint"]
+  }
+]

@@ -14,7 +14,7 @@ administer scoped systems, and maintain a durable working conversation.
 - Typed provider failures, transient retry/backoff, and cancellation-aware execution
 - Workspace confinement with explicit extra read/write roots and symlink-aware checks
 - Configurable approvals, deny list, command timeout, and output limits
-- Interactive chat, one-shot tasks, session resume/listing, and token accounting
+- Full-screen Ratatui chat, one-shot/plain modes, session management, and token accounting
 - `helm --voyage` short-lived pairing and authenticated outbound task worker
 - Atomic JSON session persistence under the platform data directory
 - Library interfaces for custom providers, event sinks, approvers, and tools
@@ -48,6 +48,9 @@ helm config
 # Interactive work in the current directory
 helm chat
 
+# Keep the line-oriented frontend for pipes or limited terminals
+helm chat --plain
+
 # One-shot work and an explicit workspace
 helm run "inventory the log files and summarize unusual failures"
 helm --workspace /srv/example --approval always run "inspect service health"
@@ -57,9 +60,17 @@ helm sessions
 helm run --resume 0198... "continue, but export the findings as markdown"
 ```
 
-Inside chat, `/session` shows identity and token use, `/clear` resets conversation
-history, and `/exit` saves and leaves. Tool progress goes to stderr, leaving assistant
-text on stdout for straightforward scripting.
+The full-screen chat shows model turns and tool activity as they happen. `Esc` cancels
+active work and tool approvals appear as keyboard-driven modals. Use `Ctrl+S` to browse
+and restore sessions, `Ctrl+N` for a new session, `Ctrl+B` to branch, `Ctrl+K` to
+compact context, and `Ctrl+E` to export Markdown. `/name TITLE`, `/branch [TITLE]`,
+`/compact [KEEP]`, `/export [PATH]`, and `/clear` provide explicit session operations.
+Long conversations compact automatically while retaining recent turns.
+
+When input or output is redirected, Helm selects the plain interface automatically.
+Inside plain chat, `/session` shows identity and token use, `/clear` resets history,
+and `/exit` saves and leaves. Tool progress goes to stderr, leaving assistant text on
+stdout for straightforward scripting.
 
 Pair the same Helm runtime with a Vessel without exposing an inbound port:
 
@@ -104,7 +115,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo test
 ```
 
-The terminal frontend is currently the functional shell beneath the planned full-screen
-TUI. Runtime facilities for cancellation, managed terminals, MCP tools, and conflict-safe
-patches are exposed through the library so that frontend can represent them without
-reimplementing execution policy.
+The next durable layers include provider-native token streaming, structured audit
+logs, and model-generated semantic context summarization. Cancellation, managed PTYs,
+MCP tools, conflict-safe patches, and the full-screen interface are implemented behind
+the shared agent, event, tool, and session contracts.

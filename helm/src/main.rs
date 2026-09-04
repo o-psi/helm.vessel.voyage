@@ -1,6 +1,7 @@
 use anyhow::{Context, Result, bail};
 use async_trait::async_trait;
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
+use clap_complete::Shell;
 use helm::{
     Agent, AgentEvent, Config, EventSink,
     agent::RetryPolicy,
@@ -9,16 +10,17 @@ use helm::{
     provider,
     session::{Session, SessionStore},
     tools::{Approver, ToolContext, ToolRegistry},
+    voyage::{Enrollment, EnrollmentStore, normalize_vessel_url},
 };
 use std::{
-    io::{self, Write},
+    io::{self, IsTerminal, Write},
     path::PathBuf,
     sync::Arc,
 };
 use tracing_subscriber::EnvFilter;
 use voyage_protocol::{
-    HeartbeatRequest, HelmDescriptor, HelmStatus, PairingStartRequest, PairingStartResponse,
-    PairingStatus, TaskEnvelope, TaskResult,
+    HeartbeatRequest, HelmDescriptor, HelmStatus, PROTOCOL_VERSION, PairingStartRequest,
+    PairingStartResponse, PairingStatus, TaskCompletion, TaskEnvelope, TaskFailure, TaskResult,
 };
 
 #[derive(Parser)]
@@ -49,54 +51,73 @@ async fn voyage_worker(
     vessel: String,
     name: String,
 ) -> Result<()> {
-    let vessel = vessel.trim_end_matches('/');
+    let vessel = normalize_vessel_url(&vessel)?;
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
         .build()?;
     let workspace = config.resolve_workspace(workspace_arg)?;
+    let enrollment_store = EnrollmentStore::new(EnrollmentStore::default_path()?);
+    let saved = enrollment_store.load().await?;
     let descriptor = HelmDescriptor {
-        id: uuid::Uuid::new_v4(),
+        id: saved
+            .as_ref()
+            .filter(|e| e.vessel_url == vessel)
+            .map_or_else(uuid::Uuid::new_v4, |e| e.helm_id),
         name,
         version: env!("CARGO_PKG_VERSION").into(),
         model: config.model.clone(),
         capabilities: vec!["shell".into(), "filesystem".into(), "search".into()],
     };
-    let pairing: PairingStartResponse = client
-        .post(format!("{vessel}/v1/pairings/start"))
-        .json(&PairingStartRequest {
-            helm: descriptor.clone(),
-        })
-        .send()
-        .await
-        .context("could not reach Vessel")?
-        .error_for_status()
-        .context("Vessel rejected pairing")?
-        .json()
-        .await
-        .context("invalid pairing response")?;
-
-    println!("{}", pairing.connection_string());
-    eprintln!(
-        "Give this one-time string to Vessel. Waiting for approval until {}…",
-        pairing.expires_at
-    );
-    loop {
-        if chrono::Utc::now() >= pairing.expires_at {
-            bail!("pairing code expired");
-        }
-        let status: PairingStatus = client
-            .get(format!("{vessel}/v1/pairings/{}", pairing.code))
-            .bearer_auth(&pairing.worker_token)
+    let enrollment = if let Some(saved) = saved.filter(|e| e.vessel_url == vessel) {
+        eprintln!("Reconnecting to Vessel as {}", saved.helm_id);
+        saved
+    } else {
+        let pairing: PairingStartResponse = client
+            .post(format!("{vessel}/v1/pairings/start"))
+            .json(&PairingStartRequest {
+                helm: descriptor.clone(),
+                protocol_version: PROTOCOL_VERSION,
+            })
             .send()
-            .await?
-            .error_for_status()?
+            .await
+            .context("could not reach Vessel")?
+            .error_for_status()
+            .context("Vessel rejected pairing")?
             .json()
-            .await?;
-        if status.claimed {
-            break;
+            .await
+            .context("invalid pairing response")?;
+
+        println!("{}", pairing.connection_string());
+        eprintln!(
+            "Give this one-time string to Vessel. Waiting for approval until {}…",
+            pairing.expires_at
+        );
+        loop {
+            if chrono::Utc::now() >= pairing.expires_at {
+                bail!("pairing code expired");
+            }
+            let status: PairingStatus = client
+                .get(format!("{vessel}/v1/pairings/{}", pairing.code))
+                .bearer_auth(&pairing.worker_token)
+                .send()
+                .await?
+                .error_for_status()?
+                .json()
+                .await?;
+            if status.claimed {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
         }
-        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-    }
+        let enrollment = Enrollment {
+            helm_id: descriptor.id,
+            vessel_url: vessel.clone(),
+            worker_token: pairing.worker_token,
+            name: descriptor.name.clone(),
+        };
+        enrollment_store.save(&enrollment).await?;
+        enrollment
+    };
     eprintln!(
         "Paired with Vessel as {}. Helm uses outbound connections only.",
         descriptor.id
@@ -105,27 +126,51 @@ async fn voyage_worker(
     let agent = build_agent(&config, workspace.clone()).await?;
     let store = SessionStore::default();
     let mut last_heartbeat = std::time::Instant::now() - std::time::Duration::from_secs(60);
+    let mut reconnect_delay = std::time::Duration::from_secs(1);
     loop {
         if last_heartbeat.elapsed() >= std::time::Duration::from_secs(20) {
-            client
+            let heartbeat = client
                 .post(format!("{vessel}/v1/worker/heartbeat"))
-                .bearer_auth(&pairing.worker_token)
+                .bearer_auth(&enrollment.worker_token)
                 .json(&HeartbeatRequest {
                     status: HelmStatus::Online,
+                    protocol_version: PROTOCOL_VERSION,
                 })
                 .send()
-                .await?
-                .error_for_status()?;
+                .await
+                .and_then(reqwest::Response::error_for_status);
+            if let Err(error) = heartbeat {
+                eprintln!("Vessel connection lost: {error}; retrying in {reconnect_delay:?}");
+                tokio::time::sleep(reconnect_delay).await;
+                reconnect_delay = (reconnect_delay * 2).min(std::time::Duration::from_secs(30));
+                continue;
+            }
             last_heartbeat = std::time::Instant::now();
+            reconnect_delay = std::time::Duration::from_secs(1);
         }
-        let task: Option<TaskEnvelope> = client
+        let response = match client
             .get(format!("{vessel}/v1/worker/tasks/next"))
-            .bearer_auth(&pairing.worker_token)
+            .bearer_auth(&enrollment.worker_token)
             .send()
-            .await?
-            .error_for_status()?
-            .json()
-            .await?;
+            .await
+            .and_then(reqwest::Response::error_for_status)
+        {
+            Ok(response) => response,
+            Err(error) => {
+                eprintln!("could not pull task: {error}; retrying in {reconnect_delay:?}");
+                tokio::time::sleep(reconnect_delay).await;
+                reconnect_delay = (reconnect_delay * 2).min(std::time::Duration::from_secs(30));
+                continue;
+            }
+        };
+        let task: Option<TaskEnvelope> = match response.json().await {
+            Ok(task) => task,
+            Err(error) => {
+                eprintln!("invalid task response: {error}");
+                continue;
+            }
+        };
+        reconnect_delay = std::time::Duration::from_secs(1);
         let Some(task) = task else {
             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
             continue;
@@ -153,13 +198,29 @@ async fn voyage_worker(
                 };
                 client
                     .post(format!("{vessel}/v1/worker/tasks/{}/result", task.id))
-                    .bearer_auth(&pairing.worker_token)
-                    .json(&result)
+                    .bearer_auth(&enrollment.worker_token)
+                    .json(&TaskCompletion {
+                        lease_id: task.lease_id,
+                        result,
+                    })
                     .send()
                     .await?
                     .error_for_status()?;
             }
-            Err(error) => eprintln!("task {} failed: {error:#}", task.id),
+            Err(error) => {
+                eprintln!("task {} failed: {error:#}", task.id);
+                let _ = client
+                    .post(format!("{vessel}/v1/worker/tasks/{}/failure", task.id))
+                    .bearer_auth(&enrollment.worker_token)
+                    .json(&TaskFailure {
+                        task_id: task.id,
+                        lease_id: task.lease_id,
+                        error: format!("{error:#}"),
+                        retryable: true,
+                    })
+                    .send()
+                    .await;
+            }
         }
     }
 }
@@ -183,9 +244,19 @@ enum Command {
     Chat {
         #[arg(long)]
         resume: Option<String>,
+        /// Use the line-oriented interface, even when attached to a terminal.
+        #[arg(long)]
+        plain: bool,
     },
     Sessions,
     Config,
+    /// Generate a shell completion script on stdout.
+    Completions {
+        #[arg(value_enum)]
+        shell: Shell,
+    },
+    /// Generate a roff manpage on stdout.
+    Manpage,
 }
 
 struct Terminal;
@@ -258,7 +329,18 @@ async fn main() -> Result<()> {
     if let Some(vessel) = cli.voyage {
         return voyage_worker(config, cli.workspace, vessel, cli.name).await;
     }
-    match cli.command.unwrap_or(Command::Chat { resume: None }) {
+    match cli.command.unwrap_or(Command::Chat {
+        resume: None,
+        plain: false,
+    }) {
+        Command::Completions { shell } => {
+            clap_complete::generate(shell, &mut Cli::command(), "helm", &mut io::stdout());
+            Ok(())
+        }
+        Command::Manpage => {
+            clap_mangen::Man::new(Cli::command()).render(&mut io::stdout())?;
+            Ok(())
+        }
         Command::Config => {
             println!("{}", toml::to_string_pretty(&config)?);
             Ok(())
@@ -271,7 +353,13 @@ async fn main() -> Result<()> {
         } => execute(config, cli.workspace, resume, prompt.join(" "), no_save)
             .await
             .map(|_| ()),
-        Command::Chat { resume } => chat(config, cli.workspace, resume).await,
+        Command::Chat { resume, plain } => {
+            if plain || !io::stdin().is_terminal() || !io::stdout().is_terminal() {
+                chat(config, cli.workspace, resume).await
+            } else {
+                tui_chat(config, cli.workspace, resume).await
+            }
+        }
     }
 }
 
@@ -286,20 +374,7 @@ async fn build_agent(config: &Config, workspace: PathBuf) -> Result<Agent> {
         environment: config.env.clone(),
         cancellation: tokio_util::sync::CancellationToken::new(),
     };
-    let mut tools = ToolRegistry::standard();
-    for (name, server) in &config.mcp_servers {
-        let mcp =
-            helm::tools::mcp::McpServer::connect(name, &server.command, &server.args, &server.env)
-                .await
-                .with_context(|| format!("failed to initialize MCP server `{name}`"))?;
-        for tool in mcp
-            .discover()
-            .await
-            .with_context(|| format!("failed to discover tools from MCP server `{name}`"))?
-        {
-            tools.register_arc(tool);
-        }
-    }
+    let tools = build_tools(config).await?;
     Ok(Agent::new(
         provider::from_config(config)?,
         tools,
@@ -316,6 +391,73 @@ async fn build_agent(config: &Config, workspace: PathBuf) -> Result<Agent> {
         initial_delay: std::time::Duration::from_millis(config.provider_retry_initial_ms),
         max_delay: std::time::Duration::from_millis(config.provider_retry_max_ms),
     }))
+}
+
+async fn tui_chat(
+    config: Config,
+    workspace_arg: Option<PathBuf>,
+    resume: Option<String>,
+) -> Result<()> {
+    let store = SessionStore::default();
+    let session = if let Some(reference) = resume {
+        store.load_reference(&reference).await?
+    } else {
+        Session::new(
+            config.resolve_workspace(workspace_arg)?,
+            config.model.clone(),
+        )
+    };
+    let (bridge, receiver) = helm::tui::bridge();
+    let policy = Arc::new(Policy::new(&config, session.workspace.clone())?);
+    let context = ToolContext {
+        policy,
+        approver: bridge.clone(),
+        timeout: config.timeout(),
+        max_output_bytes: config.max_output_bytes,
+        environment: config.env.clone(),
+        cancellation: tokio_util::sync::CancellationToken::new(),
+    };
+    let agent = Arc::new(
+        Agent::new(
+            provider::from_config(&config)?,
+            build_tools(&config).await?,
+            context,
+            bridge.clone(),
+            config.model.clone(),
+            config.system_prompt.clone(),
+            config.max_turns,
+            config.max_tokens,
+            config.temperature,
+        )
+        .with_retry_policy(RetryPolicy {
+            max_attempts: config.provider_retry_attempts,
+            initial_delay: std::time::Duration::from_millis(config.provider_retry_initial_ms),
+            max_delay: std::time::Duration::from_millis(config.provider_retry_max_ms),
+        }),
+    );
+    helm::tui::run(agent, store, session, receiver, bridge.sender()).await
+}
+
+async fn build_tools(config: &Config) -> Result<ToolRegistry> {
+    let mut tools = ToolRegistry::standard();
+    for (name, server) in &config.mcp_servers {
+        let mcp = helm::tools::mcp::McpServer::connect(
+            name,
+            &server.command,
+            &server.args,
+            &server.env,
+        )
+        .await
+        .with_context(|| format!("failed to initialize MCP server `{name}`"))?;
+        for tool in mcp
+            .discover()
+            .await
+            .with_context(|| format!("failed to discover tools from MCP server `{name}`"))?
+        {
+            tools.register_arc(tool);
+        }
+    }
+    Ok(tools)
 }
 
 async fn execute(
@@ -415,9 +557,10 @@ async fn chat(
 async fn list_sessions() -> Result<()> {
     for session in SessionStore::default().list().await? {
         println!(
-            "{}  {}  {}  {} messages",
+            "{}  {}  {:<24}  {}  {} messages",
             session.id,
             session.updated_at.format("%Y-%m-%d %H:%M UTC"),
+            session.name.as_deref().unwrap_or("untitled"),
             session.workspace.display(),
             session.messages.len()
         );
