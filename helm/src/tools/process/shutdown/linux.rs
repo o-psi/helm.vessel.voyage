@@ -6,7 +6,7 @@ use std::{
     time::Instant,
 };
 
-pub(super) struct SessionIdentity {
+pub(crate) struct SessionIdentity {
     pid: u32,
     start: u64,
 }
@@ -24,8 +24,8 @@ fn read_stat(pid: u32) -> io::Result<Stat> {
     if bytes.len() > 4096 {
         return Err(io::ErrorKind::InvalidData.into());
     }
-    let text = std::str::from_utf8(&bytes).map_err(|_| io::ErrorKind::InvalidData)?;
-    parse_stat(text).ok_or_else(|| io::ErrorKind::InvalidData.into())
+    let text = String::from_utf8_lossy(&bytes);
+    parse_stat(&text).ok_or_else(|| io::ErrorKind::InvalidData.into())
 }
 fn parse_stat(text: &str) -> Option<Stat> {
     let (prefix, fields) = text.rsplit_once(") ")?;
@@ -39,7 +39,7 @@ fn parse_stat(text: &str) -> Option<Stat> {
     })
 }
 impl SessionIdentity {
-    pub(super) fn capture(pid: u32) -> io::Result<Self> {
+    pub(crate) fn capture(pid: u32) -> io::Result<Self> {
         let stat = read_stat(pid)?;
         if stat.pid != pid || stat.session != pid || pid == 0 || pid > i32::MAX as u32 {
             return Err(io::ErrorKind::InvalidData.into());
@@ -49,12 +49,12 @@ impl SessionIdentity {
             start: stat.start,
         })
     }
-    pub(super) fn matches_leader(&self) -> bool {
+    pub(crate) fn matches_leader(&self) -> bool {
         read_stat(self.pid).is_ok_and(|stat| {
             stat.pid == self.pid && stat.session == self.pid && stat.start == self.start
         })
     }
-    pub(super) fn exit_status(&self) -> io::Result<Option<portable_pty::ExitStatus>> {
+    pub(crate) fn exit_status(&self) -> io::Result<Option<portable_pty::ExitStatus>> {
         use std::os::unix::process::ExitStatusExt;
         let mut info = std::mem::MaybeUninit::<libc::siginfo_t>::zeroed();
         let result = unsafe {
@@ -80,7 +80,13 @@ impl SessionIdentity {
         };
         Ok(Some(std::process::ExitStatus::from_raw(raw).into()))
     }
-    pub(super) fn kill_and_observe(&self, deadline: Instant) -> Result<bool, Failure> {
+    pub(crate) fn observe_empty(&self, deadline: Instant) -> Result<bool, Failure> {
+        self.scan(deadline, false)
+    }
+    pub(crate) fn kill_and_observe(&self, deadline: Instant) -> Result<bool, Failure> {
+        self.scan(deadline, true)
+    }
+    fn scan(&self, deadline: Instant, signal: bool) -> Result<bool, Failure> {
         if !self.matches_leader() {
             return Err(Failure::IdentityUnavailable);
         }
@@ -109,6 +115,9 @@ impl SessionIdentity {
                 continue;
             }
             live = true;
+            if !signal {
+                continue;
+            }
             let fd = unsafe { libc::syscall(libc::SYS_pidfd_open, pid as libc::pid_t, 0_u32) };
             if fd < 0 {
                 if io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH) {
@@ -127,19 +136,71 @@ impl SessionIdentity {
             if current.start != stat.start || current.session != self.pid || current.pid != pid {
                 continue;
             }
-            let result = unsafe {
-                libc::syscall(
-                    libc::SYS_pidfd_send_signal,
-                    fd.as_raw_fd(),
-                    libc::SIGKILL,
-                    std::ptr::null::<libc::siginfo_t>(),
-                    0_u32,
-                )
-            };
-            if result < 0 && io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH) {
-                return Err(Failure::KillFailed);
-            }
+            signal_pid(fd.as_raw_fd())?;
         }
         Ok(!live)
+    }
+}
+
+fn signal_pid(fd: i32) -> Result<(), Failure> {
+    let result = unsafe {
+        libc::syscall(
+            libc::SYS_pidfd_send_signal,
+            fd,
+            libc::SIGKILL,
+            std::ptr::null::<libc::siginfo_t>(),
+            0_u32,
+        )
+    };
+    if result < 0 && io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH) {
+        return Err(Failure::KillFailed);
+    }
+    Ok(())
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn mismatched_start_identity_never_signals_a_live_process() {
+        use std::os::unix::process::CommandExt;
+        let mut command = std::process::Command::new("sleep");
+        command.arg("30");
+        unsafe {
+            command.pre_exec(|| {
+                if libc::setsid() < 0 {
+                    return Err(io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+        let mut child = command.spawn().unwrap();
+        let mut identity = SessionIdentity::capture(child.id()).unwrap();
+        assert_eq!(
+            identity.observe_empty(Instant::now() + std::time::Duration::from_secs(1)),
+            Ok(false)
+        );
+        assert!(child.try_wait().unwrap().is_none());
+        identity.start += 1;
+        let result = identity.kill_and_observe(Instant::now() + std::time::Duration::from_secs(1));
+        let still_running = child.try_wait().unwrap().is_none();
+        child.kill().unwrap();
+        child.wait().unwrap();
+        assert_eq!(result, Err(Failure::IdentityUnavailable));
+        assert!(still_running);
+    }
+    #[test]
+    fn stat_parser_preserves_identity_despite_hostile_command_name() {
+        let mut fields = vec!["0"; 20];
+        fields[0] = "Z";
+        fields[3] = "42";
+        fields[19] = "99";
+        let text = format!("42 (name) \u{1b}[2J) {}", fields.join(" "));
+        let stat = parse_stat(&text).unwrap();
+        assert_eq!(
+            (stat.pid, stat.session, stat.start, stat.state),
+            (42, 42, 99, 'Z')
+        );
+        assert!(parse_stat("42 (broken) Z 1").is_none());
+        assert_eq!(signal_pid(-1), Err(Failure::KillFailed));
     }
 }

@@ -6,7 +6,7 @@ use std::{
     time::{Duration, Instant},
 };
 #[cfg(target_os = "linux")]
-mod linux;
+pub(crate) mod linux;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -50,20 +50,22 @@ pub(super) struct OwnedChild {
     inner: Box<dyn Child + Send + Sync>,
     reader_done: Arc<AtomicBool>,
     reaped: bool,
+    #[cfg(target_os = "linux")]
     session_observed: bool,
     #[cfg(target_os = "linux")]
-    identity: Option<linux::SessionIdentity>,
+    identity: Option<super::SessionIdentity>,
 }
 impl OwnedChild {
     fn new(inner: Box<dyn Child + Send + Sync>) -> Self {
         #[cfg(target_os = "linux")]
         let identity = inner
             .process_id()
-            .and_then(|pid| linux::SessionIdentity::capture(pid).ok());
+            .and_then(|pid| super::SessionIdentity::capture(pid).ok());
         Self {
             inner,
             reader_done: Arc::new(AtomicBool::new(true)),
             reaped: false,
+            #[cfg(target_os = "linux")]
             session_observed: false,
             #[cfg(target_os = "linux")]
             identity,
@@ -72,23 +74,20 @@ impl OwnedChild {
     pub(super) fn process_id(&self) -> Option<u32> {
         self.inner.process_id()
     }
-    pub(super) fn kill(&mut self) -> std::io::Result<()> {
-        self.inner.kill()
-    }
     /// Linux keeps the waitable leader until explicit close/shutdown. Its PID
     /// therefore cannot be reused while we identify the owned PTY session.
     pub(super) fn try_wait(&mut self) -> std::io::Result<Option<portable_pty::ExitStatus>> {
         #[cfg(target_os = "linux")]
-        if !self.reaped {
-            if let Some(identity) = &self.identity {
-                return identity.exit_status();
-            }
+        if !self.reaped
+            && let Some(identity) = &self.identity
+        {
+            return identity.exit_status();
         }
         let result = self.inner.try_wait()?;
         self.reaped |= result.is_some();
         Ok(result)
     }
-    fn observe(&mut self, deadline: Instant) -> Result<bool, TerminalShutdownFailure> {
+    pub(super) fn observe(&mut self, deadline: Instant) -> Result<bool, TerminalShutdownFailure> {
         #[cfg(target_os = "linux")]
         {
             if !self.session_observed {
@@ -96,7 +95,8 @@ impl OwnedChild {
                     let _ = self.inner.kill();
                     return Err(TerminalShutdownFailure::IdentityUnavailable);
                 };
-                self.session_observed = identity.kill_and_observe(deadline)?;
+                self.session_observed =
+                    identity.observe_empty(deadline)? || identity.kill_and_observe(deadline)?;
                 if !self.session_observed {
                     return Ok(false);
                 }
@@ -130,8 +130,8 @@ impl OwnedChild {
         }
     }
 }
-impl Drop for OwnedChild {
-    fn drop(&mut self) {
+impl OwnedChild {
+    pub(super) fn stop_best_effort(&mut self) {
         if !self.reaped {
             // Best effort only. Successful explicit shutdown has already reaped
             // the child and must never signal its potentially recycled number.
@@ -147,9 +147,15 @@ impl Drop for OwnedChild {
             if self.inner.try_wait().ok().flatten().is_none() {
                 terminate_process_group(self.inner.process_id());
             }
+            #[cfg(not(target_os = "linux"))]
             let _ = self.inner.kill();
-            let _ = self.inner.try_wait();
         }
+    }
+}
+impl Drop for OwnedChild {
+    fn drop(&mut self) {
+        self.stop_best_effort();
+        let _ = self.inner.try_wait();
     }
 }
 /// Failed setup retains the spawned handle so later shutdown can observe it.
@@ -180,7 +186,8 @@ impl StartupChild {
 }
 impl Drop for StartupChild {
     fn drop(&mut self) {
-        if let Some(child) = self.child.take() {
+        if let Some(mut child) = self.child.take() {
+            child.stop_best_effort();
             match self.pending.lock() {
                 Ok(mut pending) => {
                     pending.insert(self.id, child);
@@ -208,6 +215,17 @@ impl ProcessTool {
     /// Cancellation drops the waiter, not a running blocking observation worker.
     pub async fn shutdown(&self, timeout: Duration) -> TerminalShutdown {
         self.shutting_down.store(true, Ordering::SeqCst);
+        // This fast path performs no OS work and makes a zero-budget empty
+        // shutdown independent of blocking-pool scheduling.
+        if let Ok(_starting) = self.starting.try_lock()
+            && let Ok(processes) = self.processes.try_lock()
+            && let Ok(pending) = self.pending.try_lock()
+            && processes.is_empty()
+            && pending.is_empty()
+            && !self.uncertain.load(Ordering::SeqCst)
+        {
+            return TerminalShutdown::empty();
+        }
         let Some(deadline) = Instant::now().checked_add(timeout) else {
             return TerminalShutdown::failure(TerminalShutdownFailure::TimedOut);
         };
@@ -215,10 +233,8 @@ impl ProcessTool {
         loop {
             let copy = self.clone();
             let worker = tokio::task::spawn_blocking(move || copy.shutdown_step(deadline));
-            // A zero budget still permits the nonblocking empty-manager check.
-            let wait = deadline
-                .saturating_duration_since(Instant::now())
-                .max(Duration::from_millis(1));
+            // Bound OS observation even if a worker is delayed.
+            let wait = deadline.saturating_duration_since(Instant::now());
             match tokio::time::timeout(wait, worker).await {
                 Ok(Ok(report)) => last = report,
                 Ok(Err(_)) => {
@@ -242,6 +258,39 @@ impl ProcessTool {
                 deadline
                     .saturating_duration_since(Instant::now())
                     .min(Duration::from_millis(10)),
+            )
+            .await;
+        }
+    }
+    /// Closing one terminal does not close admission for the whole manager.
+    /// An unobserved handle remains counted against the resource limit.
+    pub(super) async fn observe_closed(&self, id: Uuid, timeout: Duration) {
+        let deadline = Instant::now() + timeout;
+        loop {
+            let copy = self.clone();
+            let worker = tokio::task::spawn_blocking(move || {
+                let Ok(mut pending) = copy.pending.try_lock() else {
+                    return false;
+                };
+                let Some(child) = pending.get_mut(&id) else {
+                    return true;
+                };
+                if child.observe(deadline) == Ok(true) {
+                    pending.remove(&id);
+                    true
+                } else {
+                    false
+                }
+            });
+            match tokio::time::timeout(deadline.saturating_duration_since(Instant::now()), worker)
+                .await
+            {
+                Ok(Ok(true)) => return,
+                _ if Instant::now() >= deadline => return,
+                _ => {}
+            }
+            tokio::time::sleep(
+                Duration::from_millis(10).min(deadline.saturating_duration_since(Instant::now())),
             )
             .await;
         }
@@ -306,3 +355,6 @@ impl ProcessTool {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;
