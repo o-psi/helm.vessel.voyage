@@ -64,7 +64,11 @@ fn failed(error: impl std::fmt::Display) -> ToolError {
 #[async_trait]
 impl Tool for CompletionTool {
     fn definition(&self) -> ToolDefinition {
-        ToolDefinition { name: "completion".into(), description: "Review only this run's obligations. Snapshot returns unresolved IDs and revision. Read owned evidence/results; adopt older todos or complete terminal agent subtrees explicitly; wait or cancel active work before adoption. Account against fresh revision with evidence or truthful blocked/deferred/failure impact; this does not complete, delete, archive, or cancel work. Mechanical accounting does not prove semantic correctness.".into(), input_schema: json!({"type":"object","required":["action"],"properties":{"action":{"enum":["snapshot","read","adopt","account"]},"kind":{"enum":["todo","agent"]},"id":{"type":"string","format":"uuid"},"revision":{"type":"integer","minimum":0},"disposition":{"enum":["completed_with_evidence","cancelled_with_reason","blocked_with_impact","deferred_with_impact","incorporated","failure_with_impact","not_needed_with_reason"]},"reason":{"type":"string"},"fingerprint":{"type":"string"}},"additionalProperties":false}) }
+        ToolDefinition {
+            name: "completion".into(),
+            description: "Review only this run's obligations. Snapshot supplies fresh revision and fingerprint plus unresolved IDs; read accepts only action, kind and id. Read owned evidence/results before accounting. Adopt older todos or complete terminal agent subtrees explicitly; wait or cancel active work before adoption. Account using the exact fresh snapshot revision/fingerprint and a concrete evidence or impact reason. Preserve truthful blocked/deferred/failure outcomes. This does not complete, delete, archive or cancel work; mechanical accounting does not prove semantic correctness. Examples show argument shapes, not IDs or fingerprints to reuse.".into(),
+            input_schema: input_schema(),
+        }
     }
     async fn execute(&self, args: Value, context: &ToolContext) -> Result<String, ToolError> {
         tokio::select! {
@@ -73,6 +77,75 @@ impl Tool for CompletionTool {
             result = tokio::time::timeout(context.timeout, self.execute_operation(args, context)) => result.unwrap_or(Err(ToolError::Timeout(context.timeout))),
         }
     }
+}
+
+// Keep a plain object and visible properties for compatible provider templates.
+// The action branches restrict both required and allowed keys; shared property
+// types still apply. Providers use non-strict function calling, while Args and
+// runtime ownership/evidence checks remain the execution authority.
+fn input_schema() -> Value {
+    let variants = [
+        (
+            "snapshot",
+            "Inspect current owned obligations and obtain fresh revision/fingerprint.",
+            vec!["action"],
+        ),
+        (
+            "read",
+            "Read one owned obligation; only action, kind and id are accepted.",
+            vec!["action", "kind", "id"],
+        ),
+        (
+            "adopt",
+            "Explicitly add historical work using the current snapshot revision.",
+            vec!["action", "kind", "id", "revision"],
+        ),
+        (
+            "account",
+            "Record reviewed evidence or truthful impact against a fresh snapshot.",
+            vec![
+                "action",
+                "kind",
+                "id",
+                "revision",
+                "fingerprint",
+                "disposition",
+                "reason",
+            ],
+        ),
+    ]
+    .into_iter()
+    .map(|(action, description, keys)| {
+        let mut properties = serde_json::Map::new();
+        for key in &keys {
+            properties.insert((*key).into(), json!({}));
+        }
+        properties.insert("action".into(), json!({"enum":[action]}));
+        json!({"type":"object", "description":description, "properties":properties,
+            "required":keys, "additionalProperties":false})
+    })
+    .collect::<Vec<_>>();
+    json!({
+        "type":"object",
+        "required":["action"],
+        "properties":{
+            "action":{"type":"string","enum":["snapshot","read","adopt","account"],"description":"Choose exactly one action and supply only its required fields."},
+            "kind":{"type":"string","enum":["todo","agent"],"description":"Obligation type from the snapshot. Required for read, adopt and account."},
+            "id":{"type":"string","format":"uuid","description":"Exact obligation UUID. Read/account use an owned ID; adopt uses explicitly selected historical work."},
+            "revision":{"type":"integer","minimum":0,"maximum":u64::MAX,"description":"Exact current snapshot revision. Required only for adopt/account; snapshot again after state changes."},
+            "fingerprint":{"type":"string","description":"Exact fresh snapshot fingerprint for account. Never invent it or send it to read/adopt."},
+            "disposition":{"type":"string","enum":["completed_with_evidence","cancelled_with_reason","blocked_with_impact","deferred_with_impact","incorporated","failure_with_impact","not_needed_with_reason"],"description":"Account only: choose the disposition supported by the record's actual status and reviewed evidence/results."},
+            "reason":{"type":"string","description":"Account only: concrete evidence or impact of remaining work. A reason does not replace recorded evidence or change status."}
+        },
+        "additionalProperties":false,
+        "oneOf":variants,
+        "examples":[
+            {"action":"snapshot"},
+            {"action":"read","kind":"todo","id":"00112233-4455-4677-8899-aabbccddeeff"},
+            {"action":"adopt","kind":"todo","id":"00112233-4455-4677-8899-aabbccddeeff","revision":1},
+            {"action":"account","kind":"todo","id":"00112233-4455-4677-8899-aabbccddeeff","revision":2,"fingerprint":"0000000000000000000000000000000000000000000000000000000000000000","disposition":"deferred_with_impact","reason":"Deployment remains pending until the operator supplies credentials; no deployment was performed."}
+        ]
+    })
 }
 
 impl CompletionTool {
@@ -247,3 +320,6 @@ mod tests {
         ));
     }
 }
+
+#[cfg(test)]
+mod schema_tests;
