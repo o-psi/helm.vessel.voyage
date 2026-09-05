@@ -315,3 +315,76 @@ async fn private_shell_preserves_approval_denial_environment_conflicts_and_sanit
         }
     }
 }
+
+struct WaitingApproval {
+    entered: tokio::sync::Notify,
+}
+#[async_trait]
+impl crate::tools::Approver for WaitingApproval {
+    async fn approve(
+        &self,
+        request: &crate::tools::ApprovalRequest,
+    ) -> crate::tools::ApprovalOutcome {
+        let encoded = serde_json::to_string(request).unwrap();
+        assert!(!encoded.contains("private-approval-秘密"));
+        self.entered.notify_one();
+        std::future::pending().await
+    }
+}
+
+#[tokio::test]
+async fn cancelling_private_approval_does_not_spawn_or_expose_binding() {
+    for managed in [false, true] {
+        if managed && !cfg!(target_os = "linux") {
+            continue;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let mut ctx = context(dir.path());
+        ctx.policy = Arc::new(
+            Policy::new(
+                &Config {
+                    access: Some(AccessMode::Approval),
+                    ..Config::default()
+                },
+                dir.path().into(),
+            )
+            .unwrap(),
+        );
+        let approver = Arc::new(WaitingApproval {
+            entered: tokio::sync::Notify::new(),
+        });
+        ctx.approver = approver.clone();
+        let bound = bindings(ctx.execution_id, "private-approval-秘密");
+        let mut registry = ToolRegistry::default();
+        let manager = managed.then(ManagedShell::new);
+        if let Some(manager) = &manager {
+            registry.register(manager.clone());
+        } else {
+            registry.register(Shell);
+        }
+        let run = registry.execute_with_workflow_secrets(
+            "shell",
+            serde_json::json!({"command":"touch forbidden", "workflow_secrets":["token"]}),
+            &ctx,
+            Some(&bound),
+        );
+        tokio::pin!(run);
+        tokio::select! { _=approver.entered.notified()=>{}, result=&mut run=>panic!("unexpected early result {result:?}") }
+        ctx.cancellation.cancel();
+        assert!(matches!(
+            tokio::time::timeout(Duration::from_secs(1), run)
+                .await
+                .unwrap(),
+            Err(ToolError::Cancelled)
+        ));
+        assert!(!dir.path().join("forbidden").exists());
+        if let Some(manager) = manager {
+            assert!(
+                manager
+                    .shutdown(Duration::from_secs(5))
+                    .await
+                    .observation_complete
+            );
+        }
+    }
+}
