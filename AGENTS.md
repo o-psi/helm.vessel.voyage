@@ -6,12 +6,10 @@ They do not grant permissions beyond the active runtime policy or operator appro
 
 ## Product stage and delivery standard
 
-Voyage has no product releases. We are still developing the first version of the
-product. Treat current binaries, package archives, installations, and stored data
-as development artifacts. Cargo's `--release` profile, version fields, release
-workflows, and packaging checks are preparation for release, not evidence that a
-product release exists. Describe changes between current builds as development
-updates; retain appropriate data-preservation and recovery guidance.
+Voyage is developing its first version and has no product releases. Write
+documentation around current behavior, setup, and useful workflows. State planned
+capabilities clearly. Omit legacy, retirement, and migration narratives about
+unreleased implementations, and keep internal delivery commentary out of user guides.
 
 The goal is a release-quality product that adds actual, tested value. An MVP,
 prototype, scaffold, or vertical slice is not the completion standard. Work may
@@ -169,7 +167,7 @@ Separate pre-existing failures from regressions with evidence.
 Run from the repository root with stable Rust, rustfmt, Clippy, and Python 3.
 These commands reflect the GitHub Linux quality workflow; recheck that workflow
 for changes. Build optimized binaries with Cargo's release profile before the
-Python system tests; these remain development builds:
+Python system tests:
 
 ```sh
 cargo fmt --all -- --check
@@ -188,19 +186,19 @@ with an approved configured provider and budget. It can consume provider capacit
 and writes ignored evidence to `eval/evidence/latest.json`; review and redact any
 shared evidence. See `eval/README.md` and `docs/cutover.md` for manual drills.
 
-Packaging is also a Linux CI gate preparing for the first release. After the
-optimized build, use a unique development version label to avoid overwriting
-existing artifacts:
+Packaging is also a Linux CI gate. After the optimized build, use a unique
+version label to avoid overwriting existing artifacts:
 
 ```sh
 ./scripts/package-release UNIQUE_VERSION
 (cd dist && sha256sum -c *.sha256)
 ```
 
-CI also runs workspace tests and locked release builds on macOS and Windows.
-Do not claim cross-platform validation from a Linux-only run. Inspect portability
-checks on the PR; follow release workflows for additional architecture/archive
-checks. Preserve existing `dist/` artifacts. Keep relevant GitHub and Forgejo
+Routine CI runs on Linux only to limit development costs. macOS and Windows
+workspace tests and locked release builds are not run on pushes or pull requests.
+Do not claim cross-platform validation from a Linux-only run. Tag-triggered release
+workflows still build platform archives; packaging is not platform test coverage.
+Preserve existing `dist/` artifacts. Keep relevant GitHub and Forgejo
 workflow counterparts consistent when changing CI (they are not currently identical).
 
 For documentation-only changes, validate paths, links, command accuracy, and diffs;
