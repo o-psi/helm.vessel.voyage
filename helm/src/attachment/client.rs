@@ -68,6 +68,8 @@ struct State {
     owner_id: Option<Uuid>,
     epoch: u64,
     status: Status,
+    #[serde(default)]
+    locally_disabled: bool,
     private_key: Vec<u8>,
     pending: Option<Pending>,
 }
@@ -134,6 +136,7 @@ pub struct Inspection {
     pub owner_id: Option<Uuid>,
     pub epoch: u64,
     pub status: Status,
+    pub locally_disabled: bool,
     pub pending: Option<&'static str>,
     pub transaction_id: Option<Uuid>,
 }
@@ -157,6 +160,8 @@ impl State {
             owner_id: self.owner_id,
             epoch: self.epoch,
             status: self.status,
+            locally_disabled: self.locally_disabled
+                || matches!(self.status, Status::Detached | Status::Revoked),
             pending,
             transaction_id,
         }
@@ -258,6 +263,7 @@ impl EnrollmentClient {
                 owner_id: None,
                 epoch: 0,
                 status: Status::Unenrolled,
+                locally_disabled: false,
                 private_key: SigningKey::generate()
                     .map_err(|_| ClientError::Crypto)?
                     .as_pkcs8()
@@ -371,7 +377,10 @@ impl EnrollmentClient {
     }
     fn active(&self) -> Result<()> {
         self.ready()?;
-        if self.state.status != Status::Active || self.state.pending.is_some() {
+        if self.state.status != Status::Active
+            || self.state.pending.is_some()
+            || self.state.locally_disabled
+        {
             Err(ClientError::Conflict)
         } else {
             Ok(())
@@ -450,7 +459,14 @@ impl EnrollmentClient {
         self.resume(None).await
     }
     pub async fn revoke(&mut self) -> Result<Receipt> {
-        self.active()?;
+        self.ready()?;
+        if !matches!(self.state.status, Status::Active | Status::Detached)
+            || self.state.pending.is_some()
+            || self.state.epoch == 0
+            || self.state.owner_id.is_none()
+        {
+            return Err(ClientError::Conflict);
+        }
         self.state.pending = Some(Pending {
             operation: ProofOperation::Revoke {
                 machine_id: self.state.machine_id,
@@ -464,17 +480,18 @@ impl EnrollmentClient {
         self.resume(None).await
     }
     /// Local detach is NOT server revocation. Retains identity/tombstone and never
-    /// deletes user sessions. Resolve pending server mutations before detaching.
+    /// deletes user sessions. Pending mutations retain their original recovery state.
+    /// Recovering a receipt never clears a durable local disable.
     pub fn detach(&mut self) -> Result<()> {
         self.ready()?;
-        if self.state.pending.is_some() {
-            return Err(ClientError::Conflict);
-        }
         // Do not erase observed server confirmation on a redundant local disable.
-        if self.state.status == Status::Revoked {
+        if self.state.status == Status::Revoked || self.state.locally_disabled {
             return Ok(());
         }
-        self.state.status = Status::Detached;
+        self.state.locally_disabled = true;
+        if self.state.pending.is_none() {
+            self.state.status = Status::Detached;
+        }
         self.persist()
     }
     /// Fresh challenge for the ORIGINAL operation; never retry a consumed proof.
@@ -596,6 +613,8 @@ impl EnrollmentClient {
         self.state.owner_id = Some(receipt.owner_id);
         self.state.status = if revoked {
             Status::Revoked
+        } else if self.state.locally_disabled {
+            Status::Detached
         } else {
             Status::Active
         };
@@ -647,6 +666,9 @@ fn validate_state(s: &State) -> Result<()> {
         || s.owner_id.is_some_and(|id| id.is_nil())
         || s.epoch >= i64::MAX as u64
     {
+        return Err(invalid());
+    }
+    if s.locally_disabled && matches!(s.status, Status::Active | Status::Unenrolled) {
         return Err(invalid());
     }
     let enrolled = s.epoch > 0 && s.owner_id.is_some();
