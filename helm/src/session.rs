@@ -534,13 +534,13 @@ fn is_not_found(error: &anyhow::Error) -> bool {
         .is_some_and(|e| e.kind() == std::io::ErrorKind::NotFound)
 }
 
-fn reject_symlinks(path: &Path) -> Result<()> {
+pub(crate) fn reject_symlinks(path: &Path) -> Result<()> {
     let mut prefix = PathBuf::new();
     for component in path.components() {
         prefix.push(component);
         match std::fs::symlink_metadata(&prefix) {
             Ok(meta) => anyhow::ensure!(
-                !meta.file_type().is_symlink(),
+                !meta.file_type().is_symlink() || trusted_system_alias(&prefix, &meta),
                 "symlink path rejected: {}",
                 prefix.display()
             ),
@@ -549,6 +549,31 @@ fn reject_symlinks(path: &Path) -> Result<()> {
         }
     }
     Ok(())
+}
+
+// macOS exposes /var, /tmp and /etc through root-managed aliases. These are
+// part of the OS namespace, not operator-selected storage redirects. Do not
+// generalize this exception to arbitrary root-owned or canonicalizable links.
+fn trusted_system_alias(path: &Path, metadata: &std::fs::Metadata) -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let target = match path.to_str() {
+            Some("/var") => "/private/var",
+            Some("/tmp") => "/private/tmp",
+            Some("/etc") => "/private/etc",
+            _ => return false,
+        };
+        metadata.uid() == 0
+            && std::fs::canonicalize(path).is_ok_and(|actual| actual == Path::new(target))
+            && std::fs::symlink_metadata("/")
+                .is_ok_and(|root| root.uid() == 0 && root.mode() & 0o022 == 0)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (path, metadata);
+        false
+    }
 }
 
 fn prepare_directory(path: &Path) -> Result<PathBuf> {
