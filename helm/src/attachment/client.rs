@@ -162,12 +162,28 @@ impl State {
         }
     }
 }
+// Unix flock is shared by fork-inherited file descriptions. Closing this
+// descriptor alone does not release ownership while an inherited copy survives.
+#[cfg(unix)]
+struct EnrollmentLock(File);
+#[cfg(not(unix))]
+type EnrollmentLock = File;
+
+#[cfg(unix)]
+impl Drop for EnrollmentLock {
+    fn drop(&mut self) {
+        use std::os::fd::AsRawFd;
+        // The descriptor remains valid until this guard finishes dropping.
+        unsafe { libc::flock(self.0.as_raw_fd(), libc::LOCK_UN) };
+    }
+}
+
 pub struct EnrollmentClient {
     #[cfg(not(windows))]
     directory: PathBuf,
     #[cfg(windows)]
     private_directory: voyage_storage::PrivateDirectory,
-    _lock: File,
+    _lock: EnrollmentLock,
     http: Client,
     state: State,
     poisoned: bool,
@@ -731,7 +747,7 @@ fn private_file(path: &Path, create: bool) -> Result<File> {
     Ok(file)
 }
 #[cfg(unix)]
-fn lock_directory_mode(directory: &Path, create: bool) -> Result<File> {
+fn lock_directory_mode(directory: &Path, create: bool) -> Result<EnrollmentLock> {
     use std::os::{
         fd::AsRawFd,
         unix::fs::{DirBuilderExt, OpenOptionsExt},
@@ -768,6 +784,8 @@ fn lock_directory_mode(directory: &Path, create: bool) -> Result<File> {
     if unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
         return Err(ClientError::Busy);
     }
+    // Install cleanup before any fallible operation after acquisition.
+    let lock = EnrollmentLock(lock);
     if create {
         dir.sync_all().map_err(|_| ClientError::Storage)?;
         File::open(absolute.parent().ok_or(ClientError::Storage)?)
