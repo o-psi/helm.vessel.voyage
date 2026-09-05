@@ -40,24 +40,43 @@ class Provider(BaseHTTPRequestHandler):
         try:
             expected = {'openai-chat': '/v1/chat/completions', 'openai-responses': '/v1/responses', 'anthropic': '/v1/messages'}[case.provider]
             assert self.path == expected, self.path
+            users = [message.get('content', '') for message in body.get('messages', body.get('input', [])) if message.get('role') == 'user']
+            is_child = bool(users) and 'managed-child-terminal' in str(users[-1])
             with case.lock:
-                step = len(case.requests)
+                bucket = 'child' if is_child else 'parent'
+                step = case.counts.get(bucket, 0)
+                case.counts[bucket] = step + 1
                 case.requests.append(body)
             # Actual first dispatch must follow both durable admission and cleanup registration.
             rows = case.sql('SELECT r.active,o.confirmation FROM runs r JOIN local_cleanup_obligations o ON o.run_id=r.id WHERE r.active=1')
             assert rows == [(1, None)], rows
-            if case.mode == 'hold':
+            if case.mode == 'hold' or (case.mode == 'child_hold' and is_child and step == 1):
                 case.started.set()
                 assert case.release.wait(25), 'fixture release timeout'
-            if case.mode in ('shell', 'denied') and step == 0:
+            if case.mode in ('child', 'child_hold'):
+                if is_child:
+                    value = ('process', {'action': 'start', 'command': 'sleep 120', 'name': 'child-owned-pty'}) if step == 0 else 'child-terminal-done'
+                elif step == 0:
+                    value = ('subagent', {'action': 'spawn', 'name': 'managed-child-one', 'task': 'managed-child-terminal-one'})
+                elif step == 1 and case.mode == 'child_hold':
+                    value = ('subagent', {'action': 'spawn', 'name': 'managed-child-two', 'task': 'managed-child-terminal-two'})
+                elif step == (2 if case.mode == 'child_hold' else 1):
+                    outputs = [message['content'] for message in body['messages'] if message.get('role') == 'tool']
+                    child_id = json.loads(outputs[0])['id']
+                    value = ('subagent', {'action': 'wait', 'id': child_id})
+                else:
+                    value = 'managed-final-雪'
+            elif case.mode in ('shell', 'denied') and step == 0:
                 value = ('shell', {'command': "printf 'one-effect\\n' >> effects.txt"})
             elif case.mode == 'terminal' and step == 0:
                 value = ('process', {'action': 'start', 'command': 'sleep 120', 'name': 'managed-owned-pty'})
             elif case.mode == 'flood':
-                value = 'provisional-large-output-' * 16000
+                value = 'provisional-large-output-' * 2000
             else:
                 value = 'managed-final-雪'
             data = response(case.provider, value, step)
+            if case.mode == 'flood':
+                data = data.replace(b'data: [DONE]\n\n', b'') * 4 + b'data: [DONE]\n\n'
             status = 500 if case.mode == 'failure' else 200
         except Exception as error:
             case.failures.append(repr(error))
@@ -95,6 +114,7 @@ class Case:
 
     def reset(self, mode='success'):
         self.mode, self.requests, self.failures = mode, [], []
+        self.counts = {}
         self.started, self.release = threading.Event(), threading.Event()
 
     def sql(self, sql, params=()):
@@ -282,7 +302,7 @@ def output_and_terminal_cleanup(root):
         # A full output pipe cannot hang the async worker or indefinitely retain the owner.
         case.reset('flood')
         process = subprocess.Popen([str(HELM), *case.command(session)], env=case.env,
-                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, pipesize=4096)
         process.wait(timeout=25)  # Deliberately do not drain stdout until the process exits.
         stdout, stderr = process.communicate(timeout=2)
         assert process.returncode != 0, (stdout[-200:], stderr)
@@ -298,6 +318,38 @@ def output_and_terminal_cleanup(root):
         case.close()
 
 
+def child_cleanup(root):
+    case = Case(root)
+    try:
+        session = case.create()
+        case.reset('child')
+        # The child's live terminal keeps readiness incomplete until owned cleanup.
+        final(run(case.command(session), case.env, expected=1), 'incomplete')
+        assert case.counts == {'parent': 4, 'child': 2}, case.counts
+        # One active and one queued child must both stop before the fence hands off.
+        session = case.create()
+        case.config.write_text(case.config.read_text() + 'subagent_max_concurrency=1\n')
+        case.reset('child_hold')
+        process = subprocess.Popen([str(HELM), *case.command(session)], env=case.env,
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        assert case.started.wait(15)
+        deadline = time.monotonic() + 15
+        while case.counts.get('parent', 0) < 3 and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert case.counts.get('parent') == 3, case.counts
+        run_id = next(row['active_run']['id'] for row in case.listing()['sessions'] if row['id'] == session)
+        run([*case.args, 'cancel', session, '--run', run_id], case.env)
+        stdout, stderr = process.communicate(timeout=25)
+        assert process.returncode != 0, stderr
+        final([json.loads(line) for line in stdout.splitlines()], 'cancelled')
+        assert case.counts['child'] == 2, 'queued child dispatched'
+        case.release.set()
+        case.reset()
+        final(run(case.command(session), case.env))
+    finally:
+        case.close()
+
+
 def main():
     with tempfile.TemporaryDirectory(prefix='helm-local-managed-') as temporary:
         root = Path(temporary).resolve()
@@ -305,6 +357,7 @@ def main():
         cancellation(root / 'cancellation')
         failures_and_policy(root / 'failure-policy')
         output_and_terminal_cleanup(root / 'output-terminal')
+        child_cleanup(root / 'children')
     print('local managed CLI: native transports, exact retry, revision fences, cancellation and restart cleanup passed')
 
 
