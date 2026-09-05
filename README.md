@@ -67,6 +67,8 @@ roles: coordination can run remotely while the user connects from a workstation.
 Work can move among permitted participants without a required repository, component
 map or permanent assignment to one machine.
 
+The [Helm voyage setup UI](docs/helm-voyage-ui.md) provides a responsive recent-conversation sidebar and explicit machine/coordinator selection in saved drafts. Drafts do not start remote work.
+
 The [session management design](docs/vessel-session-management.md) describes the
 supporting lifecycle, authority and sharing boundaries. Multi-Helm coordination,
 coordinator handoff and the Helm management interface remain planned. Current

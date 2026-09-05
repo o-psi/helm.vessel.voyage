@@ -89,6 +89,14 @@ pub(super) async fn handle_command(
     };
     let (name, argument) = command.split_once(' ').unwrap_or((command, ""));
     match name {
+        "voyages" if argument.trim().is_empty() => {
+            if app.is_running() {
+                app.status = "Finish or cancel active work before opening voyage setup".into();
+            } else {
+                app.show_sessions = false;
+                app.voyage_panel.open();
+            }
+        }
         "workflow" => {
             // Restore the command draft until an actual invocation has been saved.
             if app.composer.text.is_empty() {

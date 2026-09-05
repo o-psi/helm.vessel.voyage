@@ -115,6 +115,7 @@ pub(super) fn mouse(mouse: MouseEvent, app: &mut App) -> bool {
         || app.model_panel.model_picker
         || app.shortcut_help
         || app.workflow_panel.is_open()
+        || app.voyage_panel.is_open()
         || app.supervisor_panel.supervisor_mode.is_some()
         || app.todo_panel.todo_mode.is_some()
     {

@@ -28,6 +28,8 @@ mod conversation;
 use conversation::*;
 mod recent;
 mod render;
+mod voyage_setup;
+mod voyages;
 use render::*;
 mod text;
 mod tool_output;
@@ -85,6 +87,7 @@ struct App {
     supervisor_panel: SupervisorPanel,
     todo_panel: TodoPanel,
     workflow_panel: workflows::Panel,
+    voyage_panel: voyage_setup::Hub,
     session: Session,
     sessions: Vec<Session>,
     provider_label: String,
@@ -213,6 +216,7 @@ impl App {
             supervisor_panel: SupervisorPanel::default(),
             todo_panel: TodoPanel::default(),
             workflow_panel: workflows::Panel::default(),
+            voyage_panel: voyage_setup::Hub::default(),
             session,
             sessions,
             provider_label: "provider unknown".into(),
@@ -253,6 +257,7 @@ impl App {
 
     fn cancel(&mut self) {
         self.workflow_panel.close();
+        self.voyage_panel.close();
         if let Some(question) = self.question.take() {
             let _ = question
                 .request
@@ -311,6 +316,7 @@ pub async fn run(
     tokio::pin!(termination);
 
     while !app.quit {
+        app.voyage_panel.poll();
         if app
             .question
             .as_ref()
@@ -367,7 +373,9 @@ pub async fn run(
                             }
                         } else if !app.terminal_panel.terminal_picker {
                             let text = text.replace("\r\n", "\n").replace('\r', "\n");
-                            if app.workflow_panel.is_open() {
+                            if app.voyage_panel.is_open() {
+                                app.voyage_panel.paste(&text);
+                            } else if app.workflow_panel.is_open() {
                                 app.workflow_panel.paste(&text);
                             } else if app.model_panel.model_picker {
                                 app.model_panel.model_filter.insert_str(&text);
@@ -435,7 +443,7 @@ pub async fn run(
                     }
                 }
             }
-            _ = animation.tick(), if app.is_running() => {}
+            _ = animation.tick(), if app.is_running() || app.voyage_panel.is_open() => {}
             _ = todo_refresh.tick(), if app.todo_panel.todo_mode.is_some() => request_todo_snapshot(&tx, todos.clone()),
         }
     }
@@ -877,6 +885,10 @@ async fn handle_key(
         handle_attached_key(id, key, &mut app.terminal_panel, &mut app.status, terminals).await;
         return Ok(());
     }
+    if app.voyage_panel.is_open() {
+        app.voyage_panel.key(key);
+        return Ok(());
+    }
     if app.workflow_panel.is_open() {
         app.workflow_panel
             .key(key, app.session.workspace.clone(), tx);
@@ -1023,6 +1035,9 @@ async fn handle_key(
                 app.model_panel.model_filter = Composer::default();
                 app.model_panel.selected_model = 0;
                 request_models(tx, agent.clone(), false);
+            }
+            KeyCode::Char('v') if !app.is_running() => {
+                app.voyage_panel.open();
             }
             KeyCode::Char('n') if !app.is_running() => start_new_session(app, store, None).await?,
             KeyCode::Char('b') if !app.is_running() => {
@@ -1270,6 +1285,7 @@ fn handle_mouse(mouse: MouseEvent, app: &mut App) {
         && !app.model_panel.model_picker
         && !app.shortcut_help
         && !app.workflow_panel.is_open()
+        && !app.voyage_panel.is_open()
         && app.supervisor_panel.supervisor_mode.is_none()
         && app.todo_panel.todo_mode.is_none();
     if !conversation_is_visible {

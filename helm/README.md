@@ -8,7 +8,7 @@ Helm is also the intended operator interface for local and remote work through
 Vessel. In the planned [voyage model](../docs/voyages.md), the interface, coordinating
 agent and executing participants can be on different Helms. A voyage scopes the
 permitted machines without requiring a repository or fixing all work to one host.
-The unified interface and cross-Helm coordination remain planned.
+The [voyage setup UI](../docs/helm-voyage-ui.md) provides machine selection and saved drafts; cross-Helm coordination remains planned.
 
 ## Capabilities
 
@@ -229,8 +229,7 @@ does not repeat it at completion. Styled line-oriented output buffers one respon
 be rendered coherently, then writes it once.
 
 Dedicated remote execution is available through `helm remote-worker` and the
-[Vessel HTTP lifecycle](../docs/remote-sessions.md). Managing voyages and remote
-Helms from this TUI remains planned; see the
+[Vessel HTTP lifecycle](../docs/remote-sessions.md). The TUI offers [voyage setup](../docs/helm-voyage-ui.md) with authenticated Helm discovery and saved drafts (Ctrl+V). Executing multi-Helm voyages remains planned; see the
 [session management design](../docs/vessel-session-management.md).
 
 Helm does not impose a model-turn count limit: work continues until completion, cancellation,

@@ -39,6 +39,7 @@ pub const RESERVED: &[&str] = &[
     "onboard",
     "local-provider",
     "workflow",
+    "voyages",
     "completions",
     "manpage",
     "resume",

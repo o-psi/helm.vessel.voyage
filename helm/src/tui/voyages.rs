@@ -18,13 +18,7 @@ pub(super) struct HelmChoice {
     pub(super) can_execute: bool,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub(super) struct Draft {
-    pub(super) name: String,
-    pub(super) purpose: String,
-    pub(super) participants: Vec<Uuid>,
-    pub(super) coordinator: Option<Uuid>,
-}
+pub(super) use crate::voyage::Draft;
 
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 enum Step {
@@ -196,7 +190,11 @@ impl Panel {
         self.reconcile_focus();
     }
     pub(super) fn key(&mut self, key: KeyEvent) {
-        if !self.open || key.kind == KeyEventKind::Release {
+        if !self.open
+            || key.kind == KeyEventKind::Release
+            || (key.kind == KeyEventKind::Repeat
+                && matches!(key.code, KeyCode::Enter | KeyCode::Tab | KeyCode::Char(' ')))
+        {
             return;
         }
         if self.detail {
@@ -235,7 +233,8 @@ impl Panel {
                 self.scroll = 0;
                 self.reconcile_focus();
             }
-            KeyCode::Enter | KeyCode::Tab => self.advance(),
+            KeyCode::Enter => self.advance(),
+            KeyCode::Tab if self.step != Step::Review => self.advance(),
             KeyCode::F(2) if matches!(self.step, Step::Helms | Step::Coordinator) => {
                 self.detail = self.focused.is_some();
             }
@@ -604,6 +603,14 @@ mod tests {
         assert!(panel.error.is_some());
         press(&mut panel, KeyCode::Char(' '));
         press(&mut panel, KeyCode::Enter);
+        assert!(panel.take_ready().is_none());
+        press(&mut panel, KeyCode::Tab);
+        assert!(panel.take_ready().is_none());
+        panel.key(KeyEvent::new_with_kind(
+            KeyCode::Enter,
+            KeyModifiers::NONE,
+            KeyEventKind::Repeat,
+        ));
         assert!(panel.take_ready().is_none());
         press(&mut panel, KeyCode::Enter);
         assert_eq!(

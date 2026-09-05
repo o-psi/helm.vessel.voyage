@@ -21,6 +21,7 @@ pub mod todo;
 pub mod tools;
 pub mod tui;
 pub mod voyage;
+pub mod voyage_client;
 pub mod workflow;
 
 pub use agent::{Agent, AgentEvent, AgentOutcome, EventSink};

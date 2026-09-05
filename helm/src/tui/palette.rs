@@ -49,6 +49,12 @@ pub(super) struct SlashPaletteItem {
 
 pub(super) const SLASH_COMMANDS: &[SlashCommand] = &[
     SlashCommand {
+        name: "voyages",
+        usage: "/voyages",
+        description: "Create and edit voyage drafts",
+        completion: "/voyages",
+    },
+    SlashCommand {
         name: "workflow",
         usage: "/workflow [ID [--scope user|repository]]",
         description: "Browse and run saved workflows",

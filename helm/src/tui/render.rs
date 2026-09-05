@@ -88,6 +88,13 @@ pub(super) fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
         }
         return;
     }
+    if app.question.is_none() && app.voyage_panel.is_open() {
+        app.voyage_panel.draw(frame, area);
+        if let Some(approval) = &app.approval {
+            draw_approval(frame, area, approval);
+        }
+        return;
+    }
     if app.question.is_none() && app.workflow_panel.is_open() {
         app.workflow_panel.draw(frame, area);
         if let Some(approval) = &app.approval {
@@ -165,8 +172,11 @@ pub(super) fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
         chunks[2],
     );
     frame.render_widget(
-        Paragraph::new(format!("F1 shortcuts · Ctrl+S recent  │  {}", app.status))
-            .style(Style::default().fg(Color::Gray)),
+        Paragraph::new(format!(
+            "F1 shortcuts · Ctrl+S recent · Ctrl+V voyages  │  {}",
+            app.status
+        ))
+        .style(Style::default().fg(Color::Gray)),
         chunks[3],
     );
     draw_slash_palette(frame, chunks[2], &app.palette_context());
@@ -252,7 +262,7 @@ pub(super) fn draw_shortcut_help(frame: &mut ratatui::Frame<'_>, area: Rect, app
     } else {
         (
             "Conversation",
-            "Enter: send or steer active run\nShift+Enter: newline\nUp/Down: message history\nPageUp/PageDown: scroll\nEsc: cancel active work\nCtrl+D: todos\nCtrl+A: agents\nCtrl+M: models\nCtrl+T: terminals\nCtrl+L: activity\nCtrl+O: tool details\nCtrl+S: sessions\nCtrl+N: new session\nCtrl+B: branch\nCtrl+K: compact\nCtrl+E: export\nCtrl+C: cancel or quit\nCtrl+Q: quit",
+            "Enter: send or steer active run\nShift+Enter: newline\nUp/Down: message history\nPageUp/PageDown: scroll\nEsc: cancel active work\nCtrl+D: todos\nCtrl+A: agents\nCtrl+M: models\nCtrl+T: terminals\nCtrl+L: activity\nCtrl+O: tool details\nCtrl+S: sessions\nCtrl+N: new session\nCtrl+V: voyage drafts\nCtrl+B: branch\nCtrl+K: compact\nCtrl+E: export\nCtrl+C: cancel or quit\nCtrl+Q: quit",
             "^D todos · ^A agents · ^M models · ^T terminals · ^L activity · ^S sessions · ^N new · ^B branch · ^K compact · ^E export",
         )
     };

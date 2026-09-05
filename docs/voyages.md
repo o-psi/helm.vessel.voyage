@@ -107,7 +107,8 @@ Application policy is not an OS sandbox.
 | Private managed local sessions and run-owned completion accounting | Available; see [managed sessions](local-managed-sessions.md) and [completion](completion-gate.md). |
 | Enrollment and authenticated outbound presence | Available through [enrollment](attachment-cli.md) and [presence](attachment-presence.md). |
 | One new dedicated foreground remote session | Available through `helm remote-worker` and opt-in authenticated Vessel HTTP operations; see [remote sessions](remote-sessions.md). |
-| Helm interface for managing local/remote voyages, scope and participants | Planned. Current Helm chat does not provide that operator workflow. |
+| Helm voyage setup and machine/coordinator selection | Available as [saved configuration drafts](helm-voyage-ui.md); no runtime execution or sharing. |
+| Helm interface for executing/managing local/remote voyages | Planned. |
 | Remote voyage coordinator, cross-Helm delegation and coordinator handoff | Planned. Local subagent supervision and managed-session ownership are foundations, not these features. |
 | Full remote lifecycle, broader sharing, services and delegated approvals | Still require delivery and verification under the attachment issues. |
 
