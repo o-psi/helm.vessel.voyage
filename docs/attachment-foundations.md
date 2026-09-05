@@ -169,3 +169,7 @@ Session replacement syncs file contents on all platforms and directory entries o
 Unix. Windows directory-entry power-loss durability remains unproven; portable
 save/load/replace/delete tests do not establish that guarantee. Enrollment still
 fails closed on non-Unix platforms pending native ACL validation.
+
+The explicit local [session transfer foundation](session-journal-transfer.md) provides
+crash-resumable JSON-to-journal authority transfer and a quiescent schema upgrade,
+without frontend wiring or automatic operator-state migration.

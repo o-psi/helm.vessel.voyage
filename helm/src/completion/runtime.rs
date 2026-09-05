@@ -95,6 +95,10 @@ impl Coordinator {
             gate,
         })
     }
+    #[cfg_attr(not(unix), allow(dead_code))]
+    pub(crate) fn transfer_identity(&self) -> (&Path, &Path) {
+        (&self.directory, &self.workspace)
+    }
     pub(crate) fn acquire_agent_writer(&self) -> Result<AgentWriterLease> {
         let path = self.directory.join("agents.execution.lock");
         let mut options = OpenOptions::new();
