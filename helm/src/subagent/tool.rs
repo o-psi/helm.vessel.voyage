@@ -130,7 +130,11 @@ impl Tool for SubagentTool {
                         .policy
                         .check_delegated_workspace(&destination)
                         .map_err(failed)?;
-                    approve_git(context, "subagent.create", &worktree_name).await?;
+                    let command = manager
+                        .create_command(&worktree_name, "HEAD")
+                        .map_err(failed)?;
+                    approve_git_command(context, "subagent.create", &worktree_name, &command)
+                        .await?;
                     context.policy.check_current().map_err(failed)?;
                     Some(manager.create(&worktree_name, "HEAD").map_err(failed)?)
                 } else {
@@ -296,7 +300,15 @@ impl SubagentTool {
 }
 
 async fn approve_git(context: &ToolContext, action: &str, target: &str) -> Result<(), ToolError> {
-    match context.policy.command(&format!("git {action} {target}")) {
+    approve_git_command(context, action, target, &format!("git {action} {target}")).await
+}
+async fn approve_git_command(
+    context: &ToolContext,
+    action: &str,
+    target: &str,
+    command: &str,
+) -> Result<(), ToolError> {
+    match context.policy.command(command) {
         Decision::Deny(reason) => Err(ToolError::Denied(reason)),
         Decision::Ask(reason)
             if !context
@@ -455,6 +467,34 @@ mod tests {
         );
         assert!(!destination.exists());
         assert!(runtime.list().await.is_empty());
+        let permitted_root = root.path().join("permitted");
+        std::fs::create_dir(&permitted_root).unwrap();
+        let manager = WorktreeManager::new(
+            context.policy.workspace().into(),
+            permitted_root.join("new-root"),
+        )
+        .unwrap();
+        let mut config = config;
+        config.allow_read = vec![permitted_root.clone()];
+        config.allow_write = vec![permitted_root.clone()];
+        for denied in ["worktree", "add"] {
+            config.deny_commands = vec![denied.into()];
+            let mut denied_context = context.clone();
+            denied_context.policy = Arc::new(
+                crate::policy::Policy::new(&config, context.policy.workspace().into()).unwrap(),
+            );
+            let tool = tool.clone().with_worktrees(Some(manager.clone()));
+            let error = tool
+                .execute(
+                    json!({"action":"spawn","name":"child","task":"nothing","worktree":true}),
+                    &denied_context,
+                )
+                .await
+                .unwrap_err();
+            assert!(error.to_string().contains("denied by policy"), "{error}");
+            assert!(!permitted_root.join("new-root").exists());
+            assert!(runtime.list().await.is_empty());
+        }
     }
     struct PendingApproval {
         entered: tokio::sync::Notify,

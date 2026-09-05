@@ -63,6 +63,21 @@ impl WorktreeManager {
         );
         Ok(self.root.join(name))
     }
+    /// Exact argv rendered for Policy's command parser; never passed to a shell.
+    pub fn create_command(&self, name: &str, start_point: &str) -> Result<String> {
+        let path = self.planned_path(name)?;
+        validate(start_point)?;
+        let branch = format!("agents/{name}");
+        Ok(shell_words::join([
+            "git",
+            "worktree",
+            "add",
+            "-b",
+            &branch,
+            path.to_str().context("non-UTF8 path")?,
+            start_point,
+        ]))
+    }
     pub fn create(&self, name: &str, start_point: &str) -> Result<WorktreeLease> {
         let path = self.planned_path(name)?;
         validate(start_point)?;
