@@ -559,3 +559,218 @@ async fn cancellation_during_handshake_and_active_receive_releases_connection() 
     connection.close().await;
     drop(fixture.reopen());
 }
+
+#[tokio::test]
+async fn trace_logging_socket_child() {
+    if std::env::var_os("VOYAGE_SOCKET_TRACE_CHILD").is_none() {
+        return;
+    }
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::TRACE)
+        .with_ansi(false)
+        .init();
+    tracing::trace!("APPLICATION_TRACE_CAPTURE_WORKS");
+    let mut fixture = Fixture::new(None).await;
+    let mut connection = fixture.connect().await.unwrap();
+    let context = connection.context().clone();
+    let id = Uuid::new_v4();
+    let frame = Frame::Command {
+        command: Command {
+            version: VERSION,
+            connection_id: context.connection_id,
+            machine_id: context.machine_id,
+            principal_id: context.owner_id,
+            command_id: id,
+            expires_at_ms: now() + 20000,
+            operation: Operation::Submit {
+                session_id: Uuid::new_v4(),
+                expected_revision: 0,
+                prompt: "SOCKET_PROMPT_CANARY_NEVER_LOG".into(),
+            },
+        },
+    };
+    fixture
+        .api
+        .as_ref()
+        .unwrap()
+        .send(context.machine_id, frame)
+        .await
+        .unwrap();
+    assert!(matches!(
+        tokio::time::timeout(Duration::from_secs(2), connection.receive())
+            .await
+            .unwrap(),
+        Some(Frame::Command { .. })
+    ));
+    connection
+        .send(Frame::Result {
+            connection_id: context.connection_id,
+            command_id: id,
+            reply: Reply::History {
+                session_id: Uuid::new_v4(),
+                entries: vec![voyage_protocol::stream::ConversationEntry {
+                    role: voyage_protocol::stream::ConversationRole::Assistant,
+                    text: "SOCKET_HISTORY_CANARY_NEVER_LOG".into(),
+                }],
+                next: None,
+            },
+        })
+        .unwrap();
+    assert!(
+        tokio::time::timeout(
+            Duration::from_secs(2),
+            fixture.observations.as_mut().unwrap().recv()
+        )
+        .await
+        .unwrap()
+        .is_some()
+    );
+    connection.close().await;
+}
+
+#[test]
+fn trace_logging_does_not_expose_proofs_prompts_or_history() {
+    assert!(log::STATIC_MAX_LEVEL <= log::LevelFilter::Info);
+    let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "attachment::transport::socket_tests::trace_logging_socket_child",
+            "--nocapture",
+        ])
+        .env("VOYAGE_SOCKET_TRACE_CHILD", "1")
+        .env("RUST_LOG", "trace")
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut stdout = child.stdout.take().unwrap();
+    let mut stderr = child.stderr.take().unwrap();
+    let out_reader = std::thread::spawn(move || {
+        use std::io::Read;
+        let mut bytes = Vec::new();
+        stdout.read_to_end(&mut bytes).unwrap();
+        bytes
+    });
+    let err_reader = std::thread::spawn(move || {
+        use std::io::Read;
+        let mut bytes = Vec::new();
+        stderr.read_to_end(&mut bytes).unwrap();
+        bytes
+    });
+    let until = std::time::Instant::now() + Duration::from_secs(15);
+    loop {
+        if child.try_wait().unwrap().is_some() {
+            break;
+        }
+        if std::time::Instant::now() >= until {
+            child.kill().unwrap();
+            panic!("trace socket child timed out");
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let status = child.wait().unwrap();
+    assert!(status.success(), "socket logging fixture failed");
+    let stdout = out_reader.join().unwrap();
+    let stderr = err_reader.join().unwrap();
+    let logs = format!(
+        "{}{}",
+        String::from_utf8_lossy(&stdout),
+        String::from_utf8_lossy(&stderr)
+    );
+    assert!(logs.contains("APPLICATION_TRACE_CAPTURE_WORKS"));
+    for secret in [
+        "SOCKET_PROMPT_CANARY_NEVER_LOG",
+        "SOCKET_HISTORY_CANARY_NEVER_LOG",
+        "server_tag",
+        "signature",
+    ] {
+        assert!(
+            !logs.contains(secret),
+            "transport payload appeared in TRACE capture"
+        );
+    }
+}
+
+#[tokio::test]
+async fn local_detach_joins_socket_and_preserves_disabled_enrollment() {
+    let mut fixture = Fixture::new(Some(Script::Idle)).await;
+    let mut connection = fixture.connect().await.unwrap();
+    let machine = connection.context().machine_id;
+    connection.detach().await.unwrap();
+    assert!(!connection.is_active());
+    assert!(connection.receive().await.is_none());
+    connection.close().await;
+    let reopened = fixture.reopen();
+    assert_eq!(reopened.machine_id(), machine);
+    assert!(matches!(
+        connect(reopened, Features::default(), CancellationToken::new()).await,
+        Err(TransportError::Enrollment)
+    ));
+}
+
+#[tokio::test]
+async fn queued_frames_with_deadline_already_expired_never_reach_socket() {
+    // Expiry precedes the first poll, rather than depending on a wall-clock race.
+    // Repeat to cover fair select choosing either the timer or the ready queue.
+    for _ in 0..16 {
+        let root = tempfile::tempdir().unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let peer = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
+            tokio::time::timeout(Duration::from_secs(2), socket.next())
+                .await
+                .unwrap()
+        });
+        let (socket, _) = tokio_tungstenite::connect_async(format!("ws://{address}/"))
+            .await
+            .unwrap();
+        let client = EnrollmentClient::open(
+            &root.path().join("client"),
+            &format!("http://{address}"),
+            true,
+        )
+        .unwrap();
+        let context = ConnectionContext {
+            connection_id: Uuid::new_v4(),
+            machine_id: client.machine_id(),
+            owner_id: Uuid::new_v4(),
+            epoch: 1,
+            features: Features::default(),
+        };
+        let (outgoing, receiver) = mpsc::channel(QUEUE);
+        outgoing
+            .send(
+                Frame::Result {
+                    connection_id: context.connection_id,
+                    command_id: Uuid::new_v4(),
+                    reply: Reply::Accepted {},
+                }
+                .encode()
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+        let (incoming, _receiver) = mpsc::channel(QUEUE);
+        let closed = CancellationToken::new();
+        run(
+            SocketOwner {
+                socket,
+                _client: Arc::new(client),
+            },
+            context,
+            closed.clone(),
+            Arc::new(Mutex::new(Instant::now() - Duration::from_millis(1))),
+            receiver,
+            incoming,
+        )
+        .await;
+        assert!(closed.is_cancelled());
+        let observed = peer.await.unwrap();
+        assert!(
+            !matches!(observed, Some(Ok(Message::Text(_)))),
+            "expired outgoing frame reached peer"
+        );
+    }
+}
