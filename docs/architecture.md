@@ -4,35 +4,30 @@ Voyage separates local execution from the planned remote management plane. Helm
 owns provider credentials, canonical conversation state, policy, approvals and tool
 execution. Local chat, runs, sessions, terminals, todos and subagents remain available.
 
-## Connection transition
+## Outbound attachment presence
 
-The legacy pairing and HTTP task-worker path has been removed as an intentional
-clean break under [#77](https://github.com/o-psi/voyage/issues/77). **There is currently
-no Helm-to-Vessel connection mode.** Neither `helm --voyage` nor the proposed
-`helm attach` is a supported command in this build.
-
-The target [Vessel-managed session design](vessel-session-management.md) reverses
-enrollment: Vessel issues a one-use invitation and Helm redeems it, then initiates
-an outbound interactive connection. This is planned, not implemented:
+Vessel issues a one-use enrollment invitation and Helm redeems it. An enrolled
+Helm can maintain an authenticated, foreground outbound connection with
+`helm attachment --directory /absolute/identity connect`. See
+[enrollment](attachment-cli.md) and [presence](attachment-presence.md) for setup,
+shutdown, revocation and bounded diagnostics.
 
 ```text
 operator ── Helm TUI ── local policy ── tools
-
-planned: Vessel ◀── outbound attached Helm ── local policy ── tools
+Vessel ◀── outbound Helm presence (heartbeats only)
 ```
 
-See [retirement and data preservation](vessel-connectivity-retirement.md) for removed
-interfaces and upgrade/rollback limitations. Old enrollment files and Vessel SQLite
-snapshots remain on disk but are not loaded, migrated or executed. Removing code
-does not stop already-running old binaries or revoke credentials on other servers.
+Presence negotiates no application capabilities and cannot dispatch work or
+expose sessions. The [Vessel-managed session design](vessel-session-management.md)
+remains the target for explicit sharing, interactive control and services.
 
 ## Trust boundaries
 
 1. Provider credentials and provider continuation state remain exclusively on Helm.
 2. All execution remains subject to local roots, command policy, approvals,
    cancellation and resource limits. Application policy is not an OS sandbox.
-3. Future enrollment must use distinct scoped credentials and explicit session
-   sharing consent. Old pairing strings are not join keys.
+3. Enrollment uses distinct scoped credentials. Sharing session data and remote
+   control require separate explicit consent and current local authorization.
 4. Helm initiates network connections; attachment must not require an inbound Helm
    task port. Vessel is the authenticated control plane, not an execution authority.
 
@@ -46,18 +41,17 @@ See [Parallel subagents](subagents.md) for lifecycle and safety requirements.
 
 ## Current management-plane surface
 
-Vessel retains:
+Vessel provides:
 
 - `GET /health`: process liveness.
 - `GET /ready`: database connection check, not remote-execution readiness.
-- `GET /metrics`: explicit disabled-connectivity gauge.
-- `GET /v1/diagnostics`: authenticated version/transition status, no legacy content.
-- `GET /ui`: authenticated static status page explaining unavailable connectivity.
+- `GET /metrics`: whether attachment presence is configured.
+- `GET /v1/diagnostics`: authenticated status and bounded current presence metadata.
+- `GET /ui`: authenticated static status page.
+- Explicitly configured enrollment administration and `/v2/attachment` presence.
 
-All old pairing, worker, fleet, task and task-UI routes are gone. There is no task
-scheduler/reaper, credential recovery or operator write surface in the interim server.
-`voyage-protocol` retains common health/error responses and now contains strict v2
-command-domain foundations, not legacy task types or an enabled new transport.
-The [attachment foundations](attachment-foundations.md) also include a transactional
-local command/run journal; neither is wired to remote execution. Enrollment, event
-transport, full coordination and authorization remain open under #9/#10/#78/#79.
+`voyage-protocol` contains strict v2 command, feature and event contracts. The
+[attachment foundations](attachment-foundations.md) include a transactional local
+command/run journal. Production presence does not connect these foundations to
+remote execution. Full coordination, sharing, operator sessions, approvals and
+services remain open under #9/#10/#78/#79 and #77.
