@@ -74,7 +74,9 @@ async fn poisoned_storage_is_unconfirmed_even_when_map_looks_empty() {
         panic!("fixture poison");
     })
     .join();
-    let report = tool.shutdown(Duration::from_millis(10)).await;
+    // This checks a specific diagnostic, not the observer scheduling deadline.
+    // Use the foreground cleanup budget so a loaded blocking pool can inspect it.
+    let report = tool.shutdown(Duration::from_secs(5)).await;
     assert!(!report.observation_complete);
     assert!(report.failures.contains(&TerminalShutdownFailure::Poisoned));
 }
