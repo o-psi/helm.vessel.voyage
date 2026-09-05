@@ -1,6 +1,7 @@
 # Runtime administrator ceiling
 
-On Linux, ordinary Helm CLI, TUI, resumed sessions and child builders read the fixed
+On Linux, Helm agent execution through `run`/`chat`, the TUI, resumed sessions and
+child builders reads the fixed
 protected `/etc/helm/policy-ceiling.toml` source described in
 [policy-profiles.md](policy-profiles.md). There is no user-configurable path or
 skip flag. An absent source under trusted ancestry preserves the existing Config
@@ -41,6 +42,11 @@ are not instantaneously revoked by administrator edits, and filesystem paths can
 change after a check. Providers and local trusted library callers are not granted
 new execution authority by metadata. Profile CRUD, import/export commands and
 interactive switching are separate unfinished #70 work.
+
+This slice governs agent builders/execution and provider model discovery. Attachment
+heartbeat, config/doctor, onboarding and local-provider administration are separate
+operator commands; their entire startup is not gated here. No network or broader
+administrative authority is introduced.
 
 The new protected-ceiling feature is Linux-only. Existing ordinary non-Linux
 startup retains its previous Config behavior through an internal compile-time
