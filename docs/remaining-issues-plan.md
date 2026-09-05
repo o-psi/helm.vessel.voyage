@@ -283,3 +283,12 @@ Each original reviewed head had successful Linux CI and recorded acceptance-focu
 #112 now targets accepted catalogue parent #109. A final local-stack integration is being prepared to combine current main, consent, cleanup, schema corrections and accepted ancestry before a single final Linux baseline. No main merge or epic completion is claimed by these feature-parent deliveries.
 
 Todo PR #122 at9149502 passes723 tests normally and under two CPUs, all19 systems, strict quality, locked release,12 eval definitions and packaging/checksums. Current Linux CI is pending. Docs-only655eb6d corrects stale completion acceptance lists, preserves exact evidence and distinguishes local helper delivery from broader live/remote/subscription acceptance.
+
+
+## Corrected destination: deliver the combined local features to main
+
+The operator clarified that feature-parent PR closure is insufficient: the intended destination is main. PR #88 now carries the combined reviewed local stack at2275e4e124a2267835e9347f2f38c358a48cd13e, with runtime frozen at31453fade3e8278e2a6232ad284cc86639e59c00. The last commit changes only acceptance prose to distinguish main delivery of completed local functionality from open remote/live/subscription work. Scope: https://github.com/o-psi/voyage/issues/78#issuecomment-5554238354 .
+
+Independent integration review found no concrete blocker. Initial fmt/strict Clippy and provider34/consent29/schema10/CLI25 targeted tests pass. Full workspace tests pass; final two-CPU/release/all21 system fixtures/eval/package baseline and current-head Linux CI are running. Main merge will follow those checks. Superseded #88 branch CI runs were cancelled to avoid redundant cost; only2275e4e is the intended delivery head.
+
+The new policy runtime feature is independent and no longer blocks this completed local stack. Its nested-child authority correction29e2876 passed independent review and targeted tests, with a separate full baseline underway. It will integrate actual main after the local stack lands, including explicit review of managed builder and child authority. No native macOS/Windows gate or false epic closure is introduced.
