@@ -5,8 +5,9 @@ effective-rule resolution and a protected Linux system-ceiling reader. Ordinary
 Linux CLI, TUI, managed-session, saved-workflow and child execution now enforce
 the administrator ceiling through matching runtime policy and environment rules.
 See [runtime boundaries](policy-ceiling-runtime.md) for enforcement points and
-limitations. Named-profile management and selection remain unfinished under
-issue #70; runtime integration currently uses no selected profile layers.
+limitations. Explicit named-profile CLI management and launch selection are
+implemented below. Persistent defaults and in-TUI switching remain unfinished
+under issue #70.
 
 ## Typed rules and presets
 
@@ -59,8 +60,8 @@ with identical rules still have distinct provenance. A digest is binding evidenc
 not authentication or proof of operator interaction.
 
 Repository files and session transcripts are not automatically loaded as layers.
-Future profile selection must derive those inputs from explicit local operator
-choices and retain pinned revisions; imports must remain inert until selection.
+Named-profile selection derives inputs from explicit local operator choices and
+retains pinned revisions; imports remain inert until selection.
 
 ## Protected Linux ceiling
 
@@ -106,9 +107,122 @@ managers the same effective rules. Explicit Config and MCP environment values
 retain precedence only where the administrator environment-name ceiling permits
 them. Future profile switching must stop and observe prior owned effects before rebuilding
 and showing a new effective-policy label. A missing approver must never cause an
-unattended wait or authority promotion. Profile CRUD and switching remain unfinished; the foundation alone does not complete #70.
+unattended wait or authority promotion. Explicit named-profile launch selection is implemented below. Persistent defaults
+and in-TUI switching remain unfinished; this does not complete #70.
 
 Tests exercise strict schemas, presets, source history, root/set intersections,
 escalation and stale confirmations, canonical aliases/recreated workspaces, and
 protected-source ownership, permissions, links, malformed data and replacement.
 Filesystem tests use private internal injection; they do not modify operator `/etc`.
+
+## Explicit named-profile CLI lifecycle
+
+`helm policy` manages a private store under the Helm config directory's `profiles`
+child, or an explicit absolute `--policy-directory` whose parent already exists.
+Default administrative initialization creates missing parent directories privately
+through pinned no-follow components; runtime freshness never initializes them. It never selects a profile
+merely because one was created, imported, or found in a repository. Built-in
+`restricted`, `balanced`, and `autonomous` profiles are immutable. Custom profiles
+have a current revision and stable incarnation ID; deletion leaves a tombstone.
+Recreating a deleted name increments its revision and gives it a new incarnation.
+
+```sh
+helm policy list
+helm policy create review --preset restricted
+helm policy inspect review
+helm policy duplicate review review-copy
+helm policy export review > review.json
+helm policy edit review --expected-revision 1 --input review.json
+helm policy import imported-review --input review.json
+helm policy delete review-copy --expected-revision 1
+```
+
+Creation/import/duplication use expected revision zero by default. Recreating a
+name requires its tombstone revision. Edits require the document's name to match;
+imports deliberately copy only its rules into the explicitly chosen destination.
+Source revisions are inert metadata, not authority over destination history.
+Exports contain only the typed name, revision, and rules. There is no arbitrary
+file overwrite in the exporter: stdout redirection is an operator choice.
+
+`list` includes tombstones and supports `--after NAME --limit N` (1–100). `inspect`
+returns the current snapshot and its digest. Mutations print an operation UUID
+before publication; provide `--operation UUID` and the identical original payload
+for an uncertain retry. A historical duplicate returns its original receipt even
+if later edits exist. It does **not** restore or activate that older revision.
+Changed payloads under the same operation ID are refused. Duplicate-source retries
+must still describe the same copied rules; if the source changed, use an original
+reviewed export with `import` and the original operation ID instead.
+
+Select a profile explicitly for one invocation:
+
+```sh
+helm --config /absolute/config.toml --workspace /absolute/project \
+  policy preview review --revision 2 --digest DIGEST_FROM_INSPECT
+# Repeat the same Config/workspace/explicit policy overrides, then add the emitted flags:
+helm --config /absolute/config.toml --workspace /absolute/project \
+  --policy-profile review --policy-revision 2 --policy-digest DIGEST_FROM_INSPECT \
+  run 'Review this project'
+```
+
+Preview reports previous and proposed effective rules and provenance, plus exact
+`selection_flags`. When confirmation is required, those flags include
+`--policy-confirm TRANSITION_DIGEST`. No interactive confirmation wait is added;
+missing, stale, or wrong confirmation refuses the invocation before provider/tool
+construction. The digest binds this Config's policy, explicit CLI overrides, exact
+profile revision, canonical workspace identity, and current system ceiling. This
+is an explicit local launch choice, not cryptographic authentication of a person.
+
+The actual precedence is Config base, selected profile, explicit policy CLI
+options (`--access`, legacy `--approval`, and supported policy `--set` keys), then
+the mandatory administrator ceiling. The comparison baseline is the actual Config
+including those same explicit overrides. Explicit Config/MCP environment values
+retain existing precedence and are restricted only by the actual administrator
+name ceiling; they are never copied into profile provenance or preview.
+
+Shared ordinary, plain-chat, TUI, managed-submit, workflow-run, and model-discovery
+builders consume selection. Before a new run they reread its exact current revision
+and the protected ceiling; changed/deleted profiles or a changed transition require
+explicit reselection. Children receive resolved parent maxima, not a second
+application of a broader profile. Their inherited root selection freshness still
+refuses new work after a parent-profile edit. In-flight effects are not instantly
+revoked; application policy is not an OS sandbox.
+
+Selection survives in-process Config clones and overrides but is deliberately
+omitted from persisted Config and sessions. Resume requires explicit reselection;
+otherwise it uses the invocation's ordinary Config and ceiling. The selected
+workspace must match the actual saved workspace. Supply that explicit `--workspace`
+when previewing and resuming; Helm does not silently rebind a reviewed transition.
+Profile selection is not accepted by unrelated administrative commands.
+
+TUI subprocess relaunch requests (including `/plain`, `/verbose`, and commands that
+leave the UI and return) are refused while a profile is selected. This prevents a
+serialized temporary Config from dropping a restrictive selection. Exit normally,
+preview/reselect explicitly, and launch the requested frontend. In-TUI switching
+and persistent global/project defaults remain unfinished #70 scope. Other-platform
+schema/storage administration remains available, but explicit profile enforcement
+requires Linux; ordinary no-profile behavior retains existing platform support.
+
+## Private publication and recovery boundary
+
+The private store uses the reviewed local-actor directory-relative storage helper,
+nonblocking exclusive mutation/bootstrap locks, shared initialized-read locks, and
+no-clobber immutable publication. Selection freshness never creates a missing
+directory/lock/header or fsyncs state. Concurrent readers can coexist; a conflicting
+writer still causes explicit Busy refusal rather than cached authorization. History is
+bounded to 1,024 operations. Each change is at most 30 KiB, each immutable record at
+most 64 KiB, and documents retain the schema's collection/name/path bounds. A
+publication witness prevents a missing final record from silently exposing an
+older revision. Hashes bind records and requests; they are integrity evidence, not
+authentication or protection against an owner deliberately restoring the complete
+store from an older backup.
+
+A valid staged record is never selected by reads. Its exact operation can finish
+publication; a different operation is refused. Malformed or partially written
+candidates/witnesses fail closed and are **not** automatically repaired, discarded,
+or guessed from an unrelated retry. Stop affected Helm processes and preserve the
+whole directory for inspection. To recover manually, choose a new private directory,
+import only previously exported rules that you explicitly review again, and obtain
+new revision/digest/transition selections. Do not overwrite evidence or reuse old
+selection receipts as permission. History exhaustion uses the same explicit new-store
+workflow; there is no destructive automatic compaction. Locks are never retained
+across network, provider, approval, or Journal operations.

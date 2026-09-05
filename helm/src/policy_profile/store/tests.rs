@@ -311,3 +311,27 @@ fn concurrent_private_open_handles_allow_only_one_cas_winner() {
         1
     );
 }
+#[test]
+fn initialized_shared_readers_coexist_and_exclude_mutation_without_bootstrap() {
+    let temp = TempDir::new().unwrap();
+    let path = temp.path().join("profiles");
+    assert!(ProfileStore::open_existing(&path).is_err());
+    assert!(!path.exists());
+    let store = ProfileStore::open(&path).unwrap();
+    store.change(&create("review")).unwrap();
+    let reader = store.directory.read_lock().unwrap();
+    let another = ProfileStore::open_existing(&path).unwrap();
+    assert_eq!(another.inspect("review").unwrap().unwrap().revision, 1);
+    assert!(matches!(
+        another.change(&create("other")),
+        Err(StoreError::Busy)
+    ));
+    drop(reader);
+    another.change(&create("other")).unwrap();
+    let writer = store.directory.lock().unwrap();
+    assert!(matches!(another.inspect("review"), Err(StoreError::Busy)));
+    drop(writer);
+    std::fs::remove_file(path.join("actor.lock")).unwrap();
+    assert!(ProfileStore::open_existing(&path).is_err());
+    assert!(!path.join("actor.lock").exists());
+}

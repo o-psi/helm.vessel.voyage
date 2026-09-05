@@ -121,6 +121,43 @@ fn directory(flags: &SelectionArgs) -> Result<PathBuf> {
     ensure!(path.is_absolute(), "policy directory must be absolute");
     Ok(path)
 }
+// Provision only the default administration path, one pinned no-follow component
+// at a time. Selection freshness never calls this initialization helper.
+#[cfg(unix)]
+fn initialize_default_parent(path: &Path) -> Result<()> {
+    use cap_fs_ext::DirExt;
+    use cap_std::fs::{Dir, DirBuilder, DirBuilderExt};
+    use std::path::Component;
+    ensure!(
+        path.is_absolute() && path.components().count() <= 128,
+        "invalid default policy directory"
+    );
+    let mut current = Dir::open_ambient_dir("/", cap_std::ambient_authority())?;
+    let mut builder = DirBuilder::new();
+    builder.mode(0o700);
+    for component in path.components() {
+        let Component::Normal(name) = component else {
+            ensure!(
+                component == Component::RootDir,
+                "invalid default policy ancestor"
+            );
+            continue;
+        };
+        current = match current.open_dir_nofollow(name) {
+            Ok(next) => next,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                match current.create_dir_with(name, &builder) {
+                    Ok(()) => (),
+                    Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => (),
+                    Err(error) => return Err(error.into()),
+                }
+                current.open_dir_nofollow(name)?
+            }
+            Err(error) => return Err(error.into()),
+        };
+    }
+    Ok(())
+}
 /// CLI override fields are copied from the already-validated actual Config.
 /// Environment values are intentionally absent from both selection and provenance.
 pub fn explicit(config: &Config, assignments: &[String], access: bool) -> Result<Overrides> {
@@ -207,6 +244,13 @@ pub fn run(
         "policy administration cannot also select a launch profile"
     );
     let path = directory(flags)?;
+    #[cfg(unix)]
+    if flags.policy_directory.is_none() {
+        initialize_default_parent(
+            path.parent()
+                .context("policy directory requires a parent")?,
+        )?;
+    }
     let store = ProfileStore::open(&path)?;
     let (name, expected_revision, operation, action) = match args.command {
         PolicyCommand::List { after, limit } => {
@@ -330,4 +374,26 @@ pub fn run(
         expected_revision,
         action,
     })?)
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    #[test]
+    fn default_initialization_uses_private_modes_and_never_follows_ancestor_symlinks() {
+        use std::os::unix::fs::{PermissionsExt, symlink};
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("new/config/helm");
+        initialize_default_parent(&path).unwrap();
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+        let outside = temp.path().join("outside");
+        std::fs::create_dir(&outside).unwrap();
+        symlink(&outside, temp.path().join("linked")).unwrap();
+        assert!(initialize_default_parent(&temp.path().join("linked/escape")).is_err());
+        assert!(!outside.join("escape").exists());
+        assert!(initialize_default_parent(&temp.path().join("new/../escape")).is_err());
+    }
 }

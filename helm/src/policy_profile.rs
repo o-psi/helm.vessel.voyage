@@ -1,6 +1,6 @@
 //! Inspectable profile metadata and the administrator ceiling used by runtime builders.
 //! Public profile-layer resolution checks the fixed system ceiling; ordinary runtime
-//! integration currently selects no profile layers. Confirmation is not dispatch authority.
+//! integration also checks explicit named-profile selection. Confirmation is not dispatch authority.
 mod ceiling;
 pub mod cli;
 pub mod selection;

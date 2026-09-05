@@ -45,7 +45,7 @@ impl SelectionRequest {
                     .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase()),
             "invalid policy selection"
         );
-        let snapshot = ProfileStore::open(&self.directory)?
+        let snapshot = ProfileStore::open_existing(&self.directory)?
             .inspect(&self.name)?
             .ok_or_else(|| anyhow::anyhow!("selected policy profile is missing"))?;
         ensure!(

@@ -203,3 +203,54 @@ fn normal_config_override_handoff_retains_selected_revision_freshness() {
         .unwrap();
     assert!(RuntimePolicy::resolve(&config, temp.path()).is_err());
 }
+#[test]
+fn selected_profile_and_explicit_override_cannot_bypass_fresh_protected_ceiling() {
+    let (temp, mut config, mut request) = setup();
+    let etc = temp.path().join("etc");
+    std::fs::create_dir_all(etc.join("helm")).unwrap();
+    let mut rules = Builtin::Restricted.document().rules;
+    rules.inherit_env = vec!["PATH".into()];
+    let ceiling = etc.join("helm/policy-ceiling.toml");
+    std::fs::write(
+        &ceiling,
+        toml::to_string(&crate::policy_profile::CeilingDocument {
+            schema: 1,
+            rules: rules.clone(),
+        })
+        .unwrap(),
+    )
+    .unwrap();
+    let preset = ProfileStore::open(&request.directory)
+        .unwrap()
+        .inspect("autonomous")
+        .unwrap()
+        .unwrap();
+    request.name = preset.name.clone();
+    request.digest = preset.digest().unwrap();
+    request.explicit.access = Some(AccessMode::Unrestricted);
+    let source = Source::Test(etc);
+    let base = config_rules(&config).unwrap();
+    let preview = Selection::preview_using(&base, temp.path(), &request, &source).unwrap();
+    assert_eq!(preview.proposed.rules().access, AccessMode::ReadOnly);
+    assert!(!preview.requires_confirmation);
+    config.env.insert("REMOVE".into(), "excluded-secret".into());
+    config.policy_profile = Some(Selection {
+        request,
+        workspace: temp.path().canonicalize().unwrap(),
+        base,
+        transition_digest: preview.transition_digest,
+        source,
+    });
+    let resolved = RuntimePolicy::resolve(&config, temp.path()).unwrap();
+    assert_eq!(resolved.config().access_mode(), AccessMode::ReadOnly);
+    assert!(!resolved.config().env.contains_key("REMOVE"));
+    rules.access = AccessMode::Unrestricted;
+    std::fs::write(
+        &ceiling,
+        toml::to_string(&crate::policy_profile::CeilingDocument { schema: 1, rules }).unwrap(),
+    )
+    .unwrap();
+    assert!(resolved.policy().check_current().is_err());
+    std::fs::write(&ceiling, "bad =").unwrap();
+    assert!(RuntimePolicy::resolve(&config, temp.path()).is_err());
+}

@@ -246,6 +246,22 @@ impl ProfileStore {
         drop(lock);
         Ok(Self { directory })
     }
+    /// Selection freshness never bootstraps missing state or publishes pending data.
+    pub fn open_existing(path: &Path) -> Result<Self> {
+        let directory = storage::Directory::open_existing(path).map_err(storage_error)?;
+        let lock = directory.read_lock().map_err(storage_error)?;
+        if directory
+            .read_bounded(HEADER, MAX_RECORD)
+            .map_err(storage_error)?
+            .as_deref()
+            != Some(HEADER_BYTES)
+        {
+            return Err(StoreError::Evidence);
+        }
+        directory.verify().map_err(storage_error)?;
+        drop(lock);
+        Ok(Self { directory })
+    }
     fn check_record(&self, record: &Record, state: &Loaded) -> Result<()> {
         if record.version != 1
             || record.sequence != state.records.len() as u64 + 1
@@ -477,7 +493,7 @@ impl ProfileStore {
         if !super::label(name) {
             return Err(StoreError::Invalid);
         }
-        let _lock = self.directory.lock().map_err(storage_error)?;
+        let _lock = self.directory.read_lock().map_err(storage_error)?;
         let state = self.load()?;
         if state.pending.is_some() {
             return Err(StoreError::Pending);
@@ -488,7 +504,7 @@ impl ProfileStore {
         if !(1..=100).contains(&limit) || after.is_some_and(|s| !super::label(s)) {
             return Err(StoreError::Invalid);
         }
-        let _lock = self.directory.lock().map_err(storage_error)?;
+        let _lock = self.directory.read_lock().map_err(storage_error)?;
         let mut state = self.load()?;
         if state.pending.is_some() {
             return Err(StoreError::Pending);

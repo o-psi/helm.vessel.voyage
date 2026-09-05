@@ -1552,6 +1552,10 @@ async fn launch_from_tui(
     verbose: bool,
     log_format: LogFormat,
 ) -> Result<()> {
+    anyhow::ensure!(
+        config.policy_profile.is_none(),
+        "selected policy profile cannot cross a frontend relaunch; exit and explicitly reselect for the requested frontend"
+    );
     let runtime_config = request
         .use_active_config
         .then(|| write_runtime_config(config))
