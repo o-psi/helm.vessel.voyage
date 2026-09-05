@@ -263,3 +263,23 @@ PR #121 passed both Linux CI runs and merged into draft #112 as 68f5c9a; [delive
 Policy TUI preflight is frozen at 5cc5704 after red/green actual PTY reproduction: changed ceiling refuses provider/model requests and durable user input, preserves the Unicode composer across resize, and restores terminal modes. Root independently reviewed this and the old-lease fix. Final full Linux baseline is running.
 
 Todo schema review removed examples that matched the live evaluation's filenames/expected numbers before delivery; production examples now use unrelated illustrative shapes. This prevents the contract correction from embedding benchmark answers. Targeted contract verification is in progress before final baseline.
+
+
+## Operator-requested PR closure batch
+
+Operator-requested PR delivery has closed eight additional PRs by merge, with results observed on GitHub:
+
+- #114 -> #102: c93d52ea6655e443b1448ae4ceccd866692d877a
+- #108 -> #107: 767a5bcb8d91915f78ad3b2f0f93d76c95bc6bad
+- #110 -> #109: a9413737021653220bae877612808d094268a073
+- #92 -> #88: b994f48b0b4e7a6f7cf6520db9e748bdfcc79b2a
+- #94 -> #88: d3d535dfaac115474055b1d386e3ae0c006f4dba
+- #96 -> #88: 9131c91140df34e3ccbdce2ba39077fa60c0c952
+- #99 -> #88: ec718314b50f84ce35ec0af1886ef7ffb730fc79
+- #104 -> #88: b536b014c77a941299d8178d34763ba3763fc7bc
+
+Each original reviewed head had successful Linux CI and recorded acceptance-focused baseline evidence. The first three merge trees exactly match their tested child trees. The five merges into #88 retain tested production code plus the previously verified owned-shutdown fixture correction; the complete resulting gate test file matches the passing #112/#121 baseline. Current parent checks remain separate.
+
+#112 now targets accepted catalogue parent #109. A final local-stack integration is being prepared to combine current main, consent, cleanup, schema corrections and accepted ancestry before a single final Linux baseline. No main merge or epic completion is claimed by these feature-parent deliveries.
+
+Todo PR #122 at9149502 passes723 tests normally and under two CPUs, all19 systems, strict quality, locked release,12 eval definitions and packaging/checksums. Current Linux CI is pending. Docs-only655eb6d corrects stale completion acceptance lists, preserves exact evidence and distinguishes local helper delivery from broader live/remote/subscription acceptance.
