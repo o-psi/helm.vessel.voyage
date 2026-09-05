@@ -334,6 +334,12 @@ async fn main() -> Result<()> {
     };
     // Enrollment never loads provider config or initializes runtime/session logs.
     if let Some(Command::Attachment(args)) = cli.command {
+        if matches!(
+            &args.command,
+            helm::attachment::cli::AttachmentCommand::Connect
+        ) {
+            return attachment_connect(args).await;
+        }
         let prompt = helm::attachment::cli::prompt::PromptControl::default();
         return tokio::select! { biased;
             _=attachment_interrupt()=>{
@@ -1630,6 +1636,21 @@ async fn attachment_notice(message: &'static str) {
         tokio::task::spawn_blocking(move || eprintln!("{message}")),
     )
     .await;
+}
+
+async fn attachment_connect(args: helm::attachment::cli::AttachmentArgs) -> Result<()> {
+    let cancel = tokio_util::sync::CancellationToken::new();
+    let operation = helm::attachment::cli::run_cancellable(args, cancel.clone());
+    tokio::pin!(operation);
+    tokio::select! { biased;
+        _ = attachment_interrupt() => {
+            cancel.cancel();
+            let _ = tokio::time::timeout(std::time::Duration::from_secs(3), &mut operation).await;
+            attachment_notice("attachment connection interrupted; enrollment unchanged").await;
+            std::process::exit(130)
+        }
+        result = &mut operation => result.map_err(anyhow::Error::from),
+    }
 }
 
 async fn attachment_interrupt() {

@@ -1,4 +1,5 @@
-//! Authenticated bounded observation transport. Not mounted by main. Receipt of
+//! Authenticated bounded observation transport. Production presence mounts a
+//! heartbeat-only instance; receipt of
 //! a frame never grants execution authority or proves durable command acceptance.
 use crate::enrollment_http::EnrollmentApi;
 use axum::{
@@ -83,8 +84,62 @@ pub struct AttachmentApi {
     sockets: Arc<Semaphore>,
     observations: mpsc::Sender<AuthenticatedFrame>,
     limits: Limits,
+    closed: CancellationToken,
+}
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct ConnectionPresence {
+    pub machine_id: Uuid,
+    pub owner_id: Uuid,
+    pub connection_id: Uuid,
+    pub epoch: u64,
 }
 impl AttachmentApi {
+    /// Presence only: any application frame fails because no observation consumer
+    /// is installed. Empty protocol features never authorize command execution.
+    pub fn presence(enrollment: EnrollmentApi) -> Result<Self> {
+        let (api, receiver) = Self::new(enrollment, Features::default())?;
+        drop(receiver);
+        Ok(api)
+    }
+    pub async fn shutdown(&self) {
+        self.closed.cancel();
+        for connection in self.registry.lock().await.values() {
+            connection.cancel.cancel();
+        }
+    }
+    /// Bounded metadata for an already-authenticated operator. Each record is an
+    /// observation at its lease/epoch check, not a promise of future connectivity.
+    pub async fn connections(&self) -> Vec<ConnectionPresence> {
+        let candidates = self
+            .registry
+            .lock()
+            .await
+            .iter()
+            .map(|(machine, c)| (*machine, c.clone()))
+            .collect::<Vec<_>>();
+        let mut records =
+            futures_util::future::join_all(candidates.into_iter().map(|(machine, c)| async move {
+                self.is_current(machine, c.id)
+                    .await
+                    .then_some(ConnectionPresence {
+                        machine_id: machine,
+                        owner_id: c.owner,
+                        connection_id: c.id,
+                        epoch: c.epoch,
+                    })
+            }))
+            .await
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>();
+        records.sort_by_key(|record| record.machine_id);
+        records
+    }
+    fn live(&self, connection: &Connection) -> bool {
+        !self.closed.is_cancelled()
+            && !connection.cancel.is_cancelled()
+            && tokio::time::Instant::now() < *connection.heartbeat.borrow() + self.limits.lease
+    }
     pub fn new(
         enrollment: EnrollmentApi,
         supported: Features,
@@ -116,6 +171,7 @@ impl AttachmentApi {
                 sockets: Arc::new(Semaphore::new(limits.sockets)),
                 observations,
                 limits,
+                closed: CancellationToken::new(),
             },
             rx,
         ))
@@ -145,7 +201,7 @@ impl AttachmentApi {
         let registry = self.registry.lock().await;
         if registry
             .get(&machine)
-            .is_none_or(|c| c.id != connection.id || c.cancel.is_cancelled())
+            .is_none_or(|c| c.id != connection.id || !self.live(c))
         {
             return Err(TransportError::Stale);
         }
@@ -158,7 +214,7 @@ impl AttachmentApi {
         let Some(connection) = self.registry.lock().await.get(&machine).cloned() else {
             return false;
         };
-        if connection.id != connection_id || connection.cancel.is_cancelled() {
+        if connection.id != connection_id || !self.live(&connection) {
             return false;
         }
         let valid = matches!(tokio::time::timeout(self.limits.check,self.enrollment.attachment_current(machine,connection.epoch)).await,Ok(Ok(receipt)) if receipt.owner_id==connection.owner);
@@ -170,7 +226,7 @@ impl AttachmentApi {
             .lock()
             .await
             .get(&machine)
-            .is_some_and(|c| c.id == connection_id && !c.cancel.is_cancelled())
+            .is_some_and(|c| c.id == connection_id && self.live(c))
     }
     async fn socket(&self, mut socket: WebSocket) {
         let authentication = async {
@@ -205,9 +261,11 @@ impl AttachmentApi {
                 .map_err(|_| TransportError::Invalid)?;
             Ok((receipt, selected))
         };
-        let Ok(Ok((receipt, features))) =
-            tokio::time::timeout(self.limits.auth, authentication).await
-        else {
+        let authentication = tokio::select! { biased;
+            _ = self.closed.cancelled() => return,
+            result = tokio::time::timeout(self.limits.auth, authentication) => result,
+        };
+        let Ok(Ok((receipt, features))) = authentication else {
             return;
         };
         let (sender, mut receiver) = mpsc::channel(self.limits.queue);
@@ -222,7 +280,9 @@ impl AttachmentApi {
         };
         {
             let mut registry = self.registry.lock().await;
-            if !registry.contains_key(&receipt.machine_id) && registry.len() >= self.limits.machines
+            if self.closed.is_cancelled()
+                || (!registry.contains_key(&receipt.machine_id)
+                    && registry.len() >= self.limits.machines)
             {
                 return;
             }
@@ -334,7 +394,7 @@ impl AttachmentApi {
                         if self.write(socket,connection,Frame::Lease{connection_id:connection.id,lease_ms:self.limits.lease.as_millis() as u32}).await.is_err(){return;}
                     } else {
                         let registry=self.registry.lock().await;
-                        if registry.get(&machine).is_none_or(|c|c.id!=connection.id||c.cancel.is_cancelled()){return;}
+                        if registry.get(&machine).is_none_or(|c|c.id!=connection.id||!self.live(c)){return;}
                         if self.observations.try_send(AuthenticatedFrame{machine_id:machine,owner_id:connection.owner,epoch:connection.epoch,connection_id:connection.id,frame}).is_err(){return;}
                     }
                 },
@@ -396,6 +456,9 @@ async fn upgrade(
     headers: HeaderMap,
     ws: WebSocketUpgrade,
 ) -> Response {
+    if api.closed.is_cancelled() {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    }
     let exact = |name: &str, value: &str| {
         headers.get_all(name).iter().count() == 1
             && headers.get(name).and_then(|v| v.to_str().ok()) == Some(value)
