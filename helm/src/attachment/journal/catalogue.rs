@@ -4,7 +4,7 @@
 use super::*;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-pub(super) const SCHEMA: &str = "CREATE TABLE local_cancel_intents(run_id TEXT PRIMARY KEY REFERENCES runs(id), session_id TEXT NOT NULL REFERENCES sessions(id), installation_id TEXT NOT NULL, principal_id TEXT NOT NULL, requested_at_ms INTEGER NOT NULL CHECK(requested_at_ms>=0), expires_at_ms INTEGER NOT NULL CHECK(expires_at_ms>requested_at_ms));";
+pub(super) const SCHEMA: &str = "CREATE TABLE local_cancel_intents(run_id TEXT PRIMARY KEY REFERENCES runs(id), session_id TEXT NOT NULL REFERENCES sessions(id), installation_id TEXT NOT NULL, principal_id TEXT NOT NULL, requested_at_ms INTEGER NOT NULL CHECK(requested_at_ms>=0), expires_at_ms INTEGER NOT NULL CHECK(expires_at_ms>requested_at_ms)); CREATE TABLE local_cleanup_obligations(run_id TEXT PRIMARY KEY REFERENCES runs(id), session_id TEXT NOT NULL REFERENCES sessions(id), installation_id TEXT NOT NULL, principal_id TEXT NOT NULL, confirmation TEXT CHECK(confirmation IN ('observed','operator_attested'))); CREATE UNIQUE INDEX one_pending_cleanup ON local_cleanup_obligations(session_id) WHERE confirmation IS NULL;";
 
 #[derive(Debug, Serialize)]
 pub struct SessionPage {
@@ -19,6 +19,7 @@ pub struct SessionSummary {
     pub model: String,
     pub workspace: PathBuf,
     pub active_run: Option<RunSummary>,
+    pub pending_cleanup_run: Option<Uuid>,
 }
 #[derive(Debug, Serialize)]
 pub struct RunSummary {
@@ -172,6 +173,11 @@ impl Journal {
                     })
                 })
                 .transpose()?;
+            let pending_cleanup_run = if self.opened_schema >= 5 {
+                pending_cleanup(&tx, metadata.id)?
+            } else {
+                None
+            };
             sessions.push(SessionSummary {
                 id: metadata.id,
                 revision: revision.try_into()?,
@@ -179,6 +185,7 @@ impl Journal {
                 model: metadata.model,
                 workspace: metadata.workspace,
                 active_run,
+                pending_cleanup_run,
             });
         }
         let next_after = more.then(|| sessions.last().expect("nonempty bounded page").id);
@@ -268,5 +275,149 @@ impl Journal {
         let result = pending(&tx, session_id, run_id)?;
         tx.commit()?;
         Ok(result)
+    }
+}
+
+// Validate retained scope even for completed evidence; never silently adopt
+// tampered rows as authority to clear or ignore a cleanup obligation.
+fn cleanup_confirmation(
+    db: &Connection,
+    run_id: Uuid,
+    target: &Target,
+) -> Result<Option<Option<String>>> {
+    let row: Option<(String, String, String, Option<String>)> = db.query_row(
+        "SELECT session_id,installation_id,principal_id,confirmation FROM local_cleanup_obligations WHERE run_id=?1", [run_id.to_string()],
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+    ).optional()?;
+    row.map(|(session, installation, principal, confirmation)| {
+        ensure!(
+            session == target.session_id.to_string()
+                && installation == target.installation_id.to_string()
+                && principal == target.principal_id.to_string(),
+            "invalid cleanup binding"
+        );
+        ensure!(
+            confirmation
+                .as_deref()
+                .is_none_or(|value| matches!(value, "observed" | "operator_attested")),
+            "invalid cleanup confirmation"
+        );
+        Ok(confirmation)
+    })
+    .transpose()
+}
+pub(super) fn pending_cleanup(db: &Connection, session_id: Uuid) -> Result<Option<Uuid>> {
+    let id: Option<String> = db.query_row("SELECT run_id FROM local_cleanup_obligations WHERE session_id=?1 AND confirmation IS NULL", [session_id.to_string()], |r| r.get(0)).optional()?;
+    id.map(|id| {
+        let id = Uuid::parse_str(&id)?;
+        let target = target(db, id)?;
+        ensure!(
+            target.session_id == session_id && cleanup_confirmation(db, id, &target)? == Some(None),
+            "invalid pending cleanup"
+        );
+        Ok(id)
+    })
+    .transpose()
+}
+impl Journal {
+    /// Opt in before constructing execution resources. A committed obligation
+    /// survives terminalization, recovery, and process death until acknowledged.
+    pub fn register_local_cleanup(&mut self, guard: &ExecutionGuard, run_id: Uuid) -> Result<()> {
+        ensure!(
+            self.opened_schema >= 5,
+            "explicit quiescent journal upgrade required"
+        );
+        let initial_target = target(&self.connection, run_id)?;
+        self.check_guard(guard, initial_target.session_id)?;
+        let tx = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        check_transaction_schema(&tx, self.opened_schema)?;
+        let target = target(&tx, run_id)?;
+        ensure!(
+            target.state == RunState::Accepted,
+            "cleanup must be registered before dispatch"
+        );
+        if let Some(confirmation) = cleanup_confirmation(&tx, run_id, &target)? {
+            ensure!(confirmation.is_none(), "cleanup evidence is immutable");
+            return Ok(());
+        }
+        ensure!(
+            pending_cleanup(&tx, target.session_id)?.is_none(),
+            "session cleanup remains unconfirmed"
+        );
+        tx.execute(
+            "INSERT INTO local_cleanup_obligations VALUES(?1,?2,?3,?4,NULL)",
+            params![
+                run_id.to_string(),
+                target.session_id.to_string(),
+                target.installation_id.to_string(),
+                target.principal_id.to_string()
+            ],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+    /// Call only after observing complete provider/tool/child/PTY cleanup. Storage
+    /// cannot observe OS effects itself; this API records the guarded owner's claim.
+    pub fn confirm_local_cleanup_observed(
+        &mut self,
+        guard: &ExecutionGuard,
+        run_id: Uuid,
+    ) -> Result<()> {
+        self.confirm_local_cleanup(guard, run_id, None)
+    }
+    /// Explicit human attestation that prior effects were independently stopped.
+    /// This is retained distinctly from observed cleanup and never implied by recovery.
+    pub fn attest_local_cleanup(
+        &mut self,
+        guard: &ExecutionGuard,
+        run_id: Uuid,
+        installation_id: Uuid,
+        principal_id: Uuid,
+    ) -> Result<()> {
+        self.confirm_local_cleanup(guard, run_id, Some((installation_id, principal_id)))
+    }
+    fn confirm_local_cleanup(
+        &mut self,
+        guard: &ExecutionGuard,
+        run_id: Uuid,
+        actor: Option<(Uuid, Uuid)>,
+    ) -> Result<()> {
+        ensure!(
+            self.opened_schema >= 5,
+            "explicit quiescent journal upgrade required"
+        );
+        let initial_target = target(&self.connection, run_id)?;
+        self.check_guard(guard, initial_target.session_id)?;
+        let tx = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        check_transaction_schema(&tx, self.opened_schema)?;
+        let target = target(&tx, run_id)?;
+        ensure!(
+            !matches!(target.state, RunState::Accepted | RunState::Running),
+            "cleanup confirmation requires terminal run"
+        );
+        if let Some((installation, principal)) = actor {
+            ensure!(
+                installation == target.installation_id && principal == target.principal_id,
+                "cleanup attestation actor mismatch"
+            );
+        }
+        let expected = if actor.is_some() {
+            "operator_attested"
+        } else {
+            "observed"
+        };
+        let confirmation = cleanup_confirmation(&tx, run_id, &target)?
+            .context("cleanup obligation not registered")?;
+        if let Some(prior) = confirmation {
+            ensure!(prior == expected, "cleanup evidence is immutable");
+            return Ok(());
+        }
+        tx.execute("UPDATE local_cleanup_obligations SET confirmation=?1 WHERE run_id=?2 AND confirmation IS NULL", params![expected, run_id.to_string()])?;
+        tx.commit()?;
+        Ok(())
     }
 }

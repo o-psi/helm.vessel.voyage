@@ -550,6 +550,12 @@ impl Journal {
                 run,
             });
         }
+        if self.opened_schema >= 5 {
+            ensure!(
+                catalogue::pending_cleanup(&tx, request.session_id)?.is_none(),
+                "session cleanup remains unconfirmed"
+            );
+        }
         let now_ms = clock()?;
         ensure!(
             now_ms >= 0
