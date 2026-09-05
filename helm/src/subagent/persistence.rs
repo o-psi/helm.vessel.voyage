@@ -24,6 +24,7 @@ mod tests {
             max_terminals: 1,
         };
         AgentRecord {
+            completion: None,
             id: AgentId::new(),
             parent_id: None,
             name: "child".into(),
@@ -489,13 +490,43 @@ impl AgentTree {
 pub struct AgentTreeStore {
     path: PathBuf,
     gate: std::sync::Arc<tokio::sync::Mutex<()>>,
+    coordinator: Option<crate::completion::runtime::Coordinator>,
+    execution_lease: Option<std::sync::Arc<crate::completion::runtime::AgentWriterLease>>,
 }
 impl AgentTreeStore {
     pub fn new(path: PathBuf) -> Self {
         Self {
             path,
             gate: std::sync::Arc::new(tokio::sync::Mutex::new(())),
+            coordinator: None,
+            execution_lease: None,
         }
+    }
+    pub fn with_coordinator(
+        mut self,
+        coordinator: crate::completion::runtime::Coordinator,
+    ) -> Self {
+        self.coordinator = Some(coordinator);
+        self.execution_lease = None;
+        self
+    }
+    pub(crate) fn acquire_runtime_owner(&mut self) -> Result<()> {
+        if self.execution_lease.is_none()
+            && let Some(coordinator) = &self.coordinator
+        {
+            self.execution_lease = Some(std::sync::Arc::new(coordinator.acquire_agent_writer()?));
+        }
+        Ok(())
+    }
+    fn require_runtime_owner(&self) -> Result<()> {
+        anyhow::ensure!(
+            self.coordinator.is_none() || self.execution_lease.is_some(),
+            "coordinated agent writes require the runtime execution lease"
+        );
+        Ok(())
+    }
+    pub fn coordinator(&self) -> Option<&crate::completion::runtime::Coordinator> {
+        self.coordinator.as_ref()
     }
     pub async fn load(&self) -> Result<AgentTree> {
         match tokio::fs::read(&self.path).await {
@@ -522,6 +553,21 @@ impl AgentTreeStore {
         }
     }
     pub async fn save(&self, tree: &AgentTree) -> Result<()> {
+        self.require_runtime_owner()?;
+        let tree = tree.clone();
+        let store = self.clone();
+        tokio::spawn(async move {
+            let _coordination = match &store.coordinator {
+                Some(c) => Some(c.lock().await?),
+                None => None,
+            };
+            let _guard = store.gate.lock().await;
+            store.save_raw(&tree).await
+        })
+        .await
+        .context("agent writer task failed")?
+    }
+    async fn save_raw(&self, tree: &AgentTree) -> Result<()> {
         let parent = self.path.parent().context("invalid agent tree path")?;
         tokio::fs::create_dir_all(parent).await?;
         secure(parent, 0o700).await?;
@@ -534,21 +580,41 @@ impl AgentTreeStore {
         Ok(())
     }
     pub async fn create(&self, record: AgentRecord) -> Result<()> {
-        let _guard = self.gate.lock().await;
-        let mut tree = self.load().await?;
-        tree.insert(record)?;
-        self.save(&tree).await
+        self.require_runtime_owner()?;
+        let store = self.clone();
+        tokio::spawn(async move {
+            let _coordination = match &store.coordinator {
+                Some(c) => Some(c.lock().await?),
+                None => None,
+            };
+            let _guard = store.gate.lock().await;
+            let mut tree = store.load().await?;
+            tree.insert(record)?;
+            store.save_raw(&tree).await
+        })
+        .await
+        .context("agent writer task failed")?
     }
     pub async fn update(&self, record: AgentRecord) -> Result<()> {
-        let _guard = self.gate.lock().await;
-        let mut tree = self.load().await?;
-        anyhow::ensure!(
-            tree.agents.contains_key(&record.id),
-            "unknown agent {}",
-            record.id
-        );
-        tree.agents.insert(record.id, record);
-        self.save(&tree).await
+        self.require_runtime_owner()?;
+        let store = self.clone();
+        tokio::spawn(async move {
+            let _coordination = match &store.coordinator {
+                Some(c) => Some(c.lock().await?),
+                None => None,
+            };
+            let _guard = store.gate.lock().await;
+            let mut tree = store.load().await?;
+            anyhow::ensure!(
+                tree.agents.contains_key(&record.id),
+                "unknown agent {}",
+                record.id
+            );
+            tree.agents.insert(record.id, record);
+            store.save_raw(&tree).await
+        })
+        .await
+        .context("agent writer task failed")?
     }
     pub async fn get(&self, id: AgentId) -> Result<Option<AgentRecord>> {
         Ok(self.load().await?.agents.remove(&id))
@@ -570,32 +636,113 @@ impl AgentTreeStore {
     pub async fn list(&self) -> Result<Vec<AgentRecord>> {
         Ok(self.load().await?.agents.into_values().collect())
     }
+    /// Called under the workspace mutation boundary. Only ancestry/status
+    /// metadata is collected; unrelated result text is never returned.
+    pub(crate) async fn adoption_subtree(&self, root: AgentId, max: usize) -> Result<Vec<AgentId>> {
+        let mut records: std::collections::BTreeMap<_, _> = self
+            .load()
+            .await?
+            .agents
+            .into_values()
+            .map(|record| (record.id, (record.parent_id, record.status)))
+            .collect();
+        let mut after = None;
+        loop {
+            let page = self.list_archived(after, 100).await?;
+            for record in page.agents {
+                records
+                    .entry(record.id)
+                    .or_insert((record.parent_id, record.status));
+            }
+            match page.next_after {
+                Some(next) => {
+                    anyhow::ensure!(
+                        after.is_none_or(|previous| previous < next),
+                        "archive cursor did not advance"
+                    );
+                    after = Some(next);
+                }
+                None => break,
+            }
+        }
+        anyhow::ensure!(records.contains_key(&root), "agent missing");
+        let mut selected = std::collections::BTreeSet::from([root]);
+        loop {
+            let before = selected.len();
+            for (id, (parent, _)) in &records {
+                if parent.is_some_and(|parent| selected.contains(&parent)) {
+                    selected.insert(*id);
+                }
+            }
+            anyhow::ensure!(
+                selected.len() <= max,
+                "agent subtree exceeds completion obligation limit"
+            );
+            if selected.len() == before {
+                break;
+            }
+        }
+        for id in &selected {
+            anyhow::ensure!(
+                records[id].1.is_terminal(),
+                "wait or cancel active work before adoption; agent {} is active",
+                id
+            );
+            let mut ancestors = std::collections::BTreeSet::from([*id]);
+            let mut parent = records[id].0;
+            while let Some(id) = parent {
+                anyhow::ensure!(ancestors.insert(id), "cycle in adopted agent ancestry");
+                parent = records.get(&id).and_then(|record| record.0);
+            }
+        }
+        Ok(selected.into_iter().collect())
+    }
     pub async fn prune_terminal_leaves(
         &self,
         max_records: usize,
         protected: Option<AgentId>,
     ) -> Result<Vec<AgentId>> {
-        let _guard = self.gate.lock().await;
-        let mut tree = self.load().await?;
-        let original = tree.clone();
-        let removed = tree.prune_terminal_leaves(max_records, protected);
-        if !removed.is_empty() {
-            let archive = super::archive::AgentArchive::new(&self.path);
-            for id in &removed {
-                archive.put(&original.agents[id]).await?;
+        self.require_runtime_owner()?;
+        let store = self.clone();
+        tokio::spawn(async move {
+            let _coordination = match &store.coordinator {
+                Some(c) => Some(c.lock().await?),
+                None => None,
+            };
+            let _guard = store.gate.lock().await;
+            let mut tree = store.load().await?;
+            let original = tree.clone();
+            let removed = tree.prune_terminal_leaves(max_records, protected);
+            if !removed.is_empty() {
+                let archive = super::archive::AgentArchive::new(&store.path);
+                for id in &removed {
+                    archive.put(&original.agents[id]).await?;
+                }
+                store.save_raw(&tree).await?;
             }
-            self.save(&tree).await?;
-        }
-        Ok(removed)
+            Ok(removed)
+        })
+        .await
+        .context("agent writer task failed")?
     }
     pub async fn recover_after_restart(&self) -> Result<usize> {
-        let _guard = self.gate.lock().await;
-        let mut tree = self.load().await?;
-        let count = tree.recover_after_restart();
-        if count > 0 {
-            self.save(&tree).await?;
-        }
-        Ok(count)
+        self.require_runtime_owner()?;
+        let store = self.clone();
+        tokio::spawn(async move {
+            let _coordination = match &store.coordinator {
+                Some(c) => Some(c.lock().await?),
+                None => None,
+            };
+            let _guard = store.gate.lock().await;
+            let mut tree = store.load().await?;
+            let count = tree.recover_after_restart();
+            if count > 0 {
+                store.save_raw(&tree).await?;
+            }
+            Ok(count)
+        })
+        .await
+        .context("agent writer task failed")?
     }
 }
 #[cfg(unix)]

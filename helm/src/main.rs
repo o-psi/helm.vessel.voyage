@@ -27,6 +27,7 @@ use std::{
     sync::{Arc, OnceLock, RwLock, Weak},
 };
 use tracing_subscriber::EnvFilter;
+mod managed;
 #[derive(Parser)]
 #[command(version, about = "A general-purpose LLM harness for terminal work")]
 struct Cli {
@@ -108,6 +109,8 @@ enum LogFormat {
 }
 #[derive(Subcommand)]
 enum Command {
+    /// Use private local sessions with an authoritative SQLite journal.
+    Managed(managed::Args),
     /// Inspect a repository and explicitly review generated project guidance.
     Onboard(helm::onboarding::OnboardArgs),
     /// Manage dedicated Vessel enrollment; no worker is started.
@@ -279,6 +282,25 @@ impl Approver for Terminal {
 impl EventSink for Terminal {
     async fn emit(&self, event: AgentEvent) {
         match event {
+            AgentEvent::CompletionState {
+                phase,
+                readiness,
+                detail,
+            } => {
+                let phase = format!("{phase:?}").to_lowercase();
+                let detail = detail.as_deref().map(safe_diagnostic).unwrap_or_default();
+                let counts = readiness
+                    .map(|r| {
+                        format!(
+                            " · {} unresolved · {} accounted unfinished",
+                            r.total.saturating_sub(r.accounted),
+                            r.incomplete
+                        )
+                    })
+                    .unwrap_or_default();
+                println!("\n[completion: {phase}{counts}] {detail}");
+                let _ = io::stdout().flush();
+            }
             AgentEvent::Thinking { turn } => eprintln!("[model turn {turn}]"),
             AgentEvent::AssistantTextDelta(text) => {
                 print!("{}", self.assistant_delta(&text));
@@ -356,6 +378,14 @@ async fn main() -> Result<()> {
                 other=>other.map_err(anyhow::Error::from),
             },
         };
+    }
+    if matches!(&cli.command, Some(Command::Managed(args)) if args.administrative()) {
+        let Some(Command::Managed(args)) = cli.command else {
+            unreachable!()
+        };
+        return managed::run(args, None, cli.workspace, false)
+            .await
+            .map_err(managed::safe_error);
     }
     let filter = if cli.verbose {
         "helm=debug"
@@ -445,6 +475,9 @@ async fn main() -> Result<()> {
             print_config(&config)?;
             Ok(())
         }
+        Command::Managed(args) => managed::run(args, Some(config), cli.workspace, model_overridden)
+            .await
+            .map_err(managed::safe_error),
         Command::Onboard(args) => helm::onboarding::run(args, &config, cli.workspace),
         Command::Models { json } => list_models(&config, cli.workspace, json).await,
         Command::Doctor => doctor(&config, cli.workspace).await,
@@ -767,6 +800,8 @@ fn probe_codex_compatibility(command: &str) -> CodexCompatibilityProbe {
 }
 
 struct CliSubagentExecutor {
+    managed_resources: Option<Arc<ManagedResources>>,
+    todos: TodoTool,
     config: Config,
     workspace: PathBuf,
     runtime: OnceLock<Weak<SubagentRuntime>>,
@@ -799,6 +834,7 @@ impl SubagentExecutor for CliSubagentExecutor {
         let workspace = config.resolve_workspace(None).map_err(|e| e.to_string())?;
         let policy = Arc::new(Policy::new(&config, workspace.clone()).map_err(|e| e.to_string())?);
         let tool_context = ToolContext {
+            completion: context.completion.clone(),
             policy,
             approver: Arc::new(UnattendedApprover { allow: false }),
             timeout: config.timeout(),
@@ -819,10 +855,26 @@ impl SubagentExecutor for CliSubagentExecutor {
         });
         // Worktree-isolated children still coordinate through the parent's workspace plan.
         // Keying todos by the temporary worktree would silently fork task state.
-        let mut tools = build_tools(&config, child_tool, Some(todo_tool(&self.workspace)))
-            .await
-            .map_err(|e| e.to_string())?;
+        let completion_tool = self
+            .runtime
+            .get()
+            .and_then(Weak::upgrade)
+            .and_then(|runtime| runtime.store())
+            .map(|store| helm::completion::tool::CompletionTool::new(self.todos.store(), store));
+        let mut tools = build_tools(
+            &config,
+            child_tool,
+            Some(self.todos.clone()),
+            completion_tool,
+        )
+        .await
+        .map_err(|e| e.to_string())?;
         tools.retain_allowed(&context.policy.allowed_tools);
+        if let Some(resources) = &self.managed_resources {
+            resources
+                .register(&mut tools)
+                .map_err(|error| error.to_string())?;
+        }
         let agent = Agent::new(
             provider::from_config(&config, workspace).map_err(|e| e.to_string())?,
             tools,
@@ -863,11 +915,21 @@ impl SubagentExecutor for CliSubagentExecutor {
 }
 
 struct SubagentBundle {
+    coordinator: helm::completion::runtime::Coordinator,
+    todos: TodoTool,
+    completion_tool: helm::completion::tool::CompletionTool,
     runtime: Arc<SubagentRuntime>,
     tool: SubagentTool,
     model: Arc<RwLock<String>>,
 }
 async fn build_subagents(config: &Config, workspace: &std::path::Path) -> Result<SubagentBundle> {
+    build_subagents_managed(config, workspace, None).await
+}
+async fn build_subagents_managed(
+    config: &Config,
+    workspace: &std::path::Path,
+    managed_resources: Option<Arc<ManagedResources>>,
+) -> Result<SubagentBundle> {
     let standard = ToolRegistry::standard();
     let mut allowed_tools: std::collections::BTreeSet<String> = standard
         .definitions()
@@ -876,6 +938,7 @@ async fn build_subagents(config: &Config, workspace: &std::path::Path) -> Result
         .collect();
     allowed_tools.insert("subagent".to_string());
     allowed_tools.insert("todo".to_string());
+    allowed_tools.insert("completion".to_string());
     let budget = AgentBudget {
         max_tokens: config.max_tokens as u64,
 
@@ -893,9 +956,25 @@ async fn build_subagents(config: &Config, workspace: &std::path::Path) -> Result
         budget: budget.clone(),
     };
     let workspace_key = hex::encode(Sha256::digest(workspace.as_os_str().as_encoded_bytes()));
+    let completion_root = helm::config::default_data_dir().join("completion");
+    let mut directories = std::fs::DirBuilder::new();
+    directories.recursive(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        directories.mode(0o700);
+    }
+    directories.create(&completion_root)?;
+    let coordinator = helm::completion::runtime::Coordinator::open(
+        completion_root.join(&workspace_key),
+        workspace,
+    )?;
+    let todos = todo_tool(workspace, coordinator.clone());
     let worktrees = worktree_manager(workspace, &workspace_key);
     let model = Arc::new(RwLock::new(config.model.clone()));
     let executor = Arc::new(CliSubagentExecutor {
+        managed_resources,
+        todos: todos.clone(),
         config: config.clone(),
         workspace: workspace.to_path_buf(),
         runtime: OnceLock::new(),
@@ -906,7 +985,8 @@ async fn build_subagents(config: &Config, workspace: &std::path::Path) -> Result
         helm::config::default_data_dir()
             .join("subagents")
             .join(format!("{workspace_key}.json")),
-    );
+    )
+    .with_coordinator(coordinator.clone());
     let runtime = Arc::new(
         SubagentRuntime::new_persistent(
             executor.clone(),
@@ -924,7 +1004,14 @@ async fn build_subagents(config: &Config, workspace: &std::path::Path) -> Result
         .set(Arc::downgrade(&runtime))
         .map_err(|_| anyhow::anyhow!("subagent runtime already initialized"))?;
     let tool = SubagentTool::new(runtime.clone(), policy, budget).with_worktrees(worktrees);
+    let completion_tool = helm::completion::tool::CompletionTool::new(
+        todos.store(),
+        runtime.store().expect("persistent runtime"),
+    );
     Ok(SubagentBundle {
+        coordinator,
+        todos,
+        completion_tool,
         runtime,
         tool,
         model,
@@ -948,7 +1035,66 @@ fn worktree_manager(workspace: &std::path::Path, workspace_key: &str) -> Option<
     .ok()
 }
 
+#[derive(Default)]
+struct ManagedResourceState {
+    closed: bool,
+    terminals: Vec<helm::tools::ProcessTool>,
+    shells: Vec<helm::tools::ManagedShell>,
+}
+#[derive(Default)]
+struct ManagedResources(std::sync::Mutex<ManagedResourceState>);
+impl ManagedResources {
+    fn register(&self, tools: &mut ToolRegistry) -> Result<()> {
+        let mut state = self
+            .0
+            .lock()
+            .map_err(|_| anyhow::anyhow!("managed resources poisoned"))?;
+        anyhow::ensure!(!state.closed, "managed resource admission closed");
+        anyhow::ensure!(
+            state.terminals.len() < 1024,
+            "managed resource limit reached"
+        );
+        if let Some(terminals) = tools.terminals() {
+            state.terminals.push(terminals);
+        }
+        // Replace only an already-authorized shell; never reintroduce a filtered tool.
+        if tools.definitions().iter().any(|tool| tool.name == "shell") {
+            let shell = helm::tools::ManagedShell::new();
+            tools.register(shell.clone());
+            state.shells.push(shell);
+        }
+        Ok(())
+    }
+    fn close(&self) -> Result<ManagedResourceState> {
+        let mut state = self
+            .0
+            .lock()
+            .map_err(|_| anyhow::anyhow!("managed resources poisoned"))?;
+        state.closed = true;
+        Ok(ManagedResourceState {
+            closed: true,
+            terminals: state.terminals.clone(),
+            shells: state.shells.clone(),
+        })
+    }
+}
+
+struct ManagedAgent {
+    agent: Agent,
+    subagents: Arc<SubagentRuntime>,
+    resources: Option<Arc<ManagedResources>>,
+}
 async fn build_agent(config: &Config, workspace: PathBuf, attended: bool) -> Result<Agent> {
+    Ok(build_agent_bundle(config, workspace, attended, None)
+        .await?
+        .agent)
+}
+async fn build_agent_bundle(
+    config: &Config,
+    workspace: PathBuf,
+    attended: bool,
+    sink: Option<Arc<dyn EventSink>>,
+) -> Result<ManagedAgent> {
     let policy = Arc::new(Policy::new(config, workspace.clone())?);
     let terminal = Arc::new(Terminal::default());
     let approver: Arc<dyn Approver> = if attended {
@@ -959,6 +1105,7 @@ async fn build_agent(config: &Config, workspace: PathBuf, attended: bool) -> Res
         })
     };
     let context = ToolContext {
+        completion: None,
         policy,
         approver,
         timeout: config.timeout(),
@@ -973,26 +1120,46 @@ async fn build_agent(config: &Config, workspace: PathBuf, attended: bool) -> Res
         },
         redactor: redactor(config),
     };
-    let subagents = build_subagents(config, &workspace).await?;
-    let _runtime = subagents.runtime.clone();
-    let tools = build_tools(config, Some(subagents.tool), Some(todo_tool(&workspace))).await?;
-    Ok(Agent::new(
+    let managed_resources = sink.as_ref().map(|_| Arc::new(ManagedResources::default()));
+    let subagents = build_subagents_managed(config, &workspace, managed_resources.clone()).await?;
+    let gate_runtime = subagents.runtime.clone();
+    let gate_todos = subagents.todos.store();
+    let gate_agents = gate_runtime.store().expect("persistent runtime");
+    let mut tools = build_tools(
+        config,
+        Some(subagents.tool),
+        Some(subagents.todos),
+        Some(subagents.completion_tool),
+    )
+    .await?;
+    if let Some(resources) = &managed_resources {
+        resources.register(&mut tools)?;
+    }
+    let retained_runtime = gate_runtime.clone();
+    let agent = Agent::new(
         provider::from_config(config, context.policy.workspace().to_owned())?,
         tools,
         context,
-        terminal,
+        sink.unwrap_or(terminal),
         config.model.clone(),
         config.system_prompt.clone(),
         config.max_tokens,
         config.temperature,
     )
+    .with_completion_coordinator(subagents.coordinator)
+    .with_completion_gate(gate_todos, gate_agents, gate_runtime)
     .with_context_window(config.context_window)
     .with_model_mirror(subagents.model)
     .with_retry_policy(RetryPolicy {
         max_attempts: config.provider_retry_attempts,
         initial_delay: std::time::Duration::from_millis(config.provider_retry_initial_ms),
         max_delay: std::time::Duration::from_millis(config.provider_retry_max_ms),
-    }))
+    });
+    Ok(ManagedAgent {
+        agent,
+        subagents: retained_runtime,
+        resources: managed_resources,
+    })
 }
 
 fn tool_environment(config: &Config) -> std::collections::BTreeMap<String, String> {
@@ -1030,13 +1197,14 @@ async fn tui_chat(
     log_format: LogFormat,
 ) -> Result<()> {
     let store = SessionStore::default();
-    let mut session = if let Some(reference) = resume {
-        store.load_reference(&reference).await?
+    let (mut store, mut session) = if let Some(reference) = resume {
+        store.load_owned(&reference).await?
     } else {
-        Session::new(
+        let session = Session::new(
             config.resolve_workspace(workspace_arg)?,
             config.model.clone(),
-        )
+        );
+        (store.with_execution(session.id).await?, session)
     };
     if model_overridden && session.switch_model(config.model.clone())? {
         store.save(&mut session).await?;
@@ -1056,6 +1224,7 @@ async fn tui_chat(
     );
     let policy = Arc::new(Policy::new(&active_config, session.workspace.clone())?);
     let context = ToolContext {
+        completion: None,
         policy,
         approver: bridge.clone(),
         timeout: active_config.timeout(),
@@ -1067,9 +1236,15 @@ async fn tui_chat(
         redactor: redactor(&active_config),
     };
     let subagents = build_subagents(&active_config, &session.workspace).await?;
-    let subagent_runtime = subagents.runtime.clone();
-    let todo = todo_tool(&session.workspace);
-    let tools = build_tools(&active_config, Some(subagents.tool), Some(todo.clone())).await?;
+    let subagent_runtime = subagents.runtime;
+    let todo = subagents.todos.clone();
+    let tools = build_tools(
+        &active_config,
+        Some(subagents.tool),
+        Some(todo.clone()),
+        Some(subagents.completion_tool),
+    )
+    .await?;
     let terminals: Arc<dyn helm::terminal::InteractiveTerminals> =
         Arc::new(tools.terminals().unwrap_or_default());
     let agent = Arc::new(
@@ -1082,6 +1257,12 @@ async fn tui_chat(
             active_config.system_prompt.clone(),
             active_config.max_tokens,
             active_config.temperature,
+        )
+        .with_completion_coordinator(subagents.coordinator)
+        .with_completion_gate(
+            todo.store(),
+            subagent_runtime.store().expect("persistent runtime"),
+            subagent_runtime.clone(),
         )
         .with_context_window(active_config.context_window)
         .with_model_mirror(subagents.model)
@@ -1096,20 +1277,31 @@ async fn tui_chat(
     let session_id = session.id;
     let exit = helm::tui::run(
         agent,
-        store,
+        &mut store,
         session,
         receiver,
         bridge.sender(),
         terminals,
         Arc::new(helm::supervision::RuntimeAgentSupervisor::new(
-            subagent_runtime,
+            subagent_runtime.clone(),
         )),
         todo.store(),
         provider_label,
         active_config.access_mode(),
     )
-    .await?;
-    match exit {
+    .await;
+    // A relaunched process must acquire the same workspace writer lease. Drain
+    // workers before dropping the last runtime owner, including on UI errors.
+    tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        subagent_runtime.shutdown(),
+    )
+    .await
+    .context("subagent shutdown timed out; refusing frontend handoff")?;
+    drop(subagent_runtime);
+    let session_id = store.owned_session_id().unwrap_or(session_id);
+    drop(store); // Release the active session before a same-session child starts.
+    match exit? {
         helm::tui::TuiExit::Quit => Ok(()),
         helm::tui::TuiExit::Launch(request) => {
             launch_from_tui(&active_config, session_id, request, verbose, log_format).await
@@ -1208,23 +1400,30 @@ async fn launch_from_tui(
     result
 }
 
-fn todo_tool(workspace: &std::path::Path) -> TodoTool {
+fn todo_tool(
+    workspace: &std::path::Path,
+    coordinator: helm::completion::runtime::Coordinator,
+) -> TodoTool {
     let workspace = workspace
         .canonicalize()
         .unwrap_or_else(|_| workspace.to_path_buf());
     let key = hex::encode(Sha256::digest(workspace.as_os_str().as_encoded_bytes()));
-    TodoTool::new(Arc::new(TodoStore::new(
-        helm::config::default_data_dir()
-            .join("todos")
-            .join(format!("{key}.json")),
-        TodoScope::workspace(workspace),
-    )))
+    TodoTool::new(Arc::new(
+        TodoStore::new(
+            helm::config::default_data_dir()
+                .join("todos")
+                .join(format!("{key}.json")),
+            TodoScope::workspace(workspace),
+        )
+        .with_coordinator(coordinator),
+    ))
 }
 
 async fn build_tools(
     config: &Config,
     subagents: Option<SubagentTool>,
     todos: Option<TodoTool>,
+    completion: Option<helm::completion::tool::CompletionTool>,
 ) -> Result<ToolRegistry> {
     let mut tools = ToolRegistry::standard_with_terminal_limits(
         config.terminal_max_count,
@@ -1235,6 +1434,9 @@ async fn build_tools(
     }
     if let Some(tool) = todos {
         tools.register_todos(tool)?;
+    }
+    if let Some(tool) = completion {
+        tools.register_arc(Arc::new(tool))?;
     }
     if config.access_mode() == AccessMode::ReadOnly {
         // Do not even start external MCP servers in read-only mode: their
@@ -1265,6 +1467,90 @@ async fn build_tools(
     Ok(tools)
 }
 
+/// Once work starts, Ctrl-C requests cooperative cancellation instead of allowing
+/// the OS to exit before finalization can return canonical recovery for saving.
+async fn run_with_ctrl_c(
+    agent: &Agent,
+    history: Vec<helm::Message>,
+    prompt: String,
+    scope: Option<helm::completion::runtime::RunHandle>,
+    checkpoint: &helm::session::SessionCheckpoint,
+) -> std::result::Result<helm::agent::AgentOutcome, helm::agent::AgentError> {
+    let cancellation = tokio_util::sync::CancellationToken::new();
+    let run = agent.run_checkpointed_scoped(
+        history,
+        prompt,
+        cancellation.clone(),
+        None,
+        checkpoint,
+        agent.model(),
+        scope,
+    );
+    wait_for_run_interrupt(
+        run,
+        cancellation,
+        tokio::signal::ctrl_c(),
+        std::time::Duration::from_secs(15),
+    )
+    .await
+}
+
+async fn wait_for_run_interrupt(
+    run: impl std::future::Future<
+        Output = std::result::Result<helm::agent::AgentOutcome, helm::agent::AgentError>,
+    >,
+    cancellation: tokio_util::sync::CancellationToken,
+    interrupt: impl std::future::Future<Output = io::Result<()>>,
+    cleanup_timeout: std::time::Duration,
+) -> std::result::Result<helm::agent::AgentOutcome, helm::agent::AgentError> {
+    tokio::pin!(run);
+    tokio::select! {
+        result = &mut run => result,
+        signal = interrupt => {
+            cancellation.cancel();
+            if signal.is_err() {
+                eprintln!("[interrupt handler unavailable; cancelling run]");
+            } else {
+                eprintln!("[interrupt requested; waiting for owned work to stop]");
+            }
+            match tokio::time::timeout(cleanup_timeout, &mut run).await {
+                Ok(result) => result,
+                Err(_) => Err(helm::agent::AgentError::Completion(
+                    "cancellation cleanup timed out; completion was not confirmed".into(),
+                )),
+            }
+        }
+    }
+}
+
+/// Read exactly one idle prompt. Do not prefetch input intended for tool approval
+/// or human questions while a run is active. A detached standard thread avoids
+/// blocking Tokio shutdown if Ctrl-C ends chat while the terminal read is pending.
+async fn read_plain_prompt() -> Result<Option<String>> {
+    let (send, receive) = tokio::sync::oneshot::channel();
+    std::thread::Builder::new()
+        .name("helm-plain-input".into())
+        .spawn(move || {
+            let mut prompt = String::new();
+            let result = io::stdin()
+                .read_line(&mut prompt)
+                .map(|count| (count > 0).then_some(prompt));
+            let _ = send.send(result);
+        })?;
+    wait_for_plain_input(receive, tokio::signal::ctrl_c()).await
+}
+
+async fn wait_for_plain_input(
+    receive: tokio::sync::oneshot::Receiver<io::Result<Option<String>>>,
+    interrupt: impl std::future::Future<Output = io::Result<()>>,
+) -> Result<Option<String>> {
+    tokio::select! {
+        biased;
+        signal = interrupt => { signal?; Ok(None) }
+        result = receive => Ok(result.context("plain input reader stopped")??),
+    }
+}
+
 async fn execute(
     config: Config,
     workspace_arg: Option<PathBuf>,
@@ -1274,13 +1560,14 @@ async fn execute(
     model_overridden: bool,
 ) -> Result<Session> {
     let store = SessionStore::default();
-    let mut session = if let Some(reference) = resume {
-        store.load_reference(&reference).await?
+    let (store, mut session) = if let Some(reference) = resume {
+        store.load_owned(&reference).await?
     } else {
-        Session::new(
+        let session = Session::new(
             config.resolve_workspace(workspace_arg)?,
             config.model.clone(),
-        )
+        );
+        (store.with_execution(session.id).await?, session)
     };
     if model_overridden {
         session.switch_model(config.model.clone())?;
@@ -1288,11 +1575,47 @@ async fn execute(
     let mut active_config = config.clone();
     active_config.model = session.model.clone();
     let agent = build_agent(&active_config, session.workspace.clone(), true).await?;
-    let outcome = match agent.run(session.messages.clone(), prompt).await {
+    let scope = agent.prepare_run(&session).await?;
+    if let Some(scope) = &scope {
+        session.completion_runs.push(scope.reference());
+    }
+    let history = session.messages.clone();
+    session
+        .messages
+        .push(helm::Message::new(helm::Role::User, prompt.clone()));
+    if let Some(scope) = &scope {
+        session.begin_run_summary(scope.run_id());
+    }
+    if !no_save {
+        store.save(&mut session).await?;
+    }
+    let checkpoint = helm::session::SessionCheckpoint::new(
+        session.clone(),
+        (!no_save).then(|| store.clone()),
+        scope
+            .as_ref()
+            .map(|scope| scope.run_id())
+            .unwrap_or_else(uuid::Uuid::new_v4),
+    );
+    let result = run_with_ctrl_c(&agent, history, prompt, scope, &checkpoint).await;
+    session = checkpoint.snapshot_after_run(&result).await;
+    let outcome = match result {
         Ok(outcome) => outcome,
         Err(error) => {
-            if !no_save && let Some(recovery) = error.recovery() {
+            if let Some(recovery) = error.recovery() {
                 session.recover_context_failure(recovery)?;
+            }
+            if let helm::agent::AgentError::Finalization(failure) = &error {
+                session.update_run_summary(
+                    helm::agent::CompletionPhase::Interrupted,
+                    failure.readiness.clone(),
+                    None,
+                );
+            }
+            session.interrupt_run_summary(safe_diagnostic(
+                &redactor(&config).redact(error.to_string()),
+            ));
+            if !no_save {
                 session.terminals = agent.terminal_metadata();
                 store.save(&mut session).await?;
                 eprintln!("[session {}]", session.id);
@@ -1300,9 +1623,13 @@ async fn execute(
             return Err(error.into());
         }
     };
-    let title_due = session.title_due_after_turn();
-    session.record_completed_turn();
-    session.messages = outcome.messages;
+    let completed = matches!(outcome.stop_reason, helm::agent::StopReason::Completed);
+    let title_due = completed && session.title_due_after_turn();
+    if completed {
+        session.record_completed_turn();
+    }
+    session.replace_messages(outcome.messages);
+    session.finish_run_summary(&outcome.stop_reason);
     session.usage.input_tokens += outcome.usage.input_tokens;
     session.usage.output_tokens += outcome.usage.output_tokens;
     session.terminals = agent.terminal_metadata();
@@ -1321,6 +1648,9 @@ async fn execute(
         }
         eprintln!("[session {}]", session.id);
     }
+    if let helm::agent::StopReason::Incomplete { reason, .. } = outcome.stop_reason {
+        bail!("run incomplete: {}", safe_diagnostic(&reason));
+    }
     Ok(session)
 }
 
@@ -1332,13 +1662,14 @@ async fn chat(
     model_overridden: bool,
 ) -> Result<()> {
     let store = SessionStore::default();
-    let mut session = if let Some(reference) = resume {
-        store.load_reference(&reference).await?
+    let (mut store, mut session) = if let Some(reference) = resume {
+        store.load_owned(&reference).await?
     } else {
-        Session::new(
+        let session = Session::new(
             config.resolve_workspace(workspace_arg)?,
             config.model.clone(),
-        )
+        );
+        (store.with_execution(session.id).await?, session)
     };
     if model_overridden && session.switch_model(config.model.clone())? {
         store.save(&mut session).await?;
@@ -1358,10 +1689,9 @@ async fn chat(
             print!("\nhelm> ");
             io::stdout().flush()?;
         }
-        let mut prompt = String::new();
-        if io::stdin().read_line(&mut prompt)? == 0 {
+        let Some(prompt) = read_plain_prompt().await? else {
             break;
-        }
+        };
         let prompt = prompt.trim();
         if prompt.is_empty() {
             continue;
@@ -1410,7 +1740,9 @@ async fn chat(
             if !name.is_empty() {
                 next.set_name(name.to_owned());
             }
+            let next_owner = store.with_execution(next.id).await?;
             session = next;
+            store = next_owner;
             println!("new session: {}", session.display_name());
             continue;
         }
@@ -1487,16 +1819,48 @@ async fn chat(
             agent =
                 Some(build_agent(&active_config, session.workspace.clone(), interactive).await?);
         }
-        match agent
+        let scope = agent
             .as_ref()
             .expect("agent initialized")
-            .run(session.messages.clone(), prompt.to_owned())
-            .await
-        {
+            .prepare_run(&session)
+            .await?;
+        if let Some(scope) = &scope {
+            session.completion_runs.push(scope.reference());
+        }
+        let history = session.messages.clone();
+        session
+            .messages
+            .push(helm::Message::new(helm::Role::User, prompt.to_owned()));
+        if let Some(scope) = &scope {
+            session.begin_run_summary(scope.run_id());
+        }
+        store.save(&mut session).await?;
+        let checkpoint = helm::session::SessionCheckpoint::new(
+            session.clone(),
+            Some(store.clone()),
+            scope
+                .as_ref()
+                .map(|scope| scope.run_id())
+                .unwrap_or_else(uuid::Uuid::new_v4),
+        );
+        let result = run_with_ctrl_c(
+            agent.as_ref().expect("agent initialized"),
+            history,
+            prompt.to_owned(),
+            scope,
+            &checkpoint,
+        )
+        .await;
+        session = checkpoint.snapshot_after_run(&result).await;
+        match result {
             Ok(outcome) => {
-                let title_due = session.title_due_after_turn();
-                session.record_completed_turn();
-                session.messages = outcome.messages;
+                let completed = matches!(outcome.stop_reason, helm::agent::StopReason::Completed);
+                let title_due = completed && session.title_due_after_turn();
+                if completed {
+                    session.record_completed_turn();
+                }
+                session.replace_messages(outcome.messages);
+                session.finish_run_summary(&outcome.stop_reason);
                 session.usage.input_tokens += outcome.usage.input_tokens;
                 session.usage.output_tokens += outcome.usage.output_tokens;
                 session.terminals = agent
@@ -1525,9 +1889,19 @@ async fn chat(
                         .as_ref()
                         .expect("agent initialized")
                         .terminal_metadata();
-                    store.save(&mut session).await?;
-                    eprintln!("[session {}]", session.id);
                 }
+                if let helm::agent::AgentError::Finalization(failure) = &error {
+                    session.update_run_summary(
+                        helm::agent::CompletionPhase::Interrupted,
+                        failure.readiness.clone(),
+                        None,
+                    );
+                }
+                session.interrupt_run_summary(safe_diagnostic(
+                    &redactor(&config).redact(error.to_string()),
+                ));
+                store.save(&mut session).await?;
+                eprintln!("[session {}]", session.id);
                 eprintln!("error: {error:#}");
             }
         }
@@ -1857,5 +2231,84 @@ mod cli_tests {
     fn tool_diagnostics_are_sanitized_without_markdown_interpretation() {
         assert_eq!(safe_diagnostic("**failure**\u{1b}[31m"), "**failure**[31m");
         assert_eq!(summarize(&"é".repeat(200)).chars().count(), 161);
+    }
+    #[tokio::test]
+    async fn active_interrupt_waits_for_cooperative_run_result() {
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let observed = cancel.clone();
+        let run = async move {
+            observed.cancelled().await;
+            Err(helm::agent::AgentError::Cancelled)
+        };
+        let result = wait_for_run_interrupt(
+            run,
+            cancel.clone(),
+            std::future::ready(Ok(())),
+            std::time::Duration::from_secs(1),
+        )
+        .await;
+        assert!(cancel.is_cancelled());
+        assert!(matches!(result, Err(helm::agent::AgentError::Cancelled)));
+    }
+
+    #[tokio::test]
+    async fn stalled_cleanup_is_bounded_and_never_returns_completion() {
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let result = wait_for_run_interrupt(
+            std::future::pending(),
+            cancel.clone(),
+            std::future::ready(Ok(())),
+            std::time::Duration::from_millis(1),
+        )
+        .await;
+        assert!(cancel.is_cancelled());
+        assert!(
+            matches!(result, Err(helm::agent::AgentError::Completion(reason)) if reason.contains("cleanup timed out"))
+        );
+    }
+
+    #[tokio::test]
+    async fn idle_plain_interrupt_exits_without_waiting_for_terminal_input() {
+        let (send, receive) = tokio::sync::oneshot::channel();
+        let result = wait_for_plain_input(receive, std::future::ready(Ok(())))
+            .await
+            .unwrap();
+        assert!(result.is_none());
+        assert!(send.is_closed());
+    }
+
+    #[tokio::test]
+    async fn plain_input_preserves_exact_text_and_handles_eof_and_reader_failure() {
+        let (send, receive) = tokio::sync::oneshot::channel();
+        send.send(Ok(Some("é full prompt\n".into()))).unwrap();
+        assert_eq!(
+            wait_for_plain_input(receive, std::future::pending())
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("é full prompt\n")
+        );
+        let (send, receive) = tokio::sync::oneshot::channel();
+        send.send(Ok(None)).unwrap();
+        assert!(
+            wait_for_plain_input(receive, std::future::pending())
+                .await
+                .unwrap()
+                .is_none()
+        );
+        let (send, receive) = tokio::sync::oneshot::channel();
+        drop(send);
+        assert!(
+            wait_for_plain_input(receive, std::future::pending())
+                .await
+                .is_err()
+        );
+        let (send, receive) = tokio::sync::oneshot::channel();
+        send.send(Err(io::Error::other("reader failed"))).unwrap();
+        assert!(
+            wait_for_plain_input(receive, std::future::pending())
+                .await
+                .is_err()
+        );
     }
 }

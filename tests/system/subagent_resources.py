@@ -21,6 +21,9 @@ def run_resources(helm: Path) -> None:
     class Fixture(BaseHTTPRequestHandler):
         phase = "create"
         failures = []
+        proposed = False
+        reconciliation_snapshot = None
+        accounting_denied = False
         workers = []
         coordinator_id = None
         leaf_id = None
@@ -150,6 +153,8 @@ def run_resources(helm: Path) -> None:
             return self.message(f"{actor}-evidence")
 
         def root_create(self, outputs):
+            if len(outputs) >= 3 and Fixture.proposed:
+                return self.reconcile(outputs, len(outputs) - 3)
             if not outputs:
                 return self.call({"action": "spawn", "name": "coordinator",
                                   "task": f"{MARKER}coordinator"})
@@ -161,7 +166,40 @@ def run_resources(helm: Path) -> None:
                 return self.call({"action": "archive", "limit": 100})
             assert len(outputs) == 3
             self.check_page(outputs[-1])
+            Fixture.proposed = True
             return self.message("resource-fixture-created")
+
+        def reconcile(self, outputs, step):
+            # Read-only permits observation, but does not authorize durable review
+            # mutations. Preserve that policy and finish explicitly incomplete.
+            if step == 0:
+                return self.call({"action": "snapshot"}, name="completion")
+            if step == 1:
+                snapshot = json.loads(outputs[-1]["output"])
+                assert snapshot["total"] == WORKERS + 2 and snapshot["accounted"] == 0, snapshot
+                assert {item["obligation"]["agent"] for item in snapshot["unresolved"]} == set(self.all_ids()), snapshot
+                assert all(item["reason"] == "needs_disposition" for item in snapshot["unresolved"]), snapshot
+                Fixture.reconciliation_snapshot = snapshot
+                identity = snapshot["unresolved"][0]["obligation"]["agent"]
+                return self.call({"action": "read", "kind": "agent", "id": identity}, name="completion")
+            if step == 2:
+                record = json.loads(outputs[-1]["output"])
+                snapshot = Fixture.reconciliation_snapshot
+                identity = snapshot["unresolved"][0]["obligation"]["agent"]
+                assert record["id"] == identity and record["status"] == "completed", record
+                assert record["result"], record
+                return self.call({"action": "account", "kind": "agent", "id": identity,
+                                  "revision": snapshot["revision"], "fingerprint": snapshot["fingerprint"],
+                                  "disposition": "incorporated", "reason": "Reviewed " + record["result"]},
+                                 name="completion")
+            if step == 3:
+                assert "denied:" in outputs[-1]["output"], outputs[-1]
+                assert "`completion` action is disabled in read-only access mode" in outputs[-1]["output"], outputs[-1]
+                Fixture.accounting_denied = True
+                return self.call({"action": "snapshot"}, name="completion")
+            assert step == 4, step
+            assert json.loads(outputs[-1]["output"]) == Fixture.reconciliation_snapshot
+            return self.message("Results remain archived; read-only policy prevents required accounting, so this run is incomplete.")
 
         def check_page(self, output):
             page = json.loads(output["output"])
@@ -211,8 +249,27 @@ def run_resources(helm: Path) -> None:
             command = [str(helm), "--config", str(config), "--workspace", str(root), "run"]
             first = subprocess.run(command + ["Exercise nested delegated resource behavior."],
                                    cwd=root, env=env, capture_output=True, text=True, timeout=60)
-            assert first.returncode == 0 and "resource-fixture-created" in first.stdout, first.stderr + first.stdout + repr(Fixture.failures)
+            assert first.returncode == 1 and "resource-fixture-created" in first.stdout, first.stderr + first.stdout + repr(Fixture.failures)
             assert not Fixture.failures, Fixture.failures
+            assert Fixture.accounting_denied
+            assert first.stdout.count("[completion: reconciling") == 1, first.stdout
+            assert "[completion: incomplete" in first.stdout, first.stdout
+            assert "[completion: completed" not in first.stdout, first.stdout
+            sessions = list((root / "data/helm/sessions").glob("*.json"))
+            assert len(sessions) == 1, sessions
+            saved = json.loads(sessions[0].read_text())
+            assert saved["run_summaries"][-1]["phase"] == "incomplete", saved["run_summaries"]
+            reference = saved["completion_runs"][-1]
+            ledgers = list((root / "data/helm/completion").glob(
+                f'*/ledgers/{reference["session_id"]}-{reference["run_id"]}.json'))
+            assert len(ledgers) == 1, ledgers
+            envelope = json.loads(ledgers[0].read_text())
+            ledger = json.loads(envelope["ledger"])
+            decision = ledger["state"]["decision"]
+            assert decision["outcome"] == "incomplete", decision
+            assert decision["readiness"] == Fixture.reconciliation_snapshot, decision
+            assert not any(message["role"] == "system" for message in saved["messages"])
+            first_ledger_bytes = ledgers[0].read_bytes()
             assert Fixture.denied and not (root / "must-not-exist.txt").exists()
             assert Fixture.delayed_seconds > 1, Fixture.delayed_seconds
             assert len(set(Fixture.all_ids())) == WORKERS + 2
@@ -238,8 +295,9 @@ def run_resources(helm: Path) -> None:
             assert not Fixture.failures, Fixture.failures
             assert child_calls == {actor: count for actor, count in Fixture.calls.items() if actor != "root"}
             assert all(path.read_bytes() == contents for path, contents in archive_contents.items())
+            assert ledgers[0].read_bytes() == first_ledger_bytes
         print("subagent resources: ok (concurrency=1, nested wait/wait_many, 10 children, "
-              "command-timeout independence, read-only denial, ignored capacity, restart lookup)")
+              "command-timeout independence, read-only denial, ignored capacity, restart lookup, incomplete accounting)")
     finally:
         server.shutdown()
         server.server_close()

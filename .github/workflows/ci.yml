@@ -48,7 +48,33 @@ jobs:
         env:
           HELM_BIN: target/release/helm
         run: python3 tests/system/context_window.py
+      - name: Verify session execution fencing across independent frontends
+        env:
+          HELM_BIN: target/release/helm
+        run: python3 tests/system/session_fencing.py
+      - name: Private managed sessions across real CLI processes
+        run: python3 tests/system/local_managed.py
+      - name: Verify run ownership and readiness with an offline provider
+        env:
+          HELM_BIN: target/release/helm
+        run: python3 tests/system/completion_readiness.py
+      - name: Verify bounded final acceptance with three offline native providers
+        env:
+          HELM_BIN: target/release/helm
+        run: python3 tests/system/completion_gate.py
+      - name: Verify runtime ownership release during frontend handoff
+        env:
+          HELM_BIN: target/release/helm
+        run: python3 tests/system/completion_handoff.py
+      - name: Verify cooperative plain-chat cancellation and idle interrupt exit
+        env:
+          HELM_BIN: target/release/helm
+        run: python3 tests/system/plain_interrupt.py
       - run: python3 tests/system/vessel_lifecycle.py
+      - name: Verify evaluation runner and timeout evidence with an offline provider
+        env:
+          HELM_BIN: target/release/helm
+        run: python3 tests/system/eval_runner.py
       - name: Verify enrollment lifecycle CLI with real local Vessel
         run: python3 tests/system/attachment_enrollment.py
       - name: Verify hidden enrollment invitation entry on real terminal

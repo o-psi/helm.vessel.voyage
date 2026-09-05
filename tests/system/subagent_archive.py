@@ -16,6 +16,9 @@ def run_archive(helm: Path) -> None:
         child_calls = 0
         ids = []
         failures = []
+        proposed = False
+        reconciliation_snapshot = None
+        accounting_denied = False
 
         def log_message(self, *_args):
             pass
@@ -53,13 +56,15 @@ def run_archive(helm: Path) -> None:
                      "content": [{"type": "output_text", "text": text}]}]
 
         @staticmethod
-        def call(args):
+        def call(args, name="subagent"):
             key = f"{Fixture.phase}_{Fixture.calls}"
             return [{"type": "function_call", "id": f"fc_{key}", "call_id": f"call_{key}",
-                     "name": "subagent", "arguments": json.dumps(args)}]
+                     "name": name, "arguments": json.dumps(args)}]
 
         def creation_actions(self, outputs):
             step = len(outputs)
+            if step >= 6 and Fixture.proposed:
+                return self.reconcile(outputs, step - 6)
             if step and step % 2 == 1:
                 spawned = json.loads(outputs[-1]["output"])
                 Fixture.ids.append(spawned["id"])
@@ -69,7 +74,40 @@ def run_archive(helm: Path) -> None:
             if step < 6:
                 return self.call({"action": "spawn", "name": f"child-{step}",
                                   "task": "archive-fixture-child"})
+            Fixture.proposed = True
             return self.message("created-and-auto-archived")
+
+        def reconcile(self, outputs, step):
+            # Read-only permits observation, but does not authorize durable review
+            # mutations. Preserve that policy and finish explicitly incomplete.
+            if step == 0:
+                return self.call({"action": "snapshot"}, name="completion")
+            if step == 1:
+                snapshot = json.loads(outputs[-1]["output"])
+                assert snapshot["total"] == 3 and snapshot["accounted"] == 0, snapshot
+                assert {item["obligation"]["agent"] for item in snapshot["unresolved"]} == set(Fixture.ids), snapshot
+                assert all(item["reason"] == "needs_disposition" for item in snapshot["unresolved"]), snapshot
+                Fixture.reconciliation_snapshot = snapshot
+                identity = snapshot["unresolved"][0]["obligation"]["agent"]
+                return self.call({"action": "read", "kind": "agent", "id": identity}, name="completion")
+            if step == 2:
+                record = json.loads(outputs[-1]["output"])
+                snapshot = Fixture.reconciliation_snapshot
+                identity = snapshot["unresolved"][0]["obligation"]["agent"]
+                assert record["id"] == identity and record["status"] == "completed", record
+                assert record["result"], record
+                return self.call({"action": "account", "kind": "agent", "id": identity,
+                                  "revision": snapshot["revision"], "fingerprint": snapshot["fingerprint"],
+                                  "disposition": "incorporated", "reason": "Reviewed " + record["result"]},
+                                 name="completion")
+            if step == 3:
+                assert "denied:" in outputs[-1]["output"], outputs[-1]
+                assert "`completion` action is disabled in read-only access mode" in outputs[-1]["output"], outputs[-1]
+                Fixture.accounting_denied = True
+                return self.call({"action": "snapshot"}, name="completion")
+            assert step == 4, step
+            assert json.loads(outputs[-1]["output"]) == Fixture.reconciliation_snapshot
+            return self.message("Results remain archived; read-only policy prevents required accounting, so this run is incomplete.")
 
         def lookup_actions(self, outputs):
             step = len(outputs)
@@ -117,8 +155,27 @@ def run_archive(helm: Path) -> None:
             command = [str(helm), "--config", str(config), "--workspace", str(root), "run"]
             first = subprocess.run(command + ["Delegate three tasks sequentially."], cwd=root, env=env,
                                    capture_output=True, text=True, timeout=30)
-            assert first.returncode == 0 and "created-and-auto-archived" in first.stdout, first.stderr + first.stdout
+            assert first.returncode == 1 and "created-and-auto-archived" in first.stdout, first.stderr + first.stdout
             assert not Fixture.failures, Fixture.failures
+            assert Fixture.accounting_denied
+            assert first.stdout.count("[completion: reconciling") == 1, first.stdout
+            assert "[completion: incomplete" in first.stdout, first.stdout
+            assert "[completion: completed" not in first.stdout, first.stdout
+            sessions = list((root / "data/helm/sessions").glob("*.json"))
+            assert len(sessions) == 1, sessions
+            saved = json.loads(sessions[0].read_text())
+            assert saved["run_summaries"][-1]["phase"] == "incomplete", saved["run_summaries"]
+            reference = saved["completion_runs"][-1]
+            ledgers = list((root / "data/helm/completion").glob(
+                f'*/ledgers/{reference["session_id"]}-{reference["run_id"]}.json'))
+            assert len(ledgers) == 1, ledgers
+            envelope = json.loads(ledgers[0].read_text())
+            ledger = json.loads(envelope["ledger"])
+            decision = ledger["state"]["decision"]
+            assert decision["outcome"] == "incomplete", decision
+            assert decision["readiness"] == Fixture.reconciliation_snapshot, decision
+            assert not any(message["role"] == "system" for message in saved["messages"])
+            first_ledger_bytes = ledgers[0].read_bytes()
             assert Fixture.child_calls == 3 and len(set(Fixture.ids)) == 3
             archives = list((root / "data" / "helm" / "subagents").glob("*.archive/*.json"))
             assert len(archives) == 3, archives
@@ -130,7 +187,8 @@ def run_archive(helm: Path) -> None:
             assert second.returncode == 0 and "referenced " + Fixture.ids[0] in second.stdout, second.stderr + second.stdout
             assert not Fixture.failures, Fixture.failures
             assert Fixture.child_calls == 3, "lookup must not execute children"
-        print("subagent archive: ok (automatic completion, legacy capacity ignored, restart, pagination, status, late waits, read-only citation)")
+            assert ledgers[0].read_bytes() == first_ledger_bytes
+        print("subagent archive: ok (automatic completion, legacy capacity ignored, restart, pagination, status, late waits, read-only citation, denied accounting preserved incomplete)")
     finally:
         server.shutdown()
         server.server_close()

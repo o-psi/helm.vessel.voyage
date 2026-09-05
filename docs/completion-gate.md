@@ -7,17 +7,62 @@ Tracking: [#81](https://github.com/o-psi/voyage/issues/81),
 
 ## Current delivery status
 
-**The completion gate is not enabled.** `helm/src/completion.rs` implements the
-provider-neutral readiness contract and its deterministic tests. A separate
-[durable ledger store](completion-storage.md) now provides disk persistence. Runtime
-ownership propagation, integration with live stores, reconciliation tool operations, and the
-final-response interceptor still need implementation. The module is exported for
-integration but is not called by the agent loop. It does not add a model request,
-change streaming, or claim that existing runs are being checked.
+The provider-neutral agent loop gates final acceptance for explicitly scoped root
+runs. The [durable ledger](completion-storage.md) and [runtime ownership
+API](completion-runtime.md) register owned work before publication and serialize
+record writers with the final decision. Inherited child ownership does not activate
+a second root gate. Legacy unscoped library calls retain their prior behavior.
 
-This staged delivery avoids implementing a workspace-global cleanup check that
-could interfere with unrelated work. It also avoids using a final snapshot without
-an atomic acceptance boundary: two consecutive reads alone do not eliminate races.
+An embedding must configure `Agent::with_completion_gate` with the coordinated
+todo store, agent store, and runtime, then pass the trusted run handle through
+`run_scoped` or `run_checkpointed_scoped`. Scoped checkpoints must use that run's
+exact ID. Missing gate resources fail closed. Durable frontends must supply a
+canonical checkpoint; the uncheckpointed embedding API provides in-memory history
+only and does not establish durable transcript-before-seal ordering. An explicit
+no-save run must retain that distinction.
+
+## Root final acceptance
+
+Streamed assistant output and no-tool proposals remain provisional. The runtime
+first consumes accepted steering, then acquires a fresh readiness lease. A fully
+accounted snapshot needs no extra provider request: all-success work completes,
+while accounted failures, blockers, and deferrals produce an explicit incomplete
+outcome.
+
+The first unresolved proposal is preserved in canonical history and triggers one
+targeted, request-only system update containing bounded IDs, counts, states, and
+review instructions. It does not create a synthetic human message or persist
+runtime guidance. Normal tools, policy, approvals, and budgets remain in effect.
+The next final proposal is checked against fresh state and either completes or
+ends incomplete with structured IDs. Repeated proposals and tool turns cannot
+restart the fixed reconciliation wall deadline (60 seconds by default).
+
+The steering channel stays usable through reconciliation. Final acceptance closes
+it atomically while the readiness lease excludes coordinated writers. The runtime
+checkpoints canonical history before sealing the durable decision, then invokes
+`RunCheckpoint::accepted` explicitly. Unscoped runs invoke that acceptance hook
+as well; consumers must not infer acceptance from a no-tool message.
+
+Cancellation, provider failure, exhausted context, checkpoint failure, and deadline
+expiry return recoverable interrupted state, including partial assistant text.
+Abort requests cancellation only for active descendants with the exact run/session
+reference, including nested descendants whose parent already finished. Shutdown
+requires both finished runtime transitions and durable terminal records within a
+separate bounded budget (5 seconds by default). Failed or blocked persistence
+leaves observation inconclusive; an in-memory terminal flag alone is insufficient. An incomplete finish also stops owned active work
+before its final fresh check. Neither path closes unrelated terminals or performs
+Git/worktree cleanup. No new provider request starts after cancellation.
+
+A durable seal and frontend acknowledgement are distinct boundaries. If cancellation
+or checkpoint acknowledgement fails after a successful seal, the caller receives
+an interrupted recovery and no completed event; the already persisted decision
+remains historical evidence. Failure debug formatting omits canonical content,
+continuation state, and provider error bodies.
+
+The optional compatibility bridge handles reconciliation by rebuilding its provider
+thread with the changed system instructions. Its lack of active user steering does
+not prevent this request-boundary operation. Native transports remain independent
+of a Codex executable.
 
 ## Readiness contract implemented so far
 
@@ -66,49 +111,49 @@ disposition history, and current owned-record fingerprints. It deliberately igno
 unrelated store revisions. Revision overflow fails without partial mutation.
 
 `RunLedger::to_json`/`from_json` provide versioned serialization. The separate
-[RunLedgerStore API](completion-storage.md) provides disk persistence; it does not
-yet coordinate runtime or session publication.
+[RunLedgerStore API](completion-storage.md) provides disk persistence, with coordinated runtime writers and atomic final sealing.
 Malformed, oversized, duplicate-membership, missing-field, and future-version data
 are rejected. Existing todo/agent/session formats are unchanged. The integration
 must not treat an absent or corrupt ledger for a known run as a new empty ledger.
 Legacy sessions without a run reference must not implicitly adopt historical work.
 
-## Remaining integration requirements
+## Implementation and acceptance status
 
 ### #81: ownership and persistence
 
-1. Propagate trusted run identity from root invocation through tool context, child
-   spawn/executor context, nested children, and follow-up semantics. Preserve fresh
-   per-execution IDs; they serve a different purpose.
-2. Persist membership before work becomes visible/active. Serialize ownership,
-   record mutation, result publication, and acceptance at a shared coordinator
-   boundary, including other processes that can write the same stores.
-3. Add explicit, policy-controlled adoption and disposition operations with fresh
-   record reads, durable history, and session/run scope validation. Record text and
-   disposition reasons must use existing redaction paths before persistence/output.
-4. Use private atomic persistence, expected revisions, honest crash recovery and
-   failure handling. Do not downgrade to success on a store error or missing record.
-5. Provide bounded retrieval of owned results/evidence for the targeted prompt.
-   The current diagnostic snapshot deliberately does not embed those contents.
+The local runtime now propagates trusted root identity through tools, children and
+follow-ups, while preserving separate execution IDs. The coordinated stores publish
+ownership before dispatch, serialize owned mutations and acceptance, and fence
+competing processes. Explicit adoption/accounting requires fresh scoped reads;
+private persistence, expected revisions and recovery fail closed on missing or
+corrupt known-run state. Bounded `completion read` retrieves owned evidence without
+embedding it in the diagnostic snapshot.
 
-### #82: final-response gate
+These are implemented local contracts, not remaining foundation work. Their
+executable coverage includes `completion::runtime`, `agent::gate_tests` and the
+real-process `completion_readiness.py` fixture. The
+[acceptance evidence map](completion-validation.md) records passing integration
+commits and distinguishes local ownership from future remote dispatch.
 
-Intercept the runtime's actual completion proposal, after pending supervisor input
-is processed. Clean runs need no additional request. Otherwise, hold acceptance,
-send one targeted reconciliation update, permit normal policy-controlled work,
-and recheck fresh state within a bounded cleanup wall time. Repeated final proposals
-must not reset the bound or reintroduce the removed general model-turn cutoff.
+### #82: delivery verification
 
-Define explicit incomplete/interrupted outcomes when reconciliation cannot finish;
-account for failed children instead of demanding every todo be completed. Cancellation,
-provider failure, approval denial, and exhausted budgets must not trigger unbounded
-cleanup or additional requests after cancellation. Bound and observe shutdown of
-owned active children on abort. Do not close unrelated persistent terminals or
-perform automatic Git/worktree integration/deletion.
+`agent::gate_tests` covers clean and accounted-incomplete single-request acceptance,
+real completion-tool reconciliation, ignored updates, fixed deadlines through tool
+turns and provider waits, provider failure, scoped child shutdown and unrelated-work
+isolation, inherited child scope, canonical proposal retention, explicit checkpoint
+acceptance, post-seal cancellation/failure, missing stores, and a fake compatibility
+bridge process. Steering during reconciliation and content-free error diagnostics
+have dedicated regressions.
 
-Streaming is provisional until acceptance. TUI, plain output, saved history, and
-Vessel worker outcomes need consistent status without duplicate finals or synthetic
-human turns. Runtime guidance must not be saved as user-authored conversation.
+Frontend status, saved-session annotations, managed Journal outcomes and native
+HTTP reconciliation have additional integration coverage in the acceptance map;
+gate unit tests alone do not prove those surfaces. Vessel remote execution is
+still a separate dependency. Run both focused suites with:
+
+```sh
+cargo test -p helm --lib agent::gate_tests --all-features
+cargo test -p helm --lib completion:: --all-features
+```
 
 ### #83: verification
 
@@ -131,9 +176,57 @@ Run the focused tests with:
 cargo test -p helm --lib completion:: --all-features
 ```
 
-Still required: runtime/provider integration and cross-store persistence failure injection;
-barrier-controlled spawn/result/edit/finalization races; cross-process writer tests;
-CLI/TUI/Vessel outcome and provisional-output coverage; offline reconciliation E2E;
-adversarial behavioral evaluations; approved/budgeted real-provider smoke; and
-Linux/macOS/Windows delivery evidence. Unit serialization tests are not disk recovery
-or E2E evidence, and evaluation manifest validation is not a live evaluation.
+Runtime/provider integration, cross-store failure injection, barrier-controlled
+ownership/finalization races, cross-process writers, local CLI/TUI outcomes and
+offline reconciliation are covered by the integration suites. The reviewed
+`3950fef` Linux release passed 713 workspace tests both normally and with two-CPU
+affinity, all 19 system fixtures, evaluation-definition validation and packaging;
+see [the dated evidence](completion-validation.md#managed-integration-and-bounded-local-verification-2026-09-05).
+These results belong to that commit, not automatically to later changes.
+
+Full #83 acceptance remains open for successful budgeted real-model evidence and
+remote worker/Vessel execution once that execution path is implemented. The local
+live attempt retained honest failure/recovery evidence; it did not establish
+successful evidence verification or reconciliation. Subscription authentication
+and cutover remain separate unverified requirements. Final dependency changes
+still need their own reviewed Linux checks. The operator waived required
+macOS/Windows runs for cost; Linux evidence does not establish their behavior.
+Unit tests, offline fixtures and evaluation manifest validation are not live
+semantic evaluations. See the [remaining acceptance checklist](completion-validation.md#remaining-acceptance-and-merge-boundaries).
+
+Frontend handoffs stop accepting new subagents, cancel active/queued children,
+and await their tracked persistence/archival tasks before releasing the workspace
+writer lease. A ten-second drain timeout refuses the handoff instead of bypassing
+ownership. The offline `tests/system/completion_handoff.py` regression exercises a
+live child, TUI-to-plain relaunch and a subsequent turn in the same saved session.
+
+## Provisional output and saved outcomes
+
+Root CLI/TUI runs install the completion gate. Plain stdout explicitly marks
+`completion: provisional`, reconciliation and terminal completion states; streamed
+text is emitted once. A one-shot incomplete outcome saves its session first and
+returns an error exit status. Plain chat can continue with another turn. Only a
+completed outcome advances automatic-title checkpoints or completed-run counters.
+
+Ctrl-C during a one-shot or plain-chat run requests cooperative cancellation and
+waits up to 15 seconds for recovery and owned cleanup. A cleanup timeout is an
+unconfirmed interruption, never successful completion; previously checkpointed
+history, partial output and usage remain available. Plain chat returns to its
+prompt after an interrupted turn. Ctrl-C at that idle prompt exits without waiting
+for another line of input. Input is read only while idle, so the prompt reader does
+not consume approval input during execution.
+
+Session `run_summaries` retain each run's phase, bounded detail, optional structured
+readiness and canonical message range with content fingerprints. These are local
+presentation annotations, never provider messages or authority. Earlier no-tool
+assistant proposals remain labelled provisional; the final proposal is labelled
+completed, incomplete or interrupted. Transcript rendering and Markdown export
+preserve original text while displaying these classifications separately. A latest
+run banner remains visible after resume even if no assistant output was saved.
+
+A provisional/reconciling summary loads as interrupted after restart. Branches copy
+historical classifications but clear execution ownership references. Clearing the
+conversation removes its annotations. Compaction/recovery reanchors only exact
+message sequences; missing or ambiguous sequences retain an unlinked historical
+summary instead of attributing an old outcome to different text. Old sessions with
+no summaries remain readable. `--no-save` still does not create a session file.

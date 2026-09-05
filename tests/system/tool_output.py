@@ -117,6 +117,9 @@ approval = "never"
                               for m in saved_messages()):
                     assert time.monotonic() < deadline, "Turn was not persisted"
                     read_output()
+                # Canonical text is checkpointed before final acceptance. Wait for
+                # the finished UI event before exercising detail controls.
+                wait_for(b"Completed")
                 wait_for(b"exit 7")
                 wait_for(b"fixture fatal diagnostic")
                 wait_for(b"Failed")
@@ -149,7 +152,7 @@ approval = "never"
                 os.write(master, b"\x0f")
                 wait_for(b"previews", collapse_start)
                 wait_for("… more".encode(), collapse_start)
-                assert TAIL not in output[collapse_start:], "Collapsing redrew full output"
+                assert TAIL not in output[collapse_start:], ("Collapsing redrew full output", bytes(output[collapse_start:]))
 
                 assert len(Fixture.requests) == 2, Fixture.requests
                 results = [item for item in Fixture.requests[1]["input"]

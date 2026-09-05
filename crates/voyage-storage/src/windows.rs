@@ -402,6 +402,86 @@ impl PrivateDirectory {
         verify_acl(&file, &self.sid, false)?;
         Ok(file)
     }
+    /// Flush an existing verified file without creating a missing record.
+    pub fn sync_file(&self, name: &str) -> io::Result<()> {
+        let path = self.child(name)?;
+        let sd = descriptor(&self.sid)?;
+        let file = open_handle(
+            &path,
+            GENERIC_READ | GENERIC_WRITE,
+            OPEN_EXISTING,
+            false,
+            Some(&sd),
+        )?;
+        verify_acl(&file, &self.sid, false)?;
+        file.sync_all()
+    }
+    /// Create a new private file without replacing any existing directory entry.
+    pub fn create_file(&self, name: &str) -> io::Result<File> {
+        let path = self.child(name)?;
+        let sd = descriptor(&self.sid)?;
+        let file = open_handle(
+            &path,
+            GENERIC_READ | GENERIC_WRITE,
+            CREATE_NEW,
+            false,
+            Some(&sd),
+        )?;
+        verify_acl(&file, &self.sid, false)?;
+        Ok(file)
+    }
+    /// Publish immutable bounded metadata without replacing an existing file.
+    /// A fixed private candidate survives errors/crashes. Retry accepts only its
+    /// exact bytes; malformed/partial candidates require explicit recovery.
+    /// Errors may follow publication: reopen and verify, never blindly overwrite.
+    pub fn publish_new(&self, name: &str, bytes: &[u8]) -> io::Result<()> {
+        use std::io::Read;
+        if bytes.len() > 65536 {
+            return Err(denied());
+        }
+        let destination = self.child(name)?;
+        let temporary_name = format!(".new-{name}");
+        let temporary = self.child(&temporary_name)?;
+        let mut file = match self.create_file(&temporary_name) {
+            Ok(mut file) => {
+                file.write_all(bytes)?;
+                file
+            }
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                let sd = descriptor(&self.sid)?;
+                let mut file = open_handle(
+                    &temporary,
+                    GENERIC_READ | GENERIC_WRITE,
+                    OPEN_EXISTING,
+                    false,
+                    Some(&sd),
+                )?;
+                verify_acl(&file, &self.sid, false)?;
+                let mut existing = Vec::new();
+                (&mut file).take(65537).read_to_end(&mut existing)?;
+                if existing != bytes {
+                    return Err(denied());
+                }
+                file
+            }
+            Err(error) => return Err(error),
+        };
+        file.flush()?;
+        file.sync_all()?;
+        drop(file);
+        let source = wide(&temporary)?;
+        let target = wide(&destination)?;
+        if unsafe { MoveFileExW(source.as_ptr(), target.as_ptr(), MOVEFILE_WRITE_THROUGH) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let mut published = self.open_file(name, false)?;
+        let mut actual = Vec::new();
+        (&mut published).take(65537).read_to_end(&mut actual)?;
+        if actual != bytes {
+            return Err(denied());
+        }
+        Ok(())
+    }
     pub fn lock(&self, name: &str) -> io::Result<File> {
         let file = self.open_file(name, true)?;
         file.try_lock().map_err(|error| match error {

@@ -242,6 +242,51 @@ async fn save_replace_and_delete_work_on_supported_platforms() {
     );
 }
 
+#[tokio::test]
+async fn completion_run_references_survive_resume_but_do_not_transfer_to_branches() {
+    use crate::completion::runtime::RunReference;
+    let dir = tempfile::tempdir().unwrap();
+    let store = SessionStore::new(dir.path().into());
+    let mut original = Session::new(dir.path().into(), "test".into());
+    original.completion_runs.push(RunReference {
+        session_id: original.id,
+        run_id: Uuid::new_v4(),
+    });
+    store.save(&mut original).await.unwrap();
+    let loaded = store.load(original.id).await.unwrap();
+    assert_eq!(loaded.completion_runs, original.completion_runs);
+    assert!(
+        store
+            .branch(&loaded, None)
+            .await
+            .unwrap()
+            .completion_runs
+            .is_empty()
+    );
+    let valid = serde_json::to_value(&loaded).unwrap();
+    for invalid in [
+        serde_json::json!([{"session_id": Uuid::new_v4(), "run_id": Uuid::new_v4()}]),
+        serde_json::json!([{"session_id": loaded.id, "run_id": Uuid::nil()}]),
+        serde_json::json!([loaded.completion_runs[0], loaded.completion_runs[0]]),
+    ] {
+        let mut value = valid.clone();
+        value["completion_runs"] = invalid;
+        std::fs::write(store.path(loaded.id), serde_json::to_vec(&value).unwrap()).unwrap();
+        assert!(store.load(loaded.id).await.is_err());
+    }
+    let mut legacy = valid;
+    legacy.as_object_mut().unwrap().remove("completion_runs");
+    std::fs::write(store.path(loaded.id), serde_json::to_vec(&legacy).unwrap()).unwrap();
+    assert!(
+        store
+            .load(loaded.id)
+            .await
+            .unwrap()
+            .completion_runs
+            .is_empty()
+    );
+}
+
 #[cfg(target_os = "macos")]
 #[tokio::test]
 async fn root_owned_macos_temp_alias_supports_session_lifecycle_without_allowing_user_links() {
@@ -281,4 +326,163 @@ async fn canonical_windows_store_path_supports_leases_and_session_lifecycle() {
     assert_eq!(store.load(session.id).await.unwrap().revision, 2);
     store.delete_with_lease(session.id, &lease).await.unwrap();
     assert!(store.load(session.id).await.is_err());
+}
+
+#[tokio::test]
+async fn bound_store_clones_fence_writers_and_release_after_last_owner() {
+    let directory = tempfile::tempdir().unwrap();
+    let store = SessionStore::new(directory.path().into());
+    let mut session = Session::new(directory.path().into(), "test".into());
+    let owner = store.with_execution(session.id).await.unwrap();
+    owner.save(&mut session).await.unwrap();
+    let retained = owner.clone();
+    assert_eq!(owner.owned_session_id(), Some(session.id));
+    let again = owner.with_execution(session.id).await.unwrap();
+    drop(owner);
+    drop(again);
+    assert!(
+        tokio::time::timeout(
+            Duration::from_millis(50),
+            store.acquire_execution(session.id)
+        )
+        .await
+        .is_err()
+    );
+    session.set_name("owner update".into());
+    retained.save(&mut session).await.unwrap();
+    // Binding is per ID, not a global mutex: another session can be saved/deleted.
+    let mut other = Session::new(directory.path().into(), "other".into());
+    retained.save(&mut other).await.unwrap();
+    retained.delete(other.id).await.unwrap();
+    let disk = store.load(session.id).await.unwrap();
+    assert_eq!(disk.name.as_deref(), Some("owner update"));
+    drop(retained);
+    let next = store.with_execution(session.id).await.unwrap();
+    next.delete(session.id).await.unwrap();
+    assert!(
+        next.save(&mut session).await.is_err(),
+        "deletion must not resurrect"
+    );
+}
+
+#[tokio::test]
+async fn owned_load_reloads_after_lock_and_revalidates_names() {
+    let directory = tempfile::tempdir().unwrap();
+    let store = SessionStore::new(directory.path().into());
+    let mut session = Session::new(directory.path().into(), "test".into());
+    session.set_name("before".into());
+    let owner = store.with_execution(session.id).await.unwrap();
+    owner.save(&mut session).await.unwrap();
+    let id = session.id.to_string();
+    let pending = store.load_owned(&id);
+    tokio::pin!(pending);
+    assert!(
+        tokio::time::timeout(Duration::from_millis(100), &mut pending)
+            .await
+            .is_err()
+    );
+    session.messages.push(crate::Message::new(
+        crate::Role::User,
+        "committed while waiter blocked",
+    ));
+    owner.save(&mut session).await.unwrap();
+    drop(owner);
+    let (owner, mut current) = pending.await.unwrap();
+    assert_eq!(
+        current.messages.last().unwrap().content,
+        "committed while waiter blocked"
+    );
+    assert_eq!(current.revision, session.revision);
+    let renamed = store.load_owned("before");
+    tokio::pin!(renamed);
+    assert!(
+        tokio::time::timeout(Duration::from_millis(100), &mut renamed)
+            .await
+            .is_err()
+    );
+    current.set_name("after".into());
+    owner.save(&mut current).await.unwrap();
+    drop(owner);
+    assert!(
+        renamed.await.is_err(),
+        "a changed name cannot admit the stale snapshot"
+    );
+}
+
+#[tokio::test]
+async fn owned_load_rejects_alias_identity_and_foreign_paths() {
+    let directory = tempfile::tempdir().unwrap();
+    let store = SessionStore::new(directory.path().join("sessions"));
+    let mut session = Session::new(directory.path().into(), "test".into());
+    store.save(&mut session).await.unwrap();
+    let canonical = store.path(session.id);
+    let lexical = store
+        .directory
+        .join("..")
+        .join("sessions")
+        .join(canonical.file_name().unwrap());
+    let (owner, loaded) = store.load_owned(lexical.to_str().unwrap()).await.unwrap();
+    assert_eq!(loaded.id, session.id);
+    drop(owner);
+    let wrong_name = store.directory.join("wrong-name.json");
+    std::fs::copy(&canonical, &wrong_name).unwrap();
+    assert!(
+        store
+            .load_owned(wrong_name.to_str().unwrap())
+            .await
+            .is_err()
+    );
+    let foreign = directory.path().join("foreign.json");
+    std::fs::copy(&canonical, &foreign).unwrap();
+    assert!(store.load_owned(foreign.to_str().unwrap()).await.is_err());
+    #[cfg(unix)]
+    {
+        let link = store.directory.join("linked.json");
+        std::os::unix::fs::symlink(&canonical, &link).unwrap();
+        assert!(store.load_owned(link.to_str().unwrap()).await.is_err());
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn session_busy_is_bounded_and_cancelled_waiters_keep_owner_intact() {
+    let directory = tempfile::tempdir().unwrap();
+    let store = SessionStore::new(directory.path().into());
+    let id = Uuid::new_v4();
+    let owner = store.with_execution(id).await.unwrap();
+    let started = tokio::time::Instant::now();
+    let error = store.with_execution(id).await.unwrap_err();
+    assert!(error.to_string().contains("session busy"));
+    assert!(started.elapsed() >= Duration::from_secs(2));
+    assert!(started.elapsed() < Duration::from_secs(3));
+    assert!(
+        tokio::time::timeout(Duration::from_millis(50), store.with_execution(id))
+            .await
+            .is_err()
+    );
+    drop(owner);
+    store.with_execution(id).await.unwrap();
+}
+
+#[tokio::test]
+async fn owned_branch_holds_new_id_before_publication_and_preserves_source() {
+    let directory = tempfile::tempdir().unwrap();
+    let store = SessionStore::new(directory.path().into());
+    let mut source = Session::new(directory.path().into(), "test".into());
+    let owner = store.with_execution(source.id).await.unwrap();
+    owner.save(&mut source).await.unwrap();
+    let (branch_owner, branch) = owner
+        .branch_owned(&source, Some("branch".into()))
+        .await
+        .unwrap();
+    assert_ne!(branch.id, source.id);
+    assert_eq!(branch_owner.owned_session_id(), Some(branch.id));
+    assert!(
+        tokio::time::timeout(Duration::from_millis(50), store.with_execution(branch.id))
+            .await
+            .is_err()
+    );
+    drop(owner);
+    store.with_execution(source.id).await.unwrap();
+    assert_eq!(branch.parent_id, Some(source.id));
+    assert!(branch.completion_runs.is_empty());
 }

@@ -34,8 +34,8 @@ fn prompt_history_preserves_draft_and_bounds() {
     assert!(composer.text.is_empty());
 }
 
-#[test]
-fn prompt_history_seeds_only_user_messages_and_resets_for_new_session() {
+#[tokio::test]
+async fn prompt_history_seeds_only_user_messages_and_resets_for_new_session() {
     let mut session = Session::new(PathBuf::from("/tmp"), "test-model".into());
     for (role, text) in [
         (Role::System, "instructions"),
@@ -52,7 +52,9 @@ fn prompt_history_seeds_only_user_messages_and_resets_for_new_session() {
     app.session.messages.clear();
     app.prompt_history.navigate(&mut app.composer, true);
     assert_eq!(app.composer.text, "last");
-    start_new_session(&mut app, None);
+    let directory = tempfile::tempdir().unwrap();
+    let mut store = SessionStore::new(directory.path().join("sessions"));
+    start_new_session(&mut app, &mut store, None).await.unwrap();
     assert!(app.prompt_history.entries.is_empty());
     assert!(app.prompt_history.position.is_none());
 }
