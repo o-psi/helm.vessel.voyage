@@ -1,0 +1,894 @@
+//! Run-owned obligations coordinated with durable workspace records.
+use super::{
+    DispositionKind, Obligation, Readiness, RunId, RunLedger,
+    store::{RunLedgerStore, RunScope},
+};
+use crate::{
+    subagent::{AgentTree, AgentTreeStore},
+    todo::TodoStore,
+};
+use anyhow::{Context, Result, ensure};
+use std::{
+    collections::HashMap,
+    fs::{File, OpenOptions},
+    path::{Path, PathBuf},
+    sync::{Arc, Mutex, OnceLock, Weak},
+};
+use tokio::sync::{Mutex as AsyncMutex, OwnedMutexGuard};
+use uuid::Uuid;
+
+#[derive(Clone, Debug)]
+pub struct Coordinator {
+    directory: PathBuf,
+    workspace: PathBuf,
+    gate: Arc<AsyncMutex<()>>,
+}
+
+pub(crate) struct CoordinationGuard {
+    file: File,
+    _local: OwnedMutexGuard<()>,
+}
+impl Drop for CoordinationGuard {
+    fn drop(&mut self) {
+        let _ = self.file.unlock();
+    }
+}
+
+impl Coordinator {
+    /// Dedicated private directory beneath an existing trusted data directory.
+    pub fn open(directory: PathBuf, workspace: &Path) -> Result<Self> {
+        let workspace = workspace.canonicalize()?;
+        ensure!(
+            workspace.is_dir(),
+            "completion workspace is not a directory"
+        );
+        let mut builder = std::fs::DirBuilder::new();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::DirBuilderExt;
+            builder.mode(0o700);
+        }
+        match builder.create(&directory) {
+            Ok(()) => (),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => (),
+            Err(e) => return Err(e.into()),
+        }
+        let metadata = std::fs::symlink_metadata(&directory)?;
+        ensure!(
+            metadata.is_dir() && !metadata.file_type().is_symlink(),
+            "invalid completion coordinator directory"
+        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            ensure!(
+                metadata.permissions().mode() & 0o077 == 0,
+                "completion coordinator directory is not private"
+            );
+        }
+        let directory = directory.canonicalize()?;
+        static GATES: OnceLock<Mutex<HashMap<PathBuf, Weak<AsyncMutex<()>>>>> = OnceLock::new();
+        let mut gates = GATES
+            .get_or_init(Default::default)
+            .lock()
+            .map_err(|_| anyhow::anyhow!("coordinator registry poisoned"))?;
+        let gate = gates
+            .get(&directory)
+            .and_then(Weak::upgrade)
+            .unwrap_or_else(|| {
+                let gate = Arc::new(AsyncMutex::new(()));
+                gates.insert(directory.clone(), Arc::downgrade(&gate));
+                gate
+            });
+        Ok(Self {
+            directory,
+            workspace,
+            gate,
+        })
+    }
+    pub(crate) async fn lock(&self) -> Result<CoordinationGuard> {
+        let local = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            self.gate.clone().lock_owned(),
+        )
+        .await
+        .context("workspace completion coordinator timed out")?;
+        let path = self.directory.join("workspace.lock");
+        tokio::task::spawn_blocking(move || {
+            let mut options = OpenOptions::new();
+            options.read(true).write(true).create(true).truncate(false);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                options
+                    .mode(0o600)
+                    .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+            }
+            let file = options.open(&path)?;
+            ensure!(
+                file.metadata()?.is_file()
+                    && !std::fs::symlink_metadata(path)?.file_type().is_symlink(),
+                "invalid coordinator lock"
+            );
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                ensure!(
+                    file.metadata()?.permissions().mode() & 0o077 == 0,
+                    "coordinator lock is not private"
+                );
+            }
+            file.try_lock()
+                .context("workspace completion state is busy")?;
+            Ok(CoordinationGuard {
+                file,
+                _local: local,
+            })
+        })
+        .await?
+    }
+    pub(crate) fn same(&self, other: &Self) -> bool {
+        self.directory == other.directory && self.workspace == other.workspace
+    }
+}
+
+/// Holds cooperating todo/agent/ledger writers out until the caller records its
+/// acceptance decision. Never retain this across provider calls, tools or waits.
+pub struct ReadinessLease {
+    pub readiness: Readiness,
+    _guard: CoordinationGuard,
+}
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct RunReference {
+    pub session_id: Uuid,
+    pub run_id: Uuid,
+}
+
+#[derive(Clone, Debug)]
+pub struct Review {
+    pub revision: u64,
+    pub fingerprint: String,
+    pub disposition: DispositionKind,
+    pub reason: String,
+}
+
+#[derive(Clone, Debug)]
+pub struct RunHandle {
+    coordinator: Coordinator,
+    store: RunLedgerStore,
+    run_id: RunId,
+    session_id: Uuid,
+}
+impl RunHandle {
+    pub async fn create(coordinator: Coordinator, session_id: Uuid, run_id: Uuid) -> Result<Self> {
+        let _guard = coordinator.lock().await?;
+        let worker = coordinator.clone();
+        let store = tokio::task::spawn_blocking(move || {
+            let _guard = _guard;
+            let scope = RunScope::new(&worker.workspace, session_id)?;
+            let store = RunLedgerStore::open(worker.directory.join("ledgers"), scope)?;
+            store.create(&RunLedger::with_id(RunId(run_id)))?;
+            Ok::<_, anyhow::Error>(store)
+        })
+        .await??;
+        Ok(Self {
+            coordinator,
+            store,
+            run_id: RunId(run_id),
+            session_id,
+        })
+    }
+    /// Known runs fail closed if their durable ledger is missing or corrupt.
+    pub async fn resume(coordinator: Coordinator, session_id: Uuid, run_id: Uuid) -> Result<Self> {
+        let _guard = coordinator.lock().await?;
+        let worker = coordinator.clone();
+        let store = tokio::task::spawn_blocking(move || {
+            let _guard = _guard;
+            let store = RunLedgerStore::open(
+                worker.directory.join("ledgers"),
+                RunScope::new(&worker.workspace, session_id)?,
+            )?;
+            store.load(RunId(run_id))?;
+            Ok::<_, anyhow::Error>(store)
+        })
+        .await??;
+        Ok(Self {
+            coordinator,
+            store,
+            run_id: RunId(run_id),
+            session_id,
+        })
+    }
+    pub fn reference(&self) -> RunReference {
+        RunReference {
+            session_id: self.session_id,
+            run_id: self.run_id.0,
+        }
+    }
+    pub async fn owns(&self, obligation: Obligation) -> Result<bool> {
+        let _guard = self.coordinator.lock().await?;
+        Ok(self
+            .ledger()
+            .await?
+            .obligations()
+            .any(|entry| entry == obligation))
+    }
+    pub fn run_id(&self) -> Uuid {
+        self.run_id.0
+    }
+    pub fn coordinator(&self) -> &Coordinator {
+        &self.coordinator
+    }
+    async fn ledger(&self) -> Result<RunLedger> {
+        let handle = self.clone();
+        tokio::task::spawn_blocking(move || handle.store.load(handle.run_id)).await?
+    }
+    /// Register before publishing a todo or starting a child. Failure after this
+    /// commit leaves an unresolved missing obligation, never untracked work.
+    pub async fn register(&self, obligation: Obligation) -> Result<()> {
+        let _guard = self.coordinator.lock().await?;
+        let handle = self.clone();
+        tokio::task::spawn_blocking(move || {
+            let _guard = _guard;
+            let ledger = handle.store.load(handle.run_id)?;
+            handle.store.update(handle.run_id, ledger.revision(), |l| {
+                l.adopt(obligation, l.revision())
+            })?;
+            Ok(())
+        })
+        .await?
+    }
+    async fn records(
+        &self,
+        ledger: &RunLedger,
+        todos: &TodoStore,
+        agents: &AgentTreeStore,
+    ) -> Result<(crate::todo::TodoList, AgentTree)> {
+        ensure!(
+            todos
+                .coordinator()
+                .is_some_and(|c| c.same(&self.coordinator))
+                && agents
+                    .coordinator()
+                    .is_some_and(|c| c.same(&self.coordinator)),
+            "completion stores use a different coordinator"
+        );
+        let todos = todos.snapshot().await?;
+        let mut tree = agents.load().await?;
+        for obligation in ledger.obligations() {
+            if let Obligation::Agent(id) = obligation
+                && let std::collections::btree_map::Entry::Vacant(entry) = tree.agents.entry(id)
+                && let Some(archived) = agents.get_archived(id).await?
+            {
+                entry.insert(archived.record);
+            }
+        }
+        Ok((todos, tree))
+    }
+    pub async fn snapshot(
+        &self,
+        todos: &TodoStore,
+        agents: &AgentTreeStore,
+        limit: usize,
+    ) -> Result<Readiness> {
+        Ok(self.readiness_lease(todos, agents, limit).await?.readiness)
+    }
+    pub async fn readiness_lease(
+        &self,
+        todos: &TodoStore,
+        agents: &AgentTreeStore,
+        limit: usize,
+    ) -> Result<ReadinessLease> {
+        let guard = self.coordinator.lock().await?;
+        let ledger = self.ledger().await?;
+        let (todos, agents) = self.records(&ledger, todos, agents).await?;
+        Ok(ReadinessLease {
+            readiness: ledger.snapshot(&todos, &agents, limit)?,
+            _guard: guard,
+        })
+    }
+    async fn record(
+        &self,
+        todos: &TodoStore,
+        agents: &AgentTreeStore,
+        obligation: Obligation,
+    ) -> Result<serde_json::Value> {
+        ensure!(
+            todos
+                .coordinator()
+                .is_some_and(|c| c.same(&self.coordinator))
+                && agents
+                    .coordinator()
+                    .is_some_and(|c| c.same(&self.coordinator)),
+            "completion stores use a different coordinator"
+        );
+        match obligation {
+            Obligation::Todo(id) => serde_json::to_value(
+                todos
+                    .snapshot()
+                    .await?
+                    .items
+                    .get(&id)
+                    .context("todo missing")?,
+            )
+            .map_err(Into::into),
+            Obligation::Agent(id) => {
+                let record = match agents.get(id).await? {
+                    Some(record) => record,
+                    None => {
+                        agents
+                            .get_archived(id)
+                            .await?
+                            .context("agent missing")?
+                            .record
+                    }
+                };
+                Ok(serde_json::to_value(record)?)
+            }
+        }
+    }
+    pub async fn read_owned(
+        &self,
+        todos: &TodoStore,
+        agents: &AgentTreeStore,
+        obligation: Obligation,
+    ) -> Result<serde_json::Value> {
+        let _guard = self.coordinator.lock().await?;
+        ensure!(
+            self.ledger()
+                .await?
+                .obligations()
+                .any(|entry| entry == obligation),
+            "record is not owned by this run"
+        );
+        self.record(todos, agents, obligation).await
+    }
+    pub async fn adopt_existing(
+        &self,
+        todos: &TodoStore,
+        agents: &AgentTreeStore,
+        obligation: Obligation,
+        expected_revision: u64,
+    ) -> Result<()> {
+        let _guard = self.coordinator.lock().await?;
+        self.record(todos, agents, obligation).await?;
+        let handle = self.clone();
+        tokio::task::spawn_blocking(move || {
+            let _guard = _guard;
+            handle
+                .store
+                .update(handle.run_id, expected_revision, |ledger| {
+                    ledger.adopt(obligation, expected_revision)
+                })?;
+            Ok(())
+        })
+        .await?
+    }
+    pub async fn account(
+        &self,
+        todos: &TodoStore,
+        agents: &AgentTreeStore,
+        obligation: Obligation,
+        review: Review,
+    ) -> Result<()> {
+        let _guard = self.coordinator.lock().await?;
+        let ledger = self.ledger().await?;
+        let (todos, agents) = self.records(&ledger, todos, agents).await?;
+        ensure!(
+            ledger.snapshot(&todos, &agents, 0)?.fingerprint == review.fingerprint,
+            "completion records changed since review"
+        );
+        let Review {
+            revision: expected_revision,
+            disposition: kind,
+            reason,
+            ..
+        } = review;
+        let handle = self.clone();
+        tokio::task::spawn_blocking(move || {
+            let _guard = _guard;
+            handle.store.update(
+                handle.run_id,
+                expected_revision,
+                |ledger| match obligation {
+                    Obligation::Todo(id) => ledger.account_todo(
+                        todos.items.get(&id).context("owned todo missing")?,
+                        kind,
+                        reason,
+                        expected_revision,
+                    ),
+                    Obligation::Agent(id) => ledger.account_agent(
+                        agents.agents.get(&id).context("owned agent missing")?,
+                        kind,
+                        reason,
+                        expected_revision,
+                    ),
+                },
+            )?;
+            Ok(())
+        })
+        .await?
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        completion::UnresolvedReason,
+        subagent::{
+            AgentBudget, AgentPolicy, ApprovalPolicy, ExecutionContext, RuntimeLimits,
+            SpawnRequest, SubagentExecutor, SubagentResult, SubagentRuntime,
+        },
+        todo::{EntryKind, NewTodo, Priority, TodoScope, TodoStatus},
+    };
+    use std::collections::BTreeSet;
+    struct Fixture {
+        _root: tempfile::TempDir,
+        coordinator: Coordinator,
+        todos: TodoStore,
+        agents: AgentTreeStore,
+    }
+    impl Fixture {
+        fn new() -> Self {
+            let root = tempfile::tempdir().unwrap();
+            let coordinator =
+                Coordinator::open(root.path().join("completion"), root.path()).unwrap();
+            let todos = TodoStore::new(
+                root.path().join("todos/list.json"),
+                TodoScope::workspace(root.path().canonicalize().unwrap()),
+            )
+            .with_coordinator(coordinator.clone());
+            let agents = AgentTreeStore::new(root.path().join("agents/tree.json"))
+                .with_coordinator(coordinator.clone());
+            Self {
+                _root: root,
+                coordinator,
+                todos,
+                agents,
+            }
+        }
+        async fn run(&self) -> RunHandle {
+            RunHandle::create(self.coordinator.clone(), Uuid::new_v4(), Uuid::new_v4())
+                .await
+                .unwrap()
+        }
+        async fn snapshot(&self, run: &RunHandle) -> Readiness {
+            run.snapshot(&self.todos, &self.agents, 64).await.unwrap()
+        }
+    }
+    fn todo(title: &str) -> NewTodo {
+        NewTodo {
+            title: title.into(),
+            description: String::new(),
+            priority: Priority::Normal,
+            order: None,
+            assignees: BTreeSet::new(),
+        }
+    }
+    fn review(snapshot: Readiness, disposition: DispositionKind) -> Review {
+        Review {
+            revision: snapshot.revision,
+            fingerprint: snapshot.fingerprint,
+            disposition,
+            reason: "verified fixture evidence".into(),
+        }
+    }
+    #[tokio::test]
+    async fn owned_todos_are_isolated_and_review_rejects_concurrent_edits() {
+        let fixture = Fixture::new();
+        let first = fixture.run().await;
+        let second = fixture.run().await;
+        let legacy = fixture
+            .todos
+            .create(todo("legacy unrelated"))
+            .await
+            .unwrap();
+        let item = fixture
+            .todos
+            .create_registered(todo("owned"), Some(&first))
+            .await
+            .unwrap();
+        assert_eq!(fixture.snapshot(&first).await.total, 1);
+        assert!(fixture.snapshot(&second).await.ready());
+        assert!(
+            first
+                .read_owned(&fixture.todos, &fixture.agents, Obligation::Todo(legacy.id))
+                .await
+                .is_err()
+        );
+        let stale = fixture.snapshot(&first).await;
+        fixture
+            .todos
+            .set_blockers(item.id, vec!["waiting on fixture".into()])
+            .await
+            .unwrap();
+        assert!(
+            first
+                .account(
+                    &fixture.todos,
+                    &fixture.agents,
+                    Obligation::Todo(item.id),
+                    review(stale, DispositionKind::BlockedWithImpact)
+                )
+                .await
+                .is_err()
+        );
+        first
+            .account(
+                &fixture.todos,
+                &fixture.agents,
+                Obligation::Todo(item.id),
+                review(
+                    fixture.snapshot(&first).await,
+                    DispositionKind::BlockedWithImpact,
+                ),
+            )
+            .await
+            .unwrap();
+        let ready = fixture.snapshot(&first).await;
+        assert!(ready.ready());
+        assert_eq!(ready.incomplete, 1);
+        assert_eq!(ready.completed, 0);
+        assert_eq!(
+            fixture.todos.snapshot().await.unwrap().items[&item.id].status,
+            TodoStatus::Blocked
+        );
+        assert_eq!(
+            fixture.todos.snapshot().await.unwrap().items[&legacy.id].status,
+            TodoStatus::Pending
+        );
+    }
+    #[tokio::test]
+    async fn explicit_adoption_and_archival_preserve_obligations_and_evidence() {
+        let fixture = Fixture::new();
+        let run = fixture.run().await;
+        let item = fixture.todos.create(todo("older work")).await.unwrap();
+        run.adopt_existing(
+            &fixture.todos,
+            &fixture.agents,
+            Obligation::Todo(item.id),
+            0,
+        )
+        .await
+        .unwrap();
+        fixture
+            .todos
+            .append_note(
+                item.id,
+                EntryKind::Evidence,
+                "actual test evidence".into(),
+                None,
+            )
+            .await
+            .unwrap();
+        fixture
+            .todos
+            .set_status(item.id, TodoStatus::Completed)
+            .await
+            .unwrap();
+        run.account(
+            &fixture.todos,
+            &fixture.agents,
+            Obligation::Todo(item.id),
+            review(
+                fixture.snapshot(&run).await,
+                DispositionKind::CompletedWithEvidence,
+            ),
+        )
+        .await
+        .unwrap();
+        assert!(fixture.snapshot(&run).await.ready());
+        fixture.todos.archive(item.id).await.unwrap();
+        assert_eq!(
+            fixture.snapshot(&run).await.unresolved[0].reason,
+            UnresolvedReason::RecordChanged
+        );
+        run.account(
+            &fixture.todos,
+            &fixture.agents,
+            Obligation::Todo(item.id),
+            review(
+                fixture.snapshot(&run).await,
+                DispositionKind::CompletedWithEvidence,
+            ),
+        )
+        .await
+        .unwrap();
+        fixture.todos.remove(item.id).await.unwrap();
+        assert_eq!(
+            fixture.snapshot(&run).await.unresolved[0].reason,
+            UnresolvedReason::MissingRecord
+        );
+    }
+    #[tokio::test]
+    async fn registration_failure_never_publishes_todo_and_missing_run_never_becomes_empty() {
+        let fixture = Fixture::new();
+        let run = fixture.run().await;
+        let reference = run.reference();
+        let path = fixture.coordinator.directory.join("ledgers").join(format!(
+            "{}-{}.json",
+            reference.session_id, reference.run_id
+        ));
+        std::fs::remove_file(&path).unwrap();
+        assert!(
+            fixture
+                .todos
+                .create_registered(todo("must not publish"), Some(&run))
+                .await
+                .is_err()
+        );
+        assert!(fixture.todos.snapshot().await.unwrap().items.is_empty());
+        assert!(
+            RunHandle::resume(
+                fixture.coordinator.clone(),
+                reference.session_id,
+                reference.run_id
+            )
+            .await
+            .is_err()
+        );
+        assert!(
+            run.snapshot(&fixture.todos, &fixture.agents, 64)
+                .await
+                .is_err()
+        );
+    }
+    #[tokio::test]
+    async fn failed_publication_leaves_missing_obligation_and_reopen_retains_it() {
+        let fixture = Fixture::new();
+        let run = fixture.run().await;
+        let bad = TodoStore::new(
+            fixture._root.path().join("not-a-directory/todos.json"),
+            TodoScope::workspace(fixture._root.path().canonicalize().unwrap()),
+        )
+        .with_coordinator(fixture.coordinator.clone());
+        std::fs::write(fixture._root.path().join("not-a-directory"), "occupied").unwrap();
+        assert!(
+            bad.create_registered(todo("tracked before failure"), Some(&run))
+                .await
+                .is_err()
+        );
+        let reference = run.reference();
+        let reopened = RunHandle::resume(
+            fixture.coordinator.clone(),
+            reference.session_id,
+            reference.run_id,
+        )
+        .await
+        .unwrap();
+        let snapshot = fixture.snapshot(&reopened).await;
+        assert_eq!(snapshot.total, 1);
+        assert_eq!(
+            snapshot.unresolved[0].reason,
+            UnresolvedReason::MissingRecord
+        );
+    }
+    #[tokio::test]
+    async fn coordinated_writer_waits_for_readiness_boundary_without_reentrant_deadlock() {
+        let fixture = Fixture::new();
+        let run = fixture.run().await;
+        let item = fixture
+            .todos
+            .create_registered(todo("original"), Some(&run))
+            .await
+            .unwrap();
+        let guard = fixture.coordinator.lock().await.unwrap();
+        let todos = fixture.todos.clone();
+        let writer =
+            tokio::spawn(
+                async move { todos.edit(item.id, Some("edited".into()), None, None).await },
+            );
+        tokio::task::yield_now().await;
+        assert!(!writer.is_finished());
+        let ledger = run.ledger().await.unwrap();
+        let (todos, agents) = run
+            .records(&ledger, &fixture.todos, &fixture.agents)
+            .await
+            .unwrap();
+        assert_eq!(todos.items[&item.id].title, "original");
+        assert_eq!(ledger.snapshot(&todos, &agents, 0).unwrap().total, 1);
+        drop(guard);
+        tokio::time::timeout(std::time::Duration::from_secs(3), writer)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            fixture.todos.snapshot().await.unwrap().items[&item.id].title,
+            "edited"
+        );
+    }
+    struct OwnedExecutor;
+    #[async_trait::async_trait]
+    impl SubagentExecutor for OwnedExecutor {
+        async fn execute(
+            &self,
+            mut context: ExecutionContext,
+        ) -> std::result::Result<SubagentResult, String> {
+            if context.task == "hold" {
+                context.recv().await;
+            }
+            Ok(SubagentResult {
+                summary: context
+                    .completion
+                    .map(|run| run.run_id().to_string())
+                    .unwrap_or_else(|| "legacy".into()),
+            })
+        }
+    }
+    fn request(parent_id: Option<crate::subagent::AgentId>) -> SpawnRequest {
+        let budget = AgentBudget {
+            max_tokens: 100,
+            max_terminals: 1,
+        };
+        SpawnRequest {
+            parent_id,
+            name: "owned-child".into(),
+            task: "test ownership".into(),
+            policy: AgentPolicy {
+                readable_roots: vec![],
+                writable_roots: vec![],
+                allowed_tools: BTreeSet::new(),
+                approval: ApprovalPolicy::Deny,
+                budget: budget.clone(),
+            },
+            budget,
+            worktree: None,
+            branch: None,
+        }
+    }
+    #[tokio::test]
+    async fn subagent_creation_keeps_archived_obligations() {
+        let fixture = Fixture::new();
+        let run = fixture.run().await;
+        let runtime = SubagentRuntime::new(
+            Arc::new(OwnedExecutor),
+            RuntimeLimits::default(),
+            Some(fixture.agents.clone()),
+        )
+        .unwrap();
+        let parent = runtime
+            .spawn_for_run(request(None), Some(run.clone()))
+            .await
+            .unwrap();
+        let result = runtime.wait(parent).await.unwrap().unwrap();
+        assert_eq!(result.summary, run.run_id().to_string());
+        let snapshot = fixture.snapshot(&run).await;
+        assert_eq!(snapshot.total, 1);
+        assert!(!snapshot.ready());
+        assert_eq!(
+            run.read_owned(&fixture.todos, &fixture.agents, Obligation::Agent(parent))
+                .await
+                .unwrap()["completion"]["run_id"],
+            run.run_id().to_string()
+        );
+        // Archived records cannot be resumed; a fresh owned child must reference
+        // earlier results explicitly. Durable obligations survive auto-archive.
+        assert!(runtime.is_archived(parent).await.unwrap());
+        assert_eq!(
+            snapshot.unresolved[0].reason,
+            UnresolvedReason::NeedsDisposition
+        );
+        run.account(
+            &fixture.todos,
+            &fixture.agents,
+            Obligation::Agent(parent),
+            review(snapshot, DispositionKind::Incorporated),
+        )
+        .await
+        .unwrap();
+        assert!(fixture.snapshot(&run).await.ready());
+    }
+    #[tokio::test]
+    async fn nested_children_and_terminal_followups_inherit_and_reject_unadopted_runs() {
+        let fixture = Fixture::new();
+        let run = fixture.run().await;
+        let unrelated = fixture.run().await;
+        let runtime = SubagentRuntime::new(
+            Arc::new(OwnedExecutor),
+            RuntimeLimits::default(),
+            Some(fixture.agents.clone()),
+        )
+        .unwrap();
+        let mut initial = request(None);
+        // Keep an ancestor active so terminal children with worktrees remain
+        // retained for the existing terminal-followup contract.
+        initial.task = "hold".into();
+        let ancestor = runtime
+            .spawn_for_run(initial, Some(run.clone()))
+            .await
+            .unwrap();
+        let mut child_request = request(Some(ancestor));
+        child_request.worktree = Some(fixture._root.path().to_owned());
+        let parent = runtime.spawn(child_request).await.unwrap();
+        let child = parent;
+        assert_eq!(
+            runtime.wait(child).await.unwrap().unwrap().summary,
+            run.run_id().to_string()
+        );
+        let followup = runtime
+            .follow_up_in_run(None, parent, "followup", Some(run.clone()))
+            .await
+            .unwrap();
+        assert_eq!(
+            runtime.wait(followup).await.unwrap().unwrap().summary,
+            run.run_id().to_string()
+        );
+        assert_eq!(fixture.snapshot(&run).await.total, 3);
+        assert!(
+            runtime
+                .follow_up_in_run(None, parent, "unrelated", Some(unrelated.clone()))
+                .await
+                .is_err()
+        );
+        assert!(fixture.snapshot(&unrelated).await.ready());
+        unrelated
+            .adopt_existing(
+                &fixture.todos,
+                &fixture.agents,
+                Obligation::Agent(parent),
+                0,
+            )
+            .await
+            .unwrap();
+        let adopted = runtime
+            .follow_up_in_run(None, parent, "explicitly adopted", Some(unrelated.clone()))
+            .await
+            .unwrap();
+        assert_eq!(
+            runtime.wait(adopted).await.unwrap().unwrap().summary,
+            unrelated.run_id().to_string()
+        );
+        assert_eq!(fixture.snapshot(&unrelated).await.total, 2);
+        runtime
+            .send_message(ancestor, "finish fixture")
+            .await
+            .unwrap();
+        runtime.wait(ancestor).await.unwrap().unwrap();
+    }
+    #[tokio::test]
+    async fn coordinator_excludes_a_fresh_process() {
+        const ENV: &str = "HELM_COMPLETION_COORDINATOR_CHILD";
+        if let Ok(root) = std::env::var(ENV) {
+            let root = PathBuf::from(root);
+            let coordinator = Coordinator::open(root.join("completion"), &root).unwrap();
+            assert!(
+                coordinator.lock().await.is_err(),
+                "child acquired parent's workspace lease"
+            );
+            return;
+        }
+        let fixture = Fixture::new();
+        let _guard = fixture.coordinator.lock().await.unwrap();
+        let root = fixture._root.path().to_owned();
+        tokio::task::spawn_blocking(move || {
+            let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "completion::runtime::tests::coordinator_excludes_a_fresh_process",
+                ])
+                .env(ENV, root)
+                .stdout(std::process::Stdio::null())
+                .spawn()
+                .unwrap();
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            loop {
+                if let Some(status) = child.try_wait().unwrap() {
+                    assert!(status.success());
+                    break;
+                }
+                if std::time::Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    panic!("coordinator contention child timed out");
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+        })
+        .await
+        .unwrap();
+    }
+}

@@ -676,6 +676,7 @@ mod tests {
             environment.insert("PATH".into(), path);
         }
         ToolContext {
+            completion: None,
             policy: Arc::new(Policy::new(&config, root.to_owned()).unwrap()),
             approver: Arc::new(Yes),
             timeout: Duration::from_secs(2),

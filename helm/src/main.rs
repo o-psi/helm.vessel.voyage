@@ -745,6 +745,7 @@ impl SubagentExecutor for CliSubagentExecutor {
         let workspace = config.resolve_workspace(None).map_err(|e| e.to_string())?;
         let policy = Arc::new(Policy::new(&config, workspace.clone()).map_err(|e| e.to_string())?);
         let tool_context = ToolContext {
+            completion: None,
             policy,
             approver: Arc::new(UnattendedApprover { allow: false }),
             timeout: config.timeout(),
@@ -905,6 +906,7 @@ async fn build_agent(config: &Config, workspace: PathBuf, attended: bool) -> Res
         })
     };
     let context = ToolContext {
+        completion: None,
         policy,
         approver,
         timeout: config.timeout(),
@@ -1002,6 +1004,7 @@ async fn tui_chat(
     );
     let policy = Arc::new(Policy::new(&active_config, session.workspace.clone())?);
     let context = ToolContext {
+        completion: None,
         policy,
         approver: bridge.clone(),
         timeout: active_config.timeout(),

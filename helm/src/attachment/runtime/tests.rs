@@ -201,6 +201,7 @@ async fn setup(
         ..Config::default()
     };
     let context = ToolContext {
+        completion: None,
         policy: Arc::new(Policy::new(&config, dir.path().to_path_buf()).unwrap()),
         approver: Arc::new(UnattendedApprover { allow: false }),
         timeout: Duration::from_secs(3),

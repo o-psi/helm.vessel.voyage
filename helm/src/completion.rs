@@ -3,7 +3,9 @@
 //! This module does not accept final responses or mutate task/agent stores. A caller
 //! must persist the ledger and coordinate record reads, membership changes, and
 //! final acceptance in one serialized runtime boundary. A snapshot is not a lock.
+pub mod runtime;
 pub mod store;
+pub mod tool;
 
 use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
@@ -87,9 +89,17 @@ pub enum UnresolvedReason {
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[serde(tag = "kind", content = "status", rename_all = "snake_case")]
+pub enum WorkStatus {
+    Todo(TodoStatus),
+    Agent(AgentStatus),
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 pub struct Unresolved {
     pub obligation: Obligation,
     pub reason: UnresolvedReason,
+    pub status: Option<WorkStatus>,
 }
 
 /// Deliberately contains no transcript, task titles, results or secret-bearing
@@ -120,12 +130,18 @@ impl Default for RunLedger {
 }
 impl RunLedger {
     pub fn new() -> Self {
+        Self::with_id(RunId::default())
+    }
+    pub fn with_id(run_id: RunId) -> Self {
         Self {
             version: VERSION,
-            run_id: RunId::default(),
+            run_id,
             revision: 0,
             entries: vec![],
         }
+    }
+    pub fn obligations(&self) -> impl Iterator<Item = Obligation> + '_ {
+        self.entries.iter().map(|entry| entry.obligation)
     }
     pub fn run_id(&self) -> RunId {
         self.run_id
@@ -401,6 +417,16 @@ impl RunLedger {
                     snapshot.unresolved.push(Unresolved {
                         obligation: entry.obligation,
                         reason,
+                        status: match entry.obligation {
+                            Obligation::Todo(id) => todos
+                                .items
+                                .get(&id)
+                                .map(|item| WorkStatus::Todo(item.status)),
+                            Obligation::Agent(id) => agents
+                                .agents
+                                .get(&id)
+                                .map(|item| WorkStatus::Agent(item.status.clone())),
+                        },
                     });
                 } else {
                     snapshot.omitted_unresolved += 1;
@@ -506,6 +532,7 @@ mod tests {
             max_terminals: 1,
         };
         AgentRecord {
+            completion: None,
             id: AgentId::new(),
             parent_id: None,
             name: "child".into(),

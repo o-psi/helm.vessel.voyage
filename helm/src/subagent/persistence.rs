@@ -24,6 +24,7 @@ mod tests {
             max_terminals: 1,
         };
         AgentRecord {
+            completion: None,
             id: AgentId::new(),
             parent_id: None,
             name: "child".into(),
@@ -489,13 +490,25 @@ impl AgentTree {
 pub struct AgentTreeStore {
     path: PathBuf,
     gate: std::sync::Arc<tokio::sync::Mutex<()>>,
+    coordinator: Option<crate::completion::runtime::Coordinator>,
 }
 impl AgentTreeStore {
     pub fn new(path: PathBuf) -> Self {
         Self {
             path,
             gate: std::sync::Arc::new(tokio::sync::Mutex::new(())),
+            coordinator: None,
         }
+    }
+    pub fn with_coordinator(
+        mut self,
+        coordinator: crate::completion::runtime::Coordinator,
+    ) -> Self {
+        self.coordinator = Some(coordinator);
+        self
+    }
+    pub fn coordinator(&self) -> Option<&crate::completion::runtime::Coordinator> {
+        self.coordinator.as_ref()
     }
     pub async fn load(&self) -> Result<AgentTree> {
         match tokio::fs::read(&self.path).await {
@@ -522,6 +535,20 @@ impl AgentTreeStore {
         }
     }
     pub async fn save(&self, tree: &AgentTree) -> Result<()> {
+        let tree = tree.clone();
+        let store = self.clone();
+        tokio::spawn(async move {
+            let _coordination = match &store.coordinator {
+                Some(c) => Some(c.lock().await?),
+                None => None,
+            };
+            let _guard = store.gate.lock().await;
+            store.save_raw(&tree).await
+        })
+        .await
+        .context("agent writer task failed")?
+    }
+    async fn save_raw(&self, tree: &AgentTree) -> Result<()> {
         let parent = self.path.parent().context("invalid agent tree path")?;
         tokio::fs::create_dir_all(parent).await?;
         secure(parent, 0o700).await?;
@@ -534,21 +561,39 @@ impl AgentTreeStore {
         Ok(())
     }
     pub async fn create(&self, record: AgentRecord) -> Result<()> {
-        let _guard = self.gate.lock().await;
-        let mut tree = self.load().await?;
-        tree.insert(record)?;
-        self.save(&tree).await
+        let store = self.clone();
+        tokio::spawn(async move {
+            let _coordination = match &store.coordinator {
+                Some(c) => Some(c.lock().await?),
+                None => None,
+            };
+            let _guard = store.gate.lock().await;
+            let mut tree = store.load().await?;
+            tree.insert(record)?;
+            store.save_raw(&tree).await
+        })
+        .await
+        .context("agent writer task failed")?
     }
     pub async fn update(&self, record: AgentRecord) -> Result<()> {
-        let _guard = self.gate.lock().await;
-        let mut tree = self.load().await?;
-        anyhow::ensure!(
-            tree.agents.contains_key(&record.id),
-            "unknown agent {}",
-            record.id
-        );
-        tree.agents.insert(record.id, record);
-        self.save(&tree).await
+        let store = self.clone();
+        tokio::spawn(async move {
+            let _coordination = match &store.coordinator {
+                Some(c) => Some(c.lock().await?),
+                None => None,
+            };
+            let _guard = store.gate.lock().await;
+            let mut tree = store.load().await?;
+            anyhow::ensure!(
+                tree.agents.contains_key(&record.id),
+                "unknown agent {}",
+                record.id
+            );
+            tree.agents.insert(record.id, record);
+            store.save_raw(&tree).await
+        })
+        .await
+        .context("agent writer task failed")?
     }
     pub async fn get(&self, id: AgentId) -> Result<Option<AgentRecord>> {
         Ok(self.load().await?.agents.remove(&id))
@@ -575,27 +620,45 @@ impl AgentTreeStore {
         max_records: usize,
         protected: Option<AgentId>,
     ) -> Result<Vec<AgentId>> {
-        let _guard = self.gate.lock().await;
-        let mut tree = self.load().await?;
-        let original = tree.clone();
-        let removed = tree.prune_terminal_leaves(max_records, protected);
-        if !removed.is_empty() {
-            let archive = super::archive::AgentArchive::new(&self.path);
-            for id in &removed {
-                archive.put(&original.agents[id]).await?;
+        let store = self.clone();
+        tokio::spawn(async move {
+            let _coordination = match &store.coordinator {
+                Some(c) => Some(c.lock().await?),
+                None => None,
+            };
+            let _guard = store.gate.lock().await;
+            let mut tree = store.load().await?;
+            let original = tree.clone();
+            let removed = tree.prune_terminal_leaves(max_records, protected);
+            if !removed.is_empty() {
+                let archive = super::archive::AgentArchive::new(&store.path);
+                for id in &removed {
+                    archive.put(&original.agents[id]).await?;
+                }
+                store.save_raw(&tree).await?;
             }
-            self.save(&tree).await?;
-        }
-        Ok(removed)
+            Ok(removed)
+        })
+        .await
+        .context("agent writer task failed")?
     }
     pub async fn recover_after_restart(&self) -> Result<usize> {
-        let _guard = self.gate.lock().await;
-        let mut tree = self.load().await?;
-        let count = tree.recover_after_restart();
-        if count > 0 {
-            self.save(&tree).await?;
-        }
-        Ok(count)
+        let store = self.clone();
+        tokio::spawn(async move {
+            let _coordination = match &store.coordinator {
+                Some(c) => Some(c.lock().await?),
+                None => None,
+            };
+            let _guard = store.gate.lock().await;
+            let mut tree = store.load().await?;
+            let count = tree.recover_after_restart();
+            if count > 0 {
+                store.save_raw(&tree).await?;
+            }
+            Ok(count)
+        })
+        .await
+        .context("agent writer task failed")?
     }
 }
 #[cfg(unix)]

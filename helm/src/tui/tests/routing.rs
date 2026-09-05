@@ -107,6 +107,7 @@ fn navigation_agent(directory: &tempfile::TempDir) -> Arc<Agent> {
         Box::new(NoRequests),
         crate::tools::ToolRegistry::default(),
         crate::tools::ToolContext {
+            completion: None,
             policy: Arc::new(
                 crate::policy::Policy::new(
                     &crate::config::Config::default(),

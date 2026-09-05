@@ -121,6 +121,7 @@ impl Redactor {
 
 #[derive(Clone)]
 pub struct ToolContext {
+    pub completion: Option<crate::completion::runtime::RunHandle>,
     pub policy: Arc<Policy>,
     pub approver: Arc<dyn Approver>,
     pub timeout: Duration,
@@ -223,6 +224,7 @@ impl ToolRegistry {
                     | "process"
                     | "subagent"
                     | "todo"
+                    | "completion"
             )
         });
     }
@@ -272,6 +274,7 @@ fn allowed_in_read_only(name: &str, arguments: &Value) -> bool {
         "questions" | "read_file" | "list_directory" | "search_files" => true,
         "process" => matches!(action, Some("read" | "list")),
         "todo" => action == Some("list"),
+        "completion" => matches!(action, Some("snapshot" | "read")),
         "subagent" => match action {
             Some(
                 "status" | "list" | "archive" | "wait" | "wait_many" | "message" | "follow_up"
@@ -314,6 +317,21 @@ pub(crate) fn truncate(mut bytes: Vec<u8>, max: usize) -> String {
 mod security_tests {
     use super::*;
 
+    #[test]
+    fn read_only_completion_allows_observation_but_not_adoption_or_reviews() {
+        for action in ["snapshot", "read"] {
+            assert!(allowed_in_read_only(
+                "completion",
+                &serde_json::json!({"action":action})
+            ));
+        }
+        for action in ["adopt", "account", "unknown"] {
+            assert!(!allowed_in_read_only(
+                "completion",
+                &serde_json::json!({"action":action})
+            ));
+        }
+    }
     #[test]
     fn redacts_all_occurrences_without_echoing_short_values() {
         let redactor = Redactor::new(["long-secret".into(), "abc".into()]);
@@ -362,6 +380,7 @@ mod security_tests {
         let directory = tempfile::tempdir().unwrap();
         let config = crate::config::Config::default();
         let context = ToolContext {
+            completion: None,
             policy: Arc::new(Policy::new(&config, directory.path().to_owned()).unwrap()),
             approver: Arc::new(UnattendedApprover { allow: false }),
             timeout: Duration::from_secs(1),
@@ -387,6 +406,7 @@ mod security_tests {
             ..crate::config::Config::default()
         };
         let context = ToolContext {
+            completion: None,
             policy: Arc::new(Policy::new(&config, directory.path().to_owned()).unwrap()),
             approver: Arc::new(UnattendedApprover { allow: true }),
             timeout: Duration::from_secs(1),

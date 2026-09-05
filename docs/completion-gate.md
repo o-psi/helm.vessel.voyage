@@ -9,9 +9,11 @@ Tracking: [#81](https://github.com/o-psi/voyage/issues/81),
 
 **The completion gate is not enabled.** `helm/src/completion.rs` implements the
 provider-neutral readiness contract and its deterministic tests. A separate
-[durable ledger store](completion-storage.md) now provides disk persistence. Runtime
-ownership propagation, integration with live stores, reconciliation tool operations, and the
-final-response interceptor still need implementation. The module is exported for
+[durable ledger store](completion-storage.md) provides disk persistence. The
+[runtime ownership API](completion-runtime.md) now coordinates durable store writers,
+registers work before publication, propagates child ownership, and exposes explicit
+review operations. Ordinary session lifecycle wiring and the final-response
+interceptor still need integration. The module is exported for
 integration but is not called by the agent loop. It does not add a model request,
 change streaming, or claim that existing runs are being checked.
 

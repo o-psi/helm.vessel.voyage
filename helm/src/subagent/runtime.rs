@@ -53,6 +53,7 @@ pub enum InboxMessage {
 }
 
 pub struct ExecutionContext {
+    pub completion: Option<crate::completion::runtime::RunHandle>,
     pub id: AgentId,
     pub task: String,
     pub policy: AgentPolicy,
@@ -145,6 +146,7 @@ impl Drop for CancelDroppedWait {
 }
 
 struct Control {
+    completion: Option<crate::completion::runtime::RunHandle>,
     record: RwLock<AgentRecord>,
     cancel: CancellationToken,
     inbox: mpsc::Sender<InboxMessage>,
@@ -216,6 +218,35 @@ impl SubagentRuntime {
         limits: RuntimeLimits,
         store: AgentTreeStore,
     ) -> Result<Self, RuntimeError> {
+        // Validate known ownership before recovery can archive retained records.
+        // A missing/corrupt ledger must never silently turn owned work into legacy.
+        for record in store
+            .list()
+            .await
+            .map_err(|e| RuntimeError::Persistence(e.to_string()))?
+        {
+            if let Some(reference) = &record.completion {
+                let coordinator = store.coordinator().ok_or_else(|| {
+                    RuntimeError::Persistence("owned agent requires completion coordinator".into())
+                })?;
+                let run = crate::completion::runtime::RunHandle::resume(
+                    coordinator.clone(),
+                    reference.session_id,
+                    reference.run_id,
+                )
+                .await
+                .map_err(|e| RuntimeError::Persistence(e.to_string()))?;
+                if !run
+                    .owns(crate::completion::Obligation::Agent(record.id))
+                    .await
+                    .map_err(|e| RuntimeError::Persistence(e.to_string()))?
+                {
+                    return Err(RuntimeError::Persistence(
+                        "agent owner ledger is missing its obligation".into(),
+                    ));
+                }
+            }
+        }
         store
             .recover_after_restart()
             .await
@@ -231,12 +262,33 @@ impl SubagentRuntime {
         let runtime = Self::new(executor, limits, Some(store))?;
         let mut agents = runtime.inner.agents.write().await;
         for record in records {
+            let completion = match (
+                &record.completion,
+                runtime.inner.store.as_ref().and_then(|s| s.coordinator()),
+            ) {
+                (Some(reference), Some(coordinator)) => Some(
+                    crate::completion::runtime::RunHandle::resume(
+                        coordinator.clone(),
+                        reference.session_id,
+                        reference.run_id,
+                    )
+                    .await
+                    .map_err(|e| RuntimeError::Persistence(e.to_string()))?,
+                ),
+                (Some(_), None) => {
+                    return Err(RuntimeError::Persistence(
+                        "owned agent requires completion coordinator".into(),
+                    ));
+                }
+                (None, _) => None,
+            };
             let (inbox, _) = mpsc::channel(1);
             let initial = terminal_outcome(&record);
             let (outcome, _) = watch::channel(initial);
             agents.insert(
                 record.id,
                 Arc::new(Control {
+                    completion,
                     record: RwLock::new(record),
                     cancel: CancellationToken::new(),
                     inbox,
@@ -250,6 +302,9 @@ impl SubagentRuntime {
         Ok(runtime)
     }
 
+    pub fn store(&self) -> Option<AgentTreeStore> {
+        self.inner.store.clone()
+    }
     pub fn subscribe(&self) -> broadcast::Receiver<SubagentEvent> {
         self.inner.events.subscribe()
     }
@@ -344,6 +399,13 @@ impl SubagentRuntime {
     }
 
     pub async fn spawn(&self, request: SpawnRequest) -> Result<AgentId, RuntimeError> {
+        self.spawn_for_run(request, None).await
+    }
+    pub async fn spawn_for_run(
+        &self,
+        request: SpawnRequest,
+        mut completion: Option<crate::completion::runtime::RunHandle>,
+    ) -> Result<AgentId, RuntimeError> {
         let _mutation = self.inner.mutations.lock().await;
         if request.task.trim().is_empty() || request.name.trim().is_empty() {
             return Err(RuntimeError::Invalid(
@@ -356,6 +418,38 @@ impl SubagentRuntime {
                 .policy
                 .validate_child(&request.policy)
                 .map_err(|e| RuntimeError::Invalid(e.to_string()))?;
+        }
+        if let Some(parent) = request.parent_id {
+            let inherited = self.control(parent).await?.completion.clone();
+            match (&completion, inherited) {
+                (Some(requested), Some(inherited))
+                    if requested.reference() != inherited.reference() =>
+                {
+                    if !requested
+                        .owns(crate::completion::Obligation::Agent(parent))
+                        .await
+                        .map_err(|e| RuntimeError::Persistence(e.to_string()))?
+                    {
+                        return Err(RuntimeError::Invalid(
+                            "explicitly adopt parent before creating a child in another run".into(),
+                        ));
+                    }
+                }
+                (_, Some(inherited)) => completion = Some(inherited),
+                (Some(requested), None) => {
+                    if !requested
+                        .owns(crate::completion::Obligation::Agent(parent))
+                        .await
+                        .map_err(|e| RuntimeError::Persistence(e.to_string()))?
+                    {
+                        return Err(RuntimeError::Invalid(
+                            "explicitly adopt legacy parent before creating owned descendants"
+                                .into(),
+                        ));
+                    }
+                }
+                (None, None) => (),
+            }
         }
         self.prune_terminal_history(0, request.parent_id).await?;
         let cancellation = if let Some(parent) = request.parent_id {
@@ -371,8 +465,25 @@ impl SubagentRuntime {
         };
         let mut agents = self.inner.agents.write().await;
         let id = AgentId::new();
+        if let Some(run) = &completion {
+            if !self
+                .inner
+                .store
+                .as_ref()
+                .and_then(|s| s.coordinator())
+                .is_some_and(|c| c.same(run.coordinator()))
+            {
+                return Err(RuntimeError::Invalid(
+                    "owned subagent requires coordinated persistent store".into(),
+                ));
+            }
+            run.register(crate::completion::Obligation::Agent(id))
+                .await
+                .map_err(|e| RuntimeError::Persistence(e.to_string()))?;
+        }
         let now = Utc::now();
         let record = AgentRecord {
+            completion: completion.as_ref().map(|run| run.reference()),
             id,
             parent_id: request.parent_id,
             name: request.name.clone(),
@@ -399,6 +510,7 @@ impl SubagentRuntime {
         let (inbox_tx, inbox_rx) = mpsc::channel(64);
         let (outcome, _) = watch::channel(None);
         let control = Arc::new(Control {
+            completion,
             record: RwLock::new(record),
             cancel: cancellation,
             inbox: inbox_tx,
@@ -469,6 +581,7 @@ impl SubagentRuntime {
         self.emit(id, SubagentEventKind::Started).await;
         let request = control.record.read().await.clone();
         let context = ExecutionContext {
+            completion: control.completion.clone(),
             id,
             task: request.task,
             policy: request.policy,
@@ -696,6 +809,25 @@ impl SubagentRuntime {
         id: AgentId,
         message: impl Into<String>,
     ) -> Result<AgentId, RuntimeError> {
+        self.follow_up_in_run(caller, id, message, None).await
+    }
+    pub async fn follow_up_in_run(
+        &self,
+        caller: Option<AgentId>,
+        id: AgentId,
+        message: impl Into<String>,
+        completion: Option<crate::completion::runtime::RunHandle>,
+    ) -> Result<AgentId, RuntimeError> {
+        if let Some(run) = &completion
+            && !run
+                .owns(crate::completion::Obligation::Agent(id))
+                .await
+                .map_err(|e| RuntimeError::Persistence(e.to_string()))?
+        {
+            return Err(RuntimeError::Invalid(
+                "explicitly adopt agent before requesting a followup in this run".into(),
+            ));
+        }
         let message = message.into();
         let record = self.get_retained(id).await.map_err(|error| match error {
             RuntimeError::Unknown(_) => RuntimeError::Invalid("agent is archived or unknown; use spawn for new work and reference its original ID".into()),
@@ -711,15 +843,18 @@ impl SubagentRuntime {
             .await?;
             return Ok(id);
         }
-        self.spawn(SpawnRequest {
-            parent_id: Some(id),
-            name: format!("{}-follow-up", record.name),
-            task: message,
-            policy: record.policy.clone(),
-            budget: record.budget.clone(),
-            worktree: record.worktree,
-            branch: record.branch,
-        })
+        self.spawn_for_run(
+            SpawnRequest {
+                parent_id: Some(id),
+                name: format!("{}-follow-up", record.name),
+                task: message,
+                policy: record.policy.clone(),
+                budget: record.budget.clone(),
+                worktree: record.worktree,
+                branch: record.branch,
+            },
+            completion,
+        )
         .await
     }
 

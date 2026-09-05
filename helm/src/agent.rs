@@ -943,6 +943,7 @@ mod tests {
             provider,
             ToolRegistry::default(),
             ToolContext {
+                completion: None,
                 policy,
                 approver: Arc::new(Yes),
                 timeout: Duration::from_secs(1),
@@ -1490,6 +1491,7 @@ mod tests {
             Box::new(StreamingOk),
             ToolRegistry::default(),
             ToolContext {
+                completion: None,
                 policy,
                 approver: Arc::new(Yes),
                 timeout: Duration::from_secs(1),
