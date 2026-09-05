@@ -213,7 +213,7 @@ def cli_cases(root, port):
     assert_private(values + ['never-serialize-input'], json.dumps(Provider.requests, ensure_ascii=False), *captures, *saved)
     assert config.read_text().find('PRIVATE_SOURCE') == -1
     assert not Provider.failures, Provider.failures
-    print('workflow secrets CLI: explicit sources, preview, private use, no-save, denial and stale-profile fencing passed')
+    print('workflow secrets CLI: explicit sources, preview, private use, no-save, denial, stale-profile and persistent-defaults fencing passed')
 
 
 def tui_case(root, port):
