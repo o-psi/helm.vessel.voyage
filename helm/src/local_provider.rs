@@ -55,6 +55,9 @@ pub struct EndpointArgs {
     pub api_key_env: Option<String>,
     #[arg(long, value_enum, default_value = "chat")]
     pub transport: Transport,
+    /// Use max_completion_tokens for Chat endpoints that require the newer field.
+    #[arg(long)]
+    pub chat_max_completion_tokens: bool,
     /// Total probe deadline, including a tool-free request capped at 16 output tokens.
     #[arg(long, default_value_t = 15, value_parser = clap::value_parser!(u64).range(1..=120))]
     pub timeout_secs: u64,
@@ -130,6 +133,7 @@ impl EndpointArgs {
             },
             base_url: Some(endpoint),
             api_key_required: self.api_key_env.is_some(),
+            chat_use_max_tokens: !self.chat_max_completion_tokens,
             api_key_env: self
                 .api_key_env
                 .clone()
@@ -234,6 +238,7 @@ pub fn diagnostics(config: &Config) -> Value {
         "transport": config.provider_profile().id,
         "endpoint": config.base_url.as_deref().or(match config.provider { ProviderKind::OpenaiChat | ProviderKind::OpenaiResponses => Some("https://api.openai.com/v1"), ProviderKind::Anthropic => Some("https://api.anthropic.com/v1"), _ => None }),
         "credential_source": if matches!(config.provider, ProviderKind::ChatGptOauth | ProviderKind::CodexSubscription) { config.provider_profile().credential.to_owned() } else if config.api_key_required { format!("environment:{}",config.api_key_env) } else { "none".into() },
+        "chat_token_limit_parameter": if config.chat_use_max_tokens { "max_tokens" } else { "max_completion_tokens" },
         "discovery": "not_probed; use helm local-provider probe explicitly",
     })
 }
@@ -242,8 +247,15 @@ async fn probe_inner(args: &EndpointArgs) -> Result<(Config, Report)> {
     let key = config.api_key().map_err(|_| {
         anyhow::anyhow!("authentication failure: configured environment key unavailable")
     })?;
-    let client = client()?;
     let endpoint = config.base_url.clone().unwrap();
+    if !key.is_empty()
+        && (endpoint.contains(&key)
+            || config.model.contains(&key)
+            || config.api_key_env.contains(&key))
+    {
+        bail!("credential-bearing configuration metadata is not allowed");
+    }
+    let client = client()?;
     let discovered = models(&client, &endpoint, &key).await?;
     if args.model.is_none() {
         config.model = discovered
@@ -254,7 +266,7 @@ async fn probe_inner(args: &EndpointArgs) -> Result<(Config, Report)> {
                 anyhow::anyhow!("model-list unavailable or empty: supply --model explicitly")
             })?;
     }
-    let (route, body) = match args.transport {
+    let (route, mut body) = match args.transport {
         Transport::Chat => (
             "chat/completions",
             json!({"model":config.model,"messages":[{"role":"user","content":"Reply OK."}],"stream":false,"max_tokens":16}),
@@ -264,6 +276,10 @@ async fn probe_inner(args: &EndpointArgs) -> Result<(Config, Report)> {
             json!({"model":config.model,"input":"Reply OK.","stream":false,"max_output_tokens":16,"store":false}),
         ),
     };
+    if matches!(args.transport, Transport::Chat) && !config.chat_use_max_tokens {
+        let value = body.as_object_mut().unwrap().remove("max_tokens").unwrap();
+        body["max_completion_tokens"] = value;
+    }
     let response = authenticate(client.post(format!("{endpoint}/{route}")), &key)
         .json(&body)
         .send()
@@ -357,6 +373,13 @@ pub async fn run(command: Command) -> Result<()> {
         Command::Setup { endpoint, output } => {
             if output.try_exists()? || output.symlink_metadata().is_ok() {
                 bail!("config destination already exists");
+            }
+            let candidate = endpoint.resolve()?;
+            let key = candidate.api_key().map_err(|_| {
+                anyhow::anyhow!("authentication failure: configured environment key unavailable")
+            })?;
+            if !key.is_empty() && output.to_string_lossy().contains(&key) {
+                bail!("credential-bearing configuration metadata is not allowed");
             }
             let (config, report) = probe(&endpoint).await?;
             save(&config, &output)?;

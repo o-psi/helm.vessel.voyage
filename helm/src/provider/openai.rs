@@ -12,6 +12,7 @@ pub struct OpenAiProvider {
     client: reqwest::Client,
     api_key: String,
     base_url: String,
+    use_max_tokens: bool,
 }
 
 impl OpenAiProvider {
@@ -22,11 +23,28 @@ impl OpenAiProvider {
                 .build()
                 .expect("valid compatible HTTP client"),
             api_key,
+            use_max_tokens: false,
             base_url: base_url
                 .unwrap_or_else(|| "https://api.openai.com/v1".into())
                 .trim_end_matches('/')
                 .into(),
         }
+    }
+    pub fn with_max_tokens_parameter(mut self, enabled: bool) -> Self {
+        self.use_max_tokens = enabled;
+        self
+    }
+    fn body(&self, request: ModelRequest, streaming: bool) -> Value {
+        let mut body = request_body(request, streaming);
+        if self.use_max_tokens
+            && let Some(value) = body
+                .as_object_mut()
+                .unwrap()
+                .remove("max_completion_tokens")
+        {
+            body["max_tokens"] = value;
+        }
+        body
     }
 }
 
@@ -53,7 +71,7 @@ impl Provider for OpenAiProvider {
         Ok(models)
     }
     async fn complete(&self, request: ModelRequest) -> Result<ModelResponse, ProviderError> {
-        let body = request_body(request, false);
+        let body = self.body(request, false);
 
         let response = self
             .client
@@ -72,7 +90,7 @@ impl Provider for OpenAiProvider {
             .client
             .post(format!("{}/chat/completions", self.base_url))
             .apply_key(&self.api_key)
-            .json(&request_body(request, true))
+            .json(&self.body(request, true))
             .send()
             .await
             .map_err(map_transport)?;

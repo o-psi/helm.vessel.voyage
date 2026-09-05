@@ -90,6 +90,8 @@ pub struct Config {
     pub api_key_env: String,
     /// Explicit opt-out only for a configured native compatible endpoint.
     pub api_key_required: bool,
+    /// Use the compatible Chat max_tokens field instead of max_completion_tokens.
+    pub chat_use_max_tokens: bool,
     pub base_url: Option<String>,
     /// Explicit override for the experimental ChatGPT subscription backend.
     /// Kept separate from `base_url` so provider switching cannot redirect OAuth tokens.
@@ -173,6 +175,11 @@ pub const CONFIG_OVERRIDE_SPECS: &[ConfigOverrideSpec] = &[
         key: "model",
         description: "Default model",
         kind: ConfigValueKind::Model,
+    },
+    ConfigOverrideSpec {
+        key: "chat_use_max_tokens",
+        description: "Use the compatible Chat max_tokens parameter",
+        kind: ConfigValueKind::Bool,
     },
     ConfigOverrideSpec {
         key: "api_key_required",
@@ -368,6 +375,7 @@ impl Default for Config {
             model: "gpt-5".into(),
             api_key_env: "OPENAI_API_KEY".into(),
             api_key_required: true,
+            chat_use_max_tokens: false,
             base_url: None,
             chatgpt_base_url: None,
             system_prompt: include_str!("../prompts/system.md").trim().into(),
@@ -563,6 +571,9 @@ impl Config {
         }
         table.insert(segments[segments.len() - 1].to_owned(), parsed);
         let mut updated: Self = document.try_into()?;
+        if updated.provider != self.provider {
+            updated.api_key_required = true;
+        }
         updated.apply_provider_defaults();
         updated.validate()?;
         *self = updated;

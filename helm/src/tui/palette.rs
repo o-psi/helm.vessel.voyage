@@ -435,8 +435,8 @@ pub(super) fn set_value_suggestions(
             &prefix,
             value,
             &[
-                ("true", "Require API key"),
-                ("false", "Explicit no-auth endpoint"),
+                ("true", "Enable this setting"),
+                ("false", "Disable this setting"),
             ],
         ),
         ConfigValueKind::Provider => fixed_suggestions(&prefix, value, PROVIDER_VALUES),
