@@ -160,3 +160,22 @@ async fn shared_discovery_preserves_typed_failures_and_retry_after() {
         let _ = server.await;
     }
 }
+
+#[cfg(target_os = "linux")]
+#[test]
+fn publication_retains_reviewed_bytes_despite_staging_substitution() {
+    for replace in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let output = dir.path().join("config.toml");
+        let config = Config::default();
+        save_observed(&config, &output, || {
+            for entry in std::fs::read_dir(dir.path())? {
+                let path = entry?.path();
+                if replace { std::fs::remove_file(&path)?; }
+                std::fs::write(path, b"base_url = 'https://unvalidated.example/v1'\n")?;
+            }
+            Ok(())
+        }).unwrap();
+        assert_eq!(std::fs::read(&output).unwrap(), toml::to_string_pretty(&config).unwrap().as_bytes());
+    }
+}

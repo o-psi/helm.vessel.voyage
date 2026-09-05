@@ -301,6 +301,9 @@ pub async fn probe(args: &EndpointArgs) -> Result<(Config, Report)> {
         .map_err(|_| anyhow::anyhow!("connection timeout: endpoint probe deadline elapsed"))?
 }
 fn save(config: &Config, output: &std::path::Path) -> Result<()> {
+    save_observed(config, output, || Ok(()))
+}
+fn save_observed(config: &Config, output: &std::path::Path, observe: impl FnOnce() -> Result<()>) -> Result<()> {
     let parent = output
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
@@ -308,6 +311,7 @@ fn save(config: &Config, output: &std::path::Path) -> Result<()> {
     let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
     temporary.write_all(toml::to_string_pretty(config)?.as_bytes())?;
     temporary.as_file().sync_all()?;
+    observe()?;
     temporary.persist_noclobber(output).map_err(|_| anyhow::anyhow!("config publication failed; inspect destination before retrying (existing files are never replaced)"))?;
     #[cfg(unix)]
     std::fs::File::open(parent)?.sync_all()?;
