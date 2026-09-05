@@ -98,9 +98,21 @@ failure, deadline and cancellation without relying on an OS TCP buffer size.
 The bounded queue test inspects a stalled receiver; it does not claim to reproduce
 every production slow-peer network condition.
 
-The initial server tests use Unix enrollment storage; platform authority support
-and real Helm-to-Vessel integration must be validated on the integrated branch.
+Real client/server fixtures compile on Unix and Windows with the private enrollment
+storage implementation. Native platform results must be observed on this integrated
+branch before claiming coverage.
 Protocol and library tests do not prove proxy/TLS deployment, production routing,
 operator access, local execution coordination, sharing/approval dispatch, complete
 replay recovery, frontend behavior or service lifecycle. Those acceptance criteria
 remain open under #9 and its related production-contract issues.
+
+
+Third-party WebSocket dependencies log raw frames and close payloads at Debug and
+Trace. Both binaries therefore compile the `log` facade with `max_level_info`;
+this caps all third-party log-facade Debug/Trace diagnostics in debug and release
+builds. Application `tracing` remains independently configurable. The socket tests
+enable application TRACE and send proof/prompt/history canaries, verifying that
+application trace output remains visible while those payloads do not appear.
+Transport errors never include raw dependency error text. Buffer controls follow
+the [Axum WebSocket API](https://docs.rs/axum/0.8.9/axum/extract/ws/struct.WebSocketUpgrade.html)
+and [Tungstenite configuration](https://docs.rs/tungstenite/0.29.0/tungstenite/protocol/struct.WebSocketConfig.html).

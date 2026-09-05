@@ -1,5 +1,5 @@
 //! Real HTTP enrollment and WebSocket regression fixtures. No provider effects.
-#![cfg(unix)]
+#![cfg(any(unix, windows))]
 use super::*;
 use axum::{
     Router,

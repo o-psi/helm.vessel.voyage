@@ -1,4 +1,4 @@
-#![cfg(unix)]
+#![cfg(any(unix, windows))]
 use super::*;
 #[test]
 fn direction_rejects_server_observations_and_client_commands() {

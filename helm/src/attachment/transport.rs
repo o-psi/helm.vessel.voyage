@@ -531,7 +531,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     async fn already_cancelled_connect_never_requests_a_challenge_or_removes_identity() {
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join("enrollment");
