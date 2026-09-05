@@ -23,6 +23,7 @@ mod models;
 use models::*;
 mod terminals;
 use terminals::*;
+mod checkpoint;
 mod conversation;
 use conversation::*;
 mod render;
@@ -75,6 +76,7 @@ pub enum TuiExit {
 }
 
 struct App {
+    diagnostic_agent: Option<Arc<Agent>>,
     palette: PaletteState,
     model_panel: ModelPanel,
     terminal_panel: TerminalPanel,
@@ -99,6 +101,7 @@ struct App {
     markdown_theme: MarkdownTheme,
     markdown_syntax_highlighting: bool,
     running: Option<Running>,
+    checkpoint: Option<checkpoint::State>,
     title_job: Option<TitleJob>,
     approval: Option<ApprovalRequest>,
     question: Option<QuestionDialog>,
@@ -192,6 +195,7 @@ impl App {
             }
         }
         Self {
+            diagnostic_agent: None,
             palette: PaletteState::default(),
             model_panel: ModelPanel::default(),
             terminal_panel: TerminalPanel::default(),
@@ -216,6 +220,7 @@ impl App {
             markdown_theme: markdown_theme(),
             markdown_syntax_highlighting: std::env::var_os("NO_COLOR").is_none(),
             running: None,
+            checkpoint: None,
             title_job: None,
             approval: None,
             question: None,
@@ -240,7 +245,7 @@ impl App {
         }
         if let Some(running) = &self.running {
             running.cancel.cancel();
-            self.status = "Cancelling; partial output will not be committed".into();
+            self.status = "Cancelling; partial response retained as interrupted output".into();
         }
         if let Some(approval) = self.approval.take() {
             let _ = approval.response.send(ApprovalOutcome::Denied);
@@ -252,7 +257,7 @@ impl App {
 #[allow(clippy::too_many_arguments)]
 pub async fn run(
     agent: Arc<Agent>,
-    store: SessionStore,
+    store: &mut SessionStore,
     session: Session,
     mut rx: mpsc::UnboundedReceiver<UiEvent>,
     tx: mpsc::UnboundedSender<UiEvent>,
@@ -262,8 +267,13 @@ pub async fn run(
     provider_label: String,
     access_mode: AccessMode,
 ) -> Result<TuiExit> {
+    anyhow::ensure!(
+        store.owned_session_id() == Some(session.id),
+        "TUI session requires execution ownership"
+    );
     let sessions = store.list().await?;
     let mut app = App::new(session, sessions);
+    app.diagnostic_agent = Some(agent.clone());
     app.provider_label = provider_label;
     app.access_mode = access_mode;
     refresh_terminals(&mut app.terminal_panel, &mut app.status, terminals.as_ref()).await;
@@ -307,7 +317,7 @@ pub async fn run(
             event = input.next() => {
                 match event {
                     Some(Ok(Event::Key(key))) if key.is_press() => {
-                        handle_key(key, &mut app, &agent, &store, &tx, terminals.as_ref(), supervisor.clone(), todos.clone()).await?;
+                        handle_key(key, &mut app, &agent, store, &tx, terminals.as_ref(), supervisor.clone(), todos.clone()).await?;
                     }
                     Some(Ok(Event::Resize(columns, rows))) => {
                         let viewport = conversation_layout(
@@ -352,9 +362,9 @@ pub async fn run(
             }
             event = rx.recv() => {
                 let Some(event) = event else { break };
-                let title_due = matches!(&event, UiEvent::Finished(Ok(_)))
+                let title_due = matches!(&event, UiEvent::Finished(Ok(outcome)) if matches!(outcome.stop_reason, crate::agent::StopReason::Completed))
                     && app.session.title_due_after_turn();
-                handle_ui_event(event, &mut app, &store, terminals.as_ref()).await?;
+                handle_ui_event(event, &mut app, store, terminals.as_ref()).await?;
                 if title_due { start_title_job(&mut app, &agent, &tx); }
             }
             _ = &mut termination => {
@@ -405,6 +415,49 @@ async fn handle_ui_event(
     terminals: &dyn InteractiveTerminals,
 ) -> Result<()> {
     match event {
+        UiEvent::Checkpoint(request) => checkpoint::handle(request, app, store).await,
+        UiEvent::Agent(AgentEvent::CompletionState {
+            phase,
+            readiness,
+            detail,
+        }) => {
+            if matches!(phase, crate::agent::CompletionPhase::Reconciling)
+                && !app.streaming_response.is_empty()
+            {
+                app.live_messages.push(crate::Message::new(
+                    Role::Assistant,
+                    std::mem::take(&mut app.streaming_response),
+                ));
+            }
+            let detail = detail.map(|text| {
+                app.diagnostic_agent
+                    .as_ref()
+                    .map(|agent| agent.redact_diagnostic(&text))
+                    .unwrap_or(text)
+            });
+            let label = format!("{phase:?}").to_lowercase();
+            app.status = format!(
+                "Run {label}{}",
+                detail
+                    .as_deref()
+                    .map(|text| format!(" · {}", compact_line(text, 160)))
+                    .unwrap_or_default()
+            );
+            // Only the acknowledged checkpoint or Finished can classify canonical
+            // messages; an early event alone cannot mark a saved answer final.
+            if !matches!(
+                phase,
+                crate::agent::CompletionPhase::Completed
+                    | crate::agent::CompletionPhase::Incomplete
+            ) {
+                app.session.update_run_summary(
+                    phase,
+                    readiness,
+                    detail.map(|text| compact_line(&text, 4000)),
+                );
+                store.save(&mut app.session).await?;
+            }
+        }
         UiEvent::Agent(AgentEvent::Thinking { turn }) => {
             app.status = format!("Model turn {turn}…  Esc cancels");
         }
@@ -415,12 +468,20 @@ async fn handle_ui_event(
             app.status = "Receiving response…  Esc cancels".into();
         }
         UiEvent::Agent(AgentEvent::AssistantText(text)) => {
+            if app.checkpoint.is_some() {
+                app.status = "Response saved · checking remaining work".into();
+                return Ok(());
+            }
             let before = transcript_height(app, app.conversation_width);
             app.streaming_response = text.clone();
             preserve_manual_anchor(app, before);
             app.status = "Receiving response…  Esc cancels".into();
         }
         UiEvent::Agent(AgentEvent::ToolStarted { name, arguments }) => {
+            if app.checkpoint.is_some() {
+                app.status = format!("Running {name}…  Esc cancels");
+                return Ok(());
+            }
             let before = transcript_height(app, app.conversation_width);
             if !app.streaming_response.is_empty() {
                 app.live_messages.push(crate::Message::new(
@@ -443,6 +504,9 @@ async fn handle_ui_event(
             result,
             success,
         }) => {
+            if app.checkpoint.is_some() {
+                return Ok(());
+            }
             let before = transcript_height(app, app.conversation_width);
             if let Some(call) = app
                 .live_messages
@@ -494,7 +558,7 @@ async fn handle_ui_event(
                     history.push(message.clone());
                 }
             }
-            app.session.messages = history;
+            app.session.replace_messages(history);
             app.live_messages.clear();
             app.streaming_response.clear();
             store.save(&mut app.session).await?;
@@ -540,25 +604,61 @@ async fn handle_ui_event(
             app.question = None;
             let before = transcript_height(app, app.conversation_width);
             app.running = None;
+            let checkpoint = app.checkpoint.take();
             match result {
                 Ok(outcome) => {
                     app.live_messages.clear();
-                    app.session.messages = outcome.messages;
-                    app.session.record_completed_turn();
-                    app.session.usage.input_tokens += outcome.usage.input_tokens;
-                    app.session.usage.output_tokens += outcome.usage.output_tokens;
+                    if let Some(checkpoint) = &checkpoint {
+                        app.session.usage = checkpoint.baseline.clone();
+                        app.session
+                            .recover_context_failure(&crate::agent::CanonicalRecovery {
+                                messages: outcome.messages,
+                                usage: outcome.usage.clone(),
+                            })?;
+                    } else {
+                        app.session.replace_messages(outcome.messages);
+                        app.session.usage.input_tokens += outcome.usage.input_tokens;
+                        app.session.usage.output_tokens += outcome.usage.output_tokens;
+                    }
+                    for message in &mut app.session.messages {
+                        if let Some(receipt) = &mut message.steering
+                            && receipt.status == crate::model::SteeringStatus::Queued
+                        {
+                            receipt.status = crate::model::SteeringStatus::NotApplied;
+                        }
+                    }
+                    app.session.finish_run_summary(&outcome.stop_reason);
+                    let completed =
+                        matches!(outcome.stop_reason, crate::agent::StopReason::Completed);
+                    if completed {
+                        app.session.record_completed_turn();
+                    }
                     app.session.terminals = terminals.list().await.unwrap_or_default();
                     store.save(&mut app.session).await?;
-                    app.status = format!("Ready · {} model turn(s)", outcome.turns);
+                    app.status = match outcome.stop_reason {
+                        crate::agent::StopReason::Completed => {
+                            format!("Completed · {} model turn(s)", outcome.turns)
+                        }
+                        crate::agent::StopReason::Incomplete { reason, .. } => {
+                            format!("Incomplete · {}", compact_line(&reason, 160))
+                        }
+                    };
                 }
                 Err(error) => {
                     if let Some(recovery) = error.recovery() {
+                        if let Some(checkpoint) = &checkpoint {
+                            app.session.usage = checkpoint.baseline.clone();
+                        }
                         app.session.recover_context_failure(recovery)?;
                         // All completed responses/tools are represented by canonical IDs.
                         app.live_messages.clear();
                         app.streaming_response.clear();
                     }
-                    let error = error.to_string();
+                    let error = app
+                        .diagnostic_agent
+                        .as_ref()
+                        .map(|agent| agent.redact_diagnostic(error.to_string()))
+                        .unwrap_or_else(|| error.to_string());
                     let detail = compact_line(&error, 1_000);
                     app.activity.push(format!("✗ provider error: {detail}"));
                     let mut undelivered = 0;
@@ -570,12 +670,13 @@ async fn handle_ui_event(
                             undelivered += 1;
                         }
                     }
-                    if !app.streaming_response.is_empty() {
+                    if checkpoint.is_none() && !app.streaming_response.is_empty() {
                         app.session.messages.push(crate::Message::new(
                             Role::Assistant,
                             std::mem::take(&mut app.streaming_response),
                         ));
                     }
+                    app.session.interrupt_run_summary(detail);
                     store.save(&mut app.session).await?;
                     app.status = if undelivered > 0 {
                         format!(
@@ -702,7 +803,7 @@ async fn handle_key(
     key: KeyEvent,
     app: &mut App,
     agent: &Arc<Agent>,
-    store: &SessionStore,
+    store: &mut SessionStore,
     tx: &mpsc::UnboundedSender<UiEvent>,
     terminals: &dyn InteractiveTerminals,
     supervisor: Arc<dyn AgentSupervisor>,
@@ -866,9 +967,12 @@ async fn handle_key(
                 app.model_panel.selected_model = 0;
                 request_models(tx, agent.clone(), false);
             }
-            KeyCode::Char('n') if !app.is_running() => start_new_session(app, None),
+            KeyCode::Char('n') if !app.is_running() => start_new_session(app, store, None).await?,
             KeyCode::Char('b') if !app.is_running() => {
-                app.session = store.branch(&app.session, None).await?;
+                app.title_job = None;
+                let (owner, branch) = store.branch_owned(&app.session, None).await?;
+                app.session = branch;
+                *store = owner;
                 app.sessions = store.list().await?;
                 app.streaming_response.clear();
                 app.scroll = 0;
@@ -995,12 +1099,29 @@ async fn handle_key(
                 if handle_command(&prompt, app, store, Some(agent), Some(tx)).await? {
                     return Ok(());
                 }
+                let scope = match agent.prepare_run(&app.session).await {
+                    Ok(scope) => scope,
+                    Err(error) => {
+                        app.composer.insert_str(&prompt);
+                        app.status = format!("Cannot start run: {error}");
+                        return Ok(());
+                    }
+                };
                 app.prompt_history.record(&prompt);
+                if let Some(scope) = &scope {
+                    app.session.completion_runs.push(scope.reference());
+                }
                 let history = app.session.messages.clone();
                 app.session
                     .messages
                     .push(crate::Message::new(Role::User, prompt.clone()));
+                let run_id = scope
+                    .as_ref()
+                    .map(|scope| scope.run_id())
+                    .unwrap_or_else(uuid::Uuid::new_v4);
+                app.session.begin_run_summary(run_id);
                 store.save(&mut app.session).await?;
+                app.checkpoint = Some(checkpoint::State::new(&app.session, run_id));
                 let agent = agent.clone();
                 let events = tx.clone();
                 app.live_messages.clear();
@@ -1009,13 +1130,24 @@ async fn handle_key(
                 let cancel = tokio_util::sync::CancellationToken::new();
                 let run_cancel = cancel.clone();
                 let (steering, steering_input) = steering_channel(64);
+                let checkpoint = checkpoint::UiCheckpoint {
+                    run_id,
+                    tx: events.clone(),
+                    cancel: run_cancel.clone(),
+                };
+                let model = agent.model();
+                let run_owner = store.clone();
                 let task = tokio::spawn(async move {
+                    let _run_owner = run_owner;
                     let result = agent
-                        .run_with_cancel_and_input(
+                        .run_checkpointed_scoped(
                             history,
                             prompt,
                             run_cancel,
                             Some(steering_input),
+                            &checkpoint,
+                            model,
+                            scope,
                         )
                         .await;
                     let _ = events.send(UiEvent::Finished(result));

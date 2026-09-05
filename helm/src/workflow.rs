@@ -432,8 +432,7 @@ pub fn select(definitions: Vec<Definition>, id: &str, scope: Option<Scope>) -> R
     );
     definitions
         .into_iter()
-        .filter(|d| d.document.id == id && scope.is_none_or(|s| d.scope == s))
-        .next_back()
+        .rfind(|d| d.document.id == id && scope.is_none_or(|s| d.scope == s))
         .ok_or_else(|| anyhow::anyhow!("workflow not found in selected scope"))
 }
 #[derive(clap::Args)]

@@ -147,7 +147,7 @@ impl Tool for TodoTool {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition{name:"todo".into(),description:"Manage Helm's durable workspace task list: create/list/edit/status/block/dependencies/assign/note/progress/evidence/reorder/remove/archive/clear_completed. Set status to pending to reopen work.".into(),input_schema:json!({"type":"object","required":["action"],"properties":{"action":{"enum":["create","list","edit","status","block","dependencies","assign","note","progress","evidence","reorder","remove","archive","clear_completed"]},"id":{"type":"string","format":"uuid"},"title":{"type":"string"},"description":{"type":"string"},"priority":{"enum":["low","normal","high","critical"]},"status":{"enum":["pending","in_progress","blocked","completed","cancelled"]},"order":{"type":"integer"},"assignees":{"type":"array","items":{"type":"string"}},"blockers":{"type":"array","items":{"type":"string"}},"add":{"type":"array","items":{"type":"string","format":"uuid"}},"remove":{"type":"array","items":{"type":"string","format":"uuid"}},"text":{"type":"string"},"author":{"type":"string"},"include_archived":{"type":"boolean"}},"additionalProperties":false})}
     }
-    async fn execute(&self, args: Value, _: &ToolContext) -> Result<String, ToolError> {
+    async fn execute(&self, args: Value, context: &ToolContext) -> Result<String, ToolError> {
         let args: Args = serde_json::from_value(args).map_err(invalid)?;
         let value = match args {
             Args::Create {
@@ -158,13 +158,16 @@ impl Tool for TodoTool {
                 assignees,
             } => serde_json::to_value(
                 self.store
-                    .create(NewTodo {
-                        title,
-                        description,
-                        priority: priority.into(),
-                        order,
-                        assignees: clean_set(assignees),
-                    })
+                    .create_registered(
+                        NewTodo {
+                            title,
+                            description,
+                            priority: priority.into(),
+                            order,
+                            assignees: clean_set(assignees),
+                        },
+                        context.completion.as_ref(),
+                    )
                     .await
                     .map_err(failed)?,
             ),
@@ -295,6 +298,7 @@ mod tests {
 
     fn context(directory: &tempfile::TempDir) -> ToolContext {
         ToolContext {
+            completion: None,
             policy: Arc::new(
                 Policy::new(&Config::default(), directory.path().to_path_buf()).unwrap(),
             ),

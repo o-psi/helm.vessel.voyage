@@ -3,14 +3,14 @@ use super::*;
 #[tokio::test]
 async fn startup_only_controls_create_explicit_session_preserving_handoffs() {
     let directory = tempfile::tempdir().unwrap();
-    let store = SessionStore::new(directory.path().join("sessions"));
+    let mut store = SessionStore::new(directory.path().join("sessions"));
 
     let mut access = App::new(
         Session::new(directory.path().into(), "test-model".into()),
         Vec::new(),
     );
     let access_id = access.session.id.to_string();
-    handle_command("/access unrestricted", &mut access, &store, None, None)
+    handle_command("/access unrestricted", &mut access, &mut store, None, None)
         .await
         .unwrap();
     assert_eq!(
@@ -34,7 +34,7 @@ async fn startup_only_controls_create_explicit_session_preserving_handoffs() {
         Session::new(directory.path().into(), "test-model".into()),
         Vec::new(),
     );
-    handle_command("/set max_tokens 32", &mut setting, &store, None, None)
+    handle_command("/set max_tokens 32", &mut setting, &mut store, None, None)
         .await
         .unwrap();
     let Some(TuiExit::Launch(request)) = setting.exit else {
@@ -47,7 +47,7 @@ async fn startup_only_controls_create_explicit_session_preserving_handoffs() {
         Session::new(directory.path().into(), "test-model".into()),
         Vec::new(),
     );
-    handle_command("/doctor", &mut doctor, &store, None, None)
+    handle_command("/doctor", &mut doctor, &mut store, None, None)
         .await
         .unwrap();
     let Some(TuiExit::Launch(request)) = doctor.exit else {
@@ -60,17 +60,17 @@ async fn startup_only_controls_create_explicit_session_preserving_handoffs() {
 #[tokio::test]
 async fn clear_requires_explicit_confirmation() {
     let directory = tempfile::tempdir().unwrap();
-    let store = SessionStore::new(directory.path().join("sessions"));
+    let mut store = SessionStore::new(directory.path().join("sessions"));
     let mut session = Session::new(directory.path().into(), "test-model".into());
     session
         .messages
         .push(crate::Message::new(Role::User, "keep me"));
     let mut app = App::new(session, Vec::new());
-    handle_command("/clear", &mut app, &store, None, None)
+    handle_command("/clear", &mut app, &mut store, None, None)
         .await
         .unwrap();
     assert_eq!(app.session.messages.len(), 1);
-    handle_command("/clear confirm", &mut app, &store, None, None)
+    handle_command("/clear confirm", &mut app, &mut store, None, None)
         .await
         .unwrap();
     assert!(app.session.messages.is_empty());
@@ -79,7 +79,7 @@ async fn clear_requires_explicit_confirmation() {
 #[tokio::test]
 async fn new_command_starts_named_empty_session() {
     let directory = tempfile::tempdir().unwrap();
-    let store = SessionStore::new(directory.path().join("sessions"));
+    let mut store = SessionStore::new(directory.path().join("sessions"));
     let mut session = Session::new(directory.path().into(), "test-model".into());
     session
         .messages
@@ -87,7 +87,7 @@ async fn new_command_starts_named_empty_session() {
     let old_id = session.id;
     let mut app = App::new(session, Vec::new());
 
-    handle_command("/new field work", &mut app, &store, None, None)
+    handle_command("/new field work", &mut app, &mut store, None, None)
         .await
         .unwrap();
 
@@ -101,11 +101,11 @@ async fn new_command_starts_named_empty_session() {
 #[tokio::test]
 async fn local_commands_name_and_export_session() {
     let directory = tempfile::tempdir().unwrap();
-    let store = SessionStore::new(directory.path().join("sessions"));
+    let mut store = SessionStore::new(directory.path().join("sessions"));
     let session = Session::new(directory.path().into(), "test-model".into());
     let mut app = App::new(session, Vec::new());
     assert!(
-        handle_command("/name field work", &mut app, &store, None, None)
+        handle_command("/name field work", &mut app, &mut store, None, None)
             .await
             .unwrap()
     );
@@ -114,7 +114,7 @@ async fn local_commands_name_and_export_session() {
     handle_command(
         &format!("/export {}", export.display()),
         &mut app,
-        &store,
+        &mut store,
         None,
         None,
     )
@@ -126,7 +126,7 @@ async fn local_commands_name_and_export_session() {
 #[tokio::test]
 async fn retired_voyage_command_cannot_launch_or_mutate_a_session() {
     let dir = tempfile::tempdir().unwrap();
-    let store = SessionStore::new(dir.path().join("sessions"));
+    let mut store = SessionStore::new(dir.path().join("sessions"));
     for command in [
         "/voyage",
         "/voyage http://127.0.0.1:9480 workstation",
@@ -138,7 +138,7 @@ async fn retired_voyage_command_cannot_launch_or_mutate_a_session() {
             .push(crate::Message::new(Role::User, "keep me"));
         let id = session.id;
         let mut app = App::new(session, Vec::new());
-        handle_command(command, &mut app, &store, None, None)
+        handle_command(command, &mut app, &mut store, None, None)
             .await
             .unwrap();
         assert!(app.exit.is_none());
@@ -152,4 +152,47 @@ async fn retired_voyage_command_cannot_launch_or_mutate_a_session() {
             .iter()
             .any(|command| command.name == "voyage" || command.name == "attach")
     );
+}
+
+#[tokio::test]
+async fn new_and_branch_commands_transfer_session_ownership() {
+    let directory = tempfile::tempdir().unwrap();
+    let unbound = SessionStore::new(directory.path().join("sessions"));
+    let mut original = Session::new(directory.path().into(), "test".into());
+    let mut store = unbound.with_execution(original.id).await.unwrap();
+    store.save(&mut original).await.unwrap();
+    let original_id = original.id;
+    let mut app = App::new(original, vec![]);
+    handle_command("/new owned-new", &mut app, &mut store, None, None)
+        .await
+        .unwrap();
+    let new_id = app.session.id;
+    assert_ne!(new_id, original_id);
+    assert_eq!(store.owned_session_id(), Some(new_id));
+    unbound.with_execution(original_id).await.unwrap();
+    assert!(
+        tokio::time::timeout(Duration::from_millis(50), unbound.with_execution(new_id))
+            .await
+            .is_err()
+    );
+    handle_command("/name owned-new", &mut app, &mut store, None, None)
+        .await
+        .unwrap();
+    handle_command("/branch owned-branch", &mut app, &mut store, None, None)
+        .await
+        .unwrap();
+    let branch_id = app.session.id;
+    assert_ne!(branch_id, new_id);
+    assert_eq!(app.session.parent_id, Some(new_id));
+    assert_eq!(store.owned_session_id(), Some(branch_id));
+    unbound.with_execution(new_id).await.unwrap();
+    assert!(
+        tokio::time::timeout(Duration::from_millis(50), unbound.with_execution(branch_id))
+            .await
+            .is_err()
+    );
+    handle_command("/clear confirm", &mut app, &mut store, None, None)
+        .await
+        .unwrap();
+    assert_eq!(store.owned_session_id(), Some(branch_id));
 }

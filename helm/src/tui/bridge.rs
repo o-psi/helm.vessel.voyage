@@ -16,6 +16,7 @@ use tokio::sync::{mpsc, oneshot};
 #[doc(hidden)]
 pub enum UiEvent {
     Agent(AgentEvent),
+    Checkpoint(super::checkpoint::Request),
     Approval(ApprovalRequest),
     Question(QuestionRequest),
     Finished(Result<crate::AgentOutcome, crate::agent::AgentError>),

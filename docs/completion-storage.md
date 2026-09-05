@@ -49,15 +49,20 @@ gate. Exporting this API does not modify existing runs or stores.
   is no claim of power-loss testing or transactional session publication. Publish
   session run references only after creation succeeds; recovery must inspect the
   obligations, never infer that terminal processes survived.
-- Old binaries do not use this separate format. Rolling back this currently unused
-  API does not migrate/discard sessions, todos or agents. Preserve experimental
-  ledgers for inspection rather than deleting them on rollback.
+- Older binaries reject sealed schema-2 ledgers. Rolling back must preserve
+  ledgers, sessions, todos and agents; never strip the seal or downgrade its version.
 
-On Windows, atomic visibility is implemented, but power-loss-durable rename is
-**not guaranteed** by the current `tempfile` replacement path. This API must not
-be used as the durable Windows session-publication boundary until an appropriate
-commit strategy is implemented and verified. Portable compilation/reopen tests
-do not resolve that limitation.
+On Windows, the flushed temporary file is closed and published with
+[`MoveFileExW`](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-movefileexw)
+and `MOVEFILE_WRITE_THROUGH`; replacement additionally uses
+`MOVEFILE_REPLACE_EXISTING`. Both paths remain in the same directory and never
+allow a cross-volume copy/delete fallback. Creation keeps no-clobber semantics.
+The Win32 error propagates without publishing acceptance; temporary-file cleanup
+remains armed on failure. This replaces the previous `tempfile` rename durability
+hold with an explicit operating-system write-through request. Filesystem and device
+flush semantics still bound the guarantee; this is not proof from power-loss tests
+or a multi-file session transaction. Windows CI must execute the storage and seal
+regressions before claiming platform verification.
 
 ## Tests and limitations
 

@@ -66,9 +66,27 @@ pub(super) fn transcript(app: &App, width: usize) -> Text<'static> {
         if message.role == Role::System || message.role == Role::Tool {
             continue;
         }
+        let classification = app
+            .session
+            .messages
+            .iter()
+            .position(|stored| std::ptr::eq(stored, *message))
+            .and_then(|index| app.session.assistant_classification(index));
         let (label, color) = match message.role {
             Role::User => ("you", Color::Cyan),
-            Role::Assistant => ("helm", Color::Green),
+            Role::Assistant => (
+                match classification {
+                    Some("completed") => "helm · completed",
+                    Some("incomplete") => "helm · incomplete",
+                    Some("interrupted") => "helm · interrupted",
+                    Some("provisional") => "helm · provisional",
+                    _ if app.is_running() && !app.session.run_summaries.is_empty() => {
+                        "helm · provisional"
+                    }
+                    _ => "helm",
+                },
+                Color::Green,
+            ),
             _ => continue,
         };
         if !message.content.is_empty() {
@@ -130,9 +148,37 @@ pub(super) fn transcript(app: &App, width: usize) -> Text<'static> {
             lines.push(Line::raw(""));
         }
     }
+    for summary in &app.session.run_summaries {
+        if !summary.partial_output.is_empty()
+            && (!app.is_running()
+                || app
+                    .session
+                    .run_summaries
+                    .last()
+                    .is_none_or(|last| last.run_id != summary.run_id))
+        {
+            lines.push(Line::styled(
+                "helm · interrupted partial response",
+                Style::default().fg(Color::Yellow),
+            ));
+            lines.extend(
+                render_markdown(
+                    &summary.partial_output,
+                    RenderOptions {
+                        width,
+                        theme: app.markdown_theme,
+                        syntax_highlighting: app.markdown_syntax_highlighting,
+                        ..Default::default()
+                    },
+                )
+                .lines,
+            );
+            lines.push(Line::raw(""));
+        }
+    }
     if !app.streaming_response.is_empty() {
         lines.push(Line::from(Span::styled(
-            "helm · streaming",
+            "helm · provisional streaming",
             Style::default()
                 .fg(Color::Green)
                 .add_modifier(Modifier::BOLD),
@@ -149,6 +195,19 @@ pub(super) fn transcript(app: &App, width: usize) -> Text<'static> {
             )
             .lines,
         );
+        lines.push(Line::raw(""));
+    }
+    if let Some(summary) = app.session.run_summaries.last() {
+        let phase = format!("{:?}", summary.phase).to_lowercase();
+        let detail = summary
+            .detail
+            .as_deref()
+            .map(display_safe)
+            .unwrap_or_default();
+        lines.push(Line::styled(
+            format!("Run {phase} · {detail}"),
+            Style::default().fg(Color::Yellow),
+        ));
         lines.push(Line::raw(""));
     }
     // Pending inputs have not acquired a canonical position in the model history.

@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::{BTreeMap, VecDeque},
+    collections::{BTreeMap, BTreeSet, VecDeque},
     path::PathBuf,
     sync::{
         Arc,
@@ -53,6 +53,7 @@ pub enum InboxMessage {
 }
 
 pub struct ExecutionContext {
+    pub completion: Option<crate::completion::runtime::RunHandle>,
     pub id: AgentId,
     pub task: String,
     pub policy: AgentPolicy,
@@ -124,6 +125,7 @@ pub struct SubagentRuntime {
 }
 struct Inner {
     executor: Arc<dyn SubagentExecutor>,
+    tasks: tokio_util::task::TaskTracker,
     limits: RuntimeLimits,
     permits: Arc<Semaphore>,
     agents: RwLock<BTreeMap<AgentId, Arc<Control>>>,
@@ -145,6 +147,7 @@ impl Drop for CancelDroppedWait {
 }
 
 struct Control {
+    completion: Option<crate::completion::runtime::RunHandle>,
     record: RwLock<AgentRecord>,
     cancel: CancellationToken,
     inbox: mpsc::Sender<InboxMessage>,
@@ -183,7 +186,7 @@ impl SubagentRuntime {
     pub fn new(
         executor: Arc<dyn SubagentExecutor>,
         limits: RuntimeLimits,
-        store: Option<AgentTreeStore>,
+        mut store: Option<AgentTreeStore>,
     ) -> Result<Self, RuntimeError> {
         if limits.max_concurrency == 0
             || limits.max_concurrency > Semaphore::MAX_PERMITS
@@ -193,10 +196,16 @@ impl SubagentRuntime {
                 "runtime limits must be greater than zero".into(),
             ));
         }
+        if let Some(store) = &mut store {
+            store
+                .acquire_runtime_owner()
+                .map_err(|e| RuntimeError::Persistence(e.to_string()))?;
+        }
         let (events, _) = broadcast::channel(limits.event_history.clamp(16, 4096));
         Ok(Self {
             inner: Arc::new(Inner {
                 executor,
+                tasks: tokio_util::task::TaskTracker::new(),
                 permits: Arc::new(Semaphore::new(limits.max_concurrency)),
                 limits,
                 agents: RwLock::new(BTreeMap::new()),
@@ -216,6 +225,45 @@ impl SubagentRuntime {
         limits: RuntimeLimits,
         store: AgentTreeStore,
     ) -> Result<Self, RuntimeError> {
+        // Acquire exclusive writer lifetime before reading or recovering records.
+        // Store clones retain this lease through detached persistence operations.
+        let store = tokio::task::spawn_blocking(move || {
+            let mut store = store;
+            store.acquire_runtime_owner()?;
+            Ok::<_, anyhow::Error>(store)
+        })
+        .await
+        .map_err(|e| RuntimeError::Persistence(e.to_string()))?
+        .map_err(|e| RuntimeError::Persistence(e.to_string()))?;
+        // Validate known ownership before recovery can archive retained records.
+        // A missing/corrupt ledger must never silently turn owned work into legacy.
+        for record in store
+            .list()
+            .await
+            .map_err(|e| RuntimeError::Persistence(e.to_string()))?
+        {
+            if let Some(reference) = &record.completion {
+                let coordinator = store.coordinator().ok_or_else(|| {
+                    RuntimeError::Persistence("owned agent requires completion coordinator".into())
+                })?;
+                let run = crate::completion::runtime::RunHandle::resume(
+                    coordinator.clone(),
+                    reference.session_id,
+                    reference.run_id,
+                )
+                .await
+                .map_err(|e| RuntimeError::Persistence(e.to_string()))?;
+                if !run
+                    .owns(crate::completion::Obligation::Agent(record.id))
+                    .await
+                    .map_err(|e| RuntimeError::Persistence(e.to_string()))?
+                {
+                    return Err(RuntimeError::Persistence(
+                        "agent owner ledger is missing its obligation".into(),
+                    ));
+                }
+            }
+        }
         store
             .recover_after_restart()
             .await
@@ -231,12 +279,33 @@ impl SubagentRuntime {
         let runtime = Self::new(executor, limits, Some(store))?;
         let mut agents = runtime.inner.agents.write().await;
         for record in records {
+            let completion = match (
+                &record.completion,
+                runtime.inner.store.as_ref().and_then(|s| s.coordinator()),
+            ) {
+                (Some(reference), Some(coordinator)) => Some(
+                    crate::completion::runtime::RunHandle::resume(
+                        coordinator.clone(),
+                        reference.session_id,
+                        reference.run_id,
+                    )
+                    .await
+                    .map_err(|e| RuntimeError::Persistence(e.to_string()))?,
+                ),
+                (Some(_), None) => {
+                    return Err(RuntimeError::Persistence(
+                        "owned agent requires completion coordinator".into(),
+                    ));
+                }
+                (None, _) => None,
+            };
             let (inbox, _) = mpsc::channel(1);
             let initial = terminal_outcome(&record);
             let (outcome, _) = watch::channel(initial);
             agents.insert(
                 record.id,
                 Arc::new(Control {
+                    completion,
                     record: RwLock::new(record),
                     cancel: CancellationToken::new(),
                     inbox,
@@ -250,6 +319,9 @@ impl SubagentRuntime {
         Ok(runtime)
     }
 
+    pub fn store(&self) -> Option<AgentTreeStore> {
+        self.inner.store.clone()
+    }
     pub fn subscribe(&self) -> broadcast::Receiver<SubagentEvent> {
         self.inner.events.subscribe()
     }
@@ -343,8 +415,80 @@ impl SubagentRuntime {
             .collect()
     }
 
-    pub async fn spawn(&self, request: SpawnRequest) -> Result<AgentId, RuntimeError> {
+    /// Observe one run only after terminal workers have finished their durable
+    /// transitions. In-memory terminal status precedes persistence and is not
+    /// sufficient evidence; failed or missing durable records remain pending.
+    pub(crate) async fn pending_owned_shutdown(
+        &self,
+        reference: &crate::completion::runtime::RunReference,
+    ) -> Result<Vec<AgentId>, RuntimeError> {
         let _mutation = self.inner.mutations.lock().await;
+        let store = self.inner.store.as_ref().ok_or_else(|| {
+            RuntimeError::Invalid("owned shutdown requires persistent agent state".into())
+        })?;
+        let tree = store
+            .load()
+            .await
+            .map_err(|error| RuntimeError::Persistence(error.to_string()))?;
+        let mut pending = BTreeSet::new();
+        for record in tree.agents.values() {
+            if record.completion.as_ref() == Some(reference) && !record.status.is_terminal() {
+                pending.insert(record.id);
+            }
+        }
+        let controls: Vec<_> = self.inner.agents.read().await.values().cloned().collect();
+        for control in controls {
+            let record = control.record.read().await.clone();
+            if record.completion.as_ref() != Some(reference) {
+                continue;
+            }
+            let durable = match tree.agents.get(&record.id) {
+                Some(record) => Some(record.clone()),
+                None => store
+                    .get_archived(record.id)
+                    .await
+                    .map_err(|error| RuntimeError::Persistence(error.to_string()))?
+                    .map(|archive| archive.record),
+            };
+            if !record.status.is_terminal()
+                || control.outcome.borrow().is_none()
+                || !durable.is_some_and(|record| {
+                    record.completion.as_ref() == Some(reference) && record.status.is_terminal()
+                })
+            {
+                pending.insert(record.id);
+            }
+        }
+        Ok(pending.into_iter().collect())
+    }
+
+    /// Stop accepting work and drain cancelled workers before a frontend handoff.
+    /// Callers may bound this wait, but must not release or bypass the writer
+    /// lease if draining fails. Tracked workers finish persistence before exit.
+    pub async fn shutdown(&self) {
+        {
+            let _mutation = self.inner.mutations.lock().await;
+            self.inner.permits.close();
+            for control in self.inner.agents.read().await.values() {
+                control.cancel.cancel();
+            }
+            self.inner.tasks.close();
+        }
+        self.inner.tasks.wait().await;
+    }
+
+    pub async fn spawn(&self, request: SpawnRequest) -> Result<AgentId, RuntimeError> {
+        self.spawn_for_run(request, None).await
+    }
+    pub async fn spawn_for_run(
+        &self,
+        request: SpawnRequest,
+        mut completion: Option<crate::completion::runtime::RunHandle>,
+    ) -> Result<AgentId, RuntimeError> {
+        let _mutation = self.inner.mutations.lock().await;
+        if self.inner.permits.is_closed() {
+            return Err(RuntimeError::Invalid("runtime is shutting down".into()));
+        }
         if request.task.trim().is_empty() || request.name.trim().is_empty() {
             return Err(RuntimeError::Invalid(
                 "name and task cannot be empty".into(),
@@ -357,22 +501,84 @@ impl SubagentRuntime {
                 .validate_child(&request.policy)
                 .map_err(|e| RuntimeError::Invalid(e.to_string()))?;
         }
+        if let Some(parent) = request.parent_id {
+            let inherited = self.control(parent).await?.completion.clone();
+            match (&completion, inherited) {
+                (Some(requested), Some(inherited))
+                    if requested.reference() != inherited.reference() =>
+                {
+                    if !requested
+                        .owns(crate::completion::Obligation::Agent(parent))
+                        .await
+                        .map_err(|e| RuntimeError::Persistence(e.to_string()))?
+                    {
+                        return Err(RuntimeError::Invalid(
+                            "explicitly adopt parent before creating a child in another run".into(),
+                        ));
+                    }
+                }
+                (_, Some(inherited)) => completion = Some(inherited),
+                (Some(requested), None) => {
+                    if !requested
+                        .owns(crate::completion::Obligation::Agent(parent))
+                        .await
+                        .map_err(|e| RuntimeError::Persistence(e.to_string()))?
+                    {
+                        return Err(RuntimeError::Invalid(
+                            "explicitly adopt legacy parent before creating owned descendants"
+                                .into(),
+                        ));
+                    }
+                }
+                (None, None) => (),
+            }
+        }
         self.prune_terminal_history(0, request.parent_id).await?;
         let cancellation = if let Some(parent) = request.parent_id {
             let parent = self.control(parent).await?;
-            if parent.cancel.is_cancelled() {
-                return Err(RuntimeError::Invalid(
-                    "cannot spawn from a cancelled parent".into(),
-                ));
+            let same_run = parent.completion.as_ref().map(|run| run.reference())
+                == completion.as_ref().map(|run| run.reference());
+            if same_run {
+                if parent.cancel.is_cancelled() {
+                    return Err(RuntimeError::Invalid(
+                        "cannot spawn from a cancelled parent".into(),
+                    ));
+                }
+                parent.cancel.child_token()
+            } else {
+                if !parent.record.read().await.status.is_terminal() {
+                    return Err(RuntimeError::Invalid(
+                        "cross-run followup requires a terminal adopted parent".into(),
+                    ));
+                }
+                // Explicit adoption was validated above. New-run followups of
+                // terminal work must not inherit the old run's cancellation.
+                CancellationToken::new()
             }
-            parent.cancel.child_token()
         } else {
             CancellationToken::new()
         };
         let mut agents = self.inner.agents.write().await;
         let id = AgentId::new();
+        if let Some(run) = &completion {
+            if !self
+                .inner
+                .store
+                .as_ref()
+                .and_then(|s| s.coordinator())
+                .is_some_and(|c| c.same(run.coordinator()))
+            {
+                return Err(RuntimeError::Invalid(
+                    "owned subagent requires coordinated persistent store".into(),
+                ));
+            }
+            run.register(crate::completion::Obligation::Agent(id))
+                .await
+                .map_err(|e| RuntimeError::Persistence(e.to_string()))?;
+        }
         let now = Utc::now();
         let record = AgentRecord {
+            completion: completion.as_ref().map(|run| run.reference()),
             id,
             parent_id: request.parent_id,
             name: request.name.clone(),
@@ -399,6 +605,7 @@ impl SubagentRuntime {
         let (inbox_tx, inbox_rx) = mpsc::channel(64);
         let (outcome, _) = watch::channel(None);
         let control = Arc::new(Control {
+            completion,
             record: RwLock::new(record),
             cancel: cancellation,
             inbox: inbox_tx,
@@ -410,7 +617,7 @@ impl SubagentRuntime {
         drop(agents);
         self.emit(id, SubagentEventKind::Queued).await;
         let runtime = self.clone();
-        tokio::spawn(async move {
+        self.inner.tasks.spawn(async move {
             runtime.run(id, inbox_rx, control).await;
         });
         Ok(id)
@@ -454,7 +661,7 @@ impl SubagentRuntime {
     }
 
     async fn run(&self, id: AgentId, inbox: mpsc::Receiver<InboxMessage>, control: Arc<Control>) {
-        let permit = tokio::select! { _=control.cancel.cancelled()=>{self.finish_cancelled(id,&control).await;return}, p=self.inner.permits.clone().acquire_owned()=>match p {Ok(p)=>p,Err(_)=>{self.finish_failed(id,&control,"runtime shut down".into()).await;return}} };
+        let permit = tokio::select! { biased; _=control.cancel.cancelled()=>{self.finish_cancelled(id,&control).await;return}, p=self.inner.permits.clone().acquire_owned()=>match p {Ok(p)=>p,Err(_)=>{self.finish_failed(id,&control,"runtime shut down".into()).await;return}} };
         *control.permit.lock().await = Some(permit);
         {
             let mut r = control.record.write().await;
@@ -469,6 +676,7 @@ impl SubagentRuntime {
         self.emit(id, SubagentEventKind::Started).await;
         let request = control.record.read().await.clone();
         let context = ExecutionContext {
+            completion: control.completion.clone(),
             id,
             task: request.task,
             policy: request.policy,
@@ -486,8 +694,16 @@ impl SubagentRuntime {
             Result(Result<SubagentResult, String>),
         }
         let result = tokio::select! {
+            biased;
             _=control.cancel.cancelled()=>End::Cancelled,
             r=self.inner.executor.execute(context)=>End::Result(r)
+        };
+        // Provider cancellation may make its future return an error in the same
+        // poll as the token becomes ready. Preserve the operator's cancellation.
+        let result = if control.cancel.is_cancelled() {
+            End::Cancelled
+        } else {
+            result
         };
         match result {
             End::Cancelled => self.finish_cancelled(id, &control).await,
@@ -696,6 +912,25 @@ impl SubagentRuntime {
         id: AgentId,
         message: impl Into<String>,
     ) -> Result<AgentId, RuntimeError> {
+        self.follow_up_in_run(caller, id, message, None).await
+    }
+    pub async fn follow_up_in_run(
+        &self,
+        caller: Option<AgentId>,
+        id: AgentId,
+        message: impl Into<String>,
+        completion: Option<crate::completion::runtime::RunHandle>,
+    ) -> Result<AgentId, RuntimeError> {
+        if let Some(run) = &completion
+            && !run
+                .owns(crate::completion::Obligation::Agent(id))
+                .await
+                .map_err(|e| RuntimeError::Persistence(e.to_string()))?
+        {
+            return Err(RuntimeError::Invalid(
+                "explicitly adopt agent before requesting a followup in this run".into(),
+            ));
+        }
         let message = message.into();
         let record = self.get_retained(id).await.map_err(|error| match error {
             RuntimeError::Unknown(_) => RuntimeError::Invalid("agent is archived or unknown; use spawn for new work and reference its original ID".into()),
@@ -711,15 +946,18 @@ impl SubagentRuntime {
             .await?;
             return Ok(id);
         }
-        self.spawn(SpawnRequest {
-            parent_id: Some(id),
-            name: format!("{}-follow-up", record.name),
-            task: message,
-            policy: record.policy.clone(),
-            budget: record.budget.clone(),
-            worktree: record.worktree,
-            branch: record.branch,
-        })
+        self.spawn_for_run(
+            SpawnRequest {
+                parent_id: Some(id),
+                name: format!("{}-follow-up", record.name),
+                task: message,
+                policy: record.policy.clone(),
+                budget: record.budget.clone(),
+                worktree: record.worktree,
+                branch: record.branch,
+            },
+            completion,
+        )
         .await
     }
 
@@ -1028,6 +1266,89 @@ mod tests {
         executor.gate.notify_one();
         assert_eq!(runtime.wait(first).await.unwrap().unwrap().summary, "done");
         assert_eq!(executor.peak.load(Ordering::SeqCst), 1);
+    }
+
+    struct CancelAndFail;
+    #[async_trait]
+    impl SubagentExecutor for CancelAndFail {
+        async fn execute(&self, context: ExecutionContext) -> Result<SubagentResult, String> {
+            context.cancellation.cancel();
+            Err("provider observed cancellation".into())
+        }
+    }
+
+    #[tokio::test]
+    async fn cancellation_wins_over_provider_error_in_the_same_poll() {
+        let runtime =
+            SubagentRuntime::new(Arc::new(CancelAndFail), RuntimeLimits::default(), None).unwrap();
+        let id = runtime.spawn(request("cancelled")).await.unwrap();
+        assert!(runtime.wait(id).await.unwrap().is_err());
+        assert_eq!(
+            runtime.get(id).await.unwrap().status,
+            AgentStatus::Cancelled
+        );
+    }
+
+    #[tokio::test]
+    async fn shutdown_drains_active_and_queued_workers_before_writer_handoff() {
+        let root = tempfile::tempdir().unwrap();
+        let coordinator = crate::completion::runtime::Coordinator::open(
+            root.path().join("completion"),
+            root.path(),
+        )
+        .unwrap();
+        let store =
+            AgentTreeStore::new(root.path().join("agents.json")).with_coordinator(coordinator);
+        let runtime = SubagentRuntime::new_persistent(
+            Arc::new(GateExecutor::new()),
+            RuntimeLimits {
+                max_concurrency: 1,
+                event_history: 32,
+            },
+            store.clone(),
+        )
+        .await
+        .unwrap();
+        let first = runtime.spawn(request("active")).await.unwrap();
+        let second = runtime.spawn(request("queued")).await.unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(3), async {
+            while runtime.get(first).await.unwrap().status != AgentStatus::Running {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(3), runtime.shutdown())
+            .await
+            .unwrap();
+        for id in [first, second] {
+            assert!(runtime.wait(id).await.unwrap().is_err());
+            assert!(runtime.get(id).await.unwrap().status.is_terminal());
+        }
+        assert!(runtime.spawn(request("too late")).await.is_err());
+        // Shutdown drains work but does not bypass the owner lease.
+        assert!(
+            SubagentRuntime::new_persistent(
+                Arc::new(GateExecutor::new()),
+                RuntimeLimits::default(),
+                store.clone()
+            )
+            .await
+            .is_err()
+        );
+        drop(runtime);
+        let next = SubagentRuntime::new_persistent(
+            Arc::new(GateExecutor::new()),
+            RuntimeLimits::default(),
+            store,
+        )
+        .await
+        .unwrap();
+        for id in [first, second] {
+            assert!(next.wait(id).await.unwrap().is_err());
+            assert!(next.get(id).await.unwrap().status.is_terminal());
+        }
+        next.shutdown().await;
     }
 
     #[tokio::test]

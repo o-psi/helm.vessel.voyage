@@ -660,6 +660,20 @@ fn canonical_checkpoints_preserve_prefix_usage_and_rollback_and_never_duplicate_
             )
             .is_err()
     );
+    assert!(!journal.run(run.id).unwrap().final_checkpointed);
+    assert!(
+        journal
+            .finish(&guard, run.id, RunState::Completed, None, None)
+            .is_err()
+    );
+    journal
+        .accept_checkpoint(&guard, run.id, &history, &usage)
+        .unwrap();
+    assert!(
+        journal
+            .accept_checkpoint(&guard, run.id, &history, &usage)
+            .is_err()
+    );
     journal
         .finish(&guard, run.id, RunState::Completed, None, None)
         .unwrap();
@@ -748,4 +762,432 @@ fn uncertain_tool_intent_cannot_be_completed_or_dispatched_on_a_new_turn() {
         history.len()
     );
     assert!(journal.lookup_command(&request).unwrap().is_none());
+}
+
+fn legacy_v2(journal: &mut Journal) {
+    journal
+        .connection
+        .execute_batch("DROP TABLE local_tool_reconciliations; DROP TABLE local_cleanup_obligations; DROP TABLE local_cancel_intents; DROP TABLE IF EXISTS steering; DROP TABLE imports; UPDATE attachment_schema SET version=2 WHERE id=1;")
+        .unwrap();
+    journal.opened_schema = 2;
+}
+
+#[test]
+fn explicit_upgrade_preserves_canonical_runs_replay_and_dedup_and_fences_writers() {
+    let (_dir, mut journal, session, request) = setup();
+    legacy_v2(&mut journal);
+    let guard = journal.acquire_execution(session.id).unwrap();
+    let run = journal.admit_turn(&guard, &request, 1).unwrap().run;
+    journal
+        .finish(
+            &guard,
+            run.id,
+            RunState::Failed,
+            Some("test terminal"),
+            None,
+        )
+        .unwrap();
+    let before = serde_json::to_value(journal.load_session(session.id).unwrap().session).unwrap();
+    assert!(journal.upgrade_quiescent().is_err()); // effects guard retained after terminal persistence
+    drop(guard);
+    let mut stale = Journal::open(journal.directory.clone()).unwrap();
+    assert_eq!(stale.opened_schema, 2); // open never upgrades
+    journal
+        .upgrade_with(|| {
+            assert!(
+                stale
+                    .create_session(&Session::new(session.workspace.clone(), "new".into()))
+                    .is_err()
+            );
+            assert!(stale.acquire_execution(session.id).is_err());
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(journal.opened_schema, SCHEMA_VERSION);
+    assert_eq!(
+        serde_json::to_value(journal.load_session(session.id).unwrap().session).unwrap(),
+        before
+    );
+    assert_eq!(
+        journal.lookup_command(&request).unwrap().unwrap().id,
+        run.id
+    );
+    assert!(
+        matches!(journal.replay(session.id, 0).unwrap(), Replay::Events(events) if events.len() == 2)
+    );
+    assert!(
+        stale
+            .create_session(&Session::new(session.workspace.clone(), "stale".into()))
+            .is_err()
+    );
+    assert!(stale.acquire_execution(session.id).is_err());
+    assert_eq!(
+        Journal::open(journal.directory.clone())
+            .unwrap()
+            .opened_schema,
+        SCHEMA_VERSION
+    );
+}
+
+#[test]
+fn active_run_or_upgrade_failure_keeps_supported_v2_unchanged() {
+    let (_dir, mut journal, session, request) = setup();
+    legacy_v2(&mut journal);
+    let guard = journal.acquire_execution(session.id).unwrap();
+    journal.admit_turn(&guard, &request, 1).unwrap();
+    drop(guard);
+    assert!(journal.upgrade_quiescent().is_err());
+    let guard = journal.acquire_execution(session.id).unwrap();
+    journal.recover_interrupted(&guard).unwrap();
+    drop(guard);
+    assert!(
+        journal
+            .upgrade_with(|| anyhow::bail!("injected upgrade failure"))
+            .is_err()
+    );
+    assert_eq!(
+        journal
+            .connection
+            .query_row("SELECT version FROM attachment_schema", [], |r| r
+                .get::<_, i64>(0))
+            .unwrap(),
+        2
+    );
+    assert_eq!(
+        journal
+            .connection
+            .query_row(
+                "SELECT count(*) FROM sqlite_master WHERE name='imports'",
+                [],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+        0
+    );
+    journal.upgrade_quiescent().unwrap();
+}
+
+fn import_provenance(session: &Session, directory: &Path) -> super::super::migration::Provenance {
+    super::super::migration::Provenance {
+        transfer_id: Uuid::new_v4(),
+        session_id: session.id,
+        source_revision: session.revision,
+        source_sha256: "a".repeat(64),
+        source: directory.join("source.json"),
+        destination: directory.to_owned(),
+        backup: directory.join("backup.json"),
+        workspace: session.workspace.clone(),
+    }
+}
+
+#[test]
+fn provenance_insert_is_atomic_create_only_and_retains_source_revision() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut journal = Journal::open(dir.path().join("journal")).unwrap();
+    let mut session = Session::new(dir.path().into(), "original".into());
+    session.revision = 17;
+    session.messages.push(Message::new(Role::User, "preserve"));
+    let provenance = import_provenance(&session, &journal.directory);
+    journal.connection.execute_batch("CREATE TRIGGER fail_import BEFORE INSERT ON imports BEGIN SELECT RAISE(ABORT, 'injected disk failure'); END;").unwrap();
+    assert!(journal.import_session(&session, &provenance).is_err());
+    assert!(journal.load_session(session.id).is_err());
+    assert!(journal.preflight_import(&provenance).unwrap().is_none());
+    journal
+        .connection
+        .execute_batch("DROP TRIGGER fail_import")
+        .unwrap();
+    assert_eq!(
+        journal.import_session(&session, &provenance).unwrap(),
+        (17, false)
+    );
+    assert_eq!(
+        journal.import_session(&session, &provenance).unwrap(),
+        (17, true)
+    );
+    let mut conflict = provenance.clone();
+    conflict.source_sha256 = "b".repeat(64);
+    assert!(journal.import_session(&session, &conflict).is_err());
+    assert_eq!(journal.load_session(session.id).unwrap().revision, 17);
+    let mut collision = Session::new(dir.path().into(), "other".into());
+    collision.revision = 17;
+    conflict = provenance.clone();
+    conflict.session_id = collision.id;
+    assert!(journal.import_session(&collision, &conflict).is_err());
+    assert!(journal.load_session(collision.id).is_err());
+}
+
+#[test]
+fn import_sqlite_full_rolls_back_snapshot_and_provenance_together() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut journal = Journal::open(dir.path().join("journal")).unwrap();
+    let mut session = Session::new(dir.path().into(), "original".into());
+    session
+        .messages
+        .push(Message::new(Role::User, "x".repeat(128 * 1024)));
+    let provenance = import_provenance(&session, &journal.directory);
+    let pages: i64 = journal
+        .connection
+        .pragma_query_value(None, "page_count", |r| r.get(0))
+        .unwrap();
+    journal
+        .connection
+        .pragma_update(None, "max_page_count", pages)
+        .unwrap();
+    assert!(journal.import_session(&session, &provenance).is_err());
+    assert!(journal.load_session(session.id).is_err());
+    assert!(journal.preflight_import(&provenance).unwrap().is_none());
+}
+
+#[cfg(unix)]
+#[test]
+fn hardlinked_database_and_execution_sidecars_are_rejected_without_changes() {
+    for database in [true, false] {
+        let (dir, journal, session, _) = setup();
+        let path = if database {
+            journal.directory.join("journal.sqlite3")
+        } else {
+            drop(journal.acquire_execution(session.id).unwrap());
+            journal
+                .directory
+                .join(format!("{}.execution.lock", session.id))
+        };
+        let bytes = fs::read(&path).unwrap();
+        fs::hard_link(&path, dir.path().join("alias")).unwrap();
+        if database {
+            drop(journal);
+            assert!(Journal::open(dir.path().join("attachment")).is_err());
+        } else {
+            assert!(journal.acquire_execution(session.id).is_err());
+        }
+        assert_eq!(fs::read(path).unwrap(), bytes);
+    }
+}
+
+#[test]
+fn abrupt_hot_journal_writer_fixture() {
+    let Some(path) = std::env::var_os("HELM_JOURNAL_HOT_DIRECTORY") else {
+        return;
+    };
+    let journal = Journal::open(path.into()).unwrap();
+    let session_id = Uuid::parse_str(&std::env::var("HELM_JOURNAL_HOT_SESSION").unwrap()).unwrap();
+    let _guard = journal.acquire_execution(session_id).unwrap();
+    journal
+        .connection
+        .execute_batch(
+            "PRAGMA cache_size=1; PRAGMA cache_spill=ON; BEGIN IMMEDIATE;
+         UPDATE sessions SET state='{}', revision=999;
+         UPDATE runs SET record='{}'; DELETE FROM commands; DELETE FROM events;
+         WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM n WHERE x<256)
+         INSERT INTO events SELECT id,10000+x,hex(zeroblob(2048)) FROM sessions,n;",
+        )
+        .unwrap();
+    let bytes = fs::read(journal.directory.join("journal.sqlite3-journal")).unwrap();
+    assert_eq!(
+        &bytes[..8],
+        &[0xd9, 0xd5, 0x05, 0xf9, 0x20, 0xa1, 0x63, 0xd7]
+    );
+    fs::write(
+        journal.directory.join("hot-ready"),
+        b"synced journal and spilled pages",
+    )
+    .unwrap();
+    loop {
+        std::thread::park();
+    }
+}
+
+#[test]
+fn killed_hot_writer_preserves_canonical_run_dedup_and_replay() {
+    struct KillOnDrop(std::process::Child);
+    impl Drop for KillOnDrop {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+    let (dir, mut journal, session, request) = setup();
+    let guard = journal.acquire_execution(session.id).unwrap();
+    let run = journal.admit_turn(&guard, &request, 1).unwrap().run;
+    journal.mark_running(&guard, run.id).unwrap();
+    journal
+        .append_text(&guard, run.id, "committed partial")
+        .unwrap();
+    let original = journal.load_session(session.id).unwrap();
+    let events = match journal.replay(session.id, 0).unwrap() {
+        Replay::Events(events) => serde_json::to_value(events).unwrap(),
+        _ => panic!("initial replay missing"),
+    };
+    drop(guard);
+    drop(journal);
+    let path = dir.path().join("attachment");
+    let mut child = KillOnDrop(
+        std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "attachment::journal::tests::abrupt_hot_journal_writer_fixture",
+                "--nocapture",
+            ])
+            .env("HELM_JOURNAL_HOT_DIRECTORY", &path)
+            .env("HELM_JOURNAL_HOT_SESSION", session.id.to_string())
+            .spawn()
+            .unwrap(),
+    );
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    while !path.join("hot-ready").exists() {
+        assert!(
+            child.0.try_wait().unwrap().is_none(),
+            "writer exited before spill"
+        );
+        assert!(std::time::Instant::now() < deadline, "writer did not spill");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    child.0.kill().unwrap();
+    assert!(!child.0.wait().unwrap().success());
+    let bytes = fs::read(path.join("journal.sqlite3-journal")).unwrap();
+    assert_eq!(
+        &bytes[..8],
+        &[0xd9, 0xd5, 0x05, 0xf9, 0x20, 0xa1, 0x63, 0xd7]
+    );
+    let mut recovered = Journal::open(path).unwrap();
+    let loaded = recovered.load_session(session.id).unwrap();
+    assert_eq!(loaded.revision, original.revision);
+    assert_eq!(
+        serde_json::to_value(loaded.session).unwrap(),
+        serde_json::to_value(original.session).unwrap()
+    );
+    let record = recovered.run(run.id).unwrap();
+    assert_eq!(record.state, RunState::Running);
+    assert_eq!(record.partial_text, "committed partial");
+    match recovered.replay(session.id, 0).unwrap() {
+        Replay::Events(replayed) => assert_eq!(serde_json::to_value(replayed).unwrap(), events),
+        _ => panic!("committed replay lost"),
+    }
+    let guard = recovered.acquire_execution(session.id).unwrap();
+    assert_eq!(
+        recovered
+            .recover_interrupted(&guard)
+            .unwrap()
+            .unwrap()
+            .state,
+        RunState::Interrupted
+    );
+    let interrupted_revision = recovered.load_session(session.id).unwrap().revision;
+    assert_eq!(interrupted_revision, original.revision + 1);
+    let duplicate = recovered.admit_turn(&guard, &request, 1).unwrap();
+    assert!(duplicate.duplicate);
+    assert_eq!(duplicate.run.id, run.id);
+    assert_eq!(
+        recovered.load_session(session.id).unwrap().revision,
+        interrupted_revision
+    );
+    #[cfg(windows)]
+    {
+        let private = voyage_storage::PrivateDirectory::open(&recovered.directory).unwrap();
+        private.open_file("journal.sqlite3", false).unwrap();
+        private.open_file("journal.sqlite3-journal", false).unwrap();
+        let mode: String = recovered
+            .connection
+            .pragma_query_value(None, "journal_mode", |r| r.get(0))
+            .unwrap();
+        assert_eq!(mode, "persist");
+    }
+}
+
+#[cfg(windows)]
+#[path = "windows_tests.rs"]
+mod windows_tests;
+
+mod steering;
+
+mod catalogue;
+
+mod reconciliation;
+
+/// A rollback-journal reader permits BEGIN IMMEDIATE and cached row updates,
+/// but prevents COMMIT's exclusive lock. Keep this independent of timing/polling.
+#[cfg(target_os = "linux")]
+#[test]
+fn append_commit_busy_rolls_back_every_row_before_an_exact_once_retry() {
+    let (_dir, mut journal, session, request) = setup();
+    let guard = journal.acquire_execution(session.id).unwrap();
+    let run = journal.admit_turn(&guard, &request, 1).unwrap().run;
+    journal.mark_running(&guard, run.id).unwrap();
+    let mode: String = journal
+        .connection
+        .pragma_query_value(None, "journal_mode", |r| r.get(0))
+        .unwrap();
+    assert_eq!(mode, "delete");
+    // Prevent dirty-page spilling from moving the lock failure into an UPDATE.
+    journal
+        .connection
+        .pragma_update(None, "cache_spill", false)
+        .unwrap();
+    let snapshot = |db: &Connection| {
+        let run: String = db
+            .query_row(
+                "SELECT record FROM runs WHERE id=?1",
+                [run.id.to_string()],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let session_state: (String, i64, i64) = db
+            .query_row(
+                "SELECT state,revision,next_sequence FROM sessions WHERE id=?1",
+                [session.id.to_string()],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        let events = db
+            .prepare("SELECT sequence,event FROM events WHERE session_id=?1 ORDER BY sequence")
+            .unwrap()
+            .query_map([session.id.to_string()], |r| {
+                Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?))
+            })
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .unwrap();
+        (run, session_state, events)
+    };
+    let before = snapshot(&journal.connection);
+    let reader = Connection::open(journal.directory.join("journal.sqlite3")).unwrap();
+    reader.execute_batch("BEGIN DEFERRED").unwrap();
+    // BEGIN alone has no read lock: execute a SELECT and retain the transaction.
+    assert_eq!(snapshot(&reader), before);
+    let changes = journal.connection.total_changes();
+    let error = journal
+        .append_text(&guard, run.id, "retained-delta")
+        .unwrap_err();
+    assert!(
+        matches!(error.downcast_ref::<rusqlite::Error>(),
+        Some(rusqlite::Error::SqliteFailure(code, _)) if code.code == rusqlite::ErrorCode::DatabaseBusy),
+        "{error:#}"
+    );
+    // Row updates actually ran, proving this was not an admission/BEGIN failure.
+    assert_eq!(journal.connection.total_changes() - changes, 3);
+    // rusqlite's consuming commit failure must have rolled back before retry.
+    assert!(journal.connection.is_autocommit());
+    assert_eq!(snapshot(&journal.connection), before);
+    assert_eq!(snapshot(&reader), before);
+    reader.execute_batch("ROLLBACK").unwrap();
+    let sequence = journal
+        .append_text(&guard, run.id, "retained-delta")
+        .unwrap();
+    assert_eq!(sequence, before.1.2 as u64);
+    let after = snapshot(&journal.connection);
+    let mut expected_run: serde_json::Value = serde_json::from_str(&before.0).unwrap();
+    assert_eq!(expected_run["partial_text"], "");
+    expected_run["partial_text"] = "retained-delta".into();
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&after.0).unwrap(),
+        expected_run
+    );
+    assert_eq!((&after.1.0, after.1.1), (&before.1.0, before.1.1));
+    assert_eq!(after.1.2, before.1.2 + 1);
+    assert_eq!(after.2.len(), before.2.len() + 1);
+    assert_eq!(&after.2[..before.2.len()], &before.2);
+    let event: JournalEvent = serde_json::from_str(&after.2.last().unwrap().1).unwrap();
+    assert_eq!(event.sequence, sequence);
+    assert_eq!(event.run_id, run.id);
+    assert!(matches!(event.kind, EventKind::TextDelta(ref text) if text == "retained-delta"));
+    assert_eq!(snapshot(&reader), after);
 }

@@ -4,12 +4,11 @@ User mandate: comprehensively resolve remaining issues, including epics. Invento
 
 ## Active work
 
-- #64: context accounting and request preflight implemented; issue scope posted; 374 integrated workspace tests and all final Linux gates passed; canonical failure recovery and portability fixes integrated. Acceptance tests: full request accounting, initial/tool follow-up guard, indivisible rejection, whole-turn reduction, canonical history preservation, cancellation, provider-neutral dispatch.
-- #86: audit found input bounds, delivery-state and chronology gaps; fixes integrated in 586bfb3; four release PTY regressions pass; final Linux gates passed; current platform CI pending.
-- #80 and #59: prior delivery passed platform CI; current persistence regressions block fresh portability acceptance. Questions live-provider acceptance remains pending.
-- #81: coordinated durable ownership/readiness plus CLI/TUI session references and nested offline E2E implemented in isolated `feat/completion-wiring`; full integrated release checks underway.
-- #82: root-only bounded reconciliation and durable acceptance seal underway in isolated worktrees; #83 outcome/fixture verification depends on integration. Scope: https://github.com/o-psi/voyage/issues/82#issuecomment-5548958013
-- Draft delivery PR: https://github.com/o-psi/voyage/pull/87 (not ready to merge).
+- Delivered #64 context budgets, #86 steering, and #59 readable tool output follow-up in [PR #87](https://github.com/o-psi/voyage/pull/87), merged as 05310bf. All three issues are closed.
+- [#81](https://github.com/o-psi/voyage/issues/81): run ownership, coordinated stores and frontend references implemented; integration verification continues with #82.
+- [#82](https://github.com/o-psi/voyage/issues/82): bounded reconciliation, durable seals and CLI checkpoint acknowledgements implemented in an isolated checkout. TUI save acknowledgements and observed descendant cleanup are being completed.
+- [#83](https://github.com/o-psi/voyage/issues/83): three native-provider fixtures and adversarial evaluation scenarios under verification. Live-provider evidence remains blocked by the previously observed configured-provider HTTP401; definition validation is not live execution.
+- Recovered committed work after temporary-directory loss. Active checkouts and evidence now live under `.local-git/` on durable disk. Missing uncommitted callbacks/fixtures are being reconstructed and rechecked.
 
 ## Dependencies and delivery order
 
@@ -24,7 +23,7 @@ Each feature needs issue discussion review/update before edits, acceptance-drive
 
 ## Open inventory
 
-- [#86: Allow steering messages during an active Helm run](https://github.com/o-psi/voyage/issues/86) — pending
+- [#86: Allow steering messages during an active Helm run](https://github.com/o-psi/voyage/issues/86) — delivered in #87
 - [#83: Validate and document completion-gate behavior end to end](https://github.com/o-psi/voyage/issues/83) — pending
 - [#82: Gate final responses with bounded work reconciliation](https://github.com/o-psi/voyage/issues/82) — pending
 - [#81: Track run-scoped completion readiness for subagents and todos](https://github.com/o-psi/voyage/issues/81) — pending
@@ -44,11 +43,11 @@ Each feature needs issue discussion review/update before edits, acceptance-drive
 - [#67: Add reusable saved workflows and parameterized commands](https://github.com/o-psi/voyage/issues/67) — pending
 - [#66: Add local-model and OpenAI-compatible provider presets with endpoint discovery](https://github.com/o-psi/voyage/issues/66) — pending
 - [#65: Add first-class MCP marketplace, installation, and lifecycle UX](https://github.com/o-psi/voyage/issues/65) — pending
-- [#64: Enforce context-window limits and compact automatically before every provider request](https://github.com/o-psi/voyage/issues/64) — pending
+- [#64: Enforce context-window limits and compact automatically before every provider request](https://github.com/o-psi/voyage/issues/64) — delivered in #87
 - [#63: Add external extension and skill packaging, installation, and discovery](https://github.com/o-psi/voyage/issues/63) — pending
 - [#62: Add OS-level sandbox adapters for Linux, macOS, and Windows](https://github.com/o-psi/voyage/issues/62) — pending
-- [#59: TUI: Keep conversation user-facing and isolate activity/log diagnostics](https://github.com/o-psi/voyage/issues/59) — pending
-- [#37: Enforce per-agent tools, approvals, budgets, and resource limits](https://github.com/o-psi/voyage/issues/37) — pending
+- [#59: TUI: Keep conversation user-facing and isolate activity/log diagnostics](https://github.com/o-psi/voyage/issues/59) — delivered in #87
+- [#37: Enforce per-agent tools, approvals, budgets, and resource limits](https://github.com/o-psi/voyage/issues/37) — delivered in #87; closed with reviewed platform evidence
 - [#22: Run structured dogfood and incumbent-harness cutover](https://github.com/o-psi/voyage/issues/22) — pending
 - [#21: Define attended and unattended approval semantics](https://github.com/o-psi/voyage/issues/21) — pending
 - [#19: EPIC: Make Helm ready to replace the incumbent harness](https://github.com/o-psi/voyage/issues/19) — pending
@@ -60,6 +59,18 @@ Each feature needs issue discussion review/update before edits, acceptance-drive
 
 ## Verification and blockers
 
-Context/steering integration at 28436bb (Rust source c68eeae): all 374 Linux workspace tests, formatting, strict Clippy, locked release build, nine system fixtures, 11 eval definitions, unique packaging and checksums passed. This includes context failure/resume on three native transports and steering PTY cases. Baseline context regression failed against the previous release. Exact logs/results: `/tmp/voyage-wave1-final-results.json` (local evidence, not checked in).
+PR #87 head 0489b9e: [quality run 33941455410](https://github.com/o-psi/voyage/actions/runs/33941455410) passed all jobs. Linux passed formatting, strict Clippy, 375 workspace tests, locked release build, nine system fixtures, 11 evaluation definitions, unique packaging and checksums. macOS and Windows passed workspace tests and locked release builds. Both duplicate push/PR workflow runs succeeded. The PTY resize regression also passed local normal and fragmented reads.
 
-PR #87 remains draft until actual macOS/Windows CI on the updated branch passes; prior failures prompted explicit alias/prefix fixes and platform regressions. GitHub access now works with full runtime permissions; the installed gh binary avoids the broken mise shim. A bounded configured subscription questions smoke returned HTTP401 before tool/provider completion, with zero usage; #80 live acceptance remains blocked. Evaluation definition validation is not a live evaluation, and Linux results are not platform evidence.
+The first-wave source is merged. New completion-gate source has separate, unfinished verification; prior passing results do not establish its readiness. Current GitHub access works. Live subscription smoke previously returned HTTP401 before tool execution, with zero reported usage; it is not a live pass. The replacement and attachment epics retain their full unfinished scope.
+
+## Completion delivery in review
+
+[Draft PR #88](https://github.com/o-psi/voyage/pull/88) implements #81–#83. Integrated commit a63686c passes formatting, strict workspace/all-target/all-feature Clippy, all 441 workspace tests, and the locked Linux release build. Twelve release system fixtures are running. Packaging with unique label `completion-20260905-a63686c` and its checksum passed. Final review fixes cover cooperative plain-mode cancellation, timeout usage preservation, and the obsolete evaluation runner CLI flag. These remain dependencies before final verification.
+
+The bounded live retry on September 5 returned HTTP 401 before useful execution despite a locally present credential. Live behavioral evidence remains blocked separately from functioning GitHub/filesystem access. Platform CI is pending on #88. Next closeout candidate is #37, whose implementation is present but needs current resource-fixture and delivery evidence.
+
+Final integrated Linux verification for #88 at f09e4dd passes 447 workspace tests,
+strict Clippy, formatting, locked release build, all 14 system fixtures, eval12
+definitions and unique package/checksum. Cancellation, usage, fixture accounting
+and evaluation timeout fixes are committed. Platform and live/operator acceptance
+remain pending. #37 was closed from independently reviewed merged #87 evidence.

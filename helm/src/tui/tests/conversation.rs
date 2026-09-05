@@ -200,7 +200,7 @@ async fn shift_enter_adds_newlines_without_dispatching_messages_or_todos() {
 #[tokio::test]
 async fn active_run_composer_sends_durable_steering_and_stays_editable() {
     let directory = tempfile::tempdir().unwrap();
-    let store = SessionStore::new(directory.path().join("sessions"));
+    let mut store = SessionStore::new(directory.path().join("sessions"));
     let mut app = App::new(Session::new(directory.path().into(), "test".into()), vec![]);
     let agent = Arc::new(navigation_agent_for_conversation(&directory));
     let terminals = FakeTerminals::new();
@@ -225,7 +225,7 @@ async fn active_run_composer_sends_durable_steering_and_stays_editable() {
             key,
             &mut app,
             &agent,
-            &store,
+            &mut store,
             &tx,
             &terminals,
             supervisor.clone(),
@@ -239,7 +239,7 @@ async fn active_run_composer_sends_durable_steering_and_stays_editable() {
         KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
         &mut app,
         &agent,
-        &store,
+        &mut store,
         &tx,
         &terminals,
         supervisor,
@@ -283,6 +283,7 @@ fn navigation_agent_for_conversation(directory: &tempfile::TempDir) -> Agent {
         Box::new(ConversationNoRequests),
         crate::tools::ToolRegistry::default(),
         crate::tools::ToolContext {
+            completion: None,
             policy: Arc::new(
                 crate::policy::Policy::new(
                     &crate::config::Config::default(),
@@ -780,7 +781,7 @@ async fn steering_boundary_preserves_fifo_receipts_and_separates_streams() {
 async fn steering_backpressure_and_closed_run_preserve_draft_without_phantom_history() {
     for closed in [false, true] {
         let directory = tempfile::tempdir().unwrap();
-        let store = SessionStore::new(directory.path().join("sessions"));
+        let mut store = SessionStore::new(directory.path().join("sessions"));
         let mut app = App::new(Session::new(directory.path().into(), "test".into()), vec![]);
         let agent = Arc::new(navigation_agent_for_conversation(&directory));
         let (sender, receiver) = crate::agent::steering_channel(1);
@@ -802,7 +803,7 @@ async fn steering_backpressure_and_closed_run_preserve_draft_without_phantom_his
             KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
             &mut app,
             &agent,
-            &store,
+            &mut store,
             &tx,
             &FakeTerminals::new(),
             Arc::new(FakeSupervisor::new(vec![])),
@@ -857,7 +858,7 @@ async fn steering_save_failure_never_reaches_the_provider_queue() {
     let directory = tempfile::tempdir().unwrap();
     let blocked = directory.path().join("not-a-directory");
     std::fs::write(&blocked, "fixture").unwrap();
-    let store = SessionStore::new(blocked.join("sessions"));
+    let mut store = SessionStore::new(blocked.join("sessions"));
     let mut app = App::new(Session::new(directory.path().into(), "test".into()), vec![]);
     let agent = Arc::new(navigation_agent_for_conversation(&directory));
     let (sender, _receiver) = crate::agent::steering_channel(1);
@@ -872,7 +873,7 @@ async fn steering_save_failure_never_reaches_the_provider_queue() {
         KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
         &mut app,
         &agent,
-        &store,
+        &mut store,
         &tx,
         &FakeTerminals::new(),
         Arc::new(FakeSupervisor::new(vec![])),
@@ -964,4 +965,374 @@ async fn context_recovery_preserves_tools_and_late_steering_without_duplicates()
     assert!(app.streaming_response.is_empty());
     assert!(app.status.contains("1 steering message(s) not applied"));
     assert_eq!(saved.title_state.as_ref().unwrap().completed_runs, 0);
+}
+
+#[tokio::test]
+async fn completion_summaries_render_provisional_and_incomplete_after_resume_without_success_count()
+{
+    use crate::agent::{CompletionPhase, StopReason};
+    let directory = tempfile::tempdir().unwrap();
+    let store = SessionStore::new(directory.path().join("sessions"));
+    let mut app = App::new(Session::new(directory.path().into(), "test".into()), vec![]);
+    app.session
+        .messages
+        .push(crate::Message::new(Role::User, "finish work"));
+    app.session.begin_run_summary(Uuid::new_v4());
+    let terminals = FakeTerminals::new();
+    app.streaming_response = "premature completion".into();
+    handle_ui_event(
+        UiEvent::Agent(AgentEvent::CompletionState {
+            phase: CompletionPhase::Reconciling,
+            readiness: None,
+            detail: Some("checking remaining work".into()),
+        }),
+        &mut app,
+        &store,
+        &terminals,
+    )
+    .await
+    .unwrap();
+    assert!(app.status.contains("reconciling"));
+    assert!(app.streaming_response.is_empty());
+    assert_eq!(
+        app.live_messages.last().unwrap().content,
+        "premature completion"
+    );
+    let mut messages = app.session.messages.clone();
+    messages.push(crate::Message::new(Role::Assistant, "premature completion"));
+    messages.push(crate::Message::new(
+        Role::Assistant,
+        "honest remaining work",
+    ));
+    handle_ui_event(
+        UiEvent::Finished(Ok(crate::agent::AgentOutcome {
+            messages,
+            answer: "honest remaining work".into(),
+            usage: Default::default(),
+            turns: 2,
+            stop_reason: StopReason::Incomplete {
+                reason: "blocked by dependency".into(),
+                readiness: None,
+            },
+        })),
+        &mut app,
+        &store,
+        &terminals,
+    )
+    .await
+    .unwrap();
+    assert!(app.status.starts_with("Incomplete"));
+    assert_eq!(app.session.title_state.as_ref().unwrap().completed_runs, 0);
+    let restored = store.load(app.session.id).await.unwrap();
+    assert_eq!(restored.assistant_classification(1), Some("provisional"));
+    assert_eq!(restored.assistant_classification(2), Some("incomplete"));
+    app.session = restored;
+    let text = transcript(&app, 90).to_string();
+    assert!(text.contains("helm · provisional"));
+    assert!(text.contains("helm · incomplete"));
+    assert!(text.contains("Run incomplete"));
+    assert!(!text.contains("Run completed"));
+    for (width, height) in [(24, 10), (90, 30)] {
+        let mut terminal =
+            Terminal::new(ratatui::backend::TestBackend::new(width, height)).unwrap();
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+    }
+}
+
+#[tokio::test]
+async fn terminal_completion_event_waits_for_canonical_outcome_and_interruption_is_durable() {
+    use crate::agent::{CompletionPhase, StopReason};
+    let directory = tempfile::tempdir().unwrap();
+    let store = SessionStore::new(directory.path().join("sessions"));
+    let terminals = FakeTerminals::new();
+    let mut app = App::new(Session::new(directory.path().into(), "test".into()), vec![]);
+    app.session
+        .messages
+        .push(crate::Message::new(Role::User, "work"));
+    app.session.begin_run_summary(Uuid::new_v4());
+    store.save(&mut app.session).await.unwrap();
+    handle_ui_event(
+        UiEvent::Agent(AgentEvent::CompletionState {
+            phase: CompletionPhase::Completed,
+            readiness: None,
+            detail: None,
+        }),
+        &mut app,
+        &store,
+        &terminals,
+    )
+    .await
+    .unwrap();
+    assert_ne!(
+        store.load(app.session.id).await.unwrap().run_summaries[0].phase,
+        CompletionPhase::Completed
+    );
+    app.streaming_response = "partial output".into();
+    handle_ui_event(
+        UiEvent::Finished(Err(crate::agent::AgentError::Cancelled)),
+        &mut app,
+        &store,
+        &terminals,
+    )
+    .await
+    .unwrap();
+    let restored = store.load(app.session.id).await.unwrap();
+    assert_eq!(
+        restored.run_summaries[0].phase,
+        CompletionPhase::Interrupted
+    );
+    assert_eq!(restored.assistant_classification(1), Some("interrupted"));
+    assert_eq!(restored.messages[1].content, "partial output");
+    assert_eq!(restored.title_state.as_ref().unwrap().completed_runs, 0);
+    // A subsequent actual completed outcome increments the counter once.
+    app.session
+        .messages
+        .push(crate::Message::new(Role::User, "again"));
+    app.session.begin_run_summary(Uuid::new_v4());
+    let mut messages = app.session.messages.clone();
+    messages.push(crate::Message::new(Role::Assistant, "verified"));
+    handle_ui_event(
+        UiEvent::Finished(Ok(crate::agent::AgentOutcome {
+            messages,
+            answer: "verified".into(),
+            usage: Default::default(),
+            turns: 1,
+            stop_reason: StopReason::Completed,
+        })),
+        &mut app,
+        &store,
+        &terminals,
+    )
+    .await
+    .unwrap();
+    assert_eq!(app.session.title_state.as_ref().unwrap().completed_runs, 1);
+    assert!(app.status.starts_with("Completed"));
+}
+
+#[tokio::test]
+async fn durable_tui_checkpoints_precede_presentation_and_finished_counts_usage_once() {
+    use crate::agent::{RunCheckpoint, StopReason};
+    let directory = tempfile::tempdir().unwrap();
+    let store = SessionStore::new(directory.path().join("sessions"));
+    let terminals = FakeTerminals::new();
+    let mut app = App::new(Session::new(directory.path().into(), "test".into()), vec![]);
+    app.session.usage.input_tokens = 9;
+    app.session
+        .messages
+        .push(crate::Message::new(Role::User, "work"));
+    let run_id = Uuid::new_v4();
+    app.session.begin_run_summary(run_id);
+    app.checkpoint = Some(checkpoint::State::new(&app.session, run_id));
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let checkpoint = checkpoint::UiCheckpoint {
+        run_id,
+        tx,
+        cancel: tokio_util::sync::CancellationToken::new(),
+    };
+    let mut history = app.session.messages.clone();
+    history.push(crate::Message::new(
+        Role::Assistant,
+        "single canonical response",
+    ));
+    let usage = crate::model::Usage {
+        input_tokens: 5,
+        output_tokens: 2,
+    };
+    let (ack, _) = tokio::join!(checkpoint.canonical(&history, &usage), async {
+        handle_ui_event(rx.recv().await.unwrap(), &mut app, &store, &terminals)
+            .await
+            .unwrap();
+    });
+    ack.unwrap();
+    handle_ui_event(
+        UiEvent::Agent(AgentEvent::AssistantText(
+            "single canonical response".into(),
+        )),
+        &mut app,
+        &store,
+        &terminals,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        transcript(&app, 90)
+            .to_string()
+            .matches("single canonical response")
+            .count(),
+        1
+    );
+    assert!(app.streaming_response.is_empty());
+    handle_ui_event(
+        UiEvent::Agent(AgentEvent::ToolStarted {
+            name: "shell".into(),
+            arguments: serde_json::json!({}),
+        }),
+        &mut app,
+        &store,
+        &terminals,
+    )
+    .await
+    .unwrap();
+    assert!(
+        app.live_messages.is_empty(),
+        "canonical tool IDs must not gain synthetic duplicates"
+    );
+    let (ack, _) = tokio::join!(
+        checkpoint.accepted(&history, &usage, &StopReason::Completed),
+        async {
+            handle_ui_event(rx.recv().await.unwrap(), &mut app, &store, &terminals)
+                .await
+                .unwrap();
+        }
+    );
+    ack.unwrap();
+    assert_eq!(
+        store
+            .load(app.session.id)
+            .await
+            .unwrap()
+            .assistant_classification(1),
+        Some("completed")
+    );
+    app.session
+        .messages
+        .push(crate::Message::steering("late accepted steering"));
+    handle_ui_event(
+        UiEvent::Finished(Ok(crate::agent::AgentOutcome {
+            messages: history,
+            answer: "single canonical response".into(),
+            usage,
+            turns: 1,
+            stop_reason: StopReason::Completed,
+        })),
+        &mut app,
+        &store,
+        &terminals,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        app.session.messages.last().unwrap().content,
+        "late accepted steering"
+    );
+    assert_eq!(
+        app.session
+            .messages
+            .last()
+            .unwrap()
+            .steering
+            .as_ref()
+            .unwrap()
+            .status,
+        crate::model::SteeringStatus::NotApplied
+    );
+    assert_eq!(app.session.usage.input_tokens, 14);
+    assert_eq!(app.session.usage.output_tokens, 2);
+    assert_eq!(app.session.title_state.as_ref().unwrap().completed_runs, 1);
+    assert!(app.checkpoint.is_none());
+}
+
+#[tokio::test]
+async fn cancelled_tui_checkpoint_keeps_partial_annotation_outside_canonical_history() {
+    use crate::agent::RunCheckpoint;
+    let directory = tempfile::tempdir().unwrap();
+    let store = SessionStore::new(directory.path().join("sessions"));
+    let terminals = FakeTerminals::new();
+    let mut app = App::new(Session::new(directory.path().into(), "test".into()), vec![]);
+    app.session
+        .messages
+        .push(crate::Message::new(Role::User, "work"));
+    let run_id = Uuid::new_v4();
+    app.session.begin_run_summary(run_id);
+    app.checkpoint = Some(checkpoint::State::new(&app.session, run_id));
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let checkpoint = checkpoint::UiCheckpoint {
+        run_id,
+        tx,
+        cancel: tokio_util::sync::CancellationToken::new(),
+    };
+    let (ack, _) = tokio::join!(checkpoint.partial("interrupted 世界"), async {
+        handle_ui_event(rx.recv().await.unwrap(), &mut app, &store, &terminals)
+            .await
+            .unwrap();
+    });
+    ack.unwrap();
+    app.streaming_response = "interrupted 世界".into();
+    handle_ui_event(
+        UiEvent::Finished(Err(crate::agent::AgentError::Cancelled)),
+        &mut app,
+        &store,
+        &terminals,
+    )
+    .await
+    .unwrap();
+    let resumed = store.load(app.session.id).await.unwrap();
+    assert_eq!(resumed.messages.len(), 1);
+    assert_eq!(resumed.run_summaries[0].partial_output, "interrupted 世界");
+    assert_eq!(
+        resumed.run_summaries[0].phase,
+        crate::agent::CompletionPhase::Interrupted
+    );
+    let app = App::new(resumed, vec![]);
+    let text = transcript(&app, 90).to_string();
+    assert_eq!(text.matches("interrupted 世界").count(), 1);
+    assert!(text.contains("interrupted partial response"));
+}
+
+#[tokio::test]
+async fn checkpoint_recovery_uses_baseline_usage_and_preserves_partial_annotation() {
+    use crate::agent::{AgentError, CanonicalRecovery, ContextFailure, RunCheckpoint};
+    let directory = tempfile::tempdir().unwrap();
+    let store = SessionStore::new(directory.path().join("sessions"));
+    let terminals = FakeTerminals::new();
+    let mut app = App::new(Session::new(directory.path().into(), "test".into()), vec![]);
+    app.session
+        .messages
+        .push(crate::Message::new(Role::User, "work"));
+    app.session.usage.input_tokens = 40;
+    let run_id = Uuid::new_v4();
+    app.session.begin_run_summary(run_id);
+    app.checkpoint = Some(checkpoint::State::new(&app.session, run_id));
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let checkpoint = checkpoint::UiCheckpoint {
+        run_id,
+        tx,
+        cancel: tokio_util::sync::CancellationToken::new(),
+    };
+    let mut history = app.session.messages.clone();
+    history.push(crate::Message::new(Role::Assistant, "canonical"));
+    let usage = crate::model::Usage {
+        input_tokens: 5,
+        output_tokens: 7,
+    };
+    let (ack, _) = tokio::join!(checkpoint.canonical(&history, &usage), async {
+        handle_ui_event(rx.recv().await.unwrap(), &mut app, &store, &terminals)
+            .await
+            .unwrap();
+    });
+    ack.unwrap();
+    let (ack, _) = tokio::join!(checkpoint.partial("unfinished"), async {
+        handle_ui_event(rx.recv().await.unwrap(), &mut app, &store, &terminals)
+            .await
+            .unwrap();
+    });
+    ack.unwrap();
+    let error = AgentError::Context(ContextFailure {
+        source: crate::context::ContextError {
+            estimated: 90000,
+            limit: 65536,
+        },
+        recovery: Some(Box::new(CanonicalRecovery {
+            messages: history,
+            usage,
+        })),
+    });
+    handle_ui_event(UiEvent::Finished(Err(error)), &mut app, &store, &terminals)
+        .await
+        .unwrap();
+    let saved = store.load(app.session.id).await.unwrap();
+    assert_eq!(saved.usage.input_tokens, 45);
+    assert_eq!(saved.usage.output_tokens, 7);
+    assert_eq!(saved.messages.len(), 2);
+    assert_eq!(saved.run_summaries[0].partial_output, "unfinished");
 }
