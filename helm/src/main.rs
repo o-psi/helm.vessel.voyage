@@ -108,6 +108,8 @@ enum LogFormat {
 }
 #[derive(Subcommand)]
 enum Command {
+    /// Inspect a repository and explicitly review generated project guidance.
+    Onboard(helm::onboarding::OnboardArgs),
     /// Manage dedicated Vessel enrollment; no worker is started.
     Attachment(helm::attachment::cli::AttachmentArgs),
     /// Manage Helm's native ChatGPT subscription credentials.
@@ -443,6 +445,7 @@ async fn main() -> Result<()> {
             print_config(&config)?;
             Ok(())
         }
+        Command::Onboard(args) => helm::onboarding::run(args, &config, cli.workspace),
         Command::Models { json } => list_models(&config, cli.workspace, json).await,
         Command::Doctor => doctor(&config, cli.workspace).await,
         Command::Auth { command } => auth(command, &config).await,
