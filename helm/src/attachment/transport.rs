@@ -108,14 +108,13 @@ impl Connection {
     }
     async fn stop(&mut self) {
         self.closed.cancel();
-        if let Some(mut task) = self.task.take() {
-            if tokio::time::timeout(WRITE_TIMEOUT, &mut task)
+        if let Some(mut task) = self.task.take()
+            && tokio::time::timeout(WRITE_TIMEOUT, &mut task)
                 .await
                 .is_err()
-            {
-                task.abort();
-                let _ = task.await;
-            }
+        {
+            task.abort();
+            let _ = task.await;
         }
     }
 }
@@ -393,11 +392,14 @@ async fn run(
             message = outgoing.recv() => match message { Some(text) => Some(Message::Text(text.into())), None => break },
         };
         if let Some(message) = next {
-            let until = std::cmp::min(expires, Instant::now() + WRITE_TIMEOUT);
+            if closed.is_cancelled() || Instant::now() >= expires {
+                break;
+            }
             let result = tokio::select! {
                 biased;
                 _ = closed.cancelled() => break,
-                result = tokio::time::timeout_at(until, owner.socket.send(message)) => result,
+                _ = tokio::time::sleep_until(expires) => break,
+                result = tokio::time::timeout(WRITE_TIMEOUT, owner.socket.send(message)) => result,
             };
             if !matches!(result, Ok(Ok(()))) {
                 break;
