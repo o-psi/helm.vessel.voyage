@@ -208,3 +208,33 @@ fn full_history_refuses_new_mutations_but_preserves_exact_retry_and_pagination()
     assert_eq!(page.profiles.len(), 1);
     assert!(page.next_after.is_none());
 }
+
+#[test]
+fn self_consistent_but_invalid_profile_snapshot_is_not_committed() {
+    let (temp, anchor, store, mut change) = setup();
+    let directory = temp.path().join("profiles");
+    let snapshot = crate::policy_profile::store::ProfileStore::open(&directory)
+        .unwrap()
+        .inspect("restricted")
+        .unwrap()
+        .unwrap();
+    change.value = DefaultValue::Preference {
+        profile: Some(ProfileRef {
+            directory,
+            name: snapshot.name.clone(),
+            revision: snapshot.revision,
+            digest: snapshot.digest().unwrap(),
+            snapshot,
+        }),
+    };
+    let DefaultValue::Preference {
+        profile: Some(profile),
+    } = &mut change.value
+    else {
+        panic!("profile fixture")
+    };
+    profile.snapshot.rules.as_mut().unwrap().inherit_env = vec!["not-a-profile-name".into()];
+    profile.digest = profile.snapshot.digest().unwrap();
+    assert!(store.change(&change).is_err());
+    assert!(!anchor.directory.join(record_name(1)).exists());
+}

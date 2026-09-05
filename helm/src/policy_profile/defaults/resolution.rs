@@ -112,6 +112,10 @@ fn prepare(
     explicit: &Overrides,
     source: &Source,
 ) -> Result<DefaultsPreview> {
+    ensure!(
+        cfg!(target_os = "linux"),
+        "policy defaults enforcement currently requires Linux"
+    );
     let workspace = workspace.canonicalize()?;
     let store = DefaultsStore::open_existing(anchor)?;
     let history = store.history()?;

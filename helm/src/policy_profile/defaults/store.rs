@@ -254,7 +254,11 @@ fn validate_change(change: &DefaultsChange) -> Result<()> {
                     || !valid_hash(&p.digest)
                     || p.snapshot.name != p.name
                     || p.snapshot.revision != p.revision
-                    || p.snapshot.rules.is_none()
+                    || p.snapshot.identity.is_nil()
+                    || p.snapshot
+                        .rules
+                        .as_ref()
+                        .is_none_or(|rules| rules.validate().is_err())
                     || p.snapshot.digest().ok().as_ref() != Some(&p.digest))
             {
                 return Err(StoreError::Invalid);

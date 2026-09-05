@@ -193,9 +193,28 @@ fn common_runtime_resolves_actual_workspace_and_children_keep_default_freshness(
         root.policy().access_mode(),
         crate::config::AccessMode::ReadOnly
     );
+    #[derive(Debug)]
+    struct Authority(std::sync::atomic::AtomicBool);
+    impl crate::policy::ExecutionAuthority for Authority {
+        fn check(&self) -> anyhow::Result<()> {
+            anyhow::ensure!(self.0.load(std::sync::atomic::Ordering::SeqCst), "revoked");
+            Ok(())
+        }
+    }
+    let authority = std::sync::Arc::new(Authority(std::sync::atomic::AtomicBool::new(true)));
+    let parent = root
+        .policy()
+        .clone()
+        .with_execution_authority(authority.clone());
     let nested =
-        crate::runtime_policy::RuntimePolicy::resolve_child(root.config(), &child, root.policy())
+        crate::runtime_policy::RuntimePolicy::resolve_child(root.config(), &child, &parent)
             .unwrap();
+    authority
+        .0
+        .store(false, std::sync::atomic::Ordering::SeqCst);
+    assert!(nested.policy().check_current().is_err());
+    authority.0.store(true, std::sync::atomic::Ordering::SeqCst);
+    assert!(nested.policy().check_current().is_ok());
     assert_eq!(
         nested.policy().access_mode(),
         crate::config::AccessMode::ReadOnly
@@ -499,4 +518,66 @@ fn equal_rules_new_candidate_cannot_inherit_another_candidates_escalation_receip
     let fresh = preview(&config, &work).unwrap();
     activate(&config, &work, Uuid::new_v4(), 1, &fresh.transition_digest).unwrap();
     assert!(crate::runtime_policy::RuntimePolicy::resolve(&config, &work).is_ok());
+}
+
+#[test]
+fn default_profile_edit_invalidates_active_descendants_and_fresh_roots() {
+    use crate::policy_profile::store::{Action, ProfileChange, ProfileStore};
+    let temp = TempDir::new().unwrap();
+    let workspace = temp.path().join("work");
+    let child = workspace.join("child");
+    std::fs::create_dir_all(&child).unwrap();
+    let mut selected = profile(temp.path());
+    let profiles = ProfileStore::open_existing(&selected.directory).unwrap();
+    selected.snapshot = profiles
+        .change(&ProfileChange {
+            operation_id: Uuid::new_v4(),
+            name: "review".into(),
+            expected_revision: 0,
+            action: Action::Create {
+                rules: selected.snapshot.rules.clone().unwrap(),
+            },
+        })
+        .unwrap()
+        .snapshot;
+    selected.name = selected.snapshot.name.clone();
+    selected.digest = selected.snapshot.digest().unwrap();
+    let anchor = DefaultsSource {
+        directory: temp.path().join("defaults"),
+        store_id: Uuid::new_v4(),
+    };
+    DefaultsStore::create(&anchor)
+        .unwrap()
+        .change(&DefaultsChange {
+            operation_id: Uuid::new_v4(),
+            expected_revision: 0,
+            key: DefaultKey::Preference {
+                scope: DefaultScope::Global {},
+            },
+            value: DefaultValue::Preference {
+                profile: Some(selected.clone()),
+            },
+        })
+        .unwrap();
+    let config = crate::Config {
+        policy_defaults: Some(anchor),
+        ..Default::default()
+    };
+    let root = crate::runtime_policy::RuntimePolicy::resolve(&config, &workspace).unwrap();
+    let nested =
+        crate::runtime_policy::RuntimePolicy::resolve_child(root.config(), &child, root.policy())
+            .unwrap();
+    profiles
+        .change(&ProfileChange {
+            operation_id: Uuid::new_v4(),
+            name: selected.name,
+            expected_revision: 1,
+            action: Action::Replace {
+                rules: selected.snapshot.rules.unwrap(),
+            },
+        })
+        .unwrap();
+    assert!(root.policy().check_current().is_err());
+    assert!(nested.policy().check_current().is_err());
+    assert!(crate::runtime_policy::RuntimePolicy::resolve(&config, &workspace).is_err());
 }
