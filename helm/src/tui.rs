@@ -75,6 +75,7 @@ pub enum TuiExit {
 }
 
 struct App {
+    diagnostic_agent: Option<Arc<Agent>>,
     palette: PaletteState,
     model_panel: ModelPanel,
     terminal_panel: TerminalPanel,
@@ -192,6 +193,7 @@ impl App {
             }
         }
         Self {
+            diagnostic_agent: None,
             palette: PaletteState::default(),
             model_panel: ModelPanel::default(),
             terminal_panel: TerminalPanel::default(),
@@ -264,6 +266,7 @@ pub async fn run(
 ) -> Result<TuiExit> {
     let sessions = store.list().await?;
     let mut app = App::new(session, sessions);
+    app.diagnostic_agent = Some(agent.clone());
     app.provider_label = provider_label;
     app.access_mode = access_mode;
     refresh_terminals(&mut app.terminal_panel, &mut app.status, terminals.as_ref()).await;
@@ -417,6 +420,12 @@ async fn handle_ui_event(
                     std::mem::take(&mut app.streaming_response),
                 ));
             }
+            let detail = detail.map(|text| {
+                app.diagnostic_agent
+                    .as_ref()
+                    .map(|agent| agent.redact_diagnostic(&text))
+                    .unwrap_or(text)
+            });
             let label = format!("{phase:?}").to_lowercase();
             app.status = format!(
                 "Run {label}{}",
@@ -605,7 +614,11 @@ async fn handle_ui_event(
                         app.live_messages.clear();
                         app.streaming_response.clear();
                     }
-                    let error = error.to_string();
+                    let error = app
+                        .diagnostic_agent
+                        .as_ref()
+                        .map(|agent| agent.redact_diagnostic(error.to_string()))
+                        .unwrap_or_else(|| error.to_string());
                     let detail = compact_line(&error, 1_000);
                     app.activity.push(format!("✗ provider error: {detail}"));
                     let mut undelivered = 0;

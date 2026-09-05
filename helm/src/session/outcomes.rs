@@ -73,6 +73,11 @@ impl Session {
         self.update_run_summary(CompletionPhase::Interrupted, readiness, Some(detail));
     }
 
+    /// Refresh the current annotation range after a durable canonical checkpoint.
+    pub fn refresh_active_run_summary(&mut self) {
+        self.extend_run_summary();
+    }
+
     fn extend_run_summary(&mut self) {
         if let Some(summary) = self.run_summaries.last_mut()
             && let Some(start) = summary

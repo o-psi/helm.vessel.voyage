@@ -741,6 +741,36 @@ struct CliSubagentExecutor {
 }
 #[async_trait]
 impl SubagentExecutor for CliSubagentExecutor {
+    /// Once work starts, Ctrl-C requests cooperative cancellation instead of allowing
+    /// the OS to exit before finalization can return canonical recovery for saving.
+    async fn run_with_ctrl_c(
+        agent: &Agent,
+        history: Vec<helm::Message>,
+        prompt: String,
+        scope: Option<helm::completion::runtime::RunHandle>,
+    ) -> std::result::Result<helm::agent::AgentOutcome, helm::agent::AgentError> {
+        let cancellation = tokio_util::sync::CancellationToken::new();
+        let run = agent.run_scoped(history, prompt, cancellation.clone(), None, scope);
+        tokio::pin!(run);
+        tokio::select! {
+            result = &mut run => result,
+            signal = tokio::signal::ctrl_c() => {
+                cancellation.cancel();
+                if signal.is_err() {
+                    eprintln!("[interrupt handler unavailable; cancelling run]");
+                } else {
+                    eprintln!("[interrupt requested; waiting for owned work to stop]");
+                }
+                match tokio::time::timeout(std::time::Duration::from_secs(15), &mut run).await {
+                    Ok(result) => result,
+                    Err(_) => Err(helm::agent::AgentError::Completion(
+                        "cancellation cleanup timed out; completion was not confirmed".into(),
+                    )),
+                }
+            }
+        }
+    }
+
     async fn execute(
         &self,
         mut context: ExecutionContext,
@@ -1350,16 +1380,7 @@ async fn execute(
     if !no_save {
         store.save(&mut session).await?;
     }
-    let outcome = match agent
-        .run_scoped(
-            history,
-            prompt,
-            tokio_util::sync::CancellationToken::new(),
-            None,
-            scope,
-        )
-        .await
-    {
+    let outcome = match run_with_ctrl_c(&agent, history, prompt, scope).await {
         Ok(outcome) => outcome,
         Err(error) => {
             if let Some(recovery) = error.recovery() {
@@ -1372,7 +1393,9 @@ async fn execute(
                     None,
                 );
             }
-            session.interrupt_run_summary(safe_diagnostic(&error.to_string()));
+            session.interrupt_run_summary(safe_diagnostic(
+                &redactor(&config).redact(error.to_string()),
+            ));
             if !no_save {
                 session.terminals = agent.terminal_metadata();
                 store.save(&mut session).await?;
@@ -1647,7 +1670,9 @@ async fn chat(
                         None,
                     );
                 }
-                session.interrupt_run_summary(safe_diagnostic(&error.to_string()));
+                session.interrupt_run_summary(safe_diagnostic(
+                    &redactor(&config).redact(error.to_string()),
+                ));
                 store.save(&mut session).await?;
                 eprintln!("[session {}]", session.id);
                 eprintln!("error: {error:#}");
