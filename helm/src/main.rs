@@ -741,36 +741,6 @@ struct CliSubagentExecutor {
 }
 #[async_trait]
 impl SubagentExecutor for CliSubagentExecutor {
-    /// Once work starts, Ctrl-C requests cooperative cancellation instead of allowing
-    /// the OS to exit before finalization can return canonical recovery for saving.
-    async fn run_with_ctrl_c(
-        agent: &Agent,
-        history: Vec<helm::Message>,
-        prompt: String,
-        scope: Option<helm::completion::runtime::RunHandle>,
-    ) -> std::result::Result<helm::agent::AgentOutcome, helm::agent::AgentError> {
-        let cancellation = tokio_util::sync::CancellationToken::new();
-        let run = agent.run_scoped(history, prompt, cancellation.clone(), None, scope);
-        tokio::pin!(run);
-        tokio::select! {
-            result = &mut run => result,
-            signal = tokio::signal::ctrl_c() => {
-                cancellation.cancel();
-                if signal.is_err() {
-                    eprintln!("[interrupt handler unavailable; cancelling run]");
-                } else {
-                    eprintln!("[interrupt requested; waiting for owned work to stop]");
-                }
-                match tokio::time::timeout(std::time::Duration::from_secs(15), &mut run).await {
-                    Ok(result) => result,
-                    Err(_) => Err(helm::agent::AgentError::Completion(
-                        "cancellation cleanup timed out; completion was not confirmed".into(),
-                    )),
-                }
-            }
-        }
-    }
-
     async fn execute(
         &self,
         mut context: ExecutionContext,
@@ -1343,6 +1313,45 @@ async fn build_tools(
     Ok(tools)
 }
 
+/// Once work starts, Ctrl-C requests cooperative cancellation instead of allowing
+/// the OS to exit before finalization can return canonical recovery for saving.
+async fn run_with_ctrl_c(
+    agent: &Agent,
+    history: Vec<helm::Message>,
+    prompt: String,
+    scope: Option<helm::completion::runtime::RunHandle>,
+    checkpoint: &helm::session::SessionCheckpoint,
+) -> std::result::Result<helm::agent::AgentOutcome, helm::agent::AgentError> {
+    let cancellation = tokio_util::sync::CancellationToken::new();
+    let run = agent.run_checkpointed_scoped(
+        history,
+        prompt,
+        cancellation.clone(),
+        None,
+        checkpoint,
+        agent.model(),
+        scope,
+    );
+    tokio::pin!(run);
+    tokio::select! {
+        result = &mut run => result,
+        signal = tokio::signal::ctrl_c() => {
+            cancellation.cancel();
+            if signal.is_err() {
+                eprintln!("[interrupt handler unavailable; cancelling run]");
+            } else {
+                eprintln!("[interrupt requested; waiting for owned work to stop]");
+            }
+            match tokio::time::timeout(std::time::Duration::from_secs(15), &mut run).await {
+                Ok(result) => result,
+                Err(_) => Err(helm::agent::AgentError::Completion(
+                    "cancellation cleanup timed out; completion was not confirmed".into(),
+                )),
+            }
+        }
+    }
+}
+
 async fn execute(
     config: Config,
     workspace_arg: Option<PathBuf>,
@@ -1380,7 +1389,17 @@ async fn execute(
     if !no_save {
         store.save(&mut session).await?;
     }
-    let outcome = match run_with_ctrl_c(&agent, history, prompt, scope).await {
+    let checkpoint = helm::session::SessionCheckpoint::new(
+        session.clone(),
+        (!no_save).then(|| store.clone()),
+        scope
+            .as_ref()
+            .map(|scope| scope.run_id())
+            .unwrap_or_else(uuid::Uuid::new_v4),
+    );
+    let result = run_with_ctrl_c(&agent, history, prompt, scope, &checkpoint).await;
+    session = checkpoint.snapshot_for_finish().await;
+    let outcome = match result {
         Ok(outcome) => outcome,
         Err(error) => {
             if let Some(recovery) = error.recovery() {
@@ -1614,18 +1633,29 @@ async fn chat(
             session.begin_run_summary(scope.run_id());
         }
         store.save(&mut session).await?;
-        match agent
+        let checkpoint = helm::session::SessionCheckpoint::new(
+            session.clone(),
+            Some(store.clone()),
+            scope
+                .as_ref()
+                .map(|scope| scope.run_id())
+                .unwrap_or_else(uuid::Uuid::new_v4),
+        );
+        let result = agent
             .as_ref()
             .expect("agent initialized")
-            .run_scoped(
+            .run_checkpointed_scoped(
                 history,
                 prompt.to_owned(),
                 tokio_util::sync::CancellationToken::new(),
                 None,
+                &checkpoint,
+                session.model.clone(),
                 scope,
             )
-            .await
-        {
+            .await;
+        session = checkpoint.snapshot_for_finish().await;
+        match result {
             Ok(outcome) => {
                 let completed = matches!(outcome.stop_reason, helm::agent::StopReason::Completed);
                 let title_due = completed && session.title_due_after_turn();

@@ -494,7 +494,8 @@ impl Journal {
         if messages.len() == previous && input_delta == 0 && output_delta == 0 {
             return Ok(());
         }
-        current.session.messages = messages.to_vec();
+        current.session.replace_messages(messages.to_vec());
+        current.session.refresh_active_run_summary();
         current.session.usage.input_tokens = current
             .session
             .usage
@@ -547,6 +548,7 @@ impl Journal {
             !current.session.completion_runs.contains(&reference),
             "scope already registered"
         );
+        current.session.begin_run_summary(reference.run_id);
         current.session.completion_runs.push(reference);
         update_session(&tx, &current)?;
         tx.commit()?;
@@ -605,6 +607,20 @@ impl Journal {
         state: RunState,
         reason: Option<&str>,
         final_text: Option<&str>,
+    ) -> Result<RunRecord> {
+        self.finish_classified(guard, run_id, state, reason, final_text, None)
+    }
+
+    /// Commit terminal status and local transcript classification together.
+    #[allow(clippy::too_many_arguments)]
+    pub fn finish_classified(
+        &mut self,
+        guard: &ExecutionGuard,
+        run_id: Uuid,
+        state: RunState,
+        reason: Option<&str>,
+        final_text: Option<&str>,
+        classification: Option<&crate::agent::StopReason>,
     ) -> Result<RunRecord> {
         ensure!(
             !matches!(state, RunState::Accepted | RunState::Running),
@@ -666,6 +682,28 @@ impl Journal {
             for terminal in &mut current.session.terminals {
                 terminal.state = crate::terminal::TerminalState::Disconnected;
             }
+        }
+        if let Some(classification) = classification {
+            ensure!(
+                matches!(
+                    (&state, classification),
+                    (RunState::Completed, crate::agent::StopReason::Completed)
+                        | (
+                            RunState::Incomplete,
+                            crate::agent::StopReason::Incomplete { .. }
+                        )
+                ),
+                "run state and transcript classification disagree"
+            );
+            current.session.finish_run_summary(classification);
+        } else if state == RunState::Completed {
+            current
+                .session
+                .finish_run_summary(&crate::agent::StopReason::Completed);
+        } else {
+            current
+                .session
+                .interrupt_run_summary(reason.unwrap_or("run interrupted").to_owned());
         }
         update_session(&tx, &current)?;
         run.state = state.clone();

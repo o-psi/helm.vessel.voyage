@@ -623,6 +623,15 @@ async fn scoped_checkpoint_uses_admitted_identity_and_seals_only_accepted_work()
         assert_eq!(session.completion_runs.len(), 1);
         assert_eq!(session.completion_runs[0].run_id, record.id);
         assert_eq!(session.completion_runs[0].session_id, record.session_id);
+        assert_eq!(session.run_summaries.len(), 1);
+        assert_eq!(
+            session.run_summaries[0].phase,
+            if mode == "success" {
+                crate::agent::CompletionPhase::Completed
+            } else {
+                crate::agent::CompletionPhase::Interrupted
+            }
+        );
         let handle = RunHandle::resume(coordinator, record.session_id, record.id)
             .await
             .unwrap();

@@ -167,10 +167,19 @@ impl RunOwner {
             Err(AgentError::Checkpoint(_)) => (RunState::Failed, Some("durable checkpoint failed")),
             Err(_) => (RunState::Failed, Some("provider or runtime failed")),
         };
+        let classification = result
+            .as_ref()
+            .ok()
+            .map(|outcome| outcome.stop_reason.clone());
         self.storage(move |store| {
-            store
-                .journal
-                .finish(&store.guard, store.run_id, state, reason, None)
+            store.journal.finish_classified(
+                &store.guard,
+                store.run_id,
+                state,
+                reason,
+                None,
+                classification.as_ref(),
+            )
         })
         .await?;
         result
