@@ -63,3 +63,30 @@ failed writes, both terminal/cancel orderings, accepted-checkpoint cancellation,
 reopen recovery, quiescent schema migration, stale connections, and an independent
 process committing intent while the execution owner retains its fence. Full local
 CLI/provider cleanup integration belongs to the companion coordinator slice.
+
+## Durable cleanup obligations
+
+The foreground coordinator opts in with
+`register_local_cleanup(&guard, run_id)` while the run is Accepted, before
+constructing execution resources. Registration is transactional and idempotent
+only for the same pending obligation. A failed or aborted registration cannot
+permit dispatch. Once registered, the obligation remains after terminalization,
+recovery, timeout, cancellation, or process death. New admissions for that session
+fail while it remains outstanding; exact command retries remain observations.
+The catalogue exposes `pending_cleanup_run`, including when no run is active, so
+lost output cannot hide a blocked session.
+
+After terminalization and actual resource cleanup, the owner records
+`confirm_local_cleanup_observed(&guard, run_id)`. This stores the owner's observed
+cleanup claim; the database cannot inspect operating-system effects. Confirmation
+before terminalization is refused. Failed or uncertain cleanup must not call this
+method. The owner retains the execution guard through cleanup and confirmation.
+
+Recovery only marks Interrupted; it never clears an obligation. A human who has
+independently stopped prior effects can explicitly call
+`attest_local_cleanup(&guard, run_id, installation_id, principal_id)` through the
+local coordinator. This verifies the canonical actor binding and stores
+`operator_attested`, distinctly from `observed`. Neither provenance can later be
+relabeled, and evidence rows are retained rather than deleted. The execution fence
+is required for both acknowledgement paths. These APIs are local trust boundaries,
+not mechanisms to prove that arbitrary descendants are dead or to expand policy.

@@ -212,10 +212,10 @@ fn cancel_intent_survives_reopen_but_recovery_remains_interrupted() {
 
 #[test]
 fn schema_four_upgrade_is_quiescent_preserves_steering_and_fences_stale_connections() {
-    let (_dir, mut journal, session, request) = setup();
+    let (_dir, journal, session, request) = setup();
     journal
         .connection
-        .execute_batch("DROP TABLE local_cancel_intents; UPDATE attachment_schema SET version=4;")
+        .execute_batch("DROP TABLE local_cleanup_obligations; DROP TABLE local_cancel_intents; UPDATE attachment_schema SET version=4;")
         .unwrap();
     let path = journal.directory.clone();
     drop(journal);
@@ -419,4 +419,198 @@ fn independent_process_requests_cancellation_without_taking_execution_ownership(
             .unwrap()
     );
     journal.mark_running(&guard, fresh.id).unwrap();
+}
+
+#[test]
+fn cleanup_obligation_survives_terminal_and_recovery_until_distinct_immutable_confirmation() {
+    for observed in [true, false] {
+        let (_dir, mut journal, session, request) = setup();
+        let guard = journal.acquire_execution(session.id).unwrap();
+        let run = journal.admit_turn(&guard, &request, 1).unwrap().run;
+        journal.register_local_cleanup(&guard, run.id).unwrap();
+        journal.register_local_cleanup(&guard, run.id).unwrap();
+        assert_eq!(
+            journal.list_session_summaries(None, 1).unwrap().sessions[0].pending_cleanup_run,
+            Some(run.id)
+        );
+        assert!(
+            journal
+                .confirm_local_cleanup_observed(&guard, run.id)
+                .is_err()
+        );
+        journal.mark_running(&guard, run.id).unwrap();
+        assert!(journal.register_local_cleanup(&guard, run.id).is_err());
+        let path = journal.directory.clone();
+        drop(guard);
+        drop(journal);
+        let mut journal = Journal::open(path).unwrap();
+        let guard = journal.acquire_execution(session.id).unwrap();
+        journal.recover_interrupted(&guard).unwrap();
+        assert!(
+            journal
+                .admit_turn(&guard, &request, 90_000)
+                .unwrap()
+                .duplicate
+        );
+        let mut next = TurnAdmission {
+            command_id: Uuid::new_v4(),
+            expected_revision: journal.load_session(session.id).unwrap().revision,
+            ..request
+        };
+        assert!(journal.admit_turn(&guard, &next, 1).is_err());
+        assert!(
+            journal
+                .attest_local_cleanup(&guard, run.id, Uuid::new_v4(), next.principal_id)
+                .is_err()
+        );
+        if observed {
+            journal
+                .confirm_local_cleanup_observed(&guard, run.id)
+                .unwrap();
+            journal
+                .confirm_local_cleanup_observed(&guard, run.id)
+                .unwrap();
+            assert!(
+                journal
+                    .attest_local_cleanup(&guard, run.id, next.machine_id, next.principal_id)
+                    .is_err()
+            );
+        } else {
+            journal
+                .attest_local_cleanup(&guard, run.id, next.machine_id, next.principal_id)
+                .unwrap();
+            journal
+                .attest_local_cleanup(&guard, run.id, next.machine_id, next.principal_id)
+                .unwrap();
+            assert!(
+                journal
+                    .confirm_local_cleanup_observed(&guard, run.id)
+                    .is_err()
+            );
+        }
+        assert!(
+            journal.list_session_summaries(None, 1).unwrap().sessions[0]
+                .pending_cleanup_run
+                .is_none()
+        );
+        let provenance: String = journal
+            .connection
+            .query_row(
+                "SELECT confirmation FROM local_cleanup_obligations WHERE run_id=?1",
+                [run.id.to_string()],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            provenance,
+            if observed {
+                "observed"
+            } else {
+                "operator_attested"
+            }
+        );
+        next.expected_revision = journal.load_session(session.id).unwrap().revision;
+        journal.admit_turn(&guard, &next, 1).unwrap();
+    }
+}
+
+#[test]
+fn failed_cleanup_registration_commits_no_obligation_and_terminal_cleanup_blocks_next_turn() {
+    let (_dir, mut journal, session, request) = setup();
+    let guard = journal.acquire_execution(session.id).unwrap();
+    let run = journal.admit_turn(&guard, &request, 1).unwrap().run;
+    journal.connection.execute_batch("CREATE TRIGGER reject_cleanup BEFORE INSERT ON local_cleanup_obligations BEGIN SELECT RAISE(ABORT,'injected'); END;").unwrap();
+    assert!(journal.register_local_cleanup(&guard, run.id).is_err());
+    assert!(
+        journal.list_session_summaries(None, 1).unwrap().sessions[0]
+            .pending_cleanup_run
+            .is_none()
+    );
+    journal
+        .connection
+        .execute_batch("DROP TRIGGER reject_cleanup;")
+        .unwrap();
+    journal.register_local_cleanup(&guard, run.id).unwrap();
+    journal
+        .finish(
+            &guard,
+            run.id,
+            RunState::Cancelled,
+            Some("before dispatch"),
+            None,
+        )
+        .unwrap();
+    let next = TurnAdmission {
+        command_id: Uuid::new_v4(),
+        expected_revision: journal.load_session(session.id).unwrap().revision,
+        ..request
+    };
+    assert!(journal.admit_turn(&guard, &next, 1).is_err());
+    journal
+        .confirm_local_cleanup_observed(&guard, run.id)
+        .unwrap();
+    journal.admit_turn(&guard, &next, 1).unwrap();
+}
+
+#[test]
+fn cancellation_settles_pending_steering_and_failed_cleanup_confirmation_stays_blocked() {
+    let (_dir, mut journal, session, request) = setup();
+    let guard = journal.acquire_execution(session.id).unwrap();
+    let run = journal.admit_turn(&guard, &request, 1).unwrap().run;
+    journal.register_local_cleanup(&guard, run.id).unwrap();
+    journal.mark_running(&guard, run.id).unwrap();
+    let steering = SteeringAdmission {
+        receipt_id: Uuid::new_v4(),
+        session_id: session.id,
+        run_id: run.id,
+        actor: SteeringActor {
+            machine_id: request.machine_id,
+            principal_id: request.principal_id,
+        },
+        expected_revision: journal.load_session(session.id).unwrap().revision,
+        expires_at_ms: 60_000,
+        text: "queued correction".into(),
+    };
+    journal.queue_steering(&guard, &steering, 1).unwrap();
+    journal
+        .request_cancel_local_with_clock(&cancel(&request, run.id), || Ok(1))
+        .unwrap();
+    assert_eq!(
+        journal
+            .finish(
+                &guard,
+                run.id,
+                RunState::Completed,
+                None,
+                Some("stale success")
+            )
+            .unwrap()
+            .state,
+        RunState::Cancelled
+    );
+    assert_eq!(
+        journal.steering_record(steering.receipt_id).unwrap().status,
+        crate::model::SteeringStatus::NotApplied
+    );
+    assert_eq!(
+        journal.steering_record(steering.receipt_id).unwrap().reason,
+        Some(SteeringRejection::Cancelled)
+    );
+    journal.connection.execute_batch("CREATE TRIGGER reject_confirmation BEFORE UPDATE ON local_cleanup_obligations BEGIN SELECT RAISE(ABORT,'injected'); END;").unwrap();
+    assert!(
+        journal
+            .confirm_local_cleanup_observed(&guard, run.id)
+            .is_err()
+    );
+    assert_eq!(
+        journal.list_session_summaries(None, 1).unwrap().sessions[0].pending_cleanup_run,
+        Some(run.id)
+    );
+    journal
+        .connection
+        .execute_batch("DROP TRIGGER reject_confirmation;")
+        .unwrap();
+    journal
+        .confirm_local_cleanup_observed(&guard, run.id)
+        .unwrap();
 }
