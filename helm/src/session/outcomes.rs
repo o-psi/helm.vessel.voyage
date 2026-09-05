@@ -14,6 +14,8 @@ pub struct RunSummary {
     pub message_start: Option<usize>,
     pub message_end: Option<usize>,
     pub message_fingerprints: Vec<String>,
+    #[serde(default)]
+    pub partial_output: String,
 }
 
 fn fingerprint(message: &Message) -> String {
@@ -36,7 +38,19 @@ impl Session {
             message_start: Some(start),
             message_end: Some(self.messages.len()),
             message_fingerprints: self.messages[start..].iter().map(fingerprint).collect(),
+            partial_output: String::new(),
         });
+    }
+
+    /// Cumulative current-response partial text; never canonical provider history.
+    pub fn set_run_partial_output(&mut self, text: &str) -> Result<()> {
+        anyhow::ensure!(text.len() <= 1024 * 1024, "partial output exceeds one MiB");
+        let summary = self
+            .run_summaries
+            .last_mut()
+            .context("no active run summary")?;
+        summary.partial_output = text.to_owned();
+        Ok(())
     }
 
     pub fn update_run_summary(
@@ -55,6 +69,9 @@ impl Session {
 
     pub fn finish_run_summary(&mut self, stop: &StopReason) {
         self.extend_run_summary();
+        if let Some(summary) = self.run_summaries.last_mut() {
+            summary.partial_output.clear();
+        }
         match stop {
             StopReason::Completed => {
                 self.update_run_summary(CompletionPhase::Completed, None, None)
