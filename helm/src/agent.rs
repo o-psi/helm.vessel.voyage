@@ -1,4 +1,6 @@
 mod gate;
+#[cfg(test)]
+mod gate_tests;
 pub use gate::{CompletionPhase, FinalizationFailure, OwnedShutdown};
 
 use async_trait::async_trait;
@@ -497,6 +499,11 @@ impl Agent {
         self
     }
 
+    /// Redact diagnostics before projecting them into durable frontend metadata.
+    pub fn redact_diagnostic(&self, text: impl AsRef<str>) -> String {
+        self.context.redactor.redact(text.as_ref())
+    }
+
     pub fn supports_steering(&self) -> bool {
         self.provider.supports_steering()
     }
@@ -853,14 +860,11 @@ impl Agent {
                     let mut lease = gate::guarded(gate.lease(scope), &cancel, deadline).await??;
                     last_readiness = Some(lease.readiness.clone());
                     let clean = lease.readiness.ready() && lease.readiness.incomplete == 0;
-                    if !clean && reconciliation.is_none() {
+                    if !lease.readiness.ready() && reconciliation.is_none() {
                         reconciliation = Some(gate::reconciliation_prompt(&lease.readiness));
                         deadline = Some(tokio::time::Instant::now() + gate.reconciliation_timeout);
                         self.sink.emit(AgentEvent::CompletionState { phase: CompletionPhase::Reconciling, readiness: Some(lease.readiness.clone()), detail: Some("Final proposal withheld; one bounded reconciliation pass".into()) }).await;
                         drop(lease);
-                        if !self.supports_steering() {
-                            return Err(AgentError::Completion("compatibility provider cannot safely accept request-only reconciliation guidance".into()));
-                        }
                         continue;
                     }
                     if !clean {
@@ -892,10 +896,12 @@ impl Agent {
                     gate::guarded(lease.seal(final_outcome, reason.clone()), &cancel, deadline).await?
                         .map_err(|error| AgentError::Completion(error.to_string()))?;
                     sealed = true;
+                    if cancel.is_cancelled() { return Err(AgentError::Cancelled); }
                     let stop_reason = if clean { StopReason::Completed } else { StopReason::Incomplete { reason: reason.clone().unwrap(), readiness: Some(readiness.clone()) } };
                     if let Some(checkpoint) = checkpoint {
                         tokio::time::timeout(gate.shutdown_timeout, checkpoint.accepted(&history, &usage, &stop_reason)).await.map_err(|_| CheckpointError)??;
                     }
+                    if cancel.is_cancelled() { return Err(AgentError::Cancelled); }
                     self.sink.emit(AgentEvent::CompletionState { phase: if clean { CompletionPhase::Completed } else { CompletionPhase::Incomplete }, readiness: Some(readiness), detail: reason }).await;
                     return Ok(AgentOutcome { messages: history.clone(), answer, usage: usage.clone(), turns: turn, stop_reason });
                 }
@@ -1276,7 +1282,7 @@ mod tests {
         }
     }
 
-    fn agent(provider: Box<dyn Provider>, directory: &tempfile::TempDir) -> Agent {
+    pub(super) fn agent(provider: Box<dyn Provider>, directory: &tempfile::TempDir) -> Agent {
         let policy =
             Arc::new(Policy::new(&Config::default(), directory.path().to_path_buf()).unwrap());
         Agent::new(
@@ -1321,6 +1327,7 @@ mod tests {
         let coordinator = Coordinator::open(coordinator_path.clone(), directory.path()).unwrap();
         let a =
             agent(Box::new(EchoLatestUser), &directory).with_completion_coordinator(coordinator);
+        let a = super::gate_tests::attach_gate(a, &directory);
         let mut session = crate::session::Session::new(directory.path().to_owned(), "test".into());
         assert!(matches!(
             a.run(vec![], "unscoped".into()).await,

@@ -21,7 +21,7 @@ pub struct OwnedShutdown {
     pub observation_complete: bool,
 }
 
-#[derive(Debug, Error)]
+#[derive(Error)]
 #[error("run was not accepted: {source}")]
 pub struct FinalizationFailure {
     #[source]
@@ -29,6 +29,29 @@ pub struct FinalizationFailure {
     pub recovery: CanonicalRecovery,
     pub readiness: Option<Readiness>,
     pub shutdown: OwnedShutdown,
+}
+
+impl std::fmt::Debug for FinalizationFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let category = match self.source.as_ref() {
+            AgentError::Finalization(_) => "finalization",
+            AgentError::ReconciliationExpired => "reconciliation_deadline",
+            AgentError::Completion(_) => "completion_store",
+            AgentError::Context(_) => "context",
+            AgentError::Provider(_) => "provider",
+            AgentError::WorkspaceInstructions(_) => "workspace_instructions",
+            AgentError::Cancelled => "cancelled",
+            AgentError::Checkpoint(_) => "checkpoint",
+            AgentError::UsageOverflow => "usage_overflow",
+        };
+        formatter
+            .debug_struct("FinalizationFailure")
+            .field("source_category", &category)
+            .field("recovery", &self.recovery)
+            .field("readiness", &self.readiness)
+            .field("shutdown", &self.shutdown)
+            .finish_non_exhaustive()
+    }
 }
 
 #[derive(Clone)]
