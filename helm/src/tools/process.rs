@@ -357,6 +357,9 @@ impl ProcessTool {
         for (key, value) in environment {
             builder.env(key, value);
         }
+        ctx.policy
+            .check_execution_authority()
+            .map_err(|_| ToolError::Denied("foreground execution authority unavailable".into()))?;
         let child = StartupChild::new(self, pair.slave.spawn_command(builder).map_err(failed)?);
         after_spawn()?;
         drop(pair.slave);

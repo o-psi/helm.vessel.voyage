@@ -7,6 +7,8 @@ use voyage_protocol::{
 };
 
 pub(super) const SCHEMA: &str = "CREATE TABLE remote_session(slot INTEGER PRIMARY KEY CHECK(slot=1),session_id TEXT NOT NULL UNIQUE REFERENCES sessions(id),binding TEXT NOT NULL,next_sequence INTEGER NOT NULL DEFAULT 1 CHECK(next_sequence>0));
+CREATE TABLE remote_cleanup_attestations(run_id TEXT PRIMARY KEY REFERENCES runs(id),installation_id TEXT NOT NULL,principal_id TEXT NOT NULL);
+CREATE TABLE remote_text(run_id TEXT PRIMARY KEY REFERENCES runs(id),raw_offset INTEGER NOT NULL CHECK(raw_offset>=0));
 CREATE TABLE remote_receipts(id TEXT PRIMARY KEY,digest BLOB NOT NULL,result TEXT NOT NULL);
 CREATE TABLE remote_events(sequence INTEGER PRIMARY KEY,event TEXT NOT NULL);
 CREATE TABLE remote_tools(run_id TEXT NOT NULL REFERENCES runs(id),native_id TEXT NOT NULL,logical_id TEXT PRIMARY KEY,finished INTEGER NOT NULL DEFAULT 0 CHECK(finished IN (0,1))); CREATE UNIQUE INDEX remote_active_tool ON remote_tools(run_id,native_id) WHERE finished=0;";
@@ -92,7 +94,7 @@ fn binding(db: &Connection) -> Result<Option<(Uuid, RemoteBinding)>> {
     })
     .transpose()
 }
-fn require(db: &Connection, expected: &RemoteBinding, session: Uuid) -> Result<()> {
+pub(super) fn require(db: &Connection, expected: &RemoteBinding, session: Uuid) -> Result<()> {
     expected.validate()?;
     let (id, actual) = binding(db)?.context("remote session unavailable")?;
     ensure!(
@@ -170,7 +172,12 @@ fn publish(tx: &Transaction<'_>, run: Uuid, event: RunEvent) -> Result<()> {
     }
     Ok(())
 }
-pub(super) fn observe(tx: &Transaction<'_>, run: &RunRecord, kind: &EventKind) -> Result<()> {
+pub(super) fn observe(
+    tx: &Transaction<'_>,
+    run: &RunRecord,
+    kind: &EventKind,
+    redactor: Option<&crate::tools::Redactor>,
+) -> Result<()> {
     if !binding(tx)?.is_some_and(|(id, _)| id == run.session_id) {
         return Ok(());
     }
@@ -191,22 +198,9 @@ pub(super) fn observe(tx: &Transaction<'_>, run: &RunRecord, kind: &EventKind) -
         EventKind::CanonicalCheckpoint => Some(RunEvent::CanonicalCheckpoint {
             revision: revision()?,
         }),
-        EventKind::TextDelta(text) => {
-            // A provider delta may exceed a wire event; split on UTF-8 boundaries.
-            let mut remaining = text.as_str();
-            while !remaining.is_empty() {
-                let mut end = remaining.len().min(16384);
-                while !remaining.is_char_boundary(end) {
-                    end -= 1
-                }
-                publish(
-                    tx,
-                    run.id,
-                    RunEvent::TextDelta {
-                        text: remaining[..end].to_owned(),
-                    },
-                )?;
-                remaining = &remaining[end..];
+        EventKind::TextDelta(_) => {
+            if let Some(redactor) = redactor {
+                project_text(tx, run, redactor, false)?;
             }
             None
         }
@@ -215,23 +209,87 @@ pub(super) fn observe(tx: &Transaction<'_>, run: &RunRecord, kind: &EventKind) -
         EventKind::SteeringQueued(_)
         | EventKind::SteeringApplied(_)
         | EventKind::SteeringRejected { .. } => None,
-        EventKind::Terminal(state) => Some(RunEvent::Terminal {
-            state: match state {
-                RunState::Completed => TerminalState::Completed,
-                RunState::Incomplete => TerminalState::Incomplete,
-                RunState::Cancelled => TerminalState::Cancelled,
-                RunState::Failed => TerminalState::Failed,
-                RunState::Interrupted => TerminalState::Interrupted,
-                _ => anyhow::bail!("nonterminal public outcome"),
-            },
-        }),
+        EventKind::Terminal(state) => {
+            if let Some(redactor) = redactor {
+                project_text(tx, run, redactor, true)?;
+            }
+            Some(RunEvent::Terminal {
+                state: match state {
+                    RunState::Completed => TerminalState::Completed,
+                    RunState::Incomplete => TerminalState::Incomplete,
+                    RunState::Cancelled => TerminalState::Cancelled,
+                    RunState::Failed => TerminalState::Failed,
+                    RunState::Interrupted => TerminalState::Interrupted,
+                    _ => anyhow::bail!("nonterminal public outcome"),
+                },
+            })
+        }
     };
     if let Some(event) = event {
         publish(tx, run.id, event)?;
     }
     Ok(())
 }
-pub(super) fn canonical(tx: &Transaction<'_>, run: &RunRecord, new: &[Message]) -> Result<()> {
+fn project_text(
+    tx: &Transaction<'_>,
+    run: &RunRecord,
+    redactor: &crate::tools::Redactor,
+    flush: bool,
+) -> Result<()> {
+    let offset: Option<i64> = tx
+        .query_row(
+            "SELECT raw_offset FROM remote_text WHERE run_id=?1",
+            [run.id.to_string()],
+            |r| r.get(0),
+        )
+        .optional()?;
+    let offset: usize = offset.unwrap_or(0).try_into()?;
+    let pending = run
+        .partial_text
+        .get(offset..)
+        .context("invalid public text offset")?;
+    let consumed = redactor.stable_prefix(pending, flush);
+    let output = redactor.redact_public_prefix(&pending[..consumed]);
+    let mut remaining = output.as_str();
+    while !remaining.is_empty() {
+        let mut end = remaining.len().min(16384);
+        while !remaining.is_char_boundary(end) {
+            end -= 1;
+        }
+        publish(
+            tx,
+            run.id,
+            RunEvent::TextDelta {
+                text: remaining[..end].to_owned(),
+            },
+        )?;
+        remaining = &remaining[end..];
+    }
+    let next: i64 = offset
+        .checked_add(consumed)
+        .context("public text offset overflow")?
+        .try_into()?;
+    tx.execute("INSERT INTO remote_text(run_id,raw_offset) VALUES(?1,?2) ON CONFLICT(run_id) DO UPDATE SET raw_offset=excluded.raw_offset",params![run.id.to_string(),next])?;
+    Ok(())
+}
+pub(super) fn cleanup(tx: &Transaction<'_>, run_id: Uuid, confirmation: &str) -> Result<()> {
+    let run = read_run(tx, run_id)?;
+    if !binding(tx)?.is_some_and(|(id, _)| id == run.session_id) {
+        return Ok(());
+    }
+    let state = match confirmation {
+        "observed" => voyage_protocol::events::CleanupState::Observed,
+        "operator_attested" => voyage_protocol::events::CleanupState::OperatorAttested,
+        _ => anyhow::bail!("invalid cleanup confirmation"),
+    };
+    publish(tx, run_id, RunEvent::Cleanup { state })
+}
+pub(super) fn canonical(
+    tx: &Transaction<'_>,
+    run: &RunRecord,
+    new: &[Message],
+    redactor: Option<&crate::tools::Redactor>,
+) -> Result<()> {
     if !binding(tx)?.is_some_and(|(id, _)| id == run.session_id) {
         return Ok(());
     }
@@ -252,7 +310,10 @@ pub(super) fn canonical(tx: &Transaction<'_>, run: &RunRecord, new: &[Message]) 
                 run.id,
                 RunEvent::ToolStarted {
                     tool_call_id: id,
-                    name: call.name.clone(),
+                    name: redactor.map_or_else(
+                        || "tool".into(),
+                        |redactor| redactor.redact_public_prefix(&call.name),
+                    ),
                 },
             )?;
         }
@@ -296,6 +357,99 @@ pub(super) fn canonical(tx: &Transaction<'_>, run: &RunRecord, new: &[Message]) 
     Ok(())
 }
 impl Journal {
+    pub fn remote_local_binding(
+        &self,
+        actor: &super::super::local_actor::LocalActor,
+    ) -> Result<(Uuid, RemoteBinding)> {
+        self.check_schema()?;
+        let (session, binding) =
+            binding(&self.connection)?.context("not a dedicated remote journal")?;
+        ensure!(
+            binding.local_installation_id == actor.installation_id
+                && binding.local_principal_id == actor.principal_id,
+            "local installation attribution mismatch"
+        );
+        Ok((session, binding))
+    }
+    pub fn attest_remote_cleanup(
+        &mut self,
+        guard: &ExecutionGuard,
+        expected: &RemoteBinding,
+        run_id: Uuid,
+        actor: &super::super::local_actor::LocalActor,
+    ) -> Result<()> {
+        let run = self.run(run_id)?;
+        self.check_guard(guard, run.session_id)?;
+        let tx = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        check_transaction_schema(&tx, self.opened_schema)?;
+        require(&tx, expected, run.session_id)?;
+        ensure!(
+            expected.local_installation_id == actor.installation_id
+                && expected.local_principal_id == actor.principal_id,
+            "local installation attribution mismatch"
+        );
+        let run = read_run(&tx, run_id)?;
+        ensure!(
+            run.machine_id == expected.machine_id
+                && run.principal_id == expected.owner_id
+                && !matches!(run.state, RunState::Accepted | RunState::Running),
+            "local attestation requires matching terminal remote run"
+        );
+        let confirmation: Option<String> = tx.query_row(
+            "SELECT confirmation FROM local_cleanup_obligations WHERE run_id=?1",
+            [run_id.to_string()],
+            |r| r.get(0),
+        )?;
+        if let Some(confirmation) = confirmation {
+            ensure!(
+                confirmation == "operator_attested",
+                "cleanup evidence is immutable"
+            );
+            let prior:(String,String)=tx.query_row("SELECT installation_id,principal_id FROM remote_cleanup_attestations WHERE run_id=?1",[run_id.to_string()],|r|Ok((r.get(0)?,r.get(1)?)))?;
+            ensure!(
+                prior
+                    == (
+                        actor.installation_id.to_string(),
+                        actor.principal_id.to_string()
+                    ),
+                "attestation provenance mismatch"
+            );
+            return Ok(());
+        }
+        tx.execute(
+            "INSERT INTO remote_cleanup_attestations VALUES(?1,?2,?3)",
+            params![
+                run_id.to_string(),
+                actor.installation_id.to_string(),
+                actor.principal_id.to_string()
+            ],
+        )?;
+        tx.execute("UPDATE local_cleanup_obligations SET confirmation='operator_attested' WHERE run_id=?1 AND confirmation IS NULL",[run_id.to_string()])?;
+        cleanup(&tx, run_id, "operator_attested")?;
+        tx.commit()?;
+        Ok(())
+    }
+    pub fn configure_remote_redaction(
+        &mut self,
+        guard: &ExecutionGuard,
+        run_id: Uuid,
+        redactor: std::sync::Arc<crate::tools::Redactor>,
+    ) -> Result<()> {
+        let run = self.run(run_id)?;
+        self.check_guard(guard, run.session_id)?;
+        ensure!(
+            run.state == RunState::Accepted,
+            "redaction must precede dispatch"
+        );
+        ensure!(
+            binding(&self.connection)?.is_some_and(|(id, _)| id == run.session_id),
+            "not a dedicated remote session"
+        );
+        self.remote_redactor = Some(redactor);
+        Ok(())
+    }
     pub fn create_remote_session(
         &mut self,
         session: &Session,
@@ -343,6 +497,92 @@ impl Journal {
         };
         ensure!(actual == *expected, "remote binding mismatch");
         Ok(Some(id))
+    }
+    /// Current metadata and run counters from one read transaction. No history or provider payload.
+    pub fn remote_snapshot(
+        &self,
+        expected: &RemoteBinding,
+        session: Uuid,
+    ) -> Result<voyage_protocol::stream::Reply> {
+        use voyage_protocol::{
+            events::CleanupState,
+            stream::{ExecutionView, Reply, SessionView},
+        };
+        let tx = self.connection.unchecked_transaction()?;
+        check_transaction_schema(&tx, self.opened_schema)?;
+        require(&tx, expected, session)?;
+        let saved = read_session(&tx, session)?;
+        let latest: i64 = tx.query_row(
+            "SELECT next_sequence-1 FROM remote_session WHERE slot=1",
+            [],
+            |r| r.get(0),
+        )?;
+        let latest_run: Option<String> = tx
+            .query_row(
+                "SELECT id FROM runs WHERE session_id=?1 ORDER BY rowid DESC LIMIT 1",
+                [session.to_string()],
+                |r| r.get(0),
+            )
+            .optional()?;
+        let run = latest_run
+            .map(|id| -> Result<ExecutionView> {
+                let run = read_run(&tx, Uuid::parse_str(&id)?)?;
+                ensure!(
+                    run.session_id == session
+                        && run.machine_id == expected.machine_id
+                        && run.principal_id == expected.owner_id,
+                    "remote run binding mismatch"
+                );
+                let confirmation: Option<Option<String>> = tx
+                    .query_row(
+                        "SELECT confirmation FROM local_cleanup_obligations WHERE run_id=?1",
+                        [&id],
+                        |r| r.get(0),
+                    )
+                    .optional()?;
+                let active = matches!(run.state, RunState::Accepted | RunState::Running);
+                let cleanup = match confirmation.as_ref().and_then(|c| c.as_deref()) {
+                    Some("observed") => CleanupState::Observed,
+                    Some("operator_attested") => CleanupState::OperatorAttested,
+                    Some(_) => anyhow::bail!("invalid cleanup confirmation"),
+                    None if active => CleanupState::Pending,
+                    None => CleanupState::Unconfirmed,
+                };
+                let state = match run.state {
+                    RunState::Accepted => voyage_protocol::stream::RunState::Accepted,
+                    RunState::Running => voyage_protocol::stream::RunState::Running,
+                    RunState::Completed => voyage_protocol::stream::RunState::Completed,
+                    RunState::Incomplete => voyage_protocol::stream::RunState::Incomplete,
+                    RunState::Cancelled => voyage_protocol::stream::RunState::Cancelled,
+                    RunState::Failed => voyage_protocol::stream::RunState::Failed,
+                    RunState::Interrupted => voyage_protocol::stream::RunState::Interrupted,
+                };
+                Ok(ExecutionView {
+                    run_id: run.id,
+                    state,
+                    cleanup,
+                    input_tokens: run.usage.input_tokens,
+                    output_tokens: run.usage.output_tokens,
+                })
+            })
+            .transpose()?;
+        let reply = Reply::ExecutionSnapshot {
+            session: SessionView {
+                id: session,
+                revision: saved.revision,
+                name: saved
+                    .session
+                    .name
+                    .unwrap_or_else(|| "Remote session".into()),
+                model: saved.session.model,
+                sharing: voyage_protocol::attachment::SharingMode::LiveEvents,
+                archived: false,
+            },
+            run,
+            latest: EventCursor::new(latest.try_into()?).map_err(anyhow::Error::msg)?,
+        };
+        tx.commit()?;
+        Ok(reply)
     }
     pub fn remote_replay(
         &self,

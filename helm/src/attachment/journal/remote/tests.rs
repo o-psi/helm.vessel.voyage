@@ -243,3 +243,230 @@ fn reused_resolved_native_call_ids_receive_distinct_public_invocation_ids() {
     assert_ne!(started[0], started[1]);
     assert_eq!(started, finished);
 }
+
+#[test]
+fn current_snapshot_separates_terminal_outcome_from_atomic_cleanup_observation() {
+    use voyage_protocol::{events::CleanupState, stream::Reply};
+    let (_dir, mut journal, session, binding) = fixture();
+    journal.create_remote_session(&session, &binding).unwrap();
+    let guard = journal.acquire_execution(session.id).unwrap();
+    let request = TurnAdmission {
+        command_id: Uuid::new_v4(),
+        machine_id: binding.machine_id,
+        principal_id: binding.owner_id,
+        session_id: session.id,
+        expected_revision: 0,
+        expires_at_ms: 60000,
+        prompt: "task".into(),
+    };
+    let run = journal.admit_turn(&guard, &request, 1).unwrap().run;
+    journal.register_local_cleanup(&guard, run.id).unwrap();
+    journal.mark_running(&guard, run.id).unwrap();
+    journal
+        .finish(
+            &guard,
+            run.id,
+            RunState::Interrupted,
+            Some("PRIVATE_ERROR_CANARY"),
+            None,
+        )
+        .unwrap();
+    let revision = journal.load_session(session.id).unwrap().revision;
+    let before = journal.remote_snapshot(&binding, session.id).unwrap();
+    let Reply::ExecutionSnapshot {
+        session: public,
+        run: Some(current),
+        latest: before_cursor,
+    } = before
+    else {
+        panic!("missing snapshot")
+    };
+    assert_eq!(public.revision, revision);
+    assert_eq!(
+        current.state,
+        voyage_protocol::stream::RunState::Interrupted
+    );
+    assert_eq!(current.cleanup, CleanupState::Unconfirmed);
+    journal
+        .confirm_local_cleanup_observed(&guard, run.id)
+        .unwrap();
+    journal
+        .confirm_local_cleanup_observed(&guard, run.id)
+        .unwrap();
+    let after = journal.remote_snapshot(&binding, session.id).unwrap();
+    assert!(
+        !serde_json::to_string(&after)
+            .unwrap()
+            .contains("PRIVATE_ERROR_CANARY")
+    );
+    let Reply::ExecutionSnapshot {
+        run: Some(current),
+        latest,
+        ..
+    } = after
+    else {
+        panic!("missing snapshot")
+    };
+    assert_eq!(current.cleanup, CleanupState::Observed);
+    assert_eq!(latest.get(), before_cursor.get() + 1);
+    let RemoteReplay::Events { events, .. } = journal
+        .remote_replay(&binding, session.id, before_cursor.get(), 10)
+        .unwrap()
+    else {
+        panic!("missing replay")
+    };
+    assert_eq!(events.len(), 1);
+    assert!(matches!(
+        events[0].event,
+        RunEvent::Cleanup {
+            state: CleanupState::Observed
+        }
+    ));
+}
+
+#[test]
+fn public_text_redaction_is_transactional_across_deltas_pages_and_reopen() {
+    use std::sync::Arc;
+    for secret in [
+        "REMOTE_SECRET_CANARY",
+        "秘密🔐canary",
+        "REDACTED",
+        "REDA",
+        "CTED",
+    ] {
+        let (dir, mut journal, session, binding) = fixture();
+        journal.create_remote_session(&session, &binding).unwrap();
+        let guard = journal.acquire_execution(session.id).unwrap();
+        let request = TurnAdmission {
+            command_id: Uuid::new_v4(),
+            machine_id: binding.machine_id,
+            principal_id: binding.owner_id,
+            session_id: session.id,
+            expected_revision: 0,
+            expires_at_ms: 60000,
+            prompt: "task".into(),
+        };
+        let run = journal.admit_turn(&guard, &request, 1).unwrap().run;
+        journal
+            .configure_remote_redaction(
+                &guard,
+                run.id,
+                Arc::new(crate::tools::Redactor::new([secret.into()])),
+            )
+            .unwrap();
+        journal.mark_running(&guard, run.id).unwrap();
+        let text = format!("before {secret} after");
+        let mut cursor = 0;
+        let mut disclosed = String::new();
+        for character in text.chars() {
+            journal
+                .append_text(&guard, run.id, &character.to_string())
+                .unwrap();
+            loop {
+                let RemoteReplay::Events { events, latest } = journal
+                    .remote_replay(&binding, session.id, cursor, 1)
+                    .unwrap()
+                else {
+                    panic!("unexpected snapshot")
+                };
+                for event in events {
+                    cursor = event.cursor.get();
+                    if let RunEvent::TextDelta { text } = event.event {
+                        disclosed.push_str(&text);
+                    }
+                }
+                if cursor == latest {
+                    break;
+                }
+            }
+        }
+        journal
+            .finish(
+                &guard,
+                run.id,
+                RunState::Interrupted,
+                Some("fixture interruption"),
+                None,
+            )
+            .unwrap();
+        let RemoteReplay::Events { events, .. } = journal
+            .remote_replay(&binding, session.id, cursor, 128)
+            .unwrap()
+        else {
+            panic!("unexpected snapshot")
+        };
+        for event in events {
+            if let RunEvent::TextDelta { text } = event.event {
+                disclosed.push_str(&text);
+            }
+        }
+        assert_eq!(disclosed, "before [REDACTED] after");
+        let expected = serde_json::to_value(
+            match journal.remote_replay(&binding, session.id, 0, 128).unwrap() {
+                RemoteReplay::Events { events, .. } => events,
+                _ => panic!("missing events"),
+            },
+        )
+        .unwrap();
+        drop(guard);
+        drop(journal);
+        let reopened = Journal::open(dir.path().join("journal")).unwrap();
+        let actual = serde_json::to_value(
+            match reopened
+                .remote_replay(&binding, session.id, 0, 128)
+                .unwrap()
+            {
+                RemoteReplay::Events { events, .. } => events,
+                _ => panic!("missing events"),
+            },
+        )
+        .unwrap();
+        assert_eq!(actual, expected, "replay must not rerun redaction");
+        if !"[REDACTED]".contains(secret) {
+            assert!(!actual.to_string().contains(secret));
+        }
+    }
+}
+
+#[test]
+fn recovery_without_redactor_never_flushes_private_unresolved_text() {
+    use std::sync::Arc;
+    let (dir, mut journal, session, binding) = fixture();
+    journal.create_remote_session(&session, &binding).unwrap();
+    let guard = journal.acquire_execution(session.id).unwrap();
+    let request = TurnAdmission {
+        command_id: Uuid::new_v4(),
+        machine_id: binding.machine_id,
+        principal_id: binding.owner_id,
+        session_id: session.id,
+        expected_revision: 0,
+        expires_at_ms: 60000,
+        prompt: "task".into(),
+    };
+    let run = journal.admit_turn(&guard, &request, 1).unwrap().run;
+    journal
+        .configure_remote_redaction(
+            &guard,
+            run.id,
+            Arc::new(crate::tools::Redactor::new(["CRASH_SECRET".into()])),
+        )
+        .unwrap();
+    journal.mark_running(&guard, run.id).unwrap();
+    journal.append_text(&guard, run.id, "CRASH_").unwrap();
+    drop(guard);
+    drop(journal);
+    let mut journal = Journal::open(dir.path().join("journal")).unwrap();
+    let guard = journal.acquire_execution(session.id).unwrap();
+    journal.recover_interrupted(&guard).unwrap();
+    let RemoteReplay::Events { events, .. } =
+        journal.remote_replay(&binding, session.id, 0, 128).unwrap()
+    else {
+        panic!("missing events")
+    };
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event.event, RunEvent::TextDelta { .. }))
+    );
+    assert_eq!(journal.run(run.id).unwrap().partial_text, "CRASH_");
+}

@@ -417,6 +417,7 @@ impl Journal {
             return Ok(());
         }
         tx.execute("UPDATE local_cleanup_obligations SET confirmation=?1 WHERE run_id=?2 AND confirmation IS NULL", params![expected, run_id.to_string()])?;
+        super::remote::cleanup(&tx, run_id, expected)?;
         tx.commit()?;
         Ok(())
     }

@@ -54,6 +54,7 @@ const MAX_PARTIAL: usize = 1024 * 1024;
 const REPLAY_LIMIT: i64 = 1024;
 
 pub struct Journal {
+    remote_redactor: Option<std::sync::Arc<crate::tools::Redactor>>,
     connection: Connection,
     opened_schema: i64,
     directory: PathBuf,
@@ -252,6 +253,7 @@ impl Journal {
         #[cfg(windows)]
         storage::verify(&private_directory)?;
         Ok(Self {
+            remote_redactor: None,
             connection,
             opened_schema: version.unwrap_or(SCHEMA_VERSION),
             directory,
@@ -699,7 +701,12 @@ impl Journal {
             "UPDATE runs SET record=?1 WHERE id=?2",
             params![serde_json::to_string(&run)?, run.id.to_string()],
         )?;
-        let sequence = append_event(&tx, &run, EventKind::TextDelta(delta.to_owned()))?;
+        let sequence = append_event_projected(
+            &tx,
+            &run,
+            EventKind::TextDelta(delta.to_owned()),
+            self.remote_redactor.as_deref(),
+        )?;
         tx.commit()?;
         Ok(sequence)
     }
@@ -809,7 +816,12 @@ impl Journal {
             .checked_add(output_delta)
             .context("session usage overflow")?;
         run.usage = usage.clone();
-        remote::canonical(&tx, &run, &messages[previous..])?;
+        remote::canonical(
+            &tx,
+            &run,
+            &messages[previous..],
+            self.remote_redactor.as_deref(),
+        )?;
         // Canonical text is provisional. Only the runtime's explicit acceptance
         // hook may classify a final response; no-tool text alone is insufficient.
         run.final_checkpointed = false;
@@ -1052,7 +1064,12 @@ impl Journal {
             "UPDATE runs SET record=?1,active=0 WHERE id=?2",
             params![serde_json::to_string(&run)?, run.id.to_string()],
         )?;
-        append_event(&tx, &run, EventKind::Terminal(state))?;
+        append_event_projected(
+            &tx,
+            &run,
+            EventKind::Terminal(state),
+            self.remote_redactor.as_deref(),
+        )?;
         tx.commit()?;
         Ok(run)
     }
@@ -1233,7 +1250,15 @@ fn read_run(db: &Connection, id: Uuid) -> Result<RunRecord> {
     Ok(run)
 }
 fn append_event(tx: &Transaction<'_>, run: &RunRecord, kind: EventKind) -> Result<u64> {
-    remote::observe(tx, run, &kind)?;
+    append_event_projected(tx, run, kind, None)
+}
+fn append_event_projected(
+    tx: &Transaction<'_>,
+    run: &RunRecord,
+    kind: EventKind,
+    redactor: Option<&crate::tools::Redactor>,
+) -> Result<u64> {
+    remote::observe(tx, run, &kind, redactor)?;
     let sequence: i64 = tx.query_row(
         "SELECT next_sequence FROM sessions WHERE id=?1",
         [run.session_id.to_string()],

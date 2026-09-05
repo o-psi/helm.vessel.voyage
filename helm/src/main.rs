@@ -28,6 +28,7 @@ use std::{
 };
 use tracing_subscriber::EnvFilter;
 mod managed;
+mod remote_worker;
 #[derive(Parser)]
 #[command(version, about = "A general-purpose LLM harness for terminal work")]
 struct Cli {
@@ -115,6 +116,8 @@ enum Command {
     Onboard(helm::onboarding::OnboardArgs),
     /// Use private local sessions with an authoritative SQLite journal.
     Managed(managed::Args),
+    /// Run one explicitly exported dedicated managed session in the foreground.
+    RemoteWorker(remote_worker::Args),
     /// Manage dedicated Vessel enrollment; no worker is started.
     Attachment(helm::attachment::cli::AttachmentArgs),
     /// Manage Helm's native ChatGPT subscription credentials.
@@ -381,6 +384,16 @@ async fn main() -> Result<()> {
             },
         };
     }
+    if matches!(&cli.command,Some(Command::RemoteWorker(args)) if args.recover) {
+        let Some(Command::RemoteWorker(args)) = cli.command else {
+            unreachable!()
+        };
+        return remote_worker::recover(args).await.map_err(|_| {
+            anyhow::anyhow!(
+                "remote recovery failed; inspect the dedicated installation and exact run"
+            )
+        });
+    }
     if matches!(&cli.command, Some(Command::Managed(args)) if args.administrative()) {
         let Some(Command::Managed(args)) = cli.command else {
             unreachable!()
@@ -519,6 +532,11 @@ async fn main() -> Result<()> {
         Command::Managed(args) => managed::run(args, Some(config), cli.workspace, model_overridden)
             .await
             .map_err(managed::safe_error),
+        Command::RemoteWorker(args) => remote_worker::run(args, config, cli.workspace)
+            .await
+            .map_err(|_| {
+                anyhow::anyhow!("remote worker stopped; inspect dedicated local session state")
+            }),
         Command::Models { json } => list_models(&config, cli.workspace, json).await,
         Command::Doctor => doctor(&config, cli.workspace).await,
         Command::Auth { command } => auth(command, &config).await,

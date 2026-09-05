@@ -663,6 +663,9 @@ pub(super) async fn execute_admitted(
 ) -> Result<ManagedExecution> {
     use tokio_util::sync::CancellationToken;
     let run_id = run.record().await?.id;
+    if authority.is_some() {
+        run.configure_remote_redaction(redactor(config)).await?;
+    }
     let resources = match build_authorized_agent_bundle(
         config,
         workspace,

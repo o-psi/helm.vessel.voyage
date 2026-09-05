@@ -101,6 +101,9 @@ impl AttachmentApi {
         drop(receiver);
         Ok(api)
     }
+    pub fn is_shutdown(&self) -> bool {
+        self.closed.is_cancelled()
+    }
     pub async fn shutdown(&self) {
         self.closed.cancel();
         for connection in self.registry.lock().await.values() {
