@@ -1,7 +1,9 @@
 //! Replacement attachment domain contract, not the retired v1 worker protocol.
 //!
-//! Decoding validates syntax/bounds only. The receiver MUST bind machine/principal
-//! to the authenticated channel and enforce current local policy and sharing.
+//! Admission decoding validates syntax, bounds and the deadline. Timeless
+//! structural validation is separate for duplicate lookup. Neither authenticates:
+//! the receiver MUST bind machine/principal to the channel and enforce local
+//! policy and sharing.
 //! Never send a raw canonical Helm Session or provider continuation in a frame.
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -158,7 +160,23 @@ impl Command {
         Ok(value)
     }
 
+    /// Admission-time validation. A structurally valid expired command may be
+    /// looked up for deduplication, but MUST NOT be newly admitted using this API.
     pub fn validate(&self, now_ms: i64) -> Result<(), DecodeError> {
+        self.validate_structure()?;
+        let max = now_ms
+            .checked_add(MAX_COMMAND_LIFETIME_MS)
+            .ok_or(DecodeError::InvalidDeadline)?;
+        if now_ms < 0 || self.expires_at_ms <= now_ms || self.expires_at_ms > max {
+            return Err(DecodeError::InvalidDeadline);
+        }
+        Ok(())
+    }
+
+    /// Timeless wire validation for authenticated duplicate-outcome lookup.
+    /// Does not authorize a principal, authenticate a channel, or admit execution.
+    /// The original deadline remains part of admission_bytes and cannot renew.
+    pub fn validate_structure(&self) -> Result<(), DecodeError> {
         if self.version != VERSION {
             return Err(DecodeError::UnsupportedVersion);
         }
@@ -168,10 +186,7 @@ impl Command {
             self.principal_id,
             self.command_id,
         ])?;
-        let max = now_ms
-            .checked_add(MAX_COMMAND_LIFETIME_MS)
-            .ok_or(DecodeError::InvalidDeadline)?;
-        if now_ms < 0 || self.expires_at_ms <= now_ms || self.expires_at_ms > max {
+        if self.expires_at_ms <= 0 {
             return Err(DecodeError::InvalidDeadline);
         }
         use Operation::*;
@@ -311,7 +326,7 @@ fn target(id: Uuid, revision: u64) -> Result<(), DecodeError> {
         Ok(())
     }
 }
-fn label(value: &str) -> Result<(), DecodeError> {
+pub(crate) fn label(value: &str) -> Result<(), DecodeError> {
     if value.trim().is_empty()
         || value.len() > 256
         || value.chars().any(|c| {
