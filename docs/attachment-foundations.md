@@ -190,3 +190,8 @@ and current sharing integration; transport observations never grant effect autho
 The [enrollment lifecycle CLI](attachment-cli.md) exposes explicit enroll, status,
 resume, rotate, revoke and offline detach commands. It reuses durable client
 transactions and does not start a worker or expose remote execution.
+
+The [durable local sharing declarations](local-sharing-consent.md) preserve explicit
+consent previews, immutable receipts and unshare tombstones in private storage.
+They remain inert administrative metadata; current authorization and frontend
+integration are separate requirements.
