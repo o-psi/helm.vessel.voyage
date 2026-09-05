@@ -1,7 +1,7 @@
 # Runtime administrator ceiling
 
 On Linux, Helm agent execution through `run`/`chat`, the TUI, resumed sessions,
-`managed submit` and child builders reads the fixed
+`managed submit`, saved workflow execution and child builders reads the fixed
 protected `/etc/helm/policy-ceiling.toml` source described in
 [policy-profiles.md](policy-profiles.md). There is no user-configurable path or
 skip flag. An absent source under trusted ancestry preserves the existing Config
@@ -109,3 +109,9 @@ accepted commands remain inert receipt observations, not new execution grants.
 Managed create/list/recover are separate administrative operations. Common run
 preparation also checks freshness before creating a completion scope or allowing
 CLI/TUI canonical insertion; dispatch retains its independent check.
+
+Saved workflow execution uses the shared builder and run preparation too. Its
+pre-execution invocation metadata may be saved before policy startup; that record
+is not canonical user input or proof of execution. Workflow discovery, validation
+and preview remain non-executing administrative operations. Recommendations in a
+workflow definition do not override selected policy or its administrator ceiling.

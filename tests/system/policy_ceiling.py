@@ -342,6 +342,28 @@ for line in sys.stdin:
     assert managed_counts()[0] == 1
     scenario[0] = 'plain'
 
+    # Saved workflow execution reaches the same policy-resolved builder.
+    workflows = work / '.helm/workflows'
+    workflows.mkdir(parents=True)
+    (workflows / 'policy-fixture.toml').write_text('schema_version=1\nid="policy-fixture"\nversion="1"\ndescription="Policy fixture"\nprompt="workflow policy fixture"\n[recommended]\naccess="unrestricted"\n')
+    inspected_workflow = run('--workspace', '/work', 'workflow', '--json', 'inspect', 'policy-fixture')
+    assert inspected_workflow.returncode == 0, inspected_workflow.stderr
+    workflow_digest = json.loads(inspected_workflow.stdout)['digest']
+    requests.clear()
+    ceiling.write_text('malformed =')
+    denied_workflow = run('workflow', 'run', 'policy-fixture', '--trust-repository', workflow_digest)
+    assert denied_workflow.returncode != 0 and not requests and 'policy' in denied_workflow.stderr.lower(), (denied_workflow.stdout, denied_workflow.stderr)
+    for path in Path('/work/data').rglob('sessions/*.json'):
+        assert 'workflow policy fixture' not in json.dumps(json.loads(path.read_text())['messages'])
+    cap()
+    scenario[0] = 'environment'
+    allowed_workflow = run('workflow', 'run', 'policy-fixture', '--trust-repository', workflow_digest)
+    assert allowed_workflow.returncode == 0, (allowed_workflow.stdout, allowed_workflow.stderr)
+    workflow_outputs = [value['output'] for request in requests for value in request.get('input', []) if value.get('type') == 'function_call_output']
+    assert workflow_outputs and any('EXPLICIT=[REDACTED]' in value for value in workflow_outputs), workflow_outputs
+    assert all('\nREMOVED=' not in value and '\nAMBIENT_REMOVED=' not in value for value in workflow_outputs), workflow_outputs
+    scenario[0] = 'plain'
+
     # A worktree child loses the root workspace under a workspace-relative ceiling.
     # Its non-owning descendant must execute in that child's cwd, not regain /work.
     Path('/state').mkdir()
