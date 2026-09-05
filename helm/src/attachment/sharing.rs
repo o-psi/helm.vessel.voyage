@@ -1,7 +1,15 @@
-//! In-memory single-owner attachment policy; not authentication or persistence.
-//! Callers must supply trusted installation/authentication scopes, never request claims.
+//! Current, in-memory single-owner sharing authority. No authentication or durable
+//! storage is supplied here. Trusted local control-plane updates are separate from
+//! authenticated operation checks. Never cache an authorization boolean: recheck
+//! under the actual dispatch/publication commit fence. This registry cannot fence
+//! another process or a disk transaction; those integrations remain required.
 use serde::{Deserialize, Serialize};
+use std::{collections::BTreeMap, sync::RwLock};
 use uuid::Uuid;
+use voyage_protocol::attachment::Capability;
+
+const MAX_POLICIES: usize = 4096;
+const MAX_REVISION: u64 = i64::MAX as u64;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum Disclosure {
@@ -10,7 +18,6 @@ pub enum Disclosure {
     Live,
     Transcript,
 }
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Action {
     ViewMetadata,
@@ -28,18 +35,29 @@ pub enum Action {
     ApproveCommand,
 }
 
-/// An epoch change revokes all policies and authentication from earlier epochs.
-/// No Deserialize: construction must validate identifiers.
+// Bound retained grants to the typed capability vocabulary even if a trusted
+// configuration repeats entries. Duplicates never amplify or imply permissions.
+fn unique_capabilities(values: &[Capability]) -> Vec<Capability> {
+    let mut capabilities = Vec::new();
+    for capability in values {
+        if !capabilities.contains(capability) {
+            capabilities.push(*capability);
+        }
+    }
+    capabilities
+}
+
+/// Trusted installation identity. An epoch change invalidates earlier policies
+/// and grants. No Deserialize: request identity claims are not authentication.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Scope {
     machine: Uuid,
     owner: Uuid,
     epoch: u64,
 }
-
 impl Scope {
     pub fn new(machine: Uuid, owner: Uuid, epoch: u64) -> Option<Self> {
-        (!machine.is_nil() && !owner.is_nil() && epoch > 0 && epoch <= i64::MAX as u64).then_some(
+        (!machine.is_nil() && !owner.is_nil() && (1..MAX_REVISION).contains(&epoch)).then_some(
             Self {
                 machine,
                 owner,
@@ -49,63 +67,66 @@ impl Scope {
     }
 }
 
+/// Construct only after verifying authentication and the granted capabilities.
+/// These are principal rights, not the installation's delegation or local policy.
 #[derive(Clone, Debug)]
-pub struct SessionSharing {
-    session_id: Uuid,
+pub struct AuthenticatedPrincipal {
     scope: Scope,
-    disclosure: Disclosure,
-    archived: bool,
-    approve_write: bool,
-    approve_command: bool,
+    principal_id: Uuid,
+    capabilities: Vec<Capability>,
 }
-
-/// Deliberately contains no owner identity, credentials, provider structs, or transcript.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-pub struct Projection {
-    session_id: Uuid,
-    disclosure: Disclosure,
-    archived: bool,
-}
-
-impl SessionSharing {
-    /// Trusted local policy creation, not an attachment-request deserializer.
-    pub fn new(
-        session_id: Uuid,
-        scope: Scope,
-        disclosure: Disclosure,
-        archived: bool,
-    ) -> Option<Self> {
-        (!session_id.is_nil()).then_some(Self {
-            session_id,
+impl AuthenticatedPrincipal {
+    pub fn new(scope: Scope, principal_id: Uuid, capabilities: &[Capability]) -> Option<Self> {
+        (!principal_id.is_nil()).then(|| Self {
             scope,
+            principal_id,
+            capabilities: unique_capabilities(capabilities),
+        })
+    }
+}
+
+/// Trusted attribution from the current installation's canonical run journal,
+/// never caller-supplied IDs. Even CancelAny requires a real matching run target.
+#[derive(Clone, Copy, Debug)]
+pub struct RunAttribution {
+    session_id: Uuid,
+    run_id: Uuid,
+    principal_id: Uuid,
+}
+impl RunAttribution {
+    pub fn new(session_id: Uuid, run_id: Uuid, principal_id: Uuid) -> Option<Self> {
+        (![session_id, run_id, principal_id].iter().any(Uuid::is_nil)).then_some(Self {
+            session_id,
+            run_id,
+            principal_id,
+        })
+    }
+}
+
+/// Trusted local consent configuration. Remote changes require independently
+/// authorized and confirmed lifecycle handling, not a direct call to update_local.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SharingSettings {
+    pub disclosure: Disclosure,
+    pub archived: bool,
+    pub approve_write: bool,
+    pub approve_command: bool,
+}
+impl SharingSettings {
+    pub fn new(disclosure: Disclosure, archived: bool) -> Self {
+        Self {
             disclosure,
             archived,
             approve_write: false,
             approve_command: false,
-        })
+        }
     }
-
-    /// Explicit trusted-local opt-ins; neither disclosure nor branching grants approvals.
-    /// This only permits requesting approval; it does not execute or approve an operation.
     pub fn with_approvals(mut self, write: bool, command: bool) -> Self {
         self.approve_write = write;
         self.approve_command = command;
         self
     }
-
-    /// Bind authorization to the requested ID as well as both trusted scopes.
-    /// Archived sessions cannot run or branch, but may be unarchived, deleted or
-    /// unshared by the owner through separately confirmed lifecycle operations.
-    pub fn authorize(
-        &self,
-        session_id: Uuid,
-        current: &Scope,
-        authenticated: &Scope,
-        action: Action,
-    ) -> bool {
-        if session_id != self.session_id || self.scope != *current || current != authenticated {
-            return false;
-        }
+    fn permits(self, action: Action) -> bool {
         if self.disclosure == Disclosure::None {
             return false;
         }
@@ -126,196 +147,283 @@ impl SessionSharing {
             Action::ViewHistory | Action::Branch => self.disclosure == Disclosure::Transcript,
             Action::ApproveWrite => self.approve_write,
             Action::ApproveCommand => self.approve_command,
-            _ => true,
+            Action::ViewMetadata
+            | Action::ViewLive
+            | Action::Submit
+            | Action::Cancel
+            | Action::Rename
+            | Action::ChangeModel
+            | Action::Archive
+            | Action::Delete
+            | Action::ChangeSharing => true,
         }
+    }
+}
+
+/// Local observation only. A copied snapshot has no authorize/project/branch API
+/// and is never an authority for a later operation.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PolicySnapshot {
+    pub session_id: Uuid,
+    pub revision: u64,
+    pub settings: SharingSettings,
+}
+struct SessionPolicy {
+    scope: Scope,
+    snapshot: PolicySnapshot,
+}
+struct State {
+    scope: Scope,
+    capabilities: Vec<Capability>,
+    sessions: BTreeMap<Uuid, SessionPolicy>,
+}
+/// Every check reads this owner's current policy. Share the owner with Arc, not
+/// policy copies. Locks cover in-memory checks/updates only, not caller effects.
+pub struct SharingRegistry {
+    state: RwLock<State>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum SharingError {
+    #[error("sharing operation denied")]
+    Denied,
+    #[error("sharing revision or identity conflict")]
+    Conflict,
+    #[error("invalid sharing identity or revision")]
+    Invalid,
+    #[error("sharing capacity exhausted")]
+    Capacity,
+    #[error("sharing authority unavailable")]
+    Unavailable,
+}
+
+/// No owner identity, approval opt-ins, credentials, provider state or history.
+/// This is data, not an authorization token. Recheck before delayed publication.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct Projection {
+    session_id: Uuid,
+    disclosure: Disclosure,
+    archived: bool,
+}
+impl SharingRegistry {
+    pub fn new(scope: Scope, installation_capabilities: &[Capability]) -> Self {
+        Self {
+            state: RwLock::new(State {
+                scope,
+                capabilities: unique_capabilities(installation_capabilities),
+                sessions: BTreeMap::new(),
+            }),
+        }
+    }
+
+    /// Trusted-local create-only consent; never a remotely exposed handler.
+    pub fn register_local(
+        &self,
+        session_id: Uuid,
+        settings: SharingSettings,
+    ) -> Result<PolicySnapshot, SharingError> {
+        if session_id.is_nil() {
+            return Err(SharingError::Invalid);
+        }
+        let mut state = self.state.write().map_err(|_| SharingError::Unavailable)?;
+        if state.sessions.contains_key(&session_id) {
+            return Err(SharingError::Conflict);
+        }
+        if state.sessions.len() >= MAX_POLICIES {
+            return Err(SharingError::Capacity);
+        }
+        let snapshot = PolicySnapshot {
+            session_id,
+            revision: 1,
+            settings,
+        };
+        let scope = state.scope;
+        state.sessions.insert(
+            session_id,
+            SessionPolicy {
+                scope,
+                snapshot: snapshot.clone(),
+            },
+        );
+        Ok(snapshot)
+    }
+
+    /// Atomic in-memory CAS. Persisted policy changes need the session
+    /// coordinator's transaction; this method is not a durable acknowledgement.
+    pub fn update_local(
+        &self,
+        session_id: Uuid,
+        expected_revision: u64,
+        settings: SharingSettings,
+    ) -> Result<PolicySnapshot, SharingError> {
+        let mut state = self.state.write().map_err(|_| SharingError::Unavailable)?;
+        let scope = state.scope;
+        let policy = state
+            .sessions
+            .get_mut(&session_id)
+            .ok_or(SharingError::Conflict)?;
+        if policy.snapshot.revision != expected_revision {
+            return Err(SharingError::Conflict);
+        }
+        let revision = expected_revision
+            .checked_add(1)
+            .filter(|n| *n <= MAX_REVISION)
+            .ok_or(SharingError::Invalid)?;
+        let snapshot = PolicySnapshot {
+            session_id,
+            revision,
+            settings,
+        };
+        policy.snapshot = snapshot.clone();
+        policy.scope = scope;
+        Ok(snapshot)
+    }
+
+    /// Advance current installation authority and invalidate all old grants and
+    /// policies. Explicit local policy updates re-consent at the new epoch.
+    pub fn advance_epoch_local(
+        &self,
+        expected_epoch: u64,
+        epoch: u64,
+        capabilities: &[Capability],
+    ) -> Result<(), SharingError> {
+        let mut state = self.state.write().map_err(|_| SharingError::Unavailable)?;
+        if state.scope.epoch != expected_epoch {
+            return Err(SharingError::Conflict);
+        }
+        if epoch <= expected_epoch || epoch >= MAX_REVISION {
+            return Err(SharingError::Invalid);
+        }
+        state.scope.epoch = epoch;
+        state.capabilities = unique_capabilities(capabilities);
+        Ok(())
+    }
+
+    /// Current policy + installation delegation + authenticated capability check.
+    /// A true result is not a reusable permit. Recheck at dispatch/publication
+    /// commitment together with current local policy, cancellation and resources.
+    pub fn authorize(
+        &self,
+        session_id: Uuid,
+        principal: &AuthenticatedPrincipal,
+        action: Action,
+        run: Option<&RunAttribution>,
+    ) -> bool {
+        self.state
+            .read()
+            .is_ok_and(|state| state.authorize(session_id, principal, action, run))
     }
 
     pub fn project(
         &self,
         session_id: Uuid,
-        current: &Scope,
-        authenticated: &Scope,
+        principal: &AuthenticatedPrincipal,
     ) -> Option<Projection> {
-        self.authorize(session_id, current, authenticated, Action::ViewMetadata)
-            .then_some(Projection {
-                session_id: self.session_id,
-                disclosure: self.disclosure,
-                archived: self.archived,
-            })
-    }
-
-    /// Attachment branching requires history access. Child sharing can only narrow,
-    /// never widen; use this path rather than `new` for attachment-originated branches.
-    /// No ancestry is projected, and approval opt-ins are not inherited.
-    pub fn branch(
-        &self,
-        current: &Scope,
-        authenticated: &Scope,
-        child_id: Uuid,
-        disclosure: Disclosure,
-    ) -> Option<Self> {
-        if child_id == self.session_id
-            || disclosure > self.disclosure
-            || !self.authorize(self.session_id, current, authenticated, Action::Branch)
-        {
+        let state = self.state.read().ok()?;
+        if !state.authorize(session_id, principal, Action::ViewMetadata, None) {
             return None;
         }
-        Self::new(child_id, self.scope, disclosure, false)
+        let policy = &state.sessions[&session_id];
+        Some(Projection {
+            session_id,
+            disclosure: policy.snapshot.settings.disclosure,
+            archived: policy.snapshot.settings.archived,
+        })
+    }
+
+    /// Authorize the current source and register child consent under one lock.
+    /// Source revisions, private/archive state and capabilities cannot go stale
+    /// between this check and the in-memory branch insertion. Actual session
+    /// copying must still join the authoritative storage transaction.
+    pub fn branch(
+        &self,
+        source_id: Uuid,
+        expected_revision: u64,
+        principal: &AuthenticatedPrincipal,
+        child_id: Uuid,
+        disclosure: Disclosure,
+    ) -> Result<PolicySnapshot, SharingError> {
+        let mut state = self.state.write().map_err(|_| SharingError::Unavailable)?;
+        if !state.authorize(source_id, principal, Action::Branch, None) {
+            return Err(SharingError::Denied);
+        }
+        let source = &state.sessions[&source_id];
+        if source.snapshot.revision != expected_revision {
+            return Err(SharingError::Conflict);
+        }
+        if child_id.is_nil() || child_id == source_id {
+            return Err(SharingError::Invalid);
+        }
+        if disclosure > source.snapshot.settings.disclosure {
+            return Err(SharingError::Denied);
+        }
+        if state.sessions.contains_key(&child_id) {
+            return Err(SharingError::Conflict);
+        }
+        if state.sessions.len() >= MAX_POLICIES {
+            return Err(SharingError::Capacity);
+        }
+        let snapshot = PolicySnapshot {
+            session_id: child_id,
+            revision: 1,
+            settings: SharingSettings::new(disclosure, false),
+        };
+        let scope = state.scope;
+        state.sessions.insert(
+            child_id,
+            SessionPolicy {
+                scope,
+                snapshot: snapshot.clone(),
+            },
+        );
+        Ok(snapshot)
+    }
+}
+impl State {
+    fn authorize(
+        &self,
+        session_id: Uuid,
+        principal: &AuthenticatedPrincipal,
+        action: Action,
+        run: Option<&RunAttribution>,
+    ) -> bool {
+        let Some(policy) = self.sessions.get(&session_id) else {
+            return false;
+        };
+        if self.scope != principal.scope
+            || policy.scope != self.scope
+            || !policy.snapshot.settings.permits(action)
+        {
+            return false;
+        }
+        let capability = |capability| {
+            self.capabilities.contains(&capability) && principal.capabilities.contains(&capability)
+        };
+        match action {
+            Action::ViewMetadata => capability(Capability::ViewMetadata),
+            Action::ViewLive => capability(Capability::ViewLive),
+            Action::ViewHistory => capability(Capability::ViewHistory),
+            Action::Submit => capability(Capability::SubmitTurn),
+            Action::Cancel => run.is_some_and(|run| {
+                run.session_id == session_id
+                    && !run.run_id.is_nil()
+                    && (capability(Capability::CancelAny)
+                        || (run.principal_id == principal.principal_id
+                            && capability(Capability::CancelOwn)))
+            }),
+            Action::Rename => capability(Capability::RenameSession),
+            Action::ChangeModel => capability(Capability::ChangeModel),
+            Action::Branch => {
+                capability(Capability::BranchSession) && capability(Capability::ViewHistory)
+            }
+            Action::Archive => capability(Capability::ArchiveSession),
+            Action::Delete => capability(Capability::DeleteSession),
+            Action::ChangeSharing => capability(Capability::ChangeSharing),
+            Action::ApproveWrite => capability(Capability::ApproveWrite),
+            Action::ApproveCommand => capability(Capability::ApproveCommand),
+        }
     }
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    const ACTIONS: [Action; 13] = [
-        Action::ViewMetadata,
-        Action::ViewLive,
-        Action::ViewHistory,
-        Action::Submit,
-        Action::Cancel,
-        Action::Rename,
-        Action::ChangeModel,
-        Action::Branch,
-        Action::Archive,
-        Action::Delete,
-        Action::ChangeSharing,
-        Action::ApproveWrite,
-        Action::ApproveCommand,
-    ];
-    const DISCLOSURES: [Disclosure; 4] = [
-        Disclosure::None,
-        Disclosure::Metadata,
-        Disclosure::Live,
-        Disclosure::Transcript,
-    ];
-    fn scope() -> Scope {
-        Scope::new(Uuid::from_u128(1), Uuid::from_u128(2), 3).unwrap()
-    }
-    fn policy(disclosure: Disclosure, archived: bool) -> SessionSharing {
-        SessionSharing::new(Uuid::from_u128(4), scope(), disclosure, archived).unwrap()
-    }
-    fn allowed(p: &SessionSharing, action: Action) -> bool {
-        p.authorize(p.session_id, &scope(), &scope(), action)
-    }
-
-    #[test]
-    fn full_matrix_including_archival_and_independent_approval_opt_ins() {
-        // Explicit non-approval matrix, in ACTIONS order; approval columns default false.
-        let matrix = [
-            [false; 13],
-            [
-                true, false, false, false, false, false, false, false, false, false, false, false,
-                false,
-            ],
-            [
-                true, true, false, true, true, true, true, false, true, true, true, false, false,
-            ],
-            [
-                true, true, true, true, true, true, true, true, true, true, true, false, false,
-            ],
-        ];
-        for (row, disclosure) in DISCLOSURES.into_iter().enumerate() {
-            for archived in [false, true] {
-                for write in [false, true] {
-                    for command in [false, true] {
-                        let p = policy(disclosure, archived).with_approvals(write, command);
-                        for (column, action) in ACTIONS.into_iter().enumerate() {
-                            let mut expected = matrix[row][column];
-                            if row >= 2 {
-                                if action == Action::ApproveWrite {
-                                    expected = write;
-                                }
-                                if action == Action::ApproveCommand {
-                                    expected = command;
-                                }
-                            }
-                            if archived {
-                                expected &= matches!(
-                                    action,
-                                    Action::ViewMetadata
-                                        | Action::ViewHistory
-                                        | Action::Archive
-                                        | Action::Delete
-                                        | Action::ChangeSharing
-                                );
-                            }
-                            assert_eq!(
-                                allowed(&p, action),
-                                expected,
-                                "{disclosure:?} {action:?} archived={archived} write={write} command={command}"
-                            );
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn identity_epoch_revocation_and_guessed_ids() {
-        let p = policy(Disclosure::Transcript, false).with_approvals(true, true);
-        let scopes = [
-            Scope::new(Uuid::from_u128(9), scope().owner, 3).unwrap(),
-            Scope::new(scope().machine, Uuid::from_u128(9), 3).unwrap(),
-            Scope::new(scope().machine, scope().owner, 4).unwrap(),
-        ];
-        for action in ACTIONS {
-            for other in scopes {
-                assert!(!p.authorize(p.session_id, &scope(), &other, action));
-                assert!(!p.authorize(p.session_id, &other, &scope(), action));
-                assert!(!p.authorize(p.session_id, &other, &other, action));
-            }
-            assert!(!p.authorize(Uuid::from_u128(99), &scope(), &scope(), action));
-            assert!(!allowed(&policy(Disclosure::None, false), action));
-        }
-        assert!(Scope::new(scope().machine, scope().owner, 0).is_none());
-        assert!(Scope::new(scope().machine, scope().owner, u64::MAX).is_none());
-        assert!(Scope::new(Uuid::nil(), scope().owner, 0).is_none());
-        assert!(Scope::new(scope().machine, Uuid::nil(), 0).is_none());
-        assert!(SessionSharing::new(Uuid::nil(), scope(), Disclosure::Live, false).is_none());
-    }
-
-    #[test]
-    fn private_ancestry_and_branch_approval_reset() {
-        for parent in DISCLOSURES {
-            let p = policy(parent, false).with_approvals(true, true);
-            for child in DISCLOSURES {
-                let branch = p.branch(&scope(), &scope(), Uuid::from_u128(5), child);
-                assert_eq!(branch.is_some(), parent == Disclosure::Transcript);
-                if let Some(branch) = branch {
-                    assert!(branch.disclosure <= p.disclosure);
-                    assert!(!allowed(&branch, Action::ApproveWrite));
-                    assert!(!allowed(&branch, Action::ApproveCommand));
-                    if child == Disclosure::None {
-                        assert!(
-                            branch
-                                .project(branch.session_id, &scope(), &scope())
-                                .is_none()
-                        );
-                        assert!(
-                            branch
-                                .branch(&scope(), &scope(), Uuid::from_u128(6), parent)
-                                .is_none()
-                        );
-                    }
-                }
-            }
-        }
-        let p = policy(Disclosure::Transcript, false);
-        assert!(
-            p.branch(&scope(), &scope(), p.session_id, Disclosure::None)
-                .is_none()
-        );
-        assert!(
-            p.branch(&scope(), &scope(), Uuid::nil(), Disclosure::None)
-                .is_none()
-        );
-        let json =
-            serde_json::to_value(p.project(p.session_id, &scope(), &scope()).unwrap()).unwrap();
-        assert_eq!(
-            json,
-            serde_json::json!({"session_id": p.session_id, "disclosure": "Transcript", "archived": false})
-        );
-    }
-}
+mod tests;
