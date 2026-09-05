@@ -1,15 +1,35 @@
 use super::*;
 use std::{
     net::TcpListener,
-    os::unix::fs::PermissionsExt,
     sync::{Arc, Mutex},
     thread,
 };
 
-fn directory() -> tempfile::TempDir {
-    let directory = tempfile::tempdir().unwrap();
-    fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700)).unwrap();
-    directory
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+struct Directory {
+    _root: tempfile::TempDir,
+    path: std::path::PathBuf,
+}
+impl Directory {
+    fn path(&self) -> &Path {
+        &self.path
+    }
+}
+fn directory() -> Directory {
+    let root = tempfile::tempdir().unwrap();
+    #[cfg(unix)]
+    let path = {
+        fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        root.path().to_owned()
+    };
+    #[cfg(windows)]
+    let path = {
+        let path = root.path().join("private");
+        voyage_storage::PrivateDirectory::open(&path).unwrap();
+        path
+    };
+    Directory { _root: root, path }
 }
 fn open(dir: &Path) -> EnrollmentClient {
     EnrollmentClient::open(dir, "https://vessel.example", false).unwrap()
@@ -90,10 +110,12 @@ fn private_persistent_identity_and_process_lock() {
     let client = open(&path);
     let id = client.machine_id();
     let key = client.key().unwrap().public_key();
+    #[cfg(unix)]
     assert_eq!(
         fs::metadata(&path).unwrap().permissions().mode() & 0o777,
         0o700
     );
+    #[cfg(unix)]
     assert_eq!(
         fs::metadata(path.join("client.json"))
             .unwrap()
@@ -117,6 +139,7 @@ fn private_persistent_identity_and_process_lock() {
     ));
 }
 #[test]
+#[cfg(unix)]
 fn unsafe_files_and_directories_fail_closed() {
     let root = directory();
     let path = root.path().join("enrollment");
@@ -451,6 +474,7 @@ fn root_owned_macos_temp_alias_allows_enrollment_but_not_user_directory_aliases(
 }
 
 #[test]
+#[cfg(unix)]
 fn enrollment_rejects_user_symlink_ancestors_and_directory_aliases() {
     let root = directory();
     let actual = root.path().join("actual");

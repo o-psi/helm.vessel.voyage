@@ -372,7 +372,7 @@ fn private_storage_restart_lost_response_revocation_and_symlinks() {
     assert!(EnrollmentStore::open(&path, ORIGIN, false).is_err());
 }
 #[test]
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn independent_connections_serialize_competing_redemption_and_busy_is_not_success() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("authority");
