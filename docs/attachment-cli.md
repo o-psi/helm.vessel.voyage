@@ -68,7 +68,7 @@ and detach can inspect an existing loopback enrollment without enabling a reques
 ## Status, uncertain outcomes and detach
 
 Status prints a small JSON object containing status and, when present, origin,
-machine/owner IDs, epoch and pending operation/transaction ID. It never emits
+machine/owner IDs, epoch, local-disable state and pending operation/transaction ID. It never emits
 private keys, invitation keys or proof material. Missing state reports
 `{"status":"unenrolled"}` without creating directories, files, locks or an
 identity. Existing state is privately read under its existing lock without a
@@ -97,10 +97,18 @@ An interrupted request is not proof that the server did nothing.
 `helm attachment detach` works offline and disables this local identity without
 requesting server revocation. It retains the local tombstone and all sessions.
 A redundant detach of an already confirmed revoked identity is a read-only no-op
-that preserves the `revoked` status. It refuses unresolved pending mutations so
-their keys and recovery path are not silently discarded. Offline disable while a
-mutation is pending remains a #10 follow-up, not completed lifecycle acceptance. A `revoked` result confirms a successful server revocation
-transaction; `detached` alone does not. To revoke remotely, do so before detaching.
+that preserves the `revoked` status. During an uncertain mutation, detach records
+`locally_disabled: true` while retaining the pending operation, original transaction
+and required keys. Explicit resume reconciles the server outcome but keeps the
+identity detached; it cannot silently reconnect. Confirmed revocation is reported
+as `revoked`, independently of local disable. After recovering a pending enrollment
+or rotation, `revoke` can still request server revocation from the detached state.
+A failed private-state write reports failure; do not assume detach became durable.
+
+The development state adds a strict local-disable field. Existing state without
+this field can be read; older builds reject newly written state rather than
+silently ignoring disable. Preserve private backups when changing builds; do not
+remove this field or restore an active backup to work around that rejection.
 Re-enrollment of a detached directory is intentionally not automatic; use an
 explicit separate identity directory and operator-issued invitation when needed.
 

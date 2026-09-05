@@ -188,6 +188,37 @@ def main():
             assert state_path.read_bytes() == revoked_bytes
             assert (state_path.stat().st_mtime_ns, state_path.stat().st_ino) == (revoked_stat.st_mtime_ns, revoked_stat.st_ino)
             assert cli('status')['status'] == 'revoked'
+            # Offline disable preserves every uncertain transaction across real
+            # server-side commit/lost response and explicit recovery.
+            for operation in ['enroll', 'rotate', 'revoke']:
+                disabled_dir = root / ('disabled-' + operation)
+                disabled_inv = invitation()
+                if operation == 'enroll':
+                    Proxy.drop_next = True
+                    enroll(disabled_inv, target=disabled_dir, expected=1)
+                else:
+                    enroll(disabled_inv, target=disabled_dir)
+                    Proxy.drop_next = True
+                    cli(operation, target=disabled_dir, extra=flags, expected=1)
+                disabled_path = disabled_dir / 'client.json'
+                original = json.loads(disabled_path.read_bytes())
+                info = cli('detach', target=disabled_dir)
+                assert info['locally_disabled'] and info['pending'] == operation
+                retained = json.loads(disabled_path.read_bytes())
+                assert retained['pending'] == original['pending']
+                assert retained['private_key'] == original['private_key']
+                saved = disabled_path.read_bytes()
+                cli('detach', target=disabled_dir)
+                assert disabled_path.read_bytes() == saved
+                if operation == 'enroll':
+                    recovered = cli('resume', '--invitation-key-stdin', key=disabled_inv['key'], target=disabled_dir, extra=flags)
+                else:
+                    recovered = cli('resume', target=disabled_dir, extra=flags)
+                assert recovered['locally_disabled']
+                assert recovered['status'] == ('revoked' if operation == 'revoke' else 'detached')
+                if operation != 'revoke':
+                    cli('rotate', target=disabled_dir, extra=flags, expected=1)
+                    assert cli('revoke', target=disabled_dir, extra=flags)['status'] == 'revoked'
             # Denials and redirects preserve the original pending identity.
             denied_dir = root / 'denied'
             wrong = invitation()
