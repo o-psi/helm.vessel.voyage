@@ -21,7 +21,7 @@ pub use process::{
     ProcessTool, TerminalManager, TerminalMetadata, TerminalShutdown, TerminalShutdownFailure,
 };
 pub use questions::{MAX_ANSWER_BYTES, Question, QuestionAnswer, Questions};
-pub use shell::{ManagedShell, Shell, ShellShutdown};
+pub use shell::{ManagedShell, SecretShellOutcome, Shell, ShellShutdown};
 pub use todo::TodoTool;
 
 #[derive(Debug, Error)]
@@ -157,6 +157,18 @@ impl ToolContext {
 pub trait Tool: Send + Sync {
     fn definition(&self) -> ToolDefinition;
     async fn execute(&self, arguments: Value, context: &ToolContext) -> Result<String, ToolError>;
+    /// Trusted one-shot implementations may consume a current-run environment.
+    /// The typed result cannot carry captured output or arbitrary diagnostic text.
+    async fn execute_secret_environment(
+        &self,
+        _arguments: Value,
+        _context: &ToolContext,
+        _environment: crate::workflow::secrets::BoundEnvironment,
+    ) -> Result<shell::SecretShellOutcome, ToolError> {
+        Err(ToolError::InvalidArguments(
+            "this tool implementation does not support workflow secret bindings".into(),
+        ))
+    }
 }
 
 #[derive(Default)]
@@ -242,6 +254,46 @@ impl ToolRegistry {
         arguments: Value,
         context: &ToolContext,
     ) -> Result<String, ToolError> {
+        self.execute_with_workflow_secrets(name, arguments, context, None)
+            .await
+    }
+
+    pub async fn execute_with_workflow_secrets(
+        &self,
+        name: &str,
+        arguments: Value,
+        context: &ToolContext,
+        bindings: Option<&crate::workflow::secrets::RunBindings>,
+    ) -> Result<String, ToolError> {
+        let private_environment = if let Some(references) = arguments.get("workflow_secrets") {
+            if name != "shell" {
+                return Err(ToolError::InvalidArguments(
+                    "workflow secrets are supported only by the one-shot shell tool".into(),
+                ));
+            }
+            let references: Vec<String> =
+                serde_json::from_value(references.clone()).map_err(|_| {
+                    ToolError::InvalidArguments(
+                        "workflow secret references must be an array of names".into(),
+                    )
+                })?;
+            if references.is_empty() {
+                None
+            } else {
+                let bindings = bindings.ok_or_else(|| {
+                    ToolError::InvalidArguments(
+                        "workflow secret references are unavailable in this run".into(),
+                    )
+                })?;
+                Some(
+                    bindings
+                        .resolve(context.execution_id, &references)
+                        .map_err(|e| ToolError::InvalidArguments(e.to_string()))?,
+                )
+            }
+        } else {
+            None
+        };
         if context.policy.access_mode() == AccessMode::ReadOnly
             && !allowed_in_read_only(name, &arguments)
         {
@@ -263,6 +315,31 @@ impl ToolRegistry {
                 }
                 _ => {}
             }
+        }
+        if let Some(environment) = private_environment {
+            if context.cancellation.is_cancelled() {
+                return Err(ToolError::Cancelled);
+            }
+            if environment
+                .iter()
+                .any(|(name, _)| context.environment.contains_key(name))
+            {
+                return Err(ToolError::InvalidArguments(
+                    "workflow secret environment conflicts with configured environment".into(),
+                ));
+            }
+            let tool = self
+                .tools
+                .get(name)
+                .ok_or_else(|| ToolError::Failed("one-shot shell tool is unavailable".into()))?;
+            let outcome = tool
+                .execute_secret_environment(arguments, context, environment)
+                .await
+                .map_err(|e| e.redacted(&context.redactor))?;
+            // Only fixed enum/status metadata reaches serialization; no raw tool
+            // string or secret-dependent redaction can corrupt this envelope.
+            return serde_json::to_string(&outcome)
+                .map_err(|_| ToolError::Failed("one-shot shell outcome encoding failed".into()));
         }
         let result = self
             .tools

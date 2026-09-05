@@ -13,9 +13,18 @@ use std::process::Stdio;
 use tokio::process::Command;
 
 pub struct Shell;
+
+#[derive(Debug, serde::Serialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum SecretShellOutcome {
+    Exited { code: i64 },
+    Signalled,
+}
 #[derive(Deserialize)]
 struct Args {
     command: String,
+    #[serde(default)]
+    workflow_secrets: Vec<String>,
 }
 
 #[async_trait]
@@ -24,14 +33,19 @@ impl Tool for Shell {
         ToolDefinition {
             name: "shell".into(),
             description:
-                "Run a shell command in the workspace. Returns exit status, stdout, and stderr."
+                "Run a shell command in the workspace. Normally returns exit status, stdout and stderr. Optional workflow_secrets names explicitly bind current-run secret references to their documented HELM_WORKFLOW_* environment variables; these calls suppress stdout/stderr before capture and return only a fixed status/code. Unknown or stale references fail; no automatic inheritance."
                     .into(),
-            input_schema: json!({"type":"object","properties":{"command":{"type":"string"}},"required":["command"]}),
+            input_schema: json!({"type":"object","properties":{"command":{"type":"string"},"workflow_secrets":{"type":"array","items":{"type":"string","minLength":1,"maxLength":64},"maxItems":32,"uniqueItems":true,"description":"Explicit names from current workflow secret references. Values never belong in tool arguments; output is suppressed when bindings are used."}},"required":["command"]}),
         }
     }
     async fn execute(&self, value: Value, ctx: &ToolContext) -> Result<String, ToolError> {
         let args: Args = serde_json::from_value(value)
             .map_err(|e| ToolError::InvalidArguments(e.to_string()))?;
+        if !args.workflow_secrets.is_empty() {
+            return Err(ToolError::InvalidArguments(
+                "workflow secret references require the current-run registry binding".into(),
+            ));
+        }
         match ctx.policy.command(&args.command) {
             Decision::Deny(reason) => return Err(ToolError::Denied(reason)),
             Decision::Ask(reason)
@@ -84,6 +98,105 @@ impl Tool for Shell {
         );
         Ok(truncate(combined.into_bytes(), ctx.max_output_bytes))
     }
+
+    async fn execute_secret_environment(
+        &self,
+        value: Value,
+        ctx: &ToolContext,
+        environment: crate::workflow::secrets::BoundEnvironment,
+    ) -> Result<SecretShellOutcome, ToolError> {
+        let args: Args = serde_json::from_value(value)
+            .map_err(|_| ToolError::InvalidArguments("invalid one-shot shell arguments".into()))?;
+        authorize_secret_command(&args, ctx)
+            .await
+            .map_err(private_shell_error)?;
+        let mut command = Command::new("sh");
+        command
+            .arg("-lc")
+            .arg(&args.command)
+            .current_dir(ctx.policy.workspace())
+            .env_clear()
+            .envs(&ctx.environment)
+            .envs(environment.iter())
+            .kill_on_drop(true)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        #[cfg(unix)]
+        command.process_group(0);
+        let mut child = command
+            .spawn()
+            .map_err(|_| ToolError::Failed("private one-shot shell spawn failed".into()))?;
+        let process_id = child.id();
+        let status = tokio::select! {
+            biased;
+            _ = ctx.cancellation.cancelled() => {
+                terminate_process_group(process_id);
+                let _ = child.start_kill();
+                let _ = tokio::time::timeout(std::time::Duration::from_secs(1),child.wait()).await;
+                return Err(ToolError::Cancelled);
+            }
+            result = tokio::time::timeout(ctx.timeout,child.wait()) => match result {
+                Ok(result) => result.map_err(|_|ToolError::Failed("private one-shot shell wait failed".into()))?,
+                Err(_) => {
+                    terminate_process_group(process_id);
+                    let _ = child.start_kill();
+                    let _ = tokio::time::timeout(std::time::Duration::from_secs(1),child.wait()).await;
+                    return Err(ToolError::Timeout(ctx.timeout));
+                }
+            }
+        };
+        Ok(status.code().map_or(SecretShellOutcome::Signalled, |code| {
+            SecretShellOutcome::Exited {
+                code: i64::from(code),
+            }
+        }))
+    }
+}
+
+fn private_shell_error(error: ToolError) -> ToolError {
+    match error {
+        ToolError::InvalidArguments(_) => {
+            ToolError::InvalidArguments("invalid private one-shot shell arguments or limits".into())
+        }
+        ToolError::Denied(_) => {
+            ToolError::Denied("private one-shot shell denied by local policy or approval".into())
+        }
+        ToolError::Failed(_) => ToolError::Failed(
+            "private one-shot shell failed; cleanup observation must be checked".into(),
+        ),
+        other => other,
+    }
+}
+
+async fn authorize_secret_command(args: &Args, ctx: &ToolContext) -> Result<(), ToolError> {
+    if ctx.cancellation.is_cancelled() {
+        return Err(ToolError::Cancelled);
+    }
+    if args.workflow_secrets.is_empty() {
+        return Err(ToolError::InvalidArguments(
+            "private one-shot shell requires explicit workflow secret references".into(),
+        ));
+    }
+    match ctx.policy.command(&args.command) {
+        Decision::Deny(reason) => return Err(ToolError::Denied(reason)),
+        Decision::Ask(reason) => {
+            let approval = ctx.approval("shell", &args.command, reason);
+            let approved = tokio::select! {
+                biased;
+                _=ctx.cancellation.cancelled()=>return Err(ToolError::Cancelled),
+                result=ctx.approver.approve(&approval)=>result.approved(),
+            };
+            if !approved {
+                return Err(ToolError::Denied("user declined approval".into()));
+            }
+        }
+        Decision::Allow => {}
+    }
+    if ctx.cancellation.is_cancelled() {
+        return Err(ToolError::Cancelled);
+    }
+    Ok(())
 }
 
 #[cfg(unix)]
@@ -97,3 +210,7 @@ fn terminate_process_group(process_id: Option<u32>) {
 }
 #[cfg(not(unix))]
 fn terminate_process_group(_: Option<u32>) {}
+
+#[cfg(all(test, unix))]
+#[path = "shell/secret_tests.rs"]
+mod secret_tests;
