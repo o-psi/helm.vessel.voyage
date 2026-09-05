@@ -475,3 +475,103 @@ async fn overflowing_shutdown_timeout_is_bounded_and_can_be_retried() {
         .expect("oversized shutdown duration must not panic");
     assert!(report.observation_complete || !report.remaining.is_empty());
 }
+
+#[tokio::test]
+async fn queued_private_worker_checks_freshness_after_admission_without_spawning() {
+    use crate::policy_profile::{
+        Builtin,
+        selection::{Selection, SelectionRequest},
+        store::{Action, ProfileChange, ProfileStore},
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let directory = dir.path().join("profiles");
+    let store = ProfileStore::open(&directory).unwrap();
+    let snapshot = store
+        .change(&ProfileChange {
+            operation_id: Uuid::new_v4(),
+            name: "private".into(),
+            expected_revision: 0,
+            action: Action::Create {
+                rules: Builtin::Autonomous.document().rules,
+            },
+        })
+        .unwrap()
+        .snapshot;
+    let mut config = Config {
+        access: Some(AccessMode::Unrestricted),
+        ..Config::default()
+    };
+    let request = SelectionRequest {
+        directory,
+        name: "private".into(),
+        revision: 1,
+        digest: snapshot.digest().unwrap(),
+        explicit: Default::default(),
+    };
+    let preview = Selection::preview(&config, dir.path(), &request).unwrap();
+    config.policy_profile = Some(
+        Selection::bind(
+            &config,
+            dir.path(),
+            request,
+            Some(&preview.transition_digest),
+        )
+        .unwrap(),
+    );
+    let mut ctx = context(dir.path());
+    ctx.policy = Arc::new(Policy::new(&config, dir.path().into()).unwrap());
+    let document = crate::workflow::parse(b"schema_version=1\nid='queued-private'\nversion='1'\ndescription='check queued private worker'\nprompt='Use {{token}}'\n[parameters.token]\ntype='string'\nsecret=true\nrequired=true\n").unwrap();
+    let bindings = crate::workflow::secrets::SecretInputs::collect(
+        &document,
+        vec![("token".into(), "queued-private-value".into())],
+    )
+    .unwrap()
+    .bind(ctx.execution_id)
+    .unwrap();
+    let environment = bindings
+        .resolve(ctx.execution_id, &["token".into()])
+        .unwrap();
+    let shell = ManagedShell::new();
+    let job = Arc::new(Job {
+        cancel: ctx.cancellation.child_token(),
+        finished: AtomicBool::new(false),
+        observed: AtomicBool::new(false),
+        retained: Mutex::new(None),
+    });
+    shell
+        .state
+        .lock()
+        .unwrap()
+        .jobs
+        .insert(Uuid::new_v4(), job.clone());
+    // The caller admitted this job under the old snapshot; change the profile
+    // before invoking the queued worker, without holding an artificial state lock.
+    store
+        .change(&ProfileChange {
+            operation_id: Uuid::new_v4(),
+            name: "private".into(),
+            expected_revision: 1,
+            action: Action::Delete {},
+        })
+        .unwrap();
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    linux::run(
+        Arc::downgrade(&shell.state),
+        job.clone(),
+        "touch forbidden".into(),
+        ctx,
+        Some(environment),
+        tx,
+    );
+    assert!(matches!(rx.await.unwrap(), Err(ToolError::Denied(_))));
+    assert!(!dir.path().join("forbidden").exists());
+    assert!(job.finished.load(Ordering::Acquire));
+    assert!(job.observed.load(Ordering::Acquire));
+    assert!(job.retained.lock().unwrap().is_none());
+    assert!(
+        shell
+            .shutdown(Duration::from_secs(1))
+            .await
+            .observation_complete
+    );
+}

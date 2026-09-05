@@ -200,8 +200,12 @@ References reveal the parameter's name and intended environment key, never its v
 The provider may explicitly request the existing one-shot `shell` tool with
 `"workflow_secrets":["token"]` beside its normal `command`. The registry resolves only
 names bound to the exact accepted run, checks for configured-environment conflicts,
-and leaves ordinary roots, command rules, selected-profile freshness, approvals,
-cancellation and deadlines in force. Unknown/stale references and bindings requested
+and leaves ordinary roots, command rules, approvals, cancellation and deadlines in
+force. A private call additionally rechecks current policy before approval and before
+spawn, including after managed worker scheduling. A stale selected profile refuses
+the new private environment. These are bounded checks, not atomic revocation: a later
+policy change does not stop an existing subprocess, and ordinary tools retain their
+existing new-turn freshness contract. Unknown/stale references and bindings requested
 by other tools fail. Plain shell calls without the field receive no workflow secret.
 Bindings are not passed to PTYs, MCP tools, subagents, later runs or resumed sessions.
 Persisted metadata cannot recreate binding authority.

@@ -141,19 +141,23 @@ impl ManagedShell {
                 "private one-shot shell requires explicit workflow secret references".into(),
             ));
         }
-        match ctx.policy.command(&args.command) {
-            Decision::Deny(reason) => return Err(ToolError::Denied(reason)),
-            Decision::Ask(reason) => {
-                let approval = ctx.approval("shell", &args.command, reason);
-                let approved = tokio::select! {
-                    _ = ctx.cancellation.cancelled() => return Err(ToolError::Cancelled),
-                    outcome = ctx.approver.approve(&approval) => outcome.approved(),
-                };
-                if !approved {
-                    return Err(ToolError::Denied("user declined approval".into()));
+        if environment.is_some() {
+            authorize_secret_command(&args, ctx).await?;
+        } else {
+            match ctx.policy.command(&args.command) {
+                Decision::Deny(reason) => return Err(ToolError::Denied(reason)),
+                Decision::Ask(reason) => {
+                    let approval = ctx.approval("shell", &args.command, reason);
+                    let approved = tokio::select! {
+                        _ = ctx.cancellation.cancelled() => return Err(ToolError::Cancelled),
+                        outcome = ctx.approver.approve(&approval) => outcome.approved(),
+                    };
+                    if !approved {
+                        return Err(ToolError::Denied("user declined approval".into()));
+                    }
                 }
+                Decision::Allow => {}
             }
-            Decision::Allow => {}
         }
         #[cfg(not(target_os = "linux"))]
         {
@@ -327,6 +331,22 @@ mod linux {
                     Ok(())
                 }
             });
+        }
+        if environment.is_some() {
+            // A worker may have waited after approval. Recheck immediately before
+            // releasing its private environment; no subprocess exists on failure.
+            if let Err(error) = check_private_policy(ctx) {
+                job.observed.store(true, Ordering::Release);
+                return Err(error);
+            }
+            if job.cancel.is_cancelled() || Instant::now() >= deadline {
+                job.observed.store(true, Ordering::Release);
+                return Err(if job.cancel.is_cancelled() {
+                    ToolError::Cancelled
+                } else {
+                    ToolError::Timeout(ctx.timeout)
+                });
+            }
         }
         let child = cmd.spawn();
         let mut child = match child {

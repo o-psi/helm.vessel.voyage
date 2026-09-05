@@ -169,7 +169,16 @@ fn private_shell_error(error: ToolError) -> ToolError {
     }
 }
 
+fn check_private_policy(ctx: &ToolContext) -> Result<(), ToolError> {
+    ctx.policy.check_current().map_err(|_| {
+        ToolError::Denied(
+            "private workflow binding policy changed; restart or explicitly reselect".into(),
+        )
+    })
+}
+
 async fn authorize_secret_command(args: &Args, ctx: &ToolContext) -> Result<(), ToolError> {
+    check_private_policy(ctx)?;
     if ctx.cancellation.is_cancelled() {
         return Err(ToolError::Cancelled);
     }
@@ -193,6 +202,7 @@ async fn authorize_secret_command(args: &Args, ctx: &ToolContext) -> Result<(), 
         }
         Decision::Allow => {}
     }
+    check_private_policy(ctx)?;
     if ctx.cancellation.is_cancelled() {
         return Err(ToolError::Cancelled);
     }
