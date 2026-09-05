@@ -12,10 +12,9 @@ provider-neutral readiness contract and its deterministic tests. A separate
 [durable ledger store](completion-storage.md) provides disk persistence. The
 [runtime ownership API](completion-runtime.md) now coordinates durable store writers,
 registers work before publication, propagates child ownership, and exposes explicit
-review operations. Ordinary session lifecycle wiring and the final-response
-interceptor still need integration. The module is exported for
-integration but is not called by the agent loop. It does not add a model request,
-change streaming, or claim that existing runs are being checked.
+review operations. Ordinary CLI/TUI session lifecycle now publishes run references and validates known
+ledgers before dispatch. Final-response interception still needs integration: the
+agent loop does not yet gate acceptance or add reconciliation requests.
 
 This staged delivery avoids implementing a workspace-global cleanup check that
 could interfere with unrelated work. It also avoids using a final snapshot without
