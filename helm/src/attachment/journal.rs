@@ -14,12 +14,20 @@ use anyhow::{Context, Result, ensure};
 use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+#[cfg(all(test, not(unix)))]
+use std::fs;
+#[cfg(unix)]
+use std::fs::{self, OpenOptions};
 use std::{
-    fs::{self, File, OpenOptions},
+    fs::File,
     path::{Path, PathBuf},
     time::Duration,
 };
 use uuid::Uuid;
+#[cfg(windows)]
+mod storage;
+#[cfg(windows)]
+use std::sync::Arc;
 
 const SCHEMA_VERSION: i64 = 3;
 const IMPORT_SCHEMA: &str = "CREATE TABLE imports(session_id TEXT PRIMARY KEY REFERENCES sessions(id), transfer_id TEXT NOT NULL UNIQUE, provenance TEXT NOT NULL);";
@@ -35,6 +43,9 @@ pub struct Journal {
     connection: Connection,
     opened_schema: i64,
     directory: PathBuf,
+    // Keep checked ancestors pinned until after SQLite/the sidecar file closes.
+    #[cfg(windows)]
+    _private_directory: Arc<voyage_storage::PrivateDirectory>,
 }
 
 /// A stable OS-sidecar lock, not a lock on an atomically replaced session inode.
@@ -43,6 +54,8 @@ pub struct ExecutionGuard {
     file: File,
     directory: PathBuf,
     session_id: Uuid,
+    #[cfg(windows)]
+    _private_directory: Arc<voyage_storage::PrivateDirectory>,
 }
 impl Drop for ExecutionGuard {
     fn drop(&mut self) {
@@ -157,29 +170,17 @@ impl Journal {
     /// Dedicated local store under a trusted private parent. Network filesystems
     /// and hostile same-OS-user processes are outside the OS-lock trust boundary.
     pub fn open(directory: PathBuf) -> Result<Self> {
-        let mut builder = fs::DirBuilder::new();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::DirBuilderExt;
-            builder.mode(0o700);
-        }
-        match builder.create(&directory) {
-            Ok(()) => (),
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => (),
-            Err(e) => return Err(e).context("create attachment journal directory"),
-        }
-        let metadata = fs::symlink_metadata(&directory)?;
-        ensure!(
-            metadata.is_dir() && !metadata.file_type().is_symlink(),
-            "journal directory is not a real directory"
-        );
-        private(&metadata)?;
-        let directory = directory.canonicalize()?;
+        #[cfg(windows)]
+        let (directory, private_directory) = storage::prepare(directory)?;
+        #[cfg(not(windows))]
+        let directory = prepare_directory(directory)?;
         let database_path = directory.join("journal.sqlite3");
         let file = open_private_file(&database_path)?;
         drop(file);
         let mut connection = Connection::open(&database_path)?;
         connection.busy_timeout(Duration::ZERO)?; // fail boundedly, never stall an async reactor
+        #[cfg(windows)]
+        storage::configure(&connection)?;
         connection.execute_batch("PRAGMA foreign_keys=ON; PRAGMA synchronous=FULL;")?;
         let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         tx.execute_batch("CREATE TABLE IF NOT EXISTS attachment_schema(id INTEGER PRIMARY KEY CHECK(id=1), version INTEGER NOT NULL);")?;
@@ -212,6 +213,7 @@ impl Journal {
         tx.commit()?;
         // Bound durable storage without pruning command evidence. SQLite FULL
         // rolls the transaction back; the caller must stop further dispatch.
+        #[cfg(not(windows))]
         connection.pragma_update(None, "journal_mode", "DELETE")?;
         let page_size: i64 = connection.pragma_query_value(None, "page_size", |r| r.get(0))?;
         ensure!(page_size > 0, "invalid SQLite page size");
@@ -226,10 +228,14 @@ impl Journal {
             File::open(&directory)?.sync_all()?;
             File::open(directory.parent().context("journal has no parent")?)?.sync_all()?;
         }
+        #[cfg(windows)]
+        storage::verify(&private_directory)?;
         Ok(Self {
             connection,
             opened_schema: version.unwrap_or(SCHEMA_VERSION),
             directory,
+            #[cfg(windows)]
+            _private_directory: private_directory,
         })
     }
 
@@ -282,6 +288,8 @@ impl Journal {
                 file,
                 directory: self.directory.clone(),
                 session_id,
+                #[cfg(windows)]
+                _private_directory: self._private_directory.clone(),
             });
         }
         after_fencing()?;
@@ -410,6 +418,8 @@ impl Journal {
             file,
             directory: self.directory.clone(),
             session_id,
+            #[cfg(windows)]
+            _private_directory: self._private_directory.clone(),
         };
         self.load_session(session_id)?;
         Ok(guard)
@@ -1096,6 +1106,35 @@ fn append_event(tx: &Transaction<'_>, run: &RunRecord, kind: EventKind) -> Resul
     )?;
     Ok(sequence as u64)
 }
+#[cfg(unix)]
+fn prepare_directory(directory: PathBuf) -> Result<PathBuf> {
+    let mut builder = fs::DirBuilder::new();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        builder.mode(0o700);
+    }
+    match builder.create(&directory) {
+        Ok(()) => (),
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => (),
+        Err(e) => return Err(e).context("create attachment journal directory"),
+    }
+    let metadata = fs::symlink_metadata(&directory)?;
+    ensure!(
+        metadata.is_dir() && !metadata.file_type().is_symlink(),
+        "journal directory is not a real directory"
+    );
+    private(&metadata)?;
+    let directory = directory.canonicalize()?;
+    Ok(directory)
+}
+
+#[cfg(not(any(unix, windows)))]
+fn prepare_directory(_directory: PathBuf) -> Result<PathBuf> {
+    anyhow::bail!("private attachment storage unsupported on this platform")
+}
+
+#[cfg(unix)]
 fn private(metadata: &fs::Metadata) -> Result<()> {
     #[cfg(unix)]
     {
@@ -1109,10 +1148,14 @@ fn private(metadata: &fs::Metadata) -> Result<()> {
             "attachment storage has another owner"
         );
     }
-    #[cfg(not(unix))]
-    let _ = metadata; // Windows ACL verification is a delivery prerequisite.
+    use std::os::unix::fs::MetadataExt;
+    ensure!(
+        !metadata.is_file() || metadata.nlink() == 1,
+        "attachment storage has hard links"
+    );
     Ok(())
 }
+#[cfg(unix)]
 fn open_private_file(path: &Path) -> Result<File> {
     match fs::symlink_metadata(path) {
         Ok(m) => {
@@ -1141,6 +1184,22 @@ fn open_private_file(path: &Path) -> Result<File> {
     );
     private(&file.metadata()?)?;
     Ok(file)
+}
+
+#[cfg(windows)]
+fn open_private_file(path: &Path) -> Result<File> {
+    let parent = path.parent().context("private sidecar has no parent")?;
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .context("invalid private filename")?;
+    let private = voyage_storage::PrivateDirectory::open(parent)?;
+    Ok(private.open_file(name, true)?)
+}
+
+#[cfg(not(any(unix, windows)))]
+fn open_private_file(_path: &Path) -> Result<File> {
+    anyhow::bail!("private attachment storage unsupported on this platform")
 }
 
 #[cfg(test)]

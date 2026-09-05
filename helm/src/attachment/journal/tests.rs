@@ -1071,12 +1071,14 @@ fn killed_hot_writer_preserves_canonical_run_dedup_and_replay() {
             .state,
         RunState::Interrupted
     );
+    let interrupted_revision = recovered.load_session(session.id).unwrap().revision;
+    assert_eq!(interrupted_revision, original.revision + 1);
     let duplicate = recovered.admit_turn(&guard, &request, 1).unwrap();
     assert!(duplicate.duplicate);
     assert_eq!(duplicate.run.id, run.id);
     assert_eq!(
         recovered.load_session(session.id).unwrap().revision,
-        original.revision
+        interrupted_revision
     );
     #[cfg(windows)]
     {

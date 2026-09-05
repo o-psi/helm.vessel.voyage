@@ -170,7 +170,9 @@ Unix. Windows directory-entry power-loss durability remains unproven; portable
 save/load/replace/delete tests do not establish that guarantee. Dedicated enrollment
 storage uses the native Windows ACL implementation described in
 [security operations](security-operations.md#windows-enrollment-storage). This does
-not upgrade SessionStore or the attachment journal to verified Windows ACL storage.
+not upgrade SessionStore to verified Windows ACL storage. The attachment journal
+now uses the same native private storage boundary, with separate execution locks;
+see [journal storage](security-operations.md#windows-attachment-journal-storage).
 
 The explicit local [session transfer foundation](session-journal-transfer.md) provides
 crash-resumable JSON-to-journal authority transfer and a quiescent schema upgrade,
