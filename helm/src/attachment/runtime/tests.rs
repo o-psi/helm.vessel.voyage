@@ -16,6 +16,15 @@ use std::{
     time::Duration,
 };
 
+// Fault injection uses the live Journal's journal mode. A second connection in
+// DELETE mode cannot unlink the rollback file retained by Windows PERSIST.
+fn fixture_database(path: impl AsRef<std::path::Path>) -> rusqlite::Result<rusqlite::Connection> {
+    let db = rusqlite::Connection::open(path)?;
+    #[cfg(windows)]
+    db.pragma_update(None, "journal_mode", "PERSIST")?;
+    Ok(db)
+}
+
 struct Fixture {
     db: PathBuf,
     requests: Arc<AtomicUsize>,
@@ -26,7 +35,7 @@ impl Provider for Fixture {
     async fn complete(&self, request: ModelRequest) -> Result<ModelResponse, ProviderError> {
         assert_eq!(request.model, "fixture");
         let index = self.requests.fetch_add(1, Ordering::SeqCst);
-        let db = rusqlite::Connection::open(&self.db).unwrap();
+        let db = fixture_database(&self.db).unwrap();
         let saved: String = db
             .query_row("SELECT state FROM sessions", [], |r| r.get(0))
             .unwrap();
@@ -79,7 +88,7 @@ impl Provider for Fixture {
         if matches!(self.mode, "partial-failure" | "partial-storage-failure") {
             self.requests.fetch_add(1, Ordering::SeqCst);
             if self.mode == "partial-storage-failure" {
-                rusqlite::Connection::open(&self.db).unwrap().execute_batch("CREATE TRIGGER fail_output BEFORE UPDATE ON runs BEGIN SELECT RAISE(ABORT,'cannot persist output'); END;").unwrap();
+                fixture_database(&self.db).unwrap().execute_batch("CREATE TRIGGER fail_output BEFORE UPDATE ON runs BEGIN SELECT RAISE(ABORT,'cannot persist output'); END;").unwrap();
             }
             return Ok(Box::pin(futures_util::stream::iter(vec![
                 Ok(ProviderStreamEvent::Delta(ProviderDelta::Text(
@@ -121,7 +130,7 @@ impl Tool for Counter {
         _: serde_json::Value,
         context: &ToolContext,
     ) -> Result<String, ToolError> {
-        let db = rusqlite::Connection::open(&self.db).unwrap();
+        let db = fixture_database(&self.db).unwrap();
         let (record, state): (String, String) = db
             .query_row(
                 "SELECT record,state FROM runs JOIN sessions ON runs.session_id=sessions.id",
@@ -291,7 +300,7 @@ async fn storage_failure_before_or_after_effect_never_replays_or_accepts_success
         assert_eq!(owner.record().await.unwrap().state, RunState::Running);
         drop(owner);
         let mut journal = Journal::open(dir.path().join("attachment")).unwrap();
-        let db = rusqlite::Connection::open(dir.path().join("attachment/journal.sqlite3")).unwrap();
+        let db = fixture_database(dir.path().join("attachment/journal.sqlite3")).unwrap();
         db.execute_batch(
             "DROP TRIGGER IF EXISTS fail_checkpoint; DROP TRIGGER IF EXISTS fail_result;",
         )
@@ -398,7 +407,7 @@ async fn corrupt_storage_and_wrong_local_model_prevent_provider_dispatch() {
         let (dir, mut owner, agent, requests, effects, _) =
             setup("success", Arc::new(SilentSink)).await;
         if corrupt {
-            rusqlite::Connection::open(dir.path().join("attachment/journal.sqlite3"))
+            fixture_database(dir.path().join("attachment/journal.sqlite3"))
                 .unwrap()
                 .execute("UPDATE sessions SET state='corrupt'", [])
                 .unwrap();
@@ -524,7 +533,7 @@ async fn failed_steering_checkpoint_never_announces_durable_application() {
     let (dir, mut owner, agent, requests, effects, _) = setup("success", sink.clone()).await;
     let (sender, receiver) = crate::agent::steering_channel(2);
     sender.try_send("steering-sentinel".into()).unwrap();
-    rusqlite::Connection::open(dir.path().join("attachment/journal.sqlite3")).unwrap()
+    fixture_database(dir.path().join("attachment/journal.sqlite3")).unwrap()
         .execute_batch("CREATE TRIGGER fail_steering BEFORE UPDATE ON sessions WHEN NEW.state LIKE '%steering-sentinel%' BEGIN SELECT RAISE(ABORT,'injected steering failure'); END;").unwrap();
     assert!(matches!(
         owner
