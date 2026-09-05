@@ -3,6 +3,7 @@
 //! integration also checks explicit named-profile selection. Confirmation is not dispatch authority.
 mod ceiling;
 pub mod cli;
+pub mod defaults;
 pub mod selection;
 pub mod store;
 use crate::config::{AccessMode, UnattendedApprovalMode};

@@ -36,6 +36,8 @@ pub struct PolicyArgs {
 }
 #[derive(Debug, Subcommand)]
 pub enum PolicyCommand {
+    /// Persistent operator-private global/workspace preferences.
+    Defaults(super::defaults::cli::DefaultsArgs),
     /// List current profiles and deletion tombstones, with bounded pagination.
     List {
         #[arg(long)]
@@ -106,7 +108,10 @@ pub enum PolicyCommand {
 }
 impl PolicyArgs {
     pub fn needs_config(&self) -> bool {
-        matches!(self.command, PolicyCommand::Preview { .. })
+        matches!(
+            self.command,
+            PolicyCommand::Preview { .. } | PolicyCommand::Defaults(_)
+        )
     }
 }
 fn directory(flags: &SelectionArgs) -> Result<PathBuf> {
@@ -202,7 +207,7 @@ impl SelectionArgs {
         Ok(())
     }
 }
-fn print(value: &impl Serialize) -> Result<()> {
+pub(super) fn print(value: &impl Serialize) -> Result<()> {
     let mut out = std::io::stdout().lock();
     serde_json::to_writer_pretty(&mut out, value)?;
     writeln!(out)?;
@@ -238,11 +243,20 @@ pub fn run(
     config: Option<&Config>,
     workspace: Option<&Path>,
     explicit: Overrides,
+    config_path: Option<&Path>,
 ) -> Result<()> {
     ensure!(
         flags.policy_profile.is_none(),
         "policy administration cannot also select a launch profile"
     );
+    if let PolicyCommand::Defaults(args) = args.command {
+        return super::defaults::cli::run(
+            args,
+            config.context("configuration required")?,
+            workspace.context("workspace required")?,
+            config_path,
+        );
+    }
     let path = directory(flags)?;
     #[cfg(unix)]
     if flags.policy_directory.is_none() {
@@ -253,6 +267,7 @@ pub fn run(
     }
     let store = ProfileStore::open(&path)?;
     let (name, expected_revision, operation, action) = match args.command {
+        PolicyCommand::Defaults(_) => unreachable!(),
         PolicyCommand::List { after, limit } => {
             return print(&store.list(after.as_deref(), limit)?);
         }

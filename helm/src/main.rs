@@ -407,7 +407,14 @@ async fn main() -> Result<()> {
         let Some(Command::Policy(args)) = cli.command else {
             unreachable!()
         };
-        return helm::policy_profile::cli::run(args, &cli.policy, None, None, Default::default());
+        return helm::policy_profile::cli::run(
+            args,
+            &cli.policy,
+            None,
+            None,
+            Default::default(),
+            cli.config.as_deref(),
+        );
     }
     let filter = if cli.verbose {
         "helm=debug"
@@ -468,7 +475,20 @@ async fn main() -> Result<()> {
         }
         return Ok(());
     }
-    let mut config = Config::load(cli.config.as_deref())?;
+    let defaults_command = matches!(&cli.command,Some(Command::Policy(args)) if matches!(args.command,helm::policy_profile::cli::PolicyCommand::Defaults(_)));
+    let config_error = |error: anyhow::Error| {
+        if defaults_command {
+            anyhow::anyhow!("configuration input or override is invalid or unavailable")
+        } else {
+            error
+        }
+    };
+    let mut config = if defaults_command {
+        helm::policy_profile::defaults::cli::load_config(cli.config.as_deref())
+    } else {
+        Config::load(cli.config.as_deref())
+    }
+    .map_err(&config_error)?;
     let set_overrides_model = cli.set.iter().any(|assignment| {
         assignment
             .split_once('=')
@@ -477,8 +497,11 @@ async fn main() -> Result<()> {
     for assignment in &cli.set {
         let (key, value) = assignment
             .split_once('=')
-            .with_context(|| format!("invalid --set `{assignment}`; expected KEY=VALUE"))?;
-        config.apply_override(key.trim(), value.trim())?;
+            .with_context(|| format!("invalid --set `{assignment}`; expected KEY=VALUE"))
+            .map_err(&config_error)?;
+        config
+            .apply_override(key.trim(), value.trim())
+            .map_err(&config_error)?;
     }
     let provider_overridden = cli.provider.is_some();
     if let Some(provider) = cli.provider {
@@ -500,13 +523,15 @@ async fn main() -> Result<()> {
     if let Some(access) = cli.access {
         config.access = Some(access.into());
     }
-    let policy_explicit = if cli.policy.policy_profile.is_some()
+    let policy_explicit = if config.policy_defaults.is_some()
+        || cli.policy.policy_profile.is_some()
         || matches!(&cli.command, Some(Command::Policy(_)))
     {
         helm::policy_profile::cli::explicit(&config, &cli.set, explicit_access)?
     } else {
         Default::default()
     };
+    config.policy_explicit = policy_explicit.clone();
     if cli.policy.policy_profile.is_some() {
         let workspace = config.resolve_workspace(cli.workspace.clone())?;
         cli.policy
@@ -524,6 +549,7 @@ async fn main() -> Result<()> {
                 Some(&config),
                 Some(&workspace),
                 policy_explicit,
+                cli.config.as_deref(),
             )
         }
         Command::Completions { shell } => {
@@ -1553,7 +1579,7 @@ async fn launch_from_tui(
     log_format: LogFormat,
 ) -> Result<()> {
     anyhow::ensure!(
-        config.policy_profile.is_none(),
+        config.policy_profile.is_none() && config.policy_defaults.is_none(),
         "selected policy profile cannot cross a frontend relaunch; exit and explicitly reselect for the requested frontend"
     );
     let runtime_config = request

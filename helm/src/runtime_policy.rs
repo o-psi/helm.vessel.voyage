@@ -37,15 +37,23 @@ pub(crate) struct Snapshot {
     base: Rules,
     selection: Option<Selection>,
     pub(crate) ancestor_selection: Option<Selection>,
+    pub(crate) defaults: Option<crate::policy_profile::defaults::DefaultsGuard>,
+    pub(crate) ancestor_defaults: Option<crate::policy_profile::defaults::DefaultsGuard>,
     pub(crate) effective: EffectivePolicy,
 }
 impl Snapshot {
     pub(crate) fn check_current(&self) -> Result<()> {
+        if let Some(guard) = self.defaults.as_ref().or(self.ancestor_defaults.as_ref()) {
+            guard.check_current()?;
+        }
         if let Some(selection) = &self.ancestor_selection {
             selection.check_current()?;
         }
         let current = if let Some(selection) = &self.selection {
             selection.resolve(self.effective.workspace().path(), &self.base)?
+        } else if self.defaults.is_some() {
+            // The defaults guard above re-resolved its exact original Config and source.
+            self.effective.clone()
         } else {
             self.source
                 .resolve(self.effective.workspace().path(), &self.base, &[])?
@@ -88,6 +96,8 @@ impl RuntimePolicy {
         parent.limit_child_config(&mut config, workspace)?;
         // The child gets resolved parent maxima, never the parent's broader layer.
         config.policy_profile = None;
+        config.policy_defaults = None;
+        config.policy_explicit = Default::default();
         let mut resolved = Self::resolve_with_source(&config, workspace, source)?;
         resolved.policy.inherit_profile_freshness(parent);
         resolved.policy.check_current()?;
@@ -96,12 +106,17 @@ impl RuntimePolicy {
     fn resolve_with_source(config: &Config, workspace: &Path, source: Source) -> Result<Self> {
         let base = config_rules(config)?;
         let selection = config.policy_profile.clone();
-        let effective = if let Some(selection) = &selection {
-            selection.resolve(workspace, &base)?
+        let (effective, defaults) = if let Some(selection) = &selection {
+            (selection.resolve(workspace, &base)?, None)
+        } else if config.policy_defaults.is_some() {
+            let (effective, guard) =
+                crate::policy_profile::defaults::resolve_using(config, workspace, source.clone())?;
+            (effective, Some(guard))
         } else {
-            source.resolve(workspace, &base, &[])?
+            (source.resolve(workspace, &base, &[])?, None)
         };
         let mut config = config.clone();
+        config.policy_defaults = None;
         let rules = effective.rules();
         config.access = Some(rules.access);
         config.unattended_approval = rules.unattended.clone();
@@ -119,6 +134,8 @@ impl RuntimePolicy {
                 base,
                 selection,
                 ancestor_selection: None,
+                defaults,
+                ancestor_defaults: None,
                 effective,
             }),
         })
