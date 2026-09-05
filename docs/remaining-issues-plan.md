@@ -29,6 +29,10 @@ All sections below retain historical planning and verification checkpoints. Thei
 commit IDs, pending states and issue lists describe the time recorded, not current
 readiness. Consult current issue discussions for outstanding acceptance criteria.
 
+Subsequent [worktree cleanup](worktree-cleanup.md) integrates reviewed private policy
+defaults and transient workflow secret bindings. Their remaining issue criteria
+include TUI profile switching and plain-mode missing-input prompting.
+
 ## Historical active-work checkpoints
 
 - Main is at e74f9b5a: the full local completion/managed stack (#88), saved workflow CLI (#123), and runtime administrator ceiling (#124) are delivered with passing Linux baselines and CI. Issues #81 and #66 are closed after acceptance review.
