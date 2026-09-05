@@ -417,3 +417,61 @@ async fn capture_hard_ceiling_applies_even_when_context_allows_more() {
     assert!(output.contains(&format!("truncated at {MAX_CAPTURE} bytes")));
     cleaned(&shell).await;
 }
+
+#[tokio::test]
+async fn overflowing_execution_timeout_rejects_before_any_effect() {
+    let dir = tempfile::tempdir().unwrap();
+    let shell = ManagedShell::new();
+    let mut ctx = context(dir.path());
+    ctx.timeout = Duration::MAX;
+    let result = tokio::time::timeout(
+        Duration::from_secs(1),
+        shell.execute(json!({"command":"echo $$ > overflow-effect"}), &ctx),
+    )
+    .await
+    .expect("oversized duration must be rejected promptly");
+    // The old post-spawn panic could report a channel error before the child
+    // writes its marker. Wait for that bounded, immediately exiting fixture.
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let effect = std::fs::read_to_string(dir.path().join("overflow-effect")).ok();
+    if let Some(pid) = effect.as_deref().and_then(|s| s.trim().parse::<i32>().ok()) {
+        // Regression failure cleanup only: a panicked old worker discarded its
+        // std::Child. The marker identifies this fixture's own waitable child.
+        unsafe {
+            libc::waitpid(pid, std::ptr::null_mut(), 0);
+        }
+    }
+    assert!(result.is_err());
+    assert!(
+        effect.is_none(),
+        "invalid timeout spawned an effectful child"
+    );
+    cleaned(&shell).await;
+}
+#[tokio::test]
+async fn overflowing_shutdown_timeout_is_bounded_and_can_be_retried() {
+    let dir = tempfile::tempdir().unwrap();
+    let shell = ManagedShell::new();
+    let ctx = context(dir.path());
+    let copy = shell.clone();
+    let task = tokio::spawn(async move {
+        copy.execute(json!({"command":"echo $$ > ready; exec sleep 30"}), &ctx)
+            .await
+    });
+    let pid = ready(&dir.path().join("ready")).await[0];
+    let copy = shell.clone();
+    // A task boundary captures the old Instant overflow panic, allowing cleanup
+    // to run before asserting that the public operation must never panic.
+    let mut waiter = tokio::spawn(async move { copy.shutdown(Duration::MAX).await });
+    let result = tokio::time::timeout(Duration::from_secs(1), &mut waiter).await;
+    if result.is_err() {
+        waiter.abort();
+    }
+    cleaned(&shell).await;
+    assert!(matches!(task.await.unwrap(), Err(ToolError::Cancelled)));
+    assert!(!std::path::Path::new(&format!("/proc/{pid}")).exists());
+    let report = result
+        .expect("oversized shutdown must return promptly")
+        .expect("oversized shutdown duration must not panic");
+    assert!(report.observation_complete || !report.remaining.is_empty());
+}
