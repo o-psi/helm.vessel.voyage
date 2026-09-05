@@ -88,7 +88,7 @@ impl Tool for Questions {
         if context.cancellation.is_cancelled() {
             return Err(ToolError::Cancelled);
         }
-        let answer = if context.interaction == InteractionMode::Unattended {
+        let mut answer = if context.interaction == InteractionMode::Unattended {
             QuestionAnswer::Unavailable
         } else {
             tokio::select! {
@@ -100,6 +100,14 @@ impl Tool for Questions {
             }
         };
         answer.validate(&question)?;
+        // Match configured values before JSON escaping changes quotes/backslashes.
+        // Validate the original selected answer before replacing sensitive text.
+        match &mut answer {
+            QuestionAnswer::Selected { answer, .. } | QuestionAnswer::Custom { answer } => {
+                *answer = context.redactor.redact(std::mem::take(answer));
+            }
+            QuestionAnswer::Cancelled | QuestionAnswer::Unavailable => {}
+        }
         serde_json::to_string(&answer).map_err(|e| ToolError::Failed(e.to_string()))
     }
 }
@@ -507,5 +515,55 @@ mod tests {
             serde_json::from_str::<QuestionAnswer>(&result.content).unwrap(),
             expected
         );
+    }
+    #[tokio::test]
+    async fn questions_redaction_preserves_fixed_metadata_when_secret_matches_schema_words() {
+        let dir = tempfile::tempdir().unwrap();
+        for secret in [
+            "status",
+            "selected",
+            "answer",
+            "index",
+            "custom",
+            "cancelled",
+            "unavailable",
+        ] {
+            for answer in [
+                QuestionAnswer::Selected {
+                    index: 1,
+                    answer: secret.into(),
+                },
+                QuestionAnswer::Custom {
+                    answer: secret.into(),
+                },
+                QuestionAnswer::Cancelled,
+                QuestionAnswer::Unavailable,
+            ] {
+                let expected = match &answer {
+                    QuestionAnswer::Selected { .. } => QuestionAnswer::Selected {
+                        index: 1,
+                        answer: "[REDACTED]".into(),
+                    },
+                    QuestionAnswer::Custom { .. } => QuestionAnswer::Custom {
+                        answer: "[REDACTED]".into(),
+                    },
+                    other => other.clone(),
+                };
+                let (mut ctx, _) = context(dir.path(), answer, false);
+                ctx.redactor = Arc::new(Redactor::new([secret.to_owned()]));
+                let result = ToolRegistry::standard()
+                    .execute(
+                        "questions",
+                        json!({"question":"Which format?","options":["public",secret]}),
+                        &ctx,
+                    )
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    serde_json::from_str::<QuestionAnswer>(&result).unwrap(),
+                    expected
+                );
+            }
+        }
     }
 }
