@@ -85,6 +85,8 @@ jobs:
         env:
           HELM_BIN: target/release/helm
         run: python3 tests/system/local_provider.py
+      - name: Verify named profile lifecycle and explicit authority selection
+        run: python3 tests/system/policy_profiles.py
       - name: Enforce the Linux administrator ceiling
         run: python3 tests/system/policy_ceiling.py
       - name: Verify foreground outbound attachment presence with real binaries

@@ -81,7 +81,7 @@ class Provider(BaseHTTPRequestHandler):
 
 
 class Case:
-    def __init__(self, root, port, mode):
+    def __init__(self, root, port, mode, *, launch_args=(), access="read-only"):
         self.root, self.mode = root, mode
         self.repo = root / '.helm/workflows'
         self.repo.mkdir(parents=True)
@@ -95,13 +95,13 @@ class Case:
         if mode == 'secret':
             self.path.write_text(self.document.replace('required=true', 'required=true\nsecret=true'))
         config = root / 'config.toml'
-        config.write_text(f'provider="openai-chat"\nmodel="workflow-fixture"\nbase_url="http://127.0.0.1:{port}/v1"\napi_key_env="WORKFLOW_FIXTURE_KEY"\naccess="read-only"\nprovider_retry_attempts=1\n')
+        config.write_text(f'provider="openai-chat"\nmodel="workflow-fixture"\nbase_url="http://127.0.0.1:{port}/v1"\napi_key_env="WORKFLOW_FIXTURE_KEY"\naccess="{access}"\nprovider_retry_attempts=1\n')
         env = dict(os.environ, TERM='xterm-256color', HOME=str(root / 'home'), XDG_CONFIG_HOME=str(root / 'config'), XDG_DATA_HOME=str(root / 'data'), WORKFLOW_FIXTURE_KEY='synthetic-fixture-key')
         self.output = bytearray()
         self.reaped = False
         self.pid, self.master = pty.fork()
         if self.pid == 0:
-            os.execve(str(HELM), [str(HELM), '--config', str(config), '--workspace', str(root), 'chat'], env)
+            os.execve(str(HELM), [str(HELM), '--config', str(config), '--workspace', str(root), *launch_args, 'chat'], env)
         fcntl.ioctl(self.master, termios.TIOCSWINSZ, struct.pack('HHHH', 40, 140, 0, 0))
         self.expected = None
 
