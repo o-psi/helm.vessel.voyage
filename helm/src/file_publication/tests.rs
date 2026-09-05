@@ -101,7 +101,7 @@ mod linux {
         let temp = tempfile::tempdir().unwrap();
         let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
         let mut workers = Vec::new();
-        for byte in [b'a', b'b'] {
+        for byte in *b"ab" {
             let pending =
                 Publication::prepare(directory(temp.path()), Path::new("config")).unwrap();
             let barrier = barrier.clone();
