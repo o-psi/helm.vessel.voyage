@@ -267,3 +267,15 @@ fn filtered_global_sequences_cannot_silently_advance() {
     assert!(valid(&v));
     assert_eq!(seq.cursor(), cursor(1));
 }
+#[test]
+fn accepted_reply_rejects_unexpected_projection_fields() {
+    let mut v =
+        json!({"type":"result","connection_id":ID,"command_id":ID,"reply":{"type":"accepted"}});
+    let clean = Frame::decode(&serde_json::to_vec(&v).unwrap()).unwrap();
+    assert_eq!(
+        serde_json::from_str::<Value>(&clean.encode().unwrap()).unwrap(),
+        v
+    );
+    v["reply"]["unexpected_secret_field"] = json!("must not be accepted");
+    assert!(!valid(&v));
+}

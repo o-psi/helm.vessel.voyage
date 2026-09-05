@@ -90,7 +90,7 @@ pub enum Reply {
         run_id: Uuid,
         state: RunState,
     },
-    Accepted,
+    Accepted {},
     Denied {
         code: DenialCode,
     },
@@ -347,7 +347,7 @@ impl Reply {
                     }
                 }
             }
-            Self::Accepted | Self::Denied { .. } => (),
+            Self::Accepted {} | Self::Denied { .. } => (),
         }
         Ok(())
     }
