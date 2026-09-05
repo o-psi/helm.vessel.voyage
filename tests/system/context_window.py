@@ -2,6 +2,7 @@
 """Offline context preflight, tool followup and non-destructive resume regression."""
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -139,7 +140,9 @@ approval = "never"
         assert [m["role"] for m in saved_failure["messages"]] == ["user", "assistant", "tool"]
         assert saved_failure["messages"][1]["tool_calls"][0]["id"] == CALL_ID
         assert saved_failure["messages"][2]["tool_call_id"] == CALL_ID
-        assert saved_failure["messages"][2]["content"] == LARGE
+        expected_tool_result = f"sha256: {hashlib.sha256(LARGE.encode('utf-8')).hexdigest()}\n{LARGE}"
+        assert saved_failure["messages"][2]["content"] == expected_tool_result
+        assert saved_failure["messages"][2]["tool_success"] is True
         if provider == "openai-responses":
             assert "provider_state" in saved_failure["messages"][1]
         recovered = run("run", "--resume", saved_failure["id"], "Recover without repeating the tool.")
