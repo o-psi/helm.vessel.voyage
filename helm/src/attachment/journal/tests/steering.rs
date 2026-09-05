@@ -556,3 +556,66 @@ fn steering_revision_overflow_rolls_back_queue_and_replay_evidence() {
         i64::MAX as u64
     );
 }
+
+#[test]
+fn imported_historical_receipts_reserve_ids_without_rewriting_copied_history() {
+    let (dir, mut journal, session, request) = setup();
+    let mut imported = Session::new(dir.path().into(), "fixture".into());
+    let message = Message::steering("historical receipt".into());
+    let historical_id = message.steering.as_ref().unwrap().id;
+    imported.messages.push(message);
+    let provenance = import_provenance(&imported, &journal.directory);
+    journal.import_session(&imported, &provenance).unwrap();
+    let mut copied: Session =
+        serde_json::from_value(serde_json::to_value(&imported).unwrap()).unwrap();
+    copied.id = Uuid::new_v4();
+    journal.create_session(&copied).unwrap();
+    assert_eq!(
+        serde_json::to_value(journal.load_session(copied.id).unwrap().session.messages).unwrap(),
+        serde_json::to_value(&imported.messages).unwrap()
+    );
+    let guard = journal.acquire_execution(session.id).unwrap();
+    let mut request = request;
+    let command_id = request.command_id;
+    request.command_id = historical_id;
+    assert!(journal.admit_turn(&guard, &request, 1).is_err());
+    assert!(journal.lookup_command(&request).is_err());
+    request.command_id = command_id;
+    let run = journal.admit_turn(&guard, &request, 1).unwrap().run;
+    let mut guidance = pending(&journal, &run);
+    guidance.receipt_id = historical_id;
+    assert!(journal.queue_steering(&guard, &guidance, 1).is_err());
+    assert!(journal.steering_record(historical_id).is_err());
+    let mut forged = imported;
+    forged.id = Uuid::new_v4();
+    forged.messages[0].steering.as_mut().unwrap().id = request.command_id;
+    assert!(journal.create_session(&forged).is_err());
+    let provenance = import_provenance(&forged, &journal.directory);
+    assert!(journal.import_session(&forged, &provenance).is_err());
+    assert!(journal.load_session(forged.id).is_err());
+}
+
+#[test]
+fn oversized_encoded_receipt_is_rejected_before_parsing() {
+    let (_dir, mut journal, session, request) = setup();
+    let guard = journal.acquire_execution(session.id).unwrap();
+    let run = journal.admit_turn(&guard, &request, 1).unwrap().run;
+    let guidance = pending(&journal, &run);
+    let queued = journal.queue_steering(&guard, &guidance, 1).unwrap();
+    let padded = serde_json::to_string(&queued.record).unwrap()
+        + &" ".repeat(crate::agent::MAX_STEERING_BYTES * 6 + 4096);
+    journal
+        .connection
+        .execute(
+            "UPDATE steering SET record=?1 WHERE id=?2",
+            params![padded, guidance.receipt_id.to_string()],
+        )
+        .unwrap();
+    assert!(
+        journal
+            .steering_record(guidance.receipt_id)
+            .unwrap_err()
+            .to_string()
+            .contains("capacity")
+    );
+}
