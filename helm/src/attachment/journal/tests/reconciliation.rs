@@ -519,3 +519,152 @@ async fn reconciled_history_continues_through_three_native_http_provider_adapter
         }
     }
 }
+
+#[test]
+fn exact_call_count_and_id_size_limits_succeed_with_bounded_receipt() {
+    let (_dir, mut journal, session, _admission, guard, _run, request) = interrupted();
+    let mut current = journal.load_session(session.id).unwrap();
+    current.session.messages.last_mut().unwrap().tool_calls = (0..128)
+        .map(|index| ToolCall {
+            id: format!("{index:03}{}", "x".repeat(1021)),
+            name: "fixture".into(),
+            arguments: serde_json::json!({}),
+        })
+        .collect();
+    journal
+        .connection
+        .execute(
+            "UPDATE sessions SET state=?1 WHERE id=?2",
+            params![
+                serde_json::to_string(&current.session).unwrap(),
+                session.id.to_string()
+            ],
+        )
+        .unwrap();
+    let outcome = journal.reconcile_local_tools(&guard, &request).unwrap();
+    assert_eq!(outcome.tool_call_ids.len(), 128);
+    assert!(outcome.tool_call_ids.iter().all(|id| id.len() == 1024));
+    assert_eq!(
+        journal
+            .load_session(session.id)
+            .unwrap()
+            .session
+            .messages
+            .len(),
+        current.session.messages.len() + 128
+    );
+    let size: i64 = journal
+        .connection
+        .query_row(
+            "SELECT length(CAST(record AS BLOB)) FROM local_tool_reconciliations",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert!(size <= 256 * 1024);
+}
+
+#[test]
+fn malformed_or_oversized_existing_receipts_never_become_new_reconciliation() {
+    for variant in 0..4 {
+        let (_dir, mut journal, session, _admission, guard, _run, request) = interrupted();
+        journal.reconcile_local_tools(&guard, &request).unwrap();
+        let before =
+            serde_json::to_vec(&journal.load_session(session.id).unwrap().session).unwrap();
+        match variant {
+            0 => {
+                journal
+                    .connection
+                    .execute("UPDATE local_tool_reconciliations SET record='{}'", [])
+                    .unwrap();
+            }
+            1 => {
+                journal
+                    .connection
+                    .execute(
+                        "UPDATE local_tool_reconciliations SET record=?1",
+                        ["x".repeat(256 * 1024 + 1)],
+                    )
+                    .unwrap();
+            }
+            2 => {
+                journal.connection.execute("UPDATE local_tool_reconciliations SET record=json_set(record,'$.tool_call_ids',json('[\"call-1\",\"call-1\"]'))",[]).unwrap();
+            }
+            _ => {
+                journal.connection.execute("UPDATE local_tool_reconciliations SET record=json_set(record,'$.revision',0)",[]).unwrap();
+            }
+        }
+        assert!(journal.reconcile_local_tools(&guard, &request).is_err());
+        assert_eq!(
+            serde_json::to_vec(&journal.load_session(session.id).unwrap().session).unwrap(),
+            before
+        );
+    }
+}
+
+#[test]
+fn an_older_terminal_run_cannot_reconcile_calls_created_by_a_later_run() {
+    let (_dir, mut journal, session, mut admission, guard, _run, mut request) = interrupted();
+    // Resolve first run using an actual known result, without a reconciliation
+    // receipt, then create a later run whose unresolved call belongs only to it.
+    let mut current = journal.load_session(session.id).unwrap();
+    current.session.messages.push(Message::tool_result(
+        "call-1",
+        "actual failure result",
+        false,
+    ));
+    journal
+        .connection
+        .execute(
+            "UPDATE sessions SET state=?1 WHERE id=?2",
+            params![
+                serde_json::to_string(&current.session).unwrap(),
+                session.id.to_string()
+            ],
+        )
+        .unwrap();
+    admission.command_id = Uuid::new_v4();
+    admission.expected_revision = current.revision;
+    let later = journal.admit_turn(&guard, &admission, 1).unwrap().run;
+    journal.register_local_cleanup(&guard, later.id).unwrap();
+    journal.mark_running(&guard, later.id).unwrap();
+    let mut messages = journal.load_session(session.id).unwrap().session.messages;
+    let mut call = Message::new(Role::Assistant, "");
+    call.tool_calls.push(ToolCall {
+        id: "later-call".into(),
+        name: "shell".into(),
+        arguments: serde_json::json!({}),
+    });
+    messages.push(call);
+    journal
+        .checkpoint_canonical(&guard, later.id, &messages, &Usage::default())
+        .unwrap();
+    journal
+        .finish(
+            &guard,
+            later.id,
+            RunState::Cancelled,
+            Some("cancelled"),
+            None,
+        )
+        .unwrap();
+    journal
+        .confirm_local_cleanup_observed(&guard, later.id)
+        .unwrap();
+    request.expected_revision = journal.load_session(session.id).unwrap().revision;
+    assert!(
+        journal
+            .reconcile_local_tools(&guard, &request)
+            .unwrap_err()
+            .to_string()
+            .contains("latest run")
+    );
+    request.run_id = later.id;
+    assert_eq!(
+        journal
+            .reconcile_local_tools(&guard, &request)
+            .unwrap()
+            .tool_call_ids,
+        ["later-call"]
+    );
+}
