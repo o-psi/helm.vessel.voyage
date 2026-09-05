@@ -1,4 +1,5 @@
 //! Explicit enrollment administration, separate from provider login and execution.
+pub mod prompt;
 use super::client::{ClientError, EnrollmentClient, Inspection, Status, validate_origin};
 use clap::{Args, Subcommand};
 use std::{
@@ -27,14 +28,15 @@ pub enum AttachmentCommand {
     Enroll {
         #[arg(long)]
         invitation_id: Uuid,
-        /// Read the invitation key from a non-terminal stdin, never an argument.
-        #[arg(long, required = true)]
+        /// Read the invitation key from a pipe/file instead of the hidden terminal prompt.
+        #[arg(long)]
         invitation_key_stdin: bool,
     },
     /// Inspect local status without creating or changing enrollment.
     Status,
     /// Resume the original pending transaction (enrollment requires its invitation key).
     Resume {
+        /// Use a pipe/file instead of the hidden prompt for a pending enrollment.
         #[arg(long)]
         invitation_key_stdin: bool,
     },
@@ -50,7 +52,7 @@ pub enum CliError {
     #[error("invalid attachment arguments; use helm attachment --help")]
     Arguments,
     #[error(
-        "invitation key requires non-terminal stdin: exactly 43 base64url characters with optional newline"
+        "invitation key requires a terminal or explicit non-terminal stdin: exactly 43 base64url characters"
     )]
     Input,
     #[error("attachment input cancelled or timed out")]
@@ -127,6 +129,12 @@ fn print_status(info: Option<Inspection>, detached: bool) -> Result<(), CliError
     Ok(())
 }
 pub async fn run(args: AttachmentArgs) -> Result<(), CliError> {
+    run_with_prompt(args, prompt::PromptControl::default()).await
+}
+pub async fn run_with_prompt(
+    args: AttachmentArgs,
+    control: prompt::PromptControl,
+) -> Result<(), CliError> {
     let explicit_directory = args.directory.is_some();
     let directory = args
         .directory
@@ -150,9 +158,6 @@ pub async fn run(args: AttachmentArgs) -> Result<(), CliError> {
         invitation_key_stdin,
     } = args.command
     {
-        if !invitation_key_stdin {
-            return Err(CliError::Arguments);
-        }
         let origin = requested.ok_or(CliError::Arguments)?;
         if invitation_id.is_nil()
             || existing
@@ -161,7 +166,11 @@ pub async fn run(args: AttachmentArgs) -> Result<(), CliError> {
         {
             return Err(ClientError::Conflict.into());
         }
-        let secret = invitation().await?;
+        let secret = if invitation_key_stdin {
+            invitation().await?
+        } else {
+            prompt::read(control.clone()).await?
+        };
         if !explicit_directory {
             let parent = directory.parent().ok_or(CliError::Arguments)?;
             crate::session::reject_symlinks(parent).map_err(|_| ClientError::Storage)?;
@@ -188,11 +197,15 @@ pub async fn run(args: AttachmentArgs) -> Result<(), CliError> {
         AttachmentCommand::Resume {
             invitation_key_stdin,
         } => {
-            if (info.status == Status::Enrolling) != invitation_key_stdin {
+            if info.status != Status::Enrolling && invitation_key_stdin {
                 return Err(CliError::Arguments);
             }
-            let secret = if invitation_key_stdin {
-                Some(invitation().await?)
+            let secret = if info.status == Status::Enrolling {
+                Some(if invitation_key_stdin {
+                    invitation().await?
+                } else {
+                    prompt::read(control.clone()).await?
+                })
             } else {
                 None
             };
