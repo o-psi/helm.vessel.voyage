@@ -686,3 +686,53 @@ fn duplicate_receipt_rejects_revision_outside_sqlite_range() {
     assert!(journal.reconcile_local_tools(&guard, &request).is_err());
     assert_eq!(journal.load_session(session.id).unwrap().revision, revision);
 }
+
+#[test]
+fn concurrent_exact_requests_commit_one_append_and_one_receipt() {
+    let (_dir, mut journal, session, _admission, guard, _run, request) = interrupted();
+    let first = Journal::open(journal.directory.clone()).unwrap();
+    let second = Journal::open(journal.directory.clone()).unwrap();
+    let barrier = std::sync::Barrier::new(2);
+    let results = std::thread::scope(|scope| {
+        let run = |mut connection: Journal| {
+            barrier.wait();
+            connection.reconcile_local_tools(&guard, &request)
+        };
+        let first = scope.spawn(move || run(first));
+        let second = scope.spawn(move || run(second));
+        [first.join().unwrap(), second.join().unwrap()]
+    });
+    let mut newly_committed = 0;
+    for result in results {
+        match result {
+            Ok(result) => {
+                newly_committed += usize::from(!result.duplicate);
+                assert_eq!(result.revision, request.expected_revision + 1);
+            }
+            Err(error) => assert!(
+                matches!(error.downcast_ref::<rusqlite::Error>(),Some(rusqlite::Error::SqliteFailure(cause,_)) if cause.code==rusqlite::ErrorCode::DatabaseBusy)
+            ),
+        }
+    }
+    assert!(newly_committed <= 1);
+    let observed = journal.reconcile_local_tools(&guard, &request).unwrap();
+    assert_eq!(newly_committed + usize::from(!observed.duplicate), 1);
+    assert_eq!(
+        journal
+            .connection
+            .query_row("SELECT count(*) FROM local_tool_reconciliations", [], |r| r
+                .get::<_, i64>(0))
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        journal.load_session(session.id).unwrap().revision,
+        request.expected_revision + 1
+    );
+    assert!(
+        journal
+            .reconcile_local_tools(&guard, &request)
+            .unwrap()
+            .duplicate
+    );
+}
