@@ -50,5 +50,6 @@ pulldown-cmark = "0.13"
 syntect = { version = "5.3", default-features = false, features = ["default-syntaxes", "default-themes", "regex-fancy"] }
 
 [dev-dependencies]
+axum.workspace = true
 vessel = { path = "../vessel" }
 tokio = { version = "1.47", features = ["test-util"] }
