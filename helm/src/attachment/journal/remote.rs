@@ -9,7 +9,7 @@ use voyage_protocol::{
 pub(super) const SCHEMA: &str = "CREATE TABLE remote_session(slot INTEGER PRIMARY KEY CHECK(slot=1),session_id TEXT NOT NULL UNIQUE REFERENCES sessions(id),binding TEXT NOT NULL,next_sequence INTEGER NOT NULL DEFAULT 1 CHECK(next_sequence>0));
 CREATE TABLE remote_receipts(id TEXT PRIMARY KEY,digest BLOB NOT NULL,result TEXT NOT NULL);
 CREATE TABLE remote_events(sequence INTEGER PRIMARY KEY,event TEXT NOT NULL);
-CREATE TABLE remote_tools(run_id TEXT NOT NULL REFERENCES runs(id),native_id TEXT NOT NULL,logical_id TEXT NOT NULL UNIQUE,finished INTEGER NOT NULL DEFAULT 0 CHECK(finished IN (0,1)),PRIMARY KEY(run_id,native_id));";
+CREATE TABLE remote_tools(run_id TEXT NOT NULL REFERENCES runs(id),native_id TEXT NOT NULL,logical_id TEXT PRIMARY KEY,finished INTEGER NOT NULL DEFAULT 0 CHECK(finished IN (0,1))); CREATE UNIQUE INDEX remote_active_tool ON remote_tools(run_id,native_id) WHERE finished=0;";
 const MAX_EVENTS: i64 = 1024;
 const MAX_PUBLIC_BYTES: usize = 8 * 1024 * 1024;
 
@@ -262,13 +262,13 @@ pub(super) fn canonical(tx: &Transaction<'_>, run: &RunRecord, new: &[Message]) 
                 .as_ref()
                 .context("missing tool identity")?;
             let (id, finished): (String, bool) = tx.query_row(
-                "SELECT logical_id,finished FROM remote_tools WHERE run_id=?1 AND native_id=?2",
+                "SELECT logical_id,finished FROM remote_tools WHERE run_id=?1 AND native_id=?2 AND finished=0",
                 params![run.id.to_string(), native],
                 |r| Ok((r.get(0)?, r.get(1)?)),
             )?;
             ensure!(!finished, "duplicate public tool result");
             tx.execute(
-                "UPDATE remote_tools SET finished=1 WHERE run_id=?1 AND native_id=?2",
+                "UPDATE remote_tools SET finished=1 WHERE run_id=?1 AND native_id=?2 AND finished=0",
                 params![run.id.to_string(), native],
             )?;
             publish(
@@ -397,7 +397,19 @@ impl Journal {
         &mut self,
         expected: &RemoteBinding,
         command: &Command,
-        now: i64,
+    ) -> Result<RemoteCancelReceipt> {
+        self.remote_cancel_with_clock(expected, command, || {
+            Ok(std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_millis()
+                .try_into()?)
+        })
+    }
+    pub(crate) fn remote_cancel_with_clock(
+        &mut self,
+        expected: &RemoteBinding,
+        command: &Command,
+        clock: impl FnOnce() -> Result<i64>,
     ) -> Result<RemoteCancelReceipt> {
         ensure!(self.opened_schema >= 7, "remote schema unavailable");
         command.validate_structure().map_err(anyhow::Error::msg)?;
@@ -451,6 +463,7 @@ impl Journal {
             |r| r.get(0),
         )?;
         ensure!(!collision, "remote receipt collision");
+        let now = clock()?;
         command.validate(now).map_err(anyhow::Error::msg)?;
         let count: i64 = tx.query_row("SELECT count(*) FROM remote_receipts", [], |r| r.get(0))?;
         ensure!(count < MAX_COMMANDS, "remote receipt capacity reached");

@@ -160,7 +160,7 @@ fn remote_cancel_receipt_is_atomic_exact_and_never_retargets_after_reconnect() {
     };
     assert!(
         !journal
-            .remote_cancel(&binding, &cancel, 2)
+            .remote_cancel_with_clock(&binding, &cancel, || Ok(2))
             .unwrap()
             .duplicate
     );
@@ -168,13 +168,78 @@ fn remote_cancel_receipt_is_atomic_exact_and_never_retargets_after_reconnect() {
     cancel.connection_id = Uuid::new_v4();
     assert!(
         journal
-            .remote_cancel(&binding, &cancel, 70000)
+            .remote_cancel_with_clock(&binding, &cancel, || Ok(70000))
             .unwrap()
             .duplicate
     );
     cancel.expires_at_ms += 1;
-    assert!(journal.remote_cancel(&binding, &cancel, 2).is_err());
+    assert!(
+        journal
+            .remote_cancel_with_clock(&binding, &cancel, || Ok(2))
+            .is_err()
+    );
     cancel.command_id = request.command_id;
-    assert!(journal.remote_cancel(&binding, &cancel, 2).is_err());
+    assert!(
+        journal
+            .remote_cancel_with_clock(&binding, &cancel, || Ok(2))
+            .is_err()
+    );
     assert!(journal.mark_running(&guard, run.id).is_err());
+}
+
+#[test]
+fn reused_resolved_native_call_ids_receive_distinct_public_invocation_ids() {
+    let (_dir, mut journal, session, binding) = fixture();
+    journal.create_remote_session(&session, &binding).unwrap();
+    let guard = journal.acquire_execution(session.id).unwrap();
+    let request = TurnAdmission {
+        command_id: Uuid::new_v4(),
+        machine_id: binding.machine_id,
+        principal_id: binding.owner_id,
+        session_id: session.id,
+        expected_revision: 0,
+        expires_at_ms: 60000,
+        prompt: "task".into(),
+    };
+    let run = journal.admit_turn(&guard, &request, 1).unwrap().run;
+    journal.mark_running(&guard, run.id).unwrap();
+    let mut messages = journal.load_session(session.id).unwrap().session.messages;
+    for index in 0..2 {
+        let mut message = Message::new(Role::Assistant, "");
+        message.tool_calls.push(crate::model::ToolCall {
+            id: "call_1".into(),
+            name: "read_file".into(),
+            arguments: serde_json::json!({"path":"private"}),
+        });
+        messages.push(message);
+        journal
+            .checkpoint_canonical(&guard, run.id, &messages, &Usage::default())
+            .unwrap();
+        messages.push(Message::tool("call_1", format!("result {index}")));
+        journal
+            .checkpoint_canonical(&guard, run.id, &messages, &Usage::default())
+            .unwrap();
+    }
+    let RemoteReplay::Events { events, .. } =
+        journal.remote_replay(&binding, session.id, 0, 100).unwrap()
+    else {
+        panic!("missing replay")
+    };
+    let started: Vec<_> = events
+        .iter()
+        .filter_map(|event| match event.event {
+            RunEvent::ToolStarted { tool_call_id, .. } => Some(tool_call_id),
+            _ => None,
+        })
+        .collect();
+    let finished: Vec<_> = events
+        .iter()
+        .filter_map(|event| match event.event {
+            RunEvent::ToolFinished { tool_call_id, .. } => Some(tool_call_id),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(started.len(), 2);
+    assert_ne!(started[0], started[1]);
+    assert_eq!(started, finished);
 }
