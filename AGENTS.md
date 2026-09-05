@@ -20,6 +20,19 @@ build, happy-path demo, or closed issue alone does not prove readiness. Keep gap
 and unverified acceptance criteria explicit, and do not silently defer required
 behavior to a later version to declare the first version complete.
 
+## Product model
+
+The accepted [voyage model](docs/voyages.md) is an open-ended session across an
+explicitly user-scoped set of Helms. Helm is the interface for local and remote
+work through Vessel. Interface, coordinating and participant Helms are distinct
+roles that may overlap; the coordinator need not be on the open workstation.
+Do not require a project/repository/component map or bind every task permanently
+to one Helm. Each executing Helm retains local authority and provider credentials.
+Multi-Helm orchestration, coordinator handoff and the unified operator interface
+remain planned; current dedicated remote-worker APIs do not establish delivery.
+Browser console work is deferred. Consult the canonical model and current code
+before documenting or implementing the supporting lifecycle.
+
 ## Mandatory issue-first workflow
 
 1. **Consult all GitHub issues, open and closed, before starting substantive work.**
@@ -68,8 +81,8 @@ Voyage is a Rust 2024 workspace with four members:
 
 - `helm/`: terminal UI and provider-neutral agent runtime; local tools, policy,
   approvals, sessions, terminals, todos, subagents, and outbound Vessel worker.
-- `vessel/`: management plane; pairing, fleet/liveness, durable task scheduling,
-  operator access, and task history. Its server implementation is in
+- `vessel/`: management plane; enrollment, outbound presence, operator access,
+  and opt-in dedicated remote-session routing and public event replay. Its server implementation is in
   `vessel/src/main.rs`.
 - `crates/voyage-protocol/`: shared, versioned wire types. Contract changes require
   inspection and compatibility tests on both Helm and Vessel.

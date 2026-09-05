@@ -4,6 +4,12 @@ Helm is a Rust LLM harness for general work through a terminal. It is intentiona
 not coding-specific: the runtime can inspect and transform files, run commands,
 administer scoped systems, and maintain a durable working conversation.
 
+Helm is also the intended operator interface for local and remote work through
+Vessel. In the planned [voyage model](../docs/voyages.md), the interface, coordinating
+agent and executing participants can be on different Helms. A voyage scopes the
+permitted machines without requiring a repository or fixing all work to one host.
+The unified interface and cross-Helm coordination remain planned.
+
 ## Capabilities
 
 - Provider-neutral agent loop with native incremental OpenAI-compatible and Anthropic streaming
@@ -201,7 +207,9 @@ Plain and `NO_COLOR` output streams sanitized assistant text token by token for 
 does not repeat it at completion. Styled line-oriented output buffers one response so Markdown can
 be rendered coherently, then writes it once.
 
-Remote session management through Vessel is planned. See the
+Dedicated remote execution is available through `helm remote-worker` and the
+[Vessel HTTP lifecycle](../docs/remote-sessions.md). Managing voyages and remote
+Helms from this TUI remains planned; see the
 [session management design](../docs/vessel-session-management.md).
 
 Helm does not impose a model-turn count limit: work continues until completion, cancellation,
@@ -231,8 +239,9 @@ The active workspace is the default read/write boundary. Add other roots explici
 privileged. `always` asks for every shell command and write. `never` suppresses asks,
 but the command deny list and filesystem roots remain enforced.
 
-Vessel cannot currently dispatch work to this Helm build. Future attachment must
-remain outbound and enforce local policy. Unattended approval-required actions are
+Vessel can dispatch to an explicitly enabled dedicated remote worker. Enrollment
+and presence alone grant no execution or private-session access. Connections remain
+outbound, and each executing Helm enforces its local policy. Unattended approval-required actions are
 denied by default rather than blocking on an invisible prompt. See the [security and
 operations guide](../docs/security-operations.md) for the retained unattended policy,
 environment isolation, redaction, structured logs, and diagnostics.

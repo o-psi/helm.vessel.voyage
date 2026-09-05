@@ -1,34 +1,41 @@
-# Voyage 0.1 delivery map
+# Voyage delivery map
 
-Voyage 0.1 is a complete local-first system, not an MVP milestone. Work is divided
-into streams with explicit ownership so they can progress in separate Git worktrees.
+Voyage is developing its first release. The intended product is the
+[open-ended voyage](voyages.md): Helm as the interface for local and remote work,
+with explicitly scoped machines and coordination that can run on another Helm.
+The complete agreed workflow and its verification define delivery.
 
-| Stream | Branch | Issues | Primary ownership |
-| --- | --- | --- | --- |
-| Helm UI | `work/helm-ui` | #1–#4 | Ratatui frontend, streaming UX, sessions and artifacts |
-| Helm runtime | `work/helm-runtime` | #5–#7, #20 | Agent reliability, PTYs, tools, MCP and patch editing |
-| Helm connectivity | `work/helm-serve` | #8–#10 | Pairing, outbound task protocol, identity and enrollment |
-| Vessel | `work/vessel` | #11–#14 | Persistence, scheduler, leases and operations UI |
-| Security and operations | `work/security-observability` | #15–#16, #21 | Isolation, approvals, audit, metrics and diagnostics |
-| Quality and release | `work/quality-release` | #17–#19, #22 | Tests, evals, readiness gates, dogfood, packaging and deployment |
+## Current foundations
 
-## Integration rules
+Local Helm chat/tools, private managed sessions, local subagent supervision and
+run-owned completion accounting are available. Enrollment and outbound presence
+are available. The dedicated remote worker provides one new foreground managed
+session through authenticated Vessel HTTP operations. These foundations do not
+yet provide the unified Helm management interface or multi-Helm orchestration.
 
-- Shared wire changes originate in `work/helm-serve` and include compatibility tests.
-- Security requirements are treated as acceptance criteria in every stream; the
-  security stream owns common enforcement and adversarial coverage.
-- Quality gates land early and expand alongside each feature, rather than being a
-  final stabilization phase.
-- Each issue receives focused commits and is integrated through a Forgejo pull request.
-- `main` must remain formatted, Clippy-clean, and green under workspace tests.
+## Remaining connected work
 
-## Completion definition
+| Area | Tracking | Outcome |
+| --- | --- | --- |
+| Voyage integration | [#77](https://github.com/o-psi/voyage/issues/77) | Scoped ongoing session across Helms; complete user workflow |
+| Helm operator interface | [#14](https://github.com/o-psi/voyage/issues/14) | Local/remote viewing, targeting, scope and steering; browser console deferred |
+| Runtime coordination | [#78](https://github.com/o-psi/voyage/issues/78) | Separate interface/coordinator/participant lifecycle and full managed sessions |
+| Transport and identity | [#9](https://github.com/o-psi/voyage/issues/9), [#10](https://github.com/o-psi/voyage/issues/10) | Versioned routing, enrollment and current scoped authority |
+| Privacy and decisions | [#79](https://github.com/o-psi/voyage/issues/79), [#21](https://github.com/o-psi/voyage/issues/21), [#72](https://github.com/o-psi/voyage/issues/72) | Explicit context sharing, scoped approvals and Vessel notifications |
+| Operations | [#18](https://github.com/o-psi/voyage/issues/18) | Explicit service lifecycle, setup and recovery evidence |
+| Readiness | [#82](https://github.com/o-psi/voyage/issues/82), [#83](https://github.com/o-psi/voyage/issues/83), [#22](https://github.com/o-psi/voyage/issues/22), [#19](https://github.com/o-psi/voyage/issues/19) | Completion correctness, representative workloads and measured dogfood |
 
-The milestone is complete only when Helm provides its full-screen terminal experience,
-remote execution has a versioned authenticated lifecycle, Vessel survives restart and
-manages queued work, policy is defense-in-depth, operators can diagnose the system,
-and supported platforms receive reproducible, documented release artifacts.
+Other capabilities retain their own open issue acceptance criteria. Consult the
+complete [GitHub issue inventory](https://github.com/o-psi/voyage/issues?q=is%3Aissue)
+and [delivery history](remaining-issues-plan.md); historical branch names and closed
+foundation issues are not current assignments or proof of readiness.
 
-Issue #19 is the explicit incumbent-harness replacement gate. Completing individual
-features is insufficient until #22 demonstrates the representative workload suite and
-dogfood period without critical fallbacks.
+Shared protocol changes require both Helm and Vessel compatibility tests. Scope,
+context and handoff contracts precede their dependent UI/runtime implementation.
+Security, recovery and verification belong to every delivery, not a final cleanup
+phase. Use focused branches and GitHub PRs; keep incomplete required work explicit.
+
+Linux quality, real component fixtures, packaging and recorded behavioral/deployment
+checks remain required as applicable. Other-platform results must be observed
+separately. [Cutover](cutover.md) requires representative workload and dogfood
+evidence; individual merges and successful builds do not close that gate.

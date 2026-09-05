@@ -5,7 +5,8 @@ Voyage is a system for general-purpose LLM work across local and remote machines
 Voyage is in development toward its first release, with a focus on complete,
 reliable workflows that deliver tested value.
 
-- **Helm** is the Rust TUI and agent runtime for local work.
+- **Helm** is the Rust TUI and agent runtime. It is the intended operator interface
+  for local and remote work through Vessel; the unified remote interface is planned.
 - **Vessel** is the management plane for remote session management. It currently
   provides health checks, an authenticated status UI, outbound Helm presence, and
   explicitly enabled dedicated remote-session HTTP operations.
@@ -32,7 +33,7 @@ exact retries, cancellation, and explicit recovery without enabling remote shari
 Helm's native providers do not require Codex; see [provider architecture](docs/providers.md) for transport choices and subscription-versus-API
 billing boundaries.
 
-For self-hosted source control and issue management, see [the local Forgejo guide](docs/local-git.md).
+For GitHub collaboration and this workspace’s Git wrapper, see [the Git guide](docs/local-git.md).
 The first-version work breakdown is tracked in [the delivery map](docs/roadmap.md).
 
 See the [evaluation suite](eval/README.md) for representative task checks and the
@@ -55,9 +56,16 @@ Assistant responses use safe, streaming-aware Markdown presentation without chan
 session text. See [Markdown rendering](docs/markdown-rendering.md) for syntax, fallback, and terminal
 safety behavior.
 
-## Broader Vessel session management
+## Voyages across Helms
 
-The agreed [Vessel-managed session design](docs/vessel-session-management.md) specifies
-`helm attach VESSEL_URL JOIN_KEY`, outbound interactive control, explicit sharing,
-and phased service/approval support. Those broader capabilities remain planned; the current foreground command is
-`helm remote-worker`, scoped to one new dedicated session. Delivery is tracked in [#77](https://github.com/o-psi/voyage/issues/77).
+The agreed [voyage model](docs/voyages.md) is an open-ended session across a
+user-scoped set of Helms. The interface Helm and coordinating Helm are separate
+roles: coordination can run remotely while the user connects from a workstation.
+Work can move among permitted participants without a required repository, component
+map or permanent assignment to one machine.
+
+The [session management design](docs/vessel-session-management.md) describes the
+supporting lifecycle, authority and sharing boundaries. Multi-Helm coordination,
+coordinator handoff and the Helm management interface remain planned. Current
+`helm remote-worker` provides one dedicated foreground session with HTTP operations.
+Delivery is tracked in [#77](https://github.com/o-psi/voyage/issues/77).

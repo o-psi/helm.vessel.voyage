@@ -12,7 +12,7 @@ the README, and a SHA-256 checksum. Linux builds can be reproduced locally with:
 
 ```sh
 cargo build --workspace --release --locked
-./scripts/package-release v0.1.0
+./scripts/package-release UNIQUE_VERSION
 (cd dist && sha256sum -c *.sha256)
 ```
 
@@ -22,11 +22,13 @@ archive install. After tagging, compare artifact checksums, smoke-test both bina
 from each archive, attach evaluation/cutover evidence, and publish known limitations.
 
 The workflow uploads build artifacts but intentionally does not auto-publish or sign
-a release. Add repository-specific signing and Forgejo release credentials only after
+a release. Add repository-specific signing and GitHub release credentials only after
 the project establishes its key custody and release-approval policy.
 
-## Connectivity transition release note
+## Product capability claims
 
-This build intentionally removes legacy pairing/task-worker connectivity before
-`helm attach` is implemented. Include [retirement and data-preservation guidance](vessel-connectivity-retirement.md)
-in the release notes; do not advertise remote readiness from successful local tests.
+Release documentation must describe the actual [remote-session surface](remote-sessions.md)
+and the remaining [voyage design](voyages.md) separately. A working dedicated
+worker does not prove the Helm operator interface, multi-Helm coordination, service
+lifecycle or coordinator handoff. Report actual checks and unresolved acceptance
+criteria; do not advertise remote dogfood readiness from local tests alone.
