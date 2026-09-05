@@ -4,10 +4,12 @@ Refs [#9](https://github.com/o-psi/voyage/issues/9) and
 [#78](https://github.com/o-psi/voyage/issues/78) under the
 [full production contract](attachment-production-contract.md).
 
-**These are library foundations, not a working `helm attach` system.** No new network
-endpoint, invitation command, service or remote execution path is enabled. The
-full requested scope remains unfinished; these tests do not establish production
-readiness or safe remote access to existing local sessions.
+These libraries underpin [private managed sessions](local-managed-sessions.md),
+[foreground presence](attachment-presence.md) and [dedicated remote sessions](remote-sessions.md).
+The details below describe their individual boundaries, not a claim that all full
+session-lifecycle operations are exposed. The planned [voyage coordinator and Helm
+interface](voyages.md) remain separate work; existing local sessions are not
+implicitly exposed.
 
 ## Command domain
 
@@ -22,18 +24,18 @@ Names/model labels are bounded and reject control/bidi-format characters; prompt
 are bounded separately. Canonical JSON must fit the frame budget even after string
 escaping. Admission identity omits renewable connection IDs but retains authority,
 payload and expiry. A transport must authenticate those claimed identities; parsing
-JSON does not authenticate anyone. The compiled frame codec below carries these commands; sequenced event envelopes,
-negotiation and adapters remain unfinished. Expired duplicate-outcome lookup must
-be integrated separately from new-command deadline validation.
+JSON does not authenticate anyone. The compiled frame codec carries these commands;
+negotiated observations and adapters are described in the linked guides. Expired
+duplicate-outcome lookup is distinct from new-command deadline validation.
 
 ## Compiled stream codec (partial #9)
 
 `voyage_protocol::stream` is now an exported, compiled module. Its public-consumer
 fixtures exercise authenticate/welcome, command/result and heartbeat/lease frames.
-This is a wire codec, not an authenticated connection or a working transport.
-No websocket route, Helm listener, remote command handler or provider dispatch is
-added. Typed event subscriptions, replay/snapshot delivery, capability negotiation,
-backpressure, lease enforcement and two-component network tests remain required.
+The codec itself does not authenticate connections or dispatch effects. The
+[transport adapter](attachment-transport.md) supplies the outbound socket,
+negotiation and leases; the dedicated worker exposes only its documented command
+subset. Typed vocabulary alone does not establish a full lifecycle implementation.
 
 Both `Frame::decode` and `Frame::encode` reject invalid nested structures and
 oversized canonical JSON. Decoding first limits incoming bytes to 256 KiB. Commands
@@ -42,7 +44,7 @@ accepts only a structurally valid version-2 Connect proof: nonnil IDs, bounded e
 positive expiry, bounded origin, 32-byte server tag, 64-byte signature, no rotation
 signature and at most 16 KiB of canonical proof JSON. These checks do not verify the
 signature, origin, challenge consumption, current epoch or expiry against a clock.
-The eventual adapter must perform those checks against trusted enrollment state.
+The enrollment/transport adapter performs those checks against trusted enrollment state.
 
 Result projections have typed run states, conversation roles and fixed denial codes;
 raw provider/storage error messages and system-message roles are not representable.
@@ -62,11 +64,10 @@ An absent record must still pass `Command::validate(now_ms)` before new admissio
 reconnect nor structural decoding rewrites the deadline or admission identity.
 Existing journal deduplication/admission behavior is unchanged.
 
-This publishes previously uncompiled source, not a compatibility promise for an
-existing deployed stream. Version 1 and unknown fields remain rejected. The v2
+Version 1 and unknown fields remain rejected. The v2
 wire names for valid existing shapes are preserved; arbitrary state/role/error
-strings are intentionally rejected. There is no storage migration or credential
-reuse. Generated API documentation is available with
+strings are intentionally rejected. The codec does not transfer storage or grant
+credentials. Generated API documentation is available with
 `cargo doc -p voyage-protocol --no-deps`.
 
 Run `cargo test -p voyage-protocol --all-features` for public frame roundtrips,
@@ -118,30 +119,36 @@ The [in-memory sharing authority](attachment-sharing.md) owns current policies a
 intersects installation delegation, authenticated principal capabilities and consent.
 Copied snapshots cannot authorize operations; per-session updates use a revision CAS,
 and branch checks/insertion share one registry lock. These are local library checks,
-not durable sharing or a transport authorization fence. All production adapters,
-sharing persistence, dispatch-time rechecks and confirmation/audit integration remain
-required before remote exposure.
+not durable sharing or a transport authorization fence. The dedicated remote worker
+uses a separate fixed single-session binding and explicit foreground grant; it does
+not activate this general sharing registry. General sharing adapters, dispatch-time
+rechecks and confirmation/audit integration remain required.
 
 ## Integration requirements still open
 
-- All local CLI/TUI and remote writers must use one coordinator. Local CLI/TUI now
+- All writers for the same execution session must share its local execution owner.
+  This is not a single-machine restriction on a voyage. Local CLI/TUI now
   retain [JSON session execution ownership](session-ownership.md), including
   checkpoint/steering writers and in-process session changes. Those sidecars do not
   consult this journal or atomically commit command identity with canonical history;
-  a single-authority coordinator migration remains required.
-- Canonical tool-call/result checkpoints, usage accounting, cancellation intent,
-  live runtime ownership and cleanup must integrate with the agent loop. Text-only
-  journal fixtures are not proof of complete provider/tool durability.
+  unified frontend admission remains required. Managed CLI and the dedicated remote
+  worker already use the journal owner for their separate managed sessions.
+- Managed runtime checkpoints, usage, cancellation and cleanup are integrated for
+  the documented managed execution paths. Their exact boundaries and outstanding
+  cleanup/recovery limits are in [managed sessions](local-managed-sessions.md).
+  Library fixtures alone do not establish complete frontend integration.
 - Full session lifecycle mutations, privacy-safe projections, sharing/principal
   checks, credential epochs and authorization leases must guard every operation.
-- Enrollment, key lifecycle, authenticated WebSocket transport, Vessel UI,
-  services, opt-in remote approvals and secure notifications/handoff remain pending.
+- Enrollment/key lifecycle and authenticated WebSocket transport are available.
+  The Helm interface for remote work, multi-Helm voyage coordination, services,
+  opt-in remote approvals and secure notifications/handoff remain pending.
 - Synchronous SQLite work must run off async reactor threads in the coordinator.
   Trusted local storage and cooperating processes are assumed; network filesystems
   and hostile processes with the same OS identity are not isolated by this API.
-- Windows ACL verification, platform-specific durability, macOS/Windows tests,
-  actual deployment/backup/revocation drills and reviewed provider evidence remain
-  production gates. Unix permission tests cannot substitute for those checks.
+- Native private storage has a Windows implementation; guarantees require its
+  native evidence. Routine CI is Linux-only, so platform-specific durability,
+  deployment/backup/revocation drills and reviewed provider evidence must be
+  distinguished from Linux fixture results.
 
 ## Tests
 
@@ -184,9 +191,9 @@ authenticate a connection, execute work or expose a raw snapshot.
 
 The [authenticated socket libraries](attachment-transport.md) add an outbound
 Helm connection and a separately constructed Vessel attachment router. Production
-routing supports [heartbeat-only presence](attachment-presence.md). Operator
-execution and session disclosure remain unwired pending authoritative local dispatch
-and current sharing integration; transport observations never grant effect authority.
+routing supports [heartbeat-only presence](attachment-presence.md) and opt-in
+[dedicated remote execution](remote-sessions.md). General sharing and voyage
+coordination remain unfinished; transport observations never grant effect authority.
 
 The [enrollment lifecycle CLI](attachment-cli.md) exposes explicit enroll, status,
 resume, rotate, revoke and offline detach commands. It reuses durable client

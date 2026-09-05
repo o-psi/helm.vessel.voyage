@@ -3,7 +3,9 @@
 Tracking [#78](https://github.com/o-psi/voyage/issues/78). This closes a local JSON
 writer race; it does not expose attachment or satisfy atomic remote command
 admission. The [attachment production contract](attachment-production-contract.md)
-and journal migration requirements still apply.
+and explicit journal-transfer requirements still apply. Local execution ownership
+is distinct from the planned [voyage coordinator](voyages.md): this lock neither
+selects a coordinator nor binds a voyage to the Helm providing its interface.
 
 A saved or resumed CLI/TUI session now has one execution owner, held with the
 existing permanent `.<session-id>.lock` sidecar in the canonical session store.
@@ -39,7 +41,8 @@ No session JSON format changes. Existing sessions, canonical provider continuati
 steering receipts, summaries and original text remain local and readable. A lock or
 CAS failure never authorizes provider/tool retries. Run-long JSON ownership cannot
 atomically commit a remote command digest, prompt, event sequence and run state;
-those require the future single-authority journal/coordinator migration. Legacy
+managed sessions already use their separate journal owner for that boundary.
+Unified JSON/frontend admission remains unfinished. Older
 clients that do not honor these locks are not fenced by application policy.
 
 ## Verification

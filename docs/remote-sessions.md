@@ -2,7 +2,14 @@
 
 A foreground Helm worker can expose one newly created managed session to its enrolled Vessel owner. The operator can list that session, inspect its current state, submit a turn against an explicit revision, poll progress, and request cancellation. Tools, providers, credentials, policy and cleanup stay on Helm. Helm opens the outbound connection; it needs no inbound task port.
 
-This is an explicit single-owner mode. Ordinary `helm attachment connect` remains presence-only. Existing private sessions are not selected, imported or shared. There is no remote creation, model change, filesystem-root change, approval delegation, local recovery capability, or transcript-history API in this release. Consent metadata is not an execution grant.
+This is an explicit single-owner mode. Ordinary `helm attachment connect` remains presence-only. Existing private sessions are not selected, imported or shared. The remote API provides no creation, model change, filesystem-root change, approval delegation, recovery, or transcript-history operation. Local crash recovery is documented below. Consent metadata is not an execution grant.
+
+The planned [voyage model](voyages.md) allows an explicitly scoped set of Helms,
+with separate operator-interface, coordinating and executing roles. This dedicated
+worker is a current execution path, not that distributed coordinator or the planned
+Helm interface for remote work. A worker's fixed workspace/model binding does not
+require future voyages to be tied to a repository or component. Browser console
+work is deferred.
 
 ## Start the foreground worker
 
@@ -44,7 +51,7 @@ Replace UUID placeholders with actual identifiers. A list returns only the dedic
 
 Preserve the original command ID, deadline and operation when retrying an uncertain submit or cancel. A changed request under the same ID is rejected. An identical submit observes its original run, even after a later run or an expired original deadline; it cannot allocate another executor. A successful receipt observation does not mean that run completed. Cancellation acknowledgment means the intent was recorded, not that effects stopped. Inspect the exact run outcome and cleanup evidence.
 
-Progress uses a separate contiguous public cursor, not filtered private journal sequence numbers. Replay pages are bounded to 128 events and a frame budget; the retained suffix has count and byte limits. Receivers replace cumulative usage and deduplicate by cursor. A `snapshot_required` response means inspect the current snapshot and continue from its latest cursor. Browser disconnection does not cancel work. Vessel keeps no transcript cache; polling requests bounded replay directly from Helm.
+Progress uses a separate contiguous public cursor, not filtered private journal sequence numbers. Replay pages are bounded to 128 events and a frame budget; the retained suffix has count and byte limits. Receivers replace cumulative usage and deduplicate by cursor. A `snapshot_required` response means inspect the current snapshot and continue from its latest cursor. Disconnecting an HTTP observer does not cancel work; loss of the worker's Vessel connection does, as described above. Vessel keeps no transcript cache; polling requests bounded replay directly from Helm.
 
 Text is provisional until the durable terminal outcome. `completed`, `incomplete`, `cancelled`, `failed` and `interrupted` describe execution; cleanup is independently `pending`, `unconfirmed`, `observed` or `operator_attested`. Only `observed` confirms the coordinator's owned-resource observation. Cleanup events may follow a terminal event under the explicitly negotiated managed-execution feature. No terminal-looking agent event is promoted to durable success before the journal's terminal transaction.
 
@@ -93,4 +100,5 @@ Fresh dedicated journals use schema 7. Existing local schema 6 remains supported
 
 Tracking: [#9](https://github.com/o-psi/voyage/issues/9), [#77](https://github.com/o-psi/voyage/issues/77), [#78](https://github.com/o-psi/voyage/issues/78), [#79](https://github.com/o-psi/voyage/issues/79). These broader issues remain open for their excluded session lifecycle, approval, sharing and product surfaces.
 
-`tests/system/remote_session.py` runs real Helm and Vessel binaries against isolated native OpenAI Chat, Responses and Anthropic HTTP fixtures. It checks file effects, pre-effect durable cleanup registration, exact retries, restart observation, cancellation, split-secret/Unicode replay, forced-death recovery and local attestation, revocation, selected-profile denial/freshness, failed-publication rollback, private-scope denial, and nonzero worker exit after unconfirmed cleanup both during Ctrl-C and ordinary task completion. Journal/runtime tests cover transactional projection rollback, schema compatibility, receipt fencing, tool invocation identities and local recovery attribution. Offline fixtures do not establish live provider or deployment compatibility; final Linux baseline evidence is reported with the PR. No paid/live provider calls or native-platform jobs are required for this slice.
+`tests/system/remote_session.py` runs real Helm and Vessel binaries against isolated native OpenAI Chat, Responses and Anthropic HTTP fixtures. It checks file effects, pre-effect durable cleanup registration, exact retries, restart observation, cancellation, split-secret/Unicode replay, forced-death recovery and local attestation, revocation, selected-profile denial/freshness, failed-publication rollback, private-scope denial, and nonzero worker exit after unconfirmed cleanup both during Ctrl-C and ordinary task completion. Journal/runtime tests cover transactional projection rollback, schema compatibility, receipt fencing, tool invocation identities and local recovery attribution. Offline fixtures do not establish live provider or deployment compatibility; final Linux baseline evidence is reported with the PR. These fixtures use no paid/live provider calls. Routine quality gates are Linux-only;
+native-platform behavior requires separate evidence.
