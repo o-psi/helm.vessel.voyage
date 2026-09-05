@@ -86,10 +86,7 @@ impl Policy {
             .inherit_env
             .retain(|name| self.snapshot.effective.rules().inherit_env.contains(name));
         if let Some(allowed) = self.snapshot.effective.environment_ceiling() {
-            config.env.retain(|name, _| allowed.contains(name));
-            for server in config.mcp_servers.values_mut() {
-                server.env.retain(|name, _| allowed.contains(name));
-            }
+            crate::runtime_policy::restrict_environment(config, allowed);
         }
         Ok(())
     }
@@ -127,20 +124,30 @@ impl Policy {
         Ok(resolved)
     }
 
+    /// Deny-list check for exact argv of internal operations. This does not grant
+    /// access or replace the operation's separate mode/approval checks.
+    pub fn check_command_denials(&self, arguments: &[&str]) -> Result<()> {
+        for argument in arguments {
+            if let Some(name) = Path::new(argument)
+                .file_name()
+                .and_then(|name| name.to_str())
+                && self.deny_commands.iter().any(|denied| denied == name)
+            {
+                bail!("command `{name}` is denied by policy");
+            }
+        }
+        Ok(())
+    }
+
     pub fn command(&self, command: &str) -> Decision {
         let parsed = shell_words::split(command).unwrap_or_default();
         if parsed.is_empty() {
             return Decision::Deny("command could not be parsed safely".into());
         }
-        let denied = parsed.iter().find_map(|word| {
-            let executable = Path::new(word).file_name()?.to_str()?;
-            self.deny_commands
-                .iter()
-                .any(|denied| denied == executable)
-                .then_some(executable)
-        });
-        if let Some(executable) = denied {
-            return Decision::Deny(format!("command `{executable}` is denied by policy"));
+        if let Err(error) =
+            self.check_command_denials(&parsed.iter().map(String::as_str).collect::<Vec<_>>())
+        {
+            return Decision::Deny(error.to_string());
         }
         let risky = looks_risky(command, &parsed);
         match (self.mode, risky) {

@@ -349,19 +349,27 @@ fn normalize_roots(mut roots: Vec<PathBuf>) -> Vec<PathBuf> {
 }
 fn prepare(r: &Rules, workspace: &Path) -> Result<EffectiveRules> {
     r.validate()?;
-    prepare_trusted_config(r, workspace)
+    prepare_roots(r, workspace, false)
 }
 // Existing operator Config has its own validation contract; imported documents stay strict.
 fn prepare_trusted_config(r: &Rules, workspace: &Path) -> Result<EffectiveRules> {
+    prepare_roots(r, workspace, true)
+}
+fn prepare_roots(r: &Rules, workspace: &Path, allow_exact_file: bool) -> Result<EffectiveRules> {
     let roots = |values: &[String]| -> Result<Vec<PathBuf>> {
         values
             .iter()
             .map(|p| {
-                directory(if p == "$workspace" {
+                let path = if p == "$workspace" {
                     workspace
                 } else {
                     Path::new(p)
-                })
+                };
+                if allow_exact_file {
+                    path.canonicalize().map_err(|_| Error::Root)
+                } else {
+                    directory(path)
+                }
             })
             .collect::<Result<Vec<_>>>()
             .map(normalize_roots)

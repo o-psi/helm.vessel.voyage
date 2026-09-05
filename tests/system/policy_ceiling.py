@@ -28,11 +28,21 @@ def inside() -> None:
     Path('/etc/helm').mkdir(parents=True)
     ceiling = Path('/etc/helm/policy-ceiling.toml')
     requests: list[dict] = []
+    model_requests: list[str] = []
     scenario = ['plain']
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *_args):
             pass
+
+        def do_GET(self):
+            model_requests.append(self.path)
+            data = json.dumps({'data': [{'id': 'fixture'}]}).encode()
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Content-Length', str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
 
         def do_POST(self):
             body = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
@@ -165,7 +175,7 @@ for line in sys.stdin:
     assert 'restart or rebuild' in result.stderr, result.stderr
     session_files = list(Path('/work/data').rglob('sessions/*.json'))
     assert session_files, 'completed first turn must remain durable'
-    saved = json.loads(session_files[-1].read_text())
+    saved = next(value for path in session_files if 'first accepted' in json.dumps(value := json.loads(path.read_text())))
     assert 'second must not be sent' not in json.dumps(saved)
     scenario[0] = 'plain'
     ceiling.write_text('malformed =')
@@ -190,7 +200,22 @@ for line in sys.stdin:
         assert result.returncode != 0 and not requests, (invalid, result.stdout, result.stderr)
         assert not (work / 'mcp-started').exists()
         assert 'do-not-export-canary' not in result.stderr
+        model_requests.clear()
+        result = run('models', '--json')
+        assert result.returncode != 0 and not requests and not model_requests, (invalid, result.stdout, result.stderr)
+        result = run('chat', '--plain', input='/models\n/exit\n')
+        assert not requests and not model_requests and 'model discovery failed' in result.stderr, (invalid, result.stdout, result.stderr)
         if invalid == 'hardlink': Path('/work/hardlinked-ceiling').unlink()
+    # The compatibility bridge cannot spawn through model discovery under denial.
+    sentinel = work / 'codex-sentinel'
+    sentinel.write_text('#!/bin/sh\ntouch /work/bridge-started\nexit 99\n')
+    sentinel.chmod(0o700)
+    config.write_text(base.replace('provider = "openai-responses"', 'provider = "codex-compatibility"\ncodex_command = "/work/codex-sentinel"'))
+    ceiling.write_text('malformed =')
+    for arguments, input_text in [(('models', '--json'), None), (('chat', '--plain'), '/models\n/exit\n')]:
+        result = run(*arguments, input=input_text)
+        assert not (work / 'bridge-started').exists(), result.stderr
+        assert 'policy' in result.stderr, result.stderr
     server.shutdown()
     print('policy ceiling fixed-path CLI: passed')
 

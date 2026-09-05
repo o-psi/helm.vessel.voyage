@@ -57,3 +57,16 @@ durable canonical history. Namespace creation may be prohibited on some Linux
 runners; those report an explicit skip rather than passing this system evidence.
 The ordinary deterministic runtime and loader tests still run. No host `/etc`
 state is modified and no external provider is contacted.
+
+Every internal managed-worktree Git subprocess checks the captured current policy
+and its actual argument deny entries. This includes inspection, commit/add,
+integration/merge, removal and failure cleanup. The denial-only internal check
+is not an access grant: mutation still follows the existing operation approval and
+access-mode flow. It also does not classify harmless internal Git inspection as
+arbitrary shell execution in read-only mode. A newly denied cleanup can leave the
+worktree for explicit operator handling; denial does not imply rollback.
+
+Standalone, plain-chat and TUI model discovery also checks current policy before
+provider construction or refresh, including the optional compatibility subprocess.
+Configured values removed from child environments retain their original redaction
+coverage in the runtime-only clone, without entering rule provenance.

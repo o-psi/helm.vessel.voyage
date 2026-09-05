@@ -121,9 +121,7 @@ impl Tool for SubagentTool {
                 worktree,
             } => {
                 let lease = if worktree {
-                    let manager = self.worktrees.as_ref().ok_or_else(|| {
-                        ToolError::Failed("workspace is not a supported Git repository".into())
-                    })?;
+                    let manager = self.manager(context)?;
                     let worktree_name = format!("{}-{}", name, Uuid::new_v4().simple());
                     let destination = manager.planned_path(&worktree_name).map_err(failed)?;
                     context
@@ -156,7 +154,10 @@ impl Tool for SubagentTool {
                     Ok(id) => id,
                     Err(error) => {
                         if let (Some(manager), Some(lease)) = (&self.worktrees, &lease) {
-                            let _ = manager.remove(lease);
+                            let _ = manager
+                                .clone()
+                                .with_policy(context.policy.clone())
+                                .remove(lease);
                         }
                         return Err(failed(error));
                     }
@@ -225,12 +226,12 @@ impl Tool for SubagentTool {
                 json!({"id":follow_up_id,"queued":true})
             }
             Args::WorktreeStatus { id } => {
-                let manager = self.manager()?;
+                let manager = self.manager(context)?;
                 let lease = self.lease(AgentId(id)).await?;
                 json!({"id":id,"path":lease.path,"branch":lease.branch,"clean":manager.is_clean(&lease).map_err(failed)?})
             }
             Args::WorktreeConflicts { id, other_id } => {
-                let manager = self.manager()?;
+                let manager = self.manager(context)?;
                 let left = self.lease(AgentId(id)).await?;
                 let right = self.lease(AgentId(other_id)).await?;
                 let report = manager.conflicts(&left, &right).map_err(failed)?;
@@ -243,7 +244,7 @@ impl Tool for SubagentTool {
                     .worktree_record(AgentId(id))
                     .await
                     .map_err(failed)?;
-                let manager = self.manager()?;
+                let manager = self.manager(context)?;
                 let lease = self.lease(AgentId(id)).await?;
                 let plan = manager.plan_integration(&lease, &target).map_err(failed)?;
                 manager.integrate(&lease, &target).map_err(failed)?;
@@ -256,7 +257,7 @@ impl Tool for SubagentTool {
                     .worktree_record(AgentId(id))
                     .await
                     .map_err(failed)?;
-                let manager = self.manager()?;
+                let manager = self.manager(context)?;
                 let lease = self.lease(AgentId(id)).await?;
                 let commit = manager.commit(&lease, &message).map_err(failed)?;
                 json!({"id":id,"branch":lease.branch,"commit":commit})
@@ -268,7 +269,7 @@ impl Tool for SubagentTool {
                     .worktree_record(AgentId(id))
                     .await
                     .map_err(failed)?;
-                let manager = self.manager()?;
+                let manager = self.manager(context)?;
                 let lease = self.lease(AgentId(id)).await?;
                 manager.remove(&lease).map_err(failed)?;
                 self.runtime
@@ -282,9 +283,10 @@ impl Tool for SubagentTool {
     }
 }
 impl SubagentTool {
-    fn manager(&self) -> Result<&WorktreeManager, ToolError> {
+    fn manager(&self, context: &ToolContext) -> Result<WorktreeManager, ToolError> {
         self.worktrees
             .as_ref()
+            .map(|manager| manager.clone().with_policy(context.policy.clone()))
             .ok_or_else(|| ToolError::Failed("workspace is not a supported Git repository".into()))
     }
 

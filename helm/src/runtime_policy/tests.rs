@@ -236,6 +236,10 @@ async fn changed_ceiling_stops_reused_agent_before_provider_or_run_events() {
         .await;
     assert!(matches!(second, Err(AgentError::Policy(_))));
     assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert!(matches!(
+        agent.models(true).await,
+        Err(AgentError::Policy(_))
+    ));
 }
 
 #[test]
@@ -259,4 +263,57 @@ fn actual_child_entrypoint_rechecks_parent_and_fresh_source() {
         make_child().is_err(),
         "parent must rebuild after changed ceiling"
     );
+}
+
+#[test]
+fn excluded_environment_values_keep_original_redaction_coverage() {
+    let (root, config) = fixture();
+    write_ceiling(&root, AccessMode::ReadOnly);
+    let runtime = resolve(&root, &config).unwrap();
+    let redact = crate::tools::Redactor::new(runtime.config().redact_values.clone());
+    assert_eq!(redact.redact("secret-canary"), "[REDACTED]");
+    assert!(
+        !redact
+            .redact("server-secret-canary")
+            .contains("secret-canary")
+    );
+    assert!(config.redact_values.is_empty());
+    assert!(!format!("{:?}", runtime.policy()).contains("secret-canary"));
+}
+
+#[test]
+fn existing_config_exact_file_root_preserves_access_without_sibling_grant() {
+    let (root, mut config) = fixture();
+    let allowed = root.path().join("one-file");
+    let sibling = root.path().join("sibling");
+    std::fs::write(&allowed, "allowed").unwrap();
+    std::fs::write(&sibling, "denied").unwrap();
+    config.allow_read = vec![allowed.clone()];
+    config.allow_write = vec![allowed.clone()];
+    let runtime = resolve(&root, &config).unwrap();
+    assert!(runtime.policy().resolve_read(&allowed).is_ok());
+    assert!(runtime.policy().resolve_write(&allowed).is_ok());
+    assert!(runtime.policy().resolve_read(&sibling).is_err());
+    assert!(runtime.policy().resolve_write(&sibling).is_err());
+}
+
+#[test]
+fn managed_git_inspection_rechecks_current_ceiling_before_spawning() {
+    let (root, config) = fixture();
+    write_ceiling(&root, AccessMode::ReadOnly);
+    let runtime = resolve(&root, &config).unwrap();
+    let workspace = root.path().join("workspace");
+    std::fs::create_dir(workspace.join(".git")).unwrap();
+    let manager =
+        crate::subagent::WorktreeManager::new(workspace.clone(), workspace.join("worktrees"))
+            .unwrap()
+            .with_policy(std::sync::Arc::new(runtime.policy().clone()));
+    write_ceiling(&root, AccessMode::Unrestricted);
+    let error = manager
+        .is_clean(&crate::subagent::WorktreeLease {
+            path: workspace,
+            branch: "child".into(),
+        })
+        .unwrap_err();
+    assert!(error.to_string().contains("restart or rebuild"), "{error}");
 }

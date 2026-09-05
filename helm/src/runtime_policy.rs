@@ -85,10 +85,7 @@ impl RuntimePolicy {
         config.deny_commands = rules.deny_commands.clone();
         config.inherit_env = rules.inherit_env.clone();
         if let Some(allowed) = effective.environment_ceiling() {
-            config.env.retain(|name, _| allowed.contains(name));
-            for server in config.mcp_servers.values_mut() {
-                server.env.retain(|name, _| allowed.contains(name));
-            }
+            restrict_environment(&mut config, allowed);
         }
         Ok(Self {
             config,
@@ -124,6 +121,26 @@ fn root_names(roots: &[PathBuf]) -> Result<Vec<String>> {
                 .to_owned())
         })
         .collect()
+}
+// Removed subprocess grants remain secrets even though they are no longer exported.
+pub(crate) fn restrict_environment(config: &mut Config, allowed: &[String]) {
+    let mut removed = Vec::new();
+    let mut retain = |name: &String, value: &mut String| {
+        let keep = allowed.contains(name);
+        if !keep {
+            removed.push(value.clone());
+        }
+        keep
+    };
+    config.env.retain(&mut retain);
+    for server in config.mcp_servers.values_mut() {
+        server.env.retain(&mut retain);
+    }
+    for value in removed {
+        if !config.redact_values.contains(&value) {
+            config.redact_values.push(value);
+        }
+    }
 }
 pub(crate) fn restrictive_unattended(
     value: &mut UnattendedApprovalMode,

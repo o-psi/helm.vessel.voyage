@@ -405,6 +405,10 @@ impl Agent {
 
     pub async fn models(&self, refresh: bool) -> Result<Vec<ModelInfo>, AgentError> {
         let mut cache = self.model_cache.lock().await;
+        self.context
+            .policy
+            .check_current()
+            .map_err(|error| AgentError::Policy(error.to_string()))?;
         if !refresh
             && let Some((created, models)) = cache.as_ref()
             && created.elapsed() < Duration::from_secs(300)

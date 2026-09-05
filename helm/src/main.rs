@@ -555,6 +555,8 @@ fn print_config(config: &Config) -> Result<()> {
 
 async fn list_models(config: &Config, workspace: Option<PathBuf>, json: bool) -> Result<()> {
     let workspace = config.resolve_workspace(workspace)?;
+    let resolved = helm::runtime_policy::RuntimePolicy::resolve(config, &workspace)?;
+    let config = resolved.config();
     let provider = provider::from_config(config, workspace)?;
     let mut models = tokio::time::timeout(config.timeout(), provider.models())
         .await
@@ -1494,7 +1496,13 @@ async fn chat(
         if prompt == "/models" {
             let mut active_config = config.clone();
             active_config.model = session.model.clone();
-            match provider::from_config(&active_config, session.workspace.clone()) {
+            let resolved =
+                helm::runtime_policy::RuntimePolicy::resolve(&active_config, &session.workspace);
+            let provider = resolved.and_then(|resolved| {
+                provider::from_config(resolved.config(), session.workspace.clone())
+                    .map_err(anyhow::Error::from)
+            });
+            match provider {
                 Ok(provider) => {
                     match tokio::time::timeout(active_config.timeout(), provider.models()).await {
                         Ok(Ok(mut models)) => {
