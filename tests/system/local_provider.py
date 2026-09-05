@@ -191,8 +191,9 @@ def main():
             assert scanner is not None,'no free fixed candidate for scanner fixture'
             threading.Thread(target=scanner.serve_forever,daemon=True).start()
             before=len(Handler.requests)
-            prior={name:env.get(name) for name in ['HTTP_PROXY','http_proxy']}
+            prior={name:env.get(name) for name in ['HTTP_PROXY','http_proxy','NO_PROXY','no_proxy']}
             env['HTTP_PROXY']=env['http_proxy']=base
+            env['NO_PROXY']=env['no_proxy']=''
             try:
                 records=json.loads(run('local-provider','scan').stdout)
                 assert len(records)==4
