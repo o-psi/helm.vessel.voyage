@@ -53,6 +53,16 @@ impl WorktreeManager {
         self.policy = Some(policy);
         self
     }
+    fn check_scope(&self, path: &Path, write: bool) -> Result<()> {
+        if let Some(policy) = &self.policy {
+            policy.check_current()?;
+            policy.resolve_read(path)?;
+            if write {
+                policy.resolve_write(path)?;
+            }
+        }
+        Ok(())
+    }
     /// Use the already ceiling-filtered runtime environment for every Git subprocess.
     pub fn with_environment(
         mut self,
@@ -89,6 +99,7 @@ impl WorktreeManager {
         validate(start_point)?;
         if let Some(policy) = &self.policy {
             policy.check_current()?;
+            policy.check_delegated_workspace(&path)?;
             let command = self.create_command(name, start_point)?;
             let arguments = shell_words::split(&command)?;
             policy
@@ -117,6 +128,7 @@ impl WorktreeManager {
         Ok(WorktreeLease { path, branch })
     }
     pub fn is_clean(&self, lease: &WorktreeLease) -> Result<bool> {
+        self.check_scope(&lease.path, false)?;
         let output = git_output_env(
             self.environment.as_ref(),
             self.policy.as_deref(),
@@ -127,6 +139,7 @@ impl WorktreeManager {
     }
     /// Commit all changes owned by one managed worktree without invoking a shell.
     pub fn commit(&self, lease: &WorktreeLease, message: &str) -> Result<String> {
+        self.check_scope(&lease.path, true)?;
         anyhow::ensure!(
             lease.path.starts_with(&self.root),
             "refusing worktree outside managed root"
@@ -164,6 +177,7 @@ impl WorktreeManager {
         .to_owned())
     }
     pub fn remove(&self, lease: &WorktreeLease) -> Result<()> {
+        self.check_scope(&lease.path, true)?;
         anyhow::ensure!(
             lease.path.starts_with(&self.root),
             "refusing worktree outside managed root"
@@ -185,6 +199,8 @@ impl WorktreeManager {
     }
     /// Detect files changed by both isolated branches since their merge base.
     pub fn conflicts(&self, left: &WorktreeLease, right: &WorktreeLease) -> Result<ConflictReport> {
+        self.check_scope(&left.path, false)?;
+        self.check_scope(&right.path, false)?;
         let base = git_output_env(
             self.environment.as_ref(),
             self.policy.as_deref(),
@@ -211,6 +227,7 @@ impl WorktreeManager {
         })
     }
     pub fn plan_integration(&self, lease: &WorktreeLease, target: &str) -> Result<IntegrationPlan> {
+        self.check_scope(&lease.path, false)?;
         validate(target)?;
         let base = git_output_env(
             self.environment.as_ref(),
@@ -244,6 +261,8 @@ impl WorktreeManager {
         })
     }
     pub fn integrate(&self, lease: &WorktreeLease, target: &str) -> Result<()> {
+        self.check_scope(&lease.path, false)?;
+        self.check_scope(&self.repository, true)?;
         anyhow::ensure!(
             self.is_clean(lease)?,
             "refusing to integrate dirty agent worktree"
@@ -319,6 +338,10 @@ fn git_env<const N: usize>(
     cwd: &Path,
     args: [&str; N],
 ) -> Result<()> {
+    if let Some(policy) = policy {
+        policy.check_current()?;
+        policy.resolve_write(cwd)?;
+    }
     let output = git_command(environment, policy, cwd, args)?.output()?;
     if !output.status.success() {
         bail!("git failed: {}", String::from_utf8_lossy(&output.stderr))
@@ -346,6 +369,7 @@ fn git_command<const N: usize>(
 ) -> Result<Command> {
     if let Some(policy) = policy {
         policy.check_current()?;
+        policy.resolve_read(cwd)?;
         let arguments = std::iter::once("git").chain(args).collect::<Vec<_>>();
         policy.check_command_denials(&arguments)?;
     }

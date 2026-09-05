@@ -76,3 +76,10 @@ Standalone, plain-chat and TUI model discovery also checks current policy before
 provider construction or refresh, including the optional compatibility subprocess.
 Configured values removed from child environments retain their original redaction
 coverage in the runtime-only clone, without entering rule provenance.
+
+Git working directories and recorded lease paths are also revalidated against the
+current read/write roots. A rebuilt runtime does not gain access to an old external
+worktree merely by loading its ID or following an old symlink. Explicit read access
+permits inspection without granting removal. Denied cleanup preserves the lease
+record and durable evidence. Startup-archived records retain their existing
+immutable-evidence refusal independently of these root checks.

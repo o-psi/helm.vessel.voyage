@@ -498,6 +498,300 @@ mod tests {
             assert!(runtime.list().await.is_empty());
         }
     }
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn restarted_archived_lease_denies_status_and_preserves_cleanup_evidence() {
+        use std::{
+            collections::{BTreeMap, BTreeSet},
+            os::unix::fs::PermissionsExt,
+            time::Duration,
+        };
+        for redirected in [false, true] {
+            let root = tempfile::tempdir().unwrap();
+            let workspace = root.path().join("workspace");
+            let external = root.path().join("external");
+            std::fs::create_dir(&workspace).unwrap();
+            std::fs::create_dir(&external).unwrap();
+            std::fs::create_dir(workspace.join(".git")).unwrap();
+            let lease_path = if redirected {
+                let path = workspace.join("old-link");
+                std::os::unix::fs::symlink(&external, &path).unwrap();
+                path
+            } else {
+                external.clone()
+            };
+            let gate = Arc::new(tokio::sync::Notify::new());
+            let executor = Arc::new(GatedExecutor(gate.clone()));
+            let store = super::super::AgentTreeStore::new(root.path().join("tree.json"));
+            let runtime = Arc::new(
+                SubagentRuntime::new_persistent(
+                    executor.clone(),
+                    super::super::RuntimeLimits::default(),
+                    store.clone(),
+                )
+                .await
+                .unwrap(),
+            );
+            let budget = AgentBudget {
+                max_tokens: 100,
+                max_terminals: 1,
+            };
+            let policy = AgentPolicy {
+                readable_roots: vec![root.path().into()],
+                writable_roots: vec![root.path().into()],
+                allowed_tools: BTreeSet::new(),
+                approval: super::super::ApprovalPolicy::Deny,
+                budget: budget.clone(),
+            };
+            let id = runtime
+                .spawn(SpawnRequest {
+                    parent_id: None,
+                    name: "old".into(),
+                    task: "old task".into(),
+                    policy: policy.clone(),
+                    budget: budget.clone(),
+                    worktree: Some(lease_path.clone()),
+                    branch: Some("agents/old".into()),
+                })
+                .await
+                .unwrap();
+            gate.notify_one();
+            tokio::time::timeout(Duration::from_secs(5), runtime.wait(id))
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap();
+            drop(runtime);
+            let runtime = Arc::new(
+                SubagentRuntime::new_persistent(
+                    executor,
+                    super::super::RuntimeLimits::default(),
+                    store.clone(),
+                )
+                .await
+                .unwrap(),
+            );
+            assert_eq!(
+                runtime.get(id).await.unwrap().status,
+                super::super::AgentStatus::Completed
+            );
+            let before = std::fs::read(root.path().join("tree.json")).unwrap();
+            let config = crate::Config {
+                access: Some(crate::config::AccessMode::Unrestricted),
+                ..crate::Config::default()
+            };
+            let context = ToolContext {
+                policy: Arc::new(crate::policy::Policy::new(&config, workspace.clone()).unwrap()),
+                approver: Arc::new(crate::tools::UnattendedApprover { allow: true }),
+                timeout: Duration::from_secs(2),
+                max_output_bytes: 1024,
+                environment: BTreeMap::new(),
+                cancellation: tokio_util::sync::CancellationToken::new(),
+                execution_id: Uuid::new_v4(),
+                interaction: crate::tools::InteractionMode::Unattended,
+                redactor: Arc::new(crate::tools::Redactor::default()),
+            };
+            let bin = root.path().join("bin");
+            std::fs::create_dir(&bin).unwrap();
+            let marker = root.path().join("git-started");
+            let git = bin.join("git");
+            std::fs::write(
+                &git,
+                format!(
+                    "#!/bin/sh\nprintf started > '{}'\nexit 0\n",
+                    marker.display()
+                ),
+            )
+            .unwrap();
+            std::fs::set_permissions(&git, std::fs::Permissions::from_mode(0o700)).unwrap();
+            let manager = WorktreeManager::new(workspace, root.path().into())
+                .unwrap()
+                .with_environment(BTreeMap::from([(
+                    "PATH".into(),
+                    bin.to_str().unwrap().into(),
+                )]));
+            let tool =
+                SubagentTool::new(runtime.clone(), policy, budget).with_worktrees(Some(manager));
+            for action in ["worktree_status", "cleanup"] {
+                let error = tool
+                    .execute(json!({"action":action,"id":id}), &context)
+                    .await
+                    .unwrap_err();
+                if action == "worktree_status" {
+                    assert!(
+                        error.to_string().contains("outside allowed roots"),
+                        "{redirected}/{action}: {error}"
+                    );
+                } else {
+                    // Restart archived this terminal record. Its earlier immutable-evidence
+                    // guard must still refuse mutation rather than pretending cleanup ran.
+                    assert!(error.to_string().contains("unknown subagent"), "{error}");
+                }
+                assert!(!marker.exists(), "denied old lease must never start Git");
+                assert_eq!(
+                    runtime.get(id).await.unwrap().worktree,
+                    Some(lease_path.clone())
+                );
+                assert_eq!(
+                    std::fs::read(root.path().join("tree.json")).unwrap(),
+                    before
+                );
+                assert!(external.exists());
+            }
+        }
+    }
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn retained_child_cleanup_requires_current_write_roots_and_keeps_store() {
+        use std::{
+            collections::{BTreeMap, BTreeSet},
+            os::unix::fs::PermissionsExt,
+            time::Duration,
+        };
+        struct ChildFinishes;
+        #[async_trait]
+        impl super::super::SubagentExecutor for ChildFinishes {
+            async fn execute(
+                &self,
+                context: super::super::ExecutionContext,
+            ) -> Result<super::super::SubagentResult, String> {
+                if context.task == "parent" {
+                    std::future::pending::<()>().await;
+                }
+                Ok(super::super::SubagentResult {
+                    summary: "done".into(),
+                })
+            }
+        }
+        let root = tempfile::tempdir().unwrap();
+        let workspace = root.path().join("workspace");
+        let external = root.path().join("external");
+        std::fs::create_dir(&workspace).unwrap();
+        std::fs::create_dir(&external).unwrap();
+        std::fs::create_dir(workspace.join(".git")).unwrap();
+        let store_path = root.path().join("tree.json");
+        let runtime = Arc::new(
+            SubagentRuntime::new_persistent(
+                Arc::new(ChildFinishes),
+                super::super::RuntimeLimits::default(),
+                super::super::AgentTreeStore::new(store_path.clone()),
+            )
+            .await
+            .unwrap(),
+        );
+        let budget = AgentBudget {
+            max_tokens: 100,
+            max_terminals: 1,
+        };
+        let policy = AgentPolicy {
+            readable_roots: vec![root.path().into()],
+            writable_roots: vec![root.path().into()],
+            allowed_tools: BTreeSet::new(),
+            approval: super::super::ApprovalPolicy::Deny,
+            budget: budget.clone(),
+        };
+        let parent = runtime
+            .spawn(SpawnRequest {
+                parent_id: None,
+                name: "parent".into(),
+                task: "parent".into(),
+                policy: policy.clone(),
+                budget: budget.clone(),
+                worktree: None,
+                branch: None,
+            })
+            .await
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while runtime.get(parent).await.unwrap().status != super::super::AgentStatus::Running {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        let child = runtime
+            .spawn(SpawnRequest {
+                parent_id: Some(parent),
+                name: "child".into(),
+                task: "child".into(),
+                policy: policy.clone(),
+                budget: budget.clone(),
+                worktree: Some(external.clone()),
+                branch: Some("agents/child".into()),
+            })
+            .await
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(5), runtime.wait(child))
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert!(!runtime.is_archived(child).await.unwrap());
+        let before = std::fs::read(&store_path).unwrap();
+        let config = crate::Config {
+            access: Some(crate::config::AccessMode::Unrestricted),
+            allow_read: vec![external.clone()],
+            ..crate::Config::default()
+        };
+        let context = ToolContext {
+            policy: Arc::new(crate::policy::Policy::new(&config, workspace.clone()).unwrap()),
+            approver: Arc::new(crate::tools::UnattendedApprover { allow: true }),
+            timeout: Duration::from_secs(2),
+            max_output_bytes: 1024,
+            environment: BTreeMap::new(),
+            cancellation: tokio_util::sync::CancellationToken::new(),
+            execution_id: Uuid::new_v4(),
+            interaction: crate::tools::InteractionMode::Unattended,
+            redactor: Arc::new(crate::tools::Redactor::default()),
+        };
+        let bin = root.path().join("bin");
+        std::fs::create_dir(&bin).unwrap();
+        let marker = root.path().join("git-started");
+        let git = bin.join("git");
+        std::fs::write(
+            &git,
+            format!(
+                "#!/bin/sh\nprintf started > '{}'\nexit 0\n",
+                marker.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&git, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let manager = WorktreeManager::new(workspace, root.path().into())
+            .unwrap()
+            .with_environment(BTreeMap::from([(
+                "PATH".into(),
+                bin.to_str().unwrap().into(),
+            )]));
+        let tool = SubagentTool::new(runtime.clone(), policy, budget).with_worktrees(Some(manager));
+        // Explicit read-only delegation permits inspection, but does not permit removal.
+        tool.execute(json!({"action":"worktree_status","id":child}), &context)
+            .await
+            .unwrap();
+        assert!(marker.exists());
+        std::fs::remove_file(&marker).unwrap();
+        let error = tool
+            .execute(json!({"action":"cleanup","id":child}), &context)
+            .await
+            .unwrap_err();
+        assert!(
+            error.to_string().contains("write outside allowed roots"),
+            "{error}"
+        );
+        assert!(!marker.exists());
+        assert_eq!(
+            runtime.get(child).await.unwrap().worktree,
+            Some(external.clone())
+        );
+        assert_eq!(std::fs::read(&store_path).unwrap(), before);
+        assert!(external.exists());
+        runtime.cancel(parent).await.unwrap();
+        tokio::time::timeout(Duration::from_secs(5), runtime.wait(parent))
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap_err();
+    }
     struct PendingApproval {
         entered: tokio::sync::Notify,
         release: tokio::sync::Notify,
