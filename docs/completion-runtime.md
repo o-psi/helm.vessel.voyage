@@ -107,10 +107,51 @@ contention; cancellation of a writer's waiter; strict tool arguments; and redact
 before durable review storage. They complement the existing readiness/status and
 ledger storage matrices.
 
-The ledger store's documented [Windows power-loss-durable rename limitation](completion-storage.md)
-still applies. This integration must not be claimed as a verified durable Windows
-final-publication boundary until that hold is resolved. No new wire contract or cleanup behavior is introduced. An offline native HTTP
+The ledger store now requests [Windows write-through publication](completion-storage.md);
+platform CI and filesystem/device flush limitations still apply. No new wire contract
+or cleanup behavior is introduced. An offline native HTTP
 fixture exercises durable prompt/run publication, resume isolation, nested ownership,
 empty runs, corrupt/missing ledgers and real second-process exclusion. Finalization
 races, live behavioral evaluation and platform CI remain separate delivery evidence;
 unit and offline passes cannot replace them.
+
+## Durable final decisions (#82 core)
+
+`RunHandle::readiness_lease` excludes cooperating todo, agent and ledger writers.
+Its `seal(FinalOutcome, reason)` consumes the lease and commits an immutable final
+decision using a private, complete observation; changing the public display snapshot
+cannot change the decision. `Completed` requires every obligation accounted for
+and zero incomplete obligations. `Incomplete` and `Interrupted` retain all unresolved
+IDs and require a bounded reason. Reasons must be redacted before this trusted API
+is called. The snapshot also lists accounted incomplete IDs, so deferral or a
+reviewed child failure cannot disappear behind a zero unresolved count.
+
+The caller must durably checkpoint canonical proposal text **before sealing**, while
+holding the lease, and publish accepted status only after sealing succeeds. Do not
+hold this lease across provider requests, tools, approvals or child waits. A dropped
+lease makes no decision. Cancellation of a seal waiter does not abort an in-progress
+blocking write or release its lock early: inspect the durable decision before any
+retry. A failed or uncertain write must never trigger an accepted event.
+
+The seal is a historical decision, not a transaction across session and ledger
+files. A crash after the proposal checkpoint but before the seal leaves a provisional
+proposal. A crash after sealing but before frontend notification leaves a decision
+available through `RunHandle::decision`; recovery must validate the saved proposal
+and run identity before displaying it as accepted. A seal alone does not establish
+that the corresponding session text was saved. Frontend integration remains
+responsible for this ordering, including no-save behavior.
+
+After sealing, registration, adoption (including duplicate adoption), reviews and
+store updates are rejected. Shared task records remain editable by later independent
+runs; their historical acceptance is not retroactively rewritten. To rely on the
+accepted records as current, `validate_final_decision` rereads them under the
+coordinator and compares the entire original observation. Changed evidence,
+results, statuses or missing records cause an error. Reopening work requires a new
+run with explicit adoption. This does not coordinate old binaries that ignore the
+workspace coordinator.
+
+Ledger schema 2 requires an explicit open/sealed state and rejects malformed or
+unknown decision variants and inconsistent counts, ownership or revisions. Schema
+1 ledgers migrate as open only when they contain no state field. Older binaries
+reject schema 2 rather than treating a sealed run as empty or open. Preserve ledgers
+on rollback; do not downgrade their version or strip the decision.

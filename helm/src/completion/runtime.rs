@@ -1,6 +1,6 @@
 //! Run-owned obligations coordinated with durable workspace records.
 use super::{
-    DispositionKind, Obligation, Readiness, RunId, RunLedger,
+    DispositionKind, FinalDecision, FinalOutcome, Obligation, Readiness, RunId, RunLedger,
     store::{RunLedgerStore, RunScope},
 };
 use crate::{
@@ -175,7 +175,34 @@ impl Coordinator {
 /// acceptance decision. Never retain this across provider calls, tools or waits.
 pub struct ReadinessLease {
     pub readiness: Readiness,
+    observed: Readiness,
+    handle: RunHandle,
     _guard: CoordinationGuard,
+}
+
+impl ReadinessLease {
+    /// Checkpoint canonical proposal text before calling this, while this lease
+    /// still excludes cooperating writers. Publish acceptance only after success.
+    /// No provider, tool, approval or wait belongs inside this boundary.
+    /// A cancelled waiter does not release the guard until the write finishes;
+    /// its result is uncertain and must be inspected, never blindly repeated.
+    pub async fn seal(
+        self,
+        outcome: FinalOutcome,
+        reason: Option<String>,
+    ) -> Result<FinalDecision> {
+        tokio::task::spawn_blocking(move || {
+            let _guard = self._guard;
+            let ledger =
+                self.handle
+                    .store
+                    .update(self.handle.run_id, self.observed.revision, |ledger| {
+                        ledger.seal(self.observed, outcome, reason)
+                    })?;
+            Ok(ledger.decision().expect("seal creates decision").clone())
+        })
+        .await?
+    }
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
@@ -325,6 +352,8 @@ impl RunHandle {
         let (todos, agents) = self.records(&ledger, todos, agents).await?;
         Ok(ReadinessLease {
             readiness: ledger.snapshot(&todos, &agents, limit)?,
+            observed: ledger.snapshot(&todos, &agents, super::MAX_OBLIGATIONS)?,
+            handle: self.clone(),
             _guard: guard,
         })
     }
@@ -368,6 +397,33 @@ impl RunHandle {
             }
         }
     }
+    /// Historical decision only; shared records may have changed afterwards.
+    pub async fn decision(&self) -> Result<Option<FinalDecision>> {
+        let _guard = self.coordinator.lock().await?;
+        Ok(self.ledger().await?.decision().cloned())
+    }
+    /// Recheck that the exact accepted records still match, under the writer
+    /// coordinator. A later shared-record edit never silently reopens the run.
+    pub async fn validate_final_decision(
+        &self,
+        todos: &TodoStore,
+        agents: &AgentTreeStore,
+    ) -> Result<FinalDecision> {
+        let _guard = self.coordinator.lock().await?;
+        let mut ledger = self.ledger().await?;
+        let decision = ledger
+            .decision()
+            .context("completion run is not sealed")?
+            .clone();
+        ledger.state = super::LedgerState::Open;
+        ledger.revision = decision.readiness.revision;
+        let (todos, agents) = self.records(&ledger, todos, agents).await?;
+        ensure!(
+            ledger.snapshot(&todos, &agents, super::MAX_OBLIGATIONS)? == decision.readiness,
+            "owned completion records changed after final decision"
+        );
+        Ok(decision)
+    }
     pub async fn read_owned(
         &self,
         todos: &TodoStore,
@@ -393,6 +449,7 @@ impl RunHandle {
     ) -> Result<()> {
         let _guard = self.coordinator.lock().await?;
         let ledger = self.ledger().await?;
+        ledger.ensure_open()?;
         ensure!(
             ledger.revision() == expected_revision,
             "stale completion ledger revision"
@@ -535,6 +592,271 @@ mod tests {
             reason: "verified fixture evidence".into(),
         }
     }
+    #[tokio::test]
+    async fn final_seal_survives_restart_and_rejects_late_registration() {
+        let fixture = Fixture::new();
+        let run = fixture.run().await;
+        let mut lease = run
+            .readiness_lease(&fixture.todos, &fixture.agents, 0)
+            .await
+            .unwrap();
+        // Public display data is not authority to alter the private observation.
+        lease.readiness.fingerprint = "untrusted display edit".into();
+        let writer = run.clone();
+        let late = tokio::spawn(async move {
+            writer
+                .register(Obligation::Todo(crate::todo::TodoId::new()))
+                .await
+        });
+        tokio::task::yield_now().await;
+        assert!(!late.is_finished());
+        let decision = lease.seal(FinalOutcome::Completed, None).await.unwrap();
+        assert!(decision.readiness.ready());
+        assert_ne!(decision.readiness.fingerprint, "untrusted display edit");
+        assert!(
+            late.await
+                .unwrap()
+                .unwrap_err()
+                .to_string()
+                .contains("sealed")
+        );
+        let reference = run.reference();
+        let resumed = RunHandle::resume(
+            fixture.coordinator.clone(),
+            reference.session_id,
+            reference.run_id,
+        )
+        .await
+        .unwrap();
+        assert_eq!(resumed.decision().await.unwrap(), Some(decision.clone()));
+        assert_eq!(
+            resumed
+                .validate_final_decision(&fixture.todos, &fixture.agents)
+                .await
+                .unwrap(),
+            decision
+        );
+        assert!(
+            resumed
+                .readiness_lease(&fixture.todos, &fixture.agents, 10)
+                .await
+                .unwrap()
+                .seal(FinalOutcome::Completed, None)
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn registered_before_seal_cannot_be_hidden_by_display_cap_or_stale_snapshot() {
+        let fixture = Fixture::new();
+        let run = fixture.run().await;
+        let old = fixture.snapshot(&run).await;
+        let id = crate::todo::TodoId::new();
+        run.register(Obligation::Todo(id)).await.unwrap();
+        let lease = run
+            .readiness_lease(&fixture.todos, &fixture.agents, 0)
+            .await
+            .unwrap();
+        assert_ne!(lease.readiness.fingerprint, old.fingerprint);
+        assert!(lease.readiness.unresolved.is_empty());
+        assert!(!lease.readiness.ready());
+        assert!(lease.seal(FinalOutcome::Completed, None).await.is_err());
+        assert!(run.decision().await.unwrap().is_none());
+        let decision = run
+            .readiness_lease(&fixture.todos, &fixture.agents, 0)
+            .await
+            .unwrap()
+            .seal(
+                FinalOutcome::Interrupted,
+                Some("owned record unavailable after shutdown".into()),
+            )
+            .await
+            .unwrap();
+        assert_eq!(decision.readiness.unresolved.len(), 1);
+        assert_eq!(
+            decision.readiness.unresolved[0].obligation,
+            Obligation::Todo(id)
+        );
+        assert_eq!(decision.readiness.omitted_unresolved, 0);
+    }
+
+    #[tokio::test]
+    async fn sealed_incomplete_is_historical_and_later_record_edits_fail_validation() {
+        let fixture = Fixture::new();
+        let run = fixture.run().await;
+        let item = fixture
+            .todos
+            .create_registered(todo("deferred"), Some(&run))
+            .await
+            .unwrap();
+        run.account(
+            &fixture.todos,
+            &fixture.agents,
+            Obligation::Todo(item.id),
+            review(
+                fixture.snapshot(&run).await,
+                DispositionKind::DeferredWithImpact,
+            ),
+        )
+        .await
+        .unwrap();
+        let lease = run
+            .readiness_lease(&fixture.todos, &fixture.agents, 10)
+            .await
+            .unwrap();
+        assert!(lease.readiness.ready());
+        assert!(lease.seal(FinalOutcome::Completed, None).await.is_err());
+        let decision = run
+            .readiness_lease(&fixture.todos, &fixture.agents, 10)
+            .await
+            .unwrap()
+            .seal(FinalOutcome::Incomplete, Some("waiting on operator".into()))
+            .await
+            .unwrap();
+        assert_eq!(
+            decision.readiness.incomplete_obligations,
+            vec![Obligation::Todo(item.id)]
+        );
+        let fresh = fixture.snapshot(&run).await;
+        assert!(
+            run.account(
+                &fixture.todos,
+                &fixture.agents,
+                Obligation::Todo(item.id),
+                review(fresh.clone(), DispositionKind::DeferredWithImpact)
+            )
+            .await
+            .is_err()
+        );
+        assert!(
+            run.adopt_existing(
+                &fixture.todos,
+                &fixture.agents,
+                Obligation::Todo(item.id),
+                fresh.revision
+            )
+            .await
+            .is_err()
+        );
+        assert!(run.register(Obligation::Todo(item.id)).await.is_err());
+        assert!(
+            run.validate_final_decision(&fixture.todos, &fixture.agents)
+                .await
+                .is_ok()
+        );
+        fixture
+            .todos
+            .append_note(
+                item.id,
+                EntryKind::Progress,
+                "later independent edit".into(),
+                None,
+            )
+            .await
+            .unwrap();
+        assert!(
+            run.validate_final_decision(&fixture.todos, &fixture.agents)
+                .await
+                .is_err()
+        );
+        assert_eq!(run.decision().await.unwrap(), Some(decision));
+    }
+
+    #[tokio::test]
+    async fn record_mutation_waits_until_seal_and_cannot_rewrite_decision() {
+        let fixture = Fixture::new();
+        let run = fixture.run().await;
+        let item = fixture
+            .todos
+            .create_registered(todo("deferred"), Some(&run))
+            .await
+            .unwrap();
+        run.account(
+            &fixture.todos,
+            &fixture.agents,
+            Obligation::Todo(item.id),
+            review(
+                fixture.snapshot(&run).await,
+                DispositionKind::DeferredWithImpact,
+            ),
+        )
+        .await
+        .unwrap();
+        let lease = run
+            .readiness_lease(&fixture.todos, &fixture.agents, 10)
+            .await
+            .unwrap();
+        let store = fixture.todos.clone();
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let edit = tokio::spawn(async move {
+            started_tx.send(()).unwrap();
+            store
+                .append_note(
+                    item.id,
+                    EntryKind::Progress,
+                    "independent later edit".into(),
+                    None,
+                )
+                .await
+        });
+        started_rx.await.unwrap();
+        tokio::task::yield_now().await;
+        assert!(!edit.is_finished());
+        let decision = lease
+            .seal(FinalOutcome::Incomplete, Some("explicitly deferred".into()))
+            .await
+            .unwrap();
+        edit.await.unwrap().unwrap();
+        assert_eq!(run.decision().await.unwrap(), Some(decision));
+        assert!(
+            run.validate_final_decision(&fixture.todos, &fixture.agents)
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn uncommitted_lease_and_failed_seal_never_become_completed() {
+        let fixture = Fixture::new();
+        let run = fixture.run().await;
+        drop(
+            run.readiness_lease(&fixture.todos, &fixture.agents, 10)
+                .await
+                .unwrap(),
+        );
+        assert!(run.decision().await.unwrap().is_none());
+        let lease = run
+            .readiness_lease(&fixture.todos, &fixture.agents, 10)
+            .await
+            .unwrap();
+        let path = fixture
+            ._root
+            .path()
+            .join("completion/ledgers")
+            .join(format!("{}-{}.json", run.session_id, run.run_id.0));
+        let backup = path.with_extension("backup");
+        let original = std::fs::read(&path).unwrap();
+        std::fs::rename(&path, &backup).unwrap();
+        std::fs::create_dir(&path).unwrap();
+        assert!(lease.seal(FinalOutcome::Completed, None).await.is_err());
+        assert_eq!(std::fs::read(&backup).unwrap(), original);
+        std::fs::remove_dir(&path).unwrap();
+        std::fs::rename(&backup, &path).unwrap();
+        let resumed = RunHandle::resume(fixture.coordinator.clone(), run.session_id, run.run_id.0)
+            .await
+            .unwrap();
+        assert!(resumed.decision().await.unwrap().is_none());
+        // A failed attempt does not poison the coordinator or forbid a fresh decision.
+        resumed
+            .readiness_lease(&fixture.todos, &fixture.agents, 10)
+            .await
+            .unwrap()
+            .seal(FinalOutcome::Completed, None)
+            .await
+            .unwrap();
+    }
+
     #[tokio::test]
     async fn owned_todos_are_isolated_and_review_rejects_concurrent_edits() {
         let fixture = Fixture::new();
