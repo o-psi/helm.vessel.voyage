@@ -1305,6 +1305,7 @@ mod tests {
             let coordinator = Coordinator::open(root.join("completion"), &root).unwrap();
             let store = AgentTreeStore::new(root.join("agents/tree.json"))
                 .with_coordinator(coordinator.clone());
+            let observer = store.clone();
             let run = RunHandle::create(coordinator, Uuid::new_v4(), Uuid::new_v4())
                 .await
                 .unwrap();
@@ -1322,7 +1323,12 @@ mod tests {
                 .await
                 .unwrap();
             let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
-            while runtime.get(id).await.unwrap().status != crate::subagent::AgentStatus::Running {
+            // The in-memory Running transition precedes its durable store write.
+            // Publish the cross-process readiness marker only after the state the
+            // parent actually reads is committed, especially on slower disks.
+            while observer.get(id).await.unwrap().unwrap().status
+                != crate::subagent::AgentStatus::Running
+            {
                 assert!(std::time::Instant::now() < deadline);
                 tokio::time::sleep(std::time::Duration::from_millis(10)).await;
             }
