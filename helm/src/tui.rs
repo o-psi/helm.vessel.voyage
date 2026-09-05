@@ -26,6 +26,7 @@ use terminals::*;
 mod checkpoint;
 mod conversation;
 use conversation::*;
+mod recent;
 mod render;
 use render::*;
 mod text;
@@ -109,6 +110,9 @@ struct App {
     question: Option<QuestionDialog>,
     show_sessions: bool,
     selected_session: usize,
+    display_area: ratatui::layout::Rect,
+    display_pixels: Option<(u16, u16)>,
+    open_recent: bool,
     shortcut_help: bool,
     exit: Option<TuiExit>,
     quit: bool,
@@ -189,13 +193,18 @@ impl App {
         }
     }
 
-    fn new(session: Session, sessions: Vec<Session>) -> Self {
+    fn new(session: Session, mut sessions: Vec<Session>) -> Self {
+        if !sessions.iter().any(|item| item.id == session.id) {
+            sessions.insert(0, session.clone());
+        }
         let mut prompt_history = PromptHistory::default();
         for message in &session.messages {
             if message.role == Role::User {
                 prompt_history.record(&message.content);
             }
         }
+        let mut composer = Composer::default();
+        composer.insert_str(&session.draft);
         Self {
             diagnostic_agent: None,
             palette: PaletteState::default(),
@@ -208,7 +217,7 @@ impl App {
             sessions,
             provider_label: "provider unknown".into(),
             access_mode: AccessMode::Approval,
-            composer: Composer::default(),
+            composer,
             prompt_history,
             activity: Vec::new(),
             show_activity: false,
@@ -229,6 +238,9 @@ impl App {
             question: None,
             show_sessions: false,
             selected_session: 0,
+            display_area: ratatui::layout::Rect::default(),
+            display_pixels: None,
+            open_recent: false,
             shortcut_help: false,
             exit: None,
             quit: false,
@@ -307,6 +319,11 @@ pub async fn run(
             app.question = None;
         }
         let size = terminal.size()?;
+        app.display_area = ratatui::layout::Rect::new(0, 0, size.width, size.height);
+        app.display_pixels = crossterm::terminal::window_size()
+            .ok()
+            .filter(|size| size.width > 0 && size.height > 0)
+            .map(|size| (size.width, size.height));
         let viewport = conversation_layout(
             ratatui::layout::Rect::new(0, 0, size.width, size.height),
             &app,
@@ -334,7 +351,12 @@ pub async fn run(
                         // Discard any stale cells after the terminal changes its backing grid.
                         terminal.resize(ratatui::layout::Rect::new(0, 0, columns, rows))?;
                     }
-                    Some(Ok(Event::Mouse(mouse))) => handle_mouse(mouse, &mut app),
+                    Some(Ok(Event::Mouse(mouse))) => {
+                        handle_mouse(mouse, &mut app);
+                        if std::mem::take(&mut app.open_recent) {
+                            recent::open_selected(&mut app, store).await?;
+                        }
+                    },
                     Some(Ok(Event::Paste(text))) if app.question.is_some() => {
                         if let Some(question) = &mut app.question { question.insert(&text); }
                     }
@@ -418,6 +440,8 @@ pub async fn run(
         }
     }
     app.cancel();
+    app.session.draft.clone_from(&app.composer.text);
+    store.save(&mut app.session).await?;
     terminal.show_cursor()?;
     Ok(app.exit.unwrap_or_default())
 }
@@ -932,12 +956,9 @@ async fn handle_key(
                 app.selected_session =
                     (app.selected_session + 1).min(app.sessions.len().saturating_sub(1));
             }
-            KeyCode::Enter if !app.is_running() => {
-                if let Some(session) = app.sessions.get(app.selected_session) {
-                    let arguments = vec!["chat".into(), "--resume".into(), session.id.to_string()];
-                    request_cli(app, store, arguments, true, false).await?;
-                }
-            }
+            KeyCode::Home => app.selected_session = 0,
+            KeyCode::End => app.selected_session = app.sessions.len().saturating_sub(1),
+            KeyCode::Enter => recent::open_selected(app, store).await?,
             _ => {}
         }
         return Ok(());
@@ -952,7 +973,18 @@ async fn handle_key(
                 }
             }
             KeyCode::Char('q') => app.quit = true,
-            KeyCode::Char('s') => app.show_sessions = true,
+            KeyCode::Char('s') => {
+                app.sessions = store.list().await?;
+                if !app.sessions.iter().any(|item| item.id == app.session.id) {
+                    app.sessions.insert(0, app.session.clone());
+                }
+                app.selected_session = app
+                    .sessions
+                    .iter()
+                    .position(|item| item.id == app.session.id)
+                    .unwrap_or(0);
+                app.show_sessions = true;
+            }
             KeyCode::Char('t') => {
                 refresh_terminals(&mut app.terminal_panel, &mut app.status, terminals).await;
                 app.terminal_panel.terminal_picker = true;
@@ -1083,6 +1115,7 @@ async fn handle_key(
                 }
                 // Persist before making the input visible to the running agent.
                 app.session.messages.push(queued.clone());
+                app.session.draft.clear();
                 if let Err(error) = store.save(&mut app.session).await {
                     app.session.messages.pop();
                     app.composer.insert_str(&message);
@@ -1226,6 +1259,9 @@ fn complete_selected_slash_command(app: &mut App) {
 }
 
 fn handle_mouse(mouse: MouseEvent, app: &mut App) {
+    if recent::mouse(mouse, app) {
+        return;
+    }
     let conversation_is_visible = app.question.is_none()
         && app.terminal_panel.attached_terminal.is_none()
         && app.approval.is_none()
@@ -1310,6 +1346,7 @@ async fn start_run_with_secrets(
         .map(|scope| scope.run_id())
         .unwrap_or_else(uuid::Uuid::new_v4);
     app.session.begin_run_summary(run_id);
+    app.session.draft.clear();
     store.save(&mut app.session).await?;
     let bindings = secrets.map(|inputs| inputs.bind(run_id)).transpose()?;
     app.checkpoint = Some(checkpoint::State::new(&app.session, run_id));

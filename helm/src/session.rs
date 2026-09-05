@@ -83,6 +83,9 @@ pub struct Session {
     pub parent_id: Option<Uuid>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub workflow_runs: Vec<crate::workflow::Invocation>,
+    /// Unsent local composer text, excluded from model messages and exports.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub draft: String,
     pub messages: Vec<Message>,
     pub usage: Usage,
     #[serde(default)]
@@ -167,6 +170,7 @@ impl Session {
             }),
             parent_id: None,
             workflow_runs: Vec::new(),
+            draft: String::new(),
             messages: Vec::new(),
             usage: Usage::default(),
             terminals: Vec::new(),

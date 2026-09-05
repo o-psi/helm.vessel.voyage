@@ -28,6 +28,7 @@ pub(super) async fn request_cli(
     use_active_config: bool,
     resume_after: bool,
 ) -> Result<()> {
+    app.session.draft.clone_from(&app.composer.text);
     store.save(&mut app.session).await?;
     app.exit = Some(TuiExit::Launch(CliRequest {
         arguments,
@@ -53,6 +54,8 @@ pub(super) async fn start_new_session(
     store: &mut SessionStore,
     name: Option<&str>,
 ) -> Result<()> {
+    app.session.draft.clone_from(&app.composer.text);
+    store.save(&mut app.session).await?;
     let mut session = Session::new(app.session.workspace.clone(), app.session.model.clone());
     if let Some(name) = name.filter(|name| !name.trim().is_empty()) {
         session.set_name(name.trim().to_owned());
@@ -62,6 +65,9 @@ pub(super) async fn start_new_session(
     app.title_job = None;
     app.session = session;
     *store = owner;
+    app.composer = Composer::default();
+    app.sessions = store.list().await?;
+    app.sessions.insert(0, app.session.clone());
     app.prompt_history = PromptHistory::default();
     app.activity.clear();
     app.live_messages.clear();

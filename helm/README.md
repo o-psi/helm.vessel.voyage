@@ -135,6 +135,20 @@ compact context, and `Ctrl+E` to export Markdown. Every session starts with a st
 Fibonacci checkpoints using the independent model in `utility-models.json`
 ([details](../docs/model-management.md#automatic-session-titles)); use `/new [TITLE]` to start a fresh session and optionally name it immediately.
 
+
+On landscape displays, recent conversations stay in a left sidebar. Helm uses the
+terminal's pixel dimensions when available, otherwise assumes cells are twice as
+tall as they are wide; narrow terminals keep the conversation full width. `Ctrl+S`
+focuses recent conversations, or opens a compact drawer in portrait. Use arrow
+keys, Home/End and Enter, or click a conversation; the mouse wheel scrolls the list
+when the pointer is over it. `Esc` returns to the composer. The filled dot marks
+the current conversation. Finish or cancel an active run before switching.
+
+Unsent composer drafts are saved locally when switching conversations, creating a
+new session, or leaving normally, and restored when reopening that session. Drafts
+are not sent as model messages or included in Markdown exports. Conversation
+switching rebuilds the session's existing workspace and execution configuration.
+
 The composer remains editable while Helm is working. Press `Enter` to queue its text as steering
 for the active run; `Shift+Enter` still inserts a newline. Helm records accepted steering in the
 session immediately and applies queued messages in order before the next provider request. A

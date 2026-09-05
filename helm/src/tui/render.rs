@@ -17,10 +17,11 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap},
+    widgets::{Block, Borders, Clear, Paragraph, Wrap},
 };
 
 pub(super) fn conversation_layout(area: Rect, app: &App) -> std::rc::Rc<[Rect]> {
+    let area = super::recent::content_area(area, app);
     let constraints = if let Some(question) = &app.question {
         let header = if area.height >= 14 { 3 } else { 1 }.min(area.height);
         let status = u16::from(area.height >= 10);
@@ -95,6 +96,9 @@ pub(super) fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
         return;
     }
     let chunks = conversation_layout(area, app);
+    if let Some(sidebar) = super::recent::sidebar_area(area, app) {
+        super::recent::draw(frame, sidebar, app);
+    }
     let title = app.session.display_name();
     frame.render_widget(
         Paragraph::new(Line::from(vec![
@@ -161,17 +165,19 @@ pub(super) fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
         chunks[2],
     );
     frame.render_widget(
-        Paragraph::new(format!("F1 shortcuts  │  {}", app.status))
+        Paragraph::new(format!("F1 shortcuts · Ctrl+S recent  │  {}", app.status))
             .style(Style::default().fg(Color::Gray)),
         chunks[3],
     );
     draw_slash_palette(frame, chunks[2], &app.palette_context());
-    frame.set_cursor_position((
-        (chunks[2].x + composer_column).min(chunks[2].right().saturating_sub(1)),
-        (chunks[2].y + 1 + composer_row.saturating_sub(composer_scroll))
-            .min(chunks[2].bottom().saturating_sub(1)),
-    ));
-    if app.show_sessions {
+    if !app.show_sessions {
+        frame.set_cursor_position((
+            (chunks[2].x + composer_column).min(chunks[2].right().saturating_sub(1)),
+            (chunks[2].y + 1 + composer_row.saturating_sub(composer_scroll))
+                .min(chunks[2].bottom().saturating_sub(1)),
+        ));
+    }
+    if app.show_sessions && super::recent::sidebar_area(area, app).is_none() {
         draw_sessions(frame, area, app);
     }
     if app.terminal_panel.terminal_picker {
@@ -183,39 +189,7 @@ pub(super) fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
 }
 
 pub(super) fn draw_sessions(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
-    let popup = centered(area, 80, 70);
-    let items: Vec<_> = app
-        .sessions
-        .iter()
-        .enumerate()
-        .map(|(index, session)| {
-            let marker = if index == app.selected_session {
-                "▶"
-            } else {
-                " "
-            };
-            ListItem::new(format!(
-                "{marker} {}  {}  {} messages",
-                session.display_name(),
-                session.updated_at.format("%Y-%m-%d %H:%M"),
-                session.messages.len()
-            ))
-        })
-        .collect();
-    let items = if items.is_empty() {
-        vec![ListItem::new("No saved sessions yet")]
-    } else {
-        items
-    };
-    frame.render_widget(Clear, popup);
-    frame.render_widget(
-        List::new(items).block(
-            Block::default()
-                .title(" Sessions · ↑↓ select · Enter open · Esc close ")
-                .borders(Borders::ALL),
-        ),
-        popup,
-    );
+    super::recent::draw(frame, super::recent::drawer_area(area), app);
 }
 
 pub(super) fn draw_approval(

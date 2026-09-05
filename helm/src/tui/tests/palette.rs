@@ -29,7 +29,7 @@ fn slash_palette_lists_all_commands_above_the_composer_and_filters() {
         SLASH_COMMANDS.len()
     );
 
-    let backend = ratatui::backend::TestBackend::new(100, 30);
+    let backend = ratatui::backend::TestBackend::new(140, 30);
     let mut terminal = Terminal::new(backend).unwrap();
     terminal.draw(|frame| draw(frame, &app)).unwrap();
     let buffer = terminal.backend().buffer();
