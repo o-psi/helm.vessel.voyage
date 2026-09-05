@@ -4,7 +4,7 @@ use serde_json::{Value, json};
 
 use super::{
     ModelInfo, Provider, ProviderDelta, ProviderError, ProviderStream, ProviderStreamEvent,
-    checked_json, checked_stream_response, normalize_models,
+    checked_json, checked_stream_response,
 };
 use crate::model::{Message, ModelRequest, ModelResponse, Role, ToolCall, Usage};
 
@@ -51,24 +51,13 @@ impl OpenAiProvider {
 #[async_trait]
 impl Provider for OpenAiProvider {
     async fn models(&self) -> Result<Vec<ModelInfo>, ProviderError> {
-        let response = self
-            .client
-            .get(format!("{}/models", self.base_url))
-            .apply_key(&self.api_key)
-            .send()
-            .await
-            .map_err(map_transport)?;
-        let value = checked_json(response).await?;
-        let data = value.get("data").and_then(Value::as_array).ok_or_else(|| {
-            ProviderError::InvalidResponse("OpenAI models response omitted data".into())
-        })?;
-        let mut models = data
-            .iter()
-            .filter_map(|item| item.get("id").and_then(Value::as_str))
-            .map(ModelInfo::minimal)
-            .collect();
-        normalize_models(&mut models);
-        Ok(models)
+        super::discovery::models(&self.client, &self.base_url, &self.api_key)
+            .await?
+            .ok_or_else(|| {
+                ProviderError::InvalidResponse(
+                    "model-list unavailable; use a manual model ID".into(),
+                )
+            })
     }
     async fn complete(&self, request: ModelRequest) -> Result<ModelResponse, ProviderError> {
         let body = self.body(request, false);

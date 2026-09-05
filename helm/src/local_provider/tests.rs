@@ -109,3 +109,54 @@ fn fixed_scan_candidates_and_model_boundaries_are_explicit() {
     assert!(validate_model("\u{1b}malicious").is_err());
     assert!(validate_model("  ").is_err());
 }
+
+#[tokio::test]
+async fn shared_discovery_preserves_typed_failures_and_retry_after() {
+    use crate::provider::{Provider, ProviderError};
+    use axum::{Router, http::StatusCode, routing::get};
+    for code in [401, 403, 429, 500, 302] {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!("http://{}/v1", listener.local_addr().unwrap());
+        let app = Router::new().route(
+            "/v1/models",
+            get(move || async move {
+                (
+                    StatusCode::from_u16(code).unwrap(),
+                    [("retry-after", "7")],
+                    "private-provider-body",
+                )
+            }),
+        );
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let providers: [Box<dyn Provider>; 2] = [
+            Box::new(crate::provider::OpenAiProvider::new(
+                "fixture-key".into(),
+                Some(endpoint.clone()),
+            )),
+            Box::new(crate::provider::OpenAiResponsesProvider::new(
+                "fixture-key".into(),
+                Some(endpoint),
+            )),
+        ];
+        for provider in providers {
+            let error = tokio::time::timeout(Duration::from_secs(2), provider.models())
+                .await
+                .unwrap()
+                .unwrap_err();
+            assert!(!error.to_string().contains("private-provider-body"));
+            match code {
+                401 | 403 => assert!(matches!(error, ProviderError::Authentication(_))),
+                429 => assert!(
+                    matches!(error, ProviderError::RateLimit { retry_after: Some(duration), .. } if duration == Duration::from_secs(7))
+                ),
+                500 => assert!(matches!(error, ProviderError::Unavailable(_))),
+                302 => assert!(matches!(error, ProviderError::Request(_))),
+                _ => unreachable!(),
+            }
+        }
+        server.abort();
+        let _ = server.await;
+    }
+}

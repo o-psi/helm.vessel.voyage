@@ -7,7 +7,6 @@ use serde_json::{Value, json};
 use std::{io::Write, path::PathBuf, time::Duration};
 
 const MAX_BODY: usize = 1024 * 1024;
-const MAX_MODELS: usize = 1024;
 #[derive(Clone, Copy, Debug, ValueEnum, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Preset {
@@ -191,37 +190,9 @@ async fn models(
     endpoint: &str,
     key: &str,
 ) -> Result<Option<Vec<String>>> {
-    let response = authenticate(client.get(format!("{endpoint}/models")), key)
-        .send()
-        .await
-        .map_err(|_| anyhow::anyhow!("connection failure: model endpoint unavailable"))?;
-    if matches!(response.status().as_u16(), 404 | 405 | 501) {
-        return Ok(None);
-    }
-    status(&response)?;
-    let value = bounded_json(response).await?;
-    let data = value
-        .get("data")
-        .and_then(Value::as_array)
-        .ok_or_else(|| anyhow::anyhow!("model-list failure: missing data array"))?;
-    if data.len() > MAX_MODELS {
-        bail!("model-list failure: more than 1024 models");
-    }
-    let mut ids = Vec::new();
-    for item in data {
-        let id = item
-            .get("id")
-            .and_then(Value::as_str)
-            .ok_or_else(|| anyhow::anyhow!("model-list failure: missing model ID"))?;
-        validate_model(id)?;
-        if !key.is_empty() && id.contains(key) {
-            bail!("model-list failure: credential-bearing model ID");
-        }
-        ids.push(id.to_owned());
-    }
-    ids.sort();
-    ids.dedup();
-    Ok(Some(ids))
+    Ok(crate::provider::discovery::models(client, endpoint, key)
+        .await?
+        .map(|models| models.into_iter().map(|model| model.id).collect()))
 }
 #[derive(Serialize)]
 pub struct Report {

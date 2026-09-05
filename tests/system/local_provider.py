@@ -147,6 +147,11 @@ def main():
             results=[p.communicate(timeout=15) for p in processes]
             assert sorted(p.returncode for p in processes)==[0,1],results
             assert 'api_key_required = false' in concurrent.read_text()
+            for mode in ['auth','malformed','oversized','echo-key','badmodels','redirect']:
+                Handler.mode=mode
+                before=len(Handler.requests)
+                run('--config',str(authenticated),'models','--json',ok=False)
+                assert len(Handler.requests)==before+1
             Handler.mode='missing'
             run('local-provider','probe','custom','--endpoint',base,ok=False)
             report=json.loads(run('local-provider','probe','custom','--endpoint',base,'--model','manual').stdout)
@@ -174,6 +179,33 @@ def main():
             Handler.mode='ok'
             missing=root/'no-key.toml'; missing.write_text('api_key_env="MISSING_FIXTURE_KEY"\n')
             run('--config',str(missing),'models',ok=False)
+            # Exercise the real fixed-candidate scanner on one available documented
+            # port. Never take over a port owned by an existing local service.
+            class ScanHandler(Handler):
+                requests=[]
+                mode='ok'
+            scanner=None
+            for port in [1234,8000,8080]:
+                try: scanner=ThreadingHTTPServer(('127.0.0.1',port),ScanHandler);break
+                except OSError: pass
+            assert scanner is not None,'no free fixed candidate for scanner fixture'
+            threading.Thread(target=scanner.serve_forever,daemon=True).start()
+            before=len(Handler.requests)
+            prior={name:env.get(name) for name in ['HTTP_PROXY','http_proxy']}
+            env['HTTP_PROXY']=env['http_proxy']=base
+            try:
+                records=json.loads(run('local-provider','scan').stdout)
+                assert len(records)==4
+                assert {record['endpoint'] for record in records}=={f'http://127.0.0.1:{port}/v1' for port in [11434,1234,8000,8080]}
+                record=next(r for r in records if r['endpoint']==f'http://127.0.0.1:{scanner.server_port}/v1')
+                assert record['models']==['a-fixture','z-fixture'] and not record['protocol_validated']
+                assert ScanHandler.requests==[('/v1/models',None,None)]
+                assert len(Handler.requests)==before,'scan unexpectedly used environment proxy'
+            finally:
+                scanner.shutdown();scanner.server_close()
+                for name,value in prior.items():
+                    if value is None:env.pop(name,None)
+                    else:env[name]=value
             assert not marker.exists()
             print('local provider: five presets, two native transports, no-auth/explicit-key isolation, create-only setup, bounds/errors/manual fallback and inference passed')
         finally: server.shutdown();server.server_close()

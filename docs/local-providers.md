@@ -76,7 +76,7 @@ source, never the credential value. Their discovery state is `not_probed`:
 neither command performs inference or implicit network discovery. Use an explicit
 probe to check current availability. Saved config contains no stale claim of
 permanent compatibility. Existing `helm models` and the interactive model picker
-use the resulting provider configuration, and manual model switching remains
+use the resulting provider configuration and the same bounded compatible catalog parser, and manual model switching remains
 available.
 
 ## Explicit loopback discovery

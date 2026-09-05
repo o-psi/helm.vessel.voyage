@@ -1,6 +1,7 @@
 mod anthropic;
 mod chatgpt_oauth;
 mod codex_subscription;
+pub(crate) mod discovery;
 mod openai;
 mod openai_responses;
 
