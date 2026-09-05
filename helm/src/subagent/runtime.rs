@@ -601,7 +601,7 @@ impl SubagentRuntime {
     }
 
     async fn run(&self, id: AgentId, inbox: mpsc::Receiver<InboxMessage>, control: Arc<Control>) {
-        let permit = tokio::select! { _=control.cancel.cancelled()=>{self.finish_cancelled(id,&control).await;return}, p=self.inner.permits.clone().acquire_owned()=>match p {Ok(p)=>p,Err(_)=>{self.finish_failed(id,&control,"runtime shut down".into()).await;return}} };
+        let permit = tokio::select! { biased; _=control.cancel.cancelled()=>{self.finish_cancelled(id,&control).await;return}, p=self.inner.permits.clone().acquire_owned()=>match p {Ok(p)=>p,Err(_)=>{self.finish_failed(id,&control,"runtime shut down".into()).await;return}} };
         *control.permit.lock().await = Some(permit);
         {
             let mut r = control.record.write().await;
@@ -634,8 +634,16 @@ impl SubagentRuntime {
             Result(Result<SubagentResult, String>),
         }
         let result = tokio::select! {
+            biased;
             _=control.cancel.cancelled()=>End::Cancelled,
             r=self.inner.executor.execute(context)=>End::Result(r)
+        };
+        // Provider cancellation may make its future return an error in the same
+        // poll as the token becomes ready. Preserve the operator's cancellation.
+        let result = if control.cancel.is_cancelled() {
+            End::Cancelled
+        } else {
+            result
         };
         match result {
             End::Cancelled => self.finish_cancelled(id, &control).await,
@@ -1198,6 +1206,27 @@ mod tests {
         executor.gate.notify_one();
         assert_eq!(runtime.wait(first).await.unwrap().unwrap().summary, "done");
         assert_eq!(executor.peak.load(Ordering::SeqCst), 1);
+    }
+
+    struct CancelAndFail;
+    #[async_trait]
+    impl SubagentExecutor for CancelAndFail {
+        async fn execute(&self, context: ExecutionContext) -> Result<SubagentResult, String> {
+            context.cancellation.cancel();
+            Err("provider observed cancellation".into())
+        }
+    }
+
+    #[tokio::test]
+    async fn cancellation_wins_over_provider_error_in_the_same_poll() {
+        let runtime =
+            SubagentRuntime::new(Arc::new(CancelAndFail), RuntimeLimits::default(), None).unwrap();
+        let id = runtime.spawn(request("cancelled")).await.unwrap();
+        assert!(runtime.wait(id).await.unwrap().is_err());
+        assert_eq!(
+            runtime.get(id).await.unwrap().status,
+            AgentStatus::Cancelled
+        );
     }
 
     #[tokio::test]
