@@ -196,6 +196,14 @@ text is emitted once. A one-shot incomplete outcome saves its session first and
 returns an error exit status. Plain chat can continue with another turn. Only a
 completed outcome advances automatic-title checkpoints or completed-run counters.
 
+Ctrl-C during a one-shot or plain-chat run requests cooperative cancellation and
+waits up to 15 seconds for recovery and owned cleanup. A cleanup timeout is an
+unconfirmed interruption, never successful completion; previously checkpointed
+history, partial output and usage remain available. Plain chat returns to its
+prompt after an interrupted turn. Ctrl-C at that idle prompt exits without waiting
+for another line of input. Input is read only while idle, so the prompt reader does
+not consume approval input during execution.
+
 Session `run_summaries` retain each run's phase, bounded detail, optional structured
 readiness and canonical message range with content fingerprints. These are local
 presentation annotations, never provider messages or authority. Earlier no-tool
