@@ -119,7 +119,7 @@ impl Tool for Questions {
         if context.cancellation.is_cancelled() {
             return Err(ToolError::Cancelled);
         }
-        let mut answer = if context.interaction == InteractionMode::Unattended {
+        let answer = if context.interaction == InteractionMode::Unattended {
             QuestionAnswer::Unavailable
         } else {
             tokio::select! {
@@ -131,9 +131,6 @@ impl Tool for Questions {
             }
         };
         answer.validate(&question)?;
-        // Match configured values before JSON escaping changes quotes/backslashes.
-        // Validate the original selected answer before replacing sensitive text.
-        answer.redact(&context.redactor);
         serde_json::to_string(&answer).map_err(|e| ToolError::Failed(e.to_string()))
     }
 }

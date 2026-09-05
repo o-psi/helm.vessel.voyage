@@ -28,7 +28,8 @@ full question and controls.
 **Answers are sent to the model and saved as tool results in the session. Do not
 enter passwords, tokens, or other secrets.** This differs from direct human PTY
 input, which stays outside model-visible records. Known configured secrets receive
-redaction on selected/custom answer text before JSON encoding, including values
+redaction once at the tool registry boundary on selected/custom answer text before
+final JSON encoding, including values
 with quotes, backslashes, or Unicode. Fixed status/index metadata stays intact even
 when a configured value matches a schema word; malformed or unknown response fields
 are rejected without echoing their content. This is not a guarantee for arbitrary text.
