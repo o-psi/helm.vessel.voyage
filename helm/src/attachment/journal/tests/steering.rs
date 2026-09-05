@@ -38,14 +38,14 @@ fn queue_is_separate_from_canonical_and_application_is_atomic_fifo() {
     let mut canonical = queued.session.messages;
     canonical.push(Message::new(Role::Assistant, "response before application"));
     journal
-        .checkpoint_canonical(&guard, run.id, &canonical, &Usage::default())
+        .checkpoint_canonical_at(&guard, run.id, &canonical, &Usage::default(), 1)
         .unwrap();
     let unchanged = journal.load_session(session.id).unwrap().revision;
     let mut reordered = canonical.clone();
     reordered.push(second_record.record.applied_message());
     assert!(
         journal
-            .checkpoint_canonical(&guard, run.id, &reordered, &Usage::default())
+            .checkpoint_canonical_at(&guard, run.id, &reordered, &Usage::default(), 1)
             .is_err()
     );
     assert_eq!(
@@ -55,7 +55,7 @@ fn queue_is_separate_from_canonical_and_application_is_atomic_fifo() {
     canonical.push(first_record.record.applied_message());
     canonical.push(second_record.record.applied_message());
     journal
-        .checkpoint_canonical(&guard, run.id, &canonical, &Usage::default())
+        .checkpoint_canonical_at(&guard, run.id, &canonical, &Usage::default(), 1)
         .unwrap();
     let record = journal.steering_record(first.receipt_id).unwrap();
     assert_eq!(record.status, SteeringStatus::Applied);
@@ -69,7 +69,7 @@ fn queue_is_separate_from_canonical_and_application_is_atomic_fifo() {
     );
     let saved = journal.load_session(session.id).unwrap();
     journal
-        .checkpoint_canonical(&guard, run.id, &canonical, &Usage::default())
+        .checkpoint_canonical_at(&guard, run.id, &canonical, &Usage::default(), 1)
         .unwrap();
     assert_eq!(
         journal.load_session(session.id).unwrap().revision,
@@ -107,7 +107,7 @@ fn receipt_identity_collision_forgery_and_rejection_are_not_history_rewrites() {
         history.push(forged);
         assert!(
             journal
-                .checkpoint_canonical(&guard, run.id, &history, &Usage::default())
+                .checkpoint_canonical_at(&guard, run.id, &history, &Usage::default(), 1)
                 .is_err()
         );
     }
@@ -135,7 +135,7 @@ fn receipt_identity_collision_forgery_and_rejection_are_not_history_rewrites() {
     history.push(record.applied_message());
     assert!(
         journal
-            .checkpoint_canonical(&guard, run.id, &history, &Usage::default())
+            .checkpoint_canonical_at(&guard, run.id, &history, &Usage::default(), 1)
             .is_err()
     );
 }
@@ -208,14 +208,15 @@ fn write_failures_roll_back_queue_application_rejection_and_terminal_state() {
                 );
                 assert!(
                     journal
-                        .checkpoint_canonical(
+                        .checkpoint_canonical_at(
                             &guard,
                             run.id,
                             &history,
                             &Usage {
                                 input_tokens: 7,
                                 output_tokens: 3
-                            }
+                            },
+                            1
                         )
                         .is_err()
                 );
@@ -298,7 +299,7 @@ fn bounds_stale_revision_forged_metadata_and_pending_completion_fail_closed() {
         }
         assert!(
             journal
-                .checkpoint_canonical(&guard, run.id, &history, &Usage::default())
+                .checkpoint_canonical_at(&guard, run.id, &history, &Usage::default(), 1)
                 .is_err()
         );
         assert_eq!(
@@ -309,7 +310,7 @@ fn bounds_stale_revision_forged_metadata_and_pending_completion_fail_closed() {
     let mut final_history = original;
     final_history.push(Message::new(Role::Assistant, "proposal"));
     journal
-        .checkpoint_canonical(&guard, run.id, &final_history, &Usage::default())
+        .checkpoint_canonical_at(&guard, run.id, &final_history, &Usage::default(), 1)
         .unwrap();
     assert!(
         journal
@@ -372,4 +373,128 @@ fn explicit_schema_three_upgrade_keeps_import_provenance_and_fences_old_writer()
             .unwrap()
             .is_empty()
     );
+}
+
+#[test]
+fn crash_after_queue_or_application_fixture() {
+    let Some(root) = std::env::var_os("HELM_STEERING_CRASH_ROOT") else {
+        return;
+    };
+    let root = PathBuf::from(root);
+    let request: SteeringAdmission =
+        serde_json::from_slice(&fs::read(root.join("request.json")).unwrap()).unwrap();
+    let mut journal = Journal::open(root.join("attachment")).unwrap();
+    let guard = journal.acquire_execution(request.session_id).unwrap();
+    let record = journal.queue_steering(&guard, &request, 1).unwrap().record;
+    if std::env::var("HELM_STEERING_CRASH_STAGE").unwrap() == "applied" {
+        let mut history = journal
+            .load_session(request.session_id)
+            .unwrap()
+            .session
+            .messages;
+        history.push(record.applied_message());
+        journal
+            .checkpoint_canonical_at(
+                &guard,
+                request.run_id,
+                &history,
+                &Usage {
+                    input_tokens: 7,
+                    output_tokens: 3,
+                },
+                1,
+            )
+            .unwrap();
+    }
+    fs::write(root.join("ready"), b"durable receipt").unwrap();
+    loop {
+        std::thread::park();
+    }
+}
+
+#[test]
+fn actual_process_exit_preserves_receipt_and_never_requeues_execution() {
+    struct KillOnDrop(std::process::Child);
+    impl Drop for KillOnDrop {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+    for stage in ["queued", "applied"] {
+        let (dir, mut journal, session, request) = setup();
+        let guard = journal.acquire_execution(session.id).unwrap();
+        let run = journal.admit_turn(&guard, &request, 1).unwrap().run;
+        journal.mark_running(&guard, run.id).unwrap();
+        let guidance = pending(&journal, &run);
+        fs::write(
+            dir.path().join("request.json"),
+            serde_json::to_vec(&guidance).unwrap(),
+        )
+        .unwrap();
+        drop(guard);
+        drop(journal);
+        let mut child=KillOnDrop(std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact","attachment::journal::tests::steering::crash_after_queue_or_application_fixture","--nocapture"])
+            .env("HELM_STEERING_CRASH_ROOT",dir.path()).env("HELM_STEERING_CRASH_STAGE",stage).spawn().unwrap());
+        let deadline = std::time::Instant::now() + Duration::from_secs(30);
+        while !dir.path().join("ready").exists() {
+            assert!(
+                child.0.try_wait().unwrap().is_none(),
+                "worker exited before durable boundary"
+            );
+            assert!(
+                std::time::Instant::now() < deadline,
+                "worker did not reach durable boundary"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        child.0.kill().unwrap();
+        assert!(!child.0.wait().unwrap().success());
+        let mut journal = Journal::open(dir.path().join("attachment")).unwrap();
+        let guard = journal.acquire_execution(session.id).unwrap();
+        assert_eq!(
+            journal.recover_interrupted(&guard).unwrap().unwrap().state,
+            RunState::Interrupted
+        );
+        let expected = if stage == "applied" {
+            SteeringStatus::Applied
+        } else {
+            SteeringStatus::NotApplied
+        };
+        let receipt = journal.steering_record(guidance.receipt_id).unwrap();
+        assert_eq!(receipt.status, expected);
+        assert_eq!(receipt.request.text, guidance.text);
+        let saved = journal.load_session(session.id).unwrap();
+        assert_eq!(
+            saved
+                .session
+                .messages
+                .iter()
+                .filter(|m| m.steering.is_some())
+                .count(),
+            usize::from(stage == "applied")
+        );
+        assert_eq!(
+            saved.session.usage.input_tokens,
+            if stage == "applied" { 7 } else { 0 }
+        );
+        assert_eq!(
+            saved.session.usage.output_tokens,
+            if stage == "applied" { 3 } else { 0 }
+        );
+        let retry = journal.queue_steering(&guard, &guidance, 90_000).unwrap();
+        assert!(retry.duplicate);
+        assert_eq!(retry.record.status, expected);
+        assert_eq!(
+            journal.load_session(session.id).unwrap().revision,
+            saved.revision
+        );
+        assert!(
+            journal
+                .admit_turn(&guard, &request, 90_000)
+                .unwrap()
+                .duplicate
+        );
+    }
 }

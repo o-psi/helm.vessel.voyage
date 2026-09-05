@@ -662,6 +662,32 @@ impl Journal {
         messages: &[Message],
         usage: &Usage,
     ) -> Result<()> {
+        self.checkpoint_canonical_with_clock(guard, run_id, messages, usage, || {
+            Ok(i64::try_from(
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)?
+                    .as_millis(),
+            )?)
+        })
+    }
+    pub fn checkpoint_canonical_at(
+        &mut self,
+        guard: &ExecutionGuard,
+        run_id: Uuid,
+        messages: &[Message],
+        usage: &Usage,
+        now_ms: i64,
+    ) -> Result<()> {
+        self.checkpoint_canonical_with_clock(guard, run_id, messages, usage, || Ok(now_ms))
+    }
+    pub(crate) fn checkpoint_canonical_with_clock(
+        &mut self,
+        guard: &ExecutionGuard,
+        run_id: Uuid,
+        messages: &[Message],
+        usage: &Usage,
+        clock: impl FnOnce() -> Result<i64>,
+    ) -> Result<()> {
         let run = self.run(run_id)?;
         self.check_guard(guard, run.session_id)?;
         let tx = self
@@ -706,6 +732,7 @@ impl Journal {
                     .revision
                     .checked_add(1)
                     .context("revision overflow")?,
+                clock()?,
             )?;
         } else {
             ensure!(

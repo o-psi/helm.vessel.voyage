@@ -156,6 +156,14 @@ impl Journal {
         request: &SteeringAdmission,
         now_ms: i64,
     ) -> Result<SteeringOutcome> {
+        self.queue_steering_with_clock(guard, request, || Ok(now_ms))
+    }
+    pub(crate) fn queue_steering_with_clock(
+        &mut self,
+        guard: &ExecutionGuard,
+        request: &SteeringAdmission,
+        clock: impl FnOnce() -> Result<i64>,
+    ) -> Result<SteeringOutcome> {
         self.check_guard(guard, request.session_id)?;
         ensure!(
             self.opened_schema == SCHEMA_VERSION,
@@ -183,6 +191,7 @@ impl Journal {
                 record,
             });
         }
+        let now_ms = clock()?;
         ensure!(
             now_ms >= 0
                 && request.expires_at_ms > now_ms
@@ -349,6 +358,7 @@ pub(super) fn apply(
     appended: &[Message],
     offset: usize,
     revision: u64,
+    now_ms: i64,
 ) -> Result<()> {
     for (index, message) in appended.iter().enumerate() {
         let Some(receipt) = &message.steering else {
@@ -360,6 +370,10 @@ pub(super) fn apply(
                 && record.request.session_id == run.session_id
                 && record.status == SteeringStatus::Queued,
             "unknown, stale or duplicate steering receipt"
+        );
+        ensure!(
+            now_ms >= 0 && record.request.expires_at_ms > now_ms,
+            "steering expired before application"
         );
         ensure!(
             serde_json::to_vec(message)? == serde_json::to_vec(&record.applied_message())?,
