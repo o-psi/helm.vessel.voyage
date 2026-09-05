@@ -179,7 +179,7 @@ async fn failed_checkpoint_retains_fence_and_recovery_requires_callback_release(
             .is_err()
     );
     drop(callback);
-    let db = rusqlite::Connection::open(root.path().join("attachment/journal.sqlite3")).unwrap();
+    let db = fixture_database(root.path().join("attachment/journal.sqlite3")).unwrap();
     db.execute_batch("DROP TRIGGER fail_checkpoint").unwrap();
     assert_eq!(
         owner.recover_interrupted().await.unwrap().unwrap().state,
