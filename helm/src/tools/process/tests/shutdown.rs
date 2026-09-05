@@ -247,3 +247,64 @@ async fn ordinary_status_reads_do_not_reap_session_leader_before_shutdown() {
     );
     assert!(!std::path::Path::new(&format!("/proc/{pid}")).exists());
 }
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn shutdown_report_excludes_direct_human_input_and_hostile_output() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("input.py"),
+        r#"import os,sys,termios,time
+attrs=termios.tcgetattr(0)
+attrs[3] &= ~termios.ECHO
+termios.tcsetattr(0,termios.TCSANOW,attrs)
+open('ready','w').write('ready')
+value=sys.stdin.readline()
+open('received','w').write(value)
+print('\x1b[2Jhostile-diagnostic',flush=True)
+while True: time.sleep(1)
+"#,
+    )
+    .unwrap();
+    let ctx = context(dir.path());
+    let tool = ProcessTool::default();
+    tool.execute(
+        json!({"action":"start","command":"exec python3 input.py"}),
+        &ctx,
+    )
+    .await
+    .unwrap();
+    let id = tool.metadata().unwrap()[0].id;
+    tokio::time::timeout(Duration::from_secs(3), async {
+        while !dir.path().join("ready").exists() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    InteractiveTerminals::write(&tool, TerminalId(id), b"private-human-input\n".to_vec())
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(3), async {
+        while std::fs::read_to_string(dir.path().join("received"))
+            .ok()
+            .as_deref()
+            != Some("private-human-input\n")
+        {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let report = tool.shutdown(Duration::from_secs(3)).await;
+    assert!(report.observation_complete, "{report:?}");
+    let encoded = serde_json::to_string(&report).unwrap();
+    assert!(!encoded.contains("private-human-input"));
+    assert!(!encoded.contains("hostile-diagnostic"));
+    assert!(!encoded.contains("input.py"));
+    assert!(
+        InteractiveTerminals::write(&tool, TerminalId(id), b"late input".to_vec())
+            .await
+            .is_err()
+    );
+}
