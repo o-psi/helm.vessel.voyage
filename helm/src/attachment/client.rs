@@ -454,6 +454,10 @@ impl EnrollmentClient {
         if self.state.pending.is_some() {
             return Err(ClientError::Conflict);
         }
+        // Do not erase observed server confirmation on a redundant local disable.
+        if self.state.status == Status::Revoked {
+            return Ok(());
+        }
         self.state.status = Status::Detached;
         self.persist()
     }

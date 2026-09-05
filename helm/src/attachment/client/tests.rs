@@ -553,3 +553,21 @@ fn inspection_reports_busy_and_rejects_missing_lock_without_repair() {
         before
     );
 }
+#[test]
+fn detach_of_confirmed_revoked_identity_is_read_only() {
+    let dir = directory();
+    let mut client = open(dir.path());
+    active(&mut client);
+    client.state.status = Status::Revoked;
+    client.persist().unwrap();
+    let path = dir.path().join("client.json");
+    let before = std::fs::read(&path).unwrap();
+    let modified = std::fs::metadata(&path).unwrap().modified().unwrap();
+    client.detach().unwrap();
+    assert_eq!(client.status(), Status::Revoked);
+    assert_eq!(std::fs::read(&path).unwrap(), before);
+    assert_eq!(
+        std::fs::metadata(&path).unwrap().modified().unwrap(),
+        modified
+    );
+}

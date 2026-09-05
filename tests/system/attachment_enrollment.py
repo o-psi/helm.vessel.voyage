@@ -181,6 +181,13 @@ def main():
             cli('revoke', expected=1, extra=flags)
             assert cli('status')['status'] == 'revoking'
             assert cli('resume', extra=flags)['status'] == 'revoked'
+            revoked_bytes = state_path.read_bytes()
+            revoked_stat = state_path.stat()
+            redundant = cli('detach')
+            assert redundant['status'] == 'revoked' and 'already confirmed' in redundant['notice']
+            assert state_path.read_bytes() == revoked_bytes
+            assert (state_path.stat().st_mtime_ns, state_path.stat().st_ino) == (revoked_stat.st_mtime_ns, revoked_stat.st_ino)
+            assert cli('status')['status'] == 'revoked'
             # Denials and redirects preserve the original pending identity.
             denied_dir = root / 'denied'
             wrong = invitation()

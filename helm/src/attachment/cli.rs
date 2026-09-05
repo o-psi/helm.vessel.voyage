@@ -114,8 +114,11 @@ fn print_status(info: Option<Inspection>, detached: bool) -> Result<(), CliError
         None => serde_json::json!({"status":"unenrolled"}),
     };
     if detached {
-        value["notice"] =
-            serde_json::json!("disabled locally; server revocation is not confirmed by detach");
+        value["notice"] = if value["status"] == "revoked" {
+            serde_json::json!("server revocation already confirmed; local state unchanged")
+        } else {
+            serde_json::json!("disabled locally; server revocation is not confirmed by detach")
+        };
     }
     println!(
         "{}",

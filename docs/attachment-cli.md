@@ -70,8 +70,10 @@ An interrupted request is not proof that the server did nothing.
 
 `helm attachment detach` works offline and disables this local identity without
 requesting server revocation. It retains the local tombstone and all sessions.
-It refuses unresolved pending mutations so their keys and recovery path are not
-silently discarded. A `revoked` result confirms a successful server revocation
+A redundant detach of an already confirmed revoked identity is a read-only no-op
+that preserves the `revoked` status. It refuses unresolved pending mutations so
+their keys and recovery path are not silently discarded. Offline disable while a
+mutation is pending remains a #10 follow-up, not completed lifecycle acceptance. A `revoked` result confirms a successful server revocation
 transaction; `detached` alone does not. To revoke remotely, do so before detaching.
 Re-enrollment of a detached directory is intentionally not automatic; use an
 explicit separate identity directory and operator-issued invitation when needed.
