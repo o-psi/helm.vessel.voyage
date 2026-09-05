@@ -22,9 +22,58 @@ Names/model labels are bounded and reject control/bidi-format characters; prompt
 are bounded separately. Canonical JSON must fit the frame budget even after string
 escaping. Admission identity omits renewable connection IDs but retains authority,
 payload and expiry. A transport must authenticate those claimed identities; parsing
-JSON does not authenticate anyone. Event envelopes, negotiation and adapters remain
-unfinished. Expired duplicate-outcome lookup must be integrated separately from
-new-command deadline validation.
+JSON does not authenticate anyone. The compiled frame codec below carries these commands; sequenced event envelopes,
+negotiation and adapters remain unfinished. Expired duplicate-outcome lookup must
+be integrated separately from new-command deadline validation.
+
+## Compiled stream codec (partial #9)
+
+`voyage_protocol::stream` is now an exported, compiled module. Its public-consumer
+fixtures exercise authenticate/welcome, command/result and heartbeat/lease frames.
+This is a wire codec, not an authenticated connection or a working transport.
+No websocket route, Helm listener, remote command handler or provider dispatch is
+added. Typed event subscriptions, replay/snapshot delivery, capability negotiation,
+backpressure, lease enforcement and two-component network tests remain required.
+
+Both `Frame::decode` and `Frame::encode` reject invalid nested structures and
+oversized canonical JSON. Decoding first limits incoming bytes to 256 KiB. Commands
+reuse their identity, operation, label, revision and prompt bounds. Authentication
+accepts only a structurally valid version-2 Connect proof: nonnil IDs, bounded epoch,
+positive expiry, bounded origin, 32-byte server tag, 64-byte signature, no rotation
+signature and at most 16 KiB of canonical proof JSON. These checks do not verify the
+signature, origin, challenge consumption, current epoch or expiry against a clock.
+The eventual adapter must perform those checks against trusted enrollment state.
+
+Result projections have typed run states, conversation roles and fixed denial codes;
+raw provider/storage error messages and system-message roles are not representable.
+Session pages allow at most 100 unique IDs, 256-byte safe name/model labels and
+signed-range revisions. History pages allow at most 100 user/assistant/tool entries,
+64 KiB per entry, no NUL text and signed-range cursors. Other conversation text is
+preserved; renderers remain responsible for terminal/HTML escaping. Lease durations
+are structurally bounded to 1–30 seconds. Checking that duration does not establish
+an authorization lease or renew one. All projections still require sharing checks;
+the codec cannot decide whether disclosure is authorized.
+
+`Command::validate_structure` intentionally does not compare the original deadline
+with the current clock. After authenticating and authorizing the caller, an adapter
+may use this structure to look up an already-admitted command's durable outcome.
+An absent record must still pass `Command::validate(now_ms)` before new admission;
+`Command::decode(bytes, now_ms)` retains that admission-time validation. Neither
+reconnect nor structural decoding rewrites the deadline or admission identity.
+Existing journal deduplication/admission behavior is unchanged.
+
+This publishes previously uncompiled source, not a compatibility promise for an
+existing deployed stream. Version 1 and unknown fields remain rejected. The v2
+wire names for valid existing shapes are preserved; arbitrary state/role/error
+strings are intentionally rejected. There is no storage migration or credential
+reuse. Generated API documentation is available with
+`cargo doc -p voyage-protocol --no-deps`.
+
+Run `cargo test -p voyage-protocol --all-features` for public frame roundtrips,
+legacy/unknown/duplicate/nested rejection, identity/count/Unicode/escape boundaries,
+expired duplicate lookup versus new admission, proof-shape/context separation and
+content-free diagnostics. These deterministic tests establish codec behavior only,
+not runtime sharing, revocation, reconnect or transport backpressure.
 
 ## Atomic command/run journal
 
@@ -62,6 +111,16 @@ per session. SQLite rollback journals can consume additional transient disk spac
 Capacity failure rejects further writes; command evidence is not pruned to make room.
 Replay eviction alone does not erase partial text or deduplication history. Product
 retention/export/archival controls remain necessary for long-term operation.
+
+## Current sharing checks
+
+The [in-memory sharing authority](attachment-sharing.md) owns current policies and
+intersects installation delegation, authenticated principal capabilities and consent.
+Copied snapshots cannot authorize operations; per-session updates use a revision CAS,
+and branch checks/insertion share one registry lock. These are local library checks,
+not durable sharing or a transport authorization fence. All production adapters,
+sharing persistence, dispatch-time rechecks and confirmation/audit integration remain
+required before remote exposure.
 
 ## Integration requirements still open
 
