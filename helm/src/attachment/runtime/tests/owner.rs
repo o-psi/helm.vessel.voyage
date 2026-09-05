@@ -401,6 +401,7 @@ async fn aborted_admission_keeps_fence_until_commit_and_never_dispatches_on_retr
     retry.prompt = request.prompt.clone();
     let (started, ready) = tokio::sync::oneshot::channel();
     let (release, wait) = std::sync::mpsc::channel();
+    let lifetime = Arc::downgrade(&owner.store);
     let admitting = owner.clone();
     let task = tokio::spawn(async move {
         admitting
@@ -418,6 +419,15 @@ async fn aborted_admission_keeps_fence_until_commit_and_never_dispatches_on_retr
     process_probe(&path, session.id, true); // Only the blocking admission worker owns the fence.
     assert!(journal.lookup_command(&retry).unwrap().is_none());
     release.send(()).unwrap();
+    // Opening another Journal starts a transaction, so wait without touching SQLite
+    // until the abandoned worker has completed its commit and dropped its owner.
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while lifetime.strong_count() != 0 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
     let recovered_owner = tokio::time::timeout(Duration::from_secs(2), async {
         loop {
             if let Ok(owner) = ManagedSessionOwner::open(path.clone(), session.id).await {
