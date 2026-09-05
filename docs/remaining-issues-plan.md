@@ -373,3 +373,18 @@ Delivered: dedicated foreground remote session execution with authenticated list
 Verified Linux: 894 workspace tests normally and with actual two-CPU affinity; all 26 system fixtures; formatting, strict Clippy, locked release, 12 eval definitions, unique packaging/checksum. All 34 local baseline stages passed. Both final CI runs passed: https://github.com/o-psi/voyage/actions/runs/33993043815 and https://github.com/o-psi/voyage/actions/runs/33993045729 . Definition validation is not live-provider evaluation; native macOS/Windows and paid/live calls were not run.
 
 This is actual main delivery, not closure of the broader issues. Full session lifecycle/Create, private-session consent/import and retention, remote approvals, services, notifications and deployed production evidence remain open. Browser console work is explicitly deferred by the operator; none is included in this PR.
+
+## Primary workspace reconciliation verification
+
+Reconciliation merge `5e3dca6` preserves local delivery-history commits and the
+operator's documentation/CI edits while incorporating published `fd5295e`.
+Independent review confirmed runtime, dependency, CI and user-guide content match
+that published tree; the delivery plan is the only difference.
+
+Fresh Linux verification passed formatting, strict workspace Clippy, all 894
+workspace tests (none ignored), the locked optimized workspace build, all 26
+workflow system fixtures, and 12 evaluation definitions. Unique package
+`voyage-reconcile-5e3dca6-20260905-linux-x86_64.tar.gz` passed its checksum.
+Local evidence is under `.local-git/evidence/workspace-reconcile-20260905/`.
+These are offline checks; no live-provider or native macOS/Windows result is claimed.
+Other development worktrees remain intact, with unfinished scopes unmerged.
