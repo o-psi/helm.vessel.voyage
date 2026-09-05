@@ -39,7 +39,9 @@ silently reconstructed by the next submit.
 ## Concurrent work and retries
 
 Only one foreground owner can mutate a session. Another submit receives a busy
-or revision conflict without executing tools. Other sessions can run concurrently.
+or revision conflict without executing tools. Sessions in different workspaces can run concurrently. A shared workspace also
+has a subagent writer lease; another owner can make runtime construction fail
+boundedly, with explicit cleanup recovery required.
 Use `list --limit 20 --after SESSION_UUID` for bounded pages; metadata excludes
 conversation text and provider continuation state. `--json` emits JSON records
 for scripts, including an explicit `next_after` cursor.
@@ -113,6 +115,22 @@ helm managed --directory "$STORE" recover SESSION_UUID \
 ```
 
 This records an operator attestation, distinct from Helm observing cleanup.
+
+If cancellation interrupted a tool call before its result was recorded, a new
+turn also requires explicit reconciliation. After recovery and confirmed or
+attested cleanup, read the current revision with `list`, then run:
+
+```sh
+helm managed --directory "$STORE" recover SESSION_UUID \
+  --reconcile-tools RUN_UUID --expected-revision REVISION
+```
+
+Reconciliation appends an explicit unknown/interrupted outcome for unresolved
+tool calls. It preserves the calls, existing results, and provider continuation
+state; it never reruns a command or invents a successful outcome. An exact retry
+uses the same run UUID and original revision. Inspect the workspace before
+requesting deliberate new work.
+
 An execution that has not reached durable terminal state is reported as
 `run_unconfirmed`, with its actual saved state; dropping a future does not mean
 its work stopped.

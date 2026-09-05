@@ -370,7 +370,9 @@ async fn main() -> Result<()> {
         let Some(Command::Managed(args)) = cli.command else {
             unreachable!()
         };
-        return managed::run(args, None, cli.workspace, false).await;
+        return managed::run(args, None, cli.workspace, false)
+            .await
+            .map_err(managed::safe_error);
     }
     let filter = if cli.verbose {
         "helm=debug"
@@ -457,9 +459,9 @@ async fn main() -> Result<()> {
             print_config(&config)?;
             Ok(())
         }
-        Command::Managed(args) => {
-            managed::run(args, Some(config), cli.workspace, model_overridden).await
-        }
+        Command::Managed(args) => managed::run(args, Some(config), cli.workspace, model_overridden)
+            .await
+            .map_err(managed::safe_error),
         Command::Models { json } => list_models(&config, cli.workspace, json).await,
         Command::Doctor => doctor(&config, cli.workspace).await,
         Command::Auth { command } => auth(command, &config).await,

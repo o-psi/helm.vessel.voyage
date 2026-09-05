@@ -274,6 +274,10 @@ fn run_result(actual: &RunRecord, observed: bool) -> Value {
     json!({"event":if terminal {"run_terminal"}else{"run_unconfirmed"},"run":record(actual),
         "cleanup":if observed && terminal {"observed"}else{"unconfirmed"}})
 }
+pub(super) fn safe_error(error: anyhow::Error) -> anyhow::Error {
+    let text = safe_diagnostic(&format!("{error:#}"));
+    anyhow::anyhow!(text.chars().take(4096).collect::<String>())
+}
 pub(super) async fn run(
     args: Args,
     config: Option<Config>,
@@ -640,6 +644,16 @@ async fn submit(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn managed_errors_are_bounded_and_control_safe() {
+        let error = safe_error(anyhow::anyhow!(format!(
+            "\u{1b}[2J\u{202e}{}",
+            "x".repeat(10000)
+        )));
+        let text = error.to_string();
+        assert!(text.chars().count() <= 4096);
+        assert!(!text.contains('\u{1b}') && !text.contains('\u{202e}'));
+    }
     #[test]
     fn managed_resource_registration_preserves_filtered_authority_and_closes() {
         let resources = ManagedResources::default();

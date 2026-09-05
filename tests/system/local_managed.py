@@ -2,6 +2,7 @@
 """Real managed CLI processes, native HTTP, cancellation and authoritative SQLite."""
 import json
 import os
+import re
 from pathlib import Path
 import signal
 import sqlite3
@@ -48,8 +49,10 @@ class Provider(BaseHTTPRequestHandler):
                 case.counts[bucket] = step + 1
                 case.requests.append(body)
             # Actual first dispatch must follow both durable admission and cleanup registration.
-            rows = case.sql('SELECT r.active,o.confirmation FROM runs r JOIN local_cleanup_obligations o ON o.run_id=r.id WHERE r.active=1')
-            assert rows == [(1, None)], rows
+            selected = re.search(r'fixture prompt ([0-9a-f-]{36})', str(users[-1])) if users and not is_child else None
+            query = 'SELECT r.active,o.run_id,o.confirmation FROM runs r LEFT JOIN local_cleanup_obligations o ON o.run_id=r.id WHERE r.active=1'
+            rows = case.sql(query + (' AND r.session_id=?' if selected else ''), (selected.group(1),) if selected else ())
+            assert len(rows) == 1 and rows[0][0] == 1 and rows[0][1] and rows[0][2] is None, rows
             if case.mode == 'partial_hold':
                 prefix = response(case.provider, 'managed-partial-before-cancel', step).replace(b'data: [DONE]\n\n', b'')
                 self.send_response(200)
@@ -148,9 +151,9 @@ class Case:
     def revision(self, session):
         return next(s['revision'] for s in self.listing()['sessions'] if s['id'] == session)
 
-    def command(self, session, revision=None, command=None, expiry=None, prompt='fixture prompt'):
+    def command(self, session, revision=None, command=None, expiry=None, prompt=None):
         return [*self.args, 'submit', session, '--expected-revision', str(self.revision(session) if revision is None else revision),
-                '--command-id', command or str(uuid.uuid4()), '--expires-at-ms', str(expiry or int(time.time() * 1000) + 120000), prompt]
+                '--command-id', command or str(uuid.uuid4()), '--expires-at-ms', str(expiry or int(time.time() * 1000) + 120000), prompt or f'fixture prompt {session}']
 
     def close(self):
         self.release.set()
@@ -311,6 +314,20 @@ def failures_and_policy(root):
         args[args.index(str(case.storage))] = str(missing)
         run([*args, 'list'], case.env, expected=1)
         assert not missing.exists()
+        # Stored metadata is untrusted even when it originated in an older local writer.
+        state = json.loads(case.sql('SELECT state FROM sessions WHERE id=?', (session,))[0][0])
+        state['name'] = 'hostile\x1b[2J\u202e-name'
+        with sqlite3.connect(case.database) as database:
+            database.execute('UPDATE sessions SET state=? WHERE id=?', (json.dumps(state), session))
+        human_args = [arg for arg in case.args if arg != '--json']
+        human = subprocess.run([str(HELM), *human_args, 'list'], env=case.env, capture_output=True, text=True, timeout=20)
+        assert human.returncode == 0 and session in human.stdout
+        assert '\x1b' not in human.stdout and '\u202e' not in human.stdout and not human.stdout.startswith('{')
+        alias = case.root / 'alias'
+        alias.symlink_to(case.storage, target_is_directory=True)
+        alias_args = list(case.args)
+        alias_args[alias_args.index(str(case.storage))] = str(alias)
+        run([*alias_args, 'list'], case.env, expected=1)
     finally:
         case.close()
 
@@ -387,6 +404,68 @@ def partial_cancellation(root):
         case.close()
 
 
+def storage_failure(root):
+    case = Case(root)
+    try:
+        session = case.create()
+        case.reset('hold')
+        process = subprocess.Popen([str(HELM), *case.command(session)], env=case.env,
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        assert case.started.wait(15)
+        run_id = next(row['active_run']['id'] for row in case.listing()['sessions'] if row['id'] == session)
+        database = sqlite3.connect(case.database, timeout=5)
+        try:
+            database.execute('BEGIN EXCLUSIVE')
+            # Cancellation polling must fail closed, not treat an unreadable intent as absent.
+            stdout, stderr = process.communicate(timeout=20)
+            assert process.returncode != 0, (stdout, stderr)
+            events = [json.loads(line) for line in stdout.splitlines()]
+            assert not any(event['event'] == 'run_terminal' and event['run']['state'] == 'completed' for event in events)
+            assert len(case.requests) == 1
+        finally:
+            database.rollback()
+            database.close()
+        entry = next(row for row in case.listing()['sessions'] if row['id'] == session)
+        assert entry['pending_cleanup_run'] == run_id
+        run([*case.args, 'recover', session], case.env)
+        run(case.command(session), case.env, expected=1)
+        run([*case.args, 'recover', session, '--acknowledge-cleanup', run_id], case.env)
+        case.release.set()
+        case.reset()
+        final(run(case.command(session), case.env))
+    finally:
+        case.close()
+
+
+def independent_sessions(root):
+    case = Case(root)
+    try:
+        first = case.create()
+        other_workspace = case.root / 'other-workspace'
+        other_workspace.mkdir()
+        second = str(uuid.uuid4())
+        other_args = list(case.args)
+        other_args[other_args.index(str(case.workspace))] = str(other_workspace)
+        run([*other_args, 'create', '--id', second], case.env)
+        case.reset('hold')
+        process = subprocess.Popen([str(HELM), *case.command(first)], env=case.env,
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        assert case.started.wait(15)
+        # An idle provider in one session cannot monopolize another session's fence.
+        case.mode = 'success'
+        second_command = case.command(second)
+        second_command[second_command.index(str(case.workspace))] = str(other_workspace)
+        final(run(second_command, case.env))
+        assert len(case.requests) == 2
+        case.release.set()
+        stdout, stderr = process.communicate(timeout=20)
+        assert process.returncode == 0, stderr
+        final([json.loads(line) for line in stdout.splitlines()])
+        assert len({json.loads(row[0])['machine_id'] for row in case.sql('SELECT record FROM runs')}) == 1
+    finally:
+        case.close()
+
+
 def child_cleanup(root):
     case = Case(root)
     try:
@@ -427,6 +506,8 @@ def main():
         failures_and_policy(root / 'failure-policy')
         output_and_terminal_cleanup(root / 'output-terminal')
         partial_cancellation(root / 'partial')
+        storage_failure(root / 'storage-failure')
+        independent_sessions(root / 'independent')
         child_cleanup(root / 'children')
     print('local managed CLI: native transports, exact retry, revision fences, cancellation and restart cleanup passed')
 
