@@ -101,6 +101,10 @@ fn read(db: &Connection, id: Uuid) -> Result<SteeringRecord> {
     let (json, stored_status, run, session, ordinal, machine, principal, digest): (String,String,String,String,i64,String,String,Vec<u8>) = db.query_row(
         "SELECT record,status,run_id,session_id,ordinal,machine_id,principal_id,digest FROM steering WHERE id=?1", [id.to_string()],
         |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?,r.get(6)?,r.get(7)?)))?;
+    ensure!(
+        json.len() <= crate::agent::MAX_STEERING_BYTES * 6 + 4096,
+        "stored steering capacity exceeded"
+    );
     let record: SteeringRecord = serde_json::from_str(&json)?;
     validate(&record.request)?;
     ensure!(
@@ -149,6 +153,37 @@ pub(super) fn receipt_exists(db: &Connection, id: Uuid) -> Result<bool> {
         |r| r.get(0),
     )?)
 }
+// Historical receipts remain canonical evidence, including copies in branches.
+// Reserve their IDs without inventing queue rows or transition provenance.
+pub(super) fn historical_receipt_exists(db: &Connection, id: Uuid) -> Result<bool> {
+    Ok(db.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sessions,json_each(sessions.state,'$.messages') AS message WHERE json_extract(message.value,'$.steering.id')=?1)",
+        [id.to_string()], |r| r.get(0),
+    )?)
+}
+pub(super) fn reserved_receipt_exists(db: &Connection, id: Uuid) -> Result<bool> {
+    Ok(receipt_exists(db, id)? || historical_receipt_exists(db, id)?)
+}
+pub(super) fn validate_snapshot_ids(db: &Connection, session: &Session) -> Result<()> {
+    let mut query = db.prepare("SELECT EXISTS(SELECT 1 FROM commands WHERE id=?1)")?;
+    for receipt in session
+        .messages
+        .iter()
+        .filter_map(|message| message.steering.as_ref())
+    {
+        let exists: bool = query.query_row([receipt.id.to_string()], |r| r.get(0))?;
+        ensure!(!exists, "historical receipt collides with turn command");
+    }
+    Ok(())
+}
+pub(super) fn validate_existing_ids(db: &Connection) -> Result<()> {
+    let collision: bool = db.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sessions,json_each(sessions.state,'$.messages') AS message JOIN commands ON commands.id=json_extract(message.value,'$.steering.id'))",
+        [], |r| r.get(0),
+    )?;
+    ensure!(!collision, "historical receipt collides with turn command");
+    Ok(())
+}
 impl Journal {
     /// Caller must freshly authorize the actor for this run before each call.
     pub fn queue_steering(
@@ -192,6 +227,10 @@ impl Journal {
                 record,
             });
         }
+        ensure!(
+            !historical_receipt_exists(&tx, request.receipt_id)?,
+            "steering identity collides with historical receipt"
+        );
         let now_ms = clock()?;
         ensure!(
             now_ms >= 0

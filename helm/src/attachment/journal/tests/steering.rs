@@ -561,7 +561,7 @@ fn steering_revision_overflow_rolls_back_queue_and_replay_evidence() {
 fn imported_historical_receipts_reserve_ids_without_rewriting_copied_history() {
     let (dir, mut journal, session, request) = setup();
     let mut imported = Session::new(dir.path().into(), "fixture".into());
-    let message = Message::steering("historical receipt".into());
+    let message = Message::steering("historical receipt");
     let historical_id = message.steering.as_ref().unwrap().id;
     imported.messages.push(message);
     let provenance = import_provenance(&imported, &journal.directory);
@@ -618,4 +618,46 @@ fn oversized_encoded_receipt_is_rejected_before_parsing() {
             .to_string()
             .contains("capacity")
     );
+}
+
+#[test]
+fn legacy_history_command_collision_blocks_upgrade_without_rewriting_history() {
+    let (dir, journal, session, request) = setup();
+    journal
+        .connection
+        .execute_batch("DROP TABLE steering; UPDATE attachment_schema SET version=3;")
+        .unwrap();
+    drop(journal);
+    let mut journal = Journal::open(dir.path().join("attachment")).unwrap();
+    let mut historical = Session::new(dir.path().into(), "fixture".into());
+    let mut message = Message::steering("legacy collision");
+    message.steering.as_mut().unwrap().id = request.command_id;
+    historical.messages.push(message);
+    journal.create_session(&historical).unwrap();
+    let guard = journal.acquire_execution(session.id).unwrap();
+    let run = journal.admit_turn(&guard, &request, 1).unwrap().run;
+    journal
+        .finish(&guard, run.id, RunState::Cancelled, Some("cancelled"), None)
+        .unwrap();
+    drop(guard);
+    assert!(
+        journal
+            .upgrade_quiescent()
+            .unwrap_err()
+            .to_string()
+            .contains("collides")
+    );
+    assert_eq!(journal.opened_schema, 3);
+    assert_eq!(
+        serde_json::to_value(
+            journal
+                .load_session(historical.id)
+                .unwrap()
+                .session
+                .messages
+        )
+        .unwrap(),
+        serde_json::to_value(historical.messages).unwrap()
+    );
+    assert!(journal.lookup_command(&request).unwrap().is_some());
 }

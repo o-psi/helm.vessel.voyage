@@ -7,13 +7,16 @@ data migration is enabled by this module.
 
 Schema 4 stores steering receipts separately from canonical session messages.
 The receipt UUID is also the request's idempotency key; it cannot collide with any
-turn-command UUID, including commands in another session. The request binds text,
+turn-command UUID, including commands in another session. Historical receipt IDs
+in imported/copied canonical transcripts are also reserved against new admissions;
+copies preserve their original IDs without fabricating steering rows. New imports
+and session creation reject historical IDs that collide with existing commands. The request binds text,
 session, run, submitting machine/principal, expected revision and deadline. Exact
 retries return the durable outcome without sending again, even after the original
 deadline; changed bindings conflict and current caller authorization still applies.
 Production handles sample a trusted system clock after acquiring the storage
 transaction and again before applying pending input; callers cannot supply a
-stale timestamp. Newly expired receipts cannot reach provider dispatch.
+stale timestamp. A new deadline must be within five minutes. Newly expired receipts cannot reach provider dispatch.
 Pending text is not inserted into the canonical transcript or provider context.
 
 A managed steering handle commits Queued before sending to its bounded channel.
@@ -46,10 +49,12 @@ Limits are UTF-8 bytes: each input has the existing Agent limit of 64 KiB; a run
 can retain at most 64 pending receipts and 1,024 total receipts. The journal retains
 at most 100,000 steering receipts globally, independently of replay eviction, and
 its existing 256 MiB database and 16 MiB canonical snapshot bounds still apply.
-Receipt projection pages contain at most 64 records. Exhaustion fails without
+Receipt projection pages contain at most 64 records. Encoded receipt rows are
+bounded before parsing (six times the text byte limit plus 4 KiB for metadata). Exhaustion fails without
 dispatch or discarding deduplication evidence.
 
 Schema 2/3 databases require explicit quiescent upgrade before steering. Existing
 import provenance, canonical messages, runs and replay are preserved; old schema
-writers are fenced after upgrade. Native Windows journal storage and process
+writers are fenced after upgrade. A legacy command/historical-receipt collision
+blocks upgrade without changing the prior schema or canonical history. Native Windows journal storage and process
 fences remain in force. Source JSON transfer stays unsupported outside Unix.

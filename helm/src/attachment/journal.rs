@@ -302,6 +302,7 @@ impl Journal {
             });
         }
         after_fencing()?;
+        steering::validate_existing_ids(&tx)?;
         if self.opened_schema == 2 {
             tx.execute_batch(IMPORT_SCHEMA)?;
         }
@@ -376,6 +377,9 @@ impl Journal {
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         check_transaction_schema(&tx, self.opened_schema)?;
+        if self.opened_schema == SCHEMA_VERSION {
+            steering::validate_snapshot_ids(&tx, session)?;
+        }
         let count: i64 = tx.query_row("SELECT count(*) FROM sessions", [], |r| r.get(0))?;
         ensure!(count < MAX_SESSIONS, "attachment session capacity reached");
         let revision = i64::try_from(session.revision)?;
@@ -405,6 +409,9 @@ impl Journal {
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         check_transaction_schema(&tx, self.opened_schema)?;
+        if self.opened_schema == SCHEMA_VERSION {
+            steering::validate_snapshot_ids(&tx, session)?;
+        }
         let count: i64 = tx.query_row("SELECT count(*) FROM sessions", [], |r| r.get(0))?;
         ensure!(count < MAX_SESSIONS, "attachment session capacity reached");
         tx.execute(
@@ -452,7 +459,7 @@ impl Journal {
         self.check_schema()?;
         if self.opened_schema == SCHEMA_VERSION {
             ensure!(
-                !steering::receipt_exists(&self.connection, request.command_id)?,
+                !steering::reserved_receipt_exists(&self.connection, request.command_id)?,
                 "turn command collides with steering receipt"
             );
         }
@@ -512,7 +519,7 @@ impl Journal {
         check_transaction_schema(&tx, self.opened_schema)?;
         if self.opened_schema == SCHEMA_VERSION {
             ensure!(
-                !steering::receipt_exists(&tx, request.command_id)?,
+                !steering::reserved_receipt_exists(&tx, request.command_id)?,
                 "turn command collides with steering receipt"
             );
         }
