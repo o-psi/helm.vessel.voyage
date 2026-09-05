@@ -19,6 +19,18 @@ use std::{
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
+/// Lifetime owner for one managed session, including time between turns.
+#[derive(Clone)]
+pub struct ManagedSessionOwner;
+impl ManagedSessionOwner {
+    pub async fn open(_directory: PathBuf, _session_id: Uuid) -> anyhow::Result<Self> {
+        anyhow::bail!("managed session owner not implemented")
+    }
+    pub async fn snapshot(&self) -> anyhow::Result<super::journal::VersionedSession> {
+        anyhow::bail!("managed session snapshot not implemented")
+    }
+}
+
 struct Store {
     journal: Journal,
     guard: ExecutionGuard,
