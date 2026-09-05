@@ -44,26 +44,6 @@ impl RuntimeClock for SystemClock {
     }
 }
 
-/// Trusted runtime time source; never supplied by a remote command or provider.
-pub trait RuntimeClock: Send + Sync {
-    fn now_ms(&self) -> anyhow::Result<i64>;
-}
-impl<F> RuntimeClock for F
-where
-    F: Fn() -> anyhow::Result<i64> + Send + Sync,
-{
-    fn now_ms(&self) -> anyhow::Result<i64> {
-        self()
-    }
-}
-pub struct SystemClock;
-impl RuntimeClock for SystemClock {
-    fn now_ms(&self) -> anyhow::Result<i64> {
-        let elapsed = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?;
-        Ok(i64::try_from(elapsed.as_millis())?)
-    }
-}
-
 /// Lifetime owner for one managed session, including idle time and cleanup.
 /// No legacy JSON backend is reachable through this owner.
 #[derive(Clone)]
