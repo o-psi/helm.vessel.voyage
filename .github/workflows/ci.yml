@@ -49,6 +49,8 @@ jobs:
           HELM_BIN: target/release/helm
         run: python3 tests/system/context_window.py
       - run: python3 tests/system/vessel_lifecycle.py
+      - name: Verify enrollment lifecycle CLI with real local Vessel
+        run: python3 tests/system/attachment_enrollment.py
       - run: python3 eval/run.py validate
       - run: ./scripts/package-release "ci-${{ github.sha }}"
       - run: cd dist && sha256sum -c *.sha256

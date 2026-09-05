@@ -510,3 +510,64 @@ fn native_replacement_failure_retains_identity_and_poisons_the_client() {
     assert_eq!(reopened.machine_id(), id);
     assert_eq!(reopened.status(), Status::Unenrolled);
 }
+
+#[test]
+fn inspect_missing_enrollment_creates_nothing() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("missing");
+    assert!(EnrollmentClient::inspect(&path).unwrap().is_none());
+    assert!(!path.exists());
+    assert!(EnrollmentClient::open_existing(&path, "https://example.com", false).is_err());
+    assert!(!path.exists());
+}
+#[test]
+fn inspect_and_open_existing_preserve_exact_state() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("private");
+    let client = EnrollmentClient::open(&path, "https://example.com", false).unwrap();
+    let id = client.machine_id();
+    drop(client);
+    let before = std::fs::read(path.join("client.json")).unwrap();
+    let info = EnrollmentClient::inspect(&path).unwrap().unwrap();
+    assert_eq!(info.machine_id, id);
+    assert_eq!(info.status, Status::Unenrolled);
+    let client = EnrollmentClient::open_existing(&path, "https://example.com", false).unwrap();
+    drop(client);
+    assert_eq!(std::fs::read(path.join("client.json")).unwrap(), before);
+}
+#[test]
+fn inspection_reports_busy_and_rejects_missing_lock_without_repair() {
+    let dir = directory();
+    let client = open(dir.path());
+    assert!(matches!(
+        EnrollmentClient::inspect(dir.path()),
+        Err(ClientError::Busy)
+    ));
+    drop(client);
+    std::fs::remove_file(dir.path().join("client.lock")).unwrap();
+    let before = std::fs::read(dir.path().join("client.json")).unwrap();
+    assert!(EnrollmentClient::inspect(dir.path()).is_err());
+    assert!(!dir.path().join("client.lock").exists());
+    assert_eq!(
+        std::fs::read(dir.path().join("client.json")).unwrap(),
+        before
+    );
+}
+#[test]
+fn detach_of_confirmed_revoked_identity_is_read_only() {
+    let dir = directory();
+    let mut client = open(dir.path());
+    active(&mut client);
+    client.state.status = Status::Revoked;
+    client.persist().unwrap();
+    let path = dir.path().join("client.json");
+    let before = std::fs::read(&path).unwrap();
+    let modified = std::fs::metadata(&path).unwrap().modified().unwrap();
+    client.detach().unwrap();
+    assert_eq!(client.status(), Status::Revoked);
+    assert_eq!(std::fs::read(&path).unwrap(), before);
+    assert_eq!(
+        std::fs::metadata(&path).unwrap().modified().unwrap(),
+        modified
+    );
+}

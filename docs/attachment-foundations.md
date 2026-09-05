@@ -177,3 +177,7 @@ The [authenticated socket libraries](attachment-transport.md) add an outbound
 Helm connection and a separately constructed Vessel attachment router. Production
 routing and operator execution remain unwired pending authoritative local dispatch
 and current sharing integration; transport observations never grant effect authority.
+
+The [enrollment lifecycle CLI](attachment-cli.md) exposes explicit enroll, status,
+resume, rotate, revoke and offline detach commands. It reuses durable client
+transactions and does not start a worker or expose remote execution.

@@ -11,3 +11,5 @@ pub mod sharing;
 pub mod client;
 
 pub mod transport;
+/// Explicit enrollment lifecycle CLI; no execution transport.
+pub mod cli;
