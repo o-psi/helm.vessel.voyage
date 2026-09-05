@@ -108,8 +108,9 @@ Helm's own diagnostics are written to the owner-only `logs/helm.log` under Helm'
 so tracing output cannot corrupt the alternate-screen UI. `Esc` cancels active work and tool
 approvals appear as keyboard-driven modals. Use `Ctrl+S` to browse
 and restore sessions, `Ctrl+N` for a new session, `Ctrl+B` to branch, `Ctrl+K` to
-compact context, and `Ctrl+E` to export Markdown. Every session receives a stable generated
-name; use `/new [TITLE]` to start a fresh session and optionally name it immediately.
+compact context, and `Ctrl+E` to export Markdown. Every session starts with a stable fallback name; automatic titles refresh at
+Fibonacci checkpoints using the independent model in `utility-models.json`
+([details](../docs/model-management.md#automatic-session-titles)); use `/new [TITLE]` to start a fresh session and optionally name it immediately.
 
 The composer remains editable while Helm is working. Press `Enter` to queue its text as steering
 for the active run; `Shift+Enter` still inserts a newline. Helm records accepted steering in the
@@ -119,7 +120,9 @@ at the next safe model boundary, and continues automatically. `Esc` still cancel
 
 `/name TITLE`, `/branch [TITLE]`,
 `/compact [KEEP]`, `/export [PATH]`, and `/clear confirm` provide explicit session operations.
-Long conversations compact automatically while retaining recent turns.
+Every provider request is checked against a finite context budget. Older turns
+are omitted from the request copy when needed while saved history remains intact;
+oversized indivisible input fails locally. See [context limits](../docs/context-window.md).
 The conversation footer shows current status rather than permanently listing global shortcuts;
 press `F1` to open contextual keyboard help and `F1` or `Esc` to close it.
 Use `Up` and `Down` in the chat input to recall previously sent messages in the current
@@ -291,3 +294,33 @@ Finished subagents [archive automatically](../docs/subagents.md#automatic-archiv
 Models can page through historical IDs with `subagent` action `archive`, then read
 results with `status` or `wait`, including after restart. Archived records do not
 consume execution slots; failed outcomes keep their original status.
+
+### Steering delivery and recovery
+
+Active steering is supported in full-screen chat with native providers. Plain chat,
+one-shot/unattended runs and remote attachment do not expose a competing stdin reader
+for steering. The optional Codex compatibility bridge cannot consistently incorporate
+new messages while resuming its hosted tool turn; Helm keeps the draft and asks you
+to send it after that run finishes. Child supervisor messages to that bridge fail
+explicitly if delivered during a run.
+
+Each steering message is limited to 64 KiB of UTF-8 text; the active queue holds at
+most 64 messages. Oversized typing/paste leaves the existing draft unchanged. Queue
+backpressure or a closed run preserves the draft for retry. Slash-prefixed text sent
+during a run is ordinary steering text, not a command. Questions, approvals, panels
+and attached terminals retain exclusive input routing.
+
+Helm saves accepted input before enqueueing it. Transcript labels show **queued**,
+**applied**, or **not applied**. Applied means incorporated into canonical history at
+a safe model boundary; it does not promise that a subsequent provider request succeeds
+or that the model follows the instruction. Cancellation/failure preserves the input
+and identifies queued messages that never reached that boundary. A restart labels
+previously queued receipts **delivery unknown after restart**, because the process may
+have stopped between application and saving the receipt. No run or tool is replayed
+automatically. These user messages remain context if you explicitly start another turn.
+
+Delivery receipts contain local IDs and states. They persist in session JSON and appear
+in Markdown exports, but provider adapters send only the canonical user text. Older
+session files load without receipts. Older Helm builds ignore the new optional field
+and cannot display delivery status; keep a session backup before rolling back if those
+receipts matter. Steering changes neither the selected tools nor local authority.

@@ -51,6 +51,7 @@ impl RunOwner {
             }
             let guard = journal.acquire_execution(request.session_id)?;
             let session = journal.load_session(request.session_id)?.session;
+            let workspace = session.workspace.canonicalize()?;
             let admission = journal.admit_turn(&guard, &request, now_ms)?;
             if admission.duplicate {
                 return Ok(Admission::Existing(admission.run));
@@ -63,7 +64,7 @@ impl RunOwner {
                     run_id,
                 })),
                 run_id,
-                workspace: session.workspace,
+                workspace,
                 model: session.model,
                 input: Some((session.messages, request.prompt)),
             }))

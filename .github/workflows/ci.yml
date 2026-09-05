@@ -20,6 +20,14 @@ jobs:
         env:
           HELM_BIN: target/release/helm
         run: python3 tests/system/native_provider_no_codex.py
+      - name: Verify automatic session titles with an offline provider
+        env:
+          HELM_BIN: target/release/helm
+        run: python3 tests/system/session_titles.py
+      - name: Verify active steering with an offline provider
+        env:
+          HELM_BIN: target/release/helm
+        run: python3 tests/system/steering.py
       - name: Verify interactive questions with an offline provider
         env:
           HELM_BIN: target/release/helm
@@ -36,6 +44,10 @@ jobs:
         env:
           HELM_BIN: target/release/helm
         run: python3 tests/system/subagent_resources.py
+      - name: Verify context budgets and non-destructive resume with offline providers
+        env:
+          HELM_BIN: target/release/helm
+        run: python3 tests/system/context_window.py
       - run: python3 tests/system/vessel_lifecycle.py
       - run: python3 eval/run.py validate
       - run: ./scripts/package-release "ci-${{ github.sha }}"

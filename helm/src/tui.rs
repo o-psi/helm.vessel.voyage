@@ -99,6 +99,7 @@ struct App {
     markdown_theme: MarkdownTheme,
     markdown_syntax_highlighting: bool,
     running: Option<Running>,
+    title_job: Option<TitleJob>,
     approval: Option<ApprovalRequest>,
     question: Option<QuestionDialog>,
     show_sessions: bool,
@@ -106,6 +107,44 @@ struct App {
     shortcut_help: bool,
     exit: Option<TuiExit>,
     quit: bool,
+}
+
+struct TitleJob {
+    task: tokio::task::JoinHandle<()>,
+    cancel: tokio_util::sync::CancellationToken,
+}
+
+impl Drop for TitleJob {
+    fn drop(&mut self) {
+        self.cancel.cancel();
+        self.task.abort();
+    }
+}
+
+fn start_title_job(app: &mut App, agent: &Arc<Agent>, tx: &mpsc::UnboundedSender<UiEvent>) {
+    app.title_job = None;
+    let session_id = app.session.id;
+    let completed_runs = app
+        .session
+        .title_state
+        .as_ref()
+        .expect("completed run")
+        .completed_runs;
+    let messages = app.session.messages.clone();
+    let agent = agent.clone();
+    let events = tx.clone();
+    let cancel = tokio_util::sync::CancellationToken::new();
+    let token = cancel.clone();
+    let task = tokio::spawn(async move {
+        if let Some(result) = agent.generate_title(&messages, token).await {
+            let _ = events.send(UiEvent::TitleReady {
+                session_id,
+                completed_runs,
+                result: Some(result),
+            });
+        }
+    });
+    app.title_job = Some(TitleJob { task, cancel });
 }
 
 struct Running {
@@ -122,6 +161,17 @@ impl Drop for Running {
 }
 
 impl App {
+    fn insert_composer(&mut self, text: &str) {
+        if self.is_running()
+            && self.composer.text.len().saturating_add(text.len())
+                > crate::agent::MAX_STEERING_BYTES
+        {
+            self.status = "Steering input limit is 64 KiB; draft preserved".into();
+        } else {
+            self.composer.insert_str(text);
+        }
+    }
+
     fn palette_context(&self) -> PaletteContext<'_> {
         PaletteContext {
             input: &self.composer.text,
@@ -166,6 +216,7 @@ impl App {
             markdown_theme: markdown_theme(),
             markdown_syntax_highlighting: std::env::var_os("NO_COLOR").is_none(),
             running: None,
+            title_job: None,
             approval: None,
             question: None,
             show_sessions: false,
@@ -287,7 +338,7 @@ pub async fn run(
                             } else if matches!(app.todo_panel.todo_mode, Some(TodoMode::Input { .. })) {
                                 app.todo_panel.todo_input.insert_str(&text);
                             } else if app.supervisor_panel.supervisor_mode.is_none() {
-                                app.composer.insert_str(&text);
+                                app.insert_composer(&text);
                                 reset_slash_palette(&mut app);
                                 request_slash_models_if_needed(&mut app, &agent, &tx);
                             }
@@ -300,7 +351,10 @@ pub async fn run(
             }
             event = rx.recv() => {
                 let Some(event) = event else { break };
+                let title_due = matches!(&event, UiEvent::Finished(Ok(_)))
+                    && app.session.title_due_after_turn();
                 handle_ui_event(event, &mut app, &store, terminals.as_ref()).await?;
+                if title_due { start_title_job(&mut app, &agent, &tx); }
             }
             _ = &mut termination => {
                 app.status = "Terminal closing; cancelling active work".into();
@@ -418,7 +472,31 @@ async fn handle_ui_event(
             preserve_manual_anchor(app, before);
             app.status = format!("Provider retry {attempt}…  Esc cancels");
         }
-        UiEvent::Agent(AgentEvent::SteeringApplied) => {
+        UiEvent::Agent(AgentEvent::ContextBudget(report)) => {
+            app.status = format!(
+                "Context: estimated {}/{} tokens; {} older messages omitted",
+                report.estimated, report.limit, report.omitted_messages
+            );
+        }
+        UiEvent::Agent(AgentEvent::SteeringApplied { mut history }) => {
+            // The boundary snapshot carries real tool IDs and the completed response.
+            // Keep later accepted inputs which have not reached this boundary yet.
+            for message in &app.session.messages {
+                if let Some(receipt) = &message.steering
+                    && receipt.status == crate::model::SteeringStatus::Queued
+                    && !history.iter().any(|item| {
+                        item.steering
+                            .as_ref()
+                            .is_some_and(|other| other.id == receipt.id)
+                    })
+                {
+                    history.push(message.clone());
+                }
+            }
+            app.session.messages = history;
+            app.live_messages.clear();
+            app.streaming_response.clear();
+            store.save(&mut app.session).await?;
             app.status = "Steering applied · continuing…  Esc cancels".into();
         }
         UiEvent::Agent(AgentEvent::Cancelled) => {
@@ -465,6 +543,7 @@ async fn handle_ui_event(
                 Ok(outcome) => {
                     app.live_messages.clear();
                     app.session.messages = outcome.messages;
+                    app.session.record_completed_turn();
                     app.session.usage.input_tokens += outcome.usage.input_tokens;
                     app.session.usage.output_tokens += outcome.usage.output_tokens;
                     app.session.terminals = terminals.list().await.unwrap_or_default();
@@ -472,13 +551,65 @@ async fn handle_ui_event(
                     app.status = format!("Ready · {} model turn(s)", outcome.turns);
                 }
                 Err(error) => {
+                    if let Some(recovery) = error.recovery() {
+                        app.session.recover_context_failure(recovery)?;
+                        // All completed responses/tools are represented by canonical IDs.
+                        app.live_messages.clear();
+                        app.streaming_response.clear();
+                    }
+                    let error = error.to_string();
                     let detail = compact_line(&error, 1_000);
                     app.activity.push(format!("✗ provider error: {detail}"));
-                    app.status = format!("Error: {}", compact_line(&error, 120));
+                    let mut undelivered = 0;
+                    for message in &mut app.session.messages {
+                        if let Some(receipt) = &mut message.steering
+                            && receipt.status == crate::model::SteeringStatus::Queued
+                        {
+                            receipt.status = crate::model::SteeringStatus::NotApplied;
+                            undelivered += 1;
+                        }
+                    }
+                    if !app.streaming_response.is_empty() {
+                        app.session.messages.push(crate::Message::new(
+                            Role::Assistant,
+                            std::mem::take(&mut app.streaming_response),
+                        ));
+                    }
+                    store.save(&mut app.session).await?;
+                    app.status = if undelivered > 0 {
+                        format!(
+                            "Run stopped; {undelivered} steering message(s) not applied · {}",
+                            compact_line(&error, 80)
+                        )
+                    } else {
+                        format!("Error: {}", compact_line(&error, 120))
+                    };
                 }
             }
             app.streaming_response.clear();
             preserve_manual_anchor(app, before);
+        }
+        UiEvent::TitleReady {
+            session_id,
+            completed_runs,
+            result,
+        } => {
+            // Delayed metadata cannot rename another session or supersede newer work.
+            if app.session.id == session_id
+                && app
+                    .session
+                    .title_state
+                    .as_ref()
+                    .is_some_and(|state| state.completed_runs == completed_runs)
+                && !app.is_running()
+            {
+                app.title_job = None;
+                if let Some(result) = result {
+                    app.session.apply_generated_title(result);
+                    store.save(&mut app.session).await?;
+                    app.sessions = store.list().await?;
+                }
+            }
         }
         UiEvent::SupervisorTree(result) => match result {
             Ok(agents) => {
@@ -791,33 +922,62 @@ async fn handle_key(
     }
     match key.code {
         KeyCode::Esc if app.is_running() => app.cancel(),
-        KeyCode::Enter if key.modifiers.contains(KeyModifiers::SHIFT) => app.composer.insert('\n'),
+        KeyCode::Enter if key.modifiers.contains(KeyModifiers::SHIFT) => app.insert_composer("\n"),
         KeyCode::Enter if app.is_running() => {
             let message = app.composer.take();
             app.prompt_history.reset_navigation();
             reset_slash_palette(app);
             if !message.trim().is_empty() {
+                if !agent.supports_steering() {
+                    app.composer.insert_str(&message);
+                    app.status = "This compatibility provider cannot steer active runs; draft kept for the next turn".into();
+                    return Ok(());
+                }
                 let steering = app
                     .running
                     .as_ref()
                     .expect("running state checked")
                     .steering
                     .clone();
-                match steering.try_send(message.clone()) {
+                let queued = crate::Message::steering(message.clone());
+                if message.len() > crate::agent::MAX_STEERING_BYTES {
+                    app.composer.insert_str(&message);
+                    app.status =
+                        "Steering exceeds 64 KiB; shorten the message before sending".into();
+                    return Ok(());
+                }
+                // Persist before making the input visible to the running agent.
+                app.session.messages.push(queued.clone());
+                if let Err(error) = store.save(&mut app.session).await {
+                    app.session.messages.pop();
+                    app.composer.insert_str(&message);
+                    app.status = format!(
+                        "Steering was not sent: {}",
+                        compact_line(&error.to_string(), 100)
+                    );
+                    return Ok(());
+                }
+                let result = steering.try_send_message(queued);
+                if result.is_err() {
+                    app.session.messages.pop();
+                    store.save(&mut app.session).await?;
+                }
+                match result {
                     Ok(()) => {
                         app.prompt_history.record(&message);
-                        app.session
-                            .messages
-                            .push(crate::Message::new(Role::User, message));
-                        store.save(&mut app.session).await?;
                         app.status =
                             "Steering queued for the next model boundary · Esc cancels".into();
                     }
-                    Err(tokio::sync::mpsc::error::TrySendError::Full(message)) => {
+                    Err(crate::agent::SteeringError::TooLarge(message)) => {
+                        app.composer.insert_str(&message);
+                        app.status =
+                            "Steering exceeds 64 KiB; shorten the message before sending".into();
+                    }
+                    Err(crate::agent::SteeringError::Full(message)) => {
                         app.composer.insert_str(&message);
                         app.status = "Steering queue is full; message kept in composer".into();
                     }
-                    Err(tokio::sync::mpsc::error::TrySendError::Closed(message)) => {
+                    Err(crate::agent::SteeringError::Closed(message)) => {
                         app.composer.insert_str(&message);
                         app.status =
                             "Run already finished; press Enter to send as a new turn".into();
@@ -830,15 +990,11 @@ async fn handle_key(
             app.prompt_history.reset_navigation();
             reset_slash_palette(app);
             if !prompt.trim().is_empty() {
+                app.title_job = None;
                 if handle_command(&prompt, app, store, Some(agent), Some(tx)).await? {
                     return Ok(());
                 }
                 app.prompt_history.record(&prompt);
-                if app.session.messages.len() > 96 {
-                    let removed = compact_messages(&mut app.session.messages, 64);
-                    app.activity
-                        .push(format!("context: compacted {removed} older messages"));
-                }
                 let history = app.session.messages.clone();
                 app.session
                     .messages
@@ -860,8 +1016,7 @@ async fn handle_key(
                             run_cancel,
                             Some(steering_input),
                         )
-                        .await
-                        .map_err(|error| error.to_string());
+                        .await;
                     let _ = events.send(UiEvent::Finished(result));
                 });
                 app.running = Some(Running {
@@ -872,7 +1027,7 @@ async fn handle_key(
             }
         }
         KeyCode::Char(character) => {
-            app.composer.insert(character);
+            app.insert_composer(character.encode_utf8(&mut [0; 4]));
             reset_slash_palette(app);
             request_slash_models_if_needed(app, agent, tx);
         }

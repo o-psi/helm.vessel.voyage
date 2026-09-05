@@ -134,6 +134,16 @@ impl ProviderError {
 
 #[async_trait]
 pub trait Provider: Send + Sync {
+    /// A known effective model limit, when supplied by the provider adapter.
+    /// None uses the explicit finite runtime fallback, never an unlimited budget.
+    fn context_window(&self, _model: &str) -> Option<usize> {
+        None
+    }
+    /// Whether new canonical user input is honored at every request boundary.
+    fn supports_steering(&self) -> bool {
+        true
+    }
+
     async fn models(&self) -> Result<Vec<ModelInfo>, ProviderError> {
         Err(ProviderError::Unavailable(
             "this provider does not expose model discovery".into(),

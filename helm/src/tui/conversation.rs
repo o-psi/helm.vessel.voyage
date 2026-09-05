@@ -37,6 +37,12 @@ pub(super) fn transcript(app: &App, width: usize) -> Text<'static> {
         .session
         .messages
         .iter()
+        .filter(|message| {
+            !message
+                .steering
+                .as_ref()
+                .is_some_and(|receipt| receipt.status == crate::model::SteeringStatus::Queued)
+        })
         .chain(&app.live_messages)
         .collect();
     // Walk backwards so each stretch keeps its own newest three calls. An
@@ -66,6 +72,15 @@ pub(super) fn transcript(app: &App, width: usize) -> Text<'static> {
             _ => continue,
         };
         if !message.content.is_empty() {
+            let label = match message.steering.as_ref().map(|receipt| &receipt.status) {
+                Some(crate::model::SteeringStatus::Queued) => "you · steering queued",
+                Some(crate::model::SteeringStatus::Applied) => "you · steering applied",
+                Some(crate::model::SteeringStatus::NotApplied) => "you · steering not applied",
+                Some(crate::model::SteeringStatus::UnknownAfterRestart) => {
+                    "you · steering delivery unknown after restart"
+                }
+                None => label,
+            };
             lines.push(Line::from(Span::styled(
                 label,
                 Style::default().fg(color).add_modifier(Modifier::BOLD),
@@ -135,6 +150,27 @@ pub(super) fn transcript(app: &App, width: usize) -> Text<'static> {
             .lines,
         );
         lines.push(Line::raw(""));
+    }
+    // Pending inputs have not acquired a canonical position in the model history.
+    // Present them after live output until the boundary snapshot reconciles ordering.
+    for message in &app.session.messages {
+        if message
+            .steering
+            .as_ref()
+            .is_some_and(|receipt| receipt.status == crate::model::SteeringStatus::Queued)
+        {
+            lines.push(Line::styled(
+                "you · steering queued",
+                Style::default().fg(Color::Cyan),
+            ));
+            lines.extend(
+                message
+                    .content
+                    .lines()
+                    .map(|line| Line::raw(display_safe(line))),
+            );
+            lines.push(Line::raw(""));
+        }
     }
     if app.show_activity && !app.activity.is_empty() {
         lines.push(Line::styled(

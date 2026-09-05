@@ -162,7 +162,11 @@ async fn setup(
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("attachment");
     let db = path.join("journal.sqlite3");
-    let session = Session::new(dir.path().to_path_buf(), "fixture".into());
+    // Persist a valid noncanonical root, as happens with macOS /var aliases
+    // and Windows canonical verbatim paths. Policy uses its canonical identity.
+    let nested = dir.path().join("workspace-alias");
+    std::fs::create_dir(&nested).unwrap();
+    let session = Session::new(nested.join(".."), "fixture".into());
     Journal::open(path.clone())
         .unwrap()
         .create_session(&session)
@@ -535,7 +539,7 @@ async fn failed_steering_checkpoint_never_announces_durable_application() {
             .lock()
             .unwrap()
             .iter()
-            .any(|event| matches!(event, AgentEvent::SteeringApplied))
+            .any(|event| matches!(event, AgentEvent::SteeringApplied { .. }))
     );
     let record = owner.record().await.unwrap();
     assert_eq!(record.state, RunState::Failed);
@@ -545,4 +549,20 @@ async fn failed_steering_checkpoint_never_announces_durable_application() {
         .unwrap();
     assert_eq!(saved.session.messages.len(), 1);
     assert_eq!(saved.session.messages[0].content, "accepted prompt");
+}
+
+#[tokio::test]
+async fn admitted_workspace_uses_canonical_identity_and_rejects_another_root() {
+    let (_dir, mut owner, agent, requests, effects, _) =
+        setup("success", Arc::new(SilentSink)).await;
+    assert_eq!(owner.workspace, agent.workspace());
+    let other = tempfile::tempdir().unwrap();
+    owner.workspace = other.path().canonicalize().unwrap();
+    assert!(matches!(
+        owner.execute(&agent, CancellationToken::new(), None).await,
+        Err(AgentError::Checkpoint(_))
+    ));
+    assert_eq!(requests.load(Ordering::SeqCst), 0);
+    assert_eq!(effects.load(Ordering::SeqCst), 0);
+    assert_eq!(owner.record().await.unwrap().state, RunState::Failed);
 }

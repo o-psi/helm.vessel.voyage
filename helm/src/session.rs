@@ -67,11 +67,24 @@ pub struct Session {
     #[serde(default)]
     pub name: Option<String>,
     #[serde(default)]
+    pub title_state: Option<TitleState>,
+    #[serde(default)]
     pub parent_id: Option<Uuid>,
     pub messages: Vec<Message>,
     pub usage: Usage,
     #[serde(default)]
     pub terminals: Vec<crate::terminal::TerminalSummary>,
+}
+
+/// Automatic-title lifecycle is independent of compacted conversation history.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TitleState {
+    pub completed_runs: u64,
+    pub automatic: bool,
+    /// Last generated name also detects direct caller edits of the public name field.
+    pub generated: String,
+    #[serde(default)]
+    pub usage: Usage,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -82,6 +95,42 @@ pub struct ModelChange {
 }
 
 impl Session {
+    /// Replace provisional frontend history with rejected-run canonical state.
+    /// Inputs accepted after that snapshot remain visible and are not duplicated.
+    pub fn recover_context_failure(
+        &mut self,
+        recovery: &crate::agent::CanonicalRecovery,
+    ) -> Result<()> {
+        let input_tokens = self
+            .usage
+            .input_tokens
+            .checked_add(recovery.usage.input_tokens)
+            .context("session input usage overflow during recovery")?;
+        let output_tokens = self
+            .usage
+            .output_tokens
+            .checked_add(recovery.usage.output_tokens)
+            .context("session output usage overflow during recovery")?;
+        let mut messages = recovery.messages.clone();
+        for message in &self.messages {
+            if let Some(receipt) = &message.steering
+                && receipt.status == crate::model::SteeringStatus::Queued
+                && !messages.iter().any(|other| {
+                    other
+                        .steering
+                        .as_ref()
+                        .is_some_and(|other| other.id == receipt.id)
+                })
+            {
+                messages.push(message.clone());
+            }
+        }
+        self.messages = messages;
+        self.usage.input_tokens = input_tokens;
+        self.usage.output_tokens = output_tokens;
+        Ok(())
+    }
+
     pub fn new(workspace: PathBuf, model: String) -> Self {
         let now = Utc::now();
         let id = Uuid::new_v4();
@@ -95,6 +144,12 @@ impl Session {
             model,
             model_history: Vec::new(),
             name: Some(generated_name(id)),
+            title_state: Some(TitleState {
+                completed_runs: 0,
+                automatic: true,
+                generated: generated_name(id),
+                usage: Usage::default(),
+            }),
             parent_id: None,
             messages: Vec::new(),
             usage: Usage::default(),
@@ -118,6 +173,90 @@ impl Session {
             .is_none_or(|name| name.trim().is_empty())
         {
             self.name = Some(generated_name(self.id));
+        }
+    }
+
+    fn title_state_mut(&mut self) -> &mut TitleState {
+        let fallback = generated_name(self.id);
+        let name = self.display_name();
+        self.title_state.get_or_insert_with(|| TitleState {
+            completed_runs: 0,
+            automatic: name == fallback,
+            generated: fallback,
+            usage: Usage::default(),
+        })
+    }
+
+    pub fn set_name(&mut self, name: String) {
+        self.title_state_mut().automatic = false;
+        self.name = Some(name);
+    }
+
+    pub fn title_due_after_turn(&self) -> bool {
+        let (automatic, count, generated) = self.title_state.as_ref().map_or_else(
+            || (true, 0, generated_name(self.id)),
+            |state| {
+                (
+                    state.automatic,
+                    state.completed_runs,
+                    state.generated.clone(),
+                )
+            },
+        );
+        automatic
+            && self.display_name() == generated
+            && count.checked_add(1).is_some_and(is_title_checkpoint)
+    }
+
+    /// Called once after a successful top-level run, never for tool/model iterations.
+    pub fn record_completed_turn(&mut self) {
+        let state = self.title_state_mut();
+        state.completed_runs = state.completed_runs.saturating_add(1);
+    }
+
+    pub fn apply_generated_title(&mut self, result: crate::titles::TitleResult) {
+        // Auxiliary usage remains separate from conversation usage so it cannot
+        // overflow or distort the main run's accounting.
+        let name = self.display_name();
+        let state = self.title_state_mut();
+        match (
+            state
+                .usage
+                .input_tokens
+                .checked_add(result.usage.input_tokens),
+            state
+                .usage
+                .output_tokens
+                .checked_add(result.usage.output_tokens),
+        ) {
+            (Some(input), Some(output)) => {
+                state.usage.input_tokens = input;
+                state.usage.output_tokens = output;
+            }
+            _ => tracing::warn!("title usage accounting overflowed"),
+        }
+        if state.automatic
+            && state.generated == name
+            && let Some(title) = result.title
+        {
+            state.generated = title.clone();
+            self.name = Some(title);
+        }
+    }
+
+    pub fn clear_conversation(&mut self) {
+        self.messages.clear();
+        let automatic = self.title_state_mut().automatic
+            && self
+                .title_state
+                .as_ref()
+                .is_some_and(|state| state.generated == self.display_name());
+        let fallback = generated_name(self.id);
+        let state = self.title_state_mut();
+        state.completed_runs = 0;
+        if automatic {
+            state.generated = fallback.clone();
+            self.name = Some(fallback);
         }
     }
 
@@ -365,9 +504,12 @@ impl SessionStore {
         branch.created_at = now;
         branch.updated_at = now;
         branch.parent_id = Some(source.id);
+        branch.title_state = None;
         branch.name = name
             .filter(|name| !name.trim().is_empty())
             .or_else(|| Some(generated_name(branch.id)));
+        let manual = branch.name.as_deref() != Some(&generated_name(branch.id));
+        branch.title_state_mut().automatic = !manual;
         self.save(&mut branch).await?;
         Ok(branch)
     }
@@ -384,6 +526,9 @@ impl SessionStore {
         for message in &session.messages {
             use std::fmt::Write as _;
             let _ = writeln!(output, "## {:?}\n\n{}\n", message.role, message.content);
+            if let Some(receipt) = &message.steering {
+                let _ = writeln!(output, "Steering delivery: {:?}\n", receipt.status);
+            }
         }
         fs::write(path, output)
             .await
@@ -421,13 +566,19 @@ fn is_not_found(error: &anyhow::Error) -> bool {
         .is_some_and(|e| e.kind() == std::io::ErrorKind::NotFound)
 }
 
-fn reject_symlinks(path: &Path) -> Result<()> {
+pub(crate) fn reject_symlinks(path: &Path) -> Result<()> {
     let mut prefix = PathBuf::new();
     for component in path.components() {
         prefix.push(component);
+        // A Windows drive/UNC prefix is not a complete filesystem ancestor.
+        // In particular, canonicalize returns verbatim paths whose bare
+        // `\\?\C:` prefix cannot be queried until RootDir has been appended.
+        if matches!(component, std::path::Component::Prefix(_)) {
+            continue;
+        }
         match std::fs::symlink_metadata(&prefix) {
             Ok(meta) => anyhow::ensure!(
-                !meta.file_type().is_symlink(),
+                !meta.file_type().is_symlink() || trusted_system_alias(&prefix, &meta),
                 "symlink path rejected: {}",
                 prefix.display()
             ),
@@ -436,6 +587,31 @@ fn reject_symlinks(path: &Path) -> Result<()> {
         }
     }
     Ok(())
+}
+
+// macOS exposes /var, /tmp and /etc through root-managed aliases. These are
+// part of the OS namespace, not operator-selected storage redirects. Do not
+// generalize this exception to arbitrary root-owned or canonicalizable links.
+fn trusted_system_alias(path: &Path, metadata: &std::fs::Metadata) -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let target = match path.to_str() {
+            Some("/var") => "/private/var",
+            Some("/tmp") => "/private/tmp",
+            Some("/etc") => "/private/etc",
+            _ => return false,
+        };
+        metadata.uid() == 0
+            && std::fs::canonicalize(path).is_ok_and(|actual| actual == Path::new(target))
+            && std::fs::symlink_metadata("/")
+                .is_ok_and(|root| root.uid() == 0 && root.mode() & 0o022 == 0)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (path, metadata);
+        false
+    }
 }
 
 fn prepare_directory(path: &Path) -> Result<PathBuf> {
@@ -510,6 +686,13 @@ fn read_session(path: &Path) -> Result<Session> {
     anyhow::ensure!(session.id == id, "session ID does not match filename");
     session.loaded_from = Some(std::fs::canonicalize(path)?);
     session.ensure_name();
+    for message in &mut session.messages {
+        if let Some(receipt) = &mut message.steering
+            && receipt.status == crate::model::SteeringStatus::Queued
+        {
+            receipt.status = crate::model::SteeringStatus::UnknownAfterRestart;
+        }
+    }
     // Migrate older session files that embedded the then-current runtime prompt.
     session
         .messages
@@ -519,6 +702,18 @@ fn read_session(path: &Path) -> Result<Session> {
     }
     Ok(session)
 }
+fn is_title_checkpoint(count: u64) -> bool {
+    let (mut previous, mut current) = (0_u64, 1_u64);
+    while current < count {
+        let Some(next) = previous.checked_add(current) else {
+            return false;
+        };
+        previous = current;
+        current = next;
+    }
+    count != 0 && current == count
+}
+
 fn generated_name(id: Uuid) -> String {
     format!("session-{}", &id.simple().to_string()[..8])
 }
@@ -526,6 +721,99 @@ fn generated_name(id: Uuid) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn title_result(title: Option<&str>) -> crate::titles::TitleResult {
+        crate::titles::TitleResult {
+            title: title.map(str::to_owned),
+            usage: Usage {
+                input_tokens: 4,
+                output_tokens: 2,
+            },
+        }
+    }
+
+    #[test]
+    fn title_checkpoints_are_fibonacci_and_overflow_safe() {
+        let mut session = Session::new(PathBuf::from("."), "main-model".into());
+        let mut checkpoints = Vec::new();
+        for turn in 1..=100 {
+            if session.title_due_after_turn() {
+                checkpoints.push(turn);
+            }
+            session.record_completed_turn();
+            session.apply_generated_title(title_result(Some("Useful title")));
+            compact_messages(&mut session.messages, 2);
+        }
+        assert_eq!(checkpoints, [1, 2, 3, 5, 8, 13, 21, 34, 55, 89]);
+        assert!(!is_title_checkpoint(0));
+        assert!(!is_title_checkpoint(u64::MAX));
+        session.title_state_mut().completed_runs = u64::MAX;
+        assert!(!session.title_due_after_turn());
+        session.record_completed_turn();
+        assert_eq!(session.title_state_mut().completed_runs, u64::MAX);
+        assert_eq!(session.model, "main-model");
+        assert!(session.model_history.is_empty());
+        assert_eq!(session.usage.input_tokens, 0);
+        assert_eq!(session.title_state_mut().usage.input_tokens, 400);
+    }
+
+    #[tokio::test]
+    async fn title_state_survives_resume_and_branch_clear_reset_schedule() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = SessionStore::new(dir.path().into());
+        let mut session = Session::new(dir.path().into(), "main".into());
+        for _ in 0..3 {
+            session.record_completed_turn();
+        }
+        session.apply_generated_title(title_result(Some("Generated")));
+        store.save(&mut session).await.unwrap();
+        let mut loaded = store.load(session.id).await.unwrap();
+        assert_eq!(loaded.display_name(), "Generated");
+        assert!(!loaded.title_due_after_turn());
+        loaded.record_completed_turn();
+        assert!(loaded.title_due_after_turn());
+        let mut branch = store.branch(&loaded, None).await.unwrap();
+        assert!(branch.title_due_after_turn());
+        branch.record_completed_turn();
+        branch.apply_generated_title(title_result(Some("Branch title")));
+        branch.clear_conversation();
+        assert!(branch.title_due_after_turn());
+        assert_eq!(branch.display_name(), generated_name(branch.id));
+        let mut manual = store.branch(&loaded, Some("Chosen".into())).await.unwrap();
+        manual.clear_conversation();
+        assert!(!manual.title_due_after_turn());
+        assert_eq!(manual.display_name(), "Chosen");
+    }
+
+    #[test]
+    fn title_manual_names_and_legacy_sessions_are_preserved() {
+        let mut session = Session::new(PathBuf::from("."), "main".into());
+        // Even explicitly naming it exactly the generated fallback disables updates.
+        session.set_name(session.display_name());
+        assert!(!session.title_due_after_turn());
+        let original = session.display_name();
+        session.apply_generated_title(title_result(Some("ignored")));
+        assert_eq!(session.display_name(), original);
+        session.title_state = None;
+        session.name = Some("Legacy custom".into());
+        assert!(!session.title_due_after_turn());
+        session.record_completed_turn();
+        session.apply_generated_title(title_result(Some("ignored")));
+        session.clear_conversation();
+        assert_eq!(session.display_name(), "Legacy custom");
+        session.title_state = None;
+        session.name = Some(generated_name(session.id));
+        assert!(session.title_due_after_turn());
+        session.record_completed_turn();
+        session.apply_generated_title(title_result(None));
+        assert_eq!(session.display_name(), generated_name(session.id));
+        assert_eq!(session.title_state_mut().usage.output_tokens, 2);
+        // Public-field edits are also treated as manual.
+        session.name = Some("Caller name".into());
+        session.apply_generated_title(title_result(Some("ignored")));
+        assert!(!session.title_due_after_turn());
+        assert_eq!(session.display_name(), "Caller name");
+    }
+
     #[tokio::test]
     async fn round_trip() {
         let dir = tempfile::tempdir().unwrap();
@@ -699,6 +987,35 @@ mod tests {
         assert_eq!(
             restored.terminals[0].state,
             crate::terminal::TerminalState::Disconnected
+        );
+    }
+    #[tokio::test]
+    async fn steering_recovery_preserves_text_and_reports_unknown_delivery() {
+        use crate::model::SteeringStatus;
+        let directory = tempfile::tempdir().unwrap();
+        let store = SessionStore::new(directory.path().join("sessions"));
+        let mut session = Session::new(directory.path().into(), "test".into());
+        session
+            .messages
+            .push(Message::steering("pending before crash"));
+        let mut applied = Message::steering("already applied");
+        applied.steering.as_mut().unwrap().status = SteeringStatus::Applied;
+        session.messages.push(applied);
+        store.save(&mut session).await.unwrap();
+        let saved = store.load(session.id).await.unwrap();
+        assert_eq!(saved.messages.len(), 2);
+        assert_eq!(saved.messages[0].content, "pending before crash");
+        assert_eq!(
+            saved.messages[0].steering.as_ref().unwrap().status,
+            SteeringStatus::UnknownAfterRestart
+        );
+        assert_eq!(
+            saved.messages[1].steering.as_ref().unwrap().status,
+            SteeringStatus::Applied
+        );
+        assert_eq!(
+            saved.messages[0].steering.as_ref().unwrap().id,
+            session.messages[0].steering.as_ref().unwrap().id
         );
     }
 }

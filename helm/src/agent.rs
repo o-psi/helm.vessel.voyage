@@ -12,10 +12,23 @@ use crate::{
     tools::{ToolContext, ToolRegistry},
 };
 
+/// Each message is bounded independently of the queue count (UTF-8 bytes).
+pub const MAX_STEERING_BYTES: usize = 64 * 1024;
+
+#[derive(Debug, Error)]
+pub enum SteeringError {
+    #[error("steering queue is full")]
+    Full(String),
+    #[error("run already finished")]
+    Closed(String),
+    #[error("steering exceeds the 64 KiB message limit")]
+    TooLarge(String),
+}
+
 struct SteeringState {
     open: bool,
     capacity: usize,
-    messages: VecDeque<String>,
+    messages: VecDeque<Message>,
 }
 
 struct SteeringShared {
@@ -44,16 +57,20 @@ pub fn steering_channel(capacity: usize) -> (SteeringSender, SteeringReceiver) {
 }
 
 impl SteeringSender {
-    pub fn try_send(
-        &self,
-        message: String,
-    ) -> Result<(), tokio::sync::mpsc::error::TrySendError<String>> {
+    pub fn try_send(&self, message: String) -> Result<(), SteeringError> {
+        self.try_send_message(Message::steering(message))
+    }
+
+    pub(crate) fn try_send_message(&self, message: Message) -> Result<(), SteeringError> {
+        if message.content.len() > MAX_STEERING_BYTES {
+            return Err(SteeringError::TooLarge(message.content));
+        }
         let mut state = self.0.state.lock().expect("steering channel poisoned");
         if !state.open {
-            return Err(tokio::sync::mpsc::error::TrySendError::Closed(message));
+            return Err(SteeringError::Closed(message.content));
         }
         if state.messages.len() >= state.capacity {
-            return Err(tokio::sync::mpsc::error::TrySendError::Full(message));
+            return Err(SteeringError::Full(message.content));
         }
         state.messages.push_back(message);
         Ok(())
@@ -67,10 +84,10 @@ impl SteeringSender {
             let space = self.0.space.notified();
             match self.try_send(message) {
                 Ok(()) => return Ok(()),
-                Err(tokio::sync::mpsc::error::TrySendError::Closed(message)) => {
+                Err(SteeringError::Closed(message) | SteeringError::TooLarge(message)) => {
                     return Err(tokio::sync::mpsc::error::SendError(message));
                 }
-                Err(tokio::sync::mpsc::error::TrySendError::Full(value)) => message = value,
+                Err(SteeringError::Full(value)) => message = value,
             }
             space.await;
         }
@@ -78,7 +95,7 @@ impl SteeringSender {
 }
 
 impl SteeringReceiver {
-    fn drain(&mut self) -> Vec<String> {
+    fn drain(&mut self) -> Vec<Message> {
         let mut state = self.0.state.lock().expect("steering channel poisoned");
         let messages = state.messages.drain(..).collect();
         drop(state);
@@ -88,7 +105,7 @@ impl SteeringReceiver {
 
     /// Atomically refuse later sends if no guidance is waiting. This closes the
     /// completion race without imposing an artificial grace period.
-    fn drain_or_close(&mut self) -> Vec<String> {
+    fn drain_or_close(&mut self) -> Vec<Message> {
         let mut state = self.0.state.lock().expect("steering channel poisoned");
         if state.messages.is_empty() {
             state.open = false;
@@ -132,7 +149,10 @@ pub enum AgentEvent {
         delay: Duration,
         error: String,
     },
-    SteeringApplied,
+    ContextBudget(crate::context::ContextReport),
+    SteeringApplied {
+        history: Vec<Message>,
+    },
     Cancelled,
 }
 
@@ -174,8 +194,36 @@ pub enum StopReason {
     Completed,
 }
 
+/// Canonical run state retained when a locally rejected request stops execution.
+/// Runtime-only system messages are excluded; provider continuation stays local.
+#[derive(Clone)]
+pub struct CanonicalRecovery {
+    pub messages: Vec<Message>,
+    pub usage: Usage,
+}
+
+impl std::fmt::Debug for CanonicalRecovery {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("CanonicalRecovery")
+            .field("message_count", &self.messages.len())
+            .field("usage", &self.usage)
+            .finish_non_exhaustive()
+    }
+}
+
+#[derive(Debug, Error)]
+#[error("{source}")]
+pub struct ContextFailure {
+    #[source]
+    pub source: crate::context::ContextError,
+    pub recovery: Option<Box<CanonicalRecovery>>,
+}
+
 #[derive(Debug, Error)]
 pub enum AgentError {
+    #[error(transparent)]
+    Context(#[from] ContextFailure),
     #[error(transparent)]
     Provider(#[from] ProviderError),
     #[error("cannot load workspace instructions: {0}")]
@@ -188,6 +236,38 @@ pub enum AgentError {
     UsageOverflow,
 }
 
+impl From<crate::context::ContextError> for AgentError {
+    fn from(source: crate::context::ContextError) -> Self {
+        Self::Context(ContextFailure {
+            source,
+            recovery: None,
+        })
+    }
+}
+
+impl AgentError {
+    pub fn recovery(&self) -> Option<&CanonicalRecovery> {
+        match self {
+            Self::Context(failure) => failure.recovery.as_deref(),
+            _ => None,
+        }
+    }
+
+    fn with_recovery(mut self, messages: &[Message], usage: &Usage) -> Self {
+        if let Self::Context(failure) = &mut self {
+            failure.recovery = Some(Box::new(CanonicalRecovery {
+                messages: messages
+                    .iter()
+                    .filter(|message| message.role != crate::model::Role::System)
+                    .cloned()
+                    .collect(),
+                usage: usage.clone(),
+            }));
+        }
+        self
+    }
+}
+
 pub struct Agent {
     provider: Box<dyn Provider>,
     tools: ToolRegistry,
@@ -198,6 +278,7 @@ pub struct Agent {
     model_cache: tokio::sync::Mutex<Option<(std::time::Instant, Vec<ModelInfo>)>>,
     system_prompt: String,
     max_tokens: u32,
+    context_window: usize,
     temperature: Option<f32>,
     retry: RetryPolicy,
 }
@@ -275,9 +356,15 @@ impl Agent {
             model_cache: tokio::sync::Mutex::new(None),
             system_prompt,
             max_tokens,
+            context_window: crate::context::DEFAULT_CONTEXT_WINDOW,
             temperature,
             retry: RetryPolicy::default(),
         }
+    }
+
+    pub fn with_context_window(mut self, limit: usize) -> Self {
+        self.context_window = limit;
+        self
     }
 
     pub fn with_retry_policy(mut self, retry: RetryPolicy) -> Self {
@@ -289,6 +376,10 @@ impl Agent {
         *mirror.write().expect("model mirror lock poisoned") = self.model();
         self.model_mirror = Some(mirror);
         self
+    }
+
+    pub fn supports_steering(&self) -> bool {
+        self.provider.supports_steering()
     }
 
     pub fn model(&self) -> String {
@@ -328,6 +419,65 @@ impl Agent {
         normalize_models(&mut models);
         *cache = Some((std::time::Instant::now(), models.clone()));
         Ok(models)
+    }
+
+    /// Best-effort utility request using this agent's existing provider and authority.
+    pub async fn generate_title(
+        &self,
+        messages: &[Message],
+        cancel: CancellationToken,
+    ) -> Option<crate::titles::TitleResult> {
+        use futures_util::StreamExt;
+        let work = async {
+            let model = crate::titles::title_model()?;
+            if !self
+                .models(false)
+                .await
+                .ok()?
+                .iter()
+                .any(|item| item.id == model)
+            {
+                return None;
+            }
+            let mut request = crate::titles::request(messages, model, &self.context.redactor)?;
+            let limit = self.context_limit(&request.model);
+            crate::context::preflight(&mut request, limit).ok()?;
+            let mut stream = self.provider.stream(request).await.ok()?;
+            let mut text_bytes = 0_usize;
+            while let Some(event) = stream.next().await {
+                match event.ok()? {
+                    crate::provider::ProviderStreamEvent::Completed(response) => {
+                        return Some(crate::titles::TitleResult {
+                            title: crate::titles::sanitize(
+                                &response.message,
+                                &self.context.redactor,
+                            ),
+                            usage: response.usage,
+                        });
+                    }
+                    crate::provider::ProviderStreamEvent::Delta(
+                        crate::provider::ProviderDelta::Text(text),
+                    ) => {
+                        text_bytes = text_bytes.checked_add(text.len())?;
+                        if text_bytes > 4096 {
+                            return None;
+                        }
+                    }
+                    crate::provider::ProviderStreamEvent::Delta(
+                        crate::provider::ProviderDelta::ToolCall { .. },
+                    ) => return None,
+                }
+            }
+            None
+        };
+        tokio::select! {
+            biased;
+            _ = cancel.cancelled() => None,
+            _ = self.context.cancellation.cancelled() => None,
+            result = tokio::time::timeout(self.context.timeout.min(Duration::from_secs(10)), work) => {
+                result.ok().flatten()
+            }
+        }
     }
 
     pub async fn run(
@@ -425,14 +575,24 @@ impl Agent {
             turn = turn.saturating_add(1);
             let mut applied = 0;
             if let Some(receiver) = &mut input {
-                for message in receiver.drain() {
-                    history.push(Message::new(crate::model::Role::User, message));
+                for mut message in receiver.drain() {
+                    if !self.supports_steering() {
+                        return Err(ProviderError::Request("active steering is unavailable with this compatibility provider; send a new turn after completion".into()).into());
+                    }
+                    if let Some(receipt) = &mut message.steering {
+                        receipt.status = crate::model::SteeringStatus::Applied;
+                    }
+                    history.push(message);
                     applied += 1;
                 }
             }
             self.checkpoint(checkpoint, &history, &usage).await?;
-            for _ in 0..applied {
-                self.sink.emit(AgentEvent::SteeringApplied).await;
+            if applied > 0 {
+                self.sink
+                    .emit(AgentEvent::SteeringApplied {
+                        history: history.clone(),
+                    })
+                    .await;
             }
             if cancel.is_cancelled() {
                 return Err(AgentError::Cancelled);
@@ -450,7 +610,10 @@ impl Agent {
                 temperature: self.temperature,
                 max_tokens: Some(self.max_tokens),
             };
-            let response = self.stream_with_retry(request, &cancel, checkpoint).await?;
+            let response = self
+                .stream_with_retry(request, &cancel, checkpoint)
+                .await
+                .map_err(|error| error.with_recovery(&history, &usage))?;
             usage.input_tokens = usage
                 .input_tokens
                 .checked_add(response.usage.input_tokens)
@@ -475,16 +638,24 @@ impl Agent {
             if calls.is_empty() {
                 let mut received_input = 0;
                 if let Some(receiver) = &mut input {
-                    for message in receiver.drain_or_close() {
-                        history.push(Message::new(crate::model::Role::User, message));
+                    for mut message in receiver.drain_or_close() {
+                        if !self.supports_steering() {
+                            return Err(ProviderError::Request("active steering is unavailable with this compatibility provider; send a new turn after completion".into()).into());
+                        }
+                        if let Some(receipt) = &mut message.steering {
+                            receipt.status = crate::model::SteeringStatus::Applied;
+                        }
+                        history.push(message);
                         received_input += 1;
                     }
                 }
                 if received_input > 0 {
                     self.checkpoint(checkpoint, &history, &usage).await?;
-                    for _ in 0..received_input {
-                        self.sink.emit(AgentEvent::SteeringApplied).await;
-                    }
+                    self.sink
+                        .emit(AgentEvent::SteeringApplied {
+                            history: history.clone(),
+                        })
+                        .await;
                     continue;
                 }
                 return Ok(AgentOutcome {
@@ -543,17 +714,35 @@ impl Agent {
         Ok(())
     }
 
+    fn context_limit(&self, model: &str) -> usize {
+        self.provider
+            .context_window(model)
+            .map_or(self.context_window, |limit| limit.min(self.context_window))
+    }
+
     async fn stream_with_retry(
         &self,
-        request: ModelRequest,
+        mut request: ModelRequest,
         cancel: &CancellationToken,
         checkpoint: Option<&dyn RunCheckpoint>,
     ) -> Result<crate::model::ModelResponse, AgentError> {
         use crate::provider::{ProviderDelta, ProviderStreamEvent};
         use futures_util::StreamExt;
+        if cancel.is_cancelled() {
+            return Err(AgentError::Cancelled);
+        }
+        let limit = self.context_limit(&request.model);
+        let report = crate::context::preflight(&mut request, limit)?;
+        tracing::info!(
+            estimated_tokens = report.estimated,
+            context_window = report.limit,
+            omitted_messages = report.omitted_messages,
+            "request context preflight"
+        );
+        self.sink.emit(AgentEvent::ContextBudget(report)).await;
         let mut delay = self.retry.initial_delay;
         for attempt in 1..=self.retry.max_attempts.max(1) {
-            let stream_result = tokio::select! {_ = cancel.cancelled()=>{self.sink.emit(AgentEvent::Cancelled).await;return Err(AgentError::Cancelled);}, value=self.provider.stream(request.clone())=>value};
+            let stream_result = tokio::select! {biased; _ = cancel.cancelled()=>{self.sink.emit(AgentEvent::Cancelled).await;return Err(AgentError::Cancelled);}, value=self.provider.stream(request.clone())=>value};
             let mut stream = match stream_result {
                 Ok(value) => value,
                 Err(error) if error.is_retryable() && attempt < self.retry.max_attempts => {
@@ -842,6 +1031,113 @@ mod tests {
         calls: Arc<AtomicUsize>,
         cancel: Option<CancellationToken>,
         fail: bool,
+    }
+
+    struct BudgetFixture {
+        calls: Arc<AtomicUsize>,
+        limit: usize,
+        followup: bool,
+    }
+
+    #[async_trait]
+    impl Provider for BudgetFixture {
+        fn context_window(&self, model: &str) -> Option<usize> {
+            Some(if model == "tiny" { 1 } else { self.limit })
+        }
+        async fn complete(&self, request: ModelRequest) -> Result<ModelResponse, ProviderError> {
+            assert!(crate::context::estimate(&request) <= self.limit);
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            let mut message = Message::new(Role::Assistant, "done");
+            if self.followup {
+                message.tool_calls.push(crate::model::ToolCall {
+                    id: "call".into(),
+                    name: "missing".into(),
+                    arguments: serde_json::json!({"payload": "x".repeat(self.limit)}),
+                });
+            }
+            Ok(ModelResponse {
+                message,
+                usage: Usage::default(),
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn context_guard_blocks_initial_followup_and_changed_model_requests() {
+        let directory = tempfile::tempdir().unwrap();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let a = agent(
+            Box::new(BudgetFixture {
+                calls: calls.clone(),
+                limit: 10_000,
+                followup: true,
+            }),
+            &directory,
+        );
+        let error = a.run(vec![], "x".repeat(20_000)).await.unwrap_err();
+        assert!(matches!(error, AgentError::Context(_)));
+        let recovery = error.recovery().unwrap();
+        assert_eq!(recovery.messages.len(), 1);
+        assert_eq!(recovery.messages[0].content.len(), 20_000);
+        assert_eq!(recovery.messages[0].role, Role::User);
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        let error = a.run(vec![], "small".into()).await.unwrap_err();
+        assert!(matches!(error, AgentError::Context(_)));
+        let recovery = error.recovery().unwrap();
+        assert_eq!(recovery.messages.len(), 3);
+        assert_eq!(recovery.messages[0].content, "small");
+        assert_eq!(recovery.messages[1].tool_calls[0].id, "call");
+        assert_eq!(recovery.messages[2].tool_call_id.as_deref(), Some("call"));
+        assert!(
+            recovery
+                .messages
+                .iter()
+                .all(|message| message.role != Role::System)
+        );
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "oversized tool followup must not dispatch"
+        );
+        a.set_model("tiny").unwrap();
+        assert!(matches!(
+            a.run(vec![], "small".into()).await,
+            Err(AgentError::Context(_))
+        ));
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        let cancel = CancellationToken::new();
+        cancel.cancel();
+        assert!(matches!(
+            a.run_with_cancel(vec![], "small".into(), cancel).await,
+            Err(AgentError::Cancelled)
+        ));
+    }
+
+    #[tokio::test]
+    async fn context_projection_keeps_full_outcome_for_save_and_resume() {
+        let directory = tempfile::tempdir().unwrap();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let a = agent(
+            Box::new(BudgetFixture {
+                calls: calls.clone(),
+                limit: 10_000,
+                followup: false,
+            }),
+            &directory,
+        );
+        let history = vec![
+            Message::new(Role::User, "x".repeat(20_000)),
+            Message::new(Role::Assistant, "old"),
+        ];
+        let outcome = a.run(history, "small".into()).await.unwrap();
+        assert_eq!(outcome.messages.len(), 4);
+        assert_eq!(outcome.messages[0].content.len(), 20_000);
+        assert!(outcome.messages.iter().all(|m| m.role != Role::System));
+        let resumed: Vec<Message> =
+            serde_json::from_str(&serde_json::to_string(&outcome.messages).unwrap()).unwrap();
+        let next = a.run(resumed, "again".into()).await.unwrap();
+        assert_eq!(next.messages.len(), 6);
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
     }
     #[async_trait]
     impl Provider for LongToolLoop {
@@ -1217,7 +1513,7 @@ mod tests {
         sender.try_send("second steering".into()).unwrap();
         assert!(matches!(
             sender.try_send("overflow".into()),
-            Err(tokio::sync::mpsc::error::TrySendError::Full(_))
+            Err(SteeringError::Full(_))
         ));
         release.notify_one();
         let outcome = run.await.unwrap().unwrap();
@@ -1232,7 +1528,7 @@ mod tests {
         assert_eq!(users, ["original", "first steering", "second steering"]);
         assert!(matches!(
             sender.try_send("too late".into()),
-            Err(tokio::sync::mpsc::error::TrySendError::Closed(_))
+            Err(SteeringError::Closed(_))
         ));
     }
 
@@ -1295,5 +1591,392 @@ mod tests {
             })
             .collect::<String>();
         assert_eq!(deltas, "hello");
+    }
+    struct TitleFixture {
+        requests: Arc<std::sync::Mutex<Vec<ModelRequest>>>,
+        advertised: bool,
+        discovery_error: bool,
+        fail: bool,
+        delay: Duration,
+        message: Message,
+    }
+
+    #[async_trait]
+    impl Provider for TitleFixture {
+        async fn models(&self) -> Result<Vec<ModelInfo>, ProviderError> {
+            if self.discovery_error {
+                return Err(ProviderError::Unavailable("offline".into()));
+            }
+            Ok(if self.advertised {
+                vec![ModelInfo::minimal(crate::titles::title_model().unwrap())]
+            } else {
+                vec![]
+            })
+        }
+        async fn complete(&self, request: ModelRequest) -> Result<ModelResponse, ProviderError> {
+            self.requests.lock().unwrap().push(request);
+            tokio::time::sleep(self.delay).await;
+            if self.fail {
+                return Err(ProviderError::Unavailable("offline".into()));
+            }
+            Ok(ModelResponse {
+                message: self.message.clone(),
+                usage: Usage {
+                    input_tokens: 15,
+                    output_tokens: 5,
+                },
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn title_generation_is_isolated_and_accounts_rejected_output() {
+        for title in ["Fix private-secret", "invalid\nmultiline"] {
+            let directory = tempfile::tempdir().unwrap();
+            let requests = Arc::new(std::sync::Mutex::new(Vec::new()));
+            let mut agent = agent(
+                Box::new(TitleFixture {
+                    requests: requests.clone(),
+                    advertised: true,
+                    discovery_error: false,
+                    fail: false,
+                    delay: Duration::ZERO,
+                    message: Message::new(crate::model::Role::Assistant, title),
+                }),
+                &directory,
+            );
+            let sink = Arc::new(Recording::default());
+            agent.sink = sink.clone();
+            agent.context.redactor =
+                Arc::new(crate::tools::Redactor::new(["private-secret".into()]));
+            let history = vec![Message::new(crate::model::Role::User, "Fix private-secret")];
+            let before = serde_json::to_string(&history).unwrap();
+            let result = agent
+                .generate_title(&history, CancellationToken::new())
+                .await
+                .unwrap();
+            assert_eq!(result.usage.input_tokens, 15);
+            assert_eq!(result.usage.output_tokens, 5);
+            assert_eq!(
+                result.title,
+                if title.contains('\n') {
+                    None
+                } else {
+                    Some("Fix [REDACTED]".into())
+                }
+            );
+            assert_eq!(agent.model(), "test");
+            assert_eq!(serde_json::to_string(&history).unwrap(), before);
+            assert!(sink.events.lock().unwrap().is_empty());
+            let requests = requests.lock().unwrap();
+            assert_eq!(requests.len(), 1);
+            assert_eq!(requests[0].model, crate::titles::title_model().unwrap());
+            assert!(requests[0].tools.is_empty());
+            assert!(!requests[0].messages[1].content.contains("private-secret"));
+        }
+    }
+
+    #[tokio::test]
+    async fn title_generation_skips_unavailable_models_and_never_retries() {
+        for (advertised, discovery_error, fail, expected_calls) in [
+            (false, false, false, 0),
+            (true, true, false, 0),
+            (true, false, true, 1),
+        ] {
+            let directory = tempfile::tempdir().unwrap();
+            let requests = Arc::new(std::sync::Mutex::new(Vec::new()));
+            let agent = agent(
+                Box::new(TitleFixture {
+                    requests: requests.clone(),
+                    advertised,
+                    discovery_error,
+                    fail,
+                    delay: Duration::ZERO,
+                    message: Message::new(crate::model::Role::Assistant, "title"),
+                }),
+                &directory,
+            );
+            assert!(
+                agent
+                    .generate_title(
+                        &[Message::new(crate::model::Role::User, "question")],
+                        CancellationToken::new()
+                    )
+                    .await
+                    .is_none()
+            );
+            assert_eq!(requests.lock().unwrap().len(), expected_calls);
+        }
+    }
+
+    #[tokio::test]
+    async fn title_generation_respects_timeout_and_cancellation() {
+        for mode in [0, 1, 2, 3] {
+            let directory = tempfile::tempdir().unwrap();
+            let requests = Arc::new(std::sync::Mutex::new(Vec::new()));
+            let mut agent = agent(
+                Box::new(TitleFixture {
+                    requests: requests.clone(),
+                    advertised: true,
+                    discovery_error: false,
+                    fail: false,
+                    delay: Duration::from_secs(60),
+                    message: Message::new(crate::model::Role::Assistant, "title"),
+                }),
+                &directory,
+            );
+            agent.context.timeout = Duration::from_millis(20);
+            let cancel = CancellationToken::new();
+            if mode == 0 {
+                cancel.cancel();
+            }
+            if mode == 1 {
+                agent.context.cancellation.cancel();
+            }
+            let history = [Message::new(crate::model::Role::User, "question")];
+            let work = agent.generate_title(&history, cancel.clone());
+            let result = if mode == 3 {
+                let (result, ()) = tokio::join!(work, async {
+                    tokio::time::sleep(Duration::from_millis(2)).await;
+                    cancel.cancel();
+                });
+                result
+            } else {
+                work.await
+            };
+            assert!(result.is_none());
+            assert_eq!(requests.lock().unwrap().len(), if mode < 2 { 0 } else { 1 });
+        }
+    }
+    struct TitleStreamFixture(u8);
+    #[async_trait]
+    impl Provider for TitleStreamFixture {
+        async fn models(&self) -> Result<Vec<ModelInfo>, ProviderError> {
+            Ok(vec![ModelInfo::minimal(
+                crate::titles::title_model().unwrap(),
+            )])
+        }
+        async fn complete(&self, _: ModelRequest) -> Result<ModelResponse, ProviderError> {
+            panic!("title must use the provider streaming path");
+        }
+        async fn stream(
+            &self,
+            _: ModelRequest,
+        ) -> Result<crate::provider::ProviderStream, ProviderError> {
+            use crate::provider::{ProviderDelta, ProviderStreamEvent};
+            let events = match self.0 {
+                0 => vec![Ok(ProviderStreamEvent::Delta(ProviderDelta::Text(
+                    "unfinished".into(),
+                )))],
+                1 => vec![Ok(ProviderStreamEvent::Delta(ProviderDelta::Text(
+                    "x".repeat(4097),
+                )))],
+                2 => vec![Ok(ProviderStreamEvent::Delta(ProviderDelta::ToolCall {
+                    index: 0,
+                    id: Some("bad".into()),
+                    name: Some("shell".into()),
+                    arguments: "{}".into(),
+                }))],
+                3 => vec![Err(ProviderError::Unavailable("stream failed".into()))],
+                _ => vec![
+                    Ok(ProviderStreamEvent::Delta(ProviderDelta::Text(
+                        "Private title".into(),
+                    ))),
+                    Ok(ProviderStreamEvent::Completed(ModelResponse {
+                        message: Message::new(crate::model::Role::Assistant, "Private title"),
+                        usage: Usage {
+                            input_tokens: 1,
+                            output_tokens: 2,
+                        },
+                    })),
+                ],
+            };
+            Ok(Box::pin(futures_util::stream::iter(events)))
+        }
+    }
+
+    #[tokio::test]
+    async fn title_stream_is_private_bounded_and_requires_completion() {
+        let directory = tempfile::tempdir().unwrap();
+        for case in 0..5 {
+            let mut agent = agent(Box::new(TitleStreamFixture(case)), &directory);
+            let sink = Arc::new(Recording::default());
+            agent.sink = sink.clone();
+            let result = agent
+                .generate_title(
+                    &[Message::new(crate::model::Role::User, "question")],
+                    CancellationToken::new(),
+                )
+                .await;
+            if case == 4 {
+                let result = result.unwrap();
+                assert_eq!(result.title.as_deref(), Some("Private title"));
+                assert_eq!(result.usage.output_tokens, 2);
+            } else {
+                assert!(result.is_none());
+            }
+            assert!(sink.events.lock().unwrap().is_empty());
+        }
+    }
+
+    struct HangingTitleDiscovery;
+    #[async_trait]
+    impl Provider for HangingTitleDiscovery {
+        async fn models(&self) -> Result<Vec<ModelInfo>, ProviderError> {
+            std::future::pending().await
+        }
+        async fn complete(&self, _: ModelRequest) -> Result<ModelResponse, ProviderError> {
+            panic!("must not complete before discovery");
+        }
+    }
+
+    #[tokio::test]
+    async fn title_generation_bounds_discovery_time_too() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut agent = agent(Box::new(HangingTitleDiscovery), &directory);
+        agent.context.timeout = Duration::from_millis(5);
+        let history = [Message::new(crate::model::Role::User, "question")];
+        let result = tokio::time::timeout(
+            Duration::from_secs(1),
+            agent.generate_title(&history, CancellationToken::new()),
+        )
+        .await
+        .expect("title discovery must not hang");
+        assert!(result.is_none());
+    }
+    #[tokio::test]
+    async fn steering_bounds_and_closed_waiters_are_explicit() {
+        let (sender, mut receiver) = steering_channel(1);
+        assert!(matches!(
+            sender.try_send("界".repeat(MAX_STEERING_BYTES / 3 + 1)),
+            Err(SteeringError::TooLarge(_))
+        ));
+        assert!(
+            sender
+                .send("x".repeat(MAX_STEERING_BYTES + 1))
+                .await
+                .is_err()
+        );
+        sender.try_send("x".repeat(MAX_STEERING_BYTES)).unwrap();
+        let waiting = sender.clone();
+        let wait = tokio::spawn(async move { waiting.send("second".into()).await });
+        tokio::task::yield_now().await;
+        assert_eq!(receiver.drain().len(), 1);
+        tokio::time::timeout(Duration::from_secs(1), wait)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        let waiting = sender.clone();
+        let wait = tokio::spawn(async move { waiting.send("third".into()).await });
+        tokio::task::yield_now().await;
+        drop(receiver);
+        assert!(
+            tokio::time::timeout(Duration::from_secs(1), wait)
+                .await
+                .unwrap()
+                .unwrap()
+                .is_err()
+        );
+        assert!(matches!(
+            sender.try_send("after exit".into()),
+            Err(SteeringError::Closed(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn steering_cancellation_during_request_never_dispatches_another_request() {
+        let directory = tempfile::tempdir().unwrap();
+        let entered = Arc::new(tokio::sync::Notify::new());
+        let calls = Arc::new(AtomicUsize::new(0));
+        let runtime = agent(
+            Box::new(GateThenEcho {
+                calls: calls.clone(),
+                entered: entered.clone(),
+                release: Arc::new(tokio::sync::Notify::new()),
+            }),
+            &directory,
+        );
+        let (sender, receiver) = steering_channel(2);
+        let cancel = CancellationToken::new();
+        let token = cancel.clone();
+        let run = tokio::spawn(async move {
+            runtime
+                .run_with_cancel_and_input(vec![], "original".into(), token, Some(receiver))
+                .await
+        });
+        entered.notified().await;
+        sender.try_send("not dispatched".into()).unwrap();
+        cancel.cancel();
+        assert!(matches!(run.await.unwrap(), Err(AgentError::Cancelled)));
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert!(matches!(
+            sender.try_send("after cancel".into()),
+            Err(SteeringError::Closed(_))
+        ));
+    }
+    struct NoSteering;
+    #[async_trait]
+    impl Provider for NoSteering {
+        fn supports_steering(&self) -> bool {
+            false
+        }
+        async fn complete(&self, _: ModelRequest) -> Result<ModelResponse, ProviderError> {
+            panic!("unsupported steering must never dispatch");
+        }
+    }
+
+    #[tokio::test]
+    async fn unsupported_steering_is_explicit_before_dispatch() {
+        let directory = tempfile::tempdir().unwrap();
+        let (sender, receiver) = steering_channel(1);
+        sender.try_send("new direction".into()).unwrap();
+        let runtime = agent(Box::new(NoSteering), &directory);
+        assert!(!runtime.supports_steering());
+        let error = runtime
+            .run_with_cancel_and_input(
+                vec![],
+                "original".into(),
+                CancellationToken::new(),
+                Some(receiver),
+            )
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("steering is unavailable"));
+    }
+    #[test]
+    fn context_recovery_debug_never_exposes_messages_or_provider_state() {
+        let mut message =
+            Message::new(crate::model::Role::Assistant, "private-transcript-sentinel");
+        message.provider_state =
+            Some(serde_json::json!({"encrypted_content":"private-provider-state-sentinel"}));
+        let error = AgentError::Context(ContextFailure {
+            source: crate::context::ContextError {
+                estimated: 90000,
+                limit: 65536,
+            },
+            recovery: Some(Box::new(CanonicalRecovery {
+                messages: vec![message],
+                usage: Usage {
+                    input_tokens: 3,
+                    output_tokens: 5,
+                },
+            })),
+        });
+        for diagnostic in [
+            format!("{error:?}"),
+            format!("{error:#?}"),
+            error.to_string(),
+        ] {
+            assert!(!diagnostic.contains("private-transcript-sentinel"));
+            assert!(!diagnostic.contains("private-provider-state-sentinel"));
+            assert!(!diagnostic.contains("encrypted_content"));
+            assert!(diagnostic.contains("90000"));
+            assert!(diagnostic.contains("65536"));
+        }
+        let recovery_debug = format!("{:?}", error.recovery().unwrap());
+        assert!(recovery_debug.contains("message_count: 1"));
+        assert!(recovery_debug.contains("input_tokens: 3"));
+        assert!(recovery_debug.contains("output_tokens: 5"));
     }
 }

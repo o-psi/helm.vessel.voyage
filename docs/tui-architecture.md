@@ -95,3 +95,12 @@ substitute for macOS/Windows CI or live operator acceptance. There is no wire or
 session-format migration for this module-only refactor.
 
 Tracking: [god-file audit and TUI cleanup #84](https://github.com/o-psi/voyage/issues/84).
+
+Steering receipts are local `Message` metadata. Accepted text is persisted before it
+becomes visible to the channel; a failed save leaves the draft unsent. Boundary events
+carry canonical history so completed responses, tool IDs and steering retain their
+order. Later pending messages remain visible below live output until their boundary.
+Receipt labels survive unrelated status updates. Restart marks queued receipts unknown,
+while an observed failed/cancelled run marks them not applied. Native-provider steering
+is covered by `tests/system/steering.py` in both Linux CI workflows; compatibility
+providers advertise unsupported delivery instead of silently discarding input.

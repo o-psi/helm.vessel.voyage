@@ -380,7 +380,10 @@ async fn failed_run_does_not_remove_submitted_prompt_from_session() {
     store.save(&mut app.session).await.unwrap();
 
     handle_ui_event(
-        UiEvent::Finished(Err("provider unavailable".into())),
+        UiEvent::Finished(Err(crate::provider::ProviderError::Unavailable(
+            "provider unavailable".into(),
+        )
+        .into())),
         &mut app,
         &store,
         &crate::terminal::NoInteractiveTerminals::default(),
@@ -606,4 +609,359 @@ fn renders_tiny_terminal_with_resize_guidance() {
         .map(|cell| cell.symbol())
         .collect();
     assert!(rendered.contains("Helm"));
+}
+
+#[tokio::test]
+async fn title_results_preserve_manual_names_and_reject_stale_sessions_and_turns() {
+    let directory = tempfile::tempdir().unwrap();
+    let store = SessionStore::new(directory.path().into());
+    let mut app = App::new(Session::new(directory.path().into(), "main".into()), vec![]);
+    app.session.record_completed_turn();
+    store.save(&mut app.session).await.unwrap();
+    let id = app.session.id;
+    let original = app.session.display_name();
+    for (session_id, completed_runs) in [(Uuid::new_v4(), 1), (id, 0)] {
+        handle_ui_event(
+            UiEvent::TitleReady {
+                session_id,
+                completed_runs,
+                result: Some(crate::titles::TitleResult {
+                    title: Some("Stale".into()),
+                    usage: Default::default(),
+                }),
+            },
+            &mut app,
+            &store,
+            &crate::terminal::NoInteractiveTerminals::default(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(app.session.display_name(), original);
+    }
+    handle_ui_event(
+        UiEvent::TitleReady {
+            session_id: id,
+            completed_runs: 1,
+            result: Some(crate::titles::TitleResult {
+                title: Some("Generated title".into()),
+                usage: crate::model::Usage {
+                    input_tokens: 3,
+                    output_tokens: 1,
+                },
+            }),
+        },
+        &mut app,
+        &store,
+        &crate::terminal::NoInteractiveTerminals::default(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        store.load(id).await.unwrap().display_name(),
+        "Generated title"
+    );
+    assert_eq!(app.session.model, "main");
+    assert!(app.session.messages.is_empty());
+    app.session.set_name("My name".into());
+    handle_ui_event(
+        UiEvent::TitleReady {
+            session_id: id,
+            completed_runs: 1,
+            result: Some(crate::titles::TitleResult {
+                title: Some("Late".into()),
+                usage: Default::default(),
+            }),
+        },
+        &mut app,
+        &store,
+        &crate::terminal::NoInteractiveTerminals::default(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(app.session.display_name(), "My name");
+}
+
+#[tokio::test]
+async fn unavailable_title_model_does_not_send_a_repaint_event() {
+    let directory = tempfile::tempdir().unwrap();
+    let agent = Arc::new(navigation_agent_for_conversation(&directory));
+    let mut app = App::new(Session::new(directory.path().into(), "main".into()), vec![]);
+    app.session.record_completed_turn();
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    start_title_job(&mut app, &agent, &tx);
+    tokio::time::timeout(
+        Duration::from_secs(1),
+        &mut app.title_job.as_mut().unwrap().task,
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert!(rx.try_recv().is_err());
+    assert!(!app.is_running());
+}
+
+#[tokio::test]
+async fn steering_boundary_preserves_fifo_receipts_and_separates_streams() {
+    use crate::model::SteeringStatus;
+    let directory = tempfile::tempdir().unwrap();
+    let store = SessionStore::new(directory.path().join("sessions"));
+    let mut app = App::new(Session::new(directory.path().into(), "test".into()), vec![]);
+    let original = crate::Message::new(Role::User, "original");
+    let first = crate::Message::steering("first");
+    let later = crate::Message::steering("later");
+    app.session.messages = vec![original.clone(), first.clone(), later.clone()];
+    app.streaming_response = "old response".into();
+    let mut applied = first;
+    applied.steering.as_mut().unwrap().status = SteeringStatus::Applied;
+    handle_ui_event(
+        UiEvent::Agent(AgentEvent::SteeringApplied {
+            history: vec![
+                original,
+                crate::Message::new(Role::Assistant, "old response"),
+                applied,
+            ],
+        }),
+        &mut app,
+        &store,
+        &FakeTerminals::new(),
+    )
+    .await
+    .unwrap();
+    assert!(app.streaming_response.is_empty());
+    assert_eq!(
+        app.session
+            .messages
+            .iter()
+            .map(|m| m.content.as_str())
+            .collect::<Vec<_>>(),
+        ["original", "old response", "first", "later"]
+    );
+    handle_ui_event(
+        UiEvent::Agent(AgentEvent::AssistantTextDelta("new response".into())),
+        &mut app,
+        &store,
+        &FakeTerminals::new(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(app.streaming_response, "new response");
+    let rendered = transcript(&app, 48).to_string();
+    assert!(rendered.find("new response").unwrap() < rendered.find("later").unwrap());
+    handle_ui_event(
+        UiEvent::Finished(Err(crate::agent::AgentError::Cancelled)),
+        &mut app,
+        &store,
+        &FakeTerminals::new(),
+    )
+    .await
+    .unwrap();
+    assert!(app.status.contains("1 steering message(s) not applied"));
+    let saved = store.load(app.session.id).await.unwrap();
+    assert_eq!(
+        saved.messages[2].steering.as_ref().unwrap().status,
+        SteeringStatus::Applied
+    );
+    assert_eq!(
+        saved.messages[3].steering.as_ref().unwrap().status,
+        SteeringStatus::NotApplied
+    );
+    assert_eq!(saved.messages.last().unwrap().content, "new response");
+    assert_eq!(
+        saved
+            .messages
+            .iter()
+            .filter(|m| m.content == "first")
+            .count(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn steering_backpressure_and_closed_run_preserve_draft_without_phantom_history() {
+    for closed in [false, true] {
+        let directory = tempfile::tempdir().unwrap();
+        let store = SessionStore::new(directory.path().join("sessions"));
+        let mut app = App::new(Session::new(directory.path().into(), "test".into()), vec![]);
+        let agent = Arc::new(navigation_agent_for_conversation(&directory));
+        let (sender, receiver) = crate::agent::steering_channel(1);
+        let _receiver = if closed {
+            drop(receiver);
+            None
+        } else {
+            sender.try_send("already queued".into()).unwrap();
+            Some(receiver)
+        };
+        app.running = Some(Running {
+            task: tokio::spawn(std::future::pending()),
+            cancel: tokio_util::sync::CancellationToken::new(),
+            steering: sender,
+        });
+        app.composer.insert_str("retained λ");
+        let (tx, _) = mpsc::unbounded_channel();
+        handle_key(
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+            &mut app,
+            &agent,
+            &store,
+            &tx,
+            &FakeTerminals::new(),
+            Arc::new(FakeSupervisor::new(vec![])),
+            todo_store(&directory),
+        )
+        .await
+        .unwrap();
+        assert_eq!(app.composer.text, "retained λ");
+        assert!(app.session.messages.is_empty());
+        assert!(
+            store
+                .load(app.session.id)
+                .await
+                .unwrap()
+                .messages
+                .is_empty()
+        );
+        assert!(app.status.contains(if closed {
+            "already finished"
+        } else {
+            "queue is full"
+        }));
+    }
+}
+
+#[tokio::test]
+async fn steering_input_bounds_unicode_and_paste_without_losing_draft() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut app = App::new(Session::new(directory.path().into(), "test".into()), vec![]);
+    let (sender, _receiver) = crate::agent::steering_channel(1);
+    app.running = Some(Running {
+        task: tokio::spawn(std::future::pending()),
+        cancel: tokio_util::sync::CancellationToken::new(),
+        steering: sender,
+    });
+    app.composer
+        .insert_str(&"x".repeat(crate::agent::MAX_STEERING_BYTES - 1));
+    app.insert_composer("界");
+    assert_eq!(
+        app.composer.text.len(),
+        crate::agent::MAX_STEERING_BYTES - 1
+    );
+    app.insert_composer("\n");
+    assert_eq!(app.composer.text.len(), crate::agent::MAX_STEERING_BYTES);
+    app.insert_composer("large paste");
+    assert_eq!(app.composer.text.len(), crate::agent::MAX_STEERING_BYTES);
+    assert!(app.status.contains("draft preserved"));
+}
+
+#[tokio::test]
+async fn steering_save_failure_never_reaches_the_provider_queue() {
+    let directory = tempfile::tempdir().unwrap();
+    let blocked = directory.path().join("not-a-directory");
+    std::fs::write(&blocked, "fixture").unwrap();
+    let store = SessionStore::new(blocked.join("sessions"));
+    let mut app = App::new(Session::new(directory.path().into(), "test".into()), vec![]);
+    let agent = Arc::new(navigation_agent_for_conversation(&directory));
+    let (sender, _receiver) = crate::agent::steering_channel(1);
+    app.running = Some(Running {
+        task: tokio::spawn(std::future::pending()),
+        cancel: tokio_util::sync::CancellationToken::new(),
+        steering: sender.clone(),
+    });
+    app.composer.insert_str("must remain unsent");
+    let (tx, _) = mpsc::unbounded_channel();
+    handle_key(
+        KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+        &mut app,
+        &agent,
+        &store,
+        &tx,
+        &FakeTerminals::new(),
+        Arc::new(FakeSupervisor::new(vec![])),
+        todo_store(&directory),
+    )
+    .await
+    .unwrap();
+    assert_eq!(app.composer.text, "must remain unsent");
+    assert!(app.session.messages.is_empty());
+    assert!(app.status.contains("was not sent"));
+    sender.try_send("queue still empty".into()).unwrap();
+}
+
+#[tokio::test]
+async fn context_recovery_preserves_tools_and_late_steering_without_duplicates() {
+    use crate::agent::{AgentError, CanonicalRecovery, ContextFailure};
+    use crate::model::{Message, SteeringStatus, ToolCall, Usage};
+    let directory = tempfile::tempdir().unwrap();
+    let store = SessionStore::new(directory.path().join("sessions"));
+    let mut app = App::new(Session::new(directory.path().into(), "test".into()), vec![]);
+    let prompt = Message::new(Role::User, "read evidence");
+    let mut assistant = Message::new(Role::Assistant, "checking");
+    assistant.tool_calls.push(ToolCall {
+        id: "real-call".into(),
+        name: "read_file".into(),
+        arguments: serde_json::json!({"path":"evidence"}),
+    });
+    assistant.provider_state = Some(serde_json::json!({"kind":"local-replay-fixture"}));
+    let tool = Message::tool("real-call", "large original evidence");
+    let mut applied = Message::steering("earlier steering");
+    applied.steering.as_mut().unwrap().status = SteeringStatus::Applied;
+    let late = Message::steering("accepted during failure");
+    app.session.messages = vec![prompt.clone(), applied.clone(), late];
+    app.session.usage = Usage {
+        input_tokens: 5,
+        output_tokens: 7,
+    };
+    app.live_messages = vec![Message::tool("fake-ui-call", "large original evidence")];
+    app.streaming_response = "checking".into();
+    let recovery = CanonicalRecovery {
+        messages: vec![prompt, assistant, tool, applied],
+        usage: Usage {
+            input_tokens: 11,
+            output_tokens: 13,
+        },
+    };
+    let error = AgentError::Context(ContextFailure {
+        source: crate::context::ContextError {
+            estimated: 90000,
+            limit: 65536,
+        },
+        recovery: Some(Box::new(recovery)),
+    });
+    handle_ui_event(
+        UiEvent::Finished(Err(error)),
+        &mut app,
+        &store,
+        &FakeTerminals::new(),
+    )
+    .await
+    .unwrap();
+    let saved = store.load(app.session.id).await.unwrap();
+    assert_eq!(saved.messages.len(), 5);
+    assert_eq!(
+        saved
+            .messages
+            .iter()
+            .filter(|message| message.content == "checking")
+            .count(),
+        1
+    );
+    assert_eq!(saved.messages[2].tool_call_id.as_deref(), Some("real-call"));
+    assert_eq!(
+        saved.messages[1].provider_state.as_ref().unwrap()["kind"],
+        "local-replay-fixture"
+    );
+    assert_eq!(
+        saved.messages[3].steering.as_ref().unwrap().status,
+        SteeringStatus::Applied
+    );
+    assert_eq!(
+        saved.messages[4].steering.as_ref().unwrap().status,
+        SteeringStatus::NotApplied
+    );
+    assert_eq!(saved.messages[4].content, "accepted during failure");
+    assert_eq!(saved.usage.input_tokens, 16);
+    assert_eq!(saved.usage.output_tokens, 20);
+    assert!(app.live_messages.is_empty());
+    assert!(app.streaming_response.is_empty());
+    assert!(app.status.contains("1 steering message(s) not applied"));
+    assert_eq!(saved.title_state.as_ref().unwrap().completed_runs, 0);
 }

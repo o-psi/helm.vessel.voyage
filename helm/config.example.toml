@@ -6,6 +6,9 @@ api_key_env = "OPENAI_API_KEY"
 # base_url = "http://localhost:11434/v1"
 # chatgpt_base_url is intentionally separate; normally leave it unset.
 max_tokens = 8192
+# Set to the selected model's effective window, including reserved output.
+# Unknown models use this finite conservative fallback; smaller models need a lower value.
+context_window = 65536
 provider_retry_attempts = 4
 provider_retry_initial_ms = 500
 provider_retry_max_ms = 8000

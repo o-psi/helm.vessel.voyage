@@ -302,7 +302,11 @@ impl EventSink for Terminal {
                 delay.as_secs_f32(),
                 error = safe_diagnostic(&error)
             ),
-            AgentEvent::SteeringApplied => eprintln!("[steering applied]"),
+            AgentEvent::ContextBudget(report) => eprintln!(
+                "[context: estimated {}/{} tokens, {} messages omitted]",
+                report.estimated, report.limit, report.omitted_messages
+            ),
+            AgentEvent::SteeringApplied { .. } => eprintln!("[steering applied]"),
             AgentEvent::Cancelled => eprintln!("[cancelled]"),
         }
     }
@@ -775,6 +779,7 @@ impl SubagentExecutor for CliSubagentExecutor {
             config.max_tokens,
             config.temperature,
         )
+        .with_context_window(config.context_window)
         .with_retry_policy(RetryPolicy {
             max_attempts: config.provider_retry_attempts,
             initial_delay: std::time::Duration::from_millis(config.provider_retry_initial_ms),
@@ -927,6 +932,7 @@ async fn build_agent(config: &Config, workspace: PathBuf, attended: bool) -> Res
         config.max_tokens,
         config.temperature,
     )
+    .with_context_window(config.context_window)
     .with_model_mirror(subagents.model)
     .with_retry_policy(RetryPolicy {
         max_attempts: config.provider_retry_attempts,
@@ -1023,6 +1029,7 @@ async fn tui_chat(
             active_config.max_tokens,
             active_config.temperature,
         )
+        .with_context_window(active_config.context_window)
         .with_model_mirror(subagents.model)
         .with_retry_policy(RetryPolicy {
             max_attempts: active_config.provider_retry_attempts,
@@ -1227,13 +1234,37 @@ async fn execute(
     let mut active_config = config.clone();
     active_config.model = session.model.clone();
     let agent = build_agent(&active_config, session.workspace.clone(), true).await?;
-    let outcome = agent.run(session.messages.clone(), prompt).await?;
+    let outcome = match agent.run(session.messages.clone(), prompt).await {
+        Ok(outcome) => outcome,
+        Err(error) => {
+            if !no_save && let Some(recovery) = error.recovery() {
+                session.recover_context_failure(recovery)?;
+                session.terminals = agent.terminal_metadata();
+                store.save(&mut session).await?;
+                eprintln!("[session {}]", session.id);
+            }
+            return Err(error.into());
+        }
+    };
+    let title_due = session.title_due_after_turn();
+    session.record_completed_turn();
     session.messages = outcome.messages;
     session.usage.input_tokens += outcome.usage.input_tokens;
     session.usage.output_tokens += outcome.usage.output_tokens;
     session.terminals = agent.terminal_metadata();
     if !no_save {
         store.save(&mut session).await?;
+        if title_due
+            && let Some(result) = agent
+                .generate_title(
+                    &session.messages,
+                    tokio_util::sync::CancellationToken::new(),
+                )
+                .await
+        {
+            session.apply_generated_title(result);
+            store.save(&mut session).await?;
+        }
         eprintln!("[session {}]", session.id);
     }
     Ok(session)
@@ -1312,7 +1343,7 @@ async fn chat(
                 continue;
             }
             "/clear" => {
-                session.messages.clear();
+                session.clear_conversation();
                 store.save(&mut session).await?;
                 println!("conversation cleared");
                 continue;
@@ -1323,7 +1354,7 @@ async fn chat(
             let name = prompt.strip_prefix("/new").unwrap_or_default().trim();
             let mut next = Session::new(session.workspace.clone(), session.model.clone());
             if !name.is_empty() {
-                next.name = Some(name.to_owned());
+                next.set_name(name.to_owned());
             }
             session = next;
             println!("new session: {}", session.display_name());
@@ -1334,7 +1365,7 @@ async fn chat(
             if name.is_empty() {
                 eprintln!("usage: /name TITLE");
             } else {
-                session.name = Some(name.to_owned());
+                session.set_name(name.to_owned());
                 store.save(&mut session).await?;
                 println!("session renamed to {name}");
             }
@@ -1409,6 +1440,8 @@ async fn chat(
             .await
         {
             Ok(outcome) => {
+                let title_due = session.title_due_after_turn();
+                session.record_completed_turn();
                 session.messages = outcome.messages;
                 session.usage.input_tokens += outcome.usage.input_tokens;
                 session.usage.output_tokens += outcome.usage.output_tokens;
@@ -1417,8 +1450,32 @@ async fn chat(
                     .expect("agent initialized")
                     .terminal_metadata();
                 store.save(&mut session).await?;
+                if title_due
+                    && let Some(result) = agent
+                        .as_ref()
+                        .expect("agent initialized")
+                        .generate_title(
+                            &session.messages,
+                            tokio_util::sync::CancellationToken::new(),
+                        )
+                        .await
+                {
+                    session.apply_generated_title(result);
+                    store.save(&mut session).await?;
+                }
             }
-            Err(error) => eprintln!("error: {error:#}"),
+            Err(error) => {
+                if let Some(recovery) = error.recovery() {
+                    session.recover_context_failure(recovery)?;
+                    session.terminals = agent
+                        .as_ref()
+                        .expect("agent initialized")
+                        .terminal_metadata();
+                    store.save(&mut session).await?;
+                    eprintln!("[session {}]", session.id);
+                }
+                eprintln!("error: {error:#}");
+            }
         }
     }
     if interactive && !session.messages.is_empty() {

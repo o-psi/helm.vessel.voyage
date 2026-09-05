@@ -141,6 +141,12 @@ async fn central_router_preserves_modal_and_panel_precedence() {
     let todos = todo_store(&directory);
     let (tx, mut rx) = mpsc::unbounded_channel();
     let mut app = App::new(Session::new(directory.path().into(), "test".into()), vec![]);
+    let (steering, _receiver) = crate::agent::steering_channel(4);
+    app.running = Some(Running {
+        task: tokio::spawn(std::future::pending()),
+        cancel: tokio_util::sync::CancellationToken::new(),
+        steering,
+    });
     app.composer.insert_str("unsent λ");
     app.shortcut_help = true;
     app.model_panel.model_picker = true;

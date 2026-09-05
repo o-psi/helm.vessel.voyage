@@ -586,19 +586,29 @@ mod tests {
         let ledger = RunLedger::new();
         store.create(&ledger).unwrap();
         let before = fs::read(store.path(ledger.run_id())).unwrap();
-        // Move the private directory to inject a missing destination after the
-        // revision check, without relying on permissions (tests may run as root).
-        let moved = root.path().join("moved");
+        // Replace the destination with a directory after reading the old ledger.
+        // Unlike renaming the store directory, this works on Windows while the
+        // independent writer.lock file is open. The destination must not be
+        // removed by a failed atomic replacement.
+        let destination = store.path(ledger.run_id());
+        let moved = root.path().join("prior-ledger.json");
+        let mut injected = false;
         assert!(
             store
                 .update(ledger.run_id(), 0, |candidate| {
                     adopt(candidate)?;
-                    fs::rename(&store.directory, &moved)?;
+                    fs::rename(&destination, &moved)?;
+                    fs::create_dir(&destination)?;
+                    injected = true;
                     Ok(())
                 })
                 .is_err()
         );
-        fs::rename(&moved, &store.directory).unwrap();
+        assert!(injected, "fixture must reach the failed-write phase");
+        assert!(destination.is_dir(), "failed write removed the destination");
+        assert_eq!(fs::read(&moved).unwrap(), before);
+        fs::remove_dir(&destination).unwrap();
+        fs::rename(&moved, &destination).unwrap();
         assert_eq!(fs::read(store.path(ledger.run_id())).unwrap(), before);
         assert_eq!(store.load(ledger.run_id()).unwrap(), ledger);
         assert_eq!(fs::read_dir(&store.directory).unwrap().count(), 2);

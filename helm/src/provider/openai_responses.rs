@@ -543,6 +543,7 @@ fn finish(assembly: Assembly) -> Result<ModelResponse, ProviderError> {
             tool_calls: calls,
             tool_success: None,
             provider_state,
+            steering: None,
         },
         usage: assembly.usage,
     })
@@ -727,6 +728,7 @@ mod tests {
                         tool_call_id: None,
                         tool_calls: Vec::new(),
                         tool_success: None,
+                        steering: None,
                         provider_state: Some(json!({"kind":"openai_responses_replay","version":1,"items":[
                             {"type":"reasoning","id":"rs_1","encrypted_content":"encrypted","summary":[]},
                             {"type":"function_call","call_id":"call_1","name":"read_file","arguments":"{\"path\":\"a\"}"}
@@ -772,6 +774,7 @@ mod tests {
                             arguments: json!({"command":"pwd"}),
                         }],
                         tool_success: None,
+                        steering: None,
                         provider_state: Some(json!({
                             "kind":"openai_responses_replay",
                             "version":1,
