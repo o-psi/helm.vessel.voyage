@@ -6,12 +6,10 @@ They do not grant permissions beyond the active runtime policy or operator appro
 
 ## Product stage and delivery standard
 
-Voyage has no product releases. We are still developing the first version of the
-product. Treat current binaries, package archives, installations, and stored data
-as development artifacts. Cargo's `--release` profile, version fields, release
-workflows, and packaging checks are preparation for release, not evidence that a
-product release exists. Describe changes between current builds as development
-updates; retain appropriate data-preservation and recovery guidance.
+Voyage is developing its first version and has no product releases. Write
+documentation around current behavior, setup, and useful workflows. State planned
+capabilities clearly. Omit legacy, retirement, and migration narratives about
+unreleased implementations, and keep internal delivery commentary out of user guides.
 
 The goal is a release-quality product that adds actual, tested value. An MVP,
 prototype, scaffold, or vertical slice is not the completion standard. Work may
@@ -169,7 +167,7 @@ Separate pre-existing failures from regressions with evidence.
 Run from the repository root with stable Rust, rustfmt, Clippy, and Python 3.
 These commands reflect the GitHub Linux quality workflow; recheck that workflow
 for changes. Build optimized binaries with Cargo's release profile before the
-Python system tests; these remain development builds:
+Python system tests:
 
 ```sh
 cargo fmt --all -- --check
@@ -188,9 +186,8 @@ with an approved configured provider and budget. It can consume provider capacit
 and writes ignored evidence to `eval/evidence/latest.json`; review and redact any
 shared evidence. See `eval/README.md` and `docs/cutover.md` for manual drills.
 
-Packaging is also a Linux CI gate preparing for the first release. After the
-optimized build, use a unique development version label to avoid overwriting
-existing artifacts:
+Packaging is also a Linux CI gate. After the optimized build, use a unique
+version label to avoid overwriting existing artifacts:
 
 ```sh
 ./scripts/package-release UNIQUE_VERSION
