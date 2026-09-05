@@ -17,3 +17,6 @@ pub struct ApiError {
 pub mod attachment;
 
 pub mod enrollment;
+
+/// Strict wire codec foundations; no network adapter or authentication is enabled.
+pub mod stream;

@@ -127,6 +127,19 @@ access = "unrestricted"
                     os.write(master, b"/not-a-command second steering\r")
                     wait_until(lambda: sum("steering" in m for m in saved()["messages"]) == 2, "second durable steering")
                     assert all(m["steering"]["status"] == "queued" for m in saved()["messages"] if "steering" in m)
+                    # Persistence intentionally precedes enqueue. A fresh resize
+                    # redraw can only be processed after the Enter handler has
+                    # enqueued the second message and set its acknowledgement.
+                    # Waiting for disk alone can release the provider too early.
+                    acknowledgement_start = len(output)
+                    fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack("HHHH", 19, 49, 0, 0))
+                    wait_until(lambda: b"Steering queued" in output[acknowledgement_start:],
+                               "second steering enqueue acknowledgement")
+                    # Buffered bytes from the prior 18-row frame are not a
+                    # barrier. The new 19-row frame ends with this empty-composer
+                    # cursor on row 15, proving the resize was processed.
+                    wait_until(lambda: b"\x1b[?25h\x1b[15;1H" in output[acknowledgement_start:],
+                               "post-enqueue resized frame completion")
                     if case == "cancel":
                         os.write(master, b"\x1b")
                         wait_until(lambda: any(m.get("steering", {}).get("status") == "not_applied" for m in saved()["messages"]), "cancel delivery outcome")
