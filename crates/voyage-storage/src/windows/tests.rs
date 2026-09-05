@@ -277,3 +277,66 @@ fn real_process_lock_exclusion_and_abrupt_exit_release() {
     child.0.wait().unwrap();
     directory.lock("client.lock").unwrap();
 }
+
+#[test]
+fn immutable_publication_never_replaces_and_preserves_uncertain_candidate() {
+    let root = tempfile::tempdir().unwrap();
+    let directory = PrivateDirectory::open(&root.path().join("private")).unwrap();
+    directory.publish_new("actor.json", b"original").unwrap();
+    let original = information(&directory.open_file("actor.json", false).unwrap(), false).unwrap();
+    assert!(directory.publish_new("actor.json", b"replacement").is_err());
+    assert_eq!(
+        std::fs::read(directory.path().join("actor.json")).unwrap(),
+        b"original"
+    );
+    assert_eq!(
+        std::fs::read(directory.path().join(".new-actor.json")).unwrap(),
+        b"replacement"
+    );
+    assert!(directory.publish_new("actor.json", b"third").is_err());
+    assert_eq!(
+        std::fs::read(directory.path().join(".new-actor.json")).unwrap(),
+        b"replacement"
+    );
+    assert!(directory.create_file("actor.json").is_err());
+    let current = information(&directory.open_file("actor.json", false).unwrap(), false).unwrap();
+    assert_eq!(
+        (
+            original.dwVolumeSerialNumber,
+            original.nFileIndexHigh,
+            original.nFileIndexLow
+        ),
+        (
+            current.dwVolumeSerialNumber,
+            current.nFileIndexHigh,
+            current.nFileIndexLow
+        )
+    );
+    assert!(directory.sync_file("missing.json").is_err());
+    assert!(!directory.path().join("missing.json").exists());
+}
+
+#[test]
+fn immutable_publication_reuses_exact_candidate_but_rejects_links() {
+    let root = tempfile::tempdir().unwrap();
+    let directory = PrivateDirectory::open(&root.path().join("private")).unwrap();
+    let mut candidate = directory.create_file(".new-actor.json").unwrap();
+    candidate.write_all(b"same").unwrap();
+    candidate.sync_all().unwrap();
+    drop(candidate);
+    directory.publish_new("actor.json", b"same").unwrap();
+    assert_eq!(
+        std::fs::read(directory.path().join("actor.json")).unwrap(),
+        b"same"
+    );
+    let mut candidate = directory.create_file(".new-next.json").unwrap();
+    candidate.write_all(b"next").unwrap();
+    drop(candidate);
+    std::fs::hard_link(
+        directory.path().join(".new-next.json"),
+        directory.path().join("linked"),
+    )
+    .unwrap();
+    assert!(directory.publish_new("next.json", b"next").is_err());
+    assert!(!directory.path().join("next.json").exists());
+}

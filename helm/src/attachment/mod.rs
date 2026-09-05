@@ -11,3 +11,5 @@ pub mod sharing;
 pub mod client;
 
 pub mod migration;
+
+pub mod local_actor;
