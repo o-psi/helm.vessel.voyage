@@ -86,6 +86,17 @@ class Fixture(BaseHTTPRequestHandler):
             step = len(case.requests)
             case.requests.append(body)
             outputs, systems = normalize(case.provider, body)
+            human_text = []
+            for message in body.get("input", body.get("messages", [])):
+                if message.get("role") != "user":
+                    continue
+                content = message.get("content", "")
+                if isinstance(content, list):
+                    content = "".join(block.get("text", "") for block in content if block.get("type") in ("text", "input_text"))
+                if content:
+                    human_text.append(content)
+            expected_humans = (["gate-fixture:verified"] if case.mode == "resume" else []) + ["gate-fixture:" + case.mode]
+            assert human_text == expected_humans, ("synthetic human guidance", human_text)
             saved = case.latest_session()
             assert [m["content"] for m in saved["messages"] if m["role"] == "user"][-1] == "gate-fixture:" + case.mode
             assert saved["run_summaries"][-1]["phase"] in ("provisional", "reconciling")
