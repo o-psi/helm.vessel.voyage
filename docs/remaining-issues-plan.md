@@ -292,3 +292,12 @@ The operator clarified that feature-parent PR closure is insufficient: the inten
 Independent integration review found no concrete blocker. Initial fmt/strict Clippy and provider34/consent29/schema10/CLI25 targeted tests pass. Full workspace tests pass; final two-CPU/release/all21 system fixtures/eval/package baseline and current-head Linux CI are running. Main merge will follow those checks. Superseded #88 branch CI runs were cancelled to avoid redundant cost; only2275e4e is the intended delivery head.
 
 The new policy runtime feature is independent and no longer blocks this completed local stack. Its nested-child authority correction29e2876 passed independent review and targeted tests, with a separate full baseline underway. It will integrate actual main after the local stack lands, including explicit review of managed builder and child authority. No native macOS/Windows gate or false epic closure is introduced.
+
+
+## Main delivery observed
+
+PR #88 merged to main as995a9373358fc1635610eb0c1c8261184853a77f; fetched origin/main exactly matches reviewed2275e4e. Final runtime31453fa passed787 workspace tests normally and under two CPUs, all21 system fixtures, strict quality, locked release,12 evaluation definitions and packaging/checksums. Both final CI runs passed:33987190445 and33987192439.
+
+Verified every remaining old PR head (102,107,109,112,122) is an ancestor of main. Those redundant tracking PRs were closed with explicit incorporation comments; no code or branch was deleted. GitHub now reports zero open PRs from that stack. Issue81 is closed after independent seven-criterion acceptance review;82/83 retain their explicit remaining remote/live criteria.
+
+The policy and saved-workflow features now resume integration against actual main for separate main-targeting delivery. They no longer block delivery of the completed local stack.
