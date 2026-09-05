@@ -7,7 +7,7 @@ use std::{
 use crate::policy::Policy;
 use anyhow::{Context, Result, bail};
 
-const MAX_BYTES: u64 = 64 * 1024;
+pub(crate) const MAX_BYTES: u64 = 64 * 1024;
 
 /// Prefer AGENTS.md; use agents.md only when the preferred entry is absent.
 /// Resolve through policy before reading, including symlink targets.

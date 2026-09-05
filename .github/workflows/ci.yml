@@ -79,6 +79,12 @@ jobs:
         run: python3 tests/system/attachment_enrollment.py
       - name: Verify hidden enrollment invitation entry on real terminal
         run: python3 tests/system/attachment_secret_prompt.py
+      - name: Verify explicit repository onboarding with real CLI
+        run: python3 tests/system/repo_onboarding.py
+      - name: Verify explicit local-provider setup with offline HTTP fixtures
+        env:
+          HELM_BIN: target/release/helm
+        run: python3 tests/system/local_provider.py
       - name: Verify foreground outbound attachment presence with real binaries
         run: python3 tests/system/attachment_presence.py
       - run: python3 eval/run.py validate

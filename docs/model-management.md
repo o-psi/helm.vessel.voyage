@@ -1,10 +1,13 @@
 # Model discovery and switching
 
-Helm discovers models from the account configured for the active provider; model names are not a
+Helm discovers models from the configured provider or local endpoint; model names are not a
 compiled-in catalog. `helm models` prints the available catalog and `helm models --json` emits
 stable structured descriptors. OpenAI uses `GET /models` relative to its configured `/v1` API
-base, Anthropic uses its paginated models endpoint, and the subscription transport uses Codex
-app-server `model/list`.
+base, Anthropic uses its paginated models endpoint, and native ChatGPT OAuth uses direct
+subscription model discovery. The optional Codex compatibility bridge uses app-server `model/list`.
+For local services, use the [explicit preset and endpoint setup workflow](local-providers.md).
+Compatible discovery shares the setup bounds: 1 MiB response, 1,024 model entries, 512-byte IDs,
+no credential-bearing redirects, and fixed errors that exclude server response bodies.
 
 The configured model remains a valid manual fallback when discovery is unavailable or when an
 OpenAI-compatible endpoint accepts a model that it does not advertise. Discovery is bounded by the

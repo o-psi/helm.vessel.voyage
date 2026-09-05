@@ -692,9 +692,9 @@ async fn outbound_queue_full_and_stale_generation_fail_closed() {
 #[tokio::test]
 async fn authenticated_machine_limit_denies_new_machine_but_allows_replacement() {
     let mut f = Fixture::new().await;
-    let proof = f.proof();
-    let mut first = f.socket().await;
-    let first_id = f.authenticate(&mut first, proof).await;
+    // Prepare both enrollments before a live authorization monitor can race
+    // their independent SQLite writer and correctly fence the first socket.
+    let first_proof = f.proof();
     let first_machine = f.machine;
     f.machine = Uuid::new_v4();
     f.key = SigningKey::generate().unwrap();
@@ -716,6 +716,8 @@ async fn authenticated_machine_limit_denies_new_machine_but_allows_replacement()
     };
     f.store.complete(&proof, Some(&invite.key), now()).unwrap();
     let proof = f.proof();
+    let mut first = f.socket().await;
+    let first_id = f.authenticate(&mut first, first_proof).await;
     let mut second = f.socket().await;
     second
         .send(ClientMessage::Text(
@@ -908,3 +910,33 @@ async fn presence_rejects_application_frames_without_consumer_or_disclosure() {
 }
 
 mod presence_review;
+
+#[tokio::test]
+async fn independent_enrollment_writer_fences_live_connection_without_revocation() {
+    let mut f = Fixture::new().await;
+    let proof = f.proof();
+    let mut socket = f.socket().await;
+    let id = f.authenticate(&mut socket, proof).await;
+    let writer =
+        rusqlite::Connection::open(f._dir.path().join("authority/enrollment.sqlite3")).unwrap();
+    writer.busy_timeout(Duration::ZERO).unwrap();
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+    loop {
+        match writer.execute_batch("BEGIN EXCLUSIVE") {
+            Ok(()) => break,
+            Err(error)
+                if error.sqlite_error_code() == Some(rusqlite::ErrorCode::DatabaseBusy)
+                    && tokio::time::Instant::now() < deadline =>
+            {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+            Err(error) => panic!("fixture writer must acquire its lock: {error}"),
+        }
+    }
+    assert!(!f.api.is_current(f.machine, id).await);
+    writer.execute_batch("ROLLBACK").unwrap();
+    closed(&mut socket).await;
+    // Releasing the database lock cannot resurrect cancelled authority.
+    assert!(!f.api.is_current(f.machine, id).await);
+    assert!(!f.store.current(f.machine, 1).unwrap().revoked);
+}

@@ -111,6 +111,8 @@ enum LogFormat {
 enum Command {
     /// Use private local sessions with an authoritative SQLite journal.
     Managed(managed::Args),
+    /// Inspect a repository and explicitly review generated project guidance.
+    Onboard(helm::onboarding::OnboardArgs),
     /// Manage dedicated Vessel enrollment; no worker is started.
     Attachment(helm::attachment::cli::AttachmentArgs),
     /// Manage Helm's native ChatGPT subscription credentials.
@@ -141,6 +143,11 @@ enum Command {
         json: bool,
     },
     Config,
+    /// Explicit local/compatible endpoint setup and discovery.
+    LocalProvider {
+        #[command(subcommand)]
+        command: helm::local_provider::Command,
+    },
     /// Generate a shell completion script on stdout.
     Completions {
         #[arg(value_enum)]
@@ -418,6 +425,9 @@ async fn main() -> Result<()> {
                 .init(),
         }
     }
+    if let Some(Command::LocalProvider { command }) = cli.command {
+        return helm::local_provider::run(command).await;
+    }
     let mut config = Config::load(cli.config.as_deref())?;
     let set_overrides_model = cli.set.iter().any(|assignment| {
         assignment
@@ -468,10 +478,13 @@ async fn main() -> Result<()> {
         Command::Managed(args) => managed::run(args, Some(config), cli.workspace, model_overridden)
             .await
             .map_err(managed::safe_error),
+        Command::Onboard(args) => helm::onboarding::run(args, &config, cli.workspace),
         Command::Models { json } => list_models(&config, cli.workspace, json).await,
         Command::Doctor => doctor(&config, cli.workspace).await,
         Command::Auth { command } => auth(command, &config).await,
-        Command::Attachment(_) => unreachable!("handled before runtime initialization"),
+        Command::Attachment(_) | Command::LocalProvider { .. } => {
+            unreachable!("handled before runtime initialization")
+        }
         Command::Sessions => list_sessions().await,
         Command::Run {
             prompt,
@@ -563,6 +576,10 @@ fn print_config(config: &Config) -> Result<()> {
     println!("# provider_access = {access}");
     println!("# credential_requirement = {}", profile.credential);
     println!("# billing = {}", profile.billing);
+    println!(
+        "# endpoint_diagnostics = {}",
+        helm::local_provider::diagnostics(config)
+    );
     let mut displayed = config.clone();
     displayed.access = Some(config.access_mode());
     println!("{}", toml::to_string_pretty(&displayed)?);
@@ -607,7 +624,7 @@ async fn doctor(config: &Config, workspace: Option<PathBuf>) -> Result<()> {
     let provider_ready = match (&subscription, &oauth_status) {
         (Some(probe), _) => probe.executable && probe.app_server && probe.logged_in,
         (_, Some(status)) => status.authenticated && status.refreshable,
-        (None, None) => std::env::var_os(&config.api_key_env).is_some(),
+        (None, None) => !config.api_key_required || config.api_key().is_ok(),
     };
     let profile = config.provider_profile();
     let report = serde_json::json!({
@@ -617,8 +634,9 @@ async fn doctor(config: &Config, workspace: Option<PathBuf>) -> Result<()> {
         "workspace_readable": workspace.is_dir(),
         "provider_ready": provider_ready,
         "provider": profile,
+        "endpoint_diagnostics": helm::local_provider::diagnostics(config),
         "native_chatgpt_oauth": oauth_status.as_ref().map(token_status_json),
-        "provider_credential_present": if matches!(config.provider, helm::ProviderKind::CodexSubscription) { serde_json::Value::Null } else if let Some(status) = &oauth_status { serde_json::Value::Bool(status.authenticated) } else { serde_json::Value::Bool(std::env::var_os(&config.api_key_env).is_some()) },
+        "provider_credential_present": if matches!(config.provider, helm::ProviderKind::CodexSubscription) { serde_json::Value::Null } else if let Some(status) = &oauth_status { serde_json::Value::Bool(status.authenticated) } else if !config.api_key_required { serde_json::Value::Null } else { serde_json::Value::Bool(config.api_key().is_ok()) },
         "codex_compatibility": subscription,
         "sessions_directory": helm::config::default_data_dir().join("sessions"),
         "access": config.access_mode(),
