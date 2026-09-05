@@ -226,6 +226,8 @@ pub enum AgentError {
     Context(#[from] ContextFailure),
     #[error(transparent)]
     Provider(#[from] ProviderError),
+    #[error("cannot start run under current system policy: {0}")]
+    Policy(String),
     #[error("cannot load workspace instructions: {0}")]
     WorkspaceInstructions(String),
     #[error("agent run was cancelled")]
@@ -539,6 +541,10 @@ impl Agent {
         checkpoint: Option<&dyn RunCheckpoint>,
         selected_model: Option<String>,
     ) -> Result<AgentOutcome, AgentError> {
+        self.context
+            .policy
+            .check_current()
+            .map_err(|error| AgentError::Policy(error.to_string()))?;
         let mut context = self.context.clone();
         context.cancellation = cancel.child_token();
         context.execution_id = checkpoint.map_or_else(uuid::Uuid::new_v4, RunCheckpoint::run_id);

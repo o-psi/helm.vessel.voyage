@@ -111,6 +111,7 @@ impl Tool for SubagentTool {
     }
     }
     async fn execute(&self, arguments: Value, context: &ToolContext) -> Result<String, ToolError> {
+        context.policy.check_current().map_err(failed)?;
         let args: Args = serde_json::from_value(arguments)
             .map_err(|e| ToolError::InvalidArguments(e.to_string()))?;
         let value = match args {
@@ -123,11 +124,15 @@ impl Tool for SubagentTool {
                     let manager = self.worktrees.as_ref().ok_or_else(|| {
                         ToolError::Failed("workspace is not a supported Git repository".into())
                     })?;
-                    Some(
-                        manager
-                            .create(&format!("{}-{}", name, Uuid::new_v4().simple()), "HEAD")
-                            .map_err(failed)?,
-                    )
+                    let worktree_name = format!("{}-{}", name, Uuid::new_v4().simple());
+                    let destination = manager.planned_path(&worktree_name).map_err(failed)?;
+                    context
+                        .policy
+                        .check_delegated_workspace(&destination)
+                        .map_err(failed)?;
+                    approve_git(context, "subagent.create", &worktree_name).await?;
+                    context.policy.check_current().map_err(failed)?;
+                    Some(manager.create(&worktree_name, "HEAD").map_err(failed)?)
                 } else {
                     None
                 };
@@ -386,6 +391,70 @@ mod tests {
                 summary: "evidence".into(),
             })
         }
+    }
+    #[tokio::test]
+    async fn denied_external_worktree_has_no_git_or_runtime_effects() {
+        use std::{
+            collections::{BTreeMap, BTreeSet},
+            time::Duration,
+        };
+        let root = tempfile::tempdir().unwrap();
+        let workspace = root.path().join("workspace");
+        std::fs::create_dir(&workspace).unwrap();
+        // An invalid repository makes any attempted Git call fail differently.
+        std::fs::create_dir(workspace.join(".git")).unwrap();
+        let destination = root.path().join("external/worktrees");
+        let manager = WorktreeManager::new(workspace.clone(), destination.clone()).unwrap();
+        let runtime = Arc::new(
+            SubagentRuntime::new(
+                Arc::new(GatedExecutor(Arc::new(tokio::sync::Notify::new()))),
+                super::super::RuntimeLimits::default(),
+                None,
+            )
+            .unwrap(),
+        );
+        let budget = AgentBudget {
+            max_tokens: 100,
+            max_terminals: 1,
+        };
+        let policy = AgentPolicy {
+            readable_roots: vec![workspace.clone()],
+            writable_roots: vec![workspace.clone()],
+            allowed_tools: BTreeSet::new(),
+            approval: super::super::ApprovalPolicy::Deny,
+            budget: budget.clone(),
+        };
+        let config = crate::Config {
+            access: Some(crate::config::AccessMode::Unrestricted),
+            ..crate::Config::default()
+        };
+        let context = ToolContext {
+            policy: Arc::new(crate::policy::Policy::new(&config, workspace).unwrap()),
+            approver: Arc::new(crate::tools::UnattendedApprover { allow: true }),
+            timeout: Duration::from_secs(2),
+            max_output_bytes: 1024,
+            environment: BTreeMap::new(),
+            cancellation: tokio_util::sync::CancellationToken::new(),
+            execution_id: Uuid::new_v4(),
+            interaction: crate::tools::InteractionMode::Unattended,
+            redactor: Arc::new(crate::tools::Redactor::default()),
+        };
+        let tool = SubagentTool::new(runtime.clone(), policy, budget).with_worktrees(Some(manager));
+        let error = tool
+            .execute(
+                json!({"action":"spawn","name":"child","task":"nothing","worktree":true}),
+                &context,
+            )
+            .await
+            .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("explicit parent read and write root delegation"),
+            "{error}"
+        );
+        assert!(!destination.exists());
+        assert!(runtime.list().await.is_empty());
     }
     struct PendingApproval {
         entered: tokio::sync::Notify,

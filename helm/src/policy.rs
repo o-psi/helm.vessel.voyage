@@ -18,28 +18,80 @@ pub struct Policy {
     writable: Vec<PathBuf>,
     deny_commands: Vec<String>,
     mode: AccessMode,
+    snapshot: crate::runtime_policy::Snapshot,
 }
 
 impl Policy {
     pub fn new(config: &Config, workspace: PathBuf) -> Result<Self> {
-        // macOS exposes temporary directories through `/var`, which resolves to
-        // `/private/var`. Keep the policy root in the same canonical namespace
-        // used by `resolve_read` and `resolve_write`; otherwise legitimate paths
-        // beneath a symlinked system root are incorrectly rejected.
-        let workspace = workspace.canonicalize().map_err(|error| {
-            anyhow::anyhow!("cannot resolve workspace {}: {error}", workspace.display())
-        })?;
-        let mut readable = vec![workspace.clone()];
-        readable.extend(canonical_roots(&config.allow_read)?);
-        let mut writable = vec![workspace.clone()];
-        writable.extend(canonical_roots(&config.allow_write)?);
-        Ok(Self {
-            workspace,
-            readable,
-            writable,
-            deny_commands: config.deny_commands.clone(),
-            mode: config.access_mode(),
-        })
+        Ok(crate::runtime_policy::RuntimePolicy::resolve(config, &workspace)?.into_policy())
+    }
+    pub(crate) fn from_runtime(snapshot: crate::runtime_policy::Snapshot) -> Self {
+        let effective = &snapshot.effective;
+        Self {
+            workspace: effective.workspace().path().into(),
+            readable: effective.rules().read_roots.clone(),
+            writable: effective.rules().write_roots.clone(),
+            deny_commands: effective.rules().deny_commands.clone(),
+            mode: effective.rules().access,
+            snapshot,
+        }
+    }
+    /// New turns refuse stale policy; existing effects are not instantaneously revoked.
+    pub fn check_current(&self) -> Result<()> {
+        self.snapshot.check_current()
+    }
+    pub fn ceiling_present(&self) -> bool {
+        self.snapshot.effective.ceiling_digest().is_some()
+    }
+    pub fn check_delegated_workspace(&self, path: &Path) -> Result<()> {
+        self.snapshot.verify_workspace()?;
+        let (ancestor, suffix) = existing_ancestor(path)?;
+        let mut resolved = ancestor.canonicalize()?;
+        for part in suffix {
+            resolved.push(part);
+        }
+        anyhow::ensure!(
+            within_any(&resolved, &self.readable) && within_any(&resolved, &self.writable),
+            "child/worktree workspace requires explicit parent read and write root delegation"
+        );
+        Ok(())
+    }
+    pub(crate) fn limit_child_config(&self, config: &mut Config, workspace: &Path) -> Result<()> {
+        self.check_delegated_workspace(workspace)?;
+        anyhow::ensure!(
+            canonical_roots(&config.allow_read)?
+                .iter()
+                .all(|p| within_any(p, &self.readable))
+                && canonical_roots(&config.allow_write)?
+                    .iter()
+                    .all(|p| within_any(p, &self.writable)),
+            "child roots exceed captured parent authority"
+        );
+        let rank = |m| match m {
+            AccessMode::ReadOnly => 0,
+            AccessMode::Approval => 1,
+            AccessMode::Unrestricted => 2,
+        };
+        if rank(config.access_mode()) > rank(self.mode) {
+            config.access = Some(self.mode);
+        }
+        crate::runtime_policy::restrictive_unattended(
+            &mut config.unattended_approval,
+            &self.snapshot.effective.rules().unattended,
+        );
+        config.deny_commands.extend(self.deny_commands.clone());
+        config.deny_commands.sort();
+        config.deny_commands.dedup();
+        config
+            .inherit_env
+            .retain(|name| self.snapshot.effective.rules().inherit_env.contains(name));
+        if let Some(allowed) = self.snapshot.effective.environment_ceiling() {
+            config.env.retain(|name, _| allowed.contains(name));
+            for server in config.mcp_servers.values_mut() {
+                server.env.retain(|name, _| allowed.contains(name));
+            }
+        }
+        Ok(())
     }
 
     pub fn workspace(&self) -> &Path {

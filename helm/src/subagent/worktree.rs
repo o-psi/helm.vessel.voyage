@@ -8,6 +8,7 @@ use std::{
 pub struct WorktreeManager {
     repository: PathBuf,
     root: PathBuf,
+    environment: Option<std::collections::BTreeMap<String, String>>,
 }
 #[derive(Clone, Debug)]
 pub struct WorktreeLease {
@@ -40,20 +41,40 @@ impl WorktreeManager {
                 "worktree root cannot be repository"
             );
         }
-        Ok(Self { repository, root })
+        Ok(Self {
+            repository,
+            root,
+            environment: None,
+        })
+    }
+    /// Use the already ceiling-filtered runtime environment for every Git subprocess.
+    pub fn with_environment(
+        mut self,
+        environment: std::collections::BTreeMap<String, String>,
+    ) -> Self {
+        self.environment = Some(environment);
+        self
+    }
+    pub fn planned_path(&self, name: &str) -> Result<PathBuf> {
+        validate(name)?;
+        anyhow::ensure!(
+            !name.contains('/'),
+            "worktree name must be one path component"
+        );
+        Ok(self.root.join(name))
     }
     pub fn create(&self, name: &str, start_point: &str) -> Result<WorktreeLease> {
-        validate(name)?;
+        let path = self.planned_path(name)?;
         validate(start_point)?;
         std::fs::create_dir_all(&self.root)?;
-        let path = self.root.join(name);
         anyhow::ensure!(
             !path.exists(),
             "worktree path already exists: {}",
             path.display()
         );
         let branch = format!("agents/{name}");
-        git(
+        git_env(
+            self.environment.as_ref(),
             &self.repository,
             [
                 "worktree",
@@ -67,7 +88,11 @@ impl WorktreeManager {
         Ok(WorktreeLease { path, branch })
     }
     pub fn is_clean(&self, lease: &WorktreeLease) -> Result<bool> {
-        let output = git_output(&lease.path, ["status", "--porcelain"])?;
+        let output = git_output_env(
+            self.environment.as_ref(),
+            &lease.path,
+            ["status", "--porcelain"],
+        )?;
         Ok(output.trim().is_empty())
     }
     /// Commit all changes owned by one managed worktree without invoking a shell.
@@ -87,11 +112,19 @@ impl WorktreeManager {
             !self.is_clean(lease)?,
             "agent worktree has no changes to commit"
         );
-        git(&lease.path, ["add", "--all"])?;
-        git(&lease.path, ["commit", "-m", message])?;
-        Ok(git_output(&lease.path, ["rev-parse", "HEAD"])?
-            .trim()
-            .to_owned())
+        git_env(self.environment.as_ref(), &lease.path, ["add", "--all"])?;
+        git_env(
+            self.environment.as_ref(),
+            &lease.path,
+            ["commit", "-m", message],
+        )?;
+        Ok(git_output_env(
+            self.environment.as_ref(),
+            &lease.path,
+            ["rev-parse", "HEAD"],
+        )?
+        .trim()
+        .to_owned())
     }
     pub fn remove(&self, lease: &WorktreeLease) -> Result<()> {
         anyhow::ensure!(
@@ -102,7 +135,8 @@ impl WorktreeManager {
             self.is_clean(lease)?,
             "refusing to remove dirty agent worktree"
         );
-        git(
+        git_env(
+            self.environment.as_ref(),
             &self.repository,
             [
                 "worktree",
@@ -113,24 +147,44 @@ impl WorktreeManager {
     }
     /// Detect files changed by both isolated branches since their merge base.
     pub fn conflicts(&self, left: &WorktreeLease, right: &WorktreeLease) -> Result<ConflictReport> {
-        let base = git_output(
+        let base = git_output_env(
+            self.environment.as_ref(),
             &self.repository,
             ["merge-base", &left.branch, &right.branch],
         )?;
         let base = base.trim();
-        let left_files = changed(&self.repository, base, &left.branch)?;
-        let right_files = changed(&self.repository, base, &right.branch)?;
+        let left_files = changed(
+            self.environment.as_ref(),
+            &self.repository,
+            base,
+            &left.branch,
+        )?;
+        let right_files = changed(
+            self.environment.as_ref(),
+            &self.repository,
+            base,
+            &right.branch,
+        )?;
         Ok(ConflictReport {
             files: left_files.intersection(&right_files).cloned().collect(),
         })
     }
     pub fn plan_integration(&self, lease: &WorktreeLease, target: &str) -> Result<IntegrationPlan> {
         validate(target)?;
-        let base = git_output(&self.repository, ["merge-base", &lease.branch, target])?
-            .trim()
-            .to_owned();
-        let source_files = changed(&self.repository, &base, &lease.branch)?;
-        let target_files = changed(&self.repository, &base, target)?;
+        let base = git_output_env(
+            self.environment.as_ref(),
+            &self.repository,
+            ["merge-base", &lease.branch, target],
+        )?
+        .trim()
+        .to_owned();
+        let source_files = changed(
+            self.environment.as_ref(),
+            &self.repository,
+            &base,
+            &lease.branch,
+        )?;
+        let target_files = changed(self.environment.as_ref(), &self.repository, &base, target)?;
         Ok(IntegrationPlan {
             source: lease.branch.clone(),
             target: target.into(),
@@ -146,12 +200,20 @@ impl WorktreeManager {
             "refusing to integrate dirty agent worktree"
         );
         anyhow::ensure!(
-            git_output(&self.repository, ["status", "--porcelain"])?
-                .trim()
-                .is_empty(),
+            git_output_env(
+                self.environment.as_ref(),
+                &self.repository,
+                ["status", "--porcelain"]
+            )?
+            .trim()
+            .is_empty(),
             "refusing to integrate into dirty repository"
         );
-        let current = git_output(&self.repository, ["branch", "--show-current"])?;
+        let current = git_output_env(
+            self.environment.as_ref(),
+            &self.repository,
+            ["branch", "--show-current"],
+        )?;
         anyhow::ensure!(
             current.trim() == target,
             "target branch `{target}` is not checked out"
@@ -162,24 +224,28 @@ impl WorktreeManager {
             "integration has overlapping files: {:?}",
             plan.conflicts.files
         );
-        git(
+        git_env(
+            self.environment.as_ref(),
             &self.repository,
             ["merge", "--no-ff", "--no-edit", &lease.branch],
         )
     }
 }
 fn changed(
+    environment: Option<&std::collections::BTreeMap<String, String>>,
     repository: &Path,
     base: &str,
     branch: &str,
 ) -> Result<std::collections::BTreeSet<PathBuf>> {
-    Ok(
-        git_output(repository, ["diff", "--name-only", base, branch])?
-            .lines()
-            .filter(|line| !line.is_empty())
-            .map(PathBuf::from)
-            .collect(),
-    )
+    Ok(git_output_env(
+        environment,
+        repository,
+        ["diff", "--name-only", base, branch],
+    )?
+    .lines()
+    .filter(|line| !line.is_empty())
+    .map(PathBuf::from)
+    .collect())
 }
 fn validate(value: &str) -> Result<()> {
     if value.is_empty()
@@ -193,19 +259,40 @@ fn validate(value: &str) -> Result<()> {
     }
     Ok(())
 }
-fn git<const N: usize>(cwd: &Path, args: [&str; N]) -> Result<()> {
-    let output = Command::new("git").args(args).current_dir(cwd).output()?;
+fn git_env<const N: usize>(
+    environment: Option<&std::collections::BTreeMap<String, String>>,
+    cwd: &Path,
+    args: [&str; N],
+) -> Result<()> {
+    let output = git_command(environment, cwd, args).output()?;
     if !output.status.success() {
         bail!("git failed: {}", String::from_utf8_lossy(&output.stderr))
     }
     Ok(())
 }
-fn git_output<const N: usize>(cwd: &Path, args: [&str; N]) -> Result<String> {
-    let output = Command::new("git").args(args).current_dir(cwd).output()?;
+fn git_output_env<const N: usize>(
+    environment: Option<&std::collections::BTreeMap<String, String>>,
+    cwd: &Path,
+    args: [&str; N],
+) -> Result<String> {
+    let output = git_command(environment, cwd, args).output()?;
     if !output.status.success() {
         bail!("git failed: {}", String::from_utf8_lossy(&output.stderr))
     }
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+fn git_command<const N: usize>(
+    environment: Option<&std::collections::BTreeMap<String, String>>,
+    cwd: &Path,
+    args: [&str; N],
+) -> Command {
+    let mut command = Command::new("git");
+    command.args(args).current_dir(cwd);
+    if let Some(environment) = environment {
+        command.env_clear().envs(environment);
+    }
+    command
 }
 
 #[cfg(test)]
@@ -220,6 +307,37 @@ mod tests {
                 .unwrap()
                 .success()
         );
+    }
+    #[test]
+    fn planned_destination_rejects_non_components_without_creating_directories() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir(root.path().join(".git")).unwrap();
+        let target = root.path().join("absent");
+        let manager = WorktreeManager::new(root.path().into(), target.clone()).unwrap();
+        for name in ["/absolute", "a/b", "../escape", "-flag", "", "a\\b"] {
+            assert!(manager.planned_path(name).is_err(), "{name}");
+        }
+        assert_eq!(
+            manager.planned_path("child-1").unwrap(),
+            target.join("child-1")
+        );
+        assert!(!target.exists());
+    }
+    #[test]
+    fn protected_git_environment_explicitly_clears_ambient_names() {
+        let environment =
+            std::collections::BTreeMap::from([("ONLY".to_string(), "value".to_string())]);
+        let command = git_command(Some(&environment), Path::new("."), ["status"]);
+        assert_eq!(
+            command.get_envs().collect::<Vec<_>>(),
+            vec![(
+                std::ffi::OsStr::new("ONLY"),
+                Some(std::ffi::OsStr::new("value"))
+            )]
+        );
+        // Exercise the same env-clear builder with a deterministic local executable.
+        let mut command = git_command(Some(&environment), Path::new("."), ["--version"]);
+        assert!(command.output().unwrap().status.success());
     }
     #[test]
     fn dirty_worktree_is_never_removed() {
@@ -249,7 +367,7 @@ mod tests {
         std::fs::write(repo.path().join("tracked"), "parent").unwrap();
         run(repo.path(), &["add", "tracked"]);
         run(repo.path(), &["commit", "-qm", "parent"]);
-        let target = git_output(repo.path(), ["branch", "--show-current"]).unwrap();
+        let target = git_output_env(None, repo.path(), ["branch", "--show-current"]).unwrap();
         let plan = manager.plan_integration(&lease, target.trim()).unwrap();
         assert_eq!(plan.conflicts.files, vec![PathBuf::from("tracked")]);
         assert!(manager.integrate(&lease, target.trim()).is_err());

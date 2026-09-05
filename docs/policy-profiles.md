@@ -102,10 +102,15 @@ consume the same final rules; applying only some fields would allow bypass. Expl
 Config environment overrides must not re-add names excluded by a future environment
 ceiling. Profile switching must stop and observe prior owned effects before rebuilding
 and showing a new effective-policy label. A missing approver must never cause an
-unattended wait or authority promotion. CRUD, these frontend paths and actual ceiling
-enforcement remain unfinished; the library alone does not complete #70.
+unattended wait or authority promotion. Profile CRUD and switching remain unfinished; the foundation alone does not complete #70.
+The ordinary zero-layer runtime integration is described below.
 
 Tests exercise strict schemas, presets, source history, root/set intersections,
 escalation and stale confirmations, canonical aliases/recreated workspaces, and
 protected-source ownership, permissions, links, malformed data and replacement.
 Filesystem tests use private internal injection; they do not modify operator `/etc`.
+
+Ordinary runtime builders now integrate the zero-profile-layer administrator ceiling;
+see [runtime boundaries](policy-ceiling-runtime.md) for current enforcement, Config
+compatibility and the non-Linux legacy-startup distinction. Profile switching and
+its confirmation workflow remain unimplemented.

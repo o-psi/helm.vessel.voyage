@@ -765,6 +765,7 @@ fn probe_codex_compatibility(command: &str) -> CodexCompatibilityProbe {
 
 struct CliSubagentExecutor {
     config: Config,
+    parent_policy: Arc<Policy>,
     workspace: PathBuf,
     runtime: OnceLock<Weak<SubagentRuntime>>,
     worktrees: Option<WorktreeManager>,
@@ -794,7 +795,14 @@ impl SubagentExecutor for CliSubagentExecutor {
         config.max_tokens =
             (context.budget.max_tokens.min(u32::MAX as u64) as u32).min(config.max_tokens);
         let workspace = config.resolve_workspace(None).map_err(|e| e.to_string())?;
-        let policy = Arc::new(Policy::new(&config, workspace.clone()).map_err(|e| e.to_string())?);
+        let resolved = helm::runtime_policy::RuntimePolicy::resolve_child(
+            &config,
+            &workspace,
+            &self.parent_policy,
+        )
+        .map_err(|e| e.to_string())?;
+        let config = resolved.config().clone();
+        let policy = Arc::new(resolved.policy().clone());
         let tool_context = ToolContext {
             policy,
             approver: Arc::new(UnattendedApprover { allow: false }),
@@ -806,13 +814,20 @@ impl SubagentExecutor for CliSubagentExecutor {
             interaction: InteractionMode::Unattended,
             redactor: redactor(&config),
         };
+        let child_worktrees = self.worktrees.clone().map(|manager| {
+            if resolved.ceiling_present() {
+                manager.with_environment(tool_environment(&config))
+            } else {
+                manager
+            }
+        });
         let child_budget = context.budget.clone();
         let mut child_policy = context.policy.clone();
         child_policy.budget = child_budget.clone();
         let child_tool = self.runtime.get().and_then(Weak::upgrade).map(|runtime| {
             SubagentTool::new(runtime, child_policy, child_budget)
                 .with_parent(context.id)
-                .with_worktrees(self.worktrees.clone())
+                .with_worktrees(child_worktrees)
         });
         // Worktree-isolated children still coordinate through the parent's workspace plan.
         // Keying todos by the temporary worktree would silently fork task state.
@@ -864,7 +879,11 @@ struct SubagentBundle {
     tool: SubagentTool,
     model: Arc<RwLock<String>>,
 }
-async fn build_subagents(config: &Config, workspace: &std::path::Path) -> Result<SubagentBundle> {
+async fn build_subagents(
+    config: &Config,
+    workspace: &std::path::Path,
+    parent_policy: Arc<Policy>,
+) -> Result<SubagentBundle> {
     let standard = ToolRegistry::standard();
     let mut allowed_tools: std::collections::BTreeSet<String> = standard
         .definitions()
@@ -890,10 +909,17 @@ async fn build_subagents(config: &Config, workspace: &std::path::Path) -> Result
         budget: budget.clone(),
     };
     let workspace_key = hex::encode(Sha256::digest(workspace.as_os_str().as_encoded_bytes()));
-    let worktrees = worktree_manager(workspace, &workspace_key);
+    let worktrees = worktree_manager(workspace, &workspace_key).map(|manager| {
+        if parent_policy.ceiling_present() {
+            manager.with_environment(tool_environment(config))
+        } else {
+            manager
+        }
+    });
     let model = Arc::new(RwLock::new(config.model.clone()));
     let executor = Arc::new(CliSubagentExecutor {
         config: config.clone(),
+        parent_policy,
         workspace: workspace.to_path_buf(),
         runtime: OnceLock::new(),
         worktrees: worktrees.clone(),
@@ -946,7 +972,9 @@ fn worktree_manager(workspace: &std::path::Path, workspace_key: &str) -> Option<
 }
 
 async fn build_agent(config: &Config, workspace: PathBuf, attended: bool) -> Result<Agent> {
-    let policy = Arc::new(Policy::new(config, workspace.clone())?);
+    let resolved = helm::runtime_policy::RuntimePolicy::resolve(config, &workspace)?;
+    let config = resolved.config();
+    let policy = Arc::new(resolved.policy().clone());
     let terminal = Arc::new(Terminal::default());
     let approver: Arc<dyn Approver> = if attended {
         terminal.clone()
@@ -970,7 +998,7 @@ async fn build_agent(config: &Config, workspace: PathBuf, attended: bool) -> Res
         },
         redactor: redactor(config),
     };
-    let subagents = build_subagents(config, &workspace).await?;
+    let subagents = build_subagents(config, &workspace, context.policy.clone()).await?;
     let _runtime = subagents.runtime.clone();
     let tools = build_tools(config, Some(subagents.tool), Some(todo_tool(&workspace))).await?;
     Ok(Agent::new(
@@ -1051,43 +1079,47 @@ async fn tui_chat(
             "native"
         }
     );
-    let policy = Arc::new(Policy::new(&active_config, session.workspace.clone())?);
+    let resolved =
+        helm::runtime_policy::RuntimePolicy::resolve(&active_config, &session.workspace)?;
+    let runtime_config = resolved.config();
+    let policy = Arc::new(resolved.policy().clone());
     let context = ToolContext {
         policy,
         approver: bridge.clone(),
-        timeout: active_config.timeout(),
-        max_output_bytes: active_config.max_output_bytes,
-        environment: tool_environment(&active_config),
+        timeout: runtime_config.timeout(),
+        max_output_bytes: runtime_config.max_output_bytes,
+        environment: tool_environment(runtime_config),
         cancellation: tokio_util::sync::CancellationToken::new(),
         execution_id: uuid::Uuid::new_v4(),
         interaction: InteractionMode::Attended,
-        redactor: redactor(&active_config),
+        redactor: redactor(runtime_config),
     };
-    let subagents = build_subagents(&active_config, &session.workspace).await?;
+    let subagents =
+        build_subagents(runtime_config, &session.workspace, context.policy.clone()).await?;
     let subagent_runtime = subagents.runtime.clone();
     let todo = todo_tool(&session.workspace);
-    let tools = build_tools(&active_config, Some(subagents.tool), Some(todo.clone())).await?;
+    let tools = build_tools(runtime_config, Some(subagents.tool), Some(todo.clone())).await?;
     let terminals: Arc<dyn helm::terminal::InteractiveTerminals> =
         Arc::new(tools.terminals().unwrap_or_default());
     let agent = Arc::new(
         Agent::new(
-            provider::from_config(&active_config, session.workspace.clone())?,
+            provider::from_config(runtime_config, session.workspace.clone())?,
             tools,
             context,
             bridge.clone(),
             session.model.clone(),
-            active_config.system_prompt.clone(),
-            active_config.max_tokens,
-            active_config.temperature,
+            runtime_config.system_prompt.clone(),
+            runtime_config.max_tokens,
+            runtime_config.temperature,
         )
-        .with_context_window(active_config.context_window)
+        .with_context_window(runtime_config.context_window)
         .with_model_mirror(subagents.model)
         .with_retry_policy(RetryPolicy {
-            max_attempts: active_config.provider_retry_attempts,
+            max_attempts: runtime_config.provider_retry_attempts,
             initial_delay: std::time::Duration::from_millis(
-                active_config.provider_retry_initial_ms,
+                runtime_config.provider_retry_initial_ms,
             ),
-            max_delay: std::time::Duration::from_millis(active_config.provider_retry_max_ms),
+            max_delay: std::time::Duration::from_millis(runtime_config.provider_retry_max_ms),
         }),
     );
     let session_id = session.id;
@@ -1103,7 +1135,7 @@ async fn tui_chat(
         )),
         todo.store(),
         provider_label,
-        active_config.access_mode(),
+        runtime_config.access_mode(),
     )
     .await?;
     match exit {
@@ -1346,7 +1378,9 @@ async fn chat(
             "Helm · {} · {} · access: {} · {}\nType /help for commands.",
             session.display_name(),
             session.model,
-            config.access_mode(),
+            helm::runtime_policy::RuntimePolicy::resolve(&config, &session.workspace)?
+                .config()
+                .access_mode(),
             session.workspace.display()
         );
     }
@@ -1372,7 +1406,12 @@ async fn chat(
                 continue;
             }
             "/access" => {
-                println!("{}", config.access_mode());
+                println!(
+                    "{}",
+                    helm::runtime_policy::RuntimePolicy::resolve(&config, &session.workspace)?
+                        .config()
+                        .access_mode()
+                );
                 continue;
             }
             "/name" => {
