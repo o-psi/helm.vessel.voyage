@@ -28,7 +28,11 @@ full question and controls.
 **Answers are sent to the model and saved as tool results in the session. Do not
 enter passwords, tokens, or other secrets.** This differs from direct human PTY
 input, which stays outside model-visible records. Known configured secrets receive
-the existing tool-result redaction, but that is not a guarantee for arbitrary text.
+redaction once at the tool registry boundary on selected/custom answer text before
+final JSON encoding, including values
+with quotes, backslashes, or Unicode. Fixed status/index metadata stays intact even
+when a configured value matches a schema word; malformed or unknown response fields
+are rejected without echoing their content. This is not a guarantee for arbitrary text.
 Question/custom input is single-line; pasted control characters are removed.
 
 ## Tool contract
@@ -95,7 +99,8 @@ The Linux CI workflows also run the real PTY/native Responses fixture:
 HELM_BIN=target/release/helm python3 tests/system/questions.py
 ```
 
-It verifies selected/custom/cancelled/timeout/plain-mode flows through native HTTP
+It verifies selected/custom/cancelled/timeout/plain-mode flows, including escaped
+known-secret redaction in a custom answer, through native HTTP
 transport, real keyboard and bracketed paste routing, resize, model continuation,
 clean TUI exit, and saved tool history. This script uses POSIX PTYs; Windows behavior
 is covered only by the portable Rust fixtures unless separately exercised manually.
