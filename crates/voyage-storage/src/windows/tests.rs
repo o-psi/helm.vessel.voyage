@@ -277,3 +277,15 @@ fn real_process_lock_exclusion_and_abrupt_exit_release() {
     child.0.wait().unwrap();
     directory.lock("client.lock").unwrap();
 }
+
+#[test]
+fn open_existing_never_creates_a_missing_directory() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("missing-private-directory");
+    assert!(PrivateDirectory::open_existing(&path).is_err());
+    assert!(!path.exists());
+    drop(PrivateDirectory::open(&path).unwrap());
+    let before = std::fs::read_dir(&path).unwrap().count();
+    drop(PrivateDirectory::open_existing(&path).unwrap());
+    assert_eq!(std::fs::read_dir(&path).unwrap().count(), before);
+}
