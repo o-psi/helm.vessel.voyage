@@ -62,3 +62,9 @@ Each feature needs issue discussion review/update before edits, acceptance-drive
 PR #87 head 0489b9e: [quality run 33941455410](https://github.com/o-psi/voyage/actions/runs/33941455410) passed all jobs. Linux passed formatting, strict Clippy, 375 workspace tests, locked release build, nine system fixtures, 11 evaluation definitions, unique packaging and checksums. macOS and Windows passed workspace tests and locked release builds. Both duplicate push/PR workflow runs succeeded. The PTY resize regression also passed local normal and fragmented reads.
 
 The first-wave source is merged. New completion-gate source has separate, unfinished verification; prior passing results do not establish its readiness. Current GitHub access works. Live subscription smoke previously returned HTTP401 before tool execution, with zero reported usage; it is not a live pass. The replacement and attachment epics retain their full unfinished scope.
+
+## Completion delivery in review
+
+[Draft PR #88](https://github.com/o-psi/voyage/pull/88) implements #81–#83. Integrated commit a63686c passes formatting, strict workspace/all-target/all-feature Clippy, all 441 workspace tests, and the locked Linux release build. Twelve release system fixtures are running. Packaging with unique label `completion-20260905-a63686c` and its checksum passed. Final review fixes cover cooperative plain-mode cancellation, timeout usage preservation, and the obsolete evaluation runner CLI flag. These remain dependencies before final verification.
+
+The bounded live retry on September 5 returned HTTP 401 before useful execution despite a locally present credential. Live behavioral evidence remains blocked separately from functioning GitHub/filesystem access. Platform CI is pending on #88. Next closeout candidate is #37, whose implementation is present but needs current resource-fixture and delivery evidence.
