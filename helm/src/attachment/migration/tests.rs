@@ -1,5 +1,7 @@
 use super::*;
-use crate::{Message, Role, attachment::journal::Journal, session::Session};
+#[cfg(unix)]
+use crate::attachment::journal::Journal;
+use crate::{Message, Role, session::Session};
 use sha2::{Digest, Sha256};
 
 struct Fixture {
@@ -32,6 +34,9 @@ impl Fixture {
         session
             .messages
             .push(Message::new(Role::Assistant, "original answer"));
+        session.switch_model("selected-model").unwrap();
+        session.messages.last_mut().unwrap().provider_state =
+            Some(serde_json::json!({"opaque":"local continuity state"}));
         session.usage.input_tokens = 123;
         session.usage.output_tokens = 9;
         store.save(&mut session).await.unwrap();
@@ -373,7 +378,11 @@ async fn process_death_releases_both_fences_and_resumes_every_boundary() {
 async fn pending_tool_intent_stays_ambiguous_and_blocks_admission() {
     use crate::attachment::journal::TurnAdmission;
     let mut fixture = Fixture::new().await;
-    let mut session: Session = serde_json::from_slice(&fixture.original).unwrap();
+    let mut session = fixture
+        .store
+        .load(fixture.request.session_id)
+        .await
+        .unwrap();
     let mut intent = Message::new(Role::Assistant, "uncertain tool");
     intent.tool_calls.push(crate::model::ToolCall {
         id: "uncertain-effect".into(),
