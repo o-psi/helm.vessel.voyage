@@ -28,6 +28,7 @@ use conversation::*;
 mod render;
 use render::*;
 mod text;
+mod tool_output;
 use text::*;
 mod commands;
 use commands::*;
@@ -87,6 +88,7 @@ struct App {
     prompt_history: PromptHistory,
     activity: Vec<String>,
     show_activity: bool,
+    tool_details: bool,
     live_messages: Vec<crate::Message>,
     working_since: Instant,
     streaming_response: String,
@@ -153,6 +155,7 @@ impl App {
             prompt_history,
             activity: Vec::new(),
             show_activity: false,
+            tool_details: false,
             live_messages: Vec::new(),
             working_since: Instant::now(),
             streaming_response: String::new(),
@@ -695,6 +698,17 @@ async fn handle_key(
             KeyCode::Char('t') => {
                 refresh_terminals(&mut app.terminal_panel, &mut app.status, terminals).await;
                 app.terminal_panel.terminal_picker = true;
+            }
+            KeyCode::Char('o') => {
+                let previous = transcript_height(app, app.conversation_width);
+                app.tool_details = !app.tool_details;
+                preserve_manual_anchor(app, previous);
+                app.status = if app.tool_details {
+                    "Full tool details · Ctrl+O collapses output"
+                } else {
+                    "Tool previews · Ctrl+O expands output"
+                }
+                .into();
             }
             KeyCode::Char('l') => {
                 app.show_activity = !app.show_activity;

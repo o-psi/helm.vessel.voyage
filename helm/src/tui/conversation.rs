@@ -1,9 +1,6 @@
 //! Transcript presentation, activity and viewport anchoring.
 
-use super::{
-    App,
-    text::{compact_line, display_safe},
-};
+use super::{App, text::display_safe, tool_output};
 use crate::{
     markdown::{MarkdownTheme, RenderOptions, render_markdown},
     model::Role,
@@ -104,26 +101,17 @@ pub(super) fn transcript(app: &App, width: usize) -> Text<'static> {
                 message.role == Role::Tool
                     && message.tool_call_id.as_deref() == Some(call.id.as_str())
             });
-            let (symbol, color) = match result {
-                Some(message) if message.tool_success == Some(false) => ("✗", Color::Red),
-                Some(_) => ("✓", Color::Green),
-                None if app.is_running() => ("▶", Color::Yellow),
-                None => ("■", Color::DarkGray),
-            };
-            lines.push(Line::styled(
-                format!(
-                    "{symbol} {} · {}",
-                    compact_line(&call.name, 40),
-                    compact_line(&call.arguments.to_string(), 100)
-                ),
-                Style::default().fg(color),
+            let live = app
+                .live_messages
+                .iter()
+                .any(|message| message.tool_calls.iter().any(|live| live.id == call.id));
+            lines.extend(tool_output::render(
+                call,
+                result.copied(),
+                app.is_running() && live,
+                app.tool_details,
+                width,
             ));
-            if let Some(result) = result {
-                lines.push(Line::styled(
-                    format!("  {}", compact_line(&result.content, 160)),
-                    Style::default().fg(Color::Gray),
-                ));
-            }
             lines.push(Line::raw(""));
         }
     }

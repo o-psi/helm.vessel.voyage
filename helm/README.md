@@ -92,7 +92,18 @@ helm run --resume 0198... "continue, but export the findings as markdown"
 
 The full-screen chat keeps the user/assistant conversation in focus. A sent prompt appears
 immediately, and remains in saved history even when a run is cancelled or fails. Tool activity
-is hidden by default; toggle its compact summaries with `Ctrl+L` or `/activity [on|off]`.
+shows the last three calls between replies. `Ctrl+L` or `/activity [on|off]`
+toggles the complete activity history. Calls show readable commands/actions and bounded,
+multiline output previews. Shell exit status and nonempty streams appear separately;
+nonzero exits and failed child-agent results are highlighted. Todo and subagent responses
+show their useful fields instead of metadata dumps.
+
+Press `Ctrl+O` to expand the visible calls into complete arguments and results, and press
+it again to return to previews. Use mouse-wheel or PageUp/PageDown to scroll; long output
+wraps to the terminal width. `Ctrl+L` exposes older calls independently of detail expansion.
+Details retain the full output returned by the tool (including any runtime truncation),
+with terminal controls sanitized. These display choices do not change saved history.
+
 Helm's own diagnostics are written to the owner-only `logs/helm.log` under Helm's data directory,
 so tracing output cannot corrupt the alternate-screen UI. `Esc` cancels active work and tool
 approvals appear as keyboard-driven modals. Use `Ctrl+S` to browse
