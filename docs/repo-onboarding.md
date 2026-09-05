@@ -16,7 +16,9 @@ confidence descriptions and fixed command argument lists. Every generated comman
 is **unverified**. A declared package script is evidence that a command exists,
 not evidence that it is safe or successful. Read its implementation before running
 it. `packageManager` can select npm, pnpm, yarn or bun; absent supported metadata,
-JavaScript commands use npm as a candidate rather than assuming a verified setup.
+JavaScript commands use an explicitly labelled inferred npm fallback rather than
+assuming a verified setup. Existing guidance can override that inference or cause
+candidate commands to be omitted as described below.
 Python test/lint commands are proposed only when their tool configuration exists.
 No dependencies or setup commands are executed to improve confidence.
 
@@ -29,9 +31,38 @@ projects may exist: absence from this report is not proof that the repository ha
 no other projects.
 
 Existing root/nested README, CONTRIBUTING and agent-guidance files are identified
-with hashes. Their prose and arbitrary package script bodies are deliberately not
-copied into generated instructions. Read the originals for project-specific rules.
-The normal runtime's existing root `AGENTS.md`/`agents.md` precedence is unchanged.
+with hashes and inspected for bounded command conventions. A project's own and
+ancestor guidance applies; sibling guidance does not. `AGENTS.md` shadows the
+lowercase fallback in the same directory, matching the existing active-name rule.
+Conflicts between ancestor, nested, README or manifest evidence are surfaced for
+manual review rather than silently choosing a command against existing guidance.
+The normal runtime's instruction loading and policy are unchanged.
+
+For example, a standalone line or shell-fence line `pnpm run test:ci` can supply a
+candidate when `test:ci` is a declared string-valued package script. A complete
+`Run` directive with an inline command span is also recognized. The generated
+candidate names both the manifest and guidance paths as evidence and remains
+**unverified**. Documentation-backed candidates replace default guesses for that
+project. For Rust, Python and Go, only the exact fixed argument shapes already
+supported by manifest discovery are recognized. Other commands require manual
+review; no executable, argument or package script is inferred from arbitrary prose.
+
+Multiple package-manager mentions, disagreement with `packageManager`, undeclared
+scripts, shell composition, unsupported commands, and recognized caution or
+negation words cause conservative omission with a conflict/uncertainty warning.
+Thus guidance saying not to use npm cannot silently become an npm recommendation.
+This is deliberately conservative: even an unrelated caution or an illustrative
+example can require manual review. It is not complete natural-language negation,
+intent or convention analysis. All existing guidance receives a manual-review
+notice, including prose without a recognized convention. Read the originals;
+nonblank evidence and a recognized command shape do not prove correctness or safety.
+
+Convention inspection is bounded to 512 lines, 4 KiB per line and 64 command-shaped
+lines per guidance file. Invalid UTF-8, control characters, unsafe/unreadable files
+or exceeded limits omit affected project commands rather than trusting a partial
+scan. The existing 256 KiB input-file and overall discovery limits still apply.
+Arbitrary prose and package script bodies are never copied into the draft or
+executed. Evidence hashes cover the original bytes; inspection does not edit them.
 
 Direct file creation and acceptance currently require Linux with anonymous-file
 publication support. Inspection, stdout preview and diffs use portable directory

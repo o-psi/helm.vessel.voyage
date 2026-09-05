@@ -144,3 +144,125 @@ fn unsupported_rust_convention_does_not_advertise_conflicting_default_test() {
             .any(|warning| warning.contains("manual review"))
     );
 }
+
+#[test]
+fn negative_and_quoted_examples_never_become_positive_recommendations() {
+    for guidance in [
+        "Do not run `pnpm run test:ci`.\n",
+        "Don't use this:\n```sh\npnpm run test:ci\n```\n",
+        "Don’t use this:\npnpm run test:ci\n",
+        "Incorrect example:\npnpm run test:ci\n",
+        "Avoid pnpm commands.\npnpm run test:ci\n",
+        "> pnpm run test:ci\n",
+        "\"pnpm run test:ci\"\n",
+    ] {
+        let root = tempfile::tempdir().unwrap();
+        node(root.path(), None);
+        fs::write(root.path().join("AGENTS.md"), guidance).unwrap();
+        let report = inspect(root.path()).unwrap();
+        assert!(report.projects[0].commands.is_empty(), "{guidance}");
+        assert!(
+            report
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("omitted"))
+        );
+    }
+}
+
+#[test]
+fn bounded_or_unreadable_guidance_does_not_establish_positive_evidence() {
+    for guidance in [
+        vec![0xff],
+        b"pnpm run test:ci\n\x1b[2J".to_vec(),
+        ("\n".repeat(512) + "pnpm run test:ci\n").into_bytes(),
+        ("x".repeat(4097) + "\npnpm run test:ci\n").into_bytes(),
+        "pnpm run test:ci\n".repeat(65).into_bytes(),
+    ] {
+        let root = tempfile::tempdir().unwrap();
+        node(root.path(), None);
+        fs::write(root.path().join("README.md"), guidance).unwrap();
+        let report = inspect(root.path()).unwrap();
+        assert!(report.projects[0].commands.is_empty());
+        assert!(
+            report
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("omitted"))
+        );
+        assert!(!render(&report).contains('\x1b'));
+    }
+}
+
+#[test]
+fn ancestor_and_nested_disagreement_is_explicit_without_rewriting_either() {
+    let root = tempfile::tempdir().unwrap();
+    fs::create_dir(root.path().join("web")).unwrap();
+    node(&root.path().join("web"), None);
+    fs::write(root.path().join("AGENTS.md"), "pnpm run test:ci\n").unwrap();
+    fs::write(
+        root.path().join("web/CONTRIBUTING.md"),
+        "yarn run test:ci\n",
+    )
+    .unwrap();
+    let report = inspect(root.path()).unwrap();
+    assert!(report.projects[0].commands.is_empty());
+    assert!(
+        report
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("conflict")
+                && warning.contains("web/CONTRIBUTING.md")
+                && warning.contains("AGENTS.md"))
+    );
+    assert_eq!(
+        fs::read_to_string(root.path().join("AGENTS.md")).unwrap(),
+        "pnpm run test:ci\n"
+    );
+}
+
+#[test]
+fn exact_supported_non_node_shapes_keep_argument_bytes_and_evidence() {
+    for (manifest, contents, command) in [
+        ("Cargo.toml", "[workspace]\nmembers=[]\n", "cargo test"),
+        ("pyproject.toml", "[tool.ruff]\n", "python3 -m ruff check ."),
+        ("go.mod", "module fixture.test/project\n", "go test ./..."),
+    ] {
+        let root = tempfile::tempdir().unwrap();
+        fs::write(root.path().join(manifest), contents).unwrap();
+        fs::write(root.path().join("README.md"), format!("Run `{command}`.\n")).unwrap();
+        let report = inspect(root.path()).unwrap();
+        assert_eq!(report.projects[0].commands.len(), 1);
+        assert_eq!(
+            report.projects[0].commands[0].argv,
+            command.split_whitespace().collect::<Vec<_>>()
+        );
+        assert!(!report.projects[0].commands[0].verified);
+        assert!(
+            report.projects[0].commands[0]
+                .evidence
+                .contains("README.md")
+        );
+    }
+}
+
+#[test]
+fn guidance_cannot_introduce_option_shaped_or_expanding_script_arguments() {
+    for script in ["--help", "$(touch_CANARY)", "test;echo_CANARY"] {
+        let root = tempfile::tempdir().unwrap();
+        fs::write(
+            root.path().join("package.json"),
+            serde_json::json!({"scripts":{script:"touch CANARY"}}).to_string(),
+        )
+        .unwrap();
+        fs::write(
+            root.path().join("AGENTS.md"),
+            format!("pnpm run {script}\n"),
+        )
+        .unwrap();
+        let report = inspect(root.path()).unwrap();
+        assert!(report.projects[0].commands.is_empty());
+        assert!(!render(&report).contains("CANARY"));
+        assert!(!root.path().join("CANARY").exists());
+    }
+}

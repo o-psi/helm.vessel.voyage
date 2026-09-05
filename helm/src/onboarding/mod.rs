@@ -1,4 +1,5 @@
 //! Deterministic project discovery. Repository content is evidence, never executable setup.
+mod guidance;
 mod storage;
 use crate::{Config, config::AccessMode};
 use anyhow::{Result, bail};
@@ -124,12 +125,12 @@ fn parse_project(name: &str, text: &str, source: &str, directory: &str) -> Resul
             if !value.is_object() {
                 bail!("JavaScript manifest must be an object")
             }
-            let runner = value
+            let explicit_runner = value
                 .get("packageManager")
                 .and_then(|v| v.as_str())
                 .and_then(|v| v.split('@').next())
-                .filter(|v| matches!(*v, "npm" | "pnpm" | "yarn" | "bun"))
-                .unwrap_or("npm");
+                .filter(|v| matches!(*v, "npm" | "pnpm" | "yarn" | "bun"));
+            let runner = explicit_runner.unwrap_or("npm");
             let mut commands = Vec::new();
             if let Some(scripts) = value.get("scripts") {
                 let scripts = scripts
@@ -140,7 +141,11 @@ fn parse_project(name: &str, text: &str, source: &str, directory: &str) -> Resul
                         commands.push(candidate(
                             &[runner, "run", name],
                             source,
-                            "declared script; inspect its body before execution",
+                            if explicit_runner.is_some() {
+                                "declared script and package manager; inspect before execution"
+                            } else {
+                                "declared script; inferred npm fallback, confirm package manager before execution"
+                            },
                         ));
                     }
                 }
@@ -202,6 +207,8 @@ pub fn inspect(workspace: &Path) -> Result<Report> {
         warnings: vec![],
     };
     let mut directories = vec![(PathBuf::new(), 0)];
+    let mut guidance = Vec::new();
+    let mut manifests = std::collections::BTreeMap::new();
     let mut seen = 0;
     while let Some((directory, depth)) = directories.pop() {
         let mut children = Vec::new();
@@ -247,6 +254,9 @@ pub fn inspect(workspace: &Path) -> Result<Report> {
                     report.warnings.push(format!(
                         "Could not safely read {source}; inspect it manually"
                     ));
+                    if GUIDANCE.contains(&entry.name.as_str()) {
+                        guidance.push(guidance::Guidance::unreadable(source));
+                    }
                     continue;
                 }
             };
@@ -261,6 +271,7 @@ pub fn inspect(workspace: &Path) -> Result<Report> {
                 kind: kind.into(),
             });
             if kind == "manifest" {
+                manifests.insert(source.clone(), bytes.clone());
                 if report.projects.len() >= MAX_PROJECTS {
                     bail!("too many projects; select a narrower workspace")
                 }
@@ -282,6 +293,8 @@ pub fn inspect(workspace: &Path) -> Result<Report> {
                         "Malformed or unsupported {source}; no commands inferred"
                     )),
                 }
+            } else {
+                guidance.push(guidance::Guidance::inspect(source, &bytes));
             }
         }
         children.sort();
@@ -289,6 +302,7 @@ pub fn inspect(workspace: &Path) -> Result<Report> {
         directories.extend(children);
     }
     report.evidence.sort_by(|a, b| a.path.cmp(&b.path));
+    guidance::reconcile(&mut report, &guidance, &manifests);
     report
         .projects
         .sort_by(|a, b| (&a.directory, &a.ecosystem).cmp(&(&b.directory, &b.ecosystem)));
