@@ -46,6 +46,12 @@ def main():
 
         report = json.loads(run('inspect', '--json').stdout)
         assert report['schema'] == 1 and len(report['projects']) == 4
+        # Unsafe guidance cannot be interpreted partially and then silently
+        # overridden by apparently authoritative manifest guesses.
+        assert all(not project['commands'] for project in report['projects'])
+        assert any('manual review' in warning for warning in report['warnings'])
+        (workspace / 'README.md').write_text('Read the existing project instructions before execution.\n')
+        report = json.loads(run('inspect', '--json').stdout)
         assert all(not command['verified'] for project in report['projects'] for command in project['commands'])
         assert any(command['argv'] == ['pnpm', 'run', 'test'] for project in report['projects'] for command in project['commands'])
         assert report == json.loads(run('inspect', '--json').stdout)
@@ -73,6 +79,29 @@ def main():
         assert accepted == {'status': 'accepted', 'sha256': reviewed}
         assert (workspace / 'AGENTS.generated.md').read_text() == edited
         assert (workspace / 'AGENTS.md').read_bytes() == instructions
+        # Exact reproduction: existing pnpm-only guidance previously produced
+        # an unsupported npm test recommendation with no conflict warning.
+        original_web = (workspace / 'web/package.json').read_bytes()
+        (workspace / 'web/package.json').write_text(json.dumps({'scripts': {
+            'test': 'exit 1', 'test:ci': 'touch EXECUTION_CANARY'}}))
+        (workspace / 'web/AGENTS.md').write_text('Use pnpm only. Do not use npm. Run pnpm run test:ci for tests.\n')
+        (workspace / 'web/README.md').write_text('npm run test is unsupported.\n')
+        conflict = json.loads(run('inspect', '--json').stdout)
+        web = next(project for project in conflict['projects'] if project['directory'] == 'web')
+        assert web['commands'] == []
+        assert any('conflict' in warning and 'web/AGENTS.md' in warning for warning in conflict['warnings'])
+        assert 'npm run test' not in run('preview').stdout
+        (workspace / 'web/AGENTS.md').write_text('```sh\npnpm run test:ci\n```\n')
+        (workspace / 'web/README.md').unlink()
+        documented = json.loads(run('inspect', '--json').stdout)
+        command = next(project for project in documented['projects'] if project['directory'] == 'web')['commands'][0]
+        assert command['argv'] == ['pnpm', 'run', 'test:ci'] and not command['verified']
+        assert 'web/AGENTS.md' in command['evidence'] and 'web/package.json' in command['evidence']
+        assert not (workspace / 'web/EXECUTION_CANARY').exists()
+        assert (workspace / 'AGENTS.generated.md').read_text() == edited
+        assert (workspace / 'AGENTS.md').read_bytes() == instructions
+        (workspace / 'web/AGENTS.md').unlink()
+        (workspace / 'web/package.json').write_bytes(original_web)
         diff = run('preview', '--against', 'draft.md').stdout
         assert '--- original' in diff and '-Operator-reviewed note:' in diff
         # Discovery can be rerun; changed manifests yield reviewable differences only.
