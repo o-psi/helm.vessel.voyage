@@ -3,15 +3,18 @@
 use super::*;
 use axum::{
     Router,
+    extract::Request,
     extract::{
         State, WebSocketUpgrade,
         ws::{Message as AxumMessage, WebSocket},
     },
+    middleware::{self, Next},
+    response::Response,
     routing::get,
 };
 use std::{
     path::PathBuf,
-    sync::atomic::{AtomicUsize, Ordering},
+    sync::atomic::{AtomicBool, AtomicUsize, Ordering},
     time::{SystemTime, UNIX_EPOCH},
 };
 use vessel::{
@@ -201,6 +204,9 @@ impl Drop for Fixture {
 }
 impl Fixture {
     async fn new(mode: Option<Script>) -> Self {
+        Self::with_lost_enrollment_response(mode, false).await
+    }
+    async fn with_lost_enrollment_response(mode: Option<Script>, lose: bool) -> Self {
         let root = tempfile::tempdir().unwrap();
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let origin = format!("http://{}", listener.local_addr().unwrap());
@@ -228,12 +234,41 @@ impl Fixture {
             router = router.merge(api.clone().router());
             (None, Some(api), Some(observations))
         };
+        let lost = Arc::new(AtomicBool::new(lose));
+        router = router.layer(middleware::from_fn_with_state(
+            lost.clone(),
+            lose_complete_response,
+        ));
         let server = tokio::spawn(async move {
             axum::serve(listener, router).await.unwrap();
         });
         let client_dir = root.path().join("client");
         let mut client = EnrollmentClient::open(&client_dir, &origin, true).unwrap();
-        client.enroll(invitation.id, &invitation.key).await.unwrap();
+        let machine = client.machine_id();
+        tokio::time::timeout(Duration::from_secs(60), async {
+            let mut result = client.enroll(invitation.id, &invitation.key).await;
+            while matches!(result, Err(crate::attachment::client::ClientError::Network)) {
+                // Slow native storage may finish after HTTP's bounded timeout.
+                // Keep the original key/transaction; never enroll again here.
+                assert_eq!(
+                    client.status(),
+                    crate::attachment::client::Status::Enrolling
+                );
+                assert_eq!(client.machine_id(), machine);
+                tokio::time::sleep(Duration::from_millis(200)).await;
+                result = client.resume(Some(&invitation.key)).await;
+            }
+            result
+        })
+        .await
+        .expect("enrollment fixture recovery deadline")
+        .expect("enrollment fixture rejected or storage failed");
+        assert_eq!(client.machine_id(), machine);
+        assert_eq!(client.epoch(), 1);
+        assert!(
+            !lost.load(Ordering::SeqCst),
+            "injected response loss was not exercised"
+        );
         Self {
             _root: root,
             origin,
@@ -773,4 +808,34 @@ async fn queued_frames_with_deadline_already_expired_never_reach_socket() {
             "expired outgoing frame reached peer"
         );
     }
+}
+
+// A completed enrollment can have an uncertain HTTP response. Fixture setup must
+// recover the original operation without weakening any socket assertion.
+async fn lose_complete_response(
+    State(lose): State<Arc<AtomicBool>>,
+    request: Request,
+    next: Next,
+) -> Response {
+    let complete = request.uri().path() == "/v2/enrollment/complete";
+    let response = next.run(request).await;
+    if complete && response.status().is_success() && lose.swap(false, Ordering::SeqCst) {
+        Response::builder()
+            .status(503)
+            .body(axum::body::Body::empty())
+            .unwrap()
+    } else {
+        response
+    }
+}
+
+#[tokio::test]
+async fn fixture_recovers_original_enrollment_after_lost_complete_response() {
+    let mut fixture = Fixture::with_lost_enrollment_response(Some(Script::Idle), true).await;
+    let connection = fixture.connect().await.unwrap();
+    assert!(connection.is_active());
+    connection.close().await;
+    let client = fixture.reopen();
+    assert_eq!(client.status(), crate::attachment::client::Status::Active);
+    assert_eq!(client.epoch(), 1);
 }
