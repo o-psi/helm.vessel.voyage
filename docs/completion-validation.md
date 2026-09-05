@@ -50,3 +50,17 @@ Helm/Vessel wire contract is introduced by the fixtures; worker/frontend coverag
 must still be inspected when their implementation changes. Live provider smoke
 previously returned HTTP 401 and remains a separate acceptance hold until successful
 authenticated execution is observed.
+
+For an ordinary completed task, use `completion snapshot`, read each returned owned
+ID with `completion read`, verify the underlying evidence through the live tools,
+then `completion account` with the snapshot's current revision/fingerprint and
+`completed_with_evidence` or `incorporated`. If the record changes, fetch a fresh
+snapshot and read it again; replaying a stale review must fail.
+
+For work awaiting access, retain the todo's actual blocked status and blockers,
+then account with `blocked_with_impact` and a concrete description of what remains
+and who can unblock it. For intentionally postponed pending work use
+`deferred_with_impact`. Both allow truthful accounting but produce an incomplete
+run, including a nonzero one-shot exit. Neither disposition changes the task to
+completed. A later CLI prompt starts a new run; use explicit adoption if that new
+run is to own the prior task. Resuming a transcript alone does not adopt old work.
