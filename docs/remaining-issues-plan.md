@@ -4,10 +4,11 @@ User mandate: comprehensively resolve remaining issues, including epics. Invento
 
 ## Active work
 
-- #64: context accounting and request preflight implemented; issue scope posted; 369 integrated workspace tests passed; linear context/steering regression follow-ups pass; failure-history recovery and portability fixes underway. Acceptance tests: full request accounting, initial/tool follow-up guard, indivisible rejection, whole-turn reduction, canonical history preservation, cancellation, provider-neutral dispatch.
-- #86: audit found input bounds, delivery-state and chronology gaps; fixes integrated in 586bfb3; four release PTY regressions pass; final CI pending.
+- #64: context accounting and request preflight implemented; issue scope posted; 374 integrated workspace tests and all final Linux gates passed; canonical failure recovery and portability fixes integrated. Acceptance tests: full request accounting, initial/tool follow-up guard, indivisible rejection, whole-turn reduction, canonical history preservation, cancellation, provider-neutral dispatch.
+- #86: audit found input bounds, delivery-state and chronology gaps; fixes integrated in 586bfb3; four release PTY regressions pass; final Linux gates passed; current platform CI pending.
 - #80 and #59: prior delivery passed platform CI; current persistence regressions block fresh portability acceptance. Questions live-provider acceptance remains pending.
-- #81: coordinated durable ownership/readiness integration and descendant/follow-up tests underway in an isolated worktree.
+- #81: coordinated durable ownership/readiness plus CLI/TUI session references and nested offline E2E implemented in isolated `feat/completion-wiring`; full integrated release checks underway.
+- #82: root-only bounded reconciliation and durable acceptance seal underway in isolated worktrees; #83 outcome/fixture verification depends on integration. Scope: https://github.com/o-psi/voyage/issues/82#issuecomment-5548958013
 - Draft delivery PR: https://github.com/o-psi/voyage/pull/87 (not ready to merge).
 
 ## Dependencies and delivery order
@@ -59,4 +60,6 @@ Each feature needs issue discussion review/update before edits, acceptance-drive
 
 ## Verification and blockers
 
-Context/steering integration: 369 Linux workspace tests passed; formatting and strict Clippy passed. Three native context fixtures and existing native/title/questions/tool-output/archive/resources/Vessel fixtures passed on the context release; four steering PTY cases passed on the integrated release. Baseline context failure reproduced with old release. Final linear-scan/failure-recovery/portability edits need repeated integrated gates and packaging. PR CI on 586bfb3 fails macOS/Windows; fixes are underway, not passing claims. GitHub reads require sandbox escalation; installed gh binary is used because the mise shim attempts an installation. Live-provider and cross-platform evidence must be separately obtained; definition validation is not live evaluation.
+Context/steering integration at 28436bb (Rust source c68eeae): all 374 Linux workspace tests, formatting, strict Clippy, locked release build, nine system fixtures, 11 eval definitions, unique packaging and checksums passed. This includes context failure/resume on three native transports and steering PTY cases. Baseline context regression failed against the previous release. Exact logs/results: `/tmp/voyage-wave1-final-results.json` (local evidence, not checked in).
+
+PR #87 remains draft until actual macOS/Windows CI on the updated branch passes; prior failures prompted explicit alias/prefix fixes and platform regressions. GitHub access now works with full runtime permissions; the installed gh binary avoids the broken mise shim. A bounded configured subscription questions smoke returned HTTP401 before tool/provider completion, with zero usage; #80 live acceptance remains blocked. Evaluation definition validation is not a live evaluation, and Linux results are not platform evidence.
