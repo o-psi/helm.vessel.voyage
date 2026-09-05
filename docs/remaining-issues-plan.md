@@ -1,15 +1,15 @@
 # Remaining GitHub delivery plan
 
-User mandate: comprehensively resolve remaining issues, including epics. Latest complete open/closed inventory: 83 issues, retained in `.local-git/issues-presence-followup.jsonl`. Root user edits are preserved. Current development gates are Linux-only; historical native results below do not impose current requirements.
+User mandate: comprehensively resolve remaining issues, including epics. Latest complete open/closed inventory: 83 issues, retained in `.local-git/issues-resume-inventory.jsonl`. Root user edits are preserved. Current development gates are Linux-only; historical native results below do not impose current requirements.
 
 ## Active work
 
-- Local-provider setup [#116](https://github.com/o-psi/voyage/pull/116) is merged at 4884d868. Broad #66 retains its explicit direct-publication portability limitation.
-- Repository onboarding [#117](https://github.com/o-psi/voyage/pull/117) merged as b108491 after 523 tests, fourteen system fixtures, strict quality, release, packaging and both Linux CI runs passed. Independent review blockers have red/green fixes; direct publication remains Linux-only.
-- Policy foundation [#118](https://github.com/o-psi/voyage/pull/118) merged as e3e652ed after 541 tests, all fourteen systems, strict quality, release/package and both Linux CI runs passed. Fixture-only #119 merged as d006e912. Actual runtime enforcement proceeds in an isolated #70 slice, with no host `/etc` mutation.
-- Completion/managed stack [#88](https://github.com/o-psi/voyage/pull/88) through [#112](https://github.com/o-psi/voyage/pull/112): integrated 707-test normal/two-CPU suites pass, but cancellation systems reproduced transient SQLite Busy in the owner watcher and fixture partial polling. Production bounded polling retry and deterministic rollback regression are in progress before final systems/live evidence.
-- Consent [#114](https://github.com/o-psi/voyage/pull/114) passes both Linux CI runs, draft for its parent dependency. Presence #113 and Chat compatibility #115 are merged.
-- Bounded local completion evidence passed clean/no-plan but failed verification accounting/template compatibility. The serializer defect is fixed; fresh evaluation remains gated by the integrated runtime checks above. Subscription credentials separately returned HTTP401; no renewal or paid evaluation is assumed.
+- Main is at 8dfc9f05: the full local completion/managed stack (#88), saved workflow CLI (#123), and runtime administrator ceiling (#124) are delivered with passing Linux baselines and CI. Issues #81 and #66 are closed after acceptance review.
+- Onboarding correction [#125](https://github.com/o-psi/voyage/pull/125), head0169d43, includes current main and is running full baseline plus CI. It preserves existing instructions and omits command candidates when bounded guidance inspection finds conflicts or uncertainty.
+- Policy documentation [#126](https://github.com/o-psi/voyage/pull/126), head31f11c0, corrects stale claims that the delivered ceiling is unenforced. Documentation/link/source verification and formatting pass; CI is running. Named profile lifecycle/selection remains unfinished #70 scope.
+- Remote execution under #77/#9/#78/#79 is implementing the actual foreground dedicated-session lifecycle, transactional public projection, cancellation receipts and authenticated reconnect. Independent authority review is active; no remote execution delivery is claimed.
+- Saved workflows #67 retain TUI parameter entry and secret-input work. Completion #82/#83 retain remote output and behavioral evidence. The latest bounded local evaluation failed honest accounting and timed out; the separate subscription path returned HTTP401. No further live evaluation is active.
+- Other remaining issues retain their acceptance criteria below. Historical checkpoints are evidence of past states, not current merge blockers.
 
 ## Dependencies and delivery order
 
