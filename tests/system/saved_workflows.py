@@ -3,6 +3,7 @@
 import json
 import os
 from pathlib import Path
+import signal
 import subprocess
 import tempfile
 import threading
@@ -34,6 +35,8 @@ class Provider(BaseHTTPRequestHandler):
     mode = 'success'
     failures = []
     sessions = None
+    started = threading.Event()
+    release = threading.Event()
     def log_message(self, *_):
         pass
     def do_GET(self):
@@ -51,6 +54,11 @@ class Provider(BaseHTTPRequestHandler):
             if self.mode!='no-save':
                 saved=[json.loads(path.read_text()) for path in self.sessions.glob('*.json')]
                 assert any(s.get('workflow_runs') for s in saved), saved
+            if self.mode=='hold':
+                payload=('data: '+json.dumps({'choices':[{'delta':{'content':'workflow-partial-before-cancel'}}]})+'\n\n').encode()
+                self.send_response(200);self.send_header('Content-Type','text/event-stream');self.end_headers();self.wfile.write(payload);self.wfile.flush()
+                self.started.set();assert self.release.wait(15)
+                return
             if self.mode=='failure':
                 return self.reply({'error':{'message':'fixture failure'}},500)
             if self.mode=='denied' and not any(m['role']=='tool' for m in body['messages']):
@@ -112,8 +120,27 @@ def main():
             assert not (workspace/'should-not-exist').exists()
             Provider.mode='failure';invoke('run','review-change','--scope','user','--input','target=failure',ok=False)
             assert len(list(Provider.sessions.glob('*.json')))==3
-            Provider.mode='no-save';invoke('run','review-change','--scope','user','--input','target=ephemeral','--no-save')
+            failed=[json.loads(p.read_text()) for p in Provider.sessions.glob('*.json') if json.loads(p.read_text())['workflow_runs'][0]['inputs']['target']=='failure']
+            assert len(failed)==1 and failed[0]['run_summaries'][-1]['phase']=='interrupted',failed
+            assert any(m['role']=='user' and 'failure' in m['content'] for m in failed[0]['messages']),failed
+            Provider.mode='no-save' ;invoke('run','review-change','--scope','user','--input','target=ephemeral','--no-save')
             assert len(list(Provider.sessions.glob('*.json')))==3
+            Provider.mode='hold'
+            process=subprocess.Popen([str(HELM),'--config',str(config),'--workspace',str(workspace),'workflow','--user-directory',str(user),'run','review-change','--scope','user','--input','target=cancel'],env=env,cwd=workspace,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
+            try:
+                assert Provider.started.wait(10)
+                process.send_signal(signal.SIGINT)
+                out,err=process.communicate(timeout=20)
+                assert process.returncode!=0,(out,err)
+                saved=[json.loads(p.read_text()) for p in Provider.sessions.glob('*.json')]
+                cancelled=[s for s in saved if s['workflow_runs'][0]['inputs']['target']=='cancel']
+                assert len(cancelled)==1,cancelled
+                assert cancelled[0]['workflow_runs'][0]['id']=='review-change'
+                assert any(m['role']=='user' and 'cancel' in m['content'] for m in cancelled[0]['messages']),cancelled
+                assert cancelled[0]['run_summaries'][-1]['phase']=='interrupted',cancelled
+            finally:
+                Provider.release.set()
+                if process.poll() is None:process.kill();process.wait(5)
             count=len(Provider.requests)
             secret=DOCUMENT.replace('required=true','required=true\nsecret=true');(user/'review-change.toml').write_text(secret)
             assert js('inspect','review-change','--scope','user')['document']['parameters']['target']['secret']
@@ -130,6 +157,7 @@ def main():
             assert not Provider.failures,Provider.failures
             print('saved workflow parsing/discovery/trust/native execution/policy/persistence/failure/no-save/secret rejection passed')
     finally:
+        Provider.release.set()
         server.shutdown();server.server_close();thread.join(5)
 
 if __name__=='__main__':main()

@@ -2385,3 +2385,18 @@ mod cli_tests {
         );
     }
 }
+
+#[cfg(test)]
+mod workflow_command_tests {
+    use super::*;
+    #[test]
+    fn workflow_names_cannot_shadow_cli_commands() {
+        for command in Cli::command().get_subcommands() {
+            assert!(
+                helm::workflow::RESERVED.contains(&command.get_name()),
+                "{}",
+                command.get_name()
+            );
+        }
+    }
+}

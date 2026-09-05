@@ -281,6 +281,7 @@ impl Document {
             !self.parameters.values().any(|p| p.secret),
             "secret parameters are not supported for execution; use a nonsecret workflow until transient secret binding is available"
         );
+        self.validate()?;
         ensure!(supplied.len() <= MAX_PARAMETERS, "too many workflow inputs");
         let mut inputs = BTreeMap::new();
         for (name, text) in supplied {

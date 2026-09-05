@@ -184,3 +184,65 @@ fn all_existing_builtin_commands_remain_reserved() {
         assert!(RESERVED.contains(&name), "{name}");
     }
 }
+
+#[test]
+fn aggregate_render_limit_and_future_fields_fail_closed() {
+    let mut workflow = parse(document().as_bytes()).unwrap();
+    workflow.prompt = "{{target}}".repeat(32);
+    assert!(
+        workflow
+            .render(&[("target".into(), "x".repeat(8192))])
+            .is_err()
+    );
+    assert!(
+        parse(
+            document()
+                .replace("type = \"boolean\"", "type = \"boolean\"\nfuture = true")
+                .as_bytes()
+        )
+        .is_err()
+    );
+    for value in [
+        "\"quoted\"",
+        "line\r\n\u{1b}[31m",
+        "$HOME; touch x",
+        "{{unknown}}",
+        "}",
+        "雪",
+    ] {
+        let rendered = parse(document().as_bytes())
+            .unwrap()
+            .render(&[("target".into(), value.into())])
+            .unwrap();
+        assert!(
+            rendered
+                .prompt
+                .contains(&serde_json::to_string(value).unwrap())
+        );
+    }
+}
+
+#[test]
+fn public_render_revalidates_constructed_documents_and_human_controls() {
+    let mut workflow = parse(document().as_bytes()).unwrap();
+    workflow.prompt = "{{unknown}}".into();
+    assert!(workflow.render(&[("target".into(), "x".into())]).is_err());
+    assert_eq!(
+        safe_text("before\u{1b}[2J\r after"),
+        "before\\u{1b}[2J\\r after"
+    );
+}
+
+#[test]
+fn optional_unset_is_explicit_null_and_secret_defaults_fail_without_echo() {
+    let text = document().replace("required = true", "required = false");
+    let result = parse(text.as_bytes()).unwrap().render(&[]).unwrap();
+    assert_eq!(result.inputs["target"], Value::Null);
+    assert!(result.prompt.starts_with("Review null"));
+    let secret_default = document().replace(
+        "required = true",
+        "required = true\nsecret = true\ndefault = \"KNOWN_SECRET_CANARY\"",
+    );
+    let error = parse(secret_default.as_bytes()).unwrap_err().to_string();
+    assert!(!error.contains("KNOWN_SECRET_CANARY"));
+}

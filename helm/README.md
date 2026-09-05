@@ -336,3 +336,6 @@ Use `helm onboard inspect` or `helm onboard preview` to generate reviewable loca
 project guidance. Commands remain unverified and existing instructions are preserved.
 See [repository onboarding](../docs/repo-onboarding.md) for editing, explicit acceptance
 and rerun diffs.
+
+Saved nonsecret task definitions support typed parameters, preview, digest-bound repository trust,
+and ordinary CLI execution. See [Saved workflows](../docs/saved-workflows.md).
