@@ -88,6 +88,10 @@ pub struct Config {
     pub provider: ProviderKind,
     pub model: String,
     pub api_key_env: String,
+    /// Explicit opt-out only for a configured native compatible endpoint.
+    pub api_key_required: bool,
+    /// Use the compatible Chat max_tokens field instead of max_completion_tokens.
+    pub chat_use_max_tokens: bool,
     pub base_url: Option<String>,
     /// Explicit override for the experimental ChatGPT subscription backend.
     /// Kept separate from `base_url` so provider switching cannot redirect OAuth tokens.
@@ -134,6 +138,7 @@ pub struct McpServerConfig {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ConfigValueKind {
+    Bool,
     Provider,
     Model,
     EnvironmentName,
@@ -170,6 +175,16 @@ pub const CONFIG_OVERRIDE_SPECS: &[ConfigOverrideSpec] = &[
         key: "model",
         description: "Default model",
         kind: ConfigValueKind::Model,
+    },
+    ConfigOverrideSpec {
+        key: "chat_use_max_tokens",
+        description: "Use the compatible Chat max_tokens parameter",
+        kind: ConfigValueKind::Bool,
+    },
+    ConfigOverrideSpec {
+        key: "api_key_required",
+        description: "Require the named API key (false explicitly disables authentication)",
+        kind: ConfigValueKind::Bool,
     },
     ConfigOverrideSpec {
         key: "api_key_env",
@@ -359,6 +374,8 @@ impl Default for Config {
             provider: ProviderKind::OpenaiResponses,
             model: "gpt-5".into(),
             api_key_env: "OPENAI_API_KEY".into(),
+            api_key_required: true,
+            chat_use_max_tokens: false,
             base_url: None,
             chatgpt_base_url: None,
             system_prompt: include_str!("../prompts/system.md").trim().into(),
@@ -429,15 +446,25 @@ impl Config {
     }
 
     pub fn api_key(&self) -> Result<String> {
-        env::var(&self.api_key_env).with_context(|| format!("{} is not set", self.api_key_env))
+        if !self.api_key_required {
+            self.validate()?;
+            return Ok(String::new());
+        }
+        let key = env::var(&self.api_key_env)
+            .with_context(|| format!("{} is not set", self.api_key_env))?;
+        if key.trim().is_empty() {
+            bail!("configured API key is empty");
+        }
+        Ok(key)
     }
 
     /// Returns a secret only for transports whose authentication Helm owns.
     pub fn api_key_for_redaction(&self) -> Option<String> {
-        (!matches!(
-            self.provider,
-            ProviderKind::CodexSubscription | ProviderKind::ChatGptOauth
-        ))
+        (self.api_key_required
+            && !matches!(
+                self.provider,
+                ProviderKind::CodexSubscription | ProviderKind::ChatGptOauth
+            ))
         .then(|| self.api_key().ok())
         .flatten()
     }
@@ -455,13 +482,26 @@ impl Config {
     }
 
     pub fn provider_profile(&self) -> ProviderProfile {
-        self.provider.profile()
+        let mut profile = self.provider.profile();
+        if !self.api_key_required {
+            profile.credential = "none (explicit no-auth endpoint)";
+        }
+        if self.base_url.is_some()
+            && matches!(
+                self.provider,
+                ProviderKind::OpenaiChat | ProviderKind::OpenaiResponses
+            )
+        {
+            profile.billing = "Billing is determined by the configured endpoint; no ChatGPT subscription credentials are used";
+        }
+        profile
     }
 
     pub fn select_provider(&mut self, provider: ProviderKind) {
         let previous = self.provider.clone();
         self.provider = provider;
         if previous != self.provider {
+            self.api_key_required = true;
             match self.provider {
                 ProviderKind::OpenaiResponses | ProviderKind::OpenaiChat => {
                     if self.api_key_env == "ANTHROPIC_API_KEY" {
@@ -531,6 +571,9 @@ impl Config {
         }
         table.insert(segments[segments.len() - 1].to_owned(), parsed);
         let mut updated: Self = document.try_into()?;
+        if updated.provider != self.provider {
+            updated.api_key_required = true;
+        }
         updated.apply_provider_defaults();
         updated.validate()?;
         *self = updated;
@@ -538,6 +581,15 @@ impl Config {
     }
 
     pub fn validate(&self) -> Result<()> {
+        if !self.api_key_required {
+            if !matches!(
+                self.provider,
+                ProviderKind::OpenaiChat | ProviderKind::OpenaiResponses
+            ) {
+                bail!("no-auth mode requires a native OpenAI-compatible transport");
+            }
+            crate::local_provider::validate_endpoint(self.base_url.as_deref().unwrap_or(""))?;
+        }
         if self.context_window == 0
             || self.max_tokens == 0
             || self.max_tokens as usize >= self.context_window
