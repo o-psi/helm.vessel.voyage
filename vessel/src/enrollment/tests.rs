@@ -1,4 +1,6 @@
 use super::*;
+#[cfg(windows)]
+use std::fs;
 use voyage_protocol::enrollment::SigningKey;
 const ORIGIN: &str = "https://vessel.example";
 fn store() -> EnrollmentStore {

@@ -8,6 +8,9 @@ Voyage is a system for general-purpose LLM work across local and remote machines
 - **voyage-protocol** holds shared management-plane response types; the replacement
   attachment wire contract is not implemented yet.
 
+- **voyage-storage** supplies native private enrollment storage on Windows, shared
+  by Helm and Vessel without adding filesystem concerns to the wire protocol.
+
 ## Run locally
 
 ```sh

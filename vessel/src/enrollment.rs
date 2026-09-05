@@ -6,7 +6,7 @@ use ring::rand::{SecureRandom, SystemRandom};
 use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
-#[cfg(any(unix, windows))]
+#[cfg(unix)]
 use std::fs;
 use std::path::Path;
 #[cfg(any(unix, windows, test))]

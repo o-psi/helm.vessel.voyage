@@ -48,7 +48,7 @@ They do not grant permissions beyond the active runtime policy or operator appro
 
 ## Understand the project before changing it
 
-Voyage is a Rust 2024 workspace with three members:
+Voyage is a Rust 2024 workspace with four members:
 
 - `helm/`: terminal UI and provider-neutral agent runtime; local tools, policy,
   approvals, sessions, terminals, todos, subagents, and outbound Vessel worker.
@@ -57,6 +57,8 @@ Voyage is a Rust 2024 workspace with three members:
   `vessel/src/main.rs`.
 - `crates/voyage-protocol/`: shared, versioned wire types. Contract changes require
   inspection and compatibility tests on both Helm and Vessel.
+- `crates/voyage-storage/`: native private enrollment filesystem primitives shared
+  by Helm and Vessel; native Windows security tests are required for changes.
 
 Start with `README.md`, `Cargo.toml`, and `helm/README.md`, then read affected source,
 existing tests, and relevant documentation. Useful references:
