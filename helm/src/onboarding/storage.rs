@@ -2,8 +2,6 @@
 use anyhow::{Result, bail};
 use cap_fs_ext::{DirExt, FollowSymlinks, OpenOptionsFollowExt, OpenOptionsSyncExt};
 use cap_std::fs::{Dir, OpenOptions};
-#[cfg(target_os = "linux")]
-use std::io::Write;
 use std::{
     io::Read,
     path::{Component, Path, PathBuf},
@@ -85,69 +83,18 @@ impl Root {
         Ok(entries)
     }
     pub(super) fn publish(&self, path: &Path, bytes: &[u8]) -> Result<()> {
-        self.publish_observed(path, bytes, |_| Ok(()))
+        let (directory, name) = self.parent(path)?;
+        crate::file_publication::Publication::prepare(directory, &name)?.publish(bytes)
     }
-    #[cfg(target_os = "linux")]
+    #[cfg(test)]
     pub(super) fn publish_observed(
         &self,
         path: &Path,
         bytes: &[u8],
-        mut observe: impl FnMut(bool) -> Result<()>,
+        observe: impl FnMut(bool) -> Result<()>,
     ) -> Result<()> {
-        use std::{
-            ffi::CString,
-            os::{
-                fd::{AsRawFd, FromRawFd},
-                unix::ffi::OsStrExt,
-            },
-        };
         let (directory, name) = self.parent(path)?;
-        // Anonymous staging has no repository pathname that another writer can replace.
-        let fd = unsafe {
-            libc::openat(
-                directory.as_raw_fd(),
-                c".".as_ptr(),
-                libc::O_TMPFILE | libc::O_RDWR | libc::O_CLOEXEC,
-                0o600,
-            )
-        };
-        if fd < 0 {
-            bail!("filesystem does not support anonymous atomic onboarding publication")
-        }
-        // openat returned a new owned descriptor; File closes it on every return path.
-        let mut file = unsafe { std::fs::File::from_raw_fd(fd) };
-        file.write_all(bytes)?;
-        file.sync_all()?;
-        observe(false)?;
-        let source = CString::new(format!("/proc/self/fd/{}", file.as_raw_fd()))?;
-        let name = CString::new(name.as_os_str().as_bytes())?;
-        // Following this process-owned descriptor avoids CAP_DAC_READ_SEARCH required
-        // by AT_EMPTY_PATH. The destination stays relative to the pinned directory.
-        if unsafe {
-            libc::linkat(
-                libc::AT_FDCWD,
-                source.as_ptr(),
-                directory.as_raw_fd(),
-                name.as_ptr(),
-                libc::AT_SYMLINK_FOLLOW,
-            )
-        } != 0
-        {
-            bail!("destination exists or descriptor-based atomic publication is unavailable")
-        }
-        directory.open(".")?.sync_all()?;
-        observe(true)?;
-        Ok(())
-    }
-    #[cfg(not(target_os = "linux"))]
-    pub(super) fn publish_observed(
-        &self,
-        _: &Path,
-        _: &[u8],
-        _: impl FnMut(bool) -> Result<()>,
-    ) -> Result<()> {
-        bail!(
-            "onboarding file publication currently requires Linux anonymous staging; preview to stdout remains available"
-        )
+        crate::file_publication::Publication::prepare(directory, &name)?
+            .publish_observed(bytes, observe)
     }
 }

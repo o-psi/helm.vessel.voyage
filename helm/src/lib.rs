@@ -3,6 +3,7 @@ pub mod attachment;
 pub mod completion;
 pub mod config;
 pub mod context;
+mod file_publication;
 pub mod markdown;
 pub mod model;
 pub mod onboarding;

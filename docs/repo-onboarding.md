@@ -68,7 +68,7 @@ your draft with your usual file-management tools. No project instructions are
 modified merely by inspecting or previewing.
 
 Storage uses pinned, directory-relative operations through the maintained
-[cap-std filesystem API](https://docs.rs/cap-std/4.0.2/cap_std/fs/struct.Dir.html)
+[cap-std filesystem API](https://docs.rs/cap-std/4.0.3/cap_std/fs/struct.Dir.html)
 and [no-follow extensions](https://docs.rs/cap-fs-ext/4.0.3/cap_fs_ext/trait.DirExt.html).
 Paths must stay within the selected workspace, with existing parent directories.
 Linux publication writes and syncs an anonymous mode-0600 staging file, then links
