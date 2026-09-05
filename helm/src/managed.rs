@@ -488,6 +488,9 @@ async fn submit(
         "managed submit does not yet support effectful MCP servers; cleanup adapters are required"
     );
     // Validate cheap policy before admission. Runtime construction starts only after obligation.
+    std::time::Instant::now()
+        .checked_add(config.timeout())
+        .context("configured timeout exceeds the local clock range")?;
     Policy::new(&config, saved.session.workspace.clone())?;
     let mut run = match owner.admit(request).await? {
         Admission::Existing(existing) => {

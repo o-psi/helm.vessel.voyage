@@ -50,6 +50,16 @@ class Provider(BaseHTTPRequestHandler):
             # Actual first dispatch must follow both durable admission and cleanup registration.
             rows = case.sql('SELECT r.active,o.confirmation FROM runs r JOIN local_cleanup_obligations o ON o.run_id=r.id WHERE r.active=1')
             assert rows == [(1, None)], rows
+            if case.mode == 'partial_hold':
+                prefix = response(case.provider, 'managed-partial-before-cancel', step).replace(b'data: [DONE]\n\n', b'')
+                self.send_response(200)
+                self.send_header('Content-Type', 'text/event-stream')
+                self.end_headers()
+                self.wfile.write(prefix)
+                self.wfile.flush()
+                case.started.set()
+                assert case.release.wait(25)
+                return
             if case.mode == 'hold' or (case.mode == 'child_hold' and is_child and step == 1):
                 case.started.set()
                 assert case.release.wait(25), 'fixture release timeout'
@@ -271,6 +281,9 @@ def failures_and_policy(root):
         # Unsupported effectful configurations must fail before command admission/startup.
         original = case.config.read_text()
         before = case.sql('SELECT count(*) FROM commands')[0][0]
+        case.config.write_text(original + 'command_timeout_secs=9223372036854775807\n')
+        run(case.command(session), case.env, expected=1)
+        assert case.sql('SELECT count(*) FROM commands')[0][0] == before
         marker = case.root / 'unsupported-started'
         case.config.write_text(original + '\n[mcp_servers.marker]\ncommand="sh"\nargs=["-c", "touch ' + str(marker) + '"]\n')
         run(case.command(session), case.env, expected=1)
@@ -338,6 +351,42 @@ def output_and_terminal_cleanup(root):
         case.close()
 
 
+def partial_cancellation(root):
+    case = Case(root)
+    try:
+        session = case.create()
+        case.reset('partial_hold')
+        command = case.command(session)
+        process = subprocess.Popen([str(HELM), *command], env=case.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        assert case.started.wait(15)
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            rows = case.sql('SELECT record FROM runs WHERE session_id=?', (session,))
+            if rows and json.loads(rows[0][0])['partial_text'] == 'managed-partial-before-cancel':
+                break
+            time.sleep(0.01)
+        else:
+            raise AssertionError('partial delta not durable before cancellation')
+        run_id = json.loads(rows[0][0])['id']
+        run([*case.args, 'cancel', session, '--run', run_id], case.env)
+        stdout, stderr = process.communicate(timeout=25)
+        assert process.returncode != 0, stderr
+        final([json.loads(line) for line in stdout.splitlines()], 'cancelled')
+        canonical = case.sql('SELECT state FROM sessions WHERE id=?', (session,))[0][0]
+        assert 'managed-partial-before-cancel' not in canonical
+        saved = json.loads(case.sql('SELECT record FROM runs WHERE id=?', (run_id,))[0][0])
+        assert saved['partial_text'] == 'managed-partial-before-cancel' and saved['state'] == 'cancelled'
+        assert run(command, case.env)[0]['run']['state'] == 'cancelled'
+        assert len(case.requests) == 1
+        case.release.set()
+        case.reset()
+        final(run(case.command(session), case.env))
+        assert 'managed-partial-before-cancel' not in json.dumps(case.requests[0])
+        assert json.loads(case.sql('SELECT record FROM runs WHERE id=?', (run_id,))[0][0])['partial_text'] == 'managed-partial-before-cancel'
+    finally:
+        case.close()
+
+
 def child_cleanup(root):
     case = Case(root)
     try:
@@ -377,6 +426,7 @@ def main():
         cancellation(root / 'cancellation')
         failures_and_policy(root / 'failure-policy')
         output_and_terminal_cleanup(root / 'output-terminal')
+        partial_cancellation(root / 'partial')
         child_cleanup(root / 'children')
     print('local managed CLI: native transports, exact retry, revision fences, cancellation and restart cleanup passed')
 

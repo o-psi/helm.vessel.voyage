@@ -80,7 +80,7 @@ helm managed --directory "$STORE" recover SESSION_UUID
 ```
 
 Recovery requires exclusive ownership. It marks abandoned active execution
-interrupted, preserves canonical partial output, and marks saved PTYs stale.
+interrupted, preserves conversation and provisional output evidence, and marks saved PTYs stale.
 It does not retry tools or claim old processes survived. Inspect the outcome and
 submit a deliberate new command with the current revision when appropriate.
 
@@ -123,3 +123,7 @@ admission because their cleanup adapters do not yet provide the required
 observation. Read-only mode does not start MCP servers. Metadata, cancellation,
 and recovery remain available independently of provider configuration. These
 adapters and additional frontend integration remain tracked under #78 and #65.
+
+Unfinished streamed text remains durable provisional run evidence. It is not
+promoted into an accepted assistant message or the next provider request. Exact
+retries observe the original run and never redispatch its tools.
