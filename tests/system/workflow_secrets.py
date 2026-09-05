@@ -176,6 +176,36 @@ def cli_cases(root, port):
     # Provider assertions require the denial, and the no-effect assertion is unchanged.
     invoke(*flags, 'workflow', '--user-directory', str(workflows), 'run', 'review-change', *source, values={'FIXTURE_PRIVATE_SOURCE': values[0]})
     assert not (root / 'value-digest').exists()
+    # Persistent defaults must constrain private bindings just like explicit profiles.
+    defaults = root / 'defaults'
+    anchor = json.loads(invoke('policy', 'defaults', 'init', '--directory', str(defaults)).stdout)
+    enabled = root / 'defaults-enabled.toml'
+    invoke('policy', 'defaults', 'enable', '--directory', str(defaults), '--store-id', anchor['store_id'], '--output', str(enabled))
+    common[common.index('--config') + 1] = str(enabled)
+
+    def set_default(name, expected_revision):
+        record = json.loads(invoke('policy', 'inspect', name).stdout)
+        invoke('policy', 'defaults', 'set', '--global', '--profile-directory', str(profiles), name,
+               '--revision', str(record['profile']['revision']), '--digest', record['digest'],
+               '--expected-revision', str(expected_revision))
+
+    set_default('private-review', 0)
+    workflow('run', 'review-change', *source, values={'FIXTURE_PRIVATE_SOURCE': values[0]})
+    assert not (root / 'value-digest').exists(), 'private shell bypassed restrictive defaults'
+    invoke('policy', 'create', 'private-default', '--preset', 'autonomous')
+    set_default('private-default', 1)
+    preview = json.loads(invoke('policy', 'defaults', 'preview').stdout)['preview']
+    assert preview['requires_confirmation'], 'clearing restrictive defaults requires explicit activation'
+    invoke('policy', 'defaults', 'activate', '--expected-revision', '0', '--confirm', preview['transition_digest'])
+    Provider.denied = False
+    workflow('run', 'review-change', *source, values={'FIXTURE_PRIVATE_SOURCE': values[0]})
+    assert (root / 'value-digest').read_text() == hashlib.sha256(values[0].encode()).hexdigest()
+    (root / 'value-digest').unlink()
+    # Even unchanged rules at a new defaults revision invalidate admitted private release.
+    Provider.denied = True
+    Provider.before_tool = lambda: set_default('private-default', 2)
+    workflow('run', 'review-change', *source, values={'FIXTURE_PRIVATE_SOURCE': values[0]})
+    assert not (root / 'value-digest').exists(), 'private shell released a secret under stale defaults'
     Provider.denied = False
     # Config display and exports are ordinary public artifacts, never secret containers.
     invoke('config')
