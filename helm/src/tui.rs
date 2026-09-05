@@ -1099,6 +1099,14 @@ async fn handle_key(
                 if handle_command(&prompt, app, store, Some(agent), Some(tx)).await? {
                     return Ok(());
                 }
+                if let Err(error) = agent.check_current_policy() {
+                    app.composer.insert_str(&prompt);
+                    app.status = format!(
+                        "Policy changed; restart or rebuild: {}",
+                        compact_line(&error.to_string(), 120)
+                    );
+                    return Ok(());
+                }
                 let scope = match agent.prepare_run(&app.session).await {
                     Ok(scope) => scope,
                     Err(error) => {

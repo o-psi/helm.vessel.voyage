@@ -283,6 +283,18 @@ pub struct WorkspaceIdentity {
     inode: u64,
 }
 impl WorkspaceIdentity {
+    pub(crate) fn verify_current(&self) -> Result<()> {
+        let path = directory(&self.path)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            let metadata = std::fs::metadata(&path).map_err(|_| Error::Root)?;
+            if path != self.path || metadata.dev() != self.device || metadata.ino() != self.inode {
+                return Err(Error::Transition);
+            }
+        }
+        Ok(())
+    }
     pub fn path(&self) -> &Path {
         &self.path
     }
@@ -293,6 +305,7 @@ pub struct EffectivePolicy {
     rules: EffectiveRules,
     provenance: BTreeMap<String, Vec<Contribution>>,
     ceiling_digest: Option<String>,
+    environment_ceiling: Option<Vec<String>>,
     digest: String,
 }
 impl EffectivePolicy {
@@ -307,6 +320,10 @@ impl EffectivePolicy {
     }
     pub fn workspace(&self) -> &WorkspaceIdentity {
         &self.workspace
+    }
+    /// Protected administrator name ceiling, distinct from inherited names.
+    pub fn environment_ceiling(&self) -> Option<&[String]> {
+        self.environment_ceiling.as_deref()
     }
     pub fn ceiling_digest(&self) -> Option<&str> {
         self.ceiling_digest.as_deref()
@@ -332,15 +349,27 @@ fn normalize_roots(mut roots: Vec<PathBuf>) -> Vec<PathBuf> {
 }
 fn prepare(r: &Rules, workspace: &Path) -> Result<EffectiveRules> {
     r.validate()?;
+    prepare_roots(r, workspace, false)
+}
+// Existing operator Config has its own validation contract; imported documents stay strict.
+fn prepare_trusted_config(r: &Rules, workspace: &Path) -> Result<EffectiveRules> {
+    prepare_roots(r, workspace, true)
+}
+fn prepare_roots(r: &Rules, workspace: &Path, allow_exact_file: bool) -> Result<EffectiveRules> {
     let roots = |values: &[String]| -> Result<Vec<PathBuf>> {
         values
             .iter()
             .map(|p| {
-                directory(if p == "$workspace" {
+                let path = if p == "$workspace" {
                     workspace
                 } else {
                     Path::new(p)
-                })
+                };
+                if allow_exact_file {
+                    path.canonicalize().map_err(|_| Error::Root)
+                } else {
+                    directory(path)
+                }
             })
             .collect::<Result<Vec<_>>>()
             .map(normalize_roots)
@@ -445,6 +474,25 @@ fn resolve_loaded(
     layers: &[Layer],
     ceiling: Option<&CeilingDocument>,
 ) -> Result<EffectivePolicy> {
+    resolve_loaded_inner(workspace, base, layers, ceiling, false)
+}
+
+pub(crate) fn resolve_runtime_current(workspace: &Path, base: &Rules) -> Result<EffectivePolicy> {
+    #[cfg(target_os = "linux")]
+    let ceiling = ceiling::load()?;
+    // This internal zero-layer Config adapter preserves existing non-Linux runtime
+    // behavior. Public profile resolution still refuses unsupported enforcement.
+    #[cfg(not(target_os = "linux"))]
+    let ceiling: Option<CeilingDocument> = None;
+    resolve_loaded_inner(workspace, base, &[], ceiling.as_ref(), true)
+}
+fn resolve_loaded_inner(
+    workspace: &Path,
+    base: &Rules,
+    layers: &[Layer],
+    ceiling: Option<&CeilingDocument>,
+    trusted_config: bool,
+) -> Result<EffectivePolicy> {
     if layers.len() > MAX_LAYERS || layers.windows(2).any(|w| w[0].kind >= w[1].kind) {
         return Err(Error::Invalid);
     }
@@ -466,7 +514,11 @@ fn resolve_loaded(
         inode,
     };
     let mut raw = base.clone();
-    let prepared_base = prepare(&raw, &workspace.path)?;
+    let prepared_base = if trusted_config {
+        prepare_trusted_config(&raw, &workspace.path)?
+    } else {
+        prepare(&raw, &workspace.path)?
+    };
     let mut prepared_layers = Vec::new();
     for layer in layers {
         layer.apply(&mut raw);
@@ -528,6 +580,7 @@ fn resolve_prepared(
         Some(&before),
         &current,
     )?;
+    let environment_ceiling = ceiling.as_ref().map(|(c, _)| c.inherit_env.clone());
     let ceiling_digest = if let Some((c, digest)) = ceiling {
         ceiling_rules(&mut current, &c, &workspace.path)?;
         record(&mut provenance, "system-ceiling", None, &current)?;
@@ -541,6 +594,7 @@ fn resolve_prepared(
         rules: current,
         provenance,
         ceiling_digest,
+        environment_ceiling,
         digest,
     })
 }
@@ -602,3 +656,13 @@ pub fn transition(previous: &EffectivePolicy, proposed: &EffectivePolicy) -> Res
 }
 #[cfg(test)]
 mod tests;
+
+#[cfg(all(test, target_os = "linux"))]
+pub(crate) fn resolve_test_source(
+    workspace: &Path,
+    base: &Rules,
+    root: &Path,
+) -> Result<EffectivePolicy> {
+    let ceiling = ceiling::test_load(root)?;
+    resolve_loaded_inner(workspace, base, &[], ceiling.as_ref(), true)
+}
