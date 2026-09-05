@@ -42,7 +42,7 @@ impl Question {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(tag = "status", rename_all = "snake_case")]
+#[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
 pub enum QuestionAnswer {
     Selected { index: usize, answer: String },
     Custom { answer: String },
@@ -51,6 +51,14 @@ pub enum QuestionAnswer {
 }
 
 impl QuestionAnswer {
+    fn redact(&mut self, redactor: &super::Redactor) {
+        match self {
+            Self::Selected { answer, .. } | Self::Custom { answer } => {
+                *answer = redactor.redact(std::mem::take(answer));
+            }
+            Self::Cancelled | Self::Unavailable => {}
+        }
+    }
     fn validate(&self, question: &Question) -> Result<(), ToolError> {
         match self {
             Self::Selected { index, answer } if question.options.get(*index) != Some(answer) => {
@@ -64,6 +72,29 @@ impl QuestionAnswer {
             _ => Ok(()),
         }
     }
+}
+
+/// Fixed schema metadata is public protocol data; only answer fields contain
+/// frontend-supplied text. Never run blind replacement over the encoded envelope.
+pub(super) fn redact_result(output: &str, redactor: &super::Redactor) -> Result<String, ToolError> {
+    let invalid = || ToolError::Failed("questions returned an invalid structured response".into());
+    let mut answer: QuestionAnswer = serde_json::from_str(output).map_err(|_| invalid())?;
+    // Serde's internally tagged unit variants ignore extra fields even with
+    // deny_unknown_fields. Enforce the complete envelope for every variant.
+    let fields: &[&str] = match &answer {
+        QuestionAnswer::Selected { .. } => &["status", "index", "answer"],
+        QuestionAnswer::Custom { .. } => &["status", "answer"],
+        QuestionAnswer::Cancelled | QuestionAnswer::Unavailable => &["status"],
+    };
+    let value: Value = serde_json::from_str(output).map_err(|_| invalid())?;
+    if !value.as_object().is_some_and(|object| {
+        object.len() == fields.len() && fields.iter().all(|field| object.contains_key(*field))
+    }) {
+        return Err(invalid());
+    }
+    answer.redact(redactor);
+    serde_json::to_string(&answer)
+        .map_err(|_| ToolError::Failed("could not encode question response".into()))
 }
 
 pub struct Questions;
@@ -386,6 +417,264 @@ mod tests {
                 serde_json::from_str::<QuestionAnswer>(&result.content).unwrap(),
                 answer
             );
+        }
+    }
+    #[tokio::test]
+    async fn questions_redacts_json_escaped_known_secrets_without_breaking_answers() {
+        let dir = tempfile::tempdir().unwrap();
+        for secret in [
+            r#"private"quote"#,
+            r"private\path",
+            "日本語\"secret",
+            r#"private\"combined"#,
+        ] {
+            for selected in [false, true] {
+                let answer = if selected {
+                    QuestionAnswer::Selected {
+                        index: 1,
+                        answer: secret.into(),
+                    }
+                } else {
+                    QuestionAnswer::Custom {
+                        answer: format!("before {secret} after"),
+                    }
+                };
+                let (mut ctx, _) = context(dir.path(), answer, false);
+                ctx.redactor = Arc::new(Redactor::new([secret.to_owned()]));
+                let result = ToolRegistry::standard()
+                    .execute(
+                        "questions",
+                        json!({"question":"Which format?", "options":["public",secret]}),
+                        &ctx,
+                    )
+                    .await
+                    .unwrap();
+                let decoded: QuestionAnswer = serde_json::from_str(&result).unwrap();
+                let expected = if selected {
+                    QuestionAnswer::Selected {
+                        index: 1,
+                        answer: "[REDACTED]".into(),
+                    }
+                } else {
+                    QuestionAnswer::Custom {
+                        answer: "before [REDACTED] after".into(),
+                    }
+                };
+                assert_eq!(decoded, expected);
+            }
+        }
+    }
+    #[tokio::test]
+    async fn questions_redaction_preserves_empty_outcomes_and_rejects_control_answers() {
+        let dir = tempfile::tempdir().unwrap();
+        let secret = "private\"\\日本語";
+        for answer in [QuestionAnswer::Cancelled, QuestionAnswer::Unavailable] {
+            let (mut ctx, _) = context(dir.path(), answer.clone(), false);
+            ctx.redactor = Arc::new(Redactor::new([secret.to_owned()]));
+            let result = ToolRegistry::standard()
+                .execute("questions", args(), &ctx)
+                .await
+                .unwrap();
+            assert_eq!(
+                serde_json::from_str::<QuestionAnswer>(&result).unwrap(),
+                answer
+            );
+            assert!(!result.contains("answer"));
+        }
+        for answer in [
+            format!("{secret}\nsecond line"),
+            format!("{secret}\r"),
+            format!("{secret}\u{1b}[2J"),
+        ] {
+            let (mut ctx, _) = context(dir.path(), QuestionAnswer::Custom { answer }, false);
+            ctx.redactor = Arc::new(Redactor::new([secret.to_owned()]));
+            let error = ToolRegistry::standard()
+                .execute("questions", args(), &ctx)
+                .await
+                .unwrap_err();
+            assert!(matches!(error, ToolError::Failed(_)));
+            assert!(!error.to_string().contains("private"));
+        }
+    }
+    #[tokio::test]
+    async fn questions_escaped_secrets_are_redacted_before_provider_continuation_and_persistence() {
+        let dir = tempfile::tempdir().unwrap();
+        let secret = "private\"\\日本語";
+        let expected = QuestionAnswer::Custom {
+            answer: "before [REDACTED] after".into(),
+        };
+        let (mut ctx, _) = context(
+            dir.path(),
+            QuestionAnswer::Custom {
+                answer: format!("before {secret} after"),
+            },
+            false,
+        );
+        ctx.redactor = Arc::new(Redactor::new([secret.to_owned()]));
+        let agent = crate::Agent::new(
+            Box::new(QuestionProvider {
+                expected: expected.clone(),
+            }),
+            ToolRegistry::standard(),
+            ctx,
+            Arc::new(crate::agent::SilentSink),
+            "fixture".into(),
+            "Ask for clarification".into(),
+            1024,
+            None,
+        );
+        let outcome = agent.run(vec![], "Choose a format".into()).await.unwrap();
+        assert_eq!(outcome.turns, 2);
+        let mut session = crate::session::Session::new(dir.path().into(), "fixture".into());
+        session.messages = outcome.messages;
+        let store = crate::session::SessionStore::new(dir.path().join("sessions"));
+        store.save(&mut session).await.unwrap();
+        let restored = store.load(session.id).await.unwrap();
+        let result = restored
+            .messages
+            .iter()
+            .find(|m| m.role == crate::Role::Tool)
+            .unwrap();
+        assert_eq!(
+            serde_json::from_str::<QuestionAnswer>(&result.content).unwrap(),
+            expected
+        );
+    }
+    #[tokio::test]
+    async fn questions_redaction_preserves_fixed_metadata_when_secret_matches_schema_words() {
+        let dir = tempfile::tempdir().unwrap();
+        for secret in [
+            "status",
+            "selected",
+            "answer",
+            "index",
+            "custom",
+            "cancelled",
+            "unavailable",
+        ] {
+            for answer in [
+                QuestionAnswer::Selected {
+                    index: 1,
+                    answer: secret.into(),
+                },
+                QuestionAnswer::Custom {
+                    answer: secret.into(),
+                },
+                QuestionAnswer::Cancelled,
+                QuestionAnswer::Unavailable,
+            ] {
+                let expected = match &answer {
+                    QuestionAnswer::Selected { .. } => QuestionAnswer::Selected {
+                        index: 1,
+                        answer: "[REDACTED]".into(),
+                    },
+                    QuestionAnswer::Custom { .. } => QuestionAnswer::Custom {
+                        answer: "[REDACTED]".into(),
+                    },
+                    other => other.clone(),
+                };
+                let (mut ctx, _) = context(dir.path(), answer, false);
+                ctx.redactor = Arc::new(Redactor::new([secret.to_owned()]));
+                let result = ToolRegistry::standard()
+                    .execute(
+                        "questions",
+                        json!({"question":"Which format?","options":["public",secret]}),
+                        &ctx,
+                    )
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    serde_json::from_str::<QuestionAnswer>(&result).unwrap(),
+                    expected
+                );
+            }
+        }
+    }
+    #[tokio::test]
+    async fn questions_registry_rejects_invalid_and_unknown_result_data_without_echo() {
+        struct ResultFixture(String);
+        #[async_trait]
+        impl Tool for ResultFixture {
+            fn definition(&self) -> ToolDefinition {
+                Questions.definition()
+            }
+            async fn execute(&self, _: Value, _: &ToolContext) -> Result<String, ToolError> {
+                Ok(self.0.clone())
+            }
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let secret = r#"private"\diagnostic"#;
+        let (mut ctx, _) = context(dir.path(), QuestionAnswer::Unavailable, false);
+        ctx.redactor = Arc::new(Redactor::new([secret.to_owned()]));
+        let mut invalid = vec![
+            secret.to_owned(),
+            json!({"status":secret}).to_string(),
+            json!({"status":"custom"}).to_string(),
+            json!({"status":"selected","index":0}).to_string(),
+            json!({"status":"selected","index":-1,"answer":"public"}).to_string(),
+            json!({"status":"custom","answer":42}).to_string(),
+        ];
+        for mut value in [
+            json!({"status":"custom","answer":"public"}),
+            json!({"status":"selected","index":0,"answer":"public"}),
+            json!({"status":"cancelled"}),
+            json!({"status":"unavailable"}),
+        ] {
+            value["unknown"] = json!(secret);
+            invalid.push(value.to_string());
+        }
+        for output in invalid {
+            let mut registry = ToolRegistry::standard();
+            registry.register(ResultFixture(output));
+            let error = registry
+                .execute("questions", args(), &ctx)
+                .await
+                .unwrap_err();
+            assert!(matches!(error, ToolError::Failed(_)));
+            assert!(!error.to_string().contains("private"));
+            assert!(!error.to_string().contains("diagnostic"));
+        }
+    }
+    #[tokio::test]
+    async fn questions_redacts_each_answer_once_when_secret_matches_placeholder() {
+        let dir = tempfile::tempdir().unwrap();
+        for secret in ["REDACTED", "REDA", "CTED"] {
+            for selected in [false, true] {
+                let answer = if selected {
+                    QuestionAnswer::Selected {
+                        index: 1,
+                        answer: secret.into(),
+                    }
+                } else {
+                    QuestionAnswer::Custom {
+                        answer: format!("before {secret} after"),
+                    }
+                };
+                let (mut ctx, _) = context(dir.path(), answer, false);
+                ctx.redactor = Arc::new(Redactor::new([secret.to_owned()]));
+                let result = ToolRegistry::standard()
+                    .execute(
+                        "questions",
+                        json!({"question":"Which format?","options":["public",secret]}),
+                        &ctx,
+                    )
+                    .await
+                    .unwrap();
+                let expected = if selected {
+                    QuestionAnswer::Selected {
+                        index: 1,
+                        answer: "[REDACTED]".into(),
+                    }
+                } else {
+                    QuestionAnswer::Custom {
+                        answer: "before [REDACTED] after".into(),
+                    }
+                };
+                assert_eq!(
+                    serde_json::from_str::<QuestionAnswer>(&result).unwrap(),
+                    expected
+                );
+            }
         }
     }
 }

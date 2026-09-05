@@ -48,9 +48,12 @@ def main() -> None:
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
+        escaped_secret = 'private"quoted\\path 日本語'
         for case, keys, expected in [
             ("selected", b"\x1b[B\r", {"status": "selected", "index": 1, "answer": "Markdown"}),
             ("custom", b"\t\t\x1b[200~CSV \xe6\x97\xa5\xe6\x9c\xac\xe8\xaa\x9e\x1b[201~\r", {"status": "custom", "answer": "CSV 日本語"}),
+            ("custom_redacted", b"\t\t\x1b[200~" + f"CSV {escaped_secret}".encode() + b"\x1b[201~\r",
+             {"status": "custom", "answer": "CSV [REDACTED]"}),
             ("cancelled", b"\x1b", {"status": "cancelled"}),
             ("timeout", b"", None),
             ("plain", b"", {"status": "unavailable"}),
@@ -65,6 +68,7 @@ base_url = "http://127.0.0.1:{server.server_port}/v1"
 provider_retry_attempts = 1
 command_timeout_secs = {2 if case == 'timeout' else 10}
 access = "read-only"
+redact_values = {json.dumps([escaped_secret], ensure_ascii=False)}
 ''')
                 env = os.environ.copy()
                 env.update(TERM="xterm-256color", HELM_FIXTURE_KEY="offline-fixture-key",

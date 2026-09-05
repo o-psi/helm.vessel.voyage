@@ -1,4 +1,5 @@
 //! Explicit enrollment administration, separate from provider login and execution.
+mod connect;
 pub mod prompt;
 use super::client::{ClientError, EnrollmentClient, Inspection, Status, validate_origin};
 use clap::{Args, Subcommand};
@@ -34,6 +35,8 @@ pub enum AttachmentCommand {
     },
     /// Inspect local status without creating or changing enrollment.
     Status,
+    /// Maintain one foreground outbound presence connection; remote execution is unavailable.
+    Connect,
     /// Resume the original pending transaction (enrollment requires its invitation key).
     Resume {
         /// Use a pipe/file instead of the hidden prompt for a pending enrollment.
@@ -59,6 +62,10 @@ pub enum CliError {
     Cancelled,
     #[error(transparent)]
     Client(#[from] ClientError),
+    #[error(transparent)]
+    Transport(#[from] super::transport::TransportError),
+    #[error("attachment output unavailable")]
+    Output,
 }
 struct Secret(Vec<u8>);
 impl Drop for Secret {
@@ -135,6 +142,23 @@ pub async fn run_with_prompt(
     args: AttachmentArgs,
     control: prompt::PromptControl,
 ) -> Result<(), CliError> {
+    run_inner(args, control, tokio_util::sync::CancellationToken::new()).await
+}
+/// Foreground presence cancellation closes the outbound connection before return.
+pub async fn run_cancellable(
+    args: AttachmentArgs,
+    cancel: tokio_util::sync::CancellationToken,
+) -> Result<(), CliError> {
+    if !matches!(&args.command, AttachmentCommand::Connect) {
+        return Err(CliError::Arguments);
+    }
+    run_inner(args, prompt::PromptControl::default(), cancel).await
+}
+async fn run_inner(
+    args: AttachmentArgs,
+    control: prompt::PromptControl,
+    cancel: tokio_util::sync::CancellationToken,
+) -> Result<(), CliError> {
     let explicit_directory = args.directory.is_some();
     let directory = args
         .directory
@@ -194,6 +218,7 @@ pub async fn run_with_prompt(
         args.allow_insecure_loopback || detached,
     )?;
     match args.command {
+        AttachmentCommand::Connect => return connect::run(client, cancel).await,
         AttachmentCommand::Resume {
             invitation_key_stdin,
         } => {

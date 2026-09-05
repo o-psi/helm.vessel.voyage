@@ -7,7 +7,7 @@ reliable workflows that deliver tested value.
 
 - **Helm** is the Rust TUI and agent runtime for local work.
 - **Vessel** is the management plane for remote session management. It currently
-  provides health checks and an authenticated status UI.
+  provides health checks, an authenticated status UI and optional outbound Helm presence.
 - **voyage-protocol** holds shared management-plane and attachment protocol types.
 
 - **voyage-storage** supplies native private enrollment storage on Windows, shared
@@ -21,7 +21,8 @@ cargo run -p helm -- chat
 cargo run -p vessel -- --bind 127.0.0.1:9480
 ```
 
-Helm runs locally. Remote session management through Vessel is planned.
+Helm runs locally. [Authenticated attachment presence](docs/attachment-presence.md)
+connects enrolled Helm machines to Vessel. Remote session management remains planned.
 
 See [Helm's README](helm/README.md) for provider, policy, session, and CLI details.
 [Private managed sessions](docs/local-managed-sessions.md) support local CLI turns,

@@ -43,16 +43,23 @@ class Provider(BaseHTTPRequestHandler):
             assert self.path == expected, self.path
             users = [message.get('content', '') for message in body.get('messages', body.get('input', [])) if message.get('role') == 'user']
             is_child = bool(users) and 'managed-child-terminal' in str(users[-1])
+            selected = re.search(r'fixture prompt ([0-9a-f-]{36})', str(users[-1])) if users and not is_child else None
+            session_key = selected.group(1) if selected else None
             with case.lock:
+                first_root = not is_child and session_key not in case.admission_checked
+                if first_root:
+                    case.admission_checked.add(session_key)
                 bucket = 'child' if is_child else 'parent'
                 step = case.counts.get(bucket, 0)
                 case.counts[bucket] = step + 1
                 case.requests.append(body)
-            # Actual first dispatch must follow both durable admission and cleanup registration.
-            selected = re.search(r'fixture prompt ([0-9a-f-]{36})', str(users[-1])) if users and not is_child else None
-            query = 'SELECT r.active,o.run_id,o.confirmation FROM runs r LEFT JOIN local_cleanup_obligations o ON o.run_id=r.id WHERE r.active=1'
-            rows = case.sql(query + (' AND r.session_id=?' if selected else ''), (selected.group(1),) if selected else ())
-            assert len(rows) == 1 and rows[0][0] == 1 and rows[0][1] and rows[0][2] is None, rows
+            # The first root dispatch precedes all provider bytes and tool effects.
+            # Child/repeated dispatches can overlap parent checkpoint commits: raw
+            # SQLite reads there would introduce fixture-only write contention.
+            if first_root:
+                query = 'SELECT r.active,o.run_id,o.confirmation FROM runs r LEFT JOIN local_cleanup_obligations o ON o.run_id=r.id WHERE r.active=1'
+                rows = case.sql(query + (' AND r.session_id=?' if selected else ''), (session_key,) if selected else ())
+                assert len(rows) == 1 and rows[0][0] == 1 and rows[0][1] and rows[0][2] is None, rows
             if case.mode == 'partial_hold':
                 prefix = response(case.provider, 'managed-partial-before-cancel', step).replace(b'data: [DONE]\n\n', b'')
                 self.send_response(200)
@@ -133,6 +140,7 @@ class Case:
     def reset(self, mode='success'):
         self.mode, self.requests, self.failures = mode, [], []
         self.counts = {}
+        self.admission_checked = set()
         self.started, self.release = threading.Event(), threading.Event()
 
     def sql(self, sql, params=()):
@@ -387,25 +395,41 @@ def output_and_terminal_cleanup(root):
 
 def partial_cancellation(root):
     case = Case(root)
+    reader = None
     try:
         session = case.create()
         case.reset('partial_hold')
         command = case.command(session)
         process = case.spawn(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        events, read_errors = [], []
+        partial_saved = threading.Event()
+
+        def capture_output():
+            try:
+                for line in process.stdout:
+                    event = json.loads(line)
+                    events.append(event)
+                    if event.get('event') == 'provisional_text' and event.get('text') == 'managed-partial-before-cancel':
+                        partial_saved.set()
+            except (ValueError, OSError) as error:
+                read_errors.append(repr(error))
+
+        reader = threading.Thread(target=capture_output, daemon=True)
+        reader.start()
         assert case.started.wait(15)
-        deadline = time.monotonic() + 10
-        while time.monotonic() < deadline:
-            rows = case.sql('SELECT record FROM runs WHERE session_id=?', (session,))
-            if rows and json.loads(rows[0][0])['partial_text'] == 'managed-partial-before-cancel':
-                break
-            time.sleep(0.01)
-        else:
-            raise AssertionError('partial delta not durable before cancellation')
+        # Agent awaits the durable partial checkpoint before this event. Avoid
+        # racing that write with raw SQLite polling, then verify disk separately.
+        assert partial_saved.wait(10), ('partial delta not observed before cancellation', read_errors)
+        rows = case.sql('SELECT record FROM runs WHERE session_id=?', (session,))
+        assert len(rows) == 1 and json.loads(rows[0][0])['partial_text'] == 'managed-partial-before-cancel', rows
         run_id = json.loads(rows[0][0])['id']
         run([*case.args, 'cancel', session, '--run', run_id], case.env)
-        stdout, stderr = process.communicate(timeout=25)
+        process.wait(timeout=25)
+        reader.join(2)
+        assert not reader.is_alive() and not read_errors, read_errors
+        stderr = process.stderr.read()
         assert process.returncode != 0, stderr
-        final([json.loads(line) for line in stdout.splitlines()], 'cancelled')
+        final(events, 'cancelled')
         canonical = case.sql('SELECT state FROM sessions WHERE id=?', (session,))[0][0]
         assert 'managed-partial-before-cancel' not in canonical
         saved = json.loads(case.sql('SELECT record FROM runs WHERE id=?', (run_id,))[0][0])
@@ -418,7 +442,12 @@ def partial_cancellation(root):
         assert 'managed-partial-before-cancel' not in json.dumps(case.requests[0])
         assert json.loads(case.sql('SELECT record FROM runs WHERE id=?', (run_id,))[0][0])['partial_text'] == 'managed-partial-before-cancel'
     finally:
-        case.close()
+        try:
+            case.close()
+        finally:
+            if reader is not None:
+                reader.join(2)
+                assert not reader.is_alive(), 'partial output reader did not stop'
 
 
 def storage_failure(root):

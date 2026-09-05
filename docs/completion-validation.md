@@ -7,7 +7,9 @@ Tracking [#81](https://github.com/o-psi/voyage/issues/81),
 The [operator contract](completion-gate.md) defines scope, one-pass reconciliation,
 request costs, failure recovery and provisional output. This map identifies executable
 coverage; a test's presence is not a passing result. Delivery still requires the
-integrated release suite, actual platform CI and separately budgeted live evidence.
+integrated Linux release suite and separately budgeted live evidence. The operator
+removed required macOS/Windows runs for cost; Linux results do not establish
+unrun platform behavior.
 
 | Acceptance criterion | Executable evidence |
 | --- | --- |
@@ -75,8 +77,8 @@ interruption, transcript, runtime-release and completion assertions remain.
 The older root debug binary fails before its first response because it has not
 published the accepted session; it is not evidence of the integrated behavior.
 
-These are debug/offline Linux results. Release baseline, packaging, actual current
-macOS/Windows CI and live-provider evaluation remain required delivery evidence.
+These historical results are debug/offline Linux evidence. Later release and live
+results appear below; unrun platform behavior is not established by them.
 
 ## Integrated release verification (2026-09-05)
 
@@ -97,6 +99,59 @@ behavioral evaluations. Read-only archive/resource scenarios retain all original
 assertions and now prove denied accounting leaves 3/12 owned results unresolved,
 with durable incomplete outcomes unchanged by a separate successful lookup run.
 
-The current bounded live retry still returns HTTP401; no useful provider work is
-claimed. Current PR platform checks remain pending. The draft remains open for
-that evidence and the live/operator acceptance requirements.
+At that historical checkpoint, the bounded subscription retry returned HTTP401.
+Successful subscription authentication remains unverified; later local-provider
+evidence does not remove that separate hold.
+
+
+## Managed integration and bounded local verification (2026-09-05)
+
+Integration `3950fef` preserves PR112 ancestry and includes main `cfd5ace`. Linux
+formatting, strict workspace/all-target/all-feature Clippy, all 713 tests both
+normally and under actual two-CPU affinity, the locked release build, all 19
+integrated workflow system fixtures, 12 eval definitions, unique packaging and
+SHA256 checks pass. The managed fixture also passes 20 repeated child-cleanup
+cases. Independent review found no blocker in the cancellation watcher or fixture
+corrections. These results are Linux-only.
+
+A real external cancellation transaction exposed transient SQLite Busy reads in
+the cancellation watcher. It now retries only Busy observations within the
+existing five-second budget and stops between completed reads without abandoning
+in-flight work. Non-Busy errors and exhausted budgets remain unconfirmed cleanup.
+Separate fixture corrections synchronize partial-output inspection after the
+actual durable event and inspect admission/cleanup before the first root provider
+response for each session. Repeated child/parent HTTP handlers no longer inject
+raw database reads into concurrent checkpoint commits. A deterministic held-reader
+test proves a failed COMMIT rolls back every mutation and an explicit same-delta
+retry publishes one event. No production mutation retry was added. See
+[the integration results](https://github.com/o-psi/voyage/issues/83#issuecomment-5554021877).
+
+One bounded local `completion-evidence-verification` run used llama.cpp b10819 and
+Ministral 3 3B Q4_K_M, CPU-only with four threads, context 32768 and requested/server
+output limit 1024. The original prompt was retained with transparent guidance to
+read owned IDs and copy the current revision/fingerprint when accounting. Isolated
+HOME/XDG/config/workspace and a literal-loopback proxy excluded operator credentials
+and enforced at most 12 model requests and 300 seconds of execution.
+
+The run **did not pass**. It exited 1 after 178.36 seconds and ten HTTP200 responses.
+It read both seed files and wrote a 545-byte report identifying claimed 99 versus
+measured 42 with matching source hashes. The report additionally claims counting
+operations that were not independently performed. Six invalid completion reads
+were rejected; no account call was attempted. The todo remained
+pending with no structured evidence, despite evidence-like title/progress text.
+Context preflight rejected another dispatch at estimated 34959 tokens versus
+32768. The canonical session and sealed ledger honestly retain Interrupted,
+one unresolved obligation and zero accounted obligations; no final was accepted.
+
+The advertised completion schema requires only `action` and permits fields from
+all actions, while the strict decoder requires `kind`/`id` for `read` and rejects
+`reason`/`revision`. This contract gap corresponds to the observed invalid calls
+and needs a scoped follow-up; loosening evidence or accounting checks is not a
+solution. The local run reported 41678 input and 941 output tokens, exactly matching
+canonical usage; the largest observed response was 250 output tokens. Both owned
+Helm and model-server processes were reaped. Full prompt, raw requests/responses,
+artifacts, canonical state, usage and cleanup evidence are retained locally.
+
+This supplies useful local failure and recovery evidence, not successful semantic
+reconciliation, subscription authentication, cutover or full #83 acceptance.
+No additional live attempt is implied by these results.

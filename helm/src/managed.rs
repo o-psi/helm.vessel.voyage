@@ -464,6 +464,46 @@ impl EventSink for Progress {
     }
 }
 
+// Keep this observation bounded independently of the foreground execution.
+async fn poll_local_cancellation<F, Fut>(
+    mut read: F,
+    stopped: &tokio_util::sync::CancellationToken,
+) -> anyhow::Result<bool>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = anyhow::Result<bool>>,
+{
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if stopped.is_cancelled() {
+                return Ok(false);
+            }
+            match read().await {
+                Err(error)
+                    if error
+                        .downcast_ref::<rusqlite::Error>()
+                        .and_then(rusqlite::Error::sqlite_error_code)
+                        == Some(rusqlite::ErrorCode::DatabaseBusy) =>
+                {
+                    // Independent managed commands can briefly hold the journal.
+                    // Retry only this read, with the same run identity, after its
+                    // transaction has returned. Other errors remain fail-closed.
+                    // No blocking read is in flight here. A finished foreground
+                    // run can stop its watcher without manufacturing a timeout.
+                    tokio::select! {
+                        biased;
+                        _ = stopped.cancelled() => return Ok(false),
+                        _ = tokio::time::sleep(Duration::from_millis(5)) => {}
+                    }
+                }
+                result => return result,
+            }
+        }
+    })
+    .await
+    .context("durable cancellation polling deadline elapsed")?
+}
+
 async fn await_execution<T>(
     execution: impl std::future::Future<Output = T>,
     cancel: tokio_util::sync::CancellationToken,
@@ -599,17 +639,13 @@ async fn submit(
                     _=done.cancelled()=> return Ok::<_,anyhow::Error>(()),
                     _=tokio::time::sleep(Duration::from_millis(50))=>{}
                 }
-                match tokio::time::timeout(
-                    Duration::from_secs(5),
-                    owner.local_cancel_requested(run_id),
-                )
-                .await
+                match poll_local_cancellation(|| owner.local_cancel_requested(run_id), &done).await
                 {
-                    Ok(Ok(true)) => {
+                    Ok(true) => {
                         cancel.cancel();
                         return Ok(());
                     }
-                    Ok(Ok(false)) => {}
+                    Ok(false) => {}
                     _ => {
                         cancel.cancel();
                         bail!("durable cancellation polling failed");
@@ -871,3 +907,6 @@ mod tests {
         assert!(!progress.cancel.is_cancelled());
     }
 }
+
+#[cfg(test)]
+mod cancellation_watch_tests;

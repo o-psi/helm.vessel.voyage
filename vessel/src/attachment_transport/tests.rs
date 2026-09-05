@@ -140,10 +140,7 @@ impl Fixture {
             new_signature: None,
         }
     }
-    async fn socket(
-        &self,
-    ) -> tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>
-    {
+    fn request(&self) -> tokio_tungstenite::tungstenite::http::Request<()> {
         let mut request = format!("ws://{}/v2/attachment", self.address)
             .into_client_request()
             .unwrap();
@@ -158,7 +155,13 @@ impl Fixture {
             "sec-websocket-protocol",
             "voyage.attachment.v2".parse().unwrap(),
         );
-        connect_async(request).await.unwrap().0
+        request
+    }
+    async fn socket(
+        &self,
+    ) -> tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>
+    {
+        connect_async(self.request()).await.unwrap().0
     }
     async fn authenticate(
         &self,
@@ -271,7 +274,22 @@ async fn real_socket_proof_replay_replacement_queue_and_revocation() {
         .unwrap(),
         Frame::Lease { .. }
     ));
-    f.store.revoke(f.machine, 1, Uuid::new_v4(), now()).unwrap();
+    // The live connection independently checks enrollment through SQLite. A
+    // fail-fast Busy is not a rejected revocation; retry the same operation,
+    // yielding to that connection, while keeping every other error a failure.
+    let revocation = Uuid::new_v4();
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+    loop {
+        match f.store.revoke(f.machine, 1, revocation, now()) {
+            Ok(_) => break,
+            Err(crate::enrollment::EnrollmentError::Busy)
+                if tokio::time::Instant::now() < deadline =>
+            {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+            Err(error) => panic!("revocation must commit within its fixture deadline: {error}"),
+        }
+    }
     closed(&mut two).await;
     assert!(!f.api.is_current(f.machine, second).await);
 }
@@ -806,3 +824,87 @@ async fn functional_fixture_accepts_authentication_within_production_deadline() 
     let id = f.authenticate(&mut socket, proof).await;
     assert!(f.api.is_current(f.machine, id).await);
 }
+
+#[tokio::test]
+async fn current_connection_rejects_expired_lease_without_waiting_for_monitor() {
+    let f = Fixture::new().await;
+    let receipt = f
+        .api
+        .enrollment
+        .attachment_current(f.machine, 1)
+        .await
+        .unwrap();
+    let id = Uuid::new_v4();
+    let (send, _receiver) = mpsc::channel(1);
+    let heartbeat =
+        watch::channel(tokio::time::Instant::now() - f.api.limits.lease - Duration::from_secs(1)).0;
+    f.api.registry.lock().await.insert(
+        f.machine,
+        Connection {
+            id,
+            owner: receipt.owner_id,
+            epoch: 1,
+            features: Features::default(),
+            cancel: CancellationToken::new(),
+            send,
+            heartbeat,
+        },
+    );
+    // No monitor task exists for this synthetic connection. Current observation
+    // must enforce the lease itself, even when a monitor has not been scheduled.
+    assert!(!f.api.is_current(f.machine, id).await);
+}
+
+#[tokio::test]
+async fn shutdown_closes_authenticated_and_pending_sockets_and_future_admission() {
+    let mut f = Fixture::new().await;
+    let mut pending = f.socket().await;
+    let mut active = f.socket().await;
+    let proof = f.proof();
+    let id = f.authenticate(&mut active, proof).await;
+    let records = f.api.connections().await;
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].machine_id, f.machine);
+    assert_eq!(records[0].connection_id, id);
+    assert_eq!(records[0].epoch, 1);
+    f.api.shutdown().await;
+    assert!(!f.api.is_current(f.machine, id).await);
+    assert!(f.api.connections().await.is_empty());
+    closed(&mut pending).await;
+    closed(&mut active).await;
+    f.api.shutdown().await;
+    let error = connect_async(f.request()).await.unwrap_err();
+    assert!(
+        matches!(error, tokio_tungstenite::tungstenite::Error::Http(response) if response.status() == StatusCode::SERVICE_UNAVAILABLE)
+    );
+}
+
+#[tokio::test]
+async fn presence_rejects_application_frames_without_consumer_or_disclosure() {
+    let mut f = Fixture::new().await;
+    let presence = AttachmentApi::presence(f.api.enrollment.clone()).unwrap();
+    assert!(presence.observations.is_closed() && presence.supported.is_empty());
+    // Use the same closed-consumer path with the real fixture's shorter capacity.
+    f.rx.close();
+    let mut socket = f.socket().await;
+    let proof = f.proof();
+    let id = f.authenticate(&mut socket, proof).await;
+    socket
+        .send(ClientMessage::Text(
+            Frame::Result {
+                connection_id: id,
+                command_id: Uuid::new_v4(),
+                reply: voyage_protocol::stream::Reply::Accepted {},
+            }
+            .encode()
+            .unwrap()
+            .into(),
+        ))
+        .await
+        .unwrap();
+    closed(&mut socket).await;
+    assert!(f.api.connections().await.is_empty());
+    assert!(f.rx.recv().await.is_none());
+}
+
+mod presence_review;
