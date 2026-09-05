@@ -184,7 +184,8 @@ authenticate a connection, execute work or expose a raw snapshot.
 
 The [authenticated socket libraries](attachment-transport.md) add an outbound
 Helm connection and a separately constructed Vessel attachment router. Production
-routing and operator execution remain unwired pending authoritative local dispatch
+routing supports [heartbeat-only presence](attachment-presence.md). Operator
+execution and session disclosure remain unwired pending authoritative local dispatch
 and current sharing integration; transport observations never grant effect authority.
 
 The [enrollment lifecycle CLI](attachment-cli.md) exposes explicit enroll, status,
