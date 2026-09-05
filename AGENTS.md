@@ -4,6 +4,22 @@ These instructions apply throughout this repository. Follow them for every proje
 request, including features, fixes, documentation, investigations, and maintenance.
 They do not grant permissions beyond the active runtime policy or operator approval.
 
+## Product stage and delivery standard
+
+Voyage is developing its first version and has no product releases. Write
+documentation around current behavior, setup, and useful workflows. State planned
+capabilities clearly. Omit legacy, retirement, and migration narratives about
+unreleased implementations, and keep internal delivery commentary out of user guides.
+
+The goal is a release-quality product that adds actual, tested value. An MVP,
+prototype, scaffold, or vertical slice is not the completion standard. Work may
+proceed incrementally, but delivery must satisfy the agreed scope through complete
+user workflows, comprehensive tests, failure recovery, security, and usable
+documentation. Demonstrate useful outcomes with verification evidence; a successful
+build, happy-path demo, or closed issue alone does not prove readiness. Keep gaps
+and unverified acceptance criteria explicit, and do not silently defer required
+behavior to a later version to declare the first version complete.
+
 ## Mandatory issue-first workflow
 
 1. **Consult all GitHub issues, open and closed, before starting substantive work.**
@@ -148,7 +164,8 @@ Separate pre-existing failures from regressions with evidence.
 
 Run from the repository root with stable Rust, rustfmt, Clippy, and Python 3.
 These commands reflect the GitHub Linux quality workflow; recheck that workflow
-for changes. Build release binaries before the Python system tests:
+for changes. Build optimized binaries with Cargo's release profile before the
+Python system tests:
 
 ```sh
 cargo fmt --all -- --check
@@ -167,18 +184,18 @@ with an approved configured provider and budget. It can consume provider capacit
 and writes ignored evidence to `eval/evidence/latest.json`; review and redact any
 shared evidence. See `eval/README.md` and `docs/cutover.md` for manual drills.
 
-Packaging is also a Linux CI gate. After the release build, use a unique version
-label to avoid overwriting existing artifacts:
+Packaging is also a Linux CI gate. After the optimized build, use a unique
+version label to avoid overwriting existing artifacts:
 
 ```sh
 ./scripts/package-release UNIQUE_VERSION
 (cd dist && sha256sum -c *.sha256)
 ```
 
-CI also runs workspace tests and locked release builds on macOS and Windows.
-Do not claim cross-platform validation from a Linux-only run. Inspect portability
-checks on the PR; follow release workflows for additional architecture/archive
-checks. Preserve existing `dist/` artifacts. Keep relevant GitHub and Forgejo
+Routine CI runs on Linux only to limit development costs. macOS and Windows
+workspace tests and locked release builds are not run on pushes or pull requests.
+Do not claim cross-platform validation from a Linux-only run. Tag-triggered release
+workflows still build platform archives; packaging is not platform test coverage. Preserve existing `dist/` artifacts. Keep relevant GitHub and Forgejo
 workflow counterparts consistent when changing CI (they are not currently identical).
 
 For documentation-only changes, validate paths, links, command accuracy, and diffs;

@@ -15,7 +15,8 @@ The remote drill checklist must be updated for the new protocol when it ships.
 
 ## Entry gates
 
-- CI is green on Linux, macOS, and Windows for the exact release commit.
+- Linux CI is green for the exact release commit. For macOS or Windows adoption,
+  record separate platform test evidence; routine CI does not test those platforms.
 - The release archive checksum and `helm --version` match the proposed version.
 - `python3 eval/run.py live` passes every representative workload and its JSON
   evidence is attached to the release record.
