@@ -24,6 +24,8 @@ cargo run -p vessel -- --bind 127.0.0.1:9480
 Helm runs locally. Remote session management through Vessel is planned.
 
 See [Helm's README](helm/README.md) for provider, policy, session, and CLI details.
+[Private managed sessions](docs/local-managed-sessions.md) support local CLI turns,
+exact retries, cancellation, and explicit recovery without enabling remote sharing.
 Helm's native providers do not require Codex; see [provider architecture](docs/providers.md) for transport choices and subscription-versus-API
 billing boundaries.
 

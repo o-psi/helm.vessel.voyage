@@ -410,6 +410,20 @@ impl EventSink for Progress {
     }
 }
 
+async fn await_execution<T>(
+    execution: impl std::future::Future<Output = T>,
+    cancel: tokio_util::sync::CancellationToken,
+    interrupt: impl std::future::Future<Output = ()>,
+    grace: Duration,
+) -> Option<T> {
+    let mut execution = std::pin::pin!(execution);
+    tokio::select! { biased;
+        result=&mut execution=>Some(result),
+        _=interrupt=> { cancel.cancel(); tokio::time::timeout(grace,&mut execution).await.ok() },
+        _=cancel.cancelled()=>tokio::time::timeout(grace,&mut execution).await.ok(),
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn submit(
     directory: PathBuf,
@@ -547,15 +561,13 @@ async fn submit(
             }
         })
     };
-    let result = {
-        let mut execution = std::pin::pin!(run.execute(&resources.agent, cancel.clone(), None));
-        let result = tokio::select! { biased;
-            result=&mut execution=>Some(result),
-            _=attachment_interrupt()=> {cancel.cancel(); tokio::time::timeout(Duration::from_secs(15), &mut execution).await.ok()},
-        _=cancel.cancelled()=> tokio::time::timeout(Duration::from_secs(15), &mut execution).await.ok(),
-        };
-        result
-    };
+    let result = await_execution(
+        run.execute(&resources.agent, cancel.clone(), None),
+        cancel.clone(),
+        attachment_interrupt(),
+        Duration::from_secs(15),
+    )
+    .await;
     stop_watch.cancel();
     let watcher_ok = matches!(
         tokio::time::timeout(Duration::from_secs(6), watcher).await,
@@ -570,8 +582,18 @@ async fn submit(
         tokio::time::timeout(Duration::from_secs(15), resources.subagents.shutdown())
             .await
             .is_ok();
-    // The terminal helper is integrated in the next dependency commit.
-    let terminals_observed = terminal_handles.is_empty();
+    let terminal_reports = tokio::time::timeout(
+        Duration::from_secs(15),
+        futures_util::future::join_all(
+            terminal_handles
+                .iter()
+                .map(|terminals| terminals.shutdown(Duration::from_secs(10))),
+        ),
+    )
+    .await;
+    let terminals_observed = terminal_reports
+        .as_ref()
+        .is_ok_and(|reports| reports.iter().all(|report| report.observation_complete));
     let observed = children_observed && terminals_observed && result.is_some() && watcher_ok;
     drop(resources);
     if observed {
@@ -597,6 +619,68 @@ async fn submit(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn uncooperative_execution_timeout_preserves_durable_restart_blocker() {
+        use helm::attachment::{journal::TurnAdmission, runtime::Admission};
+        let temporary = tempfile::tempdir().unwrap();
+        let directory = temporary.path().join("journal");
+        let session = Session::new(temporary.path().to_owned(), "fixture".into());
+        let mut journal = Journal::open(directory.clone()).unwrap();
+        journal.create_session(&session).unwrap();
+        drop(journal);
+        let owner = ManagedSessionOwner::open(directory.clone(), session.id)
+            .await
+            .unwrap();
+        let actor = LocalActor {
+            installation_id: Uuid::new_v4(),
+            principal_id: Uuid::new_v4(),
+        };
+        let request = |revision| TurnAdmission {
+            command_id: Uuid::new_v4(),
+            machine_id: actor.installation_id,
+            principal_id: actor.principal_id,
+            session_id: session.id,
+            expected_revision: revision,
+            expires_at_ms: SystemClock.now_ms().unwrap() + 60000,
+            prompt: "no replay".into(),
+        };
+        let Admission::New(run) = owner.admit(request(0)).await.unwrap() else {
+            panic!("new")
+        };
+        run.register_local_cleanup().await.unwrap();
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let result = await_execution(
+            std::future::pending::<()>(),
+            cancel.clone(),
+            async {},
+            Duration::from_millis(10),
+        )
+        .await;
+        assert!(result.is_none() && cancel.is_cancelled());
+        let actual = run.record().await.unwrap();
+        assert_eq!(actual.state, RunState::Accepted);
+        assert_eq!(run_result(&actual, false)["event"], "run_unconfirmed");
+        drop(run);
+        drop(owner);
+        let recovered = ManagedSessionOwner::open(directory, session.id)
+            .await
+            .unwrap();
+        assert_eq!(
+            recovered
+                .recover_interrupted()
+                .await
+                .unwrap()
+                .unwrap()
+                .state,
+            RunState::Interrupted
+        );
+        let revision = recovered.snapshot().await.unwrap().revision;
+        let error = match recovered.admit(request(revision)).await {
+            Err(error) => error,
+            Ok(_) => panic!("unconfirmed cleanup admitted effects"),
+        };
+        assert!(error.to_string().contains("cleanup"), "{error}");
+    }
     #[test]
     fn active_durable_state_is_never_published_as_terminal() {
         for state in [RunState::Accepted, RunState::Running] {
