@@ -589,15 +589,7 @@ fn lock_directory(directory: &Path) -> Result<File> {
             .map_err(|_| ClientError::Storage)?
             .join(directory)
     };
-    for ancestor in absolute.ancestors().skip(1) {
-        if fs::symlink_metadata(ancestor)
-            .map_err(|_| ClientError::Storage)?
-            .file_type()
-            .is_symlink()
-        {
-            return Err(ClientError::Storage);
-        }
-    }
+    crate::session::reject_symlinks(&absolute).map_err(|_| ClientError::Storage)?;
     let mut builder = fs::DirBuilder::new();
     builder.mode(0o700);
     match builder.create(directory) {

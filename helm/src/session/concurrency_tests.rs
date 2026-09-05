@@ -241,3 +241,22 @@ async fn save_replace_and_delete_work_on_supported_platforms() {
             .is_file()
     );
 }
+
+#[cfg(target_os = "macos")]
+#[tokio::test]
+async fn root_owned_macos_temp_alias_supports_session_lifecycle_without_allowing_user_links() {
+    use std::os::unix::fs::symlink;
+    for temp_root in ["/var/tmp", "/tmp"] {
+        let dir = tempfile::tempdir_in(temp_root).unwrap();
+        let store = SessionStore::new(dir.path().join("sessions"));
+        let mut session = Session::new(dir.path().into(), "test".into());
+        store.save(&mut session).await.unwrap();
+        store.save(&mut session).await.unwrap();
+        assert_eq!(store.load(session.id).await.unwrap().revision, 2);
+        let alias = dir.path().join("alias");
+        symlink(dir.path().join("sessions"), &alias).unwrap();
+        assert!(SessionStore::new(alias).load(session.id).await.is_err());
+        store.delete(session.id).await.unwrap();
+        assert!(store.load(session.id).await.is_err());
+    }
+}

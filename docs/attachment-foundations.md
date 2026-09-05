@@ -93,3 +93,17 @@ private-path/symlink safety. These tests use temporary stores, not operator data
 roundtrips, deadline/identity/revision/Unicode boundaries, duplicate/nested/unknown
 fields, unsupported versions, deterministic reconnect identity and JSON-escape
 expansion. No live network or provider is contacted by these tests.
+
+### Platform storage paths
+
+Session and enrollment storage reject user-created symlinks in the directory,
+ancestors, data files and lock files. On macOS, the OS-managed `/var`, `/tmp` and
+`/etc` aliases are accepted only when root-owned, pointing to the expected
+`/private` counterpart, under a root directory that is root-owned and not writable
+by other users. This permits normal macOS temporary and data paths without
+accepting arbitrary canonicalizable storage redirects.
+
+Session replacement syncs file contents on all platforms and directory entries on
+Unix. Windows directory-entry power-loss durability remains unproven; portable
+save/load/replace/delete tests do not establish that guarantee. Enrollment still
+fails closed on non-Unix platforms pending native ACL validation.

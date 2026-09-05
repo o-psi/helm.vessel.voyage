@@ -434,3 +434,32 @@ async fn revoke_persists_tombstone_and_retains_user_data() {
     );
     server.join().unwrap();
 }
+
+#[cfg(target_os = "macos")]
+#[test]
+fn root_owned_macos_temp_alias_allows_enrollment_but_not_user_directory_aliases() {
+    for temp_root in ["/var/tmp", "/tmp"] {
+        let root = tempfile::tempdir_in(temp_root).unwrap();
+        let directory = root.path().join("client");
+        let client = EnrollmentClient::open(&directory, "https://example.com", false).unwrap();
+        drop(client);
+        EnrollmentClient::open(&directory, "https://example.com", false).unwrap();
+        let alias = root.path().join("alias");
+        std::os::unix::fs::symlink(&directory, &alias).unwrap();
+        assert!(EnrollmentClient::open(&alias, "https://example.com", false).is_err());
+    }
+}
+
+#[test]
+fn enrollment_rejects_user_symlink_ancestors_and_directory_aliases() {
+    let root = directory();
+    let actual = root.path().join("actual");
+    fs::create_dir(&actual).unwrap();
+    let alias = root.path().join("alias");
+    std::os::unix::fs::symlink(&actual, &alias).unwrap();
+    assert!(
+        EnrollmentClient::open(&alias.join("client"), "https://vessel.example", false).is_err()
+    );
+    assert!(!actual.join("client").exists());
+    assert!(EnrollmentClient::open(&alias, "https://vessel.example", false).is_err());
+}
