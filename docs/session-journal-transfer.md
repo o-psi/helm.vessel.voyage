@@ -65,16 +65,17 @@ hostile code running as the same OS user is outside this boundary.
 
 ## Explicit journal schema upgrade
 
-New journals use schema 3. Existing schema 2 journals open and retain their supported
-behavior; `open` never upgrades them. Transfer requires schema 3 before touching the
-source marker. `Journal::upgrade_quiescent` is an explicit operation: stop all legacy
+New journals use schema 4, adding [durable steering receipts](durable-steering.md)
+to schema 3 provenance. Existing schema 2/3 journals open and retain their supported
+behavior; `open` never upgrades them. Transfer requires the current schema before
+touching the source marker. `Journal::upgrade_quiescent` is an explicit operation: stop all legacy
 journal processes first, finish or recover active runs, then upgrade. It holds a
 SQLite immediate transaction and every existing session's execution sidecar while
-adding provenance and changing the schema version. The transaction excludes new
+adding missing provenance/steering tables and changing the schema version. The transaction excludes new
 sessions and admissions; sidecars exclude effects that outlive a terminal row.
 Canonical snapshots, runs, replay and deduplication records remain unchanged.
-Failures roll back to schema 2. Current handles check schema under each write
-transaction and reject stale handles after upgrade. Older binaries reject schema 3
+Failures preserve the original schema. Current handles check schema under each write
+transaction and reject stale handles after upgrade. Older binaries reject an unsupported newer schema
 when reopening, but an already-open old binary cannot be made to adopt new checks;
 explicit process quiescence is required, not inferred from PID files.
 
