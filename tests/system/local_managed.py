@@ -127,6 +127,7 @@ class Case:
         self.config.write_text(f'provider="{provider}"\nmodel="managed-fixture"\nbase_url="http://127.0.0.1:{self.server.server_port}/v1"\nprovider_retry_attempts=1\n')
         self.args = ['--config', str(self.config), '--workspace', str(self.workspace), '--access', 'unrestricted', 'managed', '--directory', str(self.storage), '--json']
         self.lock = threading.Lock()
+        self.processes = []
         self.reset()
 
     def reset(self, mode='success'):
@@ -155,8 +156,24 @@ class Case:
         return [*self.args, 'submit', session, '--expected-revision', str(self.revision(session) if revision is None else revision),
                 '--command-id', command or str(uuid.uuid4()), '--expires-at-ms', str(expiry or int(time.time() * 1000) + 120000), prompt or f'fixture prompt {session}']
 
+    def spawn(self, command, **kwargs):
+        process = subprocess.Popen([str(HELM), *command], env=self.env, **kwargs)
+        self.processes.append(process)
+        return process
+
     def close(self):
         self.release.set()
+        for process in self.processes:
+            if process.poll() is None:
+                process.send_signal(signal.SIGINT)
+                try:
+                    process.wait(timeout=20)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait(timeout=5)
+            for stream in (process.stdout, process.stderr):
+                if stream is not None:
+                    stream.close()
         self.server.shutdown()
         self.server.server_close()
         self.thread.join(5)
@@ -221,7 +238,7 @@ def cancellation(root):
             session = case.create()
             case.reset('hold')
             command = case.command(session)
-            process = subprocess.Popen([str(HELM), *command], env=case.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            process = case.spawn(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             assert case.started.wait(15), 'provider not reached'
             entry = next(s for s in case.listing()['sessions'] if s['id'] == session)
             run_id = entry['active_run']['id']
@@ -337,7 +354,7 @@ def output_and_terminal_cleanup(root):
     try:
         session = case.create()
         # Broken receipt output fails before dispatch and clears only the unused obligation.
-        process = subprocess.Popen([str(HELM), *case.command(session)], env=case.env,
+        process = case.spawn(case.command(session),
                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         process.stdout.close()
         process.wait(timeout=20)
@@ -346,7 +363,7 @@ def output_and_terminal_cleanup(root):
         assert case.sql('SELECT confirmation FROM local_cleanup_obligations') == [('observed',)]
         # A full output pipe cannot hang the async worker or indefinitely retain the owner.
         case.reset('flood')
-        process = subprocess.Popen([str(HELM), *case.command(session)], env=case.env,
+        process = case.spawn(case.command(session),
                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, pipesize=4096)
         process.wait(timeout=25)  # Deliberately do not drain stdout until the process exits.
         stdout, stderr = process.communicate(timeout=2)
@@ -374,7 +391,7 @@ def partial_cancellation(root):
         session = case.create()
         case.reset('partial_hold')
         command = case.command(session)
-        process = subprocess.Popen([str(HELM), *command], env=case.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        process = case.spawn(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         assert case.started.wait(15)
         deadline = time.monotonic() + 10
         while time.monotonic() < deadline:
@@ -409,7 +426,7 @@ def storage_failure(root):
     try:
         session = case.create()
         case.reset('hold')
-        process = subprocess.Popen([str(HELM), *case.command(session)], env=case.env,
+        process = case.spawn(case.command(session),
                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         assert case.started.wait(15)
         run_id = next(row['active_run']['id'] for row in case.listing()['sessions'] if row['id'] == session)
@@ -448,7 +465,7 @@ def independent_sessions(root):
         other_args[other_args.index(str(case.workspace))] = str(other_workspace)
         run([*other_args, 'create', '--id', second], case.env)
         case.reset('hold')
-        process = subprocess.Popen([str(HELM), *case.command(first)], env=case.env,
+        process = case.spawn(case.command(first),
                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         assert case.started.wait(15)
         # An idle provider in one session cannot monopolize another session's fence.
@@ -478,7 +495,7 @@ def child_cleanup(root):
         session = case.create()
         case.config.write_text(case.config.read_text() + 'subagent_max_concurrency=1\n')
         case.reset('child_hold')
-        process = subprocess.Popen([str(HELM), *case.command(session)], env=case.env,
+        process = case.spawn(case.command(session),
                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         assert case.started.wait(15)
         deadline = time.monotonic() + 15
