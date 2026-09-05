@@ -1170,7 +1170,13 @@ mod tests {
         let unrelated = fixture.run().await;
         let runtime = SubagentRuntime::new(
             Arc::new(OwnedExecutor),
-            RuntimeLimits::default(),
+            // This ownership fixture deliberately holds an ancestor active while
+            // independently driving its child. Do not inherit the CPU-based
+            // production default, which is one slot on two-core CI runners.
+            RuntimeLimits {
+                max_concurrency: 2,
+                ..RuntimeLimits::default()
+            },
             Some(fixture.agents.clone()),
         )
         .unwrap();
@@ -1187,7 +1193,12 @@ mod tests {
         let parent = runtime.spawn(child_request).await.unwrap();
         let child = parent;
         assert_eq!(
-            runtime.wait(child).await.unwrap().unwrap().summary,
+            tokio::time::timeout(std::time::Duration::from_secs(5), runtime.wait(child))
+                .await
+                .expect("owned child did not finish")
+                .unwrap()
+                .unwrap()
+                .summary,
             run.run_id().to_string()
         );
         let followup = runtime
@@ -1195,7 +1206,12 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            runtime.wait(followup).await.unwrap().unwrap().summary,
+            tokio::time::timeout(std::time::Duration::from_secs(5), runtime.wait(followup))
+                .await
+                .expect("followup did not finish")
+                .unwrap()
+                .unwrap()
+                .summary,
             run.run_id().to_string()
         );
         assert_eq!(fixture.snapshot(&run).await.total, 3);
@@ -1220,7 +1236,12 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            runtime.wait(adopted).await.unwrap().unwrap().summary,
+            tokio::time::timeout(std::time::Duration::from_secs(5), runtime.wait(adopted))
+                .await
+                .expect("adopted followup did not finish")
+                .unwrap()
+                .unwrap()
+                .summary,
             unrelated.run_id().to_string()
         );
         assert_eq!(fixture.snapshot(&unrelated).await.total, 3);
@@ -1228,7 +1249,11 @@ mod tests {
             .send_message(ancestor, "finish fixture")
             .await
             .unwrap();
-        runtime.wait(ancestor).await.unwrap().unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(5), runtime.wait(ancestor))
+            .await
+            .expect("ancestor did not finish")
+            .unwrap()
+            .unwrap();
     }
     #[tokio::test]
     async fn coordinator_excludes_a_fresh_process() {

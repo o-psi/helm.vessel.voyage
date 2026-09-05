@@ -47,6 +47,9 @@ struct Fixture {
 }
 impl Fixture {
     fn new() -> Self {
+        Self::with_limits(RuntimeLimits::default())
+    }
+    fn with_limits(limits: RuntimeLimits) -> Self {
         let directory = tempfile::tempdir().unwrap();
         let coordinator =
             Coordinator::open(directory.path().join("completion"), directory.path()).unwrap();
@@ -60,12 +63,7 @@ impl Fixture {
         let agents = AgentTreeStore::new(directory.path().join("agents/tree.json"))
             .with_coordinator(coordinator.clone());
         let runtime = Arc::new(
-            SubagentRuntime::new(
-                Arc::new(Executor),
-                RuntimeLimits::default(),
-                Some(agents.clone()),
-            )
-            .unwrap(),
+            SubagentRuntime::new(Arc::new(Executor), limits, Some(agents.clone())).unwrap(),
         );
         Self {
             directory,
@@ -1207,7 +1205,12 @@ async fn owned_shutdown_failed_persistence_is_inconclusive() {
 
 #[tokio::test]
 async fn owned_shutdown_does_not_cancel_a_new_runs_adopted_followup() {
-    let fixture = Fixture::new();
+    // Keep an ancestor running while a separate child finishes. This fixture
+    // requires two slots independent of the host's CPU-based production default.
+    let fixture = Fixture::with_limits(RuntimeLimits {
+        max_concurrency: 2,
+        ..RuntimeLimits::default()
+    });
     let original = fixture.scope().await;
     let adopter = fixture.scope().await;
     let ancestor = fixture
@@ -1224,7 +1227,11 @@ async fn owned_shutdown_does_not_cancel_a_new_runs_adopted_followup() {
         .send_message(parent, "finish parent")
         .await
         .unwrap();
-    fixture.runtime.wait(parent).await.unwrap().unwrap();
+    tokio::time::timeout(Duration::from_secs(5), fixture.runtime.wait(parent))
+        .await
+        .expect("adoptable parent did not finish")
+        .unwrap()
+        .unwrap();
     adopter
         .adopt_existing(
             &fixture.todos,
