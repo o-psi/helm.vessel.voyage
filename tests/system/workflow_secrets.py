@@ -151,7 +151,9 @@ def cli_cases(root, port):
     if preview['requires_confirmation']:
         flags += ['--policy-confirm', preview['transition_digest']]
     Provider.before_tool = lambda: invoke('policy', 'delete', 'private-fresh', '--expected-revision', '1')
-    invoke(*flags, 'workflow', '--user-directory', str(workflows), 'run', 'review-change', *source, values={'FIXTURE_PRIVATE_SOURCE': values[0]}, ok=False)
+    # Tool denial is a structured result; a later model reply can finish the run.
+    # Provider assertions require the denial, and the no-effect assertion is unchanged.
+    invoke(*flags, 'workflow', '--user-directory', str(workflows), 'run', 'review-change', *source, values={'FIXTURE_PRIVATE_SOURCE': values[0]})
     assert not (root / 'value-digest').exists()
     Provider.denied = False
     # Config display and exports are ordinary public artifacts, never secret containers.
