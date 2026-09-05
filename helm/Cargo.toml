@@ -10,6 +10,7 @@ name = "helm"
 path = "src/main.rs"
 
 [dependencies]
+voyage-protocol.workspace = true
 rusqlite = { version = "0.37", features = ["bundled"] }
 anyhow = "1.0"
 async-trait = "0.1"

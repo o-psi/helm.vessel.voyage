@@ -515,16 +515,34 @@ async fn checkpointed_run_uses_pinned_model_instead_of_mutable_next_turn_model()
 
 #[tokio::test]
 async fn failed_steering_checkpoint_never_announces_durable_application() {
-    let sink=Arc::new(Observed::default());
-    let (dir,mut owner,agent,requests,effects,_)=setup("success",sink.clone()).await;
-    let (sender,receiver)=crate::agent::steering_channel(2);
+    let sink = Arc::new(Observed::default());
+    let (dir, mut owner, agent, requests, effects, _) = setup("success", sink.clone()).await;
+    let (sender, receiver) = crate::agent::steering_channel(2);
     sender.try_send("steering-sentinel".into()).unwrap();
     rusqlite::Connection::open(dir.path().join("attachment/journal.sqlite3")).unwrap()
         .execute_batch("CREATE TRIGGER fail_steering BEFORE UPDATE ON sessions WHEN NEW.state LIKE '%steering-sentinel%' BEGIN SELECT RAISE(ABORT,'injected steering failure'); END;").unwrap();
-    assert!(matches!(owner.execute(&agent,CancellationToken::new(),Some(receiver)).await,Err(AgentError::Checkpoint(_))));
-    assert_eq!(requests.load(Ordering::SeqCst),0);assert_eq!(effects.load(Ordering::SeqCst),0);
-    assert!(!sink.0.lock().unwrap().iter().any(|event|matches!(event,AgentEvent::SteeringApplied)));
-    let record=owner.record().await.unwrap();assert_eq!(record.state,RunState::Failed);
-    let saved=Journal::open(dir.path().join("attachment")).unwrap().load_session(record.session_id).unwrap();
-    assert_eq!(saved.session.messages.len(),1);assert_eq!(saved.session.messages[0].content,"accepted prompt");
+    assert!(matches!(
+        owner
+            .execute(&agent, CancellationToken::new(), Some(receiver))
+            .await,
+        Err(AgentError::Checkpoint(_))
+    ));
+    assert_eq!(requests.load(Ordering::SeqCst), 0);
+    assert_eq!(effects.load(Ordering::SeqCst), 0);
+    assert!(
+        !sink
+            .0
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|event| matches!(event, AgentEvent::SteeringApplied))
+    );
+    let record = owner.record().await.unwrap();
+    assert_eq!(record.state, RunState::Failed);
+    let saved = Journal::open(dir.path().join("attachment"))
+        .unwrap()
+        .load_session(record.session_id)
+        .unwrap();
+    assert_eq!(saved.session.messages.len(), 1);
+    assert_eq!(saved.session.messages[0].content, "accepted prompt");
 }

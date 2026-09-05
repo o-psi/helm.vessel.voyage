@@ -191,3 +191,53 @@ async fn serialization_limit_failure_preserves_disk_and_caller() {
     assert_eq!(std::fs::read(store.path(session.id)).unwrap(), disk);
     assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 2);
 }
+
+#[tokio::test]
+async fn foreign_path_resume_is_rejected_before_execution_without_importing() {
+    let source_dir = tempfile::tempdir().unwrap();
+    let source = SessionStore::new(source_dir.path().into());
+    let mut session = Session::new(source_dir.path().into(), "test".into());
+    source.save(&mut session).await.unwrap();
+    let path = source.path(session.id);
+    let before = std::fs::read(&path).unwrap();
+    let target_dir = tempfile::tempdir().unwrap();
+    // A missing destination directory must also reject the foreign path without
+    // implicitly creating a store or copying a session.
+    for target in [
+        target_dir.path().to_path_buf(),
+        target_dir.path().join("missing"),
+    ] {
+        let target = SessionStore::new(target.clone());
+        let error = target
+            .load_reference(path.to_str().unwrap())
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("another store"), "{error:#}");
+    }
+    assert_eq!(std::fs::read_dir(target_dir.path()).unwrap().count(), 0);
+    assert_eq!(std::fs::read(&path).unwrap(), before);
+    let mut resumed = source.load_reference(path.to_str().unwrap()).await.unwrap();
+    source.save(&mut resumed).await.unwrap();
+    assert_eq!(resumed.revision, session.revision + 1);
+}
+
+#[tokio::test]
+async fn save_replace_and_delete_work_on_supported_platforms() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = SessionStore::new(dir.path().join("sessions"));
+    let mut session = Session::new(dir.path().into(), "first".into());
+    store.save(&mut session).await.unwrap();
+    session.model = "replacement".into();
+    store.save(&mut session).await.unwrap();
+    let restored = store.load(session.id).await.unwrap();
+    assert_eq!(restored.model, "replacement");
+    assert_eq!(restored.revision, 2);
+    store.delete(session.id).await.unwrap();
+    assert!(store.load(session.id).await.is_err());
+    assert!(
+        store
+            .directory
+            .join(format!(".{}.lock", session.id))
+            .is_file()
+    );
+}

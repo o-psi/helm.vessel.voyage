@@ -7,3 +7,5 @@ pub mod journal;
 pub mod runtime;
 
 pub mod sharing;
+
+pub mod client;

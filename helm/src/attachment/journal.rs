@@ -341,7 +341,10 @@ impl Journal {
         )?;
         ensure!(active == 0, "session has an unresolved active run");
         let mut current = read_session(&tx, request.session_id)?;
-        ensure!(!has_pending_tools(&current.session.messages), "session has unresolved tool effects; explicit reconciliation is required before another turn");
+        ensure!(
+            !has_pending_tools(&current.session.messages),
+            "session has unresolved tool effects; explicit reconciliation is required before another turn"
+        );
         ensure!(
             current.revision == request.expected_revision,
             "stale session revision"
@@ -564,7 +567,10 @@ impl Journal {
             "completed run requires a final checkpoint"
         );
         let mut current = read_session(&tx, run.session_id)?;
-        ensure!(state != RunState::Completed || !has_pending_tools(&current.session.messages), "unresolved tool effects cannot be completed");
+        ensure!(
+            state != RunState::Completed || !has_pending_tools(&current.session.messages),
+            "unresolved tool effects cannot be completed"
+        );
         ensure!(
             !(run.final_checkpointed && final_text.is_some()),
             "final answer already checkpointed"
@@ -686,9 +692,13 @@ fn has_pending_tools(messages: &[Message]) -> bool {
     for message in messages {
         if message.role == Role::Assistant {
             for call in &message.tool_calls {
-                if call.id.is_empty() || !pending.insert(call.id.as_str()) { return true; }
+                if call.id.is_empty() || !pending.insert(call.id.as_str()) {
+                    return true;
+                }
             }
-        } else if message.role == Role::Tool && let Some(id) = &message.tool_call_id {
+        } else if message.role == Role::Tool
+            && let Some(id) = &message.tool_call_id
+        {
             pending.remove(id.as_str());
         }
     }

@@ -699,20 +699,53 @@ fn old_journal_schema_is_rejected_without_migrating_or_erasing_data() {
 
 #[test]
 fn uncertain_tool_intent_cannot_be_completed_or_dispatched_on_a_new_turn() {
-    let (_dir,mut journal,session,mut request)=setup();
-    let guard=journal.acquire_execution(session.id).unwrap();
-    let run=journal.admit_turn(&guard,&request,1).unwrap().run;
-    journal.mark_running(&guard,run.id).unwrap();
-    let mut history=journal.load_session(session.id).unwrap().session.messages;
-    let mut intent=Message::new(Role::Assistant,"tool intent");
-    intent.tool_calls.push(crate::model::ToolCall{id:"uncertain-call".into(),name:"shell".into(),arguments:serde_json::json!({"command":"synthetic effect"})});
+    let (_dir, mut journal, session, mut request) = setup();
+    let guard = journal.acquire_execution(session.id).unwrap();
+    let run = journal.admit_turn(&guard, &request, 1).unwrap().run;
+    journal.mark_running(&guard, run.id).unwrap();
+    let mut history = journal.load_session(session.id).unwrap().session.messages;
+    let mut intent = Message::new(Role::Assistant, "tool intent");
+    intent.tool_calls.push(crate::model::ToolCall {
+        id: "uncertain-call".into(),
+        name: "shell".into(),
+        arguments: serde_json::json!({"command":"synthetic effect"}),
+    });
     history.push(intent);
-    journal.checkpoint_canonical(&guard,run.id,&history,&crate::model::Usage::default()).unwrap();
-    assert!(journal.finish(&guard,run.id,RunState::Completed,None,Some("false success")).is_err());
-    journal.finish(&guard,run.id,RunState::Interrupted,Some("owner exited"),None).unwrap();
-    assert!(journal.admit_turn(&guard,&request,1).unwrap().duplicate);
-    request.command_id=Uuid::new_v4();request.expected_revision=journal.load_session(session.id).unwrap().revision;
-    assert!(journal.admit_turn(&guard,&request,1).is_err());
-    assert_eq!(journal.load_session(session.id).unwrap().session.messages.len(),history.len());
+    journal
+        .checkpoint_canonical(&guard, run.id, &history, &crate::model::Usage::default())
+        .unwrap();
+    assert!(
+        journal
+            .finish(
+                &guard,
+                run.id,
+                RunState::Completed,
+                None,
+                Some("false success")
+            )
+            .is_err()
+    );
+    journal
+        .finish(
+            &guard,
+            run.id,
+            RunState::Interrupted,
+            Some("owner exited"),
+            None,
+        )
+        .unwrap();
+    assert!(journal.admit_turn(&guard, &request, 1).unwrap().duplicate);
+    request.command_id = Uuid::new_v4();
+    request.expected_revision = journal.load_session(session.id).unwrap().revision;
+    assert!(journal.admit_turn(&guard, &request, 1).is_err());
+    assert_eq!(
+        journal
+            .load_session(session.id)
+            .unwrap()
+            .session
+            .messages
+            .len(),
+        history.len()
+    );
     assert!(journal.lookup_command(&request).unwrap().is_none());
 }

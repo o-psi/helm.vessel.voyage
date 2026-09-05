@@ -237,6 +237,7 @@ impl SessionStore {
         // Validate again before replacement; never follow a destination symlink.
         reject_symlinks(&destination)?;
         // Retain a private rollback image until the directory entry is durable.
+        #[cfg(unix)]
         let mut rollback = match open_regular(&destination, false) {
             Ok(mut previous) => {
                 let mut backup = tempfile::NamedTempFile::new_in(&lease.directory)?;
@@ -247,10 +248,15 @@ impl SessionStore {
             Err(error) if is_not_found(&error) => None,
             Err(error) => return Err(error),
         };
+        // Unix supports syncing directory entries. Windows cannot open a
+        // directory with File::open; the file itself is synced before replacement.
+        // Non-Unix platforms do not promise directory-entry crash durability.
+        #[cfg(unix)]
         let directory = std::fs::File::open(&lease.directory)?;
         temporary
             .persist(&destination)
             .map_err(|error| error.error)?;
+        #[cfg(unix)]
         if let Err(error) = directory.sync_all() {
             if let Some(backup) = rollback.take() {
                 backup
@@ -283,6 +289,17 @@ impl SessionStore {
     pub async fn load_reference(&self, reference: &str) -> Result<Session> {
         let direct = Path::new(reference);
         if std::fs::symlink_metadata(direct).is_ok() {
+            // Reject foreign snapshots before the caller can execute tools. They
+            // cannot be saved through this store's revision/ownership boundary.
+            // Validate the path before canonicalizing so symlinks stay forbidden.
+            reject_symlinks(direct)?;
+            reject_symlinks(&self.directory)?;
+            let source = std::fs::canonicalize(direct)?;
+            let directory = std::fs::canonicalize(&self.directory).ok();
+            anyhow::ensure!(
+                directory.as_deref() == source.parent(),
+                "session path belongs to another store; resume it using its original session store"
+            );
             return load_path(direct).await;
         }
         if let Ok(id) = Uuid::parse_str(reference) {
@@ -331,6 +348,7 @@ impl SessionStore {
             Err(error) if is_not_found(&error) => return Ok(()),
             Err(error) => return Err(error),
         }
+        #[cfg(unix)]
         if let Err(error) = std::fs::File::open(&lease.directory).and_then(|dir| dir.sync_all()) {
             tracing::warn!(%error, "session deleted but directory sync failed");
         }
