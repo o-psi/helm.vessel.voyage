@@ -649,3 +649,59 @@ async fn unsupported_source_fields_and_system_guidance_fail_before_transition() 
         assert!(!fixture.journal.exists());
     }
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn database_failure_after_marker_is_pending_and_retries_atomically() {
+    let fixture = Fixture::new().await;
+    let _journal = Journal::open(fixture.journal.clone()).unwrap();
+    let db = rusqlite::Connection::open(fixture.journal.join("journal.sqlite3")).unwrap();
+    db.execute_batch("CREATE TRIGGER fail_transfer BEFORE INSERT ON imports BEGIN SELECT RAISE(ABORT, 'injected provenance failure'); END;").unwrap();
+    assert!(fixture.transfer().await.is_err());
+    assert!(
+        fixture
+            .store
+            .load(fixture.request.session_id)
+            .await
+            .is_err()
+    );
+    assert!(_journal.load_session(fixture.request.session_id).is_err());
+    assert_eq!(
+        db.query_row("SELECT count(*) FROM imports", [], |r| r.get::<_, i64>(0))
+            .unwrap(),
+        0
+    );
+    db.execute_batch("DROP TRIGGER fail_transfer").unwrap();
+    assert!(!fixture.transfer().await.unwrap().duplicate);
+    assert!(_journal.load_session(fixture.request.session_id).is_ok());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn legacy_journal_requires_explicit_upgrade_before_source_transition() {
+    let fixture = Fixture::new().await;
+    drop(Journal::open(fixture.journal.clone()).unwrap());
+    let db = rusqlite::Connection::open(fixture.journal.join("journal.sqlite3")).unwrap();
+    db.execute_batch("DROP TABLE imports; UPDATE attachment_schema SET version=2 WHERE id=1;")
+        .unwrap();
+    assert!(
+        fixture
+            .transfer()
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("explicit quiescent")
+    );
+    assert_eq!(std::fs::read(&fixture.source).unwrap(), fixture.original);
+    assert_eq!(
+        db.query_row("SELECT version FROM attachment_schema", [], |r| r
+            .get::<_, i64>(0))
+            .unwrap(),
+        2
+    );
+    Journal::open(fixture.journal.clone())
+        .unwrap()
+        .upgrade_quiescent()
+        .unwrap();
+    fixture.transfer().await.unwrap();
+}
