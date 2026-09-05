@@ -27,6 +27,8 @@ its identity from being recycled. Observation succeeds only after no live member
 of the owned session remains and the direct child has been reaped. Pipe handling
 runs in the owning worker, without detached reader tasks. The worker's cleanup
 attempt is bounded to five seconds; the caller can choose a shorter wait.
+An unrepresentable shutdown deadline is treated as a zero wait budget. An
+unrepresentable execution timeout is rejected before creating a child.
 
 `ShellShutdown.observation_complete` is false when any job remains unconfirmed;
 `remaining` contains opaque job IDs, not commands or captured text. A failed
