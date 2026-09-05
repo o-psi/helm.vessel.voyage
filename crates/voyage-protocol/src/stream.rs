@@ -6,6 +6,7 @@
 //! check current epochs/sharing, and validate deadlines before new admission.
 //! Expired commands may only retrieve existing authorized deduplication evidence.
 //! Canonical Helm sessions and provider continuation cannot be represented here.
+use crate::events::{EventCursor, Features, MAX_REPLAY_EVENTS, SequencedEvent, validate_replay};
 use crate::{
     attachment::{Command, MAX_FRAME_BYTES, MAX_PROMPT_BYTES, SharingMode, VERSION, label},
     enrollment::{
@@ -105,6 +106,8 @@ pub enum Frame {
     Authenticate {
         version: u16,
         proof: SignedChallenge,
+        #[serde(default, skip_serializing_if = "Features::is_empty")]
+        features: Features,
     },
     Welcome {
         version: u16,
@@ -113,6 +116,35 @@ pub enum Frame {
         owner_id: Uuid,
         epoch: u64,
         lease_ms: u32,
+        #[serde(default, skip_serializing_if = "Features::is_empty")]
+        features: Features,
+    },
+    Event {
+        connection_id: Uuid,
+        session_id: Uuid,
+        event: SequencedEvent,
+    },
+    ReplayRequest {
+        connection_id: Uuid,
+        request_id: Uuid,
+        session_id: Uuid,
+        after: EventCursor,
+        limit: u16,
+    },
+    Replay {
+        connection_id: Uuid,
+        request_id: Uuid,
+        session_id: Uuid,
+        after: EventCursor,
+        latest: EventCursor,
+        events: Vec<SequencedEvent>,
+    },
+    SnapshotRequired {
+        connection_id: Uuid,
+        request_id: Uuid,
+        session_id: Uuid,
+        after: EventCursor,
+        latest: EventCursor,
     },
     Command {
         command: Command,
@@ -148,6 +180,34 @@ impl Frame {
         self.bounded_encoding()
     }
 
+    /// Structural decoding alone does not establish negotiation. Authenticated
+    /// adapters must call this on inbound AND outbound post-handshake frames,
+    /// then independently recheck authorization at dispatch/disclosure commit.
+    pub fn validate_features(&self, negotiated: &Features) -> Result<(), &'static str> {
+        use crate::events::Feature;
+        self.validate_structure()?;
+        negotiated.validate()?;
+        match self {
+            Self::Event { event, .. } => negotiated.permits_event(&event.event),
+            Self::Replay { events, .. } => {
+                if !negotiated.contains(Feature::Replay) {
+                    return Err("replay not negotiated");
+                }
+                for event in events {
+                    negotiated.permits_event(&event.event)?;
+                }
+                Ok(())
+            }
+            Self::ReplayRequest { .. } | Self::SnapshotRequired { .. } => {
+                if !negotiated.contains(Feature::Replay) {
+                    return Err("replay not negotiated");
+                }
+                Ok(())
+            }
+            _ => Ok(()),
+        }
+    }
+
     fn bounded_encoding(&self) -> Result<String, &'static str> {
         let encoded = serde_json::to_string(self).map_err(|_| "attachment encoding failed")?;
         if encoded.len() > MAX_FRAME_BYTES {
@@ -158,7 +218,12 @@ impl Frame {
 
     fn validate_structure(&self) -> Result<(), &'static str> {
         match self {
-            Self::Authenticate { version, proof } => {
+            Self::Authenticate {
+                version,
+                proof,
+                features,
+            } => {
+                features.validate()?;
                 version_two(*version)?;
                 connect_proof(proof)?;
             }
@@ -169,11 +234,59 @@ impl Frame {
                 owner_id,
                 epoch,
                 lease_ms,
+                features,
             } => {
+                features.validate()?;
                 version_two(*version)?;
                 identities(&[*connection_id, *machine_id, *owner_id])?;
                 epoch_value(*epoch)?;
                 lease(*lease_ms)?;
+            }
+            Self::Event {
+                connection_id,
+                session_id,
+                event,
+            } => {
+                identities(&[*connection_id, *session_id])?;
+                event.validate()?;
+            }
+            Self::ReplayRequest {
+                connection_id,
+                request_id,
+                session_id,
+                after,
+                limit,
+            } => {
+                identities(&[*connection_id, *request_id, *session_id])?;
+                crate::events::bound(after.get())?;
+                if *limit == 0 || usize::from(*limit) > MAX_REPLAY_EVENTS {
+                    return Err("invalid replay limit");
+                }
+            }
+            Self::Replay {
+                connection_id,
+                request_id,
+                session_id,
+                after,
+                latest,
+                events,
+            } => {
+                identities(&[*connection_id, *request_id, *session_id])?;
+                validate_replay(*after, *latest, events)?;
+            }
+            Self::SnapshotRequired {
+                connection_id,
+                request_id,
+                session_id,
+                after,
+                latest,
+            } => {
+                identities(&[*connection_id, *request_id, *session_id])?;
+                crate::events::bound(after.get())?;
+                crate::events::bound(latest.get())?;
+                if after >= latest {
+                    return Err("invalid snapshot requirement");
+                }
             }
             Self::Command { command } => command
                 .validate_structure()
@@ -339,6 +452,7 @@ mod tests {
                 lease_ms: 30001,
             },
             Frame::Welcome {
+                features: Features::default(),
                 version: 1,
                 connection_id: id,
                 machine_id: id,
