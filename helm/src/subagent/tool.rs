@@ -683,7 +683,12 @@ mod tests {
         let runtime = Arc::new(
             SubagentRuntime::new_persistent(
                 Arc::new(ChildFinishes),
-                super::super::RuntimeLimits::default(),
+                super::super::RuntimeLimits {
+                    // This scenario keeps its parent live while the child finishes.
+                    // Machine defaults may grant only one slot on small runners.
+                    max_concurrency: 2,
+                    ..super::super::RuntimeLimits::default()
+                },
                 super::super::AgentTreeStore::new(store_path.clone()),
             )
             .await
