@@ -228,7 +228,9 @@ def main():
                 terminal.send('\r')
                 terminal.text('4/5')
                 terminal.text('[x] Helm ' + REMOTE)
-                terminal.send(b'\x1b\x1b')
+                terminal.send(b'\x1b')
+                terminal.text('Unsaved setup retained')
+                terminal.send(b'\x1b')
                 terminal.text('unsent voyage draft 雪')
                 terminal.finish()
                 assert TOKEN.encode() not in terminal.output
