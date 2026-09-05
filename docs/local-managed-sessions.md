@@ -31,17 +31,19 @@ grants still apply; otherwise an action requiring human approval is denied.
 
 Each submit prints an admission receipt before execution, followed by provisional
 model output and tool activity. Streamed text is not a completion guarantee.
-The final result reports the durable run state and observed cleanup. Only an
-accepted completed run with confirmed owned-resource cleanup exits successfully.
+The final result reports the durable run state and observed cleanup. A new
+execution exits successfully only after an accepted completed run with confirmed
+owned-resource cleanup.
 Persistent terminal processes belong to the foreground invocation; they are not
 silently reconstructed by the next submit.
 
 ## Concurrent work and retries
 
 Only one foreground owner can mutate a session. Another submit receives a busy
-or revision conflict without executing tools. Sessions in different workspaces can run concurrently. A shared workspace also
-has a subagent writer lease; another owner can make runtime construction fail
-boundedly, with explicit cleanup recovery required.
+or revision conflict without executing tools. Sessions in different workspaces
+can run concurrently. Sessions sharing a workspace also compete for its subagent
+runtime. If runtime construction fails after admission, explicit cleanup recovery
+is required.
 Use `list --limit 20 --after SESSION_UUID` for bounded pages; metadata excludes
 conversation text and provider continuation state. `--json` emits JSON records
 for scripts, including an explicit `next_after` cursor.
@@ -56,7 +58,10 @@ helm managed --directory "$STORE" --json submit SESSION_UUID \
 ```
 
 An identical retry observes the existing run, even after its deadline; it never
-replays tools. Changing the payload under the same command ID is rejected. Create
+replays tools. A successful observation exits with status 0 even when the existing
+run is active or failed. Scripts must inspect the `existing_run` event and its
+state; use `list` to check for pending cleanup. Changing the payload under the
+same command ID is rejected. Create
 is create-only: `create --id SESSION_UUID` never replaces an existing session.
 If create output is lost, use `list` to find the session instead of blindly
 creating another one.
@@ -86,7 +91,7 @@ interrupted, preserves conversation and provisional output evidence, and marks s
 It does not retry tools or claim old processes survived. Inspect the outcome and
 submit a deliberate new command with the current revision when appropriate.
 
-A development Journal from an older supported schema needs an explicit upgrade
+An older supported journal schema needs an explicit upgrade
 while all owners are stopped:
 
 ```sh
