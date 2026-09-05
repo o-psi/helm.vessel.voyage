@@ -4,9 +4,11 @@ User mandate: comprehensively resolve remaining issues, including epics. Invento
 
 ## Active work
 
-- #64: context accounting and request preflight implemented; issue scope posted; 361 workspace tests passing, release/system verification underway. Acceptance tests: full request accounting, initial/tool follow-up guard, indivisible rejection, whole-turn reduction, canonical history preservation, cancellation, provider-neutral dispatch.
-- #86: audit found input bounds, delivery-state and chronology gaps; fixes and PTY regressions underway in isolated worktree.
-- #80 and #59: independent implementation/evidence audit underway.
+- #64: context accounting and request preflight implemented; issue scope posted; 369 integrated workspace tests passed; linear context/steering regression follow-ups pass; failure-history recovery and portability fixes underway. Acceptance tests: full request accounting, initial/tool follow-up guard, indivisible rejection, whole-turn reduction, canonical history preservation, cancellation, provider-neutral dispatch.
+- #86: audit found input bounds, delivery-state and chronology gaps; fixes integrated in 586bfb3; four release PTY regressions pass; final CI pending.
+- #80 and #59: prior delivery passed platform CI; current persistence regressions block fresh portability acceptance. Questions live-provider acceptance remains pending.
+- #81: coordinated durable ownership/readiness integration and descendant/follow-up tests underway in an isolated worktree.
+- Draft delivery PR: https://github.com/o-psi/voyage/pull/87 (not ready to merge).
 
 ## Dependencies and delivery order
 
@@ -57,4 +59,4 @@ Each feature needs issue discussion review/update before edits, acceptance-drive
 
 ## Verification and blockers
 
-Context preflight: 361 Linux workspace tests passed; strict Clippy passed before the final config regression/cancellation-priority additions. Baseline regression reproduced with old release. Release build/system tests pending. GitHub reads require sandbox escalation; installed gh binary is used because the mise shim attempts an installation. Live-provider and cross-platform evidence must be separately obtained; definition validation is not live evaluation.
+Context/steering integration: 369 Linux workspace tests passed; formatting and strict Clippy passed. Three native context fixtures and existing native/title/questions/tool-output/archive/resources/Vessel fixtures passed on the context release; four steering PTY cases passed on the integrated release. Baseline context failure reproduced with old release. Final linear-scan/failure-recovery/portability edits need repeated integrated gates and packaging. PR CI on 586bfb3 fails macOS/Windows; fixes are underway, not passing claims. GitHub reads require sandbox escalation; installed gh binary is used because the mise shim attempts an installation. Live-provider and cross-platform evidence must be separately obtained; definition validation is not live evaluation.
