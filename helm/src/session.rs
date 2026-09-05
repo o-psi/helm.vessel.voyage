@@ -1,3 +1,6 @@
+mod outcomes;
+pub use outcomes::RunSummary;
+
 use crate::{
     config::default_data_dir,
     model::{Message, Usage},
@@ -67,6 +70,8 @@ pub struct Session {
     #[serde(default)]
     pub completion_runs: Vec<crate::completion::runtime::RunReference>,
     #[serde(default)]
+    pub run_summaries: Vec<RunSummary>,
+    #[serde(default)]
     pub name: Option<String>,
     #[serde(default)]
     pub title_state: Option<TitleState>,
@@ -127,7 +132,7 @@ impl Session {
                 messages.push(message.clone());
             }
         }
-        self.messages = messages;
+        self.replace_messages(messages);
         self.usage.input_tokens = input_tokens;
         self.usage.output_tokens = output_tokens;
         Ok(())
@@ -146,6 +151,7 @@ impl Session {
             model,
             model_history: Vec::new(),
             completion_runs: Vec::new(),
+            run_summaries: Vec::new(),
             name: Some(generated_name(id)),
             title_state: Some(TitleState {
                 completed_runs: 0,
@@ -249,6 +255,7 @@ impl Session {
 
     pub fn clear_conversation(&mut self) {
         self.messages.clear();
+        self.run_summaries.clear();
         let automatic = self.title_state_mut().automatic
             && self
                 .title_state
@@ -700,6 +707,7 @@ fn read_session(path: &Path) -> Result<Session> {
     );
     session.loaded_from = Some(std::fs::canonicalize(path)?);
     session.ensure_name();
+    session.recover_run_summaries();
     for message in &mut session.messages {
         if let Some(receipt) = &mut message.steering
             && receipt.status == crate::model::SteeringStatus::Queued

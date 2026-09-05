@@ -270,6 +270,25 @@ impl Approver for Terminal {
 impl EventSink for Terminal {
     async fn emit(&self, event: AgentEvent) {
         match event {
+            AgentEvent::CompletionState {
+                phase,
+                readiness,
+                detail,
+            } => {
+                let phase = format!("{phase:?}").to_lowercase();
+                let detail = detail.as_deref().map(safe_diagnostic).unwrap_or_default();
+                let counts = readiness
+                    .map(|r| {
+                        format!(
+                            " · {} unresolved · {} accounted unfinished",
+                            r.total.saturating_sub(r.accounted),
+                            r.incomplete
+                        )
+                    })
+                    .unwrap_or_default();
+                println!("\n[completion: {phase}{counts}] {detail}");
+                let _ = io::stdout().flush();
+            }
             AgentEvent::Thinking { turn } => eprintln!("[model turn {turn}]"),
             AgentEvent::AssistantTextDelta(text) => {
                 print!("{}", self.assistant_delta(&text));
@@ -961,7 +980,9 @@ async fn build_agent(config: &Config, workspace: PathBuf, attended: bool) -> Res
         redactor: redactor(config),
     };
     let subagents = build_subagents(config, &workspace).await?;
-    let _runtime = subagents.runtime.clone();
+    let gate_runtime = subagents.runtime.clone();
+    let gate_todos = subagents.todos.store();
+    let gate_agents = gate_runtime.store().expect("persistent runtime");
     let tools = build_tools(
         config,
         Some(subagents.tool),
@@ -980,6 +1001,7 @@ async fn build_agent(config: &Config, workspace: PathBuf, attended: bool) -> Res
         config.temperature,
     )
     .with_completion_coordinator(subagents.coordinator)
+    .with_completion_gate(gate_todos, gate_agents, gate_runtime)
     .with_context_window(config.context_window)
     .with_model_mirror(subagents.model)
     .with_retry_policy(RetryPolicy {
@@ -1085,6 +1107,11 @@ async fn tui_chat(
             active_config.temperature,
         )
         .with_completion_coordinator(subagents.coordinator)
+        .with_completion_gate(
+            todo.store(),
+            subagent_runtime.store().expect("persistent runtime"),
+            subagent_runtime.clone(),
+        )
         .with_context_window(active_config.context_window)
         .with_model_mirror(subagents.model)
         .with_retry_policy(RetryPolicy {
@@ -1317,6 +1344,9 @@ async fn execute(
     session
         .messages
         .push(helm::Message::new(helm::Role::User, prompt.clone()));
+    if let Some(scope) = &scope {
+        session.begin_run_summary(scope.run_id());
+    }
     if !no_save {
         store.save(&mut session).await?;
     }
@@ -1332,8 +1362,11 @@ async fn execute(
     {
         Ok(outcome) => outcome,
         Err(error) => {
-            if !no_save && let Some(recovery) = error.recovery() {
+            if let Some(recovery) = error.recovery() {
                 session.recover_context_failure(recovery)?;
+            }
+            session.interrupt_run_summary(safe_diagnostic(&error.to_string()));
+            if !no_save {
                 session.terminals = agent.terminal_metadata();
                 store.save(&mut session).await?;
                 eprintln!("[session {}]", session.id);
@@ -1341,9 +1374,13 @@ async fn execute(
             return Err(error.into());
         }
     };
-    let title_due = session.title_due_after_turn();
-    session.record_completed_turn();
-    session.messages = outcome.messages;
+    let completed = matches!(outcome.stop_reason, helm::agent::StopReason::Completed);
+    let title_due = completed && session.title_due_after_turn();
+    if completed {
+        session.record_completed_turn();
+    }
+    session.replace_messages(outcome.messages);
+    session.finish_run_summary(&outcome.stop_reason);
     session.usage.input_tokens += outcome.usage.input_tokens;
     session.usage.output_tokens += outcome.usage.output_tokens;
     session.terminals = agent.terminal_metadata();
@@ -1361,6 +1398,9 @@ async fn execute(
             store.save(&mut session).await?;
         }
         eprintln!("[session {}]", session.id);
+    }
+    if let helm::agent::StopReason::Incomplete { reason, .. } = outcome.stop_reason {
+        bail!("run incomplete: {}", safe_diagnostic(&reason));
     }
     Ok(session)
 }
@@ -1540,6 +1580,9 @@ async fn chat(
         session
             .messages
             .push(helm::Message::new(helm::Role::User, prompt.to_owned()));
+        if let Some(scope) = &scope {
+            session.begin_run_summary(scope.run_id());
+        }
         store.save(&mut session).await?;
         match agent
             .as_ref()
@@ -1554,9 +1597,13 @@ async fn chat(
             .await
         {
             Ok(outcome) => {
-                let title_due = session.title_due_after_turn();
-                session.record_completed_turn();
-                session.messages = outcome.messages;
+                let completed = matches!(outcome.stop_reason, helm::agent::StopReason::Completed);
+                let title_due = completed && session.title_due_after_turn();
+                if completed {
+                    session.record_completed_turn();
+                }
+                session.replace_messages(outcome.messages);
+                session.finish_run_summary(&outcome.stop_reason);
                 session.usage.input_tokens += outcome.usage.input_tokens;
                 session.usage.output_tokens += outcome.usage.output_tokens;
                 session.terminals = agent
@@ -1585,9 +1632,10 @@ async fn chat(
                         .as_ref()
                         .expect("agent initialized")
                         .terminal_metadata();
-                    store.save(&mut session).await?;
-                    eprintln!("[session {}]", session.id);
                 }
+                session.interrupt_run_summary(safe_diagnostic(&error.to_string()));
+                store.save(&mut session).await?;
+                eprintln!("[session {}]", session.id);
                 eprintln!("error: {error:#}");
             }
         }

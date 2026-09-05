@@ -9,7 +9,7 @@ use super::{
 };
 use crate::{
     Agent,
-    session::{Session, SessionStore, compact_messages},
+    session::{Session, SessionStore},
 };
 use anyhow::{Context, Result};
 use std::{path::PathBuf, sync::Arc};
@@ -282,7 +282,7 @@ pub(super) async fn handle_command(
                     .parse()
                     .context("/compact expects a message count")?
             };
-            let removed = compact_messages(&mut app.session.messages, retain);
+            let removed = app.session.compact(retain);
             store.save(&mut app.session).await?;
             app.scroll = 0;
             app.status = format!("Compacted {removed} messages");

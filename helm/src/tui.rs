@@ -351,7 +351,7 @@ pub async fn run(
             }
             event = rx.recv() => {
                 let Some(event) = event else { break };
-                let title_due = matches!(&event, UiEvent::Finished(Ok(_)))
+                let title_due = matches!(&event, UiEvent::Finished(Ok(outcome)) if matches!(outcome.stop_reason, crate::agent::StopReason::Completed))
                     && app.session.title_due_after_turn();
                 handle_ui_event(event, &mut app, &store, terminals.as_ref()).await?;
                 if title_due { start_title_job(&mut app, &agent, &tx); }
@@ -404,6 +404,34 @@ async fn handle_ui_event(
     terminals: &dyn InteractiveTerminals,
 ) -> Result<()> {
     match event {
+        UiEvent::Agent(AgentEvent::CompletionState {
+            phase,
+            readiness,
+            detail,
+        }) => {
+            let label = format!("{phase:?}").to_lowercase();
+            app.status = format!(
+                "Run {label}{}",
+                detail
+                    .as_deref()
+                    .map(|text| format!(" · {}", compact_line(text, 160)))
+                    .unwrap_or_default()
+            );
+            // Terminal classifications commit together with canonical messages
+            // in Finished; an early event alone cannot mark a saved answer final.
+            if !matches!(
+                phase,
+                crate::agent::CompletionPhase::Completed
+                    | crate::agent::CompletionPhase::Incomplete
+            ) {
+                app.session.update_run_summary(
+                    phase,
+                    readiness,
+                    detail.map(|text| compact_line(&text, 4000)),
+                );
+                store.save(&mut app.session).await?;
+            }
+        }
         UiEvent::Agent(AgentEvent::Thinking { turn }) => {
             app.status = format!("Model turn {turn}…  Esc cancels");
         }
@@ -542,13 +570,25 @@ async fn handle_ui_event(
             match result {
                 Ok(outcome) => {
                     app.live_messages.clear();
-                    app.session.messages = outcome.messages;
-                    app.session.record_completed_turn();
+                    app.session.replace_messages(outcome.messages);
+                    app.session.finish_run_summary(&outcome.stop_reason);
+                    let completed =
+                        matches!(outcome.stop_reason, crate::agent::StopReason::Completed);
+                    if completed {
+                        app.session.record_completed_turn();
+                    }
                     app.session.usage.input_tokens += outcome.usage.input_tokens;
                     app.session.usage.output_tokens += outcome.usage.output_tokens;
                     app.session.terminals = terminals.list().await.unwrap_or_default();
                     store.save(&mut app.session).await?;
-                    app.status = format!("Ready · {} model turn(s)", outcome.turns);
+                    app.status = match outcome.stop_reason {
+                        crate::agent::StopReason::Completed => {
+                            format!("Completed · {} model turn(s)", outcome.turns)
+                        }
+                        crate::agent::StopReason::Incomplete { reason, .. } => {
+                            format!("Incomplete · {}", compact_line(&reason, 160))
+                        }
+                    };
                 }
                 Err(error) => {
                     if let Some(recovery) = error.recovery() {
@@ -575,6 +615,7 @@ async fn handle_ui_event(
                             std::mem::take(&mut app.streaming_response),
                         ));
                     }
+                    app.session.interrupt_run_summary(detail);
                     store.save(&mut app.session).await?;
                     app.status = if undelivered > 0 {
                         format!(
@@ -1010,6 +1051,9 @@ async fn handle_key(
                 app.session
                     .messages
                     .push(crate::Message::new(Role::User, prompt.clone()));
+                if let Some(scope) = &scope {
+                    app.session.begin_run_summary(scope.run_id());
+                }
                 store.save(&mut app.session).await?;
                 let agent = agent.clone();
                 let events = tx.clone();

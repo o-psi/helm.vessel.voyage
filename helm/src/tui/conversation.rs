@@ -66,9 +66,27 @@ pub(super) fn transcript(app: &App, width: usize) -> Text<'static> {
         if message.role == Role::System || message.role == Role::Tool {
             continue;
         }
+        let classification = app
+            .session
+            .messages
+            .iter()
+            .position(|stored| std::ptr::eq(stored, *message))
+            .and_then(|index| app.session.assistant_classification(index));
         let (label, color) = match message.role {
             Role::User => ("you", Color::Cyan),
-            Role::Assistant => ("helm", Color::Green),
+            Role::Assistant => (
+                match classification {
+                    Some("completed") => "helm · completed",
+                    Some("incomplete") => "helm · incomplete",
+                    Some("interrupted") => "helm · interrupted",
+                    Some("provisional") => "helm · provisional",
+                    _ if app.is_running() && !app.session.run_summaries.is_empty() => {
+                        "helm · provisional"
+                    }
+                    _ => "helm",
+                },
+                Color::Green,
+            ),
             _ => continue,
         };
         if !message.content.is_empty() {
@@ -132,7 +150,7 @@ pub(super) fn transcript(app: &App, width: usize) -> Text<'static> {
     }
     if !app.streaming_response.is_empty() {
         lines.push(Line::from(Span::styled(
-            "helm · streaming",
+            "helm · provisional streaming",
             Style::default()
                 .fg(Color::Green)
                 .add_modifier(Modifier::BOLD),
