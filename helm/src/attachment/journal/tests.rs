@@ -1096,3 +1096,5 @@ fn killed_hot_writer_preserves_canonical_run_dedup_and_replay() {
 #[cfg(windows)]
 #[path = "windows_tests.rs"]
 mod windows_tests;
+
+mod steering;
