@@ -23,6 +23,7 @@ mod models;
 use models::*;
 mod terminals;
 use terminals::*;
+mod checkpoint;
 mod conversation;
 use conversation::*;
 mod render;
@@ -100,6 +101,7 @@ struct App {
     markdown_theme: MarkdownTheme,
     markdown_syntax_highlighting: bool,
     running: Option<Running>,
+    checkpoint: Option<checkpoint::State>,
     title_job: Option<TitleJob>,
     approval: Option<ApprovalRequest>,
     question: Option<QuestionDialog>,
@@ -218,6 +220,7 @@ impl App {
             markdown_theme: markdown_theme(),
             markdown_syntax_highlighting: std::env::var_os("NO_COLOR").is_none(),
             running: None,
+            checkpoint: None,
             title_job: None,
             approval: None,
             question: None,
@@ -242,7 +245,7 @@ impl App {
         }
         if let Some(running) = &self.running {
             running.cancel.cancel();
-            self.status = "Cancelling; partial output will not be committed".into();
+            self.status = "Cancelling; partial response retained as interrupted output".into();
         }
         if let Some(approval) = self.approval.take() {
             let _ = approval.response.send(ApprovalOutcome::Denied);
@@ -407,6 +410,7 @@ async fn handle_ui_event(
     terminals: &dyn InteractiveTerminals,
 ) -> Result<()> {
     match event {
+        UiEvent::Checkpoint(request) => checkpoint::handle(request, app, store).await,
         UiEvent::Agent(AgentEvent::CompletionState {
             phase,
             readiness,
@@ -434,8 +438,8 @@ async fn handle_ui_event(
                     .map(|text| format!(" · {}", compact_line(text, 160)))
                     .unwrap_or_default()
             );
-            // Terminal classifications commit together with canonical messages
-            // in Finished; an early event alone cannot mark a saved answer final.
+            // Only the acknowledged checkpoint or Finished can classify canonical
+            // messages; an early event alone cannot mark a saved answer final.
             if !matches!(
                 phase,
                 crate::agent::CompletionPhase::Completed
@@ -459,12 +463,20 @@ async fn handle_ui_event(
             app.status = "Receiving response…  Esc cancels".into();
         }
         UiEvent::Agent(AgentEvent::AssistantText(text)) => {
+            if app.checkpoint.is_some() {
+                app.status = "Response saved · checking remaining work".into();
+                return Ok(());
+            }
             let before = transcript_height(app, app.conversation_width);
             app.streaming_response = text.clone();
             preserve_manual_anchor(app, before);
             app.status = "Receiving response…  Esc cancels".into();
         }
         UiEvent::Agent(AgentEvent::ToolStarted { name, arguments }) => {
+            if app.checkpoint.is_some() {
+                app.status = format!("Running {name}…  Esc cancels");
+                return Ok(());
+            }
             let before = transcript_height(app, app.conversation_width);
             if !app.streaming_response.is_empty() {
                 app.live_messages.push(crate::Message::new(
@@ -487,6 +499,9 @@ async fn handle_ui_event(
             result,
             success,
         }) => {
+            if app.checkpoint.is_some() {
+                return Ok(());
+            }
             let before = transcript_height(app, app.conversation_width);
             if let Some(call) = app
                 .live_messages
@@ -584,18 +599,28 @@ async fn handle_ui_event(
             app.question = None;
             let before = transcript_height(app, app.conversation_width);
             app.running = None;
+            let checkpoint = app.checkpoint.take();
             match result {
                 Ok(outcome) => {
                     app.live_messages.clear();
-                    app.session.replace_messages(outcome.messages);
+                    if let Some(checkpoint) = &checkpoint {
+                        app.session.usage = checkpoint.baseline.clone();
+                        app.session
+                            .recover_context_failure(&crate::agent::CanonicalRecovery {
+                                messages: outcome.messages,
+                                usage: outcome.usage.clone(),
+                            })?;
+                    } else {
+                        app.session.replace_messages(outcome.messages);
+                        app.session.usage.input_tokens += outcome.usage.input_tokens;
+                        app.session.usage.output_tokens += outcome.usage.output_tokens;
+                    }
                     app.session.finish_run_summary(&outcome.stop_reason);
                     let completed =
                         matches!(outcome.stop_reason, crate::agent::StopReason::Completed);
                     if completed {
                         app.session.record_completed_turn();
                     }
-                    app.session.usage.input_tokens += outcome.usage.input_tokens;
-                    app.session.usage.output_tokens += outcome.usage.output_tokens;
                     app.session.terminals = terminals.list().await.unwrap_or_default();
                     store.save(&mut app.session).await?;
                     app.status = match outcome.stop_reason {
@@ -609,6 +634,9 @@ async fn handle_ui_event(
                 }
                 Err(error) => {
                     if let Some(recovery) = error.recovery() {
+                        if let Some(checkpoint) = &checkpoint {
+                            app.session.usage = checkpoint.baseline.clone();
+                        }
                         app.session.recover_context_failure(recovery)?;
                         // All completed responses/tools are represented by canonical IDs.
                         app.live_messages.clear();
@@ -630,7 +658,7 @@ async fn handle_ui_event(
                             undelivered += 1;
                         }
                     }
-                    if !app.streaming_response.is_empty() {
+                    if checkpoint.is_none() && !app.streaming_response.is_empty() {
                         app.session.messages.push(crate::Message::new(
                             Role::Assistant,
                             std::mem::take(&mut app.streaming_response),
@@ -1072,10 +1100,13 @@ async fn handle_key(
                 app.session
                     .messages
                     .push(crate::Message::new(Role::User, prompt.clone()));
-                if let Some(scope) = &scope {
-                    app.session.begin_run_summary(scope.run_id());
-                }
+                let run_id = scope
+                    .as_ref()
+                    .map(|scope| scope.run_id())
+                    .unwrap_or_else(uuid::Uuid::new_v4);
+                app.session.begin_run_summary(run_id);
                 store.save(&mut app.session).await?;
+                app.checkpoint = Some(checkpoint::State::new(&app.session, run_id));
                 let agent = agent.clone();
                 let events = tx.clone();
                 app.live_messages.clear();
@@ -1084,9 +1115,23 @@ async fn handle_key(
                 let cancel = tokio_util::sync::CancellationToken::new();
                 let run_cancel = cancel.clone();
                 let (steering, steering_input) = steering_channel(64);
+                let checkpoint = checkpoint::UiCheckpoint {
+                    run_id,
+                    tx: events.clone(),
+                    cancel: run_cancel.clone(),
+                };
+                let model = agent.model();
                 let task = tokio::spawn(async move {
                     let result = agent
-                        .run_scoped(history, prompt, run_cancel, Some(steering_input), scope)
+                        .run_checkpointed_scoped(
+                            history,
+                            prompt,
+                            run_cancel,
+                            Some(steering_input),
+                            &checkpoint,
+                            model,
+                            scope,
+                        )
                         .await;
                     let _ = events.send(UiEvent::Finished(result));
                 });

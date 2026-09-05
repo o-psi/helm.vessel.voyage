@@ -1108,3 +1108,155 @@ async fn terminal_completion_event_waits_for_canonical_outcome_and_interruption_
     assert_eq!(app.session.title_state.as_ref().unwrap().completed_runs, 1);
     assert!(app.status.starts_with("Completed"));
 }
+
+#[tokio::test]
+async fn durable_tui_checkpoints_precede_presentation_and_finished_counts_usage_once() {
+    use crate::agent::{RunCheckpoint, StopReason};
+    let directory = tempfile::tempdir().unwrap();
+    let store = SessionStore::new(directory.path().join("sessions"));
+    let terminals = FakeTerminals::new();
+    let mut app = App::new(Session::new(directory.path().into(), "test".into()), vec![]);
+    app.session.usage.input_tokens = 9;
+    app.session
+        .messages
+        .push(crate::Message::new(Role::User, "work"));
+    let run_id = Uuid::new_v4();
+    app.session.begin_run_summary(run_id);
+    app.checkpoint = Some(checkpoint::State::new(&app.session, run_id));
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let checkpoint = checkpoint::UiCheckpoint {
+        run_id,
+        tx,
+        cancel: tokio_util::sync::CancellationToken::new(),
+    };
+    let mut history = app.session.messages.clone();
+    history.push(crate::Message::new(
+        Role::Assistant,
+        "single canonical response",
+    ));
+    let usage = crate::model::Usage {
+        input_tokens: 5,
+        output_tokens: 2,
+    };
+    let (ack, _) = tokio::join!(checkpoint.canonical(&history, &usage), async {
+        handle_ui_event(rx.recv().await.unwrap(), &mut app, &store, &terminals)
+            .await
+            .unwrap();
+    });
+    ack.unwrap();
+    handle_ui_event(
+        UiEvent::Agent(AgentEvent::AssistantText(
+            "single canonical response".into(),
+        )),
+        &mut app,
+        &store,
+        &terminals,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        transcript(&app, 90)
+            .to_string()
+            .matches("single canonical response")
+            .count(),
+        1
+    );
+    assert!(app.streaming_response.is_empty());
+    handle_ui_event(
+        UiEvent::Agent(AgentEvent::ToolStarted {
+            name: "shell".into(),
+            arguments: serde_json::json!({}),
+        }),
+        &mut app,
+        &store,
+        &terminals,
+    )
+    .await
+    .unwrap();
+    assert!(
+        app.live_messages.is_empty(),
+        "canonical tool IDs must not gain synthetic duplicates"
+    );
+    let (ack, _) = tokio::join!(
+        checkpoint.accepted(&history, &usage, &StopReason::Completed),
+        async {
+            handle_ui_event(rx.recv().await.unwrap(), &mut app, &store, &terminals)
+                .await
+                .unwrap();
+        }
+    );
+    ack.unwrap();
+    assert_eq!(
+        store
+            .load(app.session.id)
+            .await
+            .unwrap()
+            .assistant_classification(1),
+        Some("completed")
+    );
+    handle_ui_event(
+        UiEvent::Finished(Ok(crate::agent::AgentOutcome {
+            messages: history,
+            answer: "single canonical response".into(),
+            usage,
+            turns: 1,
+            stop_reason: StopReason::Completed,
+        })),
+        &mut app,
+        &store,
+        &terminals,
+    )
+    .await
+    .unwrap();
+    assert_eq!(app.session.usage.input_tokens, 14);
+    assert_eq!(app.session.usage.output_tokens, 2);
+    assert_eq!(app.session.title_state.as_ref().unwrap().completed_runs, 1);
+    assert!(app.checkpoint.is_none());
+}
+
+#[tokio::test]
+async fn cancelled_tui_checkpoint_keeps_partial_annotation_outside_canonical_history() {
+    use crate::agent::RunCheckpoint;
+    let directory = tempfile::tempdir().unwrap();
+    let store = SessionStore::new(directory.path().join("sessions"));
+    let terminals = FakeTerminals::new();
+    let mut app = App::new(Session::new(directory.path().into(), "test".into()), vec![]);
+    app.session
+        .messages
+        .push(crate::Message::new(Role::User, "work"));
+    let run_id = Uuid::new_v4();
+    app.session.begin_run_summary(run_id);
+    app.checkpoint = Some(checkpoint::State::new(&app.session, run_id));
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let checkpoint = checkpoint::UiCheckpoint {
+        run_id,
+        tx,
+        cancel: tokio_util::sync::CancellationToken::new(),
+    };
+    let (ack, _) = tokio::join!(checkpoint.partial("interrupted 世界"), async {
+        handle_ui_event(rx.recv().await.unwrap(), &mut app, &store, &terminals)
+            .await
+            .unwrap();
+    });
+    ack.unwrap();
+    app.streaming_response = "interrupted 世界".into();
+    handle_ui_event(
+        UiEvent::Finished(Err(crate::agent::AgentError::Cancelled)),
+        &mut app,
+        &store,
+        &terminals,
+    )
+    .await
+    .unwrap();
+    let resumed = store.load(app.session.id).await.unwrap();
+    assert_eq!(resumed.messages.len(), 1);
+    assert_eq!(resumed.run_summaries[0].partial_output, "interrupted 世界");
+    assert_eq!(
+        resumed.run_summaries[0].phase,
+        crate::agent::CompletionPhase::Interrupted
+    );
+    let app = App::new(resumed, vec![]);
+    let text = transcript(&app, 90).to_string();
+    assert_eq!(text.matches("interrupted 世界").count(), 1);
+    assert!(text.contains("interrupted partial response"));
+}

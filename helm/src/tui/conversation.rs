@@ -148,6 +148,34 @@ pub(super) fn transcript(app: &App, width: usize) -> Text<'static> {
             lines.push(Line::raw(""));
         }
     }
+    for summary in &app.session.run_summaries {
+        if !summary.partial_output.is_empty()
+            && (!app.is_running()
+                || app
+                    .session
+                    .run_summaries
+                    .last()
+                    .is_none_or(|last| last.run_id != summary.run_id))
+        {
+            lines.push(Line::styled(
+                "helm · interrupted partial response",
+                Style::default().fg(Color::Yellow),
+            ));
+            lines.extend(
+                render_markdown(
+                    &summary.partial_output,
+                    RenderOptions {
+                        width,
+                        theme: app.markdown_theme,
+                        syntax_highlighting: app.markdown_syntax_highlighting,
+                        ..Default::default()
+                    },
+                )
+                .lines,
+            );
+            lines.push(Line::raw(""));
+        }
+    }
     if !app.streaming_response.is_empty() {
         lines.push(Line::from(Span::styled(
             "helm · provisional streaming",
