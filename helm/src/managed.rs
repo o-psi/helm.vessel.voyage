@@ -60,6 +60,11 @@ enum ManagedCommand {
         /// Attest that you independently stopped this run's previous effects.
         #[arg(long)]
         acknowledge_cleanup: Option<Uuid>,
+        /// Append unknown/interrupted results after terminal cleanup; never replay tools.
+        #[arg(long, requires = "expected_revision")]
+        reconcile_tools: Option<Uuid>,
+        #[arg(long, requires = "reconcile_tools")]
+        expected_revision: Option<u64>,
     },
     /// Explicitly upgrade a quiescent journal. Stop older Helm processes first.
     Upgrade,
@@ -212,6 +217,19 @@ fn human_record(value: &Value) -> String {
             text(&value["run"], "state"),
             text(value, "cleanup")
         ),
+        "session_recovered" if !value["reconciliation"].is_null() => format!(
+            "Reconciled {} tool calls in run {}; revision {}. Outcomes remain unknown; no tools replayed.{}",
+            value["reconciliation"]["tool_call_ids"]
+                .as_array()
+                .map_or(0, Vec::len),
+            text(value, "run_id"),
+            value["reconciliation"]["revision"],
+            if value["reconciliation"]["duplicate"] == true {
+                " Existing receipt."
+            } else {
+                ""
+            }
+        ),
         "session_recovered" => format!(
             "Session {} recovered; prior run {}. Cleanup {}. No tools replayed.",
             text(value, "session_id"),
@@ -334,13 +352,45 @@ pub(super) async fn run(
         ManagedCommand::Recover {
             session,
             acknowledge_cleanup,
+            reconcile_tools,
+            expected_revision,
         } => {
+            ensure!(
+                acknowledge_cleanup
+                    .zip(reconcile_tools)
+                    .is_none_or(|(a, b)| a == b),
+                "cleanup attestation and reconciliation must select the same run"
+            );
             let owner = ManagedSessionOwner::open(directory, session).await?;
-            let recovered = owner.recover_interrupted().await?;
+            // A reconciliation CAS must refer to the caller's observed terminal revision.
+            // Do not implicitly interrupt an active run and invalidate that revision first.
+            let recovered = if reconcile_tools.is_none() {
+                owner.recover_interrupted().await?
+            } else {
+                None
+            };
             if let Some(run) = acknowledge_cleanup {
                 owner.attest_local_cleanup(run, actor).await?;
             }
-            output.emit(json!({"event":"session_recovered","session_id":session,"run":recovered.as_ref().map(record),"cleanup":if acknowledge_cleanup.is_some(){"operator_attested"}else{"unchanged"}})).await
+            let reconciliation = if let Some(run_id) = reconcile_tools {
+                Some(
+                    owner
+                        .reconcile_local_tools(helm::attachment::journal::LocalReconcileRequest {
+                            session_id: session,
+                            run_id,
+                            installation_id: actor.installation_id,
+                            principal_id: actor.principal_id,
+                            expected_revision: expected_revision
+                                .context("reconciliation requires expected revision")?,
+                        })
+                        .await?,
+                )
+            } else {
+                None
+            };
+            output.emit(json!({"event":"session_recovered","session_id":session,"run":recovered.as_ref().map(record),
+                "run_id":reconcile_tools,"reconciliation":reconciliation,
+                "cleanup":if acknowledge_cleanup.is_some(){"operator_attested"}else{"unchanged"}})).await
         }
         ManagedCommand::Upgrade => {
             let mut journal = open_journal(&directory)?;

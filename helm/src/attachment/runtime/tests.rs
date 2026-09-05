@@ -720,3 +720,57 @@ async fn durable_cancel_after_model_acceptance_overrides_stale_success() {
     assert!(owner.execute(&agent, cancel, None).await.is_err());
     assert_eq!(effects.load(Ordering::SeqCst), 1);
 }
+
+#[tokio::test]
+async fn local_reconciliation_retains_callback_fence_and_rejects_other_sessions() {
+    let (_dir, mut run, agent, requests, effects, admission) =
+        setup("success", Arc::new(SilentSink)).await;
+    let session = ManagedSessionOwner {
+        store: run.store.clone(),
+        session_id: admission.session_id,
+    };
+    run.register_local_cleanup().await.unwrap();
+    run.execute(&agent, CancellationToken::new(), None)
+        .await
+        .unwrap();
+    run.confirm_local_cleanup_observed().await.unwrap();
+    let run_id = run.record().await.unwrap().id;
+    assert!(!session.local_cancel_requested(run_id).await.unwrap());
+    assert!(
+        session
+            .local_cancel_requested(Uuid::new_v4())
+            .await
+            .is_err()
+    );
+    let request = super::super::journal::LocalReconcileRequest {
+        session_id: admission.session_id,
+        run_id,
+        installation_id: admission.machine_id,
+        principal_id: admission.principal_id,
+        expected_revision: session.snapshot().await.unwrap().revision,
+    };
+    let mut wrong = request.clone();
+    wrong.session_id = Uuid::new_v4();
+    assert!(
+        session
+            .reconcile_local_tools(wrong)
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("another session")
+    );
+    let callback = run.checkpoint();
+    drop(run);
+    let error = session
+        .reconcile_local_tools(request.clone())
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("turn still owned"), "{error}");
+    drop(callback);
+    let before = session.snapshot().await.unwrap().revision;
+    let error = session.reconcile_local_tools(request).await.unwrap_err();
+    assert!(!error.to_string().contains("turn still owned"));
+    assert_eq!(session.snapshot().await.unwrap().revision, before);
+    assert_eq!(requests.load(Ordering::SeqCst), 2);
+    assert_eq!(effects.load(Ordering::SeqCst), 1);
+}

@@ -483,6 +483,25 @@ def independent_sessions(root):
         case.close()
 
 
+def explicit_upgrade(root):
+    case = Case(root)
+    try:
+        session = case.create()
+        before = case.sql('SELECT state FROM sessions WHERE id=?', (session,))[0][0]
+        with sqlite3.connect(case.database) as database:
+            database.executescript('DROP TABLE local_tool_reconciliations; UPDATE attachment_schema SET version=5;')
+        case.config.write_text('invalid [ provider configuration')
+        assert case.listing()['sessions'][0]['id'] == session
+        assert case.sql('SELECT version FROM attachment_schema') == [(5,)], 'selection implicitly upgraded operator state'
+        run([*case.args, 'upgrade'], case.env)
+        assert case.sql('SELECT version FROM attachment_schema') == [(6,)]
+        assert case.sql('SELECT state FROM sessions WHERE id=?', (session,))[0][0] == before
+        assert case.sql("SELECT count(*) FROM sqlite_master WHERE name='local_tool_reconciliations'") == [(1,)]
+        assert not case.requests
+    finally:
+        case.close()
+
+
 def child_cleanup(root):
     case = Case(root)
     try:
@@ -508,9 +527,22 @@ def child_cleanup(root):
         assert process.returncode != 0, stderr
         final([json.loads(line) for line in stdout.splitlines()], 'cancelled')
         assert case.counts['child'] == 2, 'queued child dispatched'
+        # Cleanup does not invent the missing result of the interrupted wait call.
+        run(case.command(session), case.env, expected=1)
+        revision = case.revision(session)
+        reconcile = [*case.args, 'recover', session, '--reconcile-tools', run_id, '--expected-revision', str(revision)]
+        first = run(reconcile, case.env)[0]['reconciliation']
+        assert first['duplicate'] is False and first['tool_call_ids']
+        snapshot = case.sql('SELECT state FROM sessions WHERE id=?', (session,))[0][0]
+        repeated = run(reconcile, case.env)[0]['reconciliation']
+        assert repeated['duplicate'] is True and repeated['tool_call_ids'] == first['tool_call_ids']
+        assert case.sql('SELECT state FROM sessions WHERE id=?', (session,))[0][0] == snapshot
+        assert 'outcome is unknown' in snapshot and 'not retried' in snapshot
+        assert case.counts['child'] == 2
         case.release.set()
         case.reset()
         final(run(case.command(session), case.env))
+        assert 'outcome is unknown' in json.dumps(case.requests[0])
     finally:
         case.close()
 
@@ -525,6 +557,7 @@ def main():
         partial_cancellation(root / 'partial')
         storage_failure(root / 'storage-failure')
         independent_sessions(root / 'independent')
+        explicit_upgrade(root / 'upgrade')
         child_cleanup(root / 'children')
     print('local managed CLI: native transports, exact retry, revision fences, cancellation and restart cleanup passed')
 

@@ -136,6 +136,26 @@ impl ManagedSessionOwner {
         })
         .await?
     }
+    /// Append explicit unknown outcomes under the existing owner, never dispatch tools.
+    pub async fn reconcile_local_tools(
+        &self,
+        request: super::journal::LocalReconcileRequest,
+    ) -> anyhow::Result<super::journal::LocalReconcileOutcome> {
+        anyhow::ensure!(
+            request.session_id == self.session_id,
+            "managed owner belongs to another session"
+        );
+        let shared = self.store.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut store = shared
+                .lock()
+                .map_err(|_| anyhow::anyhow!("managed owner poisoned"))?;
+            anyhow::ensure!(store.turn.upgrade().is_none(), "managed turn still owned");
+            let Store { journal, guard, .. } = &mut *store;
+            journal.reconcile_local_tools(guard, &request)
+        })
+        .await?
+    }
     /// New admission cannot overlap an earlier turn's callbacks or cleanup.
     /// Identical retries remain observations and never allocate another executor.
     pub async fn admit(&self, request: TurnAdmission) -> anyhow::Result<Admission> {
