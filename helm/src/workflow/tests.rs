@@ -64,7 +64,7 @@ fn secret_execution_is_rejected_without_echoing_values() {
         .render(&[("target".into(), "SECRET_CANARY".into())])
         .unwrap_err()
         .to_string();
-    assert!(error.contains("secret parameters are not supported for execution"));
+    assert!(error.contains("secret parameters require the isolated workflow binding renderer"));
     assert!(!error.contains("SECRET_CANARY"));
 }
 #[test]

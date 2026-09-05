@@ -1,6 +1,6 @@
-//! Saved workflow discovery and nonsecret input. Execution stays in `start_run`.
+//! Saved workflow discovery and isolated transient input. Execution stays in `start_run`.
 
-use super::{Composer, UiEvent, text::display_safe};
+use super::{UiEvent, text::display_safe};
 use crate::workflow::{self, Definition, Prepared, Scope};
 use anyhow::{Result, ensure};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -11,10 +11,55 @@ use ratatui::{
 use std::{collections::BTreeMap, path::PathBuf, time::Duration};
 use tokio::sync::mpsc;
 use uuid::Uuid;
+use zeroize::Zeroizing;
+
+#[derive(Clone, Default)]
+pub(super) struct FormEditor {
+    pub(super) text: Zeroizing<String>,
+    pub(super) cursor: usize,
+}
+
+impl FormEditor {
+    pub(super) fn insert_str(&mut self, text: &str) {
+        self.text.insert_str(self.cursor, text);
+        self.cursor += text.len();
+    }
+
+    pub(super) fn backspace(&mut self) {
+        if self.cursor == 0 {
+            return;
+        }
+        let previous = self.text[..self.cursor]
+            .char_indices()
+            .next_back()
+            .map_or(0, |(index, _)| index);
+        self.text.drain(previous..self.cursor);
+        self.cursor = previous;
+    }
+
+    pub(super) fn delete(&mut self) {
+        if let Some(character) = self.text[self.cursor..].chars().next() {
+            self.text
+                .drain(self.cursor..self.cursor + character.len_utf8());
+        }
+    }
+
+    pub(super) fn line_start(&mut self) {
+        self.cursor = self.text[..self.cursor]
+            .rfind('\n')
+            .map_or(0, |index| index + 1);
+    }
+
+    pub(super) fn line_end(&mut self) {
+        self.cursor += self.text[self.cursor..]
+            .find('\n')
+            .unwrap_or(self.text.len() - self.cursor);
+    }
+}
 
 pub(super) struct Form {
     definition: Definition,
-    fields: BTreeMap<String, Option<Composer>>,
+    fields: BTreeMap<String, Option<FormEditor>>,
     selected: usize,
     preview: Option<String>,
     trusted: bool,
@@ -23,10 +68,6 @@ pub(super) struct Form {
 
 impl Form {
     pub(super) fn new(definition: Definition) -> Result<Self> {
-        ensure!(
-            !definition.document.parameters.values().any(|p| p.secret),
-            "Secret workflow inputs are not supported in this form"
-        );
         let fields = definition
             .document
             .parameters
@@ -46,8 +87,20 @@ impl Form {
     fn supplied(&self) -> Vec<(String, String)> {
         self.fields
             .iter()
-            .filter_map(|(k, v)| v.as_ref().map(|v| (k.clone(), v.text.clone())))
+            .filter(|(k, _)| !self.definition.document.parameters[*k].secret)
+            .filter_map(|(k, v)| v.as_ref().map(|v| (k.clone(), v.text.to_string())))
             .collect()
+    }
+
+    fn secrets(&self) -> Result<workflow::secrets::SecretInputs> {
+        workflow::secrets::SecretInputs::collect(
+            &self.definition.document,
+            self.fields
+                .iter()
+                .filter(|(k, _)| self.definition.document.parameters[*k].secret)
+                .filter_map(|(k, v)| v.as_ref().map(|v| (k.clone(), v.text.to_string())))
+                .collect(),
+        )
     }
 
     pub(super) fn set_input(&mut self, name: &str, text: &str) -> Result<()> {
@@ -56,8 +109,8 @@ impl Form {
             .fields
             .get_mut(name)
             .ok_or_else(|| anyhow::anyhow!("Unknown workflow input"))?;
-        *field = Some(Composer {
-            text: text.into(),
+        *field = Some(FormEditor {
+            text: Zeroizing::new(text.into()),
             cursor: text.len(),
         });
         self.preview = None;
@@ -75,7 +128,14 @@ impl Form {
 
     pub(super) fn render_preview(&mut self) -> Result<()> {
         self.preview = None;
-        self.preview = Some(self.definition.document.render(&self.supplied())?.prompt);
+        self.preview = Some(
+            workflow::secrets::render_public(
+                &self.definition.document,
+                &self.supplied(),
+                &self.secrets()?.names(),
+            )?
+            .prompt,
+        );
         self.scroll = 0;
         Ok(())
     }
@@ -97,11 +157,17 @@ impl Form {
     pub(super) fn prepare(&self) -> Result<Prepared> {
         self.definition
             .authorize(self.trusted.then_some(self.definition.digest.as_str()))?;
-        let rendered = self.definition.document.render(&self.supplied())?;
+        let secrets = self.secrets()?;
+        let rendered = workflow::secrets::render_public(
+            &self.definition.document,
+            &self.supplied(),
+            &secrets.names(),
+        )?;
         Ok(Prepared {
             prompt: rendered.prompt,
             invocation: self.definition.invocation(rendered.inputs),
             no_save: false,
+            secrets,
         })
     }
 
@@ -185,7 +251,7 @@ impl Form {
                         .fields
                         .get_mut(&name)
                         .expect("selected field")
-                        .get_or_insert_with(Composer::default);
+                        .get_or_insert_with(FormEditor::default);
                     match key.code {
                         KeyCode::Backspace => edit.backspace(),
                         KeyCode::Delete => edit.delete(),
@@ -496,21 +562,34 @@ impl Panel {
         let p = &form.definition.document.parameters[name];
         frame.render_widget(
             Paragraph::new(display_safe(&format!(
-                "Input {}/{}: {} ({:?}{})\n{} [{:?}] · nonsecret, model-visible",
+                "Input {}/{}: {} ({:?}{})\n{} [{:?}] · {}",
                 form.selected + 1,
                 form.fields.len(),
                 name,
                 p.kind,
                 if p.required { ", required" } else { "" },
                 form.definition.document.id,
-                form.definition.scope
+                form.definition.scope,
+                if p.secret {
+                    "secret, hidden; one-shot shell only"
+                } else {
+                    "nonsecret, model-visible"
+                }
             )))
             .wrap(Wrap { trim: false }),
             chunks[0],
         );
         let (value, cursor) = if let Some(edit) = field {
-            let value = display_safe(&edit.text).replace('\t', " ");
-            let prefix = display_safe(&edit.text[..edit.cursor]).replace('\t', " ");
+            let value = if p.secret {
+                "[hidden]".into()
+            } else {
+                display_safe(&edit.text).replace('\t', " ")
+            };
+            let prefix = if p.secret {
+                String::new()
+            } else {
+                display_safe(&edit.text[..edit.cursor]).replace('\t', " ")
+            };
             let cursor =
                 super::composer::cursor_position(&prefix, chunks[1].width.saturating_sub(2));
             (value, cursor)

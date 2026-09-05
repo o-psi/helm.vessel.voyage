@@ -567,7 +567,7 @@ async fn main() -> Result<()> {
                 prepared.prompt,
                 prepared.no_save,
                 model_overridden,
-                Some(prepared.invocation),
+                Some((prepared.invocation, prepared.secrets)),
             )
             .await
             .map(|_| ())
@@ -1728,8 +1728,19 @@ async fn run_with_ctrl_c(
     scope: Option<helm::completion::runtime::RunHandle>,
     checkpoint: &helm::session::SessionCheckpoint,
 ) -> std::result::Result<helm::agent::AgentOutcome, helm::agent::AgentError> {
+    run_with_ctrl_c_and_secrets(agent, history, prompt, scope, checkpoint, None).await
+}
+
+async fn run_with_ctrl_c_and_secrets(
+    agent: &Agent,
+    history: Vec<helm::Message>,
+    prompt: String,
+    scope: Option<helm::completion::runtime::RunHandle>,
+    checkpoint: &helm::session::SessionCheckpoint,
+    bindings: Option<helm::workflow::secrets::RunBindings>,
+) -> std::result::Result<helm::agent::AgentOutcome, helm::agent::AgentError> {
     let cancellation = tokio_util::sync::CancellationToken::new();
-    let run = agent.run_checkpointed_scoped(
+    let run = agent.run_checkpointed_scoped_with_workflow_secrets(
         history,
         prompt,
         cancellation.clone(),
@@ -1737,6 +1748,7 @@ async fn run_with_ctrl_c(
         checkpoint,
         agent.model(),
         scope,
+        bindings,
     );
     wait_for_run_interrupt(
         run,
@@ -1830,7 +1842,10 @@ async fn execute_workflow(
     prompt: String,
     no_save: bool,
     model_overridden: bool,
-    workflow: Option<helm::workflow::Invocation>,
+    workflow: Option<(
+        helm::workflow::Invocation,
+        helm::workflow::secrets::SecretInputs,
+    )>,
 ) -> Result<Session> {
     let store = SessionStore::default();
     let (store, mut session) = if let Some(reference) = resume {
@@ -1848,7 +1863,9 @@ async fn execute_workflow(
     let mut active_config = config.clone();
     active_config.model = session.model.clone();
     let workflow_run = workflow.is_some();
-    if let Some(invocation) = workflow {
+    let mut secrets = None;
+    if let Some((invocation, inputs)) = workflow {
+        secrets = Some(inputs);
         anyhow::ensure!(
             session.workflow_runs.len() < 128,
             "session workflow history is full"
@@ -1874,15 +1891,18 @@ async fn execute_workflow(
     if !no_save {
         store.save(&mut session).await?;
     }
+    let run_id = scope
+        .as_ref()
+        .map(|scope| scope.run_id())
+        .unwrap_or_else(uuid::Uuid::new_v4);
     let checkpoint = helm::session::SessionCheckpoint::new(
         session.clone(),
         (!no_save).then(|| store.clone()),
-        scope
-            .as_ref()
-            .map(|scope| scope.run_id())
-            .unwrap_or_else(uuid::Uuid::new_v4),
+        run_id,
     );
-    let result = run_with_ctrl_c(&agent, history, prompt, scope, &checkpoint).await;
+    let bindings = secrets.map(|inputs| inputs.bind(run_id)).transpose()?;
+    let result =
+        run_with_ctrl_c_and_secrets(&agent, history, prompt, scope, &checkpoint, bindings).await;
     session = checkpoint.snapshot_after_run(&result).await;
     let outcome = match result {
         Ok(outcome) => outcome,
