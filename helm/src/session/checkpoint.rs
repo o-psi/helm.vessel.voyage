@@ -53,6 +53,25 @@ impl SessionCheckpoint {
         session
     }
 
+    /// Preserve committed usage when cleanup fails without canonical recovery.
+    /// Reset to the pre-run baseline only when the caller has a complete outcome
+    /// or recovery whose cumulative usage it will add exactly once.
+    pub async fn snapshot_after_run(
+        &self,
+        result: &Result<crate::agent::AgentOutcome, crate::agent::AgentError>,
+    ) -> Session {
+        let mut session = self.session.lock().await.clone();
+        if result.is_ok()
+            || result
+                .as_ref()
+                .err()
+                .is_some_and(|error| error.recovery().is_some())
+        {
+            session.usage = self.baseline_usage.clone();
+        }
+        session
+    }
+
     fn validate(&self, session: &Session) -> Result<(), CheckpointError> {
         if self.run_id.is_nil()
             || session.run_summaries.last().map(|s| s.run_id) != Some(self.run_id)
@@ -400,5 +419,72 @@ mod tests {
         assert!(checkpoint.partial("text").await.is_err());
         assert!(checkpoint.canonical(&[], &Usage::default()).await.is_err());
         assert!(!root.path().join("sessions").exists());
+    }
+    #[tokio::test]
+    async fn cleanup_without_recovery_retains_durable_usage_and_partial_text() {
+        let root = tempfile::tempdir().unwrap();
+        let (checkpoint, store) = fixture(root.path(), true);
+        let mut messages = checkpoint.snapshot_for_finish().await.messages;
+        messages.push(Message::new(Role::Assistant, "completed response"));
+        checkpoint.canonical(&messages, &run_usage()).await.unwrap();
+        checkpoint
+            .partial("current unfinished response")
+            .await
+            .unwrap();
+        let result = Err(crate::agent::AgentError::Completion(
+            "cancellation cleanup timed out".into(),
+        ));
+        let mut stopped = checkpoint.snapshot_after_run(&result).await;
+        assert_eq!(stopped.usage.input_tokens, 107);
+        assert_eq!(stopped.usage.output_tokens, 23);
+        stopped.interrupt_run_summary("cleanup timed out".into());
+        store.as_ref().unwrap().save(&mut stopped).await.unwrap();
+        let loaded = store.as_ref().unwrap().load(stopped.id).await.unwrap();
+        assert_eq!(loaded.usage.input_tokens, 107);
+        assert_eq!(loaded.messages.len(), 2);
+        assert_eq!(
+            loaded.run_summaries[0].partial_output,
+            "current unfinished response"
+        );
+    }
+
+    #[tokio::test]
+    async fn known_outcome_and_recovery_add_run_usage_to_baseline_once() {
+        let root = tempfile::tempdir().unwrap();
+        let (checkpoint, _) = fixture(root.path(), false);
+        let messages = checkpoint.snapshot_for_finish().await.messages;
+        checkpoint.canonical(&messages, &run_usage()).await.unwrap();
+        let outcome = Ok(crate::agent::AgentOutcome {
+            messages: messages.clone(),
+            answer: String::new(),
+            usage: run_usage(),
+            turns: 1,
+            stop_reason: StopReason::Completed,
+        });
+        assert_eq!(
+            checkpoint
+                .snapshot_after_run(&outcome)
+                .await
+                .usage
+                .input_tokens,
+            100
+        );
+        let recovery = crate::agent::CanonicalRecovery {
+            messages,
+            usage: run_usage(),
+        };
+        let result = Err(crate::agent::AgentError::Context(
+            crate::agent::ContextFailure {
+                source: crate::context::ContextError {
+                    estimated: 90000,
+                    limit: 65536,
+                },
+                recovery: Some(Box::new(recovery.clone())),
+            },
+        ));
+        let mut session = checkpoint.snapshot_after_run(&result).await;
+        session.recover_context_failure(&recovery).unwrap();
+        assert_eq!(session.usage.input_tokens, 107);
+        assert_eq!(session.usage.output_tokens, 23);
     }
 }

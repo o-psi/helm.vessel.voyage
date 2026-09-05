@@ -1332,23 +1332,68 @@ async fn run_with_ctrl_c(
         agent.model(),
         scope,
     );
+    wait_for_run_interrupt(
+        run,
+        cancellation,
+        tokio::signal::ctrl_c(),
+        std::time::Duration::from_secs(15),
+    )
+    .await
+}
+
+async fn wait_for_run_interrupt(
+    run: impl std::future::Future<
+        Output = std::result::Result<helm::agent::AgentOutcome, helm::agent::AgentError>,
+    >,
+    cancellation: tokio_util::sync::CancellationToken,
+    interrupt: impl std::future::Future<Output = io::Result<()>>,
+    cleanup_timeout: std::time::Duration,
+) -> std::result::Result<helm::agent::AgentOutcome, helm::agent::AgentError> {
     tokio::pin!(run);
     tokio::select! {
         result = &mut run => result,
-        signal = tokio::signal::ctrl_c() => {
+        signal = interrupt => {
             cancellation.cancel();
             if signal.is_err() {
                 eprintln!("[interrupt handler unavailable; cancelling run]");
             } else {
                 eprintln!("[interrupt requested; waiting for owned work to stop]");
             }
-            match tokio::time::timeout(std::time::Duration::from_secs(15), &mut run).await {
+            match tokio::time::timeout(cleanup_timeout, &mut run).await {
                 Ok(result) => result,
                 Err(_) => Err(helm::agent::AgentError::Completion(
                     "cancellation cleanup timed out; completion was not confirmed".into(),
                 )),
             }
         }
+    }
+}
+
+/// Read exactly one idle prompt. Do not prefetch input intended for tool approval
+/// or human questions while a run is active. A detached standard thread avoids
+/// blocking Tokio shutdown if Ctrl-C ends chat while the terminal read is pending.
+async fn read_plain_prompt() -> Result<Option<String>> {
+    let (send, receive) = tokio::sync::oneshot::channel();
+    std::thread::Builder::new()
+        .name("helm-plain-input".into())
+        .spawn(move || {
+            let mut prompt = String::new();
+            let result = io::stdin()
+                .read_line(&mut prompt)
+                .map(|count| (count > 0).then_some(prompt));
+            let _ = send.send(result);
+        })?;
+    wait_for_plain_input(receive, tokio::signal::ctrl_c()).await
+}
+
+async fn wait_for_plain_input(
+    receive: tokio::sync::oneshot::Receiver<io::Result<Option<String>>>,
+    interrupt: impl std::future::Future<Output = io::Result<()>>,
+) -> Result<Option<String>> {
+    tokio::select! {
+        biased;
+        signal = interrupt => { signal?; Ok(None) }
+        result = receive => Ok(result.context("plain input reader stopped")??),
     }
 }
 
@@ -1398,7 +1443,7 @@ async fn execute(
             .unwrap_or_else(uuid::Uuid::new_v4),
     );
     let result = run_with_ctrl_c(&agent, history, prompt, scope, &checkpoint).await;
-    session = checkpoint.snapshot_for_finish().await;
+    session = checkpoint.snapshot_after_run(&result).await;
     let outcome = match result {
         Ok(outcome) => outcome,
         Err(error) => {
@@ -1488,10 +1533,9 @@ async fn chat(
             print!("\nhelm> ");
             io::stdout().flush()?;
         }
-        let mut prompt = String::new();
-        if io::stdin().read_line(&mut prompt)? == 0 {
+        let Some(prompt) = read_plain_prompt().await? else {
             break;
-        }
+        };
         let prompt = prompt.trim();
         if prompt.is_empty() {
             continue;
@@ -1641,20 +1685,15 @@ async fn chat(
                 .map(|scope| scope.run_id())
                 .unwrap_or_else(uuid::Uuid::new_v4),
         );
-        let result = agent
-            .as_ref()
-            .expect("agent initialized")
-            .run_checkpointed_scoped(
-                history,
-                prompt.to_owned(),
-                tokio_util::sync::CancellationToken::new(),
-                None,
-                &checkpoint,
-                session.model.clone(),
-                scope,
-            )
-            .await;
-        session = checkpoint.snapshot_for_finish().await;
+        let result = run_with_ctrl_c(
+            agent.as_ref().expect("agent initialized"),
+            history,
+            prompt.to_owned(),
+            scope,
+            &checkpoint,
+        )
+        .await;
+        session = checkpoint.snapshot_after_run(&result).await;
         match result {
             Ok(outcome) => {
                 let completed = matches!(outcome.stop_reason, helm::agent::StopReason::Completed);
@@ -1987,5 +2026,84 @@ mod cli_tests {
     fn tool_diagnostics_are_sanitized_without_markdown_interpretation() {
         assert_eq!(safe_diagnostic("**failure**\u{1b}[31m"), "**failure**[31m");
         assert_eq!(summarize(&"é".repeat(200)).chars().count(), 161);
+    }
+    #[tokio::test]
+    async fn active_interrupt_waits_for_cooperative_run_result() {
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let observed = cancel.clone();
+        let run = async move {
+            observed.cancelled().await;
+            Err(helm::agent::AgentError::Cancelled)
+        };
+        let result = wait_for_run_interrupt(
+            run,
+            cancel.clone(),
+            std::future::ready(Ok(())),
+            std::time::Duration::from_secs(1),
+        )
+        .await;
+        assert!(cancel.is_cancelled());
+        assert!(matches!(result, Err(helm::agent::AgentError::Cancelled)));
+    }
+
+    #[tokio::test]
+    async fn stalled_cleanup_is_bounded_and_never_returns_completion() {
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let result = wait_for_run_interrupt(
+            std::future::pending(),
+            cancel.clone(),
+            std::future::ready(Ok(())),
+            std::time::Duration::from_millis(1),
+        )
+        .await;
+        assert!(cancel.is_cancelled());
+        assert!(
+            matches!(result, Err(helm::agent::AgentError::Completion(reason)) if reason.contains("cleanup timed out"))
+        );
+    }
+
+    #[tokio::test]
+    async fn idle_plain_interrupt_exits_without_waiting_for_terminal_input() {
+        let (send, receive) = tokio::sync::oneshot::channel();
+        let result = wait_for_plain_input(receive, std::future::ready(Ok(())))
+            .await
+            .unwrap();
+        assert!(result.is_none());
+        assert!(send.is_closed());
+    }
+
+    #[tokio::test]
+    async fn plain_input_preserves_exact_text_and_handles_eof_and_reader_failure() {
+        let (send, receive) = tokio::sync::oneshot::channel();
+        send.send(Ok(Some("é full prompt\n".into()))).unwrap();
+        assert_eq!(
+            wait_for_plain_input(receive, std::future::pending())
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("é full prompt\n")
+        );
+        let (send, receive) = tokio::sync::oneshot::channel();
+        send.send(Ok(None)).unwrap();
+        assert!(
+            wait_for_plain_input(receive, std::future::pending())
+                .await
+                .unwrap()
+                .is_none()
+        );
+        let (send, receive) = tokio::sync::oneshot::channel();
+        drop(send);
+        assert!(
+            wait_for_plain_input(receive, std::future::pending())
+                .await
+                .is_err()
+        );
+        let (send, receive) = tokio::sync::oneshot::channel();
+        send.send(Err(io::Error::other("reader failed"))).unwrap();
+        assert!(
+            wait_for_plain_input(receive, std::future::pending())
+                .await
+                .is_err()
+        );
     }
 }
