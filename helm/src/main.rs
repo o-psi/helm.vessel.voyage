@@ -1046,13 +1046,14 @@ async fn tui_chat(
     log_format: LogFormat,
 ) -> Result<()> {
     let store = SessionStore::default();
-    let mut session = if let Some(reference) = resume {
-        store.load_reference(&reference).await?
+    let (mut store, mut session) = if let Some(reference) = resume {
+        store.load_owned(&reference).await?
     } else {
-        Session::new(
+        let session = Session::new(
             config.resolve_workspace(workspace_arg)?,
             config.model.clone(),
-        )
+        );
+        (store.with_execution(session.id).await?, session)
     };
     if model_overridden && session.switch_model(config.model.clone())? {
         store.save(&mut session).await?;
@@ -1125,7 +1126,7 @@ async fn tui_chat(
     let session_id = session.id;
     let exit = helm::tui::run(
         agent,
-        store,
+        &mut store,
         session,
         receiver,
         bridge.sender(),
@@ -1147,6 +1148,8 @@ async fn tui_chat(
     .await
     .context("subagent shutdown timed out; refusing frontend handoff")?;
     drop(subagent_runtime);
+    let session_id = store.owned_session_id().unwrap_or(session_id);
+    drop(store); // Release the active session before a same-session child starts.
     match exit? {
         helm::tui::TuiExit::Quit => Ok(()),
         helm::tui::TuiExit::Launch(request) => {
@@ -1406,13 +1409,14 @@ async fn execute(
     model_overridden: bool,
 ) -> Result<Session> {
     let store = SessionStore::default();
-    let mut session = if let Some(reference) = resume {
-        store.load_reference(&reference).await?
+    let (store, mut session) = if let Some(reference) = resume {
+        store.load_owned(&reference).await?
     } else {
-        Session::new(
+        let session = Session::new(
             config.resolve_workspace(workspace_arg)?,
             config.model.clone(),
-        )
+        );
+        (store.with_execution(session.id).await?, session)
     };
     if model_overridden {
         session.switch_model(config.model.clone())?;
@@ -1507,13 +1511,14 @@ async fn chat(
     model_overridden: bool,
 ) -> Result<()> {
     let store = SessionStore::default();
-    let mut session = if let Some(reference) = resume {
-        store.load_reference(&reference).await?
+    let (mut store, mut session) = if let Some(reference) = resume {
+        store.load_owned(&reference).await?
     } else {
-        Session::new(
+        let session = Session::new(
             config.resolve_workspace(workspace_arg)?,
             config.model.clone(),
-        )
+        );
+        (store.with_execution(session.id).await?, session)
     };
     if model_overridden && session.switch_model(config.model.clone())? {
         store.save(&mut session).await?;
@@ -1584,7 +1589,9 @@ async fn chat(
             if !name.is_empty() {
                 next.set_name(name.to_owned());
             }
+            let next_owner = store.with_execution(next.id).await?;
             session = next;
+            store = next_owner;
             println!("new session: {}", session.display_name());
             continue;
         }

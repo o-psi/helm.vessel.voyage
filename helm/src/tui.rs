@@ -257,7 +257,7 @@ impl App {
 #[allow(clippy::too_many_arguments)]
 pub async fn run(
     agent: Arc<Agent>,
-    store: SessionStore,
+    store: &mut SessionStore,
     session: Session,
     mut rx: mpsc::UnboundedReceiver<UiEvent>,
     tx: mpsc::UnboundedSender<UiEvent>,
@@ -267,6 +267,10 @@ pub async fn run(
     provider_label: String,
     access_mode: AccessMode,
 ) -> Result<TuiExit> {
+    anyhow::ensure!(
+        store.owned_session_id() == Some(session.id),
+        "TUI session requires execution ownership"
+    );
     let sessions = store.list().await?;
     let mut app = App::new(session, sessions);
     app.diagnostic_agent = Some(agent.clone());
@@ -312,7 +316,7 @@ pub async fn run(
             event = input.next() => {
                 match event {
                     Some(Ok(Event::Key(key))) if key.is_press() => {
-                        handle_key(key, &mut app, &agent, &store, &tx, terminals.as_ref(), supervisor.clone(), todos.clone()).await?;
+                        handle_key(key, &mut app, &agent, store, &tx, terminals.as_ref(), supervisor.clone(), todos.clone()).await?;
                     }
                     Some(Ok(Event::Resize(columns, rows))) => {
                         let viewport = conversation_layout(
@@ -359,7 +363,7 @@ pub async fn run(
                 let Some(event) = event else { break };
                 let title_due = matches!(&event, UiEvent::Finished(Ok(outcome)) if matches!(outcome.stop_reason, crate::agent::StopReason::Completed))
                     && app.session.title_due_after_turn();
-                handle_ui_event(event, &mut app, &store, terminals.as_ref()).await?;
+                handle_ui_event(event, &mut app, store, terminals.as_ref()).await?;
                 if title_due { start_title_job(&mut app, &agent, &tx); }
             }
             _ = &mut termination => {
@@ -798,7 +802,7 @@ async fn handle_key(
     key: KeyEvent,
     app: &mut App,
     agent: &Arc<Agent>,
-    store: &SessionStore,
+    store: &mut SessionStore,
     tx: &mpsc::UnboundedSender<UiEvent>,
     terminals: &dyn InteractiveTerminals,
     supervisor: Arc<dyn AgentSupervisor>,
@@ -962,9 +966,12 @@ async fn handle_key(
                 app.model_panel.selected_model = 0;
                 request_models(tx, agent.clone(), false);
             }
-            KeyCode::Char('n') if !app.is_running() => start_new_session(app, None),
+            KeyCode::Char('n') if !app.is_running() => start_new_session(app, store, None).await?,
             KeyCode::Char('b') if !app.is_running() => {
-                app.session = store.branch(&app.session, None).await?;
+                app.title_job = None;
+                let (owner, branch) = store.branch_owned(&app.session, None).await?;
+                app.session = branch;
+                *store = owner;
                 app.sessions = store.list().await?;
                 app.streaming_response.clear();
                 app.scroll = 0;
@@ -1128,7 +1135,9 @@ async fn handle_key(
                     cancel: run_cancel.clone(),
                 };
                 let model = agent.model();
+                let run_owner = store.clone();
                 let task = tokio::spawn(async move {
+                    let _run_owner = run_owner;
                     let result = agent
                         .run_checkpointed_scoped(
                             history,

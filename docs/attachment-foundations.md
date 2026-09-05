@@ -124,8 +124,11 @@ required before remote exposure.
 
 ## Integration requirements still open
 
-- All local CLI/TUI and remote writers must use one coordinator. Today existing
-  SessionStore JSON writes do not consult this journal or its execution locks.
+- All local CLI/TUI and remote writers must use one coordinator. Local CLI/TUI now
+  retain [JSON session execution ownership](session-ownership.md), including
+  checkpoint/steering writers and in-process session changes. Those sidecars do not
+  consult this journal or atomically commit command identity with canonical history;
+  a single-authority coordinator migration remains required.
 - Canonical tool-call/result checkpoints, usage accounting, cancellation intent,
   live runtime ownership and cleanup must integrate with the agent loop. Text-only
   journal fixtures are not proof of complete provider/tool durability.

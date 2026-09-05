@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     io::{Read, Write},
     path::{Path, PathBuf},
+    sync::Arc,
     time::Duration,
 };
 use tokio::fs;
@@ -296,18 +297,23 @@ impl Session {
 #[derive(Clone, Debug)]
 pub struct SessionStore {
     directory: PathBuf,
+    execution: Option<Arc<SessionLease>>,
 }
 impl Default for SessionStore {
     fn default() -> Self {
         Self {
             directory: default_data_dir().join("sessions"),
+            execution: None,
         }
     }
 }
 
 impl SessionStore {
     pub fn new(directory: PathBuf) -> Self {
-        Self { directory }
+        Self {
+            directory,
+            execution: None,
+        }
     }
     /// Acquire before loading a session, and retain through execution and cleanup.
     /// Non-reentrant: while holding this lease use the `_with_lease` operations.
@@ -316,6 +322,7 @@ impl SessionStore {
         let directory = prepare_directory(&self.directory)?;
         let path = directory.join(format!(".{id}.lock"));
         let file = open_regular(&path, true)?;
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
         loop {
             match file.try_lock() {
                 Ok(()) => {
@@ -326,6 +333,10 @@ impl SessionStore {
                     });
                 }
                 Err(std::fs::TryLockError::WouldBlock) => {
+                    anyhow::ensure!(
+                        tokio::time::Instant::now() < deadline,
+                        "session busy; another frontend owns execution"
+                    );
                     tokio::time::sleep(Duration::from_millis(20)).await;
                 }
                 Err(std::fs::TryLockError::Error(error)) => return Err(error.into()),
@@ -333,7 +344,43 @@ impl SessionStore {
         }
     }
 
+    /// Cloneable execution owner. Every clone retains the stable sidecar lock.
+    /// A different ID creates a separate owner; existing clones are never rebound.
+    pub async fn with_execution(&self, id: Uuid) -> Result<Self> {
+        if self.execution.as_ref().is_some_and(|lease| lease.id == id) {
+            return Ok(self.clone());
+        }
+        let lease = self.acquire_execution(id).await?;
+        Ok(Self {
+            directory: self.directory.clone(),
+            execution: Some(Arc::new(lease)),
+        })
+    }
+
+    pub fn owned_session_id(&self) -> Option<Uuid> {
+        self.execution.as_ref().map(|lease| lease.id)
+    }
+
+    /// Resolve only the identity without ownership, then reload authoritative
+    /// content under the lease. Never return the pre-lock snapshot for execution.
+    pub async fn load_owned(&self, reference: &str) -> Result<(Self, Session)> {
+        let initial = self.load_reference(reference).await?;
+        let owner = self.with_execution(initial.id).await?;
+        let current = owner.load(initial.id).await?;
+        let resolved = owner.load_reference(reference).await?;
+        anyhow::ensure!(
+            resolved.id == current.id,
+            "session reference changed while acquiring ownership"
+        );
+        Ok((owner, current))
+    }
+
     pub async fn save(&self, session: &mut Session) -> Result<()> {
+        if let Some(lease) = &self.execution
+            && lease.id == session.id
+        {
+            return self.save_with_lease(session, lease).await;
+        }
         let lease = self.acquire_execution(session.id).await?;
         self.save_with_lease(session, &lease).await
     }
@@ -453,7 +500,12 @@ impl SessionStore {
                 directory.as_deref() == source.parent(),
                 "session path belongs to another store; resume it using its original session store"
             );
-            return load_path(direct).await;
+            let session = load_path(direct).await?;
+            anyhow::ensure!(
+                source.file_name() == Some(std::ffi::OsStr::new(&format!("{}.json", session.id))),
+                "session path does not match its canonical ID filename"
+            );
+            return Ok(session);
         }
         if let Ok(id) = Uuid::parse_str(reference) {
             return self.load(id).await;
@@ -489,6 +541,11 @@ impl SessionStore {
         Ok(result)
     }
     pub async fn delete(&self, id: Uuid) -> Result<()> {
+        if let Some(lease) = &self.execution
+            && lease.id == id
+        {
+            return self.delete_with_lease(id, lease).await;
+        }
         let lease = self.acquire_execution(id).await?;
         self.delete_with_lease(id, &lease).await
     }
@@ -510,6 +567,15 @@ impl SessionStore {
     }
 
     pub async fn branch(&self, source: &Session, name: Option<String>) -> Result<Session> {
+        Ok(self.branch_owned(source, name).await?.1)
+    }
+
+    /// Publish the new branch only after acquiring its execution owner.
+    pub async fn branch_owned(
+        &self,
+        source: &Session,
+        name: Option<String>,
+    ) -> Result<(Self, Session)> {
         let now = Utc::now();
         let mut branch = source.clone();
         branch.id = Uuid::new_v4();
@@ -525,8 +591,9 @@ impl SessionStore {
             .or_else(|| Some(generated_name(branch.id)));
         let manual = branch.name.as_deref() != Some(&generated_name(branch.id));
         branch.title_state_mut().automatic = !manual;
-        self.save(&mut branch).await?;
-        Ok(branch)
+        let owner = self.with_execution(branch.id).await?;
+        owner.save(&mut branch).await?;
+        Ok((owner, branch))
     }
 
     pub async fn export_markdown(&self, session: &Session, path: &Path) -> Result<()> {

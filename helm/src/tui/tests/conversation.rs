@@ -200,7 +200,7 @@ async fn shift_enter_adds_newlines_without_dispatching_messages_or_todos() {
 #[tokio::test]
 async fn active_run_composer_sends_durable_steering_and_stays_editable() {
     let directory = tempfile::tempdir().unwrap();
-    let store = SessionStore::new(directory.path().join("sessions"));
+    let mut store = SessionStore::new(directory.path().join("sessions"));
     let mut app = App::new(Session::new(directory.path().into(), "test".into()), vec![]);
     let agent = Arc::new(navigation_agent_for_conversation(&directory));
     let terminals = FakeTerminals::new();
@@ -225,7 +225,7 @@ async fn active_run_composer_sends_durable_steering_and_stays_editable() {
             key,
             &mut app,
             &agent,
-            &store,
+            &mut store,
             &tx,
             &terminals,
             supervisor.clone(),
@@ -239,7 +239,7 @@ async fn active_run_composer_sends_durable_steering_and_stays_editable() {
         KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
         &mut app,
         &agent,
-        &store,
+        &mut store,
         &tx,
         &terminals,
         supervisor,
@@ -781,7 +781,7 @@ async fn steering_boundary_preserves_fifo_receipts_and_separates_streams() {
 async fn steering_backpressure_and_closed_run_preserve_draft_without_phantom_history() {
     for closed in [false, true] {
         let directory = tempfile::tempdir().unwrap();
-        let store = SessionStore::new(directory.path().join("sessions"));
+        let mut store = SessionStore::new(directory.path().join("sessions"));
         let mut app = App::new(Session::new(directory.path().into(), "test".into()), vec![]);
         let agent = Arc::new(navigation_agent_for_conversation(&directory));
         let (sender, receiver) = crate::agent::steering_channel(1);
@@ -803,7 +803,7 @@ async fn steering_backpressure_and_closed_run_preserve_draft_without_phantom_his
             KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
             &mut app,
             &agent,
-            &store,
+            &mut store,
             &tx,
             &FakeTerminals::new(),
             Arc::new(FakeSupervisor::new(vec![])),
@@ -858,7 +858,7 @@ async fn steering_save_failure_never_reaches_the_provider_queue() {
     let directory = tempfile::tempdir().unwrap();
     let blocked = directory.path().join("not-a-directory");
     std::fs::write(&blocked, "fixture").unwrap();
-    let store = SessionStore::new(blocked.join("sessions"));
+    let mut store = SessionStore::new(blocked.join("sessions"));
     let mut app = App::new(Session::new(directory.path().into(), "test".into()), vec![]);
     let agent = Arc::new(navigation_agent_for_conversation(&directory));
     let (sender, _receiver) = crate::agent::steering_channel(1);
@@ -873,7 +873,7 @@ async fn steering_save_failure_never_reaches_the_provider_queue() {
         KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
         &mut app,
         &agent,
-        &store,
+        &mut store,
         &tx,
         &FakeTerminals::new(),
         Arc::new(FakeSupervisor::new(vec![])),
