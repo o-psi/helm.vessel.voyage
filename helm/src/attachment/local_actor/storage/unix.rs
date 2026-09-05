@@ -111,6 +111,43 @@ impl Directory {
         directory.verify()?;
         Ok(directory)
     }
+    /// Pin an existing private directory without creating or syncing any state.
+    pub(crate) fn open_existing(path: &Path) -> Result<Self> {
+        let parent = walk(
+            path.parent()
+                .context("local actor directory needs a parent")?,
+        )?;
+        let name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .context("invalid local actor directory name")?;
+        let file = checked(
+            open_at(&parent, name, libc::O_RDONLY | libc::O_DIRECTORY)?,
+            true,
+        )?;
+        let directory = Self {
+            path: path.into(),
+            file,
+            parent,
+        };
+        directory.verify()?;
+        Ok(directory)
+    }
+    /// A shared reader never creates a missing lock file or changes durability.
+    pub(crate) fn read_lock(&self) -> Result<super::Lock> {
+        self.read_lock_after(|_| Ok(()))
+    }
+    fn read_lock_after(&self, acquired: impl FnOnce(&File) -> Result<()>) -> Result<super::Lock> {
+        self.verify()?;
+        let file = checked(open_at(&self.file, "actor.lock", libc::O_RDONLY)?, false)?;
+        if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_SH | libc::LOCK_NB) } != 0 {
+            return Err(io::Error::last_os_error()).context("local actor storage busy");
+        }
+        let lock = super::Lock(file);
+        acquired(&lock.0)?;
+        self.verify()?;
+        Ok(lock)
+    }
     pub(crate) fn verify(&self) -> Result<()> {
         let current = checked(walk(&self.path)?, true)?;
         let a = current.metadata()?;
@@ -251,6 +288,30 @@ mod tests {
             .expect("failure must explicitly unlock the inherited description");
         assert!(inherited.as_ref().unwrap().metadata().unwrap().is_file());
         drop(new_lock);
+        drop(inherited);
+    }
+    #[test]
+    fn shared_verification_failure_unlocks_retained_description_and_replacement_fails() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("actor");
+        let moved = temp.path().join("moved");
+        let directory = Directory::open(&path).unwrap();
+        drop(directory.lock().unwrap());
+        let mut inherited = None;
+        let failed = directory.read_lock_after(|file| {
+            inherited = Some(file.try_clone()?);
+            fs::rename(&path, &moved)?;
+            fs::create_dir(&path)?;
+            Ok(())
+        });
+        assert!(failed.is_err());
+        assert!(directory.read_lock().is_err());
+        let reopened = Directory::open_existing(&moved).unwrap();
+        let writer = reopened
+            .lock()
+            .expect("failed shared verification must unlock retained description");
+        assert!(inherited.as_ref().unwrap().metadata().unwrap().is_file());
+        drop(writer);
         drop(inherited);
     }
 }

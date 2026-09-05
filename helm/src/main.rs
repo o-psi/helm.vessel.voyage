@@ -31,6 +31,8 @@ mod managed;
 #[derive(Parser)]
 #[command(version, about = "A general-purpose LLM harness for terminal work")]
 struct Cli {
+    #[command(flatten)]
+    policy: helm::policy_profile::cli::SelectionArgs,
     #[arg(long, global = true)]
     config: Option<PathBuf>,
     /// Override a configuration value for this invocation (`KEY=VALUE`).
@@ -109,6 +111,8 @@ enum LogFormat {
 }
 #[derive(Subcommand)]
 enum Command {
+    /// Manage named policy profiles and preview explicit launch selection.
+    Policy(helm::policy_profile::cli::PolicyArgs),
     /// Discover, inspect and run saved nonsecret workflows.
     Workflow(helm::workflow::WorkflowArgs),
     /// Inspect a repository and explicitly review generated project guidance.
@@ -361,6 +365,16 @@ async fn main() -> Result<()> {
         }
         Err(error) => error.exit(),
     };
+    if cli.policy.policy_profile.is_some() {
+        anyhow::ensure!(
+            matches!(
+                &cli.command,
+                None | Some(Command::Run { .. } | Command::Chat { .. } | Command::Models { .. })
+            ) || matches!(&cli.command, Some(Command::Workflow(args)) if matches!(args.command, helm::workflow::WorkflowCommand::Run(_)))
+                || matches!(&cli.command, Some(Command::Managed(args)) if !args.administrative()),
+            "policy selection requires an execution or model-discovery invocation"
+        );
+    }
     // Enrollment never loads provider config or initializes runtime/session logs.
     if let Some(Command::Attachment(args)) = cli.command {
         if matches!(
@@ -388,6 +402,12 @@ async fn main() -> Result<()> {
         return managed::run(args, None, cli.workspace, false)
             .await
             .map_err(managed::safe_error);
+    }
+    if matches!(&cli.command, Some(Command::Policy(args)) if !args.needs_config()) {
+        let Some(Command::Policy(args)) = cli.command else {
+            unreachable!()
+        };
+        return helm::policy_profile::cli::run(args, &cli.policy, None, None, Default::default());
     }
     let filter = if cli.verbose {
         "helm=debug"
@@ -468,6 +488,7 @@ async fn main() -> Result<()> {
     if let Some(model) = cli.model {
         config.model = model;
     }
+    let explicit_access = cli.approval.is_some() || cli.access.is_some();
     if let Some(approval) = cli.approval {
         config.access = None;
         config.approval = match approval {
@@ -479,10 +500,32 @@ async fn main() -> Result<()> {
     if let Some(access) = cli.access {
         config.access = Some(access.into());
     }
+    let policy_explicit = if cli.policy.policy_profile.is_some()
+        || matches!(&cli.command, Some(Command::Policy(_)))
+    {
+        helm::policy_profile::cli::explicit(&config, &cli.set, explicit_access)?
+    } else {
+        Default::default()
+    };
+    if cli.policy.policy_profile.is_some() {
+        let workspace = config.resolve_workspace(cli.workspace.clone())?;
+        cli.policy
+            .apply(&mut config, &workspace, policy_explicit.clone())?;
+    }
     match cli.command.unwrap_or(Command::Chat {
         resume: None,
         plain: false,
     }) {
+        Command::Policy(args) => {
+            let workspace = config.resolve_workspace(cli.workspace)?;
+            helm::policy_profile::cli::run(
+                args,
+                &cli.policy,
+                Some(&config),
+                Some(&workspace),
+                policy_explicit,
+            )
+        }
         Command::Completions { shell } => {
             clap_complete::generate(shell, &mut Cli::command(), "helm", &mut io::stdout());
             Ok(())
@@ -1509,6 +1552,10 @@ async fn launch_from_tui(
     verbose: bool,
     log_format: LogFormat,
 ) -> Result<()> {
+    anyhow::ensure!(
+        config.policy_profile.is_none(),
+        "selected policy profile cannot cross a frontend relaunch; exit and explicitly reselect for the requested frontend"
+    );
     let runtime_config = request
         .use_active_config
         .then(|| write_runtime_config(config))
@@ -2388,6 +2435,35 @@ mod cli_tests {
         );
         assert!(
             super::check_requested_workspace(&isolated, std::slice::from_ref(&isolated), &[])
+                .is_err()
+        );
+    }
+    #[test]
+    fn named_policy_cli_requires_exact_launch_binding_and_exposes_administration() {
+        for args in [
+            vec!["helm", "--policy-profile", "review", "run", "x"],
+            vec!["helm", "--policy-revision", "1", "run", "x"],
+            vec!["helm", "--policy-confirm", "abc", "run", "x"],
+        ] {
+            assert!(Cli::try_parse_from(args).is_err());
+        }
+        assert!(
+            Cli::try_parse_from([
+                "helm",
+                "--policy-profile",
+                "review",
+                "--policy-revision",
+                "1",
+                "--policy-digest",
+                "abc",
+                "run",
+                "x"
+            ])
+            .is_ok()
+        );
+        assert!(Cli::try_parse_from(["helm", "policy", "list"]).is_ok());
+        assert!(
+            Cli::try_parse_from(["helm", "policy", "edit", "review", "--input", "rules.json"])
                 .is_err()
         );
     }
