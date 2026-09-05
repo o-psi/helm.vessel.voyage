@@ -774,6 +774,7 @@ fn probe_codex_compatibility(command: &str) -> CodexCompatibilityProbe {
 }
 
 struct CliSubagentExecutor {
+    managed_resources: Option<Arc<ManagedResources>>,
     todos: TodoTool,
     config: Config,
     workspace: PathBuf,
@@ -843,6 +844,11 @@ impl SubagentExecutor for CliSubagentExecutor {
         .await
         .map_err(|e| e.to_string())?;
         tools.retain_allowed(&context.policy.allowed_tools);
+        if let Some(resources) = &self.managed_resources {
+            resources
+                .register(&tools)
+                .map_err(|error| error.to_string())?;
+        }
         let agent = Agent::new(
             provider::from_config(&config, workspace).map_err(|e| e.to_string())?,
             tools,
@@ -891,6 +897,13 @@ struct SubagentBundle {
     model: Arc<RwLock<String>>,
 }
 async fn build_subagents(config: &Config, workspace: &std::path::Path) -> Result<SubagentBundle> {
+    build_subagents_managed(config, workspace, None).await
+}
+async fn build_subagents_managed(
+    config: &Config,
+    workspace: &std::path::Path,
+    managed_resources: Option<Arc<ManagedResources>>,
+) -> Result<SubagentBundle> {
     let standard = ToolRegistry::standard();
     let mut allowed_tools: std::collections::BTreeSet<String> = standard
         .definitions()
@@ -934,6 +947,7 @@ async fn build_subagents(config: &Config, workspace: &std::path::Path) -> Result
     let worktrees = worktree_manager(workspace, &workspace_key);
     let model = Arc::new(RwLock::new(config.model.clone()));
     let executor = Arc::new(CliSubagentExecutor {
+        managed_resources,
         todos: todos.clone(),
         config: config.clone(),
         workspace: workspace.to_path_buf(),
@@ -995,10 +1009,43 @@ fn worktree_manager(workspace: &std::path::Path, workspace_key: &str) -> Option<
     .ok()
 }
 
+#[derive(Default)]
+struct ManagedResourceState {
+    closed: bool,
+    terminals: Vec<helm::tools::ProcessTool>,
+}
+#[derive(Default)]
+struct ManagedResources(std::sync::Mutex<ManagedResourceState>);
+impl ManagedResources {
+    fn register(&self, tools: &ToolRegistry) -> Result<()> {
+        let mut state = self
+            .0
+            .lock()
+            .map_err(|_| anyhow::anyhow!("managed resources poisoned"))?;
+        anyhow::ensure!(!state.closed, "managed resource admission closed");
+        anyhow::ensure!(
+            state.terminals.len() < 1024,
+            "managed resource limit reached"
+        );
+        if let Some(terminals) = tools.terminals() {
+            state.terminals.push(terminals);
+        }
+        Ok(())
+    }
+    fn close(&self) -> Result<Vec<helm::tools::ProcessTool>> {
+        let mut state = self
+            .0
+            .lock()
+            .map_err(|_| anyhow::anyhow!("managed resources poisoned"))?;
+        state.closed = true;
+        Ok(state.terminals.clone())
+    }
+}
+
 struct ManagedAgent {
     agent: Agent,
     subagents: Arc<SubagentRuntime>,
-    terminals: Option<helm::tools::ProcessTool>,
+    resources: Option<Arc<ManagedResources>>,
 }
 async fn build_agent(config: &Config, workspace: PathBuf, attended: bool) -> Result<Agent> {
     Ok(build_agent_bundle(config, workspace, attended, None)
@@ -1036,7 +1083,8 @@ async fn build_agent_bundle(
         },
         redactor: redactor(config),
     };
-    let subagents = build_subagents(config, &workspace).await?;
+    let managed_resources = sink.as_ref().map(|_| Arc::new(ManagedResources::default()));
+    let subagents = build_subagents_managed(config, &workspace, managed_resources.clone()).await?;
     let gate_runtime = subagents.runtime.clone();
     let gate_todos = subagents.todos.store();
     let gate_agents = gate_runtime.store().expect("persistent runtime");
@@ -1047,7 +1095,9 @@ async fn build_agent_bundle(
         Some(subagents.completion_tool),
     )
     .await?;
-    let terminals = tools.terminals();
+    if let Some(resources) = &managed_resources {
+        resources.register(&tools)?;
+    }
     let retained_runtime = gate_runtime.clone();
     let agent = Agent::new(
         provider::from_config(config, context.policy.workspace().to_owned())?,
@@ -1071,7 +1121,7 @@ async fn build_agent_bundle(
     Ok(ManagedAgent {
         agent,
         subagents: retained_runtime,
-        terminals,
+        resources: managed_resources,
     })
 }
 

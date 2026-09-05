@@ -53,6 +53,8 @@ class Provider(BaseHTTPRequestHandler):
                 value = ('shell', {'command': "printf 'one-effect\\n' >> effects.txt"})
             elif case.mode == 'terminal' and step == 0:
                 value = ('process', {'action': 'start', 'command': 'sleep 120', 'name': 'managed-owned-pty'})
+            elif case.mode == 'flood':
+                value = 'provisional-large-output-' * 16000
             else:
                 value = 'managed-final-雪'
             data = response(case.provider, value, step)
@@ -265,12 +267,44 @@ def failures_and_policy(root):
         case.close()
 
 
+def output_and_terminal_cleanup(root):
+    case = Case(root)
+    try:
+        session = case.create()
+        # Broken receipt output fails before dispatch and clears only the unused obligation.
+        process = subprocess.Popen([str(HELM), *case.command(session)], env=case.env,
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        process.stdout.close()
+        process.wait(timeout=20)
+        assert process.returncode != 0
+        assert not case.requests
+        assert case.sql('SELECT confirmation FROM local_cleanup_obligations') == [('observed',)]
+        # A full output pipe cannot hang the async worker or indefinitely retain the owner.
+        case.reset('flood')
+        process = subprocess.Popen([str(HELM), *case.command(session)], env=case.env,
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        process.wait(timeout=25)  # Deliberately do not drain stdout until the process exits.
+        stdout, stderr = process.communicate(timeout=2)
+        assert process.returncode != 0, (stdout[-200:], stderr)
+        row = case.sql('SELECT record FROM runs ORDER BY rowid DESC LIMIT 1')[0][0]
+        assert json.loads(row)['state'] == 'cancelled', row
+        assert case.sql('SELECT confirmation FROM local_cleanup_obligations ORDER BY rowid DESC LIMIT 1') == [('observed',)]
+        case.reset('terminal')
+        final(run(case.command(session), case.env))
+        assert len(case.requests) == 2
+        case.reset()
+        final(run(case.command(session), case.env))
+    finally:
+        case.close()
+
+
 def main():
     with tempfile.TemporaryDirectory(prefix='helm-local-managed-') as temporary:
         root = Path(temporary).resolve()
         transports(root / 'transports')
         cancellation(root / 'cancellation')
         failures_and_policy(root / 'failure-policy')
+        output_and_terminal_cleanup(root / 'output-terminal')
     print('local managed CLI: native transports, exact retry, revision fences, cancellation and restart cleanup passed')
 
 

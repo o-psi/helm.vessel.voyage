@@ -401,11 +401,11 @@ impl EventSink for Progress {
             // Provider diagnostics and raw tool arguments/results are not echoed.
             _ => None,
         };
-        if let Some(value) = value {
-            if self.output.emit(value).await.is_err() {
-                self.failed.store(true, Ordering::SeqCst);
-                self.cancel.cancel();
-            }
+        if let Some(value) = value
+            && self.output.emit(value).await.is_err()
+        {
+            self.failed.store(true, Ordering::SeqCst);
+            self.cancel.cancel();
         }
     }
 }
@@ -561,12 +561,17 @@ async fn submit(
         tokio::time::timeout(Duration::from_secs(6), watcher).await,
         Ok(Ok(Ok(())))
     );
+    let terminal_handles = resources
+        .resources
+        .as_ref()
+        .context("missing managed resources")?
+        .close()?;
     let children_observed =
         tokio::time::timeout(Duration::from_secs(15), resources.subagents.shutdown())
             .await
             .is_ok();
     // The terminal helper is integrated in the next dependency commit.
-    let terminals_observed = resources.terminals.is_none();
+    let terminals_observed = terminal_handles.is_empty();
     let observed = children_observed && terminals_observed && result.is_some() && watcher_ok;
     drop(resources);
     if observed {
