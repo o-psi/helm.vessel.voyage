@@ -899,6 +899,7 @@ dependencies = [
  "voyage-protocol",
  "voyage-storage",
  "vt100",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
