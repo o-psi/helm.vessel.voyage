@@ -56,6 +56,10 @@ jobs:
         env:
           HELM_BIN: target/release/helm
         run: python3 tests/system/completion_handoff.py
+      - name: Verify cooperative plain-chat cancellation and idle interrupt exit
+        env:
+          HELM_BIN: target/release/helm
+        run: python3 tests/system/plain_interrupt.py
       - run: python3 tests/system/vessel_lifecycle.py
       - name: Verify evaluation runner and timeout evidence with an offline provider
         env:
