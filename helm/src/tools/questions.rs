@@ -42,7 +42,7 @@ impl Question {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(tag = "status", rename_all = "snake_case")]
+#[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
 pub enum QuestionAnswer {
     Selected { index: usize, answer: String },
     Custom { answer: String },
@@ -51,6 +51,14 @@ pub enum QuestionAnswer {
 }
 
 impl QuestionAnswer {
+    fn redact(&mut self, redactor: &super::Redactor) {
+        match self {
+            Self::Selected { answer, .. } | Self::Custom { answer } => {
+                *answer = redactor.redact(std::mem::take(answer));
+            }
+            Self::Cancelled | Self::Unavailable => {}
+        }
+    }
     fn validate(&self, question: &Question) -> Result<(), ToolError> {
         match self {
             Self::Selected { index, answer } if question.options.get(*index) != Some(answer) => {
@@ -64,6 +72,29 @@ impl QuestionAnswer {
             _ => Ok(()),
         }
     }
+}
+
+/// Fixed schema metadata is public protocol data; only answer fields contain
+/// frontend-supplied text. Never run blind replacement over the encoded envelope.
+pub(super) fn redact_result(output: &str, redactor: &super::Redactor) -> Result<String, ToolError> {
+    let invalid = || ToolError::Failed("questions returned an invalid structured response".into());
+    let mut answer: QuestionAnswer = serde_json::from_str(output).map_err(|_| invalid())?;
+    // Serde's internally tagged unit variants ignore extra fields even with
+    // deny_unknown_fields. Enforce the complete envelope for every variant.
+    let fields: &[&str] = match &answer {
+        QuestionAnswer::Selected { .. } => &["status", "index", "answer"],
+        QuestionAnswer::Custom { .. } => &["status", "answer"],
+        QuestionAnswer::Cancelled | QuestionAnswer::Unavailable => &["status"],
+    };
+    let value: Value = serde_json::from_str(output).map_err(|_| invalid())?;
+    if !value.as_object().is_some_and(|object| {
+        object.len() == fields.len() && fields.iter().all(|field| object.contains_key(*field))
+    }) {
+        return Err(invalid());
+    }
+    answer.redact(redactor);
+    serde_json::to_string(&answer)
+        .map_err(|_| ToolError::Failed("could not encode question response".into()))
 }
 
 pub struct Questions;
@@ -102,12 +133,7 @@ impl Tool for Questions {
         answer.validate(&question)?;
         // Match configured values before JSON escaping changes quotes/backslashes.
         // Validate the original selected answer before replacing sensitive text.
-        match &mut answer {
-            QuestionAnswer::Selected { answer, .. } | QuestionAnswer::Custom { answer } => {
-                *answer = context.redactor.redact(std::mem::take(answer));
-            }
-            QuestionAnswer::Cancelled | QuestionAnswer::Unavailable => {}
-        }
+        answer.redact(&context.redactor);
         serde_json::to_string(&answer).map_err(|e| ToolError::Failed(e.to_string()))
     }
 }

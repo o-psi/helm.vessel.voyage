@@ -29,7 +29,9 @@ full question and controls.
 enter passwords, tokens, or other secrets.** This differs from direct human PTY
 input, which stays outside model-visible records. Known configured secrets receive
 redaction on selected/custom answer text before JSON encoding, including values
-with quotes, backslashes, or Unicode. This is not a guarantee for arbitrary text.
+with quotes, backslashes, or Unicode. Fixed status/index metadata stays intact even
+when a configured value matches a schema word; malformed or unknown response fields
+are rejected without echoing their content. This is not a guarantee for arbitrary text.
 Question/custom input is single-line; pasted control characters are removed.
 
 ## Tool contract
