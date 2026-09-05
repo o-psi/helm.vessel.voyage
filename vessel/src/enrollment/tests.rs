@@ -395,6 +395,15 @@ fn independent_connections_serialize_competing_redemption_and_busy_is_not_succes
         b.complete(&p, Some(&i.key), 1).unwrap_err(),
         EnrollmentError::Busy
     );
+    // A deterministic held write lock must grant no enrollment authority.
+    for table in ["machines", "receipts", "challenges"] {
+        assert_eq!(
+            a.db.query_row(&format!("SELECT count(*) FROM {table}"), [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+    }
     a.db.execute_batch("ROLLBACK").unwrap();
     let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
     let join = std::thread::spawn({
@@ -409,9 +418,48 @@ fn independent_connections_serialize_competing_redemption_and_busy_is_not_succes
     barrier.wait();
     let first = a.complete(&p, Some(&i.key), 1);
     let second = join.join().unwrap();
-    assert_eq!(usize::from(first.is_ok()) + usize::from(second.is_ok()), 1);
+    let results = [first, second];
+    let mut successes = results.iter().filter(|result| result.is_ok()).count();
+    assert!(successes <= 1, "a proof was redeemed more than once");
+    // observe_time and complete use separate fail-fast transactions. Contending
+    // watermark/effect locks may make BOTH initial attempts Busy. After joining,
+    // retry each Busy attempt once with the identical signed proof; never retry
+    // a denial or invent a new transaction/challenge.
+    for result in results {
+        match result {
+            Ok(_) | Err(EnrollmentError::Denied) => {}
+            Err(EnrollmentError::Busy) => match a.complete(&p, Some(&i.key), 1) {
+                Ok(_) => successes += 1,
+                Err(error) => assert_eq!(error, EnrollmentError::Denied),
+            },
+            Err(error) => panic!("unexpected competing redemption error: {error:?}"),
+        }
+    }
+    assert_eq!(successes, 1);
     assert_eq!(
-        a.db.query_row("SELECT count(*) FROM machines", [], |r| r.get::<_, i64>(0))
+        a.complete(&p, Some(&i.key), 1).unwrap_err(),
+        EnrollmentError::Denied
+    );
+    drop(a);
+    let reopened = EnrollmentStore::open(&path, ORIGIN, false).unwrap();
+    for table in ["machines", "receipts", "challenges"] {
+        assert_eq!(
+            reopened
+                .db
+                .query_row(&format!("SELECT count(*) FROM {table}"), [], |r| r
+                    .get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
+    }
+    assert_eq!(
+        reopened
+            .db
+            .query_row(
+                "SELECT count(*) FROM audit WHERE machine_id IS NOT NULL",
+                [],
+                |r| r.get::<_, i64>(0)
+            )
             .unwrap(),
         1
     );
