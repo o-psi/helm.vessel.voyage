@@ -10,6 +10,7 @@ name = "helm"
 path = "src/main.rs"
 
 [dependencies]
+cap-std = "4.0.2"
 log.workspace = true
 voyage-protocol.workspace = true
 tokio-tungstenite.workspace = true
