@@ -82,6 +82,9 @@ impl Fixture {
         .await
         .unwrap()
     }
+    // Functional scenarios use production deadlines, including the time needed
+    // to observe a worker's durable terminal transition on a busy filesystem.
+    // Tests of deadline expiry opt into a short limit explicitly below.
     fn agent(&self, provider: Arc<Script>) -> Agent {
         let mut agent = super::tests::agent(Box::new(provider), &self.directory)
             .with_completion_coordinator(self.coordinator.clone())
@@ -90,7 +93,6 @@ impl Fixture {
                 self.agents.clone(),
                 self.runtime.clone(),
             )
-            .with_completion_deadlines(Duration::from_secs(1), Duration::from_millis(200))
             .with_context_window(1_000_000)
             .with_retry_policy(RetryPolicy {
                 max_attempts: 1,
@@ -1134,12 +1136,59 @@ async fn running_owned_child(fixture: &Fixture, scope: &RunHandle) -> crate::sub
 }
 
 #[tokio::test]
+async fn owned_shutdown_observes_delayed_durable_terminal_transition() {
+    let fixture = Fixture::new();
+    let scope = fixture.scope().await;
+    let child = running_owned_child(&fixture, &scope).await;
+    // Real persistence exclusion models slow durable publication. Functional
+    // cleanup must tolerate this within its production deadline; the separate
+    // blocked-persistence test proves an expired deadline remains inconclusive.
+    let guard = fixture.coordinator.lock().await.unwrap();
+    let release = tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(350)).await;
+        drop(guard);
+    });
+    let agent = fixture.agent(Script::new([]));
+    let report = agent
+        .completion_gate
+        .as_ref()
+        .unwrap()
+        .shutdown_owned(&scope)
+        .await;
+    release.await.unwrap();
+    assert!(report.observation_complete && report.remaining.is_empty());
+    let durable = match fixture.agents.get(child).await.unwrap() {
+        Some(record) => record,
+        None => {
+            fixture
+                .agents
+                .get_archived(child)
+                .await
+                .unwrap()
+                .unwrap()
+                .record
+        }
+    };
+    assert!(durable.status.is_terminal());
+    assert!(
+        fixture
+            .runtime
+            .pending_owned_shutdown(&scope.reference())
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[tokio::test]
 async fn owned_shutdown_does_not_claim_blocked_terminal_persistence_finished() {
     let fixture = Fixture::new();
     let scope = fixture.scope().await;
     let child = running_owned_child(&fixture, &scope).await;
     let guard = fixture.coordinator.lock().await.unwrap();
-    let agent = fixture.agent(Script::new([]));
+    let agent = fixture
+        .agent(Script::new([]))
+        .with_completion_deadlines(Duration::from_secs(1), Duration::from_millis(200));
     let report = agent
         .completion_gate
         .as_ref()
@@ -1180,7 +1229,9 @@ async fn owned_shutdown_failed_persistence_is_inconclusive() {
     let backup = fixture.directory.path().join("agents/tree.backup");
     std::fs::rename(&path, &backup).unwrap();
     std::fs::create_dir(&path).unwrap();
-    let agent = fixture.agent(Script::new([]));
+    let agent = fixture
+        .agent(Script::new([]))
+        .with_completion_deadlines(Duration::from_secs(1), Duration::from_millis(200));
     let report = agent
         .completion_gate
         .as_ref()
