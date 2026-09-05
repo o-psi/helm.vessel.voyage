@@ -516,3 +516,175 @@ async fn private_binding_rechecks_selected_profile_before_and_after_approval() {
         }
     }
 }
+
+#[derive(Debug)]
+struct RevocablePrivateAuthority(std::sync::atomic::AtomicBool);
+impl crate::policy::ExecutionAuthority for RevocablePrivateAuthority {
+    fn check(&self) -> anyhow::Result<()> {
+        anyhow::ensure!(self.0.load(std::sync::atomic::Ordering::SeqCst), "revoked");
+        Ok(())
+    }
+}
+#[derive(Default)]
+struct PausedPrivateApproval {
+    entered: tokio::sync::Notify,
+    release: tokio::sync::Notify,
+    calls: std::sync::atomic::AtomicUsize,
+}
+#[async_trait]
+impl crate::tools::Approver for PausedPrivateApproval {
+    async fn approve(
+        &self,
+        request: &crate::tools::ApprovalRequest,
+    ) -> crate::tools::ApprovalOutcome {
+        assert!(
+            !serde_json::to_string(request)
+                .unwrap()
+                .contains("private-authority-秘密")
+        );
+        self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.entered.notify_one();
+        self.release.notified().await;
+        crate::tools::ApprovalOutcome::Approved
+    }
+}
+
+#[tokio::test]
+async fn private_shell_dispatch_preserves_revocation_and_cancellation_before_and_during_approval() {
+    use std::sync::atomic::Ordering::SeqCst;
+    for managed in [false, true] {
+        if managed && !cfg!(target_os = "linux") {
+            continue;
+        }
+        for during_approval in [false, true] {
+            for revoke in [false, true] {
+                let dir = tempfile::tempdir().unwrap();
+                let mut ctx = context(dir.path());
+                let authority = Arc::new(RevocablePrivateAuthority(
+                    std::sync::atomic::AtomicBool::new(true),
+                ));
+                ctx.policy = Arc::new(
+                    Policy::new(
+                        &Config {
+                            access: Some(AccessMode::Approval),
+                            ..Config::default()
+                        },
+                        dir.path().into(),
+                    )
+                    .unwrap()
+                    .with_execution_authority(authority.clone()),
+                );
+                let approval = Arc::new(PausedPrivateApproval::default());
+                ctx.approver = approval.clone();
+                let bound = bindings(ctx.execution_id, "private-authority-秘密");
+                let mut registry = ToolRegistry::default();
+                let manager = managed.then(ManagedShell::new);
+                if let Some(manager) = &manager {
+                    registry.register(manager.clone());
+                } else {
+                    registry.register(Shell);
+                }
+                let run = registry.execute_with_workflow_secrets(
+                    "shell",
+                    serde_json::json!({"command":"touch forbidden", "workflow_secrets":["token"]}),
+                    &ctx,
+                    Some(&bound),
+                );
+                tokio::pin!(run);
+                if during_approval {
+                    tokio::select! { _=approval.entered.notified()=>{}, result=&mut run=>panic!("approval was not awaited: {result:?}") }
+                }
+                if revoke {
+                    authority.0.store(false, SeqCst);
+                } else {
+                    ctx.cancellation.cancel();
+                }
+                approval.release.notify_one();
+                let result = tokio::time::timeout(Duration::from_secs(2), run)
+                    .await
+                    .unwrap();
+                if revoke {
+                    assert!(matches!(result, Err(ToolError::Denied(_))));
+                } else {
+                    assert!(matches!(result, Err(ToolError::Cancelled)));
+                }
+                assert_eq!(approval.calls.load(SeqCst), usize::from(during_approval));
+                assert!(!dir.path().join("forbidden").exists());
+                if let Some(manager) = manager {
+                    assert!(
+                        manager
+                            .shutdown(Duration::from_secs(5))
+                            .await
+                            .observation_complete
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// This trusted test adapter deliberately performs no policy checks of its own:
+/// the registry must guard every private implementation and wrap its approver.
+struct ApprovalOnlyPrivateShell(Arc<std::sync::atomic::AtomicBool>);
+#[async_trait]
+impl Tool for ApprovalOnlyPrivateShell {
+    fn definition(&self) -> crate::model::ToolDefinition {
+        Shell.definition()
+    }
+    async fn execute(&self, _: serde_json::Value, _: &ToolContext) -> Result<String, ToolError> {
+        unreachable!()
+    }
+    async fn execute_secret_environment(
+        &self,
+        _: serde_json::Value,
+        ctx: &ToolContext,
+        _: crate::workflow::secrets::BoundEnvironment,
+    ) -> Result<SecretShellOutcome, ToolError> {
+        let approval = ctx.approval("shell", "test private dispatch", "test approval".into());
+        if !ctx.approver.approve(&approval).await.approved() {
+            return Err(ToolError::Denied("approval denied".into()));
+        }
+        self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+        Ok(SecretShellOutcome::Exited { code: 0 })
+    }
+}
+#[tokio::test]
+async fn registry_private_branch_uses_common_authority_guard_and_wrapped_approver() {
+    use std::sync::atomic::{AtomicBool, Ordering::SeqCst};
+    for during_approval in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let mut ctx = context(dir.path());
+        let authority = Arc::new(RevocablePrivateAuthority(AtomicBool::new(true)));
+        ctx.policy = Arc::new(
+            (*ctx.policy)
+                .clone()
+                .with_execution_authority(authority.clone()),
+        );
+        let approval = Arc::new(PausedPrivateApproval::default());
+        ctx.approver = approval.clone();
+        let effect = Arc::new(AtomicBool::new(false));
+        let mut registry = ToolRegistry::default();
+        registry.register(ApprovalOnlyPrivateShell(effect.clone()));
+        let bound = bindings(ctx.execution_id, "private-authority-秘密");
+        let run = registry.execute_with_workflow_secrets(
+            "shell",
+            serde_json::json!({"command":"unused", "workflow_secrets":["token"]}),
+            &ctx,
+            Some(&bound),
+        );
+        tokio::pin!(run);
+        if during_approval {
+            tokio::select! { _=approval.entered.notified()=>{}, result=&mut run=>panic!("approval was not awaited: {result:?}") }
+        }
+        authority.0.store(false, SeqCst);
+        approval.release.notify_one();
+        assert!(matches!(
+            tokio::time::timeout(Duration::from_secs(2), run)
+                .await
+                .unwrap(),
+            Err(ToolError::Denied(_))
+        ));
+        assert!(!effect.load(SeqCst));
+        assert_eq!(approval.calls.load(SeqCst), usize::from(during_approval));
+    }
+}

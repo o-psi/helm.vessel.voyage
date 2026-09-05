@@ -58,6 +58,16 @@ class Provider(BaseHTTPRequestHandler):
         body = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
         self.requests.append(body)
         try:
+            for tool in body['tools']:
+                definition = tool['function']
+                properties = definition['parameters'].get('properties', {})
+                if definition['name'] == 'shell':
+                    binding = properties['workflow_secrets']
+                    assert binding['type'] == 'array' and binding['uniqueItems'] is True
+                    assert binding['maxItems'] == 32 and binding['items']['type'] == 'string'
+                    assert 'workflow_secrets' not in definition['parameters'].get('required', [])
+                else:
+                    assert 'workflow_secrets' not in properties
             if not self.no_save:
                 saved = [json.loads(p.read_text()) for p in self.sessions.glob('*.json')]
                 accepted = [s for s in saved if s.get('workflow_runs')]
