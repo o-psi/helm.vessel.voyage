@@ -570,6 +570,12 @@ pub(crate) fn reject_symlinks(path: &Path) -> Result<()> {
     let mut prefix = PathBuf::new();
     for component in path.components() {
         prefix.push(component);
+        // A Windows drive/UNC prefix is not a complete filesystem ancestor.
+        // In particular, canonicalize returns verbatim paths whose bare
+        // `\\?\C:` prefix cannot be queried until RootDir has been appended.
+        if matches!(component, std::path::Component::Prefix(_)) {
+            continue;
+        }
         match std::fs::symlink_metadata(&prefix) {
             Ok(meta) => anyhow::ensure!(
                 !meta.file_type().is_symlink() || trusted_system_alias(&prefix, &meta),
