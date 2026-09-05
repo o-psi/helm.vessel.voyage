@@ -54,9 +54,7 @@ impl Publication {
         #[cfg(not(target_os = "linux"))]
         {
             let _ = directory;
-            bail!(
-                "anonymous create-only publication currently requires Linux"
-            )
+            bail!("anonymous create-only publication currently requires Linux")
         }
     }
 
