@@ -1,5 +1,9 @@
 # Vessel
 
+Vessel is under development as part of Voyage's unreleased first version. The target
+is a release-quality management plane with complete, tested user workflows. The
+interim state below does not meet that target yet.
+
 Vessel is Voyage's management plane. Its legacy pairing and HTTP task-worker
 implementation has been removed ahead of the replacement attachment flow.
 **Helm connectivity, fleet/task operations and session management are currently
@@ -34,13 +38,14 @@ remain supported, as do `completions` and `manpage`.
 fleet and task API/UI routes have been removed. Retired routes return 404 even for
 authenticated clients. There is no new invitation or attachment endpoint yet.
 
-## Stored data and upgrade
+## Stored development data and build updates
 
 The server opens SQLite for readiness but does not load, rewrite, migrate or delete
 legacy `control_plane` snapshots or `schema_migrations`. Stored running tasks do not
 represent live execution and are not retried. No credentials or history are imported
 into the future connection model. See [retirement and data preservation](../docs/vessel-connectivity-retirement.md)
-before upgrading or rolling back; stop old processes separately and protect backups.
+before updating or reverting development builds; stop old processes separately and
+protect backups.
 
 The agreed [Vessel-managed session design](../docs/vessel-session-management.md)
 remains the target: `helm attach VESSEL_URL JOIN_KEY`, outbound interactive control,
