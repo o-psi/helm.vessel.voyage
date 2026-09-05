@@ -170,3 +170,8 @@ fails closed on non-Unix platforms pending native ACL validation.
 The subsequent [event/replay contract](attachment-events.md) adds negotiated,
 bounded observation frames and receive-side cursor checks. It remains a partial
 #9 foundation with no authenticated socket, execution or raw snapshot exposure.
+
+The [authenticated socket libraries](attachment-transport.md) add an outbound
+Helm connection and a separately constructed Vessel attachment router. Production
+routing and operator execution remain unwired pending authoritative local dispatch
+and current sharing integration; transport observations never grant effect authority.

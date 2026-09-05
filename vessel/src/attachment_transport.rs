@@ -311,12 +311,11 @@ impl AttachmentApi {
             return;
         }
         let mut heartbeat = tokio::time::Instant::now();
-        let mut check = tokio::time::interval(self.limits.check);
+        connection.heartbeat.send_replace(heartbeat);
         loop {
             tokio::select! {
                 _=connection.cancel.cancelled()=>return,
                 _=tokio::time::sleep_until(heartbeat+self.limits.lease)=>return,
-                _=check.tick()=>{if !self.is_current(machine,connection.id).await{return;}},
                 incoming=socket.recv()=>{
                     let text=match incoming {
                         Some(Ok(Message::Text(text))) => text,
