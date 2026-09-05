@@ -29,7 +29,9 @@ mod storage;
 #[cfg(windows)]
 use std::sync::Arc;
 
-const SCHEMA_VERSION: i64 = 6;
+const SCHEMA_VERSION: i64 = 7;
+mod remote;
+pub use remote::{RemoteBinding, RemoteCancelReceipt, RemoteReplay};
 mod reconciliation;
 pub use reconciliation::{LocalReconcileOutcome, LocalReconcileRequest};
 const STEERING_SCHEMA_VERSION: i64 = 4;
@@ -52,6 +54,7 @@ const MAX_PARTIAL: usize = 1024 * 1024;
 const REPLAY_LIMIT: i64 = 1024;
 
 pub struct Journal {
+    remote_redactor: Option<std::sync::Arc<crate::tools::Redactor>>,
     connection: Connection,
     opened_schema: i64,
     directory: PathBuf,
@@ -208,7 +211,7 @@ impl Journal {
             .optional()?;
         if let Some(version) = version {
             ensure!(
-                matches!(version, 2 | 3 | 4 | 5 | SCHEMA_VERSION),
+                matches!(version, 2 | 3 | 4 | 5 | 6 | SCHEMA_VERSION),
                 "unsupported attachment journal schema"
             );
         } else {
@@ -223,6 +226,7 @@ impl Journal {
             tx.execute_batch(steering::SCHEMA)?;
             tx.execute_batch(catalogue::SCHEMA)?;
             tx.execute_batch(reconciliation::SCHEMA)?;
+            tx.execute_batch(remote::SCHEMA)?;
             tx.execute(
                 "INSERT INTO attachment_schema VALUES(1, ?1)",
                 [SCHEMA_VERSION],
@@ -249,6 +253,7 @@ impl Journal {
         #[cfg(windows)]
         storage::verify(&private_directory)?;
         Ok(Self {
+            remote_redactor: None,
             connection,
             opened_schema: version.unwrap_or(SCHEMA_VERSION),
             directory,
@@ -321,7 +326,10 @@ impl Journal {
         if self.opened_schema < 5 {
             tx.execute_batch(catalogue::SCHEMA)?;
         }
-        tx.execute_batch(reconciliation::SCHEMA)?;
+        if self.opened_schema < 6 {
+            tx.execute_batch(reconciliation::SCHEMA)?;
+        }
+        tx.execute_batch(remote::SCHEMA)?;
         tx.execute(
             "UPDATE attachment_schema SET version=?1 WHERE id=1",
             [SCHEMA_VERSION],
@@ -472,6 +480,7 @@ impl Journal {
     /// Authentication/sharing must still be checked by the caller on every retry.
     pub fn lookup_command(&self, request: &TurnAdmission) -> Result<Option<RunRecord>> {
         self.check_schema()?;
+        remote::validate_admission(&self.connection, request)?;
         if self.opened_schema >= STEERING_SCHEMA_VERSION {
             ensure!(
                 !steering::reserved_receipt_exists(&self.connection, request.command_id)?,
@@ -532,6 +541,7 @@ impl Journal {
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         check_transaction_schema(&tx, self.opened_schema)?;
+        remote::validate_admission(&tx, request)?;
         if self.opened_schema >= STEERING_SCHEMA_VERSION {
             ensure!(
                 !steering::reserved_receipt_exists(&tx, request.command_id)?,
@@ -691,7 +701,12 @@ impl Journal {
             "UPDATE runs SET record=?1 WHERE id=?2",
             params![serde_json::to_string(&run)?, run.id.to_string()],
         )?;
-        let sequence = append_event(&tx, &run, EventKind::TextDelta(delta.to_owned()))?;
+        let sequence = append_event_projected(
+            &tx,
+            &run,
+            EventKind::TextDelta(delta.to_owned()),
+            self.remote_redactor.as_deref(),
+        )?;
         tx.commit()?;
         Ok(sequence)
     }
@@ -801,6 +816,12 @@ impl Journal {
             .checked_add(output_delta)
             .context("session usage overflow")?;
         run.usage = usage.clone();
+        remote::canonical(
+            &tx,
+            &run,
+            &messages[previous..],
+            self.remote_redactor.as_deref(),
+        )?;
         // Canonical text is provisional. Only the runtime's explicit acceptance
         // hook may classify a final response; no-tool text alone is insufficient.
         run.final_checkpointed = false;
@@ -1043,7 +1064,12 @@ impl Journal {
             "UPDATE runs SET record=?1,active=0 WHERE id=?2",
             params![serde_json::to_string(&run)?, run.id.to_string()],
         )?;
-        append_event(&tx, &run, EventKind::Terminal(state))?;
+        append_event_projected(
+            &tx,
+            &run,
+            EventKind::Terminal(state),
+            self.remote_redactor.as_deref(),
+        )?;
         tx.commit()?;
         Ok(run)
     }
@@ -1224,6 +1250,15 @@ fn read_run(db: &Connection, id: Uuid) -> Result<RunRecord> {
     Ok(run)
 }
 fn append_event(tx: &Transaction<'_>, run: &RunRecord, kind: EventKind) -> Result<u64> {
+    append_event_projected(tx, run, kind, None)
+}
+fn append_event_projected(
+    tx: &Transaction<'_>,
+    run: &RunRecord,
+    kind: EventKind,
+    redactor: Option<&crate::tools::Redactor>,
+) -> Result<u64> {
+    remote::observe(tx, run, &kind, redactor)?;
     let sequence: i64 = tx.query_row(
         "SELECT next_sequence FROM sessions WHERE id=?1",
         [run.session_id.to_string()],

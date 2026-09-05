@@ -18,6 +18,7 @@ administer scoped systems, and maintain a durable working conversation.
 - Bounded parallel subagents with messaging, cancellation, durable results, and Git worktrees
 - Atomic JSON session persistence under the platform data directory
 - Explicit private managed sessions with SQLite history, exact command retries, and cross-process cancellation
+- Explicit foreground [dedicated remote sessions](../docs/remote-sessions.md) with local execution authority and authenticated Vessel observation
 - Library interfaces for custom providers, event sinks, approvers, and tools
 
 Helm treats safety as a runtime boundary, not a prompt convention. Filesystem tools

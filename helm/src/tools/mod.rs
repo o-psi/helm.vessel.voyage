@@ -49,6 +49,29 @@ pub trait Approver: Send + Sync {
     }
 }
 
+/// Rechecks optional foreground authority after an awaited approval. It never grants access.
+struct DispatchApprover {
+    inner: Arc<dyn Approver>,
+    policy: Arc<Policy>,
+}
+#[async_trait]
+impl Approver for DispatchApprover {
+    async fn approve(&self, request: &ApprovalRequest) -> ApprovalOutcome {
+        if self.policy.check_execution_authority().is_err() {
+            return ApprovalOutcome::Denied;
+        }
+        let outcome = self.inner.approve(request).await;
+        if self.policy.check_execution_authority().is_err() {
+            ApprovalOutcome::Denied
+        } else {
+            outcome
+        }
+    }
+    async fn ask_question(&self, question: &Question) -> QuestionAnswer {
+        self.inner.ask_question(question).await
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum InteractionMode {
@@ -114,6 +137,95 @@ impl Redactor {
         }
     }
 
+    /// Return the raw prefix safe to commit to a public stream. Any suffix that
+    /// may complete a configured secret remains private until a later chunk.
+    pub(crate) fn stable_prefix(&self, text: &str, flush: bool) -> usize {
+        if flush {
+            return text.len();
+        }
+        let mut hold = 0;
+        for secret in &self.secrets {
+            let pattern = secret.as_bytes();
+            let mut prefix = vec![0; pattern.len()];
+            for i in 1..pattern.len() {
+                let mut matched = prefix[i - 1];
+                while matched > 0 && pattern[i] != pattern[matched] {
+                    matched = prefix[matched - 1];
+                }
+                if pattern[i] == pattern[matched] {
+                    matched += 1;
+                }
+                prefix[i] = matched;
+            }
+            let mut matched = 0;
+            for byte in text.as_bytes() {
+                while matched > 0 && (matched == pattern.len() || *byte != pattern[matched]) {
+                    matched = prefix[matched - 1];
+                }
+                if *byte == pattern[matched] {
+                    matched += 1;
+                }
+            }
+            // A complete secret is safe to redact now. Its proper suffix may
+            // still begin an overlapping occurrence, so retain that suffix.
+            if matched == pattern.len() {
+                matched = prefix[matched - 1];
+            }
+            hold = hold.max(matched);
+        }
+        let mut end = text.len() - hold;
+        while !text.is_char_boundary(end) {
+            end -= 1;
+        }
+        // Descending starts reach the transitive safe boundary in one pass,
+        // including overlapping configured values, without quadratic rescans.
+        let mut matches = self
+            .secrets
+            .iter()
+            .flat_map(|secret| {
+                text.match_indices(secret)
+                    .map(move |(start, _)| (start, start + secret.len()))
+            })
+            .collect::<Vec<_>>();
+        matches.sort_unstable_by_key(|a| std::cmp::Reverse(a.0));
+        for (start, finish) in matches {
+            if start < end && finish > end {
+                end = start;
+            }
+        }
+        end
+    }
+    /// Redact source bytes once; replacement markers are never reprocessed.
+    pub(crate) fn redact_public_prefix(&self, text: &str) -> String {
+        let mut matches = self
+            .secrets
+            .iter()
+            .flat_map(|secret| {
+                text.match_indices(secret)
+                    .map(move |(start, _)| (start, start + secret.len()))
+            })
+            .collect::<Vec<_>>();
+        matches.sort_unstable();
+        let mut merged: Vec<(usize, usize)> = Vec::new();
+        for (start, end) in matches {
+            if let Some(previous) = merged.last_mut()
+                && start < previous.1
+            {
+                previous.1 = previous.1.max(end);
+            } else {
+                merged.push((start, end));
+            }
+        }
+        let mut output = String::new();
+        let mut offset = 0;
+        for (start, end) in merged {
+            output.push_str(&text[offset..start]);
+            output.push_str("[REDACTED]");
+            offset = end;
+        }
+        output.push_str(&text[offset..]);
+        output
+    }
     pub fn redact(&self, input: impl Into<String>) -> String {
         self.secrets.iter().fold(input.into(), |text, secret| {
             text.replace(secret, "[REDACTED]")
@@ -264,11 +376,23 @@ impl ToolRegistry {
                 _ => {}
             }
         }
+        context
+            .policy
+            .check_execution_authority()
+            .map_err(|_| ToolError::Denied("foreground execution authority unavailable".into()))?;
+        if context.cancellation.is_cancelled() {
+            return Err(ToolError::Cancelled);
+        }
+        let mut dispatch = context.clone();
+        dispatch.approver = Arc::new(DispatchApprover {
+            inner: context.approver.clone(),
+            policy: context.policy.clone(),
+        });
         let result = self
             .tools
             .get(name)
             .ok_or_else(|| ToolError::Failed(format!("unknown tool `{name}`")))?
-            .execute(arguments, context)
+            .execute(arguments, &dispatch)
             .await;
         result
             .and_then(|output| {
@@ -331,6 +455,85 @@ pub(crate) fn truncate(mut bytes: Vec<u8>, max: usize) -> String {
 mod security_tests {
     use super::*;
 
+    #[derive(Debug)]
+    struct Revocable(std::sync::atomic::AtomicBool);
+    impl crate::policy::ExecutionAuthority for Revocable {
+        fn check(&self) -> anyhow::Result<()> {
+            anyhow::ensure!(self.0.load(std::sync::atomic::Ordering::SeqCst), "revoked");
+            Ok(())
+        }
+    }
+    struct RevokingApprover(Arc<Revocable>);
+    #[async_trait]
+    impl Approver for RevokingApprover {
+        async fn approve(&self, _: &ApprovalRequest) -> ApprovalOutcome {
+            tokio::task::yield_now().await;
+            self.0.0.store(false, std::sync::atomic::Ordering::SeqCst);
+            ApprovalOutcome::Approved
+        }
+    }
+    #[tokio::test]
+    async fn foreground_revocation_during_approval_does_not_grant_dispatch() {
+        let workspace = tempfile::tempdir().unwrap();
+        let authority = Arc::new(Revocable(std::sync::atomic::AtomicBool::new(true)));
+        let policy = Arc::new(
+            Policy::new(&crate::config::Config::default(), workspace.path().into())
+                .unwrap()
+                .with_execution_authority(authority.clone()),
+        );
+        let approver = DispatchApprover {
+            inner: Arc::new(RevokingApprover(authority)),
+            policy: policy.clone(),
+        };
+        assert!(policy.check_current().is_ok());
+        let request = ApprovalRequest {
+            id: uuid::Uuid::new_v4(),
+            execution_id: uuid::Uuid::new_v4(),
+            action: "write".into(),
+            target: "file".into(),
+            reason: "approval".into(),
+            mode: InteractionMode::Unattended,
+        };
+        assert_eq!(approver.approve(&request).await, ApprovalOutcome::Denied);
+        assert!(policy.check_current().is_err());
+        assert!(policy.clone().check_execution_authority().is_err());
+    }
+
+    #[test]
+    fn streaming_public_redaction_handles_overlaps_all_secret_and_placeholder_once() {
+        for (secrets, text) in [
+            (vec!["ababa"], "abababa"),
+            (vec!["aaaa", "aaaaa"], "aaaaaaaaaaaaaaaaa"),
+            (vec!["REMOTE_SECRET"], "REMOTE_SECRET"),
+            (vec!["秘密🔐canary"], "before 秘密🔐canary after"),
+            (vec!["SECRET", "REDACTED"], "SECRET"),
+        ] {
+            let redactor = Redactor::new(secrets.iter().map(|value| (*value).into()));
+            let expected = redactor.redact_public_prefix(text);
+            let boundaries = text
+                .char_indices()
+                .map(|(i, _)| i)
+                .chain(std::iter::once(text.len()))
+                .collect::<Vec<_>>();
+            for split in boundaries {
+                let mut pending = String::new();
+                let mut disclosed = String::new();
+                for chunk in [&text[..split], &text[split..]] {
+                    pending.push_str(chunk);
+                    let end = redactor.stable_prefix(&pending, false);
+                    disclosed.push_str(&redactor.redact_public_prefix(&pending[..end]));
+                    pending.drain(..end);
+                }
+                disclosed.push_str(&redactor.redact_public_prefix(&pending));
+                assert_eq!(disclosed, expected, "split {split} in {text}");
+                for secret in &secrets {
+                    if !"[REDACTED]".contains(secret) {
+                        assert!(!disclosed.contains(secret));
+                    }
+                }
+            }
+        }
+    }
     #[test]
     fn read_only_completion_allows_observation_but_not_adoption_or_reviews() {
         for action in ["snapshot", "read"] {

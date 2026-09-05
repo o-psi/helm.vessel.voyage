@@ -48,9 +48,12 @@ observed; it is not an authorization grant or a guarantee that the peer remains
 connected. No session data, frame payload, credentials or human terminal input is
 included. The public metrics endpoint reports only whether presence is configured.
 With enrollment disabled, the attachment route is absent and diagnostics report
-no connections. Remote execution remains explicitly unavailable in both modes.
+no connections. Remote execution remains unavailable unless separately enabled
+with Vessel `--remote-execution` and Helm [remote-worker](remote-sessions.md).
+That opt-in server reports `outbound_managed_sessions`; individual presence-only
+connections still cannot receive execution commands.
 
-The presence server negotiates an empty event-feature set and has no application
+The default presence server negotiates an empty event-feature set and has no application
 frame consumer. Unexpected application frames close their connection without
 acknowledging work. Server shutdown closes socket admission, pending authentication
 and registered connections. Lease checks enforce expiry directly, even if a
@@ -65,5 +68,6 @@ server restart, signal shutdown, blocked output, server revocation and offline
 detach. Independent library regressions cover stale leases, revocation, owner
 mismatches, generation isolation and shutdown racing with authentication. TLS
 proxy deployment and native macOS/Windows behavior are not claimed by those local
-fixtures. Session sharing and managed dispatch remain dependent work under #9,
-#10, #78 and #79.
+fixtures. Dedicated foreground managed dispatch is documented separately in
+[remote sessions](remote-sessions.md); broader sharing and services remain open
+under #9, #10, #78 and #79.

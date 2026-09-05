@@ -28,6 +28,7 @@ use std::{
 };
 use tracing_subscriber::EnvFilter;
 mod managed;
+mod remote_worker;
 #[derive(Parser)]
 #[command(version, about = "A general-purpose LLM harness for terminal work")]
 struct Cli {
@@ -119,6 +120,8 @@ enum Command {
     Onboard(helm::onboarding::OnboardArgs),
     /// Use private local sessions with an authoritative SQLite journal.
     Managed(managed::Args),
+    /// Run one explicitly exported dedicated managed session in the foreground.
+    RemoteWorker(remote_worker::Args),
     /// Manage dedicated Vessel enrollment; no worker is started.
     Attachment(helm::attachment::cli::AttachmentArgs),
     /// Manage Helm's native ChatGPT subscription credentials.
@@ -371,7 +374,8 @@ async fn main() -> Result<()> {
                 &cli.command,
                 None | Some(Command::Run { .. } | Command::Chat { .. } | Command::Models { .. })
             ) || matches!(&cli.command, Some(Command::Workflow(args)) if matches!(args.command, helm::workflow::WorkflowCommand::Run(_)))
-                || matches!(&cli.command, Some(Command::Managed(args)) if !args.administrative()),
+                || matches!(&cli.command, Some(Command::Managed(args)) if !args.administrative())
+                || matches!(&cli.command, Some(Command::RemoteWorker(args)) if !args.recover),
             "policy selection requires an execution or model-discovery invocation"
         );
     }
@@ -394,6 +398,16 @@ async fn main() -> Result<()> {
                 other=>other.map_err(anyhow::Error::from),
             },
         };
+    }
+    if matches!(&cli.command,Some(Command::RemoteWorker(args)) if args.recover) {
+        let Some(Command::RemoteWorker(args)) = cli.command else {
+            unreachable!()
+        };
+        return remote_worker::recover(args).await.map_err(|_| {
+            anyhow::anyhow!(
+                "remote recovery failed; inspect the dedicated installation and exact run"
+            )
+        });
     }
     if matches!(&cli.command, Some(Command::Managed(args)) if args.administrative()) {
         let Some(Command::Managed(args)) = cli.command else {
@@ -562,6 +576,11 @@ async fn main() -> Result<()> {
         Command::Managed(args) => managed::run(args, Some(config), cli.workspace, model_overridden)
             .await
             .map_err(managed::safe_error),
+        Command::RemoteWorker(args) => remote_worker::run(args, config, cli.workspace)
+            .await
+            .map_err(|_| {
+                anyhow::anyhow!("remote worker stopped; inspect dedicated local session state")
+            }),
         Command::Models { json } => list_models(&config, cli.workspace, json).await,
         Command::Doctor => doctor(&config, cli.workspace).await,
         Command::Auth { command } => auth(command, &config).await,
@@ -1038,6 +1057,10 @@ impl SubagentExecutor for CliSubagentExecutor {
             .and_then(Weak::upgrade)
             .and_then(|runtime| runtime.store())
             .map(|store| helm::completion::tool::CompletionTool::new(self.todos.store(), store));
+        tool_context
+            .policy
+            .check_execution_authority()
+            .map_err(|error| error.to_string())?;
         let mut tools = build_tools(
             &config,
             child_tool,
@@ -1052,6 +1075,10 @@ impl SubagentExecutor for CliSubagentExecutor {
                 .register(&mut tools)
                 .map_err(|error| error.to_string())?;
         }
+        tool_context
+            .policy
+            .check_execution_authority()
+            .map_err(|error| error.to_string())?;
         let agent = Agent::new(
             provider::from_config(&config, workspace).map_err(|e| e.to_string())?,
             tools,
@@ -1112,6 +1139,7 @@ async fn build_subagents_managed(
     parent_policy: Arc<Policy>,
     managed_resources: Option<Arc<ManagedResources>>,
 ) -> Result<SubagentBundle> {
+    parent_policy.check_execution_authority()?;
     let standard = ToolRegistry::standard();
     let mut allowed_tools: std::collections::BTreeSet<String> = standard
         .definitions()
@@ -1284,9 +1312,26 @@ async fn build_agent_bundle(
     attended: bool,
     sink: Option<Arc<dyn EventSink>>,
 ) -> Result<ManagedAgent> {
+    build_authorized_agent_bundle(config, workspace, attended, sink, None).await
+}
+async fn build_authorized_agent_bundle(
+    config: &Config,
+    workspace: PathBuf,
+    attended: bool,
+    sink: Option<Arc<dyn EventSink>>,
+    authority: Option<Arc<dyn helm::policy::ExecutionAuthority>>,
+) -> Result<ManagedAgent> {
+    if let Some(authority) = &authority {
+        authority.check()?;
+    }
     let resolved = helm::runtime_policy::RuntimePolicy::resolve(config, &workspace)?;
     let config = resolved.config();
-    let policy = Arc::new(resolved.policy().clone());
+    let mut policy = resolved.policy().clone();
+    if let Some(authority) = authority {
+        policy = policy.with_execution_authority(authority);
+    }
+    policy.check_execution_authority()?;
+    let policy = Arc::new(policy);
     let terminal = Arc::new(Terminal::default());
     let approver: Arc<dyn Approver> = if attended {
         terminal.clone()
@@ -1322,6 +1367,7 @@ async fn build_agent_bundle(
     let gate_runtime = subagents.runtime.clone();
     let gate_todos = subagents.todos.store();
     let gate_agents = gate_runtime.store().expect("persistent runtime");
+    context.policy.check_execution_authority()?;
     let mut tools = build_tools(
         config,
         Some(subagents.tool),
@@ -1333,6 +1379,7 @@ async fn build_agent_bundle(
         resources.register(&mut tools)?;
     }
     let retained_runtime = gate_runtime.clone();
+    context.policy.check_execution_authority()?;
     let agent = Agent::new(
         provider::from_config(config, context.policy.workspace().to_owned())?,
         tools,

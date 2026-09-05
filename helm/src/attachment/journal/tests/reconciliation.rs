@@ -248,7 +248,7 @@ fn schema_five_requires_explicit_quiescent_upgrade_and_preserves_cleanup_evidenc
     journal
         .connection
         .execute_batch(
-            "DROP TABLE local_tool_reconciliations; UPDATE attachment_schema SET version=5;",
+            "DROP TABLE remote_cleanup_attestations; DROP TABLE remote_text; DROP TABLE remote_tools; DROP TABLE remote_events; DROP TABLE remote_receipts; DROP TABLE remote_session; DROP TABLE local_tool_reconciliations; UPDATE attachment_schema SET version=5;",
         )
         .unwrap();
     let path = journal.directory.clone();

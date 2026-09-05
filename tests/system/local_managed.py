@@ -518,12 +518,12 @@ def explicit_upgrade(root):
         session = case.create()
         before = case.sql('SELECT state FROM sessions WHERE id=?', (session,))[0][0]
         with sqlite3.connect(case.database) as database:
-            database.executescript('DROP TABLE local_tool_reconciliations; UPDATE attachment_schema SET version=5;')
+            database.executescript('DROP TABLE remote_cleanup_attestations; DROP TABLE remote_text; DROP TABLE remote_receipts; DROP TABLE remote_events; DROP TABLE remote_tools; DROP TABLE remote_session; DROP TABLE local_tool_reconciliations; UPDATE attachment_schema SET version=5;')
         case.config.write_text('invalid [ provider configuration')
         assert case.listing()['sessions'][0]['id'] == session
         assert case.sql('SELECT version FROM attachment_schema') == [(5,)], 'selection implicitly upgraded operator state'
         run([*case.args, 'upgrade'], case.env)
-        assert case.sql('SELECT version FROM attachment_schema') == [(6,)]
+        assert case.sql('SELECT version FROM attachment_schema') == [(7,)]
         assert case.sql('SELECT state FROM sessions WHERE id=?', (session,))[0][0] == before
         assert case.sql("SELECT count(*) FROM sqlite_master WHERE name='local_tool_reconciliations'") == [(1,)]
         assert not case.requests

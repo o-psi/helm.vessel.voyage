@@ -215,7 +215,7 @@ fn schema_four_upgrade_is_quiescent_preserves_steering_and_fences_stale_connecti
     let (_dir, journal, session, request) = setup();
     journal
         .connection
-        .execute_batch("DROP TABLE local_tool_reconciliations; DROP TABLE local_cleanup_obligations; DROP TABLE local_cancel_intents; UPDATE attachment_schema SET version=4;")
+        .execute_batch("DROP TABLE remote_cleanup_attestations; DROP TABLE remote_text; DROP TABLE remote_tools; DROP TABLE remote_events; DROP TABLE remote_receipts; DROP TABLE remote_session; DROP TABLE local_tool_reconciliations; DROP TABLE local_cleanup_obligations; DROP TABLE local_cancel_intents; UPDATE attachment_schema SET version=4;")
         .unwrap();
     let path = journal.directory.clone();
     drop(journal);

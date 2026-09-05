@@ -354,7 +354,7 @@ fn explicit_schema_three_upgrade_keeps_import_provenance_and_fences_old_writer()
     journal.import_session(&session, &provenance).unwrap();
     journal
         .connection
-        .execute_batch("DROP TABLE local_tool_reconciliations; DROP TABLE local_cleanup_obligations; DROP TABLE local_cancel_intents; DROP TABLE steering; UPDATE attachment_schema SET version=3;")
+        .execute_batch("DROP TABLE remote_cleanup_attestations; DROP TABLE remote_text; DROP TABLE remote_tools; DROP TABLE remote_events; DROP TABLE remote_receipts; DROP TABLE remote_session; DROP TABLE local_tool_reconciliations; DROP TABLE local_cleanup_obligations; DROP TABLE local_cancel_intents; DROP TABLE steering; UPDATE attachment_schema SET version=3;")
         .unwrap();
     drop(journal);
     let mut journal = Journal::open(dir.path().join("journal")).unwrap();
@@ -625,7 +625,7 @@ fn legacy_history_command_collision_blocks_upgrade_without_rewriting_history() {
     let (dir, journal, session, request) = setup();
     journal
         .connection
-        .execute_batch("DROP TABLE local_tool_reconciliations; DROP TABLE local_cleanup_obligations; DROP TABLE local_cancel_intents; DROP TABLE steering; UPDATE attachment_schema SET version=3;")
+        .execute_batch("DROP TABLE remote_cleanup_attestations; DROP TABLE remote_text; DROP TABLE remote_tools; DROP TABLE remote_events; DROP TABLE remote_receipts; DROP TABLE remote_session; DROP TABLE local_tool_reconciliations; DROP TABLE local_cleanup_obligations; DROP TABLE local_cancel_intents; DROP TABLE steering; UPDATE attachment_schema SET version=3;")
         .unwrap();
     drop(journal);
     let mut journal = Journal::open(dir.path().join("attachment")).unwrap();
