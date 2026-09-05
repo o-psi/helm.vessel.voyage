@@ -551,6 +551,13 @@ async fn handle_ui_event(
                     app.status = format!("Ready · {} model turn(s)", outcome.turns);
                 }
                 Err(error) => {
+                    if let Some(recovery) = error.recovery() {
+                        app.session.recover_context_failure(recovery)?;
+                        // All completed responses/tools are represented by canonical IDs.
+                        app.live_messages.clear();
+                        app.streaming_response.clear();
+                    }
+                    let error = error.to_string();
                     let detail = compact_line(&error, 1_000);
                     app.activity.push(format!("✗ provider error: {detail}"));
                     let mut undelivered = 0;
@@ -1015,8 +1022,7 @@ async fn handle_key(
                 let task = tokio::spawn(async move {
                     let result = agent
                         .run_scoped(history, prompt, run_cancel, Some(steering_input), scope)
-                        .await
-                        .map_err(|error| error.to_string());
+                        .await;
                     let _ = events.send(UiEvent::Finished(result));
                 });
                 app.running = Some(Running {

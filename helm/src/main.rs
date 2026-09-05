@@ -1300,7 +1300,8 @@ async fn execute(
     let mut active_config = config.clone();
     active_config.model = session.model.clone();
     let agent = build_agent(&active_config, session.workspace.clone(), true).await?;
-    let scope = agent.prepare_run(&session).await?;
+    let scope = agent.prepare_run(&session).await {
+
     if let Some(scope) = &scope {
         session.completion_runs.push(scope.reference());
     }
@@ -1309,9 +1310,10 @@ async fn execute(
         .messages
         .push(helm::Message::new(helm::Role::User, prompt.clone()));
     if !no_save {
-        store.save(&mut session).await?;
+        store.save(&mut session).await {
+
     }
-    let outcome = agent
+    let outcome = match agent
         .run_scoped(
             history,
             prompt,
@@ -1319,7 +1321,19 @@ async fn execute(
             None,
             scope,
         )
-        .await?;
+        .await {
+
+        Ok(outcome) => outcome,
+        Err(error) => {
+            if !no_save && let Some(recovery) = error.recovery() {
+                session.recover_context_failure(recovery)?;
+                session.terminals = agent.terminal_metadata();
+                store.save(&mut session).await?;
+                eprintln!("[session {}]", session.id);
+            }
+            return Err(error.into());
+        }
+    };
     let title_due = session.title_due_after_turn();
     session.record_completed_turn();
     session.messages = outcome.messages;
@@ -1557,7 +1571,18 @@ async fn chat(
                     store.save(&mut session).await?;
                 }
             }
-            Err(error) => eprintln!("error: {error:#}"),
+            Err(error) => {
+                if let Some(recovery) = error.recovery() {
+                    session.recover_context_failure(recovery)?;
+                    session.terminals = agent
+                        .as_ref()
+                        .expect("agent initialized")
+                        .terminal_metadata();
+                    store.save(&mut session).await?;
+                    eprintln!("[session {}]", session.id);
+                }
+                eprintln!("error: {error:#}");
+            }
         }
     }
     if interactive && !session.messages.is_empty() {

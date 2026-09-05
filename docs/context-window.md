@@ -49,3 +49,13 @@ tool-group integrity, initial/follow-up rejection, model changes, cancellation,
 and canonical save/resume. Linux checks cannot establish macOS/Windows or live
 provider behavior; those results must be recorded separately in the tracking issue
 [#64](https://github.com/o-psi/voyage/issues/64).
+
+A context rejection carries the run's canonical prompt, completed assistant/tool
+messages, continuation metadata and usage back to its frontend. Save-enabled
+one-shot runs and plain/full-screen chat persist that recovery snapshot and report
+an error; they do not count the rejected run as completed. `--no-save` still skips
+persistence. A later explicit resume retains this evidence and rebuilds a projection
+without automatically replaying tool execution. Full-screen recovery also retains
+steering accepted after the rejected snapshot and marks that input not applied.
+Runtime system guidance is excluded from the saved snapshot; continuation metadata
+remains local session data.

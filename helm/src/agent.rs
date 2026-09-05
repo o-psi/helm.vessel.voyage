@@ -194,12 +194,38 @@ pub enum StopReason {
     Completed,
 }
 
+/// Canonical run state retained when a locally rejected request stops execution.
+/// Runtime-only system messages are excluded; provider continuation stays local.
+#[derive(Clone)]
+pub struct CanonicalRecovery {
+    pub messages: Vec<Message>,
+    pub usage: Usage,
+}
+
+impl std::fmt::Debug for CanonicalRecovery {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("CanonicalRecovery")
+            .field("message_count", &self.messages.len())
+            .field("usage", &self.usage)
+            .finish_non_exhaustive()
+    }
+}
+
+#[derive(Debug, Error)]
+#[error("{source}")]
+pub struct ContextFailure {
+    #[source]
+    pub source: crate::context::ContextError,
+    pub recovery: Option<Box<CanonicalRecovery>>,
+}
+
 #[derive(Debug, Error)]
 pub enum AgentError {
     #[error("completion ownership failed: {0}")]
     Completion(String),
     #[error(transparent)]
-    Context(#[from] crate::context::ContextError),
+    Context(#[from] ContextFailure),
     #[error(transparent)]
     Provider(#[from] ProviderError),
     #[error("cannot load workspace instructions: {0}")]
@@ -210,6 +236,38 @@ pub enum AgentError {
     Checkpoint(#[from] CheckpointError),
     #[error("provider usage accounting overflowed")]
     UsageOverflow,
+}
+
+impl From<crate::context::ContextError> for AgentError {
+    fn from(source: crate::context::ContextError) -> Self {
+        Self::Context(ContextFailure {
+            source,
+            recovery: None,
+        })
+    }
+}
+
+impl AgentError {
+    pub fn recovery(&self) -> Option<&CanonicalRecovery> {
+        match self {
+            Self::Context(failure) => failure.recovery.as_deref(),
+            _ => None,
+        }
+    }
+
+    fn with_recovery(mut self, messages: &[Message], usage: &Usage) -> Self {
+        if let Self::Context(failure) = &mut self {
+            failure.recovery = Some(Box::new(CanonicalRecovery {
+                messages: messages
+                    .iter()
+                    .filter(|message| message.role != crate::model::Role::System)
+                    .cloned()
+                    .collect(),
+                usage: usage.clone(),
+            }));
+        }
+        self
+    }
 }
 
 pub struct Agent {
@@ -632,7 +690,10 @@ impl Agent {
                 temperature: self.temperature,
                 max_tokens: Some(self.max_tokens),
             };
-            let response = self.stream_with_retry(request, &cancel, checkpoint).await?;
+            let response = self
+                .stream_with_retry(request, &cancel, checkpoint)
+                .await
+                .map_err(|error| error.with_recovery(&history, &usage))?;
             usage.input_tokens = usage
                 .input_tokens
                 .checked_add(response.usage.input_tokens)
@@ -1140,15 +1201,26 @@ mod tests {
             }),
             &directory,
         );
-        assert!(matches!(
-            a.run(vec![], "x".repeat(20_000)).await,
-            Err(AgentError::Context(_))
-        ));
+        let error = a.run(vec![], "x".repeat(20_000)).await.unwrap_err();
+        assert!(matches!(error, AgentError::Context(_)));
+        let recovery = error.recovery().unwrap();
+        assert_eq!(recovery.messages.len(), 1);
+        assert_eq!(recovery.messages[0].content.len(), 20_000);
+        assert_eq!(recovery.messages[0].role, Role::User);
         assert_eq!(calls.load(Ordering::SeqCst), 0);
-        assert!(matches!(
-            a.run(vec![], "small".into()).await,
-            Err(AgentError::Context(_))
-        ));
+        let error = a.run(vec![], "small".into()).await.unwrap_err();
+        assert!(matches!(error, AgentError::Context(_)));
+        let recovery = error.recovery().unwrap();
+        assert_eq!(recovery.messages.len(), 3);
+        assert_eq!(recovery.messages[0].content, "small");
+        assert_eq!(recovery.messages[1].tool_calls[0].id, "call");
+        assert_eq!(recovery.messages[2].tool_call_id.as_deref(), Some("call"));
+        assert!(
+            recovery
+                .messages
+                .iter()
+                .all(|message| message.role != Role::System)
+        );
         assert_eq!(
             calls.load(Ordering::SeqCst),
             1,
@@ -1999,5 +2071,40 @@ mod tests {
             .await
             .unwrap_err();
         assert!(error.to_string().contains("steering is unavailable"));
+    }
+    #[test]
+    fn context_recovery_debug_never_exposes_messages_or_provider_state() {
+        let mut message =
+            Message::new(crate::model::Role::Assistant, "private-transcript-sentinel");
+        message.provider_state =
+            Some(serde_json::json!({"encrypted_content":"private-provider-state-sentinel"}));
+        let error = AgentError::Context(ContextFailure {
+            source: crate::context::ContextError {
+                estimated: 90000,
+                limit: 65536,
+            },
+            recovery: Some(Box::new(CanonicalRecovery {
+                messages: vec![message],
+                usage: Usage {
+                    input_tokens: 3,
+                    output_tokens: 5,
+                },
+            })),
+        });
+        for diagnostic in [
+            format!("{error:?}"),
+            format!("{error:#?}"),
+            error.to_string(),
+        ] {
+            assert!(!diagnostic.contains("private-transcript-sentinel"));
+            assert!(!diagnostic.contains("private-provider-state-sentinel"));
+            assert!(!diagnostic.contains("encrypted_content"));
+            assert!(diagnostic.contains("90000"));
+            assert!(diagnostic.contains("65536"));
+        }
+        let recovery_debug = format!("{:?}", error.recovery().unwrap());
+        assert!(recovery_debug.contains("message_count: 1"));
+        assert!(recovery_debug.contains("input_tokens: 3"));
+        assert!(recovery_debug.contains("output_tokens: 5"));
     }
 }
