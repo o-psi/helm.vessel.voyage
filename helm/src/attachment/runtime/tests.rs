@@ -567,3 +567,78 @@ async fn admitted_workspace_uses_canonical_identity_and_rejects_another_root() {
     assert_eq!(effects.load(Ordering::SeqCst), 0);
     assert_eq!(owner.record().await.unwrap().state, RunState::Failed);
 }
+
+struct NoChildren;
+#[async_trait]
+impl crate::subagent::SubagentExecutor for NoChildren {
+    async fn execute(
+        &self,
+        _: crate::subagent::ExecutionContext,
+    ) -> Result<crate::subagent::SubagentResult, String> {
+        Err("unexpected child execution".into())
+    }
+}
+
+#[tokio::test]
+async fn scoped_checkpoint_uses_admitted_identity_and_seals_only_accepted_work() {
+    use crate::{
+        completion::{
+            FinalOutcome,
+            runtime::{Coordinator, RunHandle},
+        },
+        subagent::{AgentTreeStore, RuntimeLimits, SubagentRuntime},
+        todo::{TodoScope, TodoStore},
+    };
+    for mode in ["success", "provider-failure"] {
+        let (dir, mut owner, agent, requests, _, _) = setup(mode, Arc::new(SilentSink)).await;
+        let coordinator =
+            Coordinator::open(dir.path().join("completion"), agent.workspace()).unwrap();
+        let todos = Arc::new(
+            TodoStore::new(
+                dir.path().join("todos/list.json"),
+                TodoScope::workspace(agent.workspace().to_owned()),
+            )
+            .with_coordinator(coordinator.clone()),
+        );
+        let agents = AgentTreeStore::new(dir.path().join("agents/tree.json"))
+            .with_coordinator(coordinator.clone());
+        let runtime = Arc::new(
+            SubagentRuntime::new(
+                Arc::new(NoChildren),
+                RuntimeLimits::default(),
+                Some(agents.clone()),
+            )
+            .unwrap(),
+        );
+        let agent = agent
+            .with_completion_coordinator(coordinator.clone())
+            .with_completion_gate(todos, agents, runtime);
+        let outcome = owner.execute(&agent, CancellationToken::new(), None).await;
+        let record = owner.record().await.unwrap();
+        let session = Journal::open(dir.path().join("attachment"))
+            .unwrap()
+            .load_session(record.session_id)
+            .unwrap()
+            .session;
+        assert_eq!(session.completion_runs.len(), 1);
+        assert_eq!(session.completion_runs[0].run_id, record.id);
+        assert_eq!(session.completion_runs[0].session_id, record.session_id);
+        let handle = RunHandle::resume(coordinator, record.session_id, record.id)
+            .await
+            .unwrap();
+        let decision = handle.decision().await.unwrap().unwrap();
+        if mode == "success" {
+            assert_eq!(outcome.unwrap().stop_reason, StopReason::Completed);
+            assert_eq!(record.state, RunState::Completed);
+            assert!(record.final_checkpointed);
+            assert_eq!(decision.outcome, FinalOutcome::Completed);
+            assert_eq!(requests.load(Ordering::SeqCst), 2);
+        } else {
+            assert!(outcome.is_err());
+            assert_eq!(record.state, RunState::Failed);
+            assert!(!record.final_checkpointed);
+            assert_eq!(decision.outcome, FinalOutcome::Interrupted);
+            assert_eq!(requests.load(Ordering::SeqCst), 1);
+        }
+    }
+}
