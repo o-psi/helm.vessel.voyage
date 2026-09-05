@@ -431,6 +431,14 @@ pub(super) fn set_value_suggestions(
     };
     let prefix = format!("/set {key} ");
     match spec.kind {
+        ConfigValueKind::Bool => fixed_suggestions(
+            &prefix,
+            value,
+            &[
+                ("true", "Enable this setting"),
+                ("false", "Disable this setting"),
+            ],
+        ),
         ConfigValueKind::Provider => fixed_suggestions(&prefix, value, PROVIDER_VALUES),
         ConfigValueKind::Model => model_suggestions(context, value, &prefix),
         ConfigValueKind::EnvironmentName => fixed_suggestions(

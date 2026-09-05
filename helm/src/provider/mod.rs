@@ -1,6 +1,7 @@
 mod anthropic;
 mod chatgpt_oauth;
 mod codex_subscription;
+pub(crate) mod discovery;
 mod openai;
 mod openai_responses;
 
@@ -169,12 +170,15 @@ pub fn from_config(
                 .map_err(|e| ProviderError::Authentication(e.to_string()))?,
             config.base_url.clone(),
         ))),
-        ProviderKind::OpenaiChat => Ok(Box::new(OpenAiProvider::new(
-            config
-                .api_key()
-                .map_err(|e| ProviderError::Authentication(e.to_string()))?,
-            config.base_url.clone(),
-        ))),
+        ProviderKind::OpenaiChat => Ok(Box::new(
+            OpenAiProvider::new(
+                config
+                    .api_key()
+                    .map_err(|e| ProviderError::Authentication(e.to_string()))?,
+                config.base_url.clone(),
+            )
+            .with_max_tokens_parameter(config.chat_use_max_tokens),
+        )),
         ProviderKind::ChatGptOauth => {
             let store = ChatGptTokenStore::new(ChatGptTokenStore::default_path()?);
             let mut endpoints = OAuthEndpoints::default();
@@ -238,6 +242,19 @@ pub(crate) async fn checked_stream_response(
         match checked_json(response).await {
             Err(error) => Err(error),
             Ok(_) => unreachable!("non-success response cannot produce successful JSON"),
+        }
+    }
+}
+
+trait CompatibleAuthentication {
+    fn apply_key(self, key: &str) -> Self;
+}
+impl CompatibleAuthentication for reqwest::RequestBuilder {
+    fn apply_key(self, key: &str) -> Self {
+        if key.is_empty() {
+            self
+        } else {
+            self.bearer_auth(key)
         }
     }
 }
