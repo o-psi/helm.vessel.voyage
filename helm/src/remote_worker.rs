@@ -200,12 +200,13 @@ pub(super) async fn run(args: Args, mut config: Config, workspace: Option<PathBu
         let mut cursor = latest.get();
         let mut interval = tokio::time::interval(Duration::from_millis(100));
         let mut shutdown = false;
+        let mut cleanup_observed = true;
         loop {
             tokio::select! {biased;
                 _=attachment_interrupt()=>{shutdown=true;break;},
                 result=async {match &mut active {Some(task)=>Some(task.await),None=>std::future::pending().await}}=>{
                     active=None;
-                    if !matches!(result,Some(Ok(Ok(ref finished))) if finished.cleanup_observed) {break;}
+                    if !matches!(result,Some(Ok(Ok(ref finished))) if finished.cleanup_observed) {cleanup_observed=false;break;}
                 },
                 frame=connection.receive()=>{
                     let Some(frame)=frame else {break};
@@ -274,11 +275,16 @@ pub(super) async fn run(args: Args, mut config: Config, workspace: Option<PathBu
         cancel.cancel();
         // Never abandon an admitted executor: it owns its bounded cleanup and durable blocker.
         if let Some(task) = active {
-            let _ = task.await;
+            cleanup_observed &=
+                matches!(task.await, Ok(Ok(ref finished)) if finished.cleanup_observed);
         }
         drop(dispatch_authority);
         drop(authority);
         connection.close().await;
+        ensure!(
+            cleanup_observed,
+            "remote owned-resource cleanup unconfirmed; inspect the dedicated journal and recover locally"
+        );
         if shutdown {
             return Ok(());
         }

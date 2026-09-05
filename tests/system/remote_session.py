@@ -74,7 +74,7 @@ class Provider(BaseHTTPRequestHandler):
         except (BrokenPipeError,ConnectionResetError):pass
 
 
-def case(root,provider,profile=False):
+def case(root,provider,profile=False,shutdown_failure=False):
     root.mkdir()
     workspace=root/'workspace';workspace.mkdir()
     env=dict(os.environ,HOME=str(root/'home'),XDG_DATA_HOME=str(root/'data'),XDG_CONFIG_HOME=str(root/'config'),VESSEL_OPERATOR_TOKEN=TOKEN,REMOTE_PROVIDER_KEY=KEY,RUST_LOG='warn')
@@ -100,7 +100,7 @@ def case(root,provider,profile=False):
             payload=res.read().decode()
             if path.startswith('/v1/remote/') and res.status==200:
                 assert res.headers.get('Cache-Control')=='no-store', 'remote content cacheable'
-            assert res.status==expected,(path,res.status,payload)
+            assert res.status in (expected if isinstance(expected,tuple) else (expected,)),(path,res.status,payload)
         assert KEY not in payload and TOKEN not in payload,'credential exported'
         return json.loads(payload) if payload.startswith(('{','[')) else payload
     def ready():
@@ -151,6 +151,34 @@ def case(root,provider,profile=False):
             return snapshot if snapshot.get('run',{}).get('cleanup')=='observed' else None
         completed=wait(terminal,'completed observed cleanup')
         assert completed['run']['state']=='completed',completed
+        if shutdown_failure:
+            state['hold']=True
+            held=command({'type':'submit','session_id':session,'expected_revision':completed['session']['revision'],'prompt':'Hold until explicit worker shutdown.'})['reply']['run']['run_id']
+            assert state['started'].wait(10),'provider did not start before shutdown'
+            with sqlite3.connect(state['database']) as db:
+                db.execute("CREATE TRIGGER fixture_cleanup_failure BEFORE UPDATE OF confirmation ON local_cleanup_obligations BEGIN SELECT RAISE(ABORT, 'fixture cleanup failure'); END")
+            if shutdown_failure=='completed':
+                # Terminal cleanup failure may close the lease before its cancel
+                # acknowledgement is delivered. Durable Cancelled below proves
+                # admission; transport uncertainty is not proof of rejection.
+                reply=command({'type':'cancel','session_id':session,'run_id':held},expected=(200,409,504))
+                if isinstance(reply,dict):assert reply['reply']['type']=='accepted',reply
+            else:
+                worker.send_signal(signal.SIGINT)
+            worker.wait(25)
+            assert worker.returncode!=0,'worker reported successful shutdown despite unconfirmed cleanup'
+            with sqlite3.connect(state['database']) as db:
+                record=json.loads(db.execute('SELECT record FROM runs WHERE id=?',(held,)).fetchone()[0])
+                confirmation=db.execute('SELECT confirmation FROM local_cleanup_obligations WHERE run_id=?',(held,)).fetchone()[0]
+                db.execute('DROP TRIGGER fixture_cleanup_failure')
+            assert record['state']=='cancelled' and confirmation is None,(record,confirmation)
+            count=len(state['requests'])
+            worker=spawn(worker_command);wait(connected,'observe unconfirmed shutdown')
+            snapshot=command({'type':'inspect','session_id':session})['reply']
+            assert snapshot['run']['run_id']==held and snapshot['run']['cleanup']=='unconfirmed',snapshot
+            denied=command({'type':'submit','session_id':session,'expected_revision':snapshot['session']['revision'],'prompt':'Cleanup blocker must survive shutdown.'})['reply']
+            assert denied['type']=='denied' and len(state['requests'])==count,denied
+            return
         if profile:
             assert not (workspace/'remote-effect.txt').exists(),'selected restricted profile allowed a write'
             count=len(state['requests'])
@@ -290,4 +318,6 @@ if __name__=='__main__':
         for provider in ('openai-chat','openai-responses','anthropic'):
             case(Path(directory)/provider,provider)
         case(Path(directory)/'profile','openai-chat',profile=True)
-    print('remote session: three native adapters, actual file effects, exact retry/restart, cancellation, forced-death recovery/attestation, revocation, private-scope denial, publication rollback and selected-profile freshness passed')
+        case(Path(directory)/'shutdown-failure','openai-chat',shutdown_failure=True)
+        case(Path(directory)/'completed-cleanup-failure','openai-chat',shutdown_failure='completed')
+    print('remote session: three native adapters, actual file effects, exact retry/restart, cancellation, forced-death recovery/attestation, revocation, private-scope denial, publication rollback, selected-profile freshness and unconfirmed-cleanup exit status passed')
