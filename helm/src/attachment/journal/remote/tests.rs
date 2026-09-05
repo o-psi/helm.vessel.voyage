@@ -774,3 +774,89 @@ fn public_projection_commit_busy_rolls_back_private_suffix_offset_and_event_toge
         .collect::<String>();
     assert_eq!(text, "[REDACTED]");
 }
+
+#[test]
+fn remote_retention_requires_snapshot_and_corrupt_rows_never_skip_disclosure_checks() {
+    let (_dir, mut journal, session, binding) = fixture();
+    journal.create_remote_session(&session, &binding).unwrap();
+    let run = Uuid::new_v4();
+    let tx = journal.connection.transaction().unwrap();
+    for _ in 0..=MAX_EVENTS {
+        publish(&tx, run, RunEvent::Running {}).unwrap();
+    }
+    tx.commit().unwrap();
+    assert!(matches!(
+        journal.remote_replay(&binding, session.id, 0, 128).unwrap(),
+        RemoteReplay::SnapshotRequired { .. }
+    ));
+    let RemoteReplay::Events { events, latest } =
+        journal.remote_replay(&binding, session.id, 1, 128).unwrap()
+    else {
+        panic!("retained suffix missing")
+    };
+    assert_eq!(events.len(), 128);
+    assert_eq!(events[0].cursor.get(), 2);
+    assert_eq!(latest, 1025);
+    for limit in [0, 129, usize::MAX] {
+        assert!(
+            journal
+                .remote_replay(&binding, session.id, 1, limit)
+                .is_err()
+        );
+    }
+    journal
+        .connection
+        .execute(
+            "UPDATE remote_events SET event=?1 WHERE sequence=2",
+            ["X".repeat(131073)],
+        )
+        .unwrap();
+    assert!(journal.remote_replay(&binding, session.id, 1, 128).is_err());
+    journal
+        .connection
+        .execute("UPDATE remote_session SET binding=?1", ["X".repeat(8193)])
+        .unwrap();
+    assert!(journal.remote_session(&binding).is_err());
+    assert!(journal.remote_snapshot(&binding, session.id).is_err());
+}
+
+#[test]
+fn public_outbox_byte_cap_preserves_contiguous_replay_and_bounded_pages() {
+    let (_dir, mut journal, session, binding) = fixture();
+    journal.create_remote_session(&session, &binding).unwrap();
+    let run = Uuid::new_v4();
+    let tx = journal.connection.transaction().unwrap();
+    for _ in 0..600 {
+        publish(
+            &tx,
+            run,
+            RunEvent::TextDelta {
+                text: "x".repeat(16384),
+            },
+        )
+        .unwrap();
+    }
+    tx.commit().unwrap();
+    let (first, count, bytes): (i64, i64, i64) = journal
+        .connection
+        .query_row(
+            "SELECT min(sequence),count(*),sum(length(CAST(event AS BLOB))) FROM remote_events",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .unwrap();
+    assert!(first > 1 && count < 600);
+    assert!(bytes <= MAX_PUBLIC_BYTES as i64);
+    let RemoteReplay::Events { events, latest } = journal
+        .remote_replay(&binding, session.id, (first - 1) as u64, 128)
+        .unwrap()
+    else {
+        panic!("retained suffix missing")
+    };
+    assert!(events.len() < 128 && !events.is_empty());
+    assert!(serde_json::to_vec(&events).unwrap().len() <= 192 * 1024);
+    for (offset, event) in events.iter().enumerate() {
+        assert_eq!(event.cursor.get(), first as u64 + offset as u64);
+    }
+    assert_eq!(latest, 600);
+}

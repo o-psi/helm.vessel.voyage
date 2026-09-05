@@ -52,6 +52,20 @@ impl helm::policy::ExecutionAuthority for Authority {
         Ok(())
     }
 }
+/// Dispatch combines the still-live remote grant with the locally selected
+/// policy snapshot. Observation/cancellation use the lease alone so a changed
+/// local profile cannot obstruct cleanup or truthful inspection.
+#[derive(Debug)]
+struct DispatchAuthority {
+    lease: Arc<Authority>,
+    policy: Policy,
+}
+impl helm::policy::ExecutionAuthority for DispatchAuthority {
+    fn check(&self) -> Result<()> {
+        self.lease.check()?;
+        self.policy.check_current()
+    }
+}
 fn features() -> Features {
     Features::new(vec![
         Feature::SequencedEvents,
@@ -99,7 +113,7 @@ pub(super) async fn run(args: Args, mut config: Config, workspace: Option<PathBu
         config.access_mode() == AccessMode::ReadOnly || config.mcp_servers.is_empty(),
         "remote execution does not support effectful MCP servers without cleanup adapters"
     );
-    Policy::new(&config, workspace.clone())?;
+    let launch_policy = Policy::new(&config, workspace.clone())?;
     std::time::Instant::now()
         .checked_add(config.timeout())
         .context("configured timeout exceeds clock range")?;
@@ -169,6 +183,10 @@ pub(super) async fn run(args: Args, mut config: Config, workspace: Option<PathBu
         let authority = Arc::new(Authority {
             lease: connection.lease(),
         });
+        let dispatch_authority = Arc::new(DispatchAuthority {
+            lease: authority.clone(),
+            policy: launch_policy.clone(),
+        });
         let connected = serde_json::json!({"event":"remote_session_connected","session_id":session,"machine_id":binding.machine_id,"connection_id":connection.context().connection_id});
         write_notice(connected.to_string()).await?;
         let cancel = CancellationToken::new();
@@ -209,13 +227,13 @@ pub(super) async fn run(args: Args, mut config: Config, workspace: Option<PathBu
                                     Operation::Inspect{session_id} if *session_id==session=>owner.remote_snapshot(binding.clone(),authority.clone()).await.unwrap_or(Reply::Denied{code:DenialCode::Internal}),
                                     Operation::Submit{session_id,expected_revision,prompt} if *session_id==session=>{
                                         let request=TurnAdmission{command_id:command.command_id,machine_id:binding.machine_id,principal_id:binding.owner_id,session_id:session,expected_revision:*expected_revision,expires_at_ms:command.expires_at_ms,prompt:prompt.clone()};
-                                        match owner.admit_authorized(request,authority.clone()).await {
+                                        match owner.admit_authorized(request,dispatch_authority.clone()).await {
                                             Ok(Admission::Existing(run))=>Reply::Run{session_id:run.session_id,run_id:run.id,state:public_state(run.state)},
                                             Ok(Admission::New(mut run))=>{
                                                 if active.is_some() || run.register_local_cleanup().await.is_err(){let _=run.fail_before_execution().await;Reply::Denied{code:DenialCode::Internal}}
                                                 else {
                                                     let snapshot=owner.remote_snapshot(binding.clone(),authority.clone()).await;
-                                                    let owner=owner.clone();let config=config.clone();let workspace=workspace.clone();let authority=authority.clone();let execution_cancel=cancel.child_token();let interrupt=execution_cancel.clone();
+                                                    let owner=owner.clone();let config=config.clone();let workspace=workspace.clone();let authority=dispatch_authority.clone();let execution_cancel=cancel.child_token();let interrupt=execution_cancel.clone();
                                                     active=Some(tokio::spawn(async move {managed::execute_admitted(&owner,&mut run,&config,workspace,Arc::new(helm::agent::SilentSink),execution_cancel,async move{interrupt.cancelled().await},Some(authority)).await}));
                                                     snapshot.unwrap_or(Reply::Denied{code:DenialCode::Internal})
                                                 }
@@ -258,6 +276,7 @@ pub(super) async fn run(args: Args, mut config: Config, workspace: Option<PathBu
         if let Some(task) = active {
             let _ = task.await;
         }
+        drop(dispatch_authority);
         drop(authority);
         connection.close().await;
         if shutdown {

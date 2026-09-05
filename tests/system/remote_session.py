@@ -74,7 +74,7 @@ class Provider(BaseHTTPRequestHandler):
         except (BrokenPipeError,ConnectionResetError):pass
 
 
-def case(root,provider):
+def case(root,provider,profile=False):
     root.mkdir()
     workspace=root/'workspace';workspace.mkdir()
     env=dict(os.environ,HOME=str(root/'home'),XDG_DATA_HOME=str(root/'data'),XDG_CONFIG_HOME=str(root/'config'),VESSEL_OPERATOR_TOKEN=TOKEN,REMOTE_PROVIDER_KEY=KEY,RUST_LOG='warn')
@@ -112,7 +112,17 @@ def case(root,provider):
         invitation=request('/v2/enrollment/invitations',{'ttl_ms':60000})
         enrolled=subprocess.run([str(HELM),'attachment','--directory',str(root/'enrollment'),'--origin',origin,'--allow-insecure-loopback','enroll','--invitation-id',invitation['id'],'--invitation-key-stdin'],input=invitation['key']+'\n',text=True,capture_output=True,env=env,timeout=10)
         assert enrolled.returncode==0,(enrolled.stdout,enrolled.stderr)
-        worker_command=[str(HELM),'--config',str(config),'--workspace',str(workspace),'remote-worker','--directory',str(root/'managed'),'--enrollment-directory',str(root/'enrollment'),'--origin',origin,'--allow-insecure-loopback']
+        selection=[]
+        if profile:
+            common=[str(HELM),'--config',str(config),'--workspace',str(workspace),'--policy-directory',str(root/'profiles')]
+            def profile_command(*arguments):
+                result=subprocess.run([*common,'policy',*arguments],env=env,capture_output=True,text=True,timeout=10)
+                assert result.returncode==0,(result.stdout,result.stderr)
+                return json.loads(result.stdout)
+            profile_command('create','remote-review','--preset','restricted')
+            selected=profile_command('inspect','remote-review')
+            selection=['--policy-directory',str(root/'profiles'),'--policy-profile','remote-review','--policy-revision','1','--policy-digest',selected['digest']]
+        worker_command=[str(HELM),'--config',str(config),'--workspace',str(workspace),*selection,'remote-worker','--directory',str(root/'managed'),'--enrollment-directory',str(root/'enrollment'),'--origin',origin,'--allow-insecure-loopback']
         worker=spawn(worker_command)
         def connected():
             assert worker.poll() is None,'worker stopped'
@@ -141,14 +151,41 @@ def case(root,provider):
             return snapshot if snapshot.get('run',{}).get('cleanup')=='observed' else None
         completed=wait(terminal,'completed observed cleanup')
         assert completed['run']['state']=='completed',completed
+        if profile:
+            assert not (workspace/'remote-effect.txt').exists(),'selected restricted profile allowed a write'
+            count=len(state['requests'])
+            with sqlite3.connect(state['database']) as db:
+                before=db.execute('SELECT count(*) FROM runs').fetchone()[0]
+            profile_command('delete','remote-review','--expected-revision','1')
+            rejected=command({'type':'submit','session_id':session,'expected_revision':completed['session']['revision'],'prompt':'Stale profile must not admit.'})['reply']
+            assert rejected['type']=='denied',rejected
+            inspected=command({'type':'inspect','session_id':session})['reply']
+            assert inspected['session']['revision']==completed['session']['revision'],inspected
+            assert len(state['requests'])==count,'stale profile reached provider'
+            with sqlite3.connect(state['database']) as db:
+                assert db.execute('SELECT count(*) FROM runs').fetchone()[0]==before,'stale profile admitted canonical input'
+            return
         assert (workspace/'remote-effect.txt').read_text()=='exactly-once remote effect'
         count=len(state['requests'])
         retry=command(operation,identity,expiry)['reply']
         assert retry['type']=='run' and retry['run_id']==run_id and retry['state']=='completed',retry
         assert len(state['requests'])==count,'duplicate effects'
         altered=dict(operation,prompt='Changed request must not reuse a receipt.')
-        assert command(altered,identity,expiry)['reply']['type']=='denied'
+        command(altered,identity,expiry,expected=409)
         assert len(state['requests'])==count,'altered receipt dispatched'
+        # Reject admission atomically if its public outbox cannot be committed.
+        with sqlite3.connect(state['database']) as db:
+            before_runs=db.execute('SELECT count(*) FROM runs').fetchone()[0]
+            db.execute("CREATE TRIGGER fixture_public_failure BEFORE INSERT ON remote_events BEGIN SELECT RAISE(ABORT, 'fixture public failure'); END")
+        try:
+            rejected=command({'type':'submit','session_id':session,'expected_revision':completed['session']['revision'],'prompt':'Must not dispatch without public receipt.'})['reply']
+            assert rejected['type']=='denied',rejected
+            assert len(state['requests'])==count,'failed admission dispatched provider'
+            with sqlite3.connect(state['database']) as db:
+                assert db.execute('SELECT count(*) FROM runs').fetchone()[0]==before_runs
+            assert command({'type':'inspect','session_id':session})['reply']['session']['revision']==completed['session']['revision']
+        finally:
+            with sqlite3.connect(state['database']) as db:db.execute('DROP TRIGGER fixture_public_failure')
         events=request(base+f'/events?session_id={session}&after=0&limit=128')
         assert events['type']=='replay',events
         kinds=[event['event']['type'] for event in events['events']]
@@ -252,4 +289,5 @@ if __name__=='__main__':
     with tempfile.TemporaryDirectory(prefix='voyage-remote-') as directory:
         for provider in ('openai-chat','openai-responses','anthropic'):
             case(Path(directory)/provider,provider)
-    print('remote session: three native adapters, actual file effects, exact retry/restart, cancellation, forced-death recovery/attestation, revocation and private-scope denial passed')
+        case(Path(directory)/'profile','openai-chat',profile=True)
+    print('remote session: three native adapters, actual file effects, exact retry/restart, cancellation, forced-death recovery/attestation, revocation, private-scope denial, publication rollback and selected-profile freshness passed')

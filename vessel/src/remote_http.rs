@@ -536,6 +536,7 @@ mod tests {
     #[test]
     fn readonly_ids_are_fresh_and_restored_without_consuming_mutation_capacity() {
         let requested = Uuid::new_v4();
+        assert!(restore_command_id(reply(requested), requested).is_err());
         let operation = Operation::List {
             after: None,
             limit: 1,

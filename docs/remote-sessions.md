@@ -52,6 +52,13 @@ Configured secrets are removed at the transactional public-text projection bound
 
 The HTTP relay retains up to 4,096 immutable mutation fingerprints per connection. Reusing a mutation ID for changed content is rejected even after its HTTP waiter times out or disconnects. At capacity, exact retries remain available; stop and restart the foreground worker to establish a fresh connection before issuing new mutation IDs. List, inspect and watch polling use fresh transport IDs and do not consume this limit. At most 32 generations are retained, and retired generations are periodically removed; delayed responses from them cannot satisfy a current connection's waiter. These relay records contain digests and identifiers, not prompts, and do not replace Helm's durable receipts or current authorization checks.
 
+A named policy profile can be selected with the normal `--policy-directory`,
+`--policy-profile`, revision, digest and required confirmation flags before
+`remote-worker`. Its current snapshot is rechecked inside admission and at
+dispatch boundaries, including inherited child authority. A stale/deleted profile
+refuses new admission; inspection and exact-run cancellation remain available
+under the current connection lease. Recovery accepts no profile selection.
+
 ## Recover locally after a crash
 
 Forced process death can leave an active run and an unresolved cleanup obligation. No new turn may dispatch through that blocker. Stop the foreground worker, then use the same private installation directory:
@@ -86,4 +93,4 @@ Fresh dedicated journals use schema 7. Existing local schema 6 remains supported
 
 Tracking: [#9](https://github.com/o-psi/voyage/issues/9), [#77](https://github.com/o-psi/voyage/issues/77), [#78](https://github.com/o-psi/voyage/issues/78), [#79](https://github.com/o-psi/voyage/issues/79). These broader issues remain open for their excluded session lifecycle, approval, sharing and product surfaces.
 
-`tests/system/remote_session.py` runs real Helm and Vessel binaries against isolated native OpenAI Chat, Responses and Anthropic HTTP fixtures. It checks file effects, pre-effect durable cleanup registration, exact retries, restart observation, cancellation, split-secret/Unicode replay, forced-death recovery and local attestation, revocation, and private-scope denial. Journal/runtime tests cover transactional projection rollback, schema compatibility, receipt fencing, tool invocation identities and local recovery attribution. Offline fixtures do not establish live provider or deployment compatibility; final Linux baseline evidence is reported with the PR. No paid/live provider calls or native-platform jobs are required for this slice.
+`tests/system/remote_session.py` runs real Helm and Vessel binaries against isolated native OpenAI Chat, Responses and Anthropic HTTP fixtures. It checks file effects, pre-effect durable cleanup registration, exact retries, restart observation, cancellation, split-secret/Unicode replay, forced-death recovery and local attestation, revocation, selected-profile denial/freshness, failed-publication rollback, and private-scope denial. Journal/runtime tests cover transactional projection rollback, schema compatibility, receipt fencing, tool invocation identities and local recovery attribution. Offline fixtures do not establish live provider or deployment compatibility; final Linux baseline evidence is reported with the PR. No paid/live provider calls or native-platform jobs are required for this slice.
