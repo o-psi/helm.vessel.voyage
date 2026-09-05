@@ -570,6 +570,27 @@ fn detach_of_confirmed_revoked_identity_is_read_only() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn releasing_client_unlocks_inherited_file_description() {
+    let dir = directory();
+    let client = open(dir.path());
+    // dup and fork share the same open file description and flock ownership.
+    let inherited = client._lock.0.try_clone().unwrap();
+    assert!(matches!(
+        EnrollmentClient::open_existing(dir.path(), "https://vessel.example", false),
+        Err(ClientError::Busy)
+    ));
+    drop(client);
+    let reopened = EnrollmentClient::open_existing(dir.path(), "https://vessel.example", false);
+    drop(inherited);
+    assert!(
+        reopened.is_ok(),
+        "released enrollment owner retained its lock: {:?}",
+        reopened.err()
+    );
+}
+
 #[test]
 fn pending_detach_survives_recovery_without_reactivation() {
     for kind in ["enroll", "rotate", "revoke"] {
