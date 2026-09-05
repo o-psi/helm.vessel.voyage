@@ -6,11 +6,12 @@ use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::{
+    io::{Read, Write},
     path::{Path, PathBuf},
-    time::{SystemTime, UNIX_EPOCH},
+    time::Duration,
 };
 use tokio::fs;
-use tokio::io::AsyncWriteExt;
+
 use uuid::Uuid;
 
 /// Shrink a conversation without breaking tool-call groups. The system message and
@@ -52,6 +53,11 @@ pub fn compact_messages(messages: &mut Vec<Message>, retain: usize) -> usize {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Session {
     pub id: Uuid,
+    /// Optimistic concurrency version; legacy files start at zero.
+    #[serde(default)]
+    pub revision: u64,
+    #[serde(skip)]
+    loaded_from: Option<PathBuf>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub workspace: PathBuf,
@@ -81,6 +87,8 @@ impl Session {
         let id = Uuid::new_v4();
         Self {
             id,
+            revision: 0,
+            loaded_from: None,
             created_at: now,
             updated_at: now,
             workspace,
@@ -149,30 +157,124 @@ impl SessionStore {
     pub fn new(directory: PathBuf) -> Self {
         Self { directory }
     }
+    /// Acquire before loading a session, and retain through execution and cleanup.
+    /// Non-reentrant: while holding this lease use the `_with_lease` operations.
+    /// Waiting is cancellation-safe and never blocks a Tokio worker on an OS lock.
+    pub async fn acquire_execution(&self, id: Uuid) -> Result<SessionLease> {
+        let directory = prepare_directory(&self.directory)?;
+        let path = directory.join(format!(".{id}.lock"));
+        let file = open_regular(&path, true)?;
+        loop {
+            match file.try_lock() {
+                Ok(()) => {
+                    return Ok(SessionLease {
+                        directory,
+                        id,
+                        _file: file,
+                    });
+                }
+                Err(std::fs::TryLockError::WouldBlock) => {
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                }
+                Err(std::fs::TryLockError::Error(error)) => return Err(error.into()),
+            }
+        }
+    }
+
     pub async fn save(&self, session: &mut Session) -> Result<()> {
-        session.ensure_name();
-        session.updated_at = Utc::now();
-        fs::create_dir_all(&self.directory).await?;
-        secure_directory(&self.directory).await?;
-        let destination = self.path(session.id);
-        let temporary = self
-            .directory
-            .join(format!(".{}.{}.tmp", session.id, nonce()));
-        let mut file = fs::File::create(&temporary).await?;
-        secure_file(&temporary).await?;
-        // System guidance belongs to the current runtime, not durable user history. Keeping it
-        // on disk makes resumed sessions inherit stale tools, policy, or provider identity.
-        let mut persisted = session.clone();
+        let lease = self.acquire_execution(session.id).await?;
+        self.save_with_lease(session, &lease).await
+    }
+
+    /// Compare and replace under an existing execution lease. Caller state is only
+    /// changed after commit. The bounded synchronous commit has no cancellation points.
+    pub async fn save_with_lease(&self, session: &mut Session, lease: &SessionLease) -> Result<()> {
+        self.check_lease(session.id, lease)?;
+        let destination = lease.directory.join(format!("{}.json", session.id));
+        if let Some(source) = &session.loaded_from {
+            anyhow::ensure!(
+                source == &destination,
+                "session was loaded from another path; branch it instead"
+            );
+        }
+        match read_session(&destination) {
+            Ok(current) => {
+                anyhow::ensure!(session.loaded_from.is_some(), "session ID already exists");
+                anyhow::ensure!(
+                    current.revision == session.revision,
+                    "stale session revision"
+                );
+            }
+            Err(error) if is_not_found(&error) => {
+                anyhow::ensure!(
+                    session.loaded_from.is_none() && session.revision == 0,
+                    "session was deleted; refusing resurrection"
+                );
+            }
+            Err(error) => return Err(error),
+        }
+        let mut next = session.clone();
+        next.revision = session
+            .revision
+            .checked_add(1)
+            .context("session revision exhausted")?;
+        next.ensure_name();
+        next.updated_at = Utc::now();
+        next.loaded_from = Some(destination.clone());
+        let mut persisted = next.clone();
+        // Runtime system guidance must never become durable conversation history.
         persisted
             .messages
             .retain(|message| message.role != crate::model::Role::System);
-        file.write_all(&serde_json::to_vec_pretty(&persisted)?)
-            .await?;
-        file.sync_all().await?;
-        if let Err(error) = fs::rename(&temporary, &destination).await {
-            let _ = fs::remove_file(&temporary).await;
-            return Err(error).with_context(|| format!("failed to save session {}", session.id));
+        let bytes = serde_json::to_vec_pretty(&persisted)?;
+        anyhow::ensure!(
+            bytes.len() as u64 <= MAX_SESSION_BYTES,
+            "session exceeds size limit"
+        );
+        let mut temporary = tempfile::NamedTempFile::new_in(&lease.directory)?;
+        temporary.write_all(&bytes)?;
+        temporary.as_file().sync_all()?;
+        // Validate again before replacement; never follow a destination symlink.
+        reject_symlinks(&destination)?;
+        // Retain a private rollback image until the directory entry is durable.
+        let mut rollback = match open_regular(&destination, false) {
+            Ok(mut previous) => {
+                let mut backup = tempfile::NamedTempFile::new_in(&lease.directory)?;
+                std::io::copy(&mut previous, &mut backup)?;
+                backup.as_file().sync_all()?;
+                Some(backup)
+            }
+            Err(error) if is_not_found(&error) => None,
+            Err(error) => return Err(error),
+        };
+        let directory = std::fs::File::open(&lease.directory)?;
+        temporary
+            .persist(&destination)
+            .map_err(|error| error.error)?;
+        if let Err(error) = directory.sync_all() {
+            if let Some(backup) = rollback.take() {
+                backup
+                    .persist(&destination)
+                    .map_err(|error| error.error)
+                    .context("directory sync failed and session rollback failed")?;
+            } else {
+                std::fs::remove_file(&destination)
+                    .context("directory sync failed and new-session rollback failed")?;
+            }
+            // Failing storage cannot promise crash durability of the rollback.
+            let _ = directory.sync_all();
+            return Err(error).context("session directory sync failed; snapshot rolled back");
         }
+        *session = next;
+        Ok(())
+    }
+
+    fn check_lease(&self, id: Uuid, lease: &SessionLease) -> Result<()> {
+        reject_symlinks(&self.directory)?;
+        anyhow::ensure!(
+            id == lease.id() && std::fs::canonicalize(&self.directory)? == lease.directory(),
+            "session lease belongs to another directory or ID"
+        );
         Ok(())
     }
     pub async fn load(&self, id: Uuid) -> Result<Session> {
@@ -180,7 +282,7 @@ impl SessionStore {
     }
     pub async fn load_reference(&self, reference: &str) -> Result<Session> {
         let direct = Path::new(reference);
-        if direct.exists() {
+        if std::fs::symlink_metadata(direct).is_ok() {
             return load_path(direct).await;
         }
         if let Ok(id) = Uuid::parse_str(reference) {
@@ -200,6 +302,7 @@ impl SessionStore {
     }
     pub async fn list(&self) -> Result<Vec<Session>> {
         let mut result = Vec::new();
+        reject_symlinks(&self.directory)?;
         let mut entries = match fs::read_dir(&self.directory).await {
             Ok(v) => v,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(result),
@@ -216,17 +319,31 @@ impl SessionStore {
         Ok(result)
     }
     pub async fn delete(&self, id: Uuid) -> Result<()> {
-        match fs::remove_file(self.path(id)).await {
-            Ok(()) => Ok(()),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(error) => Err(error.into()),
+        let lease = self.acquire_execution(id).await?;
+        self.delete_with_lease(id, &lease).await
+    }
+
+    pub async fn delete_with_lease(&self, id: Uuid, lease: &SessionLease) -> Result<()> {
+        self.check_lease(id, lease)?;
+        let path = lease.directory.join(format!("{id}.json"));
+        match read_session(&path) {
+            Ok(_) => std::fs::remove_file(&path)?,
+            Err(error) if is_not_found(&error) => return Ok(()),
+            Err(error) => return Err(error),
         }
+        if let Err(error) = std::fs::File::open(&lease.directory).and_then(|dir| dir.sync_all()) {
+            tracing::warn!(%error, "session deleted but directory sync failed");
+        }
+        // The sidecar is deliberately NEVER unlinked, even on deletion.
+        Ok(())
     }
 
     pub async fn branch(&self, source: &Session, name: Option<String>) -> Result<Session> {
         let now = Utc::now();
         let mut branch = source.clone();
         branch.id = Uuid::new_v4();
+        branch.revision = 0;
+        branch.loaded_from = None;
         branch.created_at = now;
         branch.updated_at = now;
         branch.parent_id = Some(source.id);
@@ -259,34 +376,121 @@ impl SessionStore {
     }
 }
 
-#[cfg(unix)]
-async fn secure_directory(path: &Path) -> Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-    fs::set_permissions(path, std::fs::Permissions::from_mode(0o700)).await?;
-    Ok(())
+/// Exclusive OS ownership of one session ID in one canonical store directory.
+/// Send + Sync, with no runtime/thread affinity; dropping releases the lock.
+/// Sidecar files are permanent so independent processes always lock the same inode.
+#[derive(Debug)]
+pub struct SessionLease {
+    directory: PathBuf,
+    id: Uuid,
+    _file: std::fs::File,
 }
-#[cfg(not(unix))]
-async fn secure_directory(_: &Path) -> Result<()> {
+
+impl SessionLease {
+    pub(crate) fn directory(&self) -> &Path {
+        &self.directory
+    }
+    pub(crate) fn id(&self) -> Uuid {
+        self.id
+    }
+}
+
+const MAX_SESSION_BYTES: u64 = 64 * 1024 * 1024;
+
+fn is_not_found(error: &anyhow::Error) -> bool {
+    error
+        .downcast_ref::<std::io::Error>()
+        .is_some_and(|e| e.kind() == std::io::ErrorKind::NotFound)
+}
+
+fn reject_symlinks(path: &Path) -> Result<()> {
+    let mut prefix = PathBuf::new();
+    for component in path.components() {
+        prefix.push(component);
+        match std::fs::symlink_metadata(&prefix) {
+            Ok(meta) => anyhow::ensure!(
+                !meta.file_type().is_symlink(),
+                "symlink path rejected: {}",
+                prefix.display()
+            ),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
     Ok(())
 }
 
-#[cfg(unix)]
-async fn secure_file(path: &Path) -> Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-    fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).await?;
-    Ok(())
+fn prepare_directory(path: &Path) -> Result<PathBuf> {
+    reject_symlinks(path)?;
+    std::fs::create_dir_all(path)?;
+    reject_symlinks(path)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        anyhow::ensure!(
+            std::fs::metadata(path)?.uid() == unsafe { libc::geteuid() },
+            "session directory is not owned by current user"
+        );
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))?;
+    }
+    Ok(std::fs::canonicalize(path)?)
 }
-#[cfg(not(unix))]
-async fn secure_file(_: &Path) -> Result<()> {
-    Ok(())
+
+fn open_regular(path: &Path, lock: bool) -> Result<std::fs::File> {
+    reject_symlinks(path)?;
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true).write(lock).create(lock);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options
+            .mode(0o600)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+    }
+    let file = options
+        .open(path)
+        .with_context(|| format!("failed to open {}", path.display()))?;
+    let meta = file.metadata()?;
+    anyhow::ensure!(meta.is_file(), "not a regular file: {}", path.display());
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        anyhow::ensure!(meta.nlink() == 1, "hard-linked session file rejected");
+        if lock {
+            anyhow::ensure!(
+                meta.uid() == unsafe { libc::geteuid() } && meta.mode() & 0o777 == 0o600,
+                "session lock must be owner-only"
+            );
+        }
+    }
+    Ok(file)
 }
 
 async fn load_path(path: &Path) -> Result<Session> {
-    let data = fs::read(path)
-        .await
-        .with_context(|| format!("failed to read session {}", path.display()))?;
+    read_session(path)
+}
+
+fn read_session(path: &Path) -> Result<Session> {
+    let file = open_regular(path, false)?;
+    anyhow::ensure!(
+        file.metadata()?.len() <= MAX_SESSION_BYTES,
+        "session exceeds size limit"
+    );
+    let mut data = Vec::new();
+    file.take(MAX_SESSION_BYTES + 1).read_to_end(&mut data)?;
+    anyhow::ensure!(
+        data.len() as u64 <= MAX_SESSION_BYTES,
+        "session exceeds size limit"
+    );
     let mut session: Session = serde_json::from_slice(&data)
         .with_context(|| format!("invalid session {}", path.display()))?;
+    let stem = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .context("invalid session filename")?;
+    let id = Uuid::parse_str(stem).context("session filename must be a UUID")?;
+    anyhow::ensure!(session.id == id, "session ID does not match filename");
+    session.loaded_from = Some(std::fs::canonicalize(path)?);
     session.ensure_name();
     // Migrate older session files that embedded the then-current runtime prompt.
     session
@@ -299,13 +503,6 @@ async fn load_path(path: &Path) -> Result<Session> {
 }
 fn generated_name(id: Uuid) -> String {
     format!("session-{}", &id.simple().to_string()[..8])
-}
-
-fn nonce() -> u128 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos()
 }
 
 #[cfg(test)]
@@ -487,3 +684,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "session/concurrency_tests.rs"]
+mod concurrency_tests;
