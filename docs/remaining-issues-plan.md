@@ -335,3 +335,14 @@ Remote lifecycle under #77/#9/#78/#79 is implementing an explicit foreground ded
 The operator explicitly requested review and merge of [PR #129](https://github.com/o-psi/voyage/pull/129) to main. Refreshed all 83 open/closed issue titles, bodies and states. The dedicated remote-session scope remains [#77](https://github.com/o-psi/voyage/issues/77#issuecomment-5554450723), with #9/#78/#79 retaining broader unfinished criteria. Review found the old-schema simulation must remove schema-7 tables and foreground shutdown must return failure when cleanup is unconfirmed. Both corrections require regression evidence and a fresh final Linux baseline/CI before merge.
 
 The operator deferred all browser console work. The isolated vessel-session-console experiment is preserved unmerged; no JavaScript or Livewire console is included in PR129. Secret-workflow and policy-default work continue independently in isolated branches.
+
+
+## Remote session delivery to main
+
+PR #129 is merged into main as `fd5295ed48b21186fbd2f7845c93bb0eab7dc181` (observed 2026-09-05T21:36:54Z): https://github.com/o-psi/voyage/pull/129 . Fetched main exactly matches tested head `5593b1e` at tree `fcce1f9a9c48261de21a5322a90aacfe29ee82c8`.
+
+Delivered: dedicated foreground remote session execution with authenticated list/inspect/submit/replay/cancel, durable exact-retry receipts, current local policy and connection authority, redacted transactional public events, and explicit local crash recovery/cleanup attestation. Review corrected the old-schema fixture and false-success shutdown exit; real failure regressions retain truthful Cancelled/unconfirmed state and block later admission.
+
+Verified Linux: 894 workspace tests normally and with actual two-CPU affinity; all 26 system fixtures; formatting, strict Clippy, locked release, 12 eval definitions, unique packaging/checksum. All 34 local baseline stages passed. Both final CI runs passed: https://github.com/o-psi/voyage/actions/runs/33993043815 and https://github.com/o-psi/voyage/actions/runs/33993045729 . Definition validation is not live-provider evaluation; native macOS/Windows and paid/live calls were not run.
+
+This is actual main delivery, not closure of the broader issues. Full session lifecycle/Create, private-session consent/import and retention, remote approvals, services, notifications and deployed production evidence remain open. Browser console work is explicitly deferred by the operator; none is included in this PR.
