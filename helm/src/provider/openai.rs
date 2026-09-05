@@ -79,7 +79,7 @@ impl Provider for OpenAiProvider {
 }
 
 fn request_body(request: ModelRequest, streaming: bool) -> Value {
-    let messages: Vec<Value> = request.messages.iter().map(encode_message).collect();
+    let messages = encode_messages(&request.messages);
     let tools: Vec<Value> = request.tools.iter().map(|t| json!({"type":"function","function":{"name":t.name,"description":t.description,"parameters":t.input_schema}})).collect();
     let mut body = json!({"model":request.model,"messages":messages,"stream":streaming});
     if streaming {
@@ -287,6 +287,32 @@ fn map_transport(error: reqwest::Error) -> ProviderError {
     }
 }
 
+/// Compatible templates commonly accept one initial system block. Preserve the
+/// exact ordered text at the same authority level without changing canonical
+/// messages. Stop at any other role or unusual tool metadata; never promote or
+/// silently discard a malformed/late message to make a template accept it.
+fn encode_messages(messages: &[Message]) -> Vec<Value> {
+    let leading = messages
+        .iter()
+        .take_while(|message| {
+            message.role == Role::System
+                && message.tool_call_id.is_none()
+                && message.tool_calls.is_empty()
+        })
+        .count();
+    if leading < 2 {
+        return messages.iter().map(encode_message).collect();
+    }
+    let content = messages[..leading]
+        .iter()
+        .map(|message| message.content.as_str())
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    std::iter::once(json!({"role": "system", "content": content}))
+        .chain(messages[leading..].iter().map(encode_message))
+        .collect()
+}
+
 fn encode_message(message: &Message) -> Value {
     let role = match message.role {
         Role::System => "system",
@@ -413,3 +439,6 @@ mod tests {
         assert_eq!(completed.usage.output_tokens, 3);
     }
 }
+
+#[cfg(test)]
+mod leading_system_tests;

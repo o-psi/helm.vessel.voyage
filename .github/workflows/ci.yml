@@ -79,6 +79,8 @@ jobs:
         run: python3 tests/system/attachment_enrollment.py
       - name: Verify hidden enrollment invitation entry on real terminal
         run: python3 tests/system/attachment_secret_prompt.py
+      - name: Verify foreground outbound attachment presence with real binaries
+        run: python3 tests/system/attachment_presence.py
       - run: python3 eval/run.py validate
       - run: ./scripts/package-release "ci-${{ github.sha }}"
       - run: cd dist && sha256sum -c *.sha256
