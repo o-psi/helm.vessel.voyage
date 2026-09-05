@@ -7,7 +7,7 @@ struct NoRequests;
 async fn tool_details_shortcut_expands_collapses_and_respects_approval_input() {
     let directory = tempfile::tempdir().unwrap();
     let agent = navigation_agent(&directory);
-    let store = SessionStore::new(directory.path().join("sessions"));
+    let mut store = SessionStore::new(directory.path().join("sessions"));
     let terminals = FakeTerminals::new();
     let supervisor = Arc::new(FakeSupervisor::new(vec![]));
     let todos = todo_store(&directory);
@@ -35,7 +35,7 @@ async fn tool_details_shortcut_expands_collapses_and_respects_approval_input() {
         key,
         &mut app,
         &agent,
-        &store,
+        &mut store,
         &tx,
         &terminals,
         supervisor.clone(),
@@ -52,7 +52,7 @@ async fn tool_details_shortcut_expands_collapses_and_respects_approval_input() {
         key,
         &mut app,
         &agent,
-        &store,
+        &mut store,
         &tx,
         &terminals,
         supervisor.clone(),
@@ -76,7 +76,7 @@ async fn tool_details_shortcut_expands_collapses_and_respects_approval_input() {
         response,
     });
     handle_key(
-        key, &mut app, &agent, &store, &tx, &terminals, supervisor, todos,
+        key, &mut app, &agent, &mut store, &tx, &terminals, supervisor, todos,
     )
     .await
     .unwrap();
@@ -136,7 +136,7 @@ fn navigation_agent(directory: &tempfile::TempDir) -> Arc<Agent> {
 async fn central_router_preserves_modal_and_panel_precedence() {
     let directory = tempfile::tempdir().unwrap();
     let agent = navigation_agent(&directory);
-    let store = SessionStore::new(directory.path().join("sessions"));
+    let mut store = SessionStore::new(directory.path().join("sessions"));
     let terminals = FakeTerminals::new();
     let supervisor = Arc::new(FakeSupervisor::new(vec![]));
     let todos = todo_store(&directory);
@@ -173,7 +173,7 @@ async fn central_router_preserves_modal_and_panel_precedence() {
         KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
         &mut app,
         &agent,
-        &store,
+        &mut store,
         &tx,
         &terminals,
         supervisor.clone(),
@@ -200,7 +200,7 @@ async fn central_router_preserves_modal_and_panel_precedence() {
         KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE),
         &mut app,
         &agent,
-        &store,
+        &mut store,
         &tx,
         &terminals,
         supervisor.clone(),
@@ -216,7 +216,7 @@ async fn central_router_preserves_modal_and_panel_precedence() {
         KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE),
         &mut app,
         &agent,
-        &store,
+        &mut store,
         &tx,
         &terminals,
         supervisor.clone(),
@@ -229,7 +229,7 @@ async fn central_router_preserves_modal_and_panel_precedence() {
         KeyEvent::new(KeyCode::Char(']'), KeyModifiers::CONTROL),
         &mut app,
         &agent,
-        &store,
+        &mut store,
         &tx,
         &terminals,
         supervisor.clone(),
@@ -243,7 +243,7 @@ async fn central_router_preserves_modal_and_panel_precedence() {
         KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE),
         &mut app,
         &agent,
-        &store,
+        &mut store,
         &tx,
         &terminals,
         supervisor.clone(),
@@ -257,7 +257,7 @@ async fn central_router_preserves_modal_and_panel_precedence() {
         KeyEvent::new(KeyCode::Char('m'), KeyModifiers::NONE),
         &mut app,
         &agent,
-        &store,
+        &mut store,
         &tx,
         &terminals,
         supervisor.clone(),
@@ -272,7 +272,7 @@ async fn central_router_preserves_modal_and_panel_precedence() {
         KeyEvent::new(KeyCode::Char('s'), KeyModifiers::NONE),
         &mut app,
         &agent,
-        &store,
+        &mut store,
         &tx,
         &terminals,
         supervisor.clone(),
@@ -287,7 +287,7 @@ async fn central_router_preserves_modal_and_panel_precedence() {
         KeyEvent::new(KeyCode::Char('t'), KeyModifiers::NONE),
         &mut app,
         &agent,
-        &store,
+        &mut store,
         &tx,
         &terminals,
         supervisor,
