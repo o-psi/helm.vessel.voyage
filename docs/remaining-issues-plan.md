@@ -68,3 +68,9 @@ The first-wave source is merged. New completion-gate source has separate, unfini
 [Draft PR #88](https://github.com/o-psi/voyage/pull/88) implements #81–#83. Integrated commit a63686c passes formatting, strict workspace/all-target/all-feature Clippy, all 441 workspace tests, and the locked Linux release build. Twelve release system fixtures are running. Packaging with unique label `completion-20260905-a63686c` and its checksum passed. Final review fixes cover cooperative plain-mode cancellation, timeout usage preservation, and the obsolete evaluation runner CLI flag. These remain dependencies before final verification.
 
 The bounded live retry on September 5 returned HTTP 401 before useful execution despite a locally present credential. Live behavioral evidence remains blocked separately from functioning GitHub/filesystem access. Platform CI is pending on #88. Next closeout candidate is #37, whose implementation is present but needs current resource-fixture and delivery evidence.
+
+Final integrated Linux verification for #88 at f09e4dd passes 447 workspace tests,
+strict Clippy, formatting, locked release build, all 14 system fixtures, eval12
+definitions and unique package/checksum. Cancellation, usage, fixture accounting
+and evaluation timeout fixes are committed. Platform and live/operator acceptance
+remain pending. #37 was closed from independently reviewed merged #87 evidence.

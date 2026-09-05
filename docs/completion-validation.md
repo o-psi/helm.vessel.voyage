@@ -77,3 +77,26 @@ published the accepted session; it is not evidence of the integrated behavior.
 
 These are debug/offline Linux results. Release baseline, packaging, actual current
 macOS/Windows CI and live-provider evaluation remain required delivery evidence.
+
+## Integrated release verification (2026-09-05)
+
+At `f09e4dd` (Rust source last changed in `20bfd2a`), Linux formatting, strict
+workspace/all-target/all-feature Clippy, all 447 workspace tests and the locked
+release build pass. All 14 release system fixtures pass: native transport/no-turn
+limit, titles, steering, questions, tool output, archives, subagent resources,
+context budgets, completion ownership, three-provider gate, frontend handoff,
+Vessel lifecycle, plain SIGINT and evaluation-runner failure recovery. Tool output
+also passes with fragmented 73-byte PTY reads. Twelve eval definitions validate.
+Unique package `completion-20260905-f09e4dd` and its SHA256 check pass.
+
+Plain SIGINT coverage now proves active cancellation preserves separate partial
+output and 7/3 usage, and idle SIGINT exits while stdin stays open. Evaluation
+runner tests use actual offline Helm subprocesses to verify writes, provider error,
+Unicode timeout evidence and subsequent-scenario continuation; these are not live
+behavioral evaluations. Read-only archive/resource scenarios retain all original
+assertions and now prove denied accounting leaves 3/12 owned results unresolved,
+with durable incomplete outcomes unchanged by a separate successful lookup run.
+
+The current bounded live retry still returns HTTP401; no useful provider work is
+claimed. Current PR platform checks remain pending. The draft remains open for
+that evidence and the live/operator acceptance requirements.
