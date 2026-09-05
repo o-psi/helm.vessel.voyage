@@ -573,7 +573,7 @@ async fn submit(
         tokio::time::timeout(Duration::from_secs(6), watcher).await,
         Ok(Ok(Ok(())))
     );
-    let terminal_handles = resources
+    let retained = resources
         .resources
         .as_ref()
         .context("missing managed resources")?
@@ -585,7 +585,8 @@ async fn submit(
     let terminal_reports = tokio::time::timeout(
         Duration::from_secs(15),
         futures_util::future::join_all(
-            terminal_handles
+            retained
+                .terminals
                 .iter()
                 .map(|terminals| terminals.shutdown(Duration::from_secs(10))),
         ),
@@ -594,7 +595,24 @@ async fn submit(
     let terminals_observed = terminal_reports
         .as_ref()
         .is_ok_and(|reports| reports.iter().all(|report| report.observation_complete));
-    let observed = children_observed && terminals_observed && result.is_some() && watcher_ok;
+    let shell_reports = tokio::time::timeout(
+        Duration::from_secs(15),
+        futures_util::future::join_all(
+            retained
+                .shells
+                .iter()
+                .map(|shell| shell.shutdown(Duration::from_secs(10))),
+        ),
+    )
+    .await;
+    let shells_observed = shell_reports
+        .as_ref()
+        .is_ok_and(|reports| reports.iter().all(|report| report.observation_complete));
+    let observed = children_observed
+        && terminals_observed
+        && shells_observed
+        && result.is_some()
+        && watcher_ok;
     drop(resources);
     if observed {
         run.confirm_local_cleanup_observed().await?;
@@ -619,6 +637,24 @@ async fn submit(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn managed_resource_registration_preserves_filtered_authority_and_closes() {
+        let resources = ManagedResources::default();
+        let mut tools = ToolRegistry::standard();
+        tools.retain_allowed(&std::collections::BTreeSet::from(["read_file".into()]));
+        resources.register(&mut tools).unwrap();
+        assert_eq!(
+            tools
+                .definitions()
+                .iter()
+                .map(|tool| tool.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["read_file"]
+        );
+        let retained = resources.close().unwrap();
+        assert!(retained.shells.is_empty());
+        assert!(resources.register(&mut ToolRegistry::standard()).is_err());
+    }
     #[tokio::test]
     async fn uncooperative_execution_timeout_preserves_durable_restart_blocker() {
         use helm::attachment::{journal::TurnAdmission, runtime::Admission};

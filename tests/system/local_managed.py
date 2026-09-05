@@ -70,6 +70,8 @@ class Provider(BaseHTTPRequestHandler):
                 value = ('questions', {'question': 'Choose an option', 'options': ['One', 'Two']})
             elif case.mode in ('shell', 'denied') and step == 0:
                 value = ('shell', {'command': "printf 'one-effect\\n' >> effects.txt"})
+            elif case.mode == 'shell_background' and step == 0:
+                value = ('shell', {'command': 'sleep 120 >/dev/null 2>&1 & echo $! > shell-child.pid'})
             elif case.mode == 'terminal' and step == 0:
                 value = ('process', {'action': 'start', 'command': 'sleep 120', 'name': 'managed-owned-pty'})
             elif case.mode == 'flood':
@@ -322,6 +324,11 @@ def output_and_terminal_cleanup(root):
         row = case.sql('SELECT record FROM runs ORDER BY rowid DESC LIMIT 1')[0][0]
         assert json.loads(row)['state'] == 'cancelled', row
         assert case.sql('SELECT confirmation FROM local_cleanup_obligations ORDER BY rowid DESC LIMIT 1') == [('observed',)]
+        case.reset('shell_background')
+        final(run(case.command(session), case.env))
+        pid = int((case.workspace / 'shell-child.pid').read_text())
+        stat = Path(f'/proc/{pid}/stat')
+        assert not stat.exists() or stat.read_text().rsplit(')', 1)[1].split()[0] in ('Z', 'X'), 'shell descendant still executing after observed cleanup'
         case.reset('terminal')
         final(run(case.command(session), case.env))
         assert len(case.requests) == 2

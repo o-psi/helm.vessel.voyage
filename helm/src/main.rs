@@ -846,7 +846,7 @@ impl SubagentExecutor for CliSubagentExecutor {
         tools.retain_allowed(&context.policy.allowed_tools);
         if let Some(resources) = &self.managed_resources {
             resources
-                .register(&tools)
+                .register(&mut tools)
                 .map_err(|error| error.to_string())?;
         }
         let agent = Agent::new(
@@ -1013,11 +1013,12 @@ fn worktree_manager(workspace: &std::path::Path, workspace_key: &str) -> Option<
 struct ManagedResourceState {
     closed: bool,
     terminals: Vec<helm::tools::ProcessTool>,
+    shells: Vec<helm::tools::ManagedShell>,
 }
 #[derive(Default)]
 struct ManagedResources(std::sync::Mutex<ManagedResourceState>);
 impl ManagedResources {
-    fn register(&self, tools: &ToolRegistry) -> Result<()> {
+    fn register(&self, tools: &mut ToolRegistry) -> Result<()> {
         let mut state = self
             .0
             .lock()
@@ -1030,15 +1031,25 @@ impl ManagedResources {
         if let Some(terminals) = tools.terminals() {
             state.terminals.push(terminals);
         }
+        // Replace only an already-authorized shell; never reintroduce a filtered tool.
+        if tools.definitions().iter().any(|tool| tool.name == "shell") {
+            let shell = helm::tools::ManagedShell::new();
+            tools.register(shell.clone());
+            state.shells.push(shell);
+        }
         Ok(())
     }
-    fn close(&self) -> Result<Vec<helm::tools::ProcessTool>> {
+    fn close(&self) -> Result<ManagedResourceState> {
         let mut state = self
             .0
             .lock()
             .map_err(|_| anyhow::anyhow!("managed resources poisoned"))?;
         state.closed = true;
-        Ok(state.terminals.clone())
+        Ok(ManagedResourceState {
+            closed: true,
+            terminals: state.terminals.clone(),
+            shells: state.shells.clone(),
+        })
     }
 }
 
@@ -1088,7 +1099,7 @@ async fn build_agent_bundle(
     let gate_runtime = subagents.runtime.clone();
     let gate_todos = subagents.todos.store();
     let gate_agents = gate_runtime.store().expect("persistent runtime");
-    let tools = build_tools(
+    let mut tools = build_tools(
         config,
         Some(subagents.tool),
         Some(subagents.todos),
@@ -1096,7 +1107,7 @@ async fn build_agent_bundle(
     )
     .await?;
     if let Some(resources) = &managed_resources {
-        resources.register(&tools)?;
+        resources.register(&mut tools)?;
     }
     let retained_runtime = gate_runtime.clone();
     let agent = Agent::new(
