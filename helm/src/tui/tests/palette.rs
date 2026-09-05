@@ -1,6 +1,25 @@
 use super::*;
 
 #[test]
+fn saved_workflows_have_a_namespaced_palette_command() {
+    let mut app = App::new(
+        Session::new(PathBuf::from("/tmp"), "test-model".into()),
+        Vec::new(),
+    );
+    app.composer.insert_str("/workf");
+    let matches = slash_palette_matches(&app.palette_context());
+    assert_eq!(
+        matches
+            .iter()
+            .map(|command| command.name)
+            .collect::<Vec<_>>(),
+        ["workflow"]
+    );
+    assert!(crate::workflow::RESERVED.contains(&"workflow"));
+    assert!(matches[0].description.contains("workflow"));
+}
+
+#[test]
 fn slash_palette_lists_all_commands_above_the_composer_and_filters() {
     let session = Session::new(PathBuf::from("/tmp"), "test-model".into());
     let mut app = App::new(session, Vec::new());
