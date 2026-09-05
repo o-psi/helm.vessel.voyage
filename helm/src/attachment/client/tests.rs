@@ -1,15 +1,36 @@
 use super::*;
 use std::{
+    io::Write,
     net::TcpListener,
-    os::unix::fs::PermissionsExt,
     sync::{Arc, Mutex},
     thread,
 };
 
-fn directory() -> tempfile::TempDir {
-    let directory = tempfile::tempdir().unwrap();
-    fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700)).unwrap();
-    directory
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+struct Directory {
+    _root: tempfile::TempDir,
+    path: std::path::PathBuf,
+}
+impl Directory {
+    fn path(&self) -> &Path {
+        &self.path
+    }
+}
+fn directory() -> Directory {
+    let root = tempfile::tempdir().unwrap();
+    #[cfg(unix)]
+    let path = {
+        fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        root.path().to_owned()
+    };
+    #[cfg(windows)]
+    let path = {
+        let path = root.path().join("private");
+        voyage_storage::PrivateDirectory::open(&path).unwrap();
+        path
+    };
+    Directory { _root: root, path }
 }
 fn open(dir: &Path) -> EnrollmentClient {
     EnrollmentClient::open(dir, "https://vessel.example", false).unwrap()
@@ -90,10 +111,12 @@ fn private_persistent_identity_and_process_lock() {
     let client = open(&path);
     let id = client.machine_id();
     let key = client.key().unwrap().public_key();
+    #[cfg(unix)]
     assert_eq!(
         fs::metadata(&path).unwrap().permissions().mode() & 0o777,
         0o700
     );
+    #[cfg(unix)]
     assert_eq!(
         fs::metadata(path.join("client.json"))
             .unwrap()
@@ -117,6 +140,7 @@ fn private_persistent_identity_and_process_lock() {
     ));
 }
 #[test]
+#[cfg(unix)]
 fn unsafe_files_and_directories_fail_closed() {
     let root = directory();
     let path = root.path().join("enrollment");
@@ -451,6 +475,7 @@ fn root_owned_macos_temp_alias_allows_enrollment_but_not_user_directory_aliases(
 }
 
 #[test]
+#[cfg(unix)]
 fn enrollment_rejects_user_symlink_ancestors_and_directory_aliases() {
     let root = directory();
     let actual = root.path().join("actual");
@@ -462,4 +487,26 @@ fn enrollment_rejects_user_symlink_ancestors_and_directory_aliases() {
     );
     assert!(!actual.join("client").exists());
     assert!(EnrollmentClient::open(&alias, "https://vessel.example", false).is_err());
+}
+
+#[test]
+#[cfg(windows)]
+fn native_replacement_failure_retains_identity_and_poisons_the_client() {
+    let root = directory();
+    let mut client = open(root.path());
+    let original = fs::read(root.path().join("client.json")).unwrap();
+    let id = client.machine_id();
+    let held = client
+        .private_directory
+        .open_file("client.json", false)
+        .unwrap();
+    client.state.status = Status::Detached;
+    assert_eq!(client.persist().unwrap_err(), ClientError::Storage);
+    assert_eq!(client.ready().unwrap_err(), ClientError::Storage);
+    assert_eq!(fs::read(root.path().join("client.json")).unwrap(), original);
+    drop(held);
+    drop(client);
+    let reopened = open(root.path());
+    assert_eq!(reopened.machine_id(), id);
+    assert_eq!(reopened.status(), Status::Unenrolled);
 }

@@ -937,3 +937,162 @@ fn import_sqlite_full_rolls_back_snapshot_and_provenance_together() {
     assert!(journal.load_session(session.id).is_err());
     assert!(journal.preflight_import(&provenance).unwrap().is_none());
 }
+
+#[cfg(unix)]
+#[test]
+fn hardlinked_database_and_execution_sidecars_are_rejected_without_changes() {
+    for database in [true, false] {
+        let (dir, journal, session, _) = setup();
+        let path = if database {
+            journal.directory.join("journal.sqlite3")
+        } else {
+            drop(journal.acquire_execution(session.id).unwrap());
+            journal
+                .directory
+                .join(format!("{}.execution.lock", session.id))
+        };
+        let bytes = fs::read(&path).unwrap();
+        fs::hard_link(&path, dir.path().join("alias")).unwrap();
+        if database {
+            drop(journal);
+            assert!(Journal::open(dir.path().join("attachment")).is_err());
+        } else {
+            assert!(journal.acquire_execution(session.id).is_err());
+        }
+        assert_eq!(fs::read(path).unwrap(), bytes);
+    }
+}
+
+#[test]
+fn abrupt_hot_journal_writer_fixture() {
+    let Some(path) = std::env::var_os("HELM_JOURNAL_HOT_DIRECTORY") else {
+        return;
+    };
+    let journal = Journal::open(path.into()).unwrap();
+    let session_id = Uuid::parse_str(&std::env::var("HELM_JOURNAL_HOT_SESSION").unwrap()).unwrap();
+    let _guard = journal.acquire_execution(session_id).unwrap();
+    journal
+        .connection
+        .execute_batch(
+            "PRAGMA cache_size=1; PRAGMA cache_spill=ON; BEGIN IMMEDIATE;
+         UPDATE sessions SET state='{}', revision=999;
+         UPDATE runs SET record='{}'; DELETE FROM commands; DELETE FROM events;
+         WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM n WHERE x<256)
+         INSERT INTO events SELECT id,10000+x,hex(zeroblob(2048)) FROM sessions,n;",
+        )
+        .unwrap();
+    let bytes = fs::read(journal.directory.join("journal.sqlite3-journal")).unwrap();
+    assert_eq!(
+        &bytes[..8],
+        &[0xd9, 0xd5, 0x05, 0xf9, 0x20, 0xa1, 0x63, 0xd7]
+    );
+    fs::write(
+        journal.directory.join("hot-ready"),
+        b"synced journal and spilled pages",
+    )
+    .unwrap();
+    loop {
+        std::thread::park();
+    }
+}
+
+#[test]
+fn killed_hot_writer_preserves_canonical_run_dedup_and_replay() {
+    struct KillOnDrop(std::process::Child);
+    impl Drop for KillOnDrop {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+    let (dir, mut journal, session, request) = setup();
+    let guard = journal.acquire_execution(session.id).unwrap();
+    let run = journal.admit_turn(&guard, &request, 1).unwrap().run;
+    journal.mark_running(&guard, run.id).unwrap();
+    journal
+        .append_text(&guard, run.id, "committed partial")
+        .unwrap();
+    let original = journal.load_session(session.id).unwrap();
+    let events = match journal.replay(session.id, 0).unwrap() {
+        Replay::Events(events) => serde_json::to_value(events).unwrap(),
+        _ => panic!("initial replay missing"),
+    };
+    drop(guard);
+    drop(journal);
+    let path = dir.path().join("attachment");
+    let mut child = KillOnDrop(
+        std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "attachment::journal::tests::abrupt_hot_journal_writer_fixture",
+                "--nocapture",
+            ])
+            .env("HELM_JOURNAL_HOT_DIRECTORY", &path)
+            .env("HELM_JOURNAL_HOT_SESSION", session.id.to_string())
+            .spawn()
+            .unwrap(),
+    );
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    while !path.join("hot-ready").exists() {
+        assert!(
+            child.0.try_wait().unwrap().is_none(),
+            "writer exited before spill"
+        );
+        assert!(std::time::Instant::now() < deadline, "writer did not spill");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    child.0.kill().unwrap();
+    assert!(!child.0.wait().unwrap().success());
+    let bytes = fs::read(path.join("journal.sqlite3-journal")).unwrap();
+    assert_eq!(
+        &bytes[..8],
+        &[0xd9, 0xd5, 0x05, 0xf9, 0x20, 0xa1, 0x63, 0xd7]
+    );
+    let mut recovered = Journal::open(path).unwrap();
+    let loaded = recovered.load_session(session.id).unwrap();
+    assert_eq!(loaded.revision, original.revision);
+    assert_eq!(
+        serde_json::to_value(loaded.session).unwrap(),
+        serde_json::to_value(original.session).unwrap()
+    );
+    let record = recovered.run(run.id).unwrap();
+    assert_eq!(record.state, RunState::Running);
+    assert_eq!(record.partial_text, "committed partial");
+    match recovered.replay(session.id, 0).unwrap() {
+        Replay::Events(replayed) => assert_eq!(serde_json::to_value(replayed).unwrap(), events),
+        _ => panic!("committed replay lost"),
+    }
+    let guard = recovered.acquire_execution(session.id).unwrap();
+    assert_eq!(
+        recovered
+            .recover_interrupted(&guard)
+            .unwrap()
+            .unwrap()
+            .state,
+        RunState::Interrupted
+    );
+    let interrupted_revision = recovered.load_session(session.id).unwrap().revision;
+    assert_eq!(interrupted_revision, original.revision + 1);
+    let duplicate = recovered.admit_turn(&guard, &request, 1).unwrap();
+    assert!(duplicate.duplicate);
+    assert_eq!(duplicate.run.id, run.id);
+    assert_eq!(
+        recovered.load_session(session.id).unwrap().revision,
+        interrupted_revision
+    );
+    #[cfg(windows)]
+    {
+        let private = voyage_storage::PrivateDirectory::open(&recovered.directory).unwrap();
+        private.open_file("journal.sqlite3", false).unwrap();
+        private.open_file("journal.sqlite3-journal", false).unwrap();
+        let mode: String = recovered
+            .connection
+            .pragma_query_value(None, "journal_mode", |r| r.get(0))
+            .unwrap();
+        assert_eq!(mode, "persist");
+    }
+}
+
+#[cfg(windows)]
+#[path = "windows_tests.rs"]
+mod windows_tests;

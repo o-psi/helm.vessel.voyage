@@ -167,9 +167,17 @@ accepting arbitrary canonicalizable storage redirects.
 
 Session replacement syncs file contents on all platforms and directory entries on
 Unix. Windows directory-entry power-loss durability remains unproven; portable
-save/load/replace/delete tests do not establish that guarantee. Enrollment still
-fails closed on non-Unix platforms pending native ACL validation.
+save/load/replace/delete tests do not establish that guarantee. Dedicated enrollment
+storage uses the native Windows ACL implementation described in
+[security operations](security-operations.md#windows-enrollment-storage). This does
+not upgrade SessionStore to verified Windows ACL storage. The attachment journal
+now uses the same native private storage boundary, with separate execution locks;
+see [journal storage](security-operations.md#windows-attachment-journal-storage).
 
 The explicit local [session transfer foundation](session-journal-transfer.md) provides
 crash-resumable JSON-to-journal authority transfer and a quiescent schema upgrade,
 without frontend wiring or automatic operator-state migration.
+
+The subsequent [event/replay contract](attachment-events.md) adds negotiated,
+bounded observation frames and receive-side cursor checks. It remains a partial
+#9 foundation with no authenticated socket, execution or raw snapshot exposure.
