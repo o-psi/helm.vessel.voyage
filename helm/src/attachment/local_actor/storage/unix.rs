@@ -120,6 +120,9 @@ impl Directory {
         Ok(())
     }
     pub(in crate::attachment::local_actor) fn lock(&self) -> Result<super::Lock> {
+        self.lock_after(|_| Ok(()))
+    }
+    fn lock_after(&self, acquired: impl FnOnce(&File) -> Result<()>) -> Result<super::Lock> {
         self.verify()?;
         let file = checked(
             open_at(&self.file, "actor.lock", libc::O_RDWR | libc::O_CREAT)?,
@@ -129,9 +132,11 @@ impl Directory {
             unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0,
             "local actor storage busy"
         );
+        let lock = super::Lock(file);
+        acquired(&lock.0)?;
         self.sync()?;
         self.verify()?;
-        Ok(super::Lock(file))
+        Ok(lock)
     }
     pub(in crate::attachment::local_actor) fn read(&self, name: &str) -> Result<Option<Vec<u8>>> {
         self.verify()?;
@@ -208,5 +213,37 @@ impl Directory {
             io::Error::last_os_error()
         );
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn verification_failure_unlocks_while_inherited_description_remains_open() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = fs::canonicalize(temp.path()).unwrap();
+        let path = root.join("actor");
+        let moved = root.join("moved");
+        let directory = Directory::open(&path).unwrap();
+        let mut inherited = None;
+        let failed = directory.lock_after(|file| {
+            // dup and fork both retain the same flock-owning open file description.
+            // Keep that description alive deterministically without forking Rust's
+            // multithreaded test process or waiting for a child to reach exec.
+            inherited = Some(file.try_clone()?);
+            fs::rename(&path, &moved)?;
+            Ok(())
+        });
+        assert!(failed.is_err()); // The real post-acquisition path check fails.
+        assert!(inherited.is_some());
+        let reopened = Directory::open(&moved).unwrap();
+        let new_lock = reopened
+            .lock()
+            .expect("failure must explicitly unlock the inherited description");
+        assert!(inherited.as_ref().unwrap().metadata().unwrap().is_file());
+        drop(new_lock);
+        drop(inherited);
     }
 }

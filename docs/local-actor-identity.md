@@ -29,8 +29,10 @@ dedicated child directory. Initialization uses a nonblocking exclusive lock.
 Contention returns an error for the caller to retry within its own deadline;
 it never waits indefinitely. The lock is released when initialization ends,
 so idle handles and concurrent sessions can use the same installation identity.
-Unix explicitly unlocks before closing, avoiding transient lock retention by
-an unrelated process fork before close-on-exec.
+Unix explicitly unlocks before closing, including when post-acquisition sync or
+path validation fails. This avoids lock retention by an unrelated process fork
+before close-on-exec; a regression retains a duplicate of the same open file
+description while forcing the real path-validation failure.
 
 Initialization writes and syncs a bounded `candidate.json`, then prepares a
 bounded fixed publication slot and atomically publishes `actor.json` without
