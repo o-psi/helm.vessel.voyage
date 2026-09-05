@@ -713,6 +713,7 @@ fn probe_codex_compatibility(command: &str) -> CodexCompatibilityProbe {
 }
 
 struct CliSubagentExecutor {
+    todos: TodoTool,
     config: Config,
     workspace: PathBuf,
     runtime: OnceLock<Weak<SubagentRuntime>>,
@@ -745,7 +746,7 @@ impl SubagentExecutor for CliSubagentExecutor {
         let workspace = config.resolve_workspace(None).map_err(|e| e.to_string())?;
         let policy = Arc::new(Policy::new(&config, workspace.clone()).map_err(|e| e.to_string())?);
         let tool_context = ToolContext {
-            completion: None,
+            completion: context.completion.clone(),
             policy,
             approver: Arc::new(UnattendedApprover { allow: false }),
             timeout: config.timeout(),
@@ -766,9 +767,20 @@ impl SubagentExecutor for CliSubagentExecutor {
         });
         // Worktree-isolated children still coordinate through the parent's workspace plan.
         // Keying todos by the temporary worktree would silently fork task state.
-        let mut tools = build_tools(&config, child_tool, Some(todo_tool(&self.workspace)))
-            .await
-            .map_err(|e| e.to_string())?;
+        let completion_tool = self
+            .runtime
+            .get()
+            .and_then(Weak::upgrade)
+            .and_then(|runtime| runtime.store())
+            .map(|store| helm::completion::tool::CompletionTool::new(self.todos.store(), store));
+        let mut tools = build_tools(
+            &config,
+            child_tool,
+            Some(self.todos.clone()),
+            completion_tool,
+        )
+        .await
+        .map_err(|e| e.to_string())?;
         tools.retain_allowed(&context.policy.allowed_tools);
         let agent = Agent::new(
             provider::from_config(&config, workspace).map_err(|e| e.to_string())?,
@@ -810,6 +822,9 @@ impl SubagentExecutor for CliSubagentExecutor {
 }
 
 struct SubagentBundle {
+    coordinator: helm::completion::runtime::Coordinator,
+    todos: TodoTool,
+    completion_tool: helm::completion::tool::CompletionTool,
     runtime: Arc<SubagentRuntime>,
     tool: SubagentTool,
     model: Arc<RwLock<String>>,
@@ -823,6 +838,7 @@ async fn build_subagents(config: &Config, workspace: &std::path::Path) -> Result
         .collect();
     allowed_tools.insert("subagent".to_string());
     allowed_tools.insert("todo".to_string());
+    allowed_tools.insert("completion".to_string());
     let budget = AgentBudget {
         max_tokens: config.max_tokens as u64,
 
@@ -840,9 +856,24 @@ async fn build_subagents(config: &Config, workspace: &std::path::Path) -> Result
         budget: budget.clone(),
     };
     let workspace_key = hex::encode(Sha256::digest(workspace.as_os_str().as_encoded_bytes()));
+    let completion_root = helm::config::default_data_dir().join("completion");
+    let mut directories = std::fs::DirBuilder::new();
+    directories.recursive(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        directories.mode(0o700);
+    }
+    directories.create(&completion_root)?;
+    let coordinator = helm::completion::runtime::Coordinator::open(
+        completion_root.join(&workspace_key),
+        workspace,
+    )?;
+    let todos = todo_tool(workspace, coordinator.clone());
     let worktrees = worktree_manager(workspace, &workspace_key);
     let model = Arc::new(RwLock::new(config.model.clone()));
     let executor = Arc::new(CliSubagentExecutor {
+        todos: todos.clone(),
         config: config.clone(),
         workspace: workspace.to_path_buf(),
         runtime: OnceLock::new(),
@@ -853,7 +884,8 @@ async fn build_subagents(config: &Config, workspace: &std::path::Path) -> Result
         helm::config::default_data_dir()
             .join("subagents")
             .join(format!("{workspace_key}.json")),
-    );
+    )
+    .with_coordinator(coordinator.clone());
     let runtime = Arc::new(
         SubagentRuntime::new_persistent(
             executor.clone(),
@@ -871,7 +903,14 @@ async fn build_subagents(config: &Config, workspace: &std::path::Path) -> Result
         .set(Arc::downgrade(&runtime))
         .map_err(|_| anyhow::anyhow!("subagent runtime already initialized"))?;
     let tool = SubagentTool::new(runtime.clone(), policy, budget).with_worktrees(worktrees);
+    let completion_tool = helm::completion::tool::CompletionTool::new(
+        todos.store(),
+        runtime.store().expect("persistent runtime"),
+    );
     Ok(SubagentBundle {
+        coordinator,
+        todos,
+        completion_tool,
         runtime,
         tool,
         model,
@@ -923,7 +962,13 @@ async fn build_agent(config: &Config, workspace: PathBuf, attended: bool) -> Res
     };
     let subagents = build_subagents(config, &workspace).await?;
     let _runtime = subagents.runtime.clone();
-    let tools = build_tools(config, Some(subagents.tool), Some(todo_tool(&workspace))).await?;
+    let tools = build_tools(
+        config,
+        Some(subagents.tool),
+        Some(subagents.todos),
+        Some(subagents.completion_tool),
+    )
+    .await?;
     Ok(Agent::new(
         provider::from_config(config, context.policy.workspace().to_owned())?,
         tools,
@@ -934,6 +979,7 @@ async fn build_agent(config: &Config, workspace: PathBuf, attended: bool) -> Res
         config.max_tokens,
         config.temperature,
     )
+    .with_completion_coordinator(subagents.coordinator)
     .with_context_window(config.context_window)
     .with_model_mirror(subagents.model)
     .with_retry_policy(RetryPolicy {
@@ -1017,8 +1063,14 @@ async fn tui_chat(
     };
     let subagents = build_subagents(&active_config, &session.workspace).await?;
     let subagent_runtime = subagents.runtime.clone();
-    let todo = todo_tool(&session.workspace);
-    let tools = build_tools(&active_config, Some(subagents.tool), Some(todo.clone())).await?;
+    let todo = subagents.todos.clone();
+    let tools = build_tools(
+        &active_config,
+        Some(subagents.tool),
+        Some(todo.clone()),
+        Some(subagents.completion_tool),
+    )
+    .await?;
     let terminals: Arc<dyn helm::terminal::InteractiveTerminals> =
         Arc::new(tools.terminals().unwrap_or_default());
     let agent = Arc::new(
@@ -1032,6 +1084,7 @@ async fn tui_chat(
             active_config.max_tokens,
             active_config.temperature,
         )
+        .with_completion_coordinator(subagents.coordinator)
         .with_context_window(active_config.context_window)
         .with_model_mirror(subagents.model)
         .with_retry_policy(RetryPolicy {
@@ -1157,23 +1210,30 @@ async fn launch_from_tui(
     result
 }
 
-fn todo_tool(workspace: &std::path::Path) -> TodoTool {
+fn todo_tool(
+    workspace: &std::path::Path,
+    coordinator: helm::completion::runtime::Coordinator,
+) -> TodoTool {
     let workspace = workspace
         .canonicalize()
         .unwrap_or_else(|_| workspace.to_path_buf());
     let key = hex::encode(Sha256::digest(workspace.as_os_str().as_encoded_bytes()));
-    TodoTool::new(Arc::new(TodoStore::new(
-        helm::config::default_data_dir()
-            .join("todos")
-            .join(format!("{key}.json")),
-        TodoScope::workspace(workspace),
-    )))
+    TodoTool::new(Arc::new(
+        TodoStore::new(
+            helm::config::default_data_dir()
+                .join("todos")
+                .join(format!("{key}.json")),
+            TodoScope::workspace(workspace),
+        )
+        .with_coordinator(coordinator),
+    ))
 }
 
 async fn build_tools(
     config: &Config,
     subagents: Option<SubagentTool>,
     todos: Option<TodoTool>,
+    completion: Option<helm::completion::tool::CompletionTool>,
 ) -> Result<ToolRegistry> {
     let mut tools = ToolRegistry::standard_with_terminal_limits(
         config.terminal_max_count,
@@ -1184,6 +1244,9 @@ async fn build_tools(
     }
     if let Some(tool) = todos {
         tools.register_todos(tool)?;
+    }
+    if let Some(tool) = completion {
+        tools.register_arc(Arc::new(tool))?;
     }
     if config.access_mode() == AccessMode::ReadOnly {
         // Do not even start external MCP servers in read-only mode: their
@@ -1237,7 +1300,26 @@ async fn execute(
     let mut active_config = config.clone();
     active_config.model = session.model.clone();
     let agent = build_agent(&active_config, session.workspace.clone(), true).await?;
-    let outcome = agent.run(session.messages.clone(), prompt).await?;
+    let scope = agent.prepare_run(&session).await?;
+    if let Some(scope) = &scope {
+        session.completion_runs.push(scope.reference());
+    }
+    let history = session.messages.clone();
+    session
+        .messages
+        .push(helm::Message::new(helm::Role::User, prompt.clone()));
+    if !no_save {
+        store.save(&mut session).await?;
+    }
+    let outcome = agent
+        .run_scoped(
+            history,
+            prompt,
+            tokio_util::sync::CancellationToken::new(),
+            None,
+            scope,
+        )
+        .await?;
     let title_due = session.title_due_after_turn();
     session.record_completed_turn();
     session.messages = outcome.messages;
@@ -1425,10 +1507,29 @@ async fn chat(
             agent =
                 Some(build_agent(&active_config, session.workspace.clone(), interactive).await?);
         }
+        let scope = agent
+            .as_ref()
+            .expect("agent initialized")
+            .prepare_run(&session)
+            .await?;
+        if let Some(scope) = &scope {
+            session.completion_runs.push(scope.reference());
+        }
+        let history = session.messages.clone();
+        session
+            .messages
+            .push(helm::Message::new(helm::Role::User, prompt.to_owned()));
+        store.save(&mut session).await?;
         match agent
             .as_ref()
             .expect("agent initialized")
-            .run(session.messages.clone(), prompt.to_owned())
+            .run_scoped(
+                history,
+                prompt.to_owned(),
+                tokio_util::sync::CancellationToken::new(),
+                None,
+                scope,
+            )
             .await
         {
             Ok(outcome) => {

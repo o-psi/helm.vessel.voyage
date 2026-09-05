@@ -65,6 +65,8 @@ pub struct Session {
     #[serde(default)]
     pub model_history: Vec<ModelChange>,
     #[serde(default)]
+    pub completion_runs: Vec<crate::completion::runtime::RunReference>,
+    #[serde(default)]
     pub name: Option<String>,
     #[serde(default)]
     pub title_state: Option<TitleState>,
@@ -107,6 +109,7 @@ impl Session {
             workspace,
             model,
             model_history: Vec::new(),
+            completion_runs: Vec::new(),
             name: Some(generated_name(id)),
             title_state: Some(TitleState {
                 completed_runs: 0,
@@ -468,6 +471,7 @@ impl SessionStore {
         branch.created_at = now;
         branch.updated_at = now;
         branch.parent_id = Some(source.id);
+        branch.completion_runs.clear();
         branch.title_state = None;
         branch.name = name
             .filter(|name| !name.trim().is_empty())
@@ -617,6 +621,16 @@ fn read_session(path: &Path) -> Result<Session> {
         .context("invalid session filename")?;
     let id = Uuid::parse_str(stem).context("session filename must be a UUID")?;
     anyhow::ensure!(session.id == id, "session ID does not match filename");
+    let mut run_ids = std::collections::BTreeSet::new();
+    anyhow::ensure!(
+        session
+            .completion_runs
+            .iter()
+            .all(|reference| reference.session_id == session.id
+                && !reference.run_id.is_nil()
+                && run_ids.insert(reference.run_id)),
+        "invalid or duplicate completion run reference"
+    );
     session.loaded_from = Some(std::fs::canonicalize(path)?);
     session.ensure_name();
     for message in &mut session.messages {

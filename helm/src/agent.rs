@@ -196,6 +196,8 @@ pub enum StopReason {
 
 #[derive(Debug, Error)]
 pub enum AgentError {
+    #[error("completion ownership failed: {0}")]
+    Completion(String),
     #[error(transparent)]
     Context(#[from] crate::context::ContextError),
     #[error(transparent)]
@@ -221,6 +223,7 @@ pub struct Agent {
     system_prompt: String,
     max_tokens: u32,
     context_window: usize,
+    completion_coordinator: Option<crate::completion::runtime::Coordinator>,
     temperature: Option<f32>,
     retry: RetryPolicy,
 }
@@ -299,9 +302,63 @@ impl Agent {
             system_prompt,
             max_tokens,
             context_window: crate::context::DEFAULT_CONTEXT_WINDOW,
+            completion_coordinator: None,
             temperature,
             retry: RetryPolicy::default(),
         }
+    }
+
+    pub fn with_completion_coordinator(
+        mut self,
+        coordinator: crate::completion::runtime::Coordinator,
+    ) -> Self {
+        self.completion_coordinator = Some(coordinator);
+        self
+    }
+
+    /// Prepare and verify durable ownership before the frontend publishes work.
+    /// Historical runs are checked, never adopted into the new run.
+    pub async fn prepare_run(
+        &self,
+        session: &crate::session::Session,
+    ) -> Result<Option<crate::completion::runtime::RunHandle>, AgentError> {
+        let Some(coordinator) = &self.completion_coordinator else {
+            return Ok(None);
+        };
+        for reference in &session.completion_runs {
+            if reference.session_id != session.id {
+                return Err(AgentError::Completion(
+                    "run reference belongs to a different session".into(),
+                ));
+            }
+            crate::completion::runtime::RunHandle::resume(
+                coordinator.clone(),
+                session.id,
+                reference.run_id,
+            )
+            .await
+            .map_err(|error| AgentError::Completion(error.to_string()))?;
+        }
+        crate::completion::runtime::RunHandle::create(
+            coordinator.clone(),
+            session.id,
+            uuid::Uuid::new_v4(),
+        )
+        .await
+        .map(Some)
+        .map_err(|error| AgentError::Completion(error.to_string()))
+    }
+
+    pub async fn run_scoped(
+        &self,
+        history: Vec<Message>,
+        prompt: String,
+        cancel: CancellationToken,
+        input: Option<SteeringReceiver>,
+        scope: Option<crate::completion::runtime::RunHandle>,
+    ) -> Result<AgentOutcome, AgentError> {
+        self.run_inner(history, prompt, cancel, input, None, None, scope)
+            .await
     }
 
     pub fn with_context_window(mut self, limit: usize) -> Self {
@@ -448,7 +505,7 @@ impl Agent {
         cancel: CancellationToken,
         input: Option<SteeringReceiver>,
     ) -> Result<AgentOutcome, AgentError> {
-        self.run_inner(history, prompt, cancel, input, None, None)
+        self.run_inner(history, prompt, cancel, input, None, None, None)
             .await
     }
 
@@ -468,10 +525,12 @@ impl Agent {
             input,
             Some(checkpoint),
             Some(model),
+            None,
         )
         .await
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn run_inner(
         &self,
         mut history: Vec<Message>,
@@ -480,10 +539,31 @@ impl Agent {
         mut input: Option<SteeringReceiver>,
         checkpoint: Option<&dyn RunCheckpoint>,
         selected_model: Option<String>,
+        scope: Option<crate::completion::runtime::RunHandle>,
     ) -> Result<AgentOutcome, AgentError> {
         let mut context = self.context.clone();
         context.cancellation = cancel.child_token();
-        context.execution_id = checkpoint.map_or_else(uuid::Uuid::new_v4, RunCheckpoint::run_id);
+        if let Some(scope) = scope {
+            if !self
+                .completion_coordinator
+                .as_ref()
+                .is_some_and(|c| c.same(scope.coordinator()))
+            {
+                return Err(AgentError::Completion(
+                    "run coordinator does not match this agent".into(),
+                ));
+            }
+            context.execution_id = scope.run_id();
+            context.completion = Some(scope);
+        } else {
+            context.execution_id =
+                checkpoint.map_or_else(uuid::Uuid::new_v4, RunCheckpoint::run_id);
+        }
+        if self.completion_coordinator.is_some() && context.completion.is_none() {
+            return Err(AgentError::Completion(
+                "prepare a session run before execution".into(),
+            ));
+        }
         if context.execution_id.is_nil() {
             return Err(CheckpointError.into());
         }
@@ -971,6 +1051,52 @@ mod tests {
         calls: Arc<AtomicUsize>,
         cancel: Option<CancellationToken>,
         fail: bool,
+    }
+
+    #[tokio::test]
+    async fn prepared_runs_are_distinct_and_known_missing_ownership_fails_closed() {
+        use crate::completion::runtime::Coordinator;
+        let directory = tempfile::tempdir().unwrap();
+        let coordinator_path = directory.path().join("completion");
+        let coordinator = Coordinator::open(coordinator_path.clone(), directory.path()).unwrap();
+        let a =
+            agent(Box::new(EchoLatestUser), &directory).with_completion_coordinator(coordinator);
+        let mut session = crate::session::Session::new(directory.path().to_owned(), "test".into());
+        assert!(matches!(
+            a.run(vec![], "unscoped".into()).await,
+            Err(AgentError::Completion(_))
+        ));
+        let first = a.prepare_run(&session).await.unwrap().unwrap();
+        let reference = first.reference();
+        session.completion_runs.push(reference.clone());
+        let outcome = a
+            .run_scoped(
+                vec![],
+                "first".into(),
+                CancellationToken::new(),
+                None,
+                Some(first),
+            )
+            .await
+            .unwrap();
+        assert_eq!(outcome.answer, "first");
+        let second = a.prepare_run(&session).await.unwrap().unwrap();
+        assert_ne!(reference.run_id, second.run_id());
+        std::fs::remove_file(
+            coordinator_path
+                .join("ledgers")
+                .join(format!("{}-{}.json", session.id, reference.run_id)),
+        )
+        .unwrap();
+        assert!(matches!(
+            a.prepare_run(&session).await,
+            Err(AgentError::Completion(_))
+        ));
+        session.completion_runs[0].session_id = uuid::Uuid::new_v4();
+        assert!(matches!(
+            a.prepare_run(&session).await,
+            Err(AgentError::Completion(_))
+        ));
     }
 
     struct BudgetFixture {

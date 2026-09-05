@@ -86,11 +86,18 @@ remain isolated for readiness; a foreign unfinished todo does not block a run.
 
 ## Delivery boundaries and tests
 
-The integration API does not itself wire ordinary CLI/TUI session lifecycle or
-intercept final responses. The parent delivery must create/recover session run
-references, install coordinated stores, propagate the context handle, register the
-tool, and apply #82's bounded final gate. Keeping the existing default `None` context
-means legacy library callers retain their prior behavior.
+Ordinary CLI and TUI runs install coordinated stores and the completion tool.
+Before provider dispatch they allocate a distinct ledger, record its trusted session
+reference, and save the accepted prompt (unless the user selected no-save). Resume
+validates every known ledger and fails closed on missing or corrupt ownership.
+Branching starts without the source session's run references; old unfinished work
+requires explicit adoption. Children share the parent's run ownership and stores.
+Legacy session files without references load with empty ownership. Legacy library
+callers with the default `None` coordinator retain their prior behavior.
+
+Final-response interception remains #82 work: readiness data alone does not prevent
+an early final answer. The attachment checkpoint lifecycle still needs an explicit
+scoped entry point before it can participate in this gate.
 
 Deterministic integration tests cover run isolation; explicit adoption; evidence
 changes; honest blocked/deferred accounting; archived/deleted records; missing
@@ -102,7 +109,8 @@ ledger storage matrices.
 
 The ledger store's documented [Windows power-loss-durable rename limitation](completion-storage.md)
 still applies. This integration must not be claimed as a verified durable Windows
-final-publication boundary until that hold is resolved. No new wire contract,
-provider dispatch, or cleanup behavior is introduced by these APIs alone. Native
-provider/TUI/worker flows, finalization races, live behavioral evaluation and platform
-CI belong to the integrated delivery; existing unit passes cannot replace them.
+final-publication boundary until that hold is resolved. No new wire contract or cleanup behavior is introduced. An offline native HTTP
+fixture exercises durable prompt/run publication, resume isolation, nested ownership,
+empty runs, corrupt/missing ledgers and real second-process exclusion. Finalization
+races, live behavioral evaluation and platform CI remain separate delivery evidence;
+unit and offline passes cannot replace them.

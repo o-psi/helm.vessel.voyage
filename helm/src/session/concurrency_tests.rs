@@ -241,3 +241,48 @@ async fn save_replace_and_delete_work_on_supported_platforms() {
             .is_file()
     );
 }
+
+#[tokio::test]
+async fn completion_run_references_survive_resume_but_do_not_transfer_to_branches() {
+    use crate::completion::runtime::RunReference;
+    let dir = tempfile::tempdir().unwrap();
+    let store = SessionStore::new(dir.path().into());
+    let mut original = Session::new(dir.path().into(), "test".into());
+    original.completion_runs.push(RunReference {
+        session_id: original.id,
+        run_id: Uuid::new_v4(),
+    });
+    store.save(&mut original).await.unwrap();
+    let loaded = store.load(original.id).await.unwrap();
+    assert_eq!(loaded.completion_runs, original.completion_runs);
+    assert!(
+        store
+            .branch(&loaded, None)
+            .await
+            .unwrap()
+            .completion_runs
+            .is_empty()
+    );
+    let valid = serde_json::to_value(&loaded).unwrap();
+    for invalid in [
+        serde_json::json!([{"session_id": Uuid::new_v4(), "run_id": Uuid::new_v4()}]),
+        serde_json::json!([{"session_id": loaded.id, "run_id": Uuid::nil()}]),
+        serde_json::json!([loaded.completion_runs[0], loaded.completion_runs[0]]),
+    ] {
+        let mut value = valid.clone();
+        value["completion_runs"] = invalid;
+        std::fs::write(store.path(loaded.id), serde_json::to_vec(&value).unwrap()).unwrap();
+        assert!(store.load(loaded.id).await.is_err());
+    }
+    let mut legacy = valid;
+    legacy.as_object_mut().unwrap().remove("completion_runs");
+    std::fs::write(store.path(loaded.id), serde_json::to_vec(&legacy).unwrap()).unwrap();
+    assert!(
+        store
+            .load(loaded.id)
+            .await
+            .unwrap()
+            .completion_runs
+            .is_empty()
+    );
+}

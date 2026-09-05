@@ -987,7 +987,18 @@ async fn handle_key(
                 if handle_command(&prompt, app, store, Some(agent), Some(tx)).await? {
                     return Ok(());
                 }
+                let scope = match agent.prepare_run(&app.session).await {
+                    Ok(scope) => scope,
+                    Err(error) => {
+                        app.composer.insert_str(&prompt);
+                        app.status = format!("Cannot start run: {error}");
+                        return Ok(());
+                    }
+                };
                 app.prompt_history.record(&prompt);
+                if let Some(scope) = &scope {
+                    app.session.completion_runs.push(scope.reference());
+                }
                 let history = app.session.messages.clone();
                 app.session
                     .messages
@@ -1003,12 +1014,7 @@ async fn handle_key(
                 let (steering, steering_input) = steering_channel(64);
                 let task = tokio::spawn(async move {
                     let result = agent
-                        .run_with_cancel_and_input(
-                            history,
-                            prompt,
-                            run_cancel,
-                            Some(steering_input),
-                        )
+                        .run_scoped(history, prompt, run_cancel, Some(steering_input), scope)
                         .await
                         .map_err(|error| error.to_string());
                     let _ = events.send(UiEvent::Finished(result));
