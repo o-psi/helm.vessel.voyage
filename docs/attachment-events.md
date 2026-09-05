@@ -38,9 +38,9 @@ lifecycle because a subscriber can join mid-run.
 Replay requests specify an exclusive `after` cursor and limit 1–128. Pages carry
 `after`, `latest` and positive contiguous events starting at `after + 1`. A page
 may end before latest; continue from its last cursor. Empty pages require
-`after == latest`. Cursors ahead of latest fail. Missing prefixes, tails, interior
-gaps or evicted events require explicit `snapshot_required`, not silently skipped
-records. That signal contains only requested/latest cursors, not a Session snapshot.
+`after == latest`. Cursors ahead of latest fail. A contiguous prefix page is valid even when it ends before latest. If the
+next expected cursor is unavailable (an evicted prefix, interior gap or unavailable
+tail), return explicit `snapshot_required` instead of silently skipping records. That signal contains only requested/latest cursors, not a Session snapshot.
 The existing Journal's 1024-event replay limit must be paged and byte-bounded by a
 future adapter; this module does not modify its durable admission/replay contract.
 An adapter also correlates replay response request IDs and honors request limits.
