@@ -4,6 +4,24 @@ These instructions apply throughout this repository. Follow them for every proje
 request, including features, fixes, documentation, investigations, and maintenance.
 They do not grant permissions beyond the active runtime policy or operator approval.
 
+## Product stage and delivery standard
+
+Voyage has no product releases. We are still developing the first version of the
+product. Treat current binaries, package archives, installations, and stored data
+as development artifacts. Cargo's `--release` profile, version fields, release
+workflows, and packaging checks are preparation for release, not evidence that a
+product release exists. Describe changes between current builds as development
+updates; retain appropriate data-preservation and recovery guidance.
+
+The goal is a release-quality product that adds actual, tested value. An MVP,
+prototype, scaffold, or vertical slice is not the completion standard. Work may
+proceed incrementally, but delivery must satisfy the agreed scope through complete
+user workflows, comprehensive tests, failure recovery, security, and usable
+documentation. Demonstrate useful outcomes with verification evidence; a successful
+build, happy-path demo, or closed issue alone does not prove readiness. Keep gaps
+and unverified acceptance criteria explicit, and do not silently defer required
+behavior to a later version to declare the first version complete.
+
 ## Mandatory issue-first workflow
 
 1. **Consult all GitHub issues, open and closed, before starting substantive work.**
@@ -150,7 +168,8 @@ Separate pre-existing failures from regressions with evidence.
 
 Run from the repository root with stable Rust, rustfmt, Clippy, and Python 3.
 These commands reflect the GitHub Linux quality workflow; recheck that workflow
-for changes. Build release binaries before the Python system tests:
+for changes. Build optimized binaries with Cargo's release profile before the
+Python system tests; these remain development builds:
 
 ```sh
 cargo fmt --all -- --check
@@ -169,8 +188,9 @@ with an approved configured provider and budget. It can consume provider capacit
 and writes ignored evidence to `eval/evidence/latest.json`; review and redact any
 shared evidence. See `eval/README.md` and `docs/cutover.md` for manual drills.
 
-Packaging is also a Linux CI gate. After the release build, use a unique version
-label to avoid overwriting existing artifacts:
+Packaging is also a Linux CI gate preparing for the first release. After the
+optimized build, use a unique development version label to avoid overwriting
+existing artifacts:
 
 ```sh
 ./scripts/package-release UNIQUE_VERSION
