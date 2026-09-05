@@ -324,3 +324,54 @@ fn managed_git_inspection_rechecks_current_ceiling_before_spawning() {
         .unwrap_err();
     assert!(error.to_string().contains("restart or rebuild"), "{error}");
 }
+#[test]
+fn defaults_keep_real_ceiling_environment_limits_and_freshness() {
+    let (root, mut config) = fixture();
+    let profiles_path = root.path().join("profiles");
+    let profiles = crate::policy_profile::store::ProfileStore::open(&profiles_path).unwrap();
+    let snapshot = profiles.inspect("restricted").unwrap().unwrap();
+    let anchor = crate::policy_profile::defaults::DefaultsSource {
+        directory: root.path().join("defaults"),
+        store_id: uuid::Uuid::new_v4(),
+    };
+    let store = crate::policy_profile::defaults::DefaultsStore::create(&anchor).unwrap();
+    store
+        .change(&crate::policy_profile::defaults::DefaultsChange {
+            operation_id: uuid::Uuid::new_v4(),
+            key: crate::policy_profile::defaults::DefaultKey::Preference {
+                scope: crate::policy_profile::defaults::DefaultScope::Global {},
+            },
+            expected_revision: 0,
+            value: crate::policy_profile::defaults::DefaultValue::Preference {
+                profile: Some(crate::policy_profile::defaults::ProfileRef {
+                    directory: profiles_path,
+                    name: snapshot.name.clone(),
+                    revision: snapshot.revision,
+                    digest: snapshot.digest().unwrap(),
+                    snapshot,
+                }),
+            },
+        })
+        .unwrap();
+    config.policy_defaults = Some(anchor);
+    let no_ceiling = resolve(&root, &config).unwrap();
+    assert_eq!(no_ceiling.config().env, config.env);
+    assert_eq!(
+        no_ceiling.config().mcp_servers["fixture"].env,
+        config.mcp_servers["fixture"].env
+    );
+    write_ceiling(&root, AccessMode::ReadOnly);
+    assert!(no_ceiling.policy().check_current().is_err());
+    let capped = resolve(&root, &config).unwrap();
+    assert_eq!(capped.config().access_mode(), AccessMode::ReadOnly);
+    assert_eq!(capped.config().env["EXPLICIT"], "global-value");
+    assert_eq!(
+        capped.config().mcp_servers["fixture"].env["EXPLICIT"],
+        "server-value"
+    );
+    assert!(!capped.config().env.contains_key("REMOVE"));
+    assert!(config.env.contains_key("REMOVE"));
+    std::fs::write(root.path().join("helm/policy-ceiling.toml"), "malformed").unwrap();
+    assert!(capped.policy().check_current().is_err());
+    assert!(resolve(&root, &config).is_err());
+}

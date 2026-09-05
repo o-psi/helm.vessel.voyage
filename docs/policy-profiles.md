@@ -6,8 +6,8 @@ Linux CLI, TUI, managed-session, saved-workflow and child execution now enforce
 the administrator ceiling through matching runtime policy and environment rules.
 See [runtime boundaries](policy-ceiling-runtime.md) for enforcement points and
 limitations. Explicit named-profile CLI management and launch selection are
-implemented below. Persistent defaults and in-TUI switching remain unfinished
-under issue #70.
+implemented below. [Persistent private defaults](policy-defaults.md) are available;
+in-TUI switching remains unfinished under issue #70.
 
 ## Typed rules and presets
 
@@ -107,8 +107,10 @@ managers the same effective rules. Explicit Config and MCP environment values
 retain precedence only where the administrator environment-name ceiling permits
 them. Future profile switching must stop and observe prior owned effects before rebuilding
 and showing a new effective-policy label. A missing approver must never cause an
-unattended wait or authority promotion. Explicit named-profile launch selection is implemented below. Persistent defaults
-and in-TUI switching remain unfinished; this does not complete #70.
+unattended wait or authority promotion. Explicit named-profile launch selection is
+implemented below. Persistent private defaults are described in
+[policy-defaults.md](policy-defaults.md).
+In-TUI switching remains unfinished; this does not complete #70.
 
 Tests exercise strict schemas, presets, source history, root/set intersections,
 escalation and stale confirmations, canonical aliases/recreated workspaces, and
@@ -199,8 +201,8 @@ Profile selection is not accepted by unrelated administrative commands.
 TUI subprocess relaunch requests (including `/plain`, `/verbose`, and commands that
 leave the UI and return) are refused while a profile is selected. This prevents a
 serialized temporary Config from dropping a restrictive selection. Exit normally,
-preview/reselect explicitly, and launch the requested frontend. In-TUI switching
-and persistent global/project defaults remain unfinished #70 scope. Other-platform
+preview/reselect explicitly, and launch the requested frontend. Persistent global/project preferences use an explicit private source anchor; see
+[policy-defaults.md](policy-defaults.md). In-TUI switching remains unfinished #70 scope. Other-platform
 schema/storage administration remains available, but explicit profile enforcement
 requires Linux; ordinary no-profile behavior retains existing platform support.
 

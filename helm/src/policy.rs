@@ -67,6 +67,11 @@ impl Policy {
     }
     pub(crate) fn inherit_profile_freshness(&mut self, parent: &Policy) {
         self.snapshot.ancestor_selection = parent.snapshot.inherited_selection();
+        self.snapshot.ancestor_defaults = parent
+            .snapshot
+            .defaults
+            .clone()
+            .or_else(|| parent.snapshot.ancestor_defaults.clone());
     }
     pub fn ceiling_present(&self) -> bool {
         self.snapshot.effective.ceiling_digest().is_some()

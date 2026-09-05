@@ -85,6 +85,12 @@ impl ProviderKind {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
+    /// Explicit operator-private defaults source, freshly resolved at root startup.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub policy_defaults: Option<crate::policy_profile::defaults::DefaultsSource>,
+    /// Invocation policy overrides; never restored as authority from a saved session.
+    #[serde(skip)]
+    pub policy_explicit: crate::policy_profile::Overrides,
     /// Explicit invocation authority; never persisted or restored from sessions.
     #[serde(skip)]
     pub policy_profile: Option<crate::policy_profile::selection::Selection>,
@@ -405,6 +411,8 @@ impl Default for Config {
             inherit_env: vec!["PATH".into(), "LANG".into(), "LC_ALL".into(), "TERM".into()],
             redact_values: Vec::new(),
             policy_profile: None,
+            policy_defaults: None,
+            policy_explicit: Default::default(),
             mcp_servers: BTreeMap::new(),
             codex_command: "codex".into(),
         }
@@ -435,6 +443,12 @@ mod context_tests {
 }
 
 impl Config {
+    pub(crate) fn parse_loaded(text: &str) -> Result<Self> {
+        let mut config: Self = toml::from_str(text)?;
+        config.apply_provider_defaults();
+        config.validate()?;
+        Ok(config)
+    }
     pub fn load(explicit: Option<&Path>) -> Result<Self> {
         let path = explicit.map(PathBuf::from).or_else(default_config_path);
         let mut config = if let Some(path) = path.filter(|p| p.exists()) {
@@ -578,6 +592,7 @@ impl Config {
         // Serialization deliberately drops launch authority; in-process edits must
         // retain it so the next rebuild checks the same profile and transition.
         updated.policy_profile = self.policy_profile.clone();
+        updated.policy_explicit = self.policy_explicit.clone();
         if updated.provider != self.provider {
             updated.api_key_required = true;
         }
