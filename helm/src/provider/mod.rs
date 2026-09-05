@@ -269,3 +269,6 @@ mod model_tests {
         assert_eq!(models[0].display_name, "Preferred");
     }
 }
+
+#[cfg(test)]
+pub(crate) mod schema_fixture;

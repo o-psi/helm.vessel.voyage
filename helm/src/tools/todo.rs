@@ -296,7 +296,7 @@ mod tests {
     };
     use std::{collections::BTreeMap, time::Duration};
 
-    fn context(directory: &tempfile::TempDir) -> ToolContext {
+    pub(super) fn context(directory: &tempfile::TempDir) -> ToolContext {
         ToolContext {
             completion: None,
             policy: Arc::new(
