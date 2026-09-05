@@ -649,6 +649,7 @@ fn terminate_process_group(_: Option<u32>) {}
 
 #[cfg(test)]
 mod tests {
+    mod shutdown;
     use super::*;
     use crate::{
         config::{ApprovalMode, Config},
