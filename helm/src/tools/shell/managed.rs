@@ -12,6 +12,11 @@ use std::{
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
+enum Output {
+    Public(String),
+    Private(SecretShellOutcome),
+}
+
 const MAX_JOBS: usize = 64;
 const MAX_CAPTURE: usize = 8 * 1024 * 1024;
 
@@ -90,6 +95,35 @@ impl Tool for ManagedShell {
         Shell.definition()
     }
     async fn execute(&self, value: Value, ctx: &ToolContext) -> Result<String, ToolError> {
+        match self.execute_mode(value, ctx, None).await? {
+            Output::Public(output) => Ok(output),
+            Output::Private(_) => Err(ToolError::Failed("unexpected private shell outcome".into())),
+        }
+    }
+    async fn execute_secret_environment(
+        &self,
+        value: Value,
+        ctx: &ToolContext,
+        environment: crate::workflow::secrets::BoundEnvironment,
+    ) -> Result<SecretShellOutcome, ToolError> {
+        match self
+            .execute_mode(value, ctx, Some(environment))
+            .await
+            .map_err(private_shell_error)?
+        {
+            Output::Private(outcome) => Ok(outcome),
+            Output::Public(_) => Err(ToolError::Failed("unexpected public shell outcome".into())),
+        }
+    }
+}
+
+impl ManagedShell {
+    async fn execute_mode(
+        &self,
+        value: Value,
+        ctx: &ToolContext,
+        environment: Option<crate::workflow::secrets::BoundEnvironment>,
+    ) -> Result<Output, ToolError> {
         if Instant::now().checked_add(ctx.timeout).is_none() {
             return Err(ToolError::InvalidArguments(
                 "shell timeout is out of range".into(),
@@ -97,23 +131,37 @@ impl Tool for ManagedShell {
         }
         let args: Args = serde_json::from_value(value)
             .map_err(|e| ToolError::InvalidArguments(e.to_string()))?;
-        match ctx.policy.command(&args.command) {
-            Decision::Deny(reason) => return Err(ToolError::Denied(reason)),
-            Decision::Ask(reason) => {
-                let approval = ctx.approval("shell", &args.command, reason);
-                let approved = tokio::select! {
-                    _ = ctx.cancellation.cancelled() => return Err(ToolError::Cancelled),
-                    outcome = ctx.approver.approve(&approval) => outcome.approved(),
-                };
-                if !approved {
-                    return Err(ToolError::Denied("user declined approval".into()));
+        if environment.is_none() && !args.workflow_secrets.is_empty() {
+            return Err(ToolError::InvalidArguments(
+                "workflow secret references require the current-run registry binding".into(),
+            ));
+        }
+        if environment.is_some() && args.workflow_secrets.is_empty() {
+            return Err(ToolError::InvalidArguments(
+                "private one-shot shell requires explicit workflow secret references".into(),
+            ));
+        }
+        if environment.is_some() {
+            authorize_secret_command(&args, ctx).await?;
+        } else {
+            match ctx.policy.command(&args.command) {
+                Decision::Deny(reason) => return Err(ToolError::Denied(reason)),
+                Decision::Ask(reason) => {
+                    let approval = ctx.approval("shell", &args.command, reason);
+                    let approved = tokio::select! {
+                        _ = ctx.cancellation.cancelled() => return Err(ToolError::Cancelled),
+                        outcome = ctx.approver.approve(&approval) => outcome.approved(),
+                    };
+                    if !approved {
+                        return Err(ToolError::Denied("user declined approval".into()));
+                    }
                 }
+                Decision::Allow => {}
             }
-            Decision::Allow => {}
         }
         #[cfg(not(target_os = "linux"))]
         {
-            let _ = args;
+            let _ = (args, environment);
             return Err(ToolError::Failed(
                 "managed shell cleanup observation is unavailable on this platform".into(),
             ));
@@ -146,7 +194,7 @@ impl Tool for ManagedShell {
                 let ctx = ctx.clone();
                 let started = std::thread::Builder::new()
                     .name("managed-shell".into())
-                    .spawn(move || linux::run(weak, job, args.command, ctx, tx));
+                    .spawn(move || linux::run(weak, job, args.command, ctx, environment, tx));
                 if let Err(error) = started {
                     state.jobs.remove(&id);
                     return Err(ToolError::Failed(error.to_string()));
@@ -217,10 +265,11 @@ mod linux {
         job: Arc<Job>,
         command: String,
         ctx: ToolContext,
-        tx: tokio::sync::oneshot::Sender<Result<String, ToolError>>,
+        environment: Option<crate::workflow::secrets::BoundEnvironment>,
+        tx: tokio::sync::oneshot::Sender<Result<Output, ToolError>>,
     ) {
         let mut tx = Some(tx);
-        let result = work(state, &job, &command, &ctx, &mut tx);
+        let result = work(state, &job, &command, &ctx, environment.as_ref(), &mut tx);
         if let Some(tx) = tx {
             let _ = tx.send(result);
         }
@@ -231,8 +280,9 @@ mod linux {
         job: &Job,
         command: &str,
         ctx: &ToolContext,
-        tx: &mut Option<tokio::sync::oneshot::Sender<Result<String, ToolError>>>,
-    ) -> Result<String, ToolError> {
+        environment: Option<&crate::workflow::secrets::BoundEnvironment>,
+        tx: &mut Option<tokio::sync::oneshot::Sender<Result<Output, ToolError>>>,
+    ) -> Result<Output, ToolError> {
         let Some(deadline) = Instant::now().checked_add(ctx.timeout) else {
             job.observed.store(true, Ordering::Release);
             return Err(ToolError::InvalidArguments(
@@ -259,8 +309,19 @@ mod linux {
             .env_clear()
             .envs(&ctx.environment)
             .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
+            .stdout(if environment.is_some() {
+                Stdio::null()
+            } else {
+                Stdio::piped()
+            })
+            .stderr(if environment.is_some() {
+                Stdio::null()
+            } else {
+                Stdio::piped()
+            });
+        if let Some(environment) = environment {
+            cmd.envs(environment.iter());
+        }
         // SAFETY: setsid is async-signal-safe and does not access Rust state.
         unsafe {
             cmd.pre_exec(|| {
@@ -276,6 +337,22 @@ mod linux {
             return Err(ToolError::Denied(
                 "foreground execution authority unavailable".into(),
             ));
+        }
+        if environment.is_some() {
+            // A worker may have waited after approval. Recheck immediately before
+            // releasing its private environment; no subprocess exists on failure.
+            if let Err(error) = check_private_policy(ctx) {
+                job.observed.store(true, Ordering::Release);
+                return Err(error);
+            }
+            if job.cancel.is_cancelled() || Instant::now() >= deadline {
+                job.observed.store(true, Ordering::Release);
+                return Err(if job.cancel.is_cancelled() {
+                    ToolError::Cancelled
+                } else {
+                    ToolError::Timeout(ctx.timeout)
+                });
+            }
         }
         let child = cmd.spawn();
         let mut child = match child {
@@ -297,23 +374,32 @@ mod linux {
             }
         };
         let limit = ctx.max_output_bytes.min(MAX_CAPTURE);
-        let captures = child
-            .stdout
-            .take()
-            .zip(child.stderr.take())
-            .ok_or_else(|| io::Error::other("missing shell pipes"))
-            .and_then(|(out, err)| {
-                Ok((Capture::new(out, limit + 1)?, Capture::new(err, limit + 1)?))
-            });
+        let captures = if environment.is_some() {
+            Ok(None)
+        } else {
+            child
+                .stdout
+                .take()
+                .zip(child.stderr.take())
+                .ok_or_else(|| io::Error::other("missing shell pipes"))
+                .and_then(|(out, err)| {
+                    Ok(Some((
+                        Capture::new(out, limit + 1)?,
+                        Capture::new(err, limit + 1)?,
+                    )))
+                })
+        };
         let result = match captures {
-            Ok((mut stdout, mut stderr)) => loop {
+            Ok(mut captures) => loop {
                 if job.cancel.is_cancelled() {
                     break Err(ToolError::Cancelled);
                 }
                 if tx.is_some() && Instant::now() >= deadline {
                     break Err(ToolError::Timeout(ctx.timeout));
                 }
-                if let Err(e) = stdout.drain().and_then(|()| stderr.drain()) {
+                if let Some((stdout, stderr)) = &mut captures
+                    && let Err(e) = stdout.drain().and_then(|()| stderr.drain())
+                {
                     break Err(ToolError::Failed(e.to_string()));
                 }
                 match identity.exit_status() {
@@ -322,25 +408,40 @@ mod linux {
                             "managed shell exit observation unavailable".into(),
                         ));
                     }
-                    Ok(Some(status)) if stdout.eof && stderr.eof => {
+                    Ok(Some(status))
+                        if captures
+                            .as_ref()
+                            .is_none_or(|(stdout, stderr)| stdout.eof && stderr.eof) =>
+                    {
                         if let Some(tx) = tx.take() {
-                            let combined = format!(
-                                "exit: {}\nstdout:\n{}\nstderr:\n{}",
-                                status
-                                    .signal()
-                                    .map(|_| "signal".to_owned())
-                                    .unwrap_or_else(|| status.exit_code().to_string()),
-                                String::from_utf8_lossy(&stdout.bytes),
-                                String::from_utf8_lossy(&stderr.bytes)
-                            );
-                            let _ = tx.send(Ok(truncate(combined.into_bytes(), limit)));
+                            let output = if let Some((stdout, stderr)) = &captures {
+                                let combined = format!(
+                                    "exit: {}\nstdout:\n{}\nstderr:\n{}",
+                                    status
+                                        .signal()
+                                        .map(|_| "signal".to_owned())
+                                        .unwrap_or_else(|| status.exit_code().to_string()),
+                                    String::from_utf8_lossy(&stdout.bytes),
+                                    String::from_utf8_lossy(&stderr.bytes)
+                                );
+                                Output::Public(truncate(combined.into_bytes(), limit))
+                            } else {
+                                Output::Private(if status.signal().is_some() {
+                                    SecretShellOutcome::Signalled
+                                } else {
+                                    SecretShellOutcome::Exited {
+                                        code: i64::from(status.exit_code()),
+                                    }
+                                })
+                            };
+                            let _ = tx.send(Ok(output));
                         }
                         if identity.observe_empty(Instant::now() + Duration::from_millis(100))
                             == Ok(true)
                         {
                             if child.wait().is_ok() {
                                 job.observed.store(true, Ordering::Release);
-                                return Ok(String::new());
+                                return Ok(Output::Public(String::new()));
                             }
                             break Err(ToolError::Failed("managed shell child reap failed".into()));
                         }

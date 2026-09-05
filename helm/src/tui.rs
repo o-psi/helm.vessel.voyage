@@ -372,7 +372,7 @@ pub async fn run(
                     && app.session.title_due_after_turn();
                 handle_ui_event(event, &mut app, store, terminals.as_ref()).await?;
                 if let Some(prepared) = app.workflow_panel.ready.take() {
-                    if start_run(&mut app, &agent, store, &tx, prepared.prompt, Some(prepared.invocation)).await? {
+                    if start_run_with_secrets(&mut app, &agent, store, &tx, prepared.prompt, Some(prepared.invocation), Some(prepared.secrets)).await? {
                         app.workflow_panel.close();
                         app.composer.take();
                     } else {
@@ -1259,6 +1259,18 @@ async fn start_run(
     prompt: String,
     invocation: Option<crate::workflow::Invocation>,
 ) -> Result<bool> {
+    start_run_with_secrets(app, agent, store, tx, prompt, invocation, None).await
+}
+
+async fn start_run_with_secrets(
+    app: &mut App,
+    agent: &Arc<Agent>,
+    store: &mut SessionStore,
+    tx: &mpsc::UnboundedSender<UiEvent>,
+    prompt: String,
+    invocation: Option<crate::workflow::Invocation>,
+    secrets: Option<crate::workflow::secrets::SecretInputs>,
+) -> Result<bool> {
     if app.is_running() {
         app.status = "A run is already active; workflow inputs were retained".into();
         return Ok(false);
@@ -1299,6 +1311,7 @@ async fn start_run(
         .unwrap_or_else(uuid::Uuid::new_v4);
     app.session.begin_run_summary(run_id);
     store.save(&mut app.session).await?;
+    let bindings = secrets.map(|inputs| inputs.bind(run_id)).transpose()?;
     app.checkpoint = Some(checkpoint::State::new(&app.session, run_id));
     let agent = agent.clone();
     let events = tx.clone();
@@ -1318,7 +1331,7 @@ async fn start_run(
     let task = tokio::spawn(async move {
         let _run_owner = run_owner;
         let result = agent
-            .run_checkpointed_scoped(
+            .run_checkpointed_scoped_with_workflow_secrets(
                 history,
                 prompt,
                 run_cancel,
@@ -1326,6 +1339,7 @@ async fn start_run(
                 &checkpoint,
                 model,
                 scope,
+                bindings,
             )
             .await;
         let _ = events.send(UiEvent::Finished(result));

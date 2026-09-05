@@ -101,6 +101,10 @@ jobs:
         env:
           HELM_BIN: target/release/helm
         run: python3 tests/system/tui_workflows.py
+      - name: Verify transient workflow secrets without public capture
+        env:
+          HELM_BIN: target/release/helm
+        run: python3 tests/system/workflow_secrets.py
       - run: python3 eval/run.py validate
       - run: ./scripts/package-release "ci-${{ github.sha }}"
       - run: cd dist && sha256sum -c *.sha256
