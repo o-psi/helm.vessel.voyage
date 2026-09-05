@@ -189,14 +189,23 @@ async fn abandoned_submit_keeps_fence_until_durable_closed_rejection() {
     drop(owner); // closes the receiver, but the worker still owns its fence
     assert!(journal.acquire_execution(session_id).is_err());
     release_tx.send(()).unwrap();
-    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+    // Wait for the worker before making SQLite-backed acquisition probes;
+    // probing during rejection would inject read contention into this test.
+    // A zero strong count precedes Store's destructor, so then observe the
+    // actual OS lease rather than treating the refcount as release proof.
+    let _guard = tokio::time::timeout(std::time::Duration::from_secs(10), async {
         while weak.strong_count() != 0 {
+            tokio::task::yield_now().await;
+        }
+        loop {
+            if let Ok(guard) = journal.acquire_execution(session_id) {
+                break guard;
+            }
             tokio::task::yield_now().await;
         }
     })
     .await
     .unwrap();
-    let _guard = journal.acquire_execution(session_id).unwrap();
     let receipt = journal.steering_record(receipt_id).unwrap();
     assert_eq!(receipt.status, crate::model::SteeringStatus::NotApplied);
     assert_eq!(
