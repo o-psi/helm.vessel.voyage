@@ -566,4 +566,49 @@ mod tests {
             }
         }
     }
+    #[tokio::test]
+    async fn questions_registry_rejects_invalid_and_unknown_result_data_without_echo() {
+        struct ResultFixture(String);
+        #[async_trait]
+        impl Tool for ResultFixture {
+            fn definition(&self) -> ToolDefinition {
+                Questions.definition()
+            }
+            async fn execute(&self, _: Value, _: &ToolContext) -> Result<String, ToolError> {
+                Ok(self.0.clone())
+            }
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let secret = r#"private"\diagnostic"#;
+        let (mut ctx, _) = context(dir.path(), QuestionAnswer::Unavailable, false);
+        ctx.redactor = Arc::new(Redactor::new([secret.to_owned()]));
+        let mut invalid = vec![
+            secret.to_owned(),
+            json!({"status":secret}).to_string(),
+            json!({"status":"custom"}).to_string(),
+            json!({"status":"selected","index":0}).to_string(),
+            json!({"status":"selected","index":-1,"answer":"public"}).to_string(),
+            json!({"status":"custom","answer":42}).to_string(),
+        ];
+        for mut value in [
+            json!({"status":"custom","answer":"public"}),
+            json!({"status":"selected","index":0,"answer":"public"}),
+            json!({"status":"cancelled"}),
+            json!({"status":"unavailable"}),
+        ] {
+            value["unknown"] = json!(secret);
+            invalid.push(value.to_string());
+        }
+        for output in invalid {
+            let mut registry = ToolRegistry::standard();
+            registry.register(ResultFixture(output));
+            let error = registry
+                .execute("questions", args(), &ctx)
+                .await
+                .unwrap_err();
+            assert!(matches!(error, ToolError::Failed(_)));
+            assert!(!error.to_string().contains("private"));
+            assert!(!error.to_string().contains("diagnostic"));
+        }
+    }
 }
