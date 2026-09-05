@@ -517,3 +517,49 @@ fn reserved_revocation_capacity_survives_full_ordinary_receipts_and_audit() {
         );
     }
 }
+
+#[test]
+#[cfg(windows)]
+fn native_private_sqlite_restart_and_journal_permissions() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("authority");
+    let mut store = EnrollmentStore::open(&path, ORIGIN, false).unwrap();
+    let owner = store.owner_id();
+    let (key, receipt, operation) = enroll(&mut store);
+    let private = store._private_directory.as_ref().unwrap();
+    private.open_file("enrollment.sqlite3", false).unwrap();
+    private
+        .open_file("enrollment.sqlite3-journal", false)
+        .unwrap();
+    let mode: String = store
+        .db
+        .pragma_query_value(None, "journal_mode", |row| row.get(0))
+        .unwrap();
+    assert_eq!(mode, "persist");
+    drop(store);
+    let mut reopened = EnrollmentStore::open(&path, ORIGIN, false).unwrap();
+    assert_eq!(reopened.owner_id(), owner);
+    assert_eq!(
+        reopened.current(receipt.machine_id, receipt.epoch).unwrap(),
+        receipt
+    );
+    let challenge = reopened.challenge(operation, None, 2).unwrap();
+    assert_eq!(
+        reopened.complete(&proof(&key, challenge), None, 2).unwrap(),
+        receipt
+    );
+}
+
+#[test]
+#[cfg(windows)]
+fn native_sqlite_linked_database_and_journal_are_rejected() {
+    for file in ["enrollment.sqlite3", "enrollment.sqlite3-journal"] {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("authority");
+        drop(EnrollmentStore::open(&path, ORIGIN, false).unwrap());
+        let original = fs::read(path.join(file)).unwrap();
+        fs::hard_link(path.join(file), path.join("linked-alias")).unwrap();
+        assert!(EnrollmentStore::open(&path, ORIGIN, false).is_err());
+        assert_eq!(fs::read(path.join(file)).unwrap(), original);
+    }
+}

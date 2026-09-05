@@ -1,5 +1,5 @@
 //! Native ACL validation and handles that pin the checked directory hierarchy.
-use crate::policy::{Grant, private_acl};
+use crate::policy::{Grant, private_acl, sid_length};
 use std::{
     ffi::c_void,
     fs::File,
@@ -18,7 +18,11 @@ use windows_sys::Win32::{
     },
     Security::{Authorization::*, *},
     Storage::FileSystem::*,
-    System::Threading::{GetCurrentProcess, OpenProcessToken},
+    System::{
+        SystemServices::FILE_PERSISTENT_ACLS,
+        Threading::{GetCurrentProcess, OpenProcessToken},
+        WindowsProgramming::DRIVE_FIXED,
+    },
 };
 
 fn denied() -> io::Error {
@@ -203,7 +207,7 @@ fn verify_acl(file: &File, expected: &[u8], directory: bool) -> io::Result<()> {
             return Err(io::Error::from_raw_os_error(result as i32));
         }
         let sd = Descriptor(sd);
-        if acl.is_null() {
+        if acl.is_null() || IsValidAcl(acl) == 0 {
             return Err(denied());
         }
         let mut control = 0;
@@ -218,17 +222,39 @@ fn verify_acl(file: &File, expected: &[u8], directory: bool) -> io::Result<()> {
             if GetAce(acl, index as u32, &mut pointer) == 0 {
                 return Err(denied());
             }
+            let acl_start = acl as usize;
+            let acl_end = acl_start
+                .checked_add((*acl).AclSize as usize)
+                .ok_or_else(denied)?;
+            let ace_start = pointer as usize;
+            if ace_start < acl_start + size_of::<ACL>()
+                || ace_start
+                    .checked_add(size_of::<ACE_HEADER>())
+                    .is_none_or(|end| end > acl_end)
+            {
+                return Err(denied());
+            }
             let header = &*pointer.cast::<ACE_HEADER>();
+            if ace_start
+                .checked_add(header.AceSize as usize)
+                .is_none_or(|end| end > acl_end)
+            {
+                return Err(denied());
+            }
             // ACCESS_ALLOWED_ACE_TYPE = 0. Callback/object/deny/unknown ACEs are
             // deliberately unsupported rather than approximating their meaning.
             if header.AceType != 0 || (header.AceSize as usize) < size_of::<ACCESS_ALLOWED_ACE>() {
                 return Err(denied());
             }
             let ace = &*pointer.cast::<ACCESS_ALLOWED_ACE>();
-            let sid = copied_sid((&ace.SidStart as *const u32).cast_mut().cast())?;
-            if 8 + sid.len() > header.AceSize as usize {
+            let sid_pointer = (&ace.SidStart as *const u32).cast::<u8>();
+            let available = header.AceSize as usize - 8;
+            let encoded = std::slice::from_raw_parts(sid_pointer, available);
+            let length = sid_length(encoded).ok_or_else(denied)?;
+            if IsValidSid(sid_pointer.cast_mut().cast()) == 0 {
                 return Err(denied());
             }
+            let sid = encoded[..length].to_vec();
             grants.push(Grant {
                 sid,
                 mask: ace.Mask,

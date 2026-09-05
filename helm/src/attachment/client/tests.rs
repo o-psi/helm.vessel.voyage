@@ -487,3 +487,25 @@ fn enrollment_rejects_user_symlink_ancestors_and_directory_aliases() {
     assert!(!actual.join("client").exists());
     assert!(EnrollmentClient::open(&alias, "https://vessel.example", false).is_err());
 }
+
+#[test]
+#[cfg(windows)]
+fn native_replacement_failure_retains_identity_and_poisons_the_client() {
+    let root = directory();
+    let mut client = open(root.path());
+    let original = fs::read(root.path().join("client.json")).unwrap();
+    let id = client.machine_id();
+    let held = client
+        .private_directory
+        .open_file("client.json", false)
+        .unwrap();
+    client.state.status = Status::Detached;
+    assert_eq!(client.persist().unwrap_err(), ClientError::Storage);
+    assert_eq!(client.ready().unwrap_err(), ClientError::Storage);
+    assert_eq!(fs::read(root.path().join("client.json")).unwrap(), original);
+    drop(held);
+    drop(client);
+    let reopened = open(root.path());
+    assert_eq!(reopened.machine_id(), id);
+    assert_eq!(reopened.status(), Status::Unenrolled);
+}

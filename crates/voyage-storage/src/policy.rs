@@ -17,6 +17,8 @@ pub(crate) fn private_acl(
         return false;
     }
     let mut effective = 0;
+    let mut object_children = 0;
+    let mut directory_children = 0;
     for grant in grants {
         // Object/container inheritance and inherited markers are understood.
         // An inherit-only ACE cannot establish access to this object.
@@ -26,8 +28,24 @@ pub(crate) fn private_acl(
         if grant.flags & 8 == 0 {
             effective |= grant.mask;
         }
+        if grant.flags & 1 != 0 {
+            object_children |= grant.mask;
+        }
+        if grant.flags & 2 != 0 {
+            directory_children |= grant.mask;
+        }
     }
     effective & ALL == ALL
+        && (!directory || (object_children & ALL == ALL && directory_children & ALL == ALL))
+}
+
+/// Validate the complete SID extent before native SID functions can read it.
+pub(crate) fn sid_length(bytes: &[u8]) -> Option<usize> {
+    if bytes.len() < 8 || bytes[0] != 1 || bytes[1] > 15 {
+        return None;
+    }
+    let length = 8 + usize::from(bytes[1]) * 4;
+    (length <= bytes.len()).then_some(length)
 }
 
 #[cfg(test)]
@@ -93,5 +111,27 @@ mod tests {
         let mut read_only = owner_grant(0);
         read_only.mask = 1;
         assert!(!private_acl(&[1, 2], &[1, 2], true, false, &[read_only]));
+    }
+    #[test]
+    fn rejects_non_inheriting_and_partial_inheritance_directory_acl() {
+        for flags in [0, 1, 2, 7] {
+            assert!(!private_acl(
+                &[1, 2],
+                &[1, 2],
+                true,
+                true,
+                &[owner_grant(flags)]
+            ));
+        }
+    }
+    #[test]
+    fn malformed_sid_lengths_are_rejected_before_native_inspection() {
+        assert_eq!(sid_length(&[]), None);
+        assert_eq!(sid_length(&[1, 0, 0, 0, 0, 0, 0]), None);
+        assert_eq!(sid_length(&[1, 1, 0, 0, 0, 0, 0, 0]), None);
+        assert_eq!(sid_length(&[1, 16, 0, 0, 0, 0, 0, 0]), None);
+        assert_eq!(sid_length(&[2, 0, 0, 0, 0, 0, 0, 0]), None);
+        assert_eq!(sid_length(&[1, 0, 0, 0, 0, 0, 0, 0]), Some(8));
+        assert_eq!(sid_length(&[1, 1, 0, 0, 0, 0, 0, 5, 0, 0, 0, 0]), Some(12));
     }
 }
