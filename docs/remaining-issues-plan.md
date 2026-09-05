@@ -74,3 +74,15 @@ The first-wave source is merged. New completion-gate source has separate, unfini
 Next independent slices are explicit crash-safe session transfer with provenance and quiescent schema upgrade (#78), and negotiated attachment features with sequenced events and bounded replay (#9). Both are isolated from operator state and depend on the reviewed foundations. Neither completes the attachment epic or exposes remote execution.
 
 Durable machine-readable status and exact logs are in ignored `.local-git/active-work.json` and `.local-git/evidence/`. CI completion must be observed at the relevant head; live evaluation definition validation is not live execution.
+
+## Delivery checkpoint: attachment transport integration
+
+[PR #89](https://github.com/o-psi/voyage/pull/89) merged as 0909082 after full Linux and native platform CI. [PR #93](https://github.com/o-psi/voyage/pull/93) merged as 654fd4d after 426 workspace tests, full Linux release/system/package verification and both native macOS/Windows runs. Together with merged #91, these deliver strict codec, sharing-authority and event/replay foundations; #9/#79/#77 remain open.
+
+[PR #90](https://github.com/o-psi/voyage/pull/90) passed both native Windows tests and release builds at ec44d46 (402 native Windows tests); Linux baseline at 227e4f1 passed 406 tests and all nine systems. Integration with the merged protocol documentation required a conflict resolution, so current head 7c90033 has fresh checks running. Do not treat the earlier results as the current merge status.
+
+[PR #94](https://github.com/o-psi/voyage/pull/94) adds explicit crash-safe transfer and schema provenance, dependent on #92. Its full Linux baseline passes 496 tests (also under two CPUs), all 15 systems, release and packaging. Source transfer still fails before writes on non-Unix; no operator state has been migrated. A later native CI failure in an inherited completion test identified an in-memory-versus-durable readiness race. Test-only 62bce48 fixes it and passes 50 two-CPU repetitions; #88, #92 and #94 now include it at heads 62bce48, 338adf5 and 64e425f respectively, with fresh native checks pending.
+
+The real socket branch `feat/attachment-transport` now passes 464 workspace tests with both client and server fixtures enabled for Unix and Windows. Four observed regression fixes cover Ping-before-Welcome, short lease renewal, enrollment ownership through socket teardown and expired queued writes. Logging canary tests preserve application TRACE while excluding dependency raw frame/proof/prompt/history logs. Release/system/package checks and native CI are in progress. Production routing and remote execution remain unwired until authoritative coordinator and sharing boundaries are complete.
+
+Parallel next slices are explicit enrollment lifecycle commands and read-only inspection (#10), and private native Windows Journal/database/sidecar storage (#78). The configured live provider still returns HTTP 401; login renewal was requested and live acceptance remains blocked. No additional issue or epic is closed by these partial foundations.
