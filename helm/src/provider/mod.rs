@@ -269,3 +269,16 @@ mod model_tests {
         assert_eq!(models[0].display_name, "Preferred");
     }
 }
+
+trait CompatibleAuthentication {
+    fn apply_key(self, key: &str) -> Self;
+}
+impl CompatibleAuthentication for reqwest::RequestBuilder {
+    fn apply_key(self, key: &str) -> Self {
+        if key.is_empty() {
+            self
+        } else {
+            self.bearer_auth(key)
+        }
+    }
+}

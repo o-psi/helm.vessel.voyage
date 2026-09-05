@@ -1,3 +1,4 @@
+use super::CompatibleAuthentication;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -19,7 +20,10 @@ pub struct OpenAiResponsesProvider {
 impl OpenAiResponsesProvider {
     pub fn new(api_key: String, base_url: Option<String>) -> Self {
         Self {
-            client: reqwest::Client::new(),
+            client: reqwest::Client::builder()
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .expect("valid compatible HTTP client"),
             api_key,
             base_url: base_url
                 .unwrap_or_else(|| "https://api.openai.com/v1".into())
@@ -35,7 +39,7 @@ impl Provider for OpenAiResponsesProvider {
         let response = self
             .client
             .get(format!("{}/models", self.base_url))
-            .bearer_auth(&self.api_key)
+            .apply_key(&self.api_key)
             .send()
             .await
             .map_err(map_transport)?;
@@ -56,7 +60,7 @@ impl Provider for OpenAiResponsesProvider {
         let response = self
             .client
             .post(format!("{}/responses", self.base_url))
-            .bearer_auth(&self.api_key)
+            .apply_key(&self.api_key)
             .json(&request_body(request, false)?)
             .send()
             .await
@@ -68,7 +72,7 @@ impl Provider for OpenAiResponsesProvider {
         let response = self
             .client
             .post(format!("{}/responses", self.base_url))
-            .bearer_auth(&self.api_key)
+            .apply_key(&self.api_key)
             .json(&request_body(request, true)?)
             .send()
             .await

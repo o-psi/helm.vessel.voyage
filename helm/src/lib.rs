@@ -3,6 +3,7 @@ pub mod attachment;
 pub mod completion;
 pub mod config;
 pub mod context;
+pub mod local_provider;
 pub mod markdown;
 pub mod model;
 pub mod policy;

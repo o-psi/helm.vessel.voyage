@@ -431,6 +431,14 @@ pub(super) fn set_value_suggestions(
     };
     let prefix = format!("/set {key} ");
     match spec.kind {
+        ConfigValueKind::Bool => fixed_suggestions(
+            &prefix,
+            value,
+            &[
+                ("true", "Require API key"),
+                ("false", "Explicit no-auth endpoint"),
+            ],
+        ),
         ConfigValueKind::Provider => fixed_suggestions(&prefix, value, PROVIDER_VALUES),
         ConfigValueKind::Model => model_suggestions(context, value, &prefix),
         ConfigValueKind::EnvironmentName => fixed_suggestions(
