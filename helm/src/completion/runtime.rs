@@ -392,14 +392,34 @@ impl RunHandle {
         expected_revision: u64,
     ) -> Result<()> {
         let _guard = self.coordinator.lock().await?;
+        let ledger = self.ledger().await?;
+        ensure!(
+            ledger.revision() == expected_revision,
+            "stale completion ledger revision"
+        );
+        if ledger.obligations().any(|entry| entry == obligation) {
+            return Ok(());
+        }
         self.record(todos, agents, obligation).await?;
+        let obligations = match obligation {
+            Obligation::Todo(_) => vec![obligation],
+            Obligation::Agent(id) => agents
+                .adoption_subtree(id, super::MAX_OBLIGATIONS)
+                .await?
+                .into_iter()
+                .map(Obligation::Agent)
+                .collect(),
+        };
         let handle = self.clone();
         tokio::task::spawn_blocking(move || {
             let _guard = _guard;
             handle
                 .store
                 .update(handle.run_id, expected_revision, |ledger| {
-                    ledger.adopt(obligation, expected_revision)
+                    for obligation in obligations {
+                        ledger.adopt(obligation, ledger.revision())?;
+                    }
+                    Ok(())
                 })?;
             Ok(())
         })
@@ -881,7 +901,7 @@ mod tests {
             runtime.wait(adopted).await.unwrap().unwrap().summary,
             unrelated.run_id().to_string()
         );
-        assert_eq!(fixture.snapshot(&unrelated).await.total, 2);
+        assert_eq!(fixture.snapshot(&unrelated).await.total, 3);
         runtime
             .send_message(ancestor, "finish fixture")
             .await
@@ -1041,5 +1061,109 @@ mod tests {
                 crate::subagent::AgentStatus::Interrupted
             ))
         );
+    }
+    #[tokio::test]
+    async fn adoption_rejects_active_descendants_then_atomically_includes_archived_subtree() {
+        let fixture = Fixture::new();
+        let original = fixture.run().await;
+        let adopter = fixture.run().await;
+        let runtime = SubagentRuntime::new(
+            Arc::new(OwnedExecutor),
+            RuntimeLimits {
+                max_concurrency: 3,
+                event_history: 64,
+            },
+            Some(fixture.agents.clone()),
+        )
+        .unwrap();
+        let mut initial = request(None);
+        initial.task = "hold".into();
+        let ancestor = runtime
+            .spawn_for_run(initial, Some(original.clone()))
+            .await
+            .unwrap();
+        let mut parent_task = request(Some(ancestor));
+        parent_task.task = "hold".into();
+        let parent = runtime.spawn(parent_task).await.unwrap();
+        let mut child_task = request(Some(parent));
+        child_task.task = "hold".into();
+        let child = runtime.spawn(child_task).await.unwrap();
+        runtime
+            .send_message(parent, "finish while descendant remains active")
+            .await
+            .unwrap();
+        runtime.wait(parent).await.unwrap().unwrap();
+        let rejected = adopter
+            .adopt_existing(
+                &fixture.todos,
+                &fixture.agents,
+                Obligation::Agent(parent),
+                0,
+            )
+            .await
+            .unwrap_err();
+        assert!(
+            rejected
+                .to_string()
+                .contains("wait or cancel active work before adoption")
+        );
+        assert_eq!(
+            fixture.snapshot(&adopter).await.total,
+            0,
+            "rejected adoption exposed partial membership"
+        );
+        runtime.cancel(child).await.unwrap();
+        runtime.wait(child).await.unwrap().unwrap_err();
+        assert!(runtime.is_archived(parent).await.unwrap());
+        assert!(runtime.is_archived(child).await.unwrap());
+        adopter
+            .adopt_existing(
+                &fixture.todos,
+                &fixture.agents,
+                Obligation::Agent(parent),
+                0,
+            )
+            .await
+            .unwrap();
+        assert!(adopter.owns(Obligation::Agent(parent)).await.unwrap());
+        assert!(adopter.owns(Obligation::Agent(child)).await.unwrap());
+        assert!(!adopter.owns(Obligation::Agent(ancestor)).await.unwrap());
+        let snapshot = fixture.snapshot(&adopter).await;
+        assert_eq!(snapshot.total, 2);
+        assert_eq!(snapshot.accounted, 0);
+        let full = fixture.run().await;
+        full.store
+            .update(full.run_id, 0, |ledger| {
+                for _ in 0..super::super::MAX_OBLIGATIONS - 1 {
+                    ledger.adopt(
+                        Obligation::Todo(crate::todo::TodoId::new()),
+                        ledger.revision(),
+                    )?;
+                }
+                Ok(())
+            })
+            .unwrap();
+        let before = fixture.snapshot(&full).await;
+        assert!(
+            full.adopt_existing(
+                &fixture.todos,
+                &fixture.agents,
+                Obligation::Agent(parent),
+                before.revision
+            )
+            .await
+            .is_err()
+        );
+        assert_eq!(
+            fixture.snapshot(&full).await,
+            before,
+            "capacity failure partially adopted a subtree"
+        );
+        assert!(!full.owns(Obligation::Agent(parent)).await.unwrap());
+        runtime
+            .send_message(ancestor, "finish fixture")
+            .await
+            .unwrap();
+        runtime.wait(ancestor).await.unwrap().unwrap();
     }
 }

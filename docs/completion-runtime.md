@@ -23,7 +23,8 @@ arguments cannot select their run, session, workspace, or coordinator.
 `SubagentTool` registers a new child before scheduling execution. Durable agent
 records contain an optional version-compatible `RunReference`, and child execution
 contexts inherit the handle. Nested spawns and terminal followups inherit run
-ownership. Following up work from another run requires explicit adoption; archived
+ownership. Adopting a terminal subtree does not adopt work independently requested
+by another run after that adoption boundary. Following up work from another run requires explicit adoption; archived
 agents retain their existing historical-reference behavior and cannot restart.
 
 Registration and record publication are separate durable commits. A publication
@@ -41,11 +42,15 @@ it. It cannot release the lease while that mutation still commits.
 ## Explicit review
 
 Register `completion::tool::CompletionTool` with the same todo and agent stores.
-Its actions are:
+Operations observe the tool timeout and cancellation token. Its actions are:
 
 - `snapshot`: bounded readiness counts, unresolved IDs, revision and fingerprint.
 - `read`: bounded details of one owned todo or agent, including archived results.
-- `adopt`: explicitly register an existing record using the current ledger revision.
+- `adopt`: explicitly register an existing todo or an entire terminal agent subtree
+  using the current ledger revision. Agent adoption includes archived descendants
+  atomically. Any active node rejects the operation without adding membership:
+  wait or cancel active work before adoption. Already-owned records are a no-op;
+  adopting an active agent does not retarget its running execution context.
 - `account`: record an evidence/status-compatible disposition and reason against
   both the revision and exact snapshot fingerprint. Concurrent evidence/result
   changes invalidate the review even when ledger membership did not change.

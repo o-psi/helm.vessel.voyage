@@ -636,6 +636,67 @@ impl AgentTreeStore {
     pub async fn list(&self) -> Result<Vec<AgentRecord>> {
         Ok(self.load().await?.agents.into_values().collect())
     }
+    /// Called under the workspace mutation boundary. Only ancestry/status
+    /// metadata is collected; unrelated result text is never returned.
+    pub(crate) async fn adoption_subtree(&self, root: AgentId, max: usize) -> Result<Vec<AgentId>> {
+        let mut records: std::collections::BTreeMap<_, _> = self
+            .load()
+            .await?
+            .agents
+            .into_values()
+            .map(|record| (record.id, (record.parent_id, record.status)))
+            .collect();
+        let mut after = None;
+        loop {
+            let page = self.list_archived(after, 100).await?;
+            for record in page.agents {
+                records
+                    .entry(record.id)
+                    .or_insert((record.parent_id, record.status));
+            }
+            match page.next_after {
+                Some(next) => {
+                    anyhow::ensure!(
+                        after.is_none_or(|previous| previous < next),
+                        "archive cursor did not advance"
+                    );
+                    after = Some(next);
+                }
+                None => break,
+            }
+        }
+        anyhow::ensure!(records.contains_key(&root), "agent missing");
+        let mut selected = std::collections::BTreeSet::from([root]);
+        loop {
+            let before = selected.len();
+            for (id, (parent, _)) in &records {
+                if parent.is_some_and(|parent| selected.contains(&parent)) {
+                    selected.insert(*id);
+                }
+            }
+            anyhow::ensure!(
+                selected.len() <= max,
+                "agent subtree exceeds completion obligation limit"
+            );
+            if selected.len() == before {
+                break;
+            }
+        }
+        for id in &selected {
+            anyhow::ensure!(
+                records[id].1.is_terminal(),
+                "wait or cancel active work before adoption; agent {} is active",
+                id
+            );
+            let mut ancestors = std::collections::BTreeSet::from([*id]);
+            let mut parent = records[id].0;
+            while let Some(id) = parent {
+                anyhow::ensure!(ancestors.insert(id), "cycle in adopted agent ancestry");
+                parent = records.get(&id).and_then(|record| record.0);
+            }
+        }
+        Ok(selected.into_iter().collect())
+    }
     pub async fn prune_terminal_leaves(
         &self,
         max_records: usize,

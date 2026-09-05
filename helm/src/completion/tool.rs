@@ -64,9 +64,23 @@ fn failed(error: impl std::fmt::Display) -> ToolError {
 #[async_trait]
 impl Tool for CompletionTool {
     fn definition(&self) -> ToolDefinition {
-        ToolDefinition { name: "completion".into(), description: "Review only this run's obligations. Snapshot returns unresolved IDs and revision. Read owned evidence/results; adopt older work explicitly. Account against fresh revision with evidence or truthful blocked/deferred/failure impact; this does not complete, delete, archive, or cancel work. Mechanical accounting does not prove semantic correctness.".into(), input_schema: json!({"type":"object","required":["action"],"properties":{"action":{"enum":["snapshot","read","adopt","account"]},"kind":{"enum":["todo","agent"]},"id":{"type":"string","format":"uuid"},"revision":{"type":"integer","minimum":0},"disposition":{"enum":["completed_with_evidence","cancelled_with_reason","blocked_with_impact","deferred_with_impact","incorporated","failure_with_impact","not_needed_with_reason"]},"reason":{"type":"string"},"fingerprint":{"type":"string"}},"additionalProperties":false}) }
+        ToolDefinition { name: "completion".into(), description: "Review only this run's obligations. Snapshot returns unresolved IDs and revision. Read owned evidence/results; adopt older todos or complete terminal agent subtrees explicitly; wait or cancel active work before adoption. Account against fresh revision with evidence or truthful blocked/deferred/failure impact; this does not complete, delete, archive, or cancel work. Mechanical accounting does not prove semantic correctness.".into(), input_schema: json!({"type":"object","required":["action"],"properties":{"action":{"enum":["snapshot","read","adopt","account"]},"kind":{"enum":["todo","agent"]},"id":{"type":"string","format":"uuid"},"revision":{"type":"integer","minimum":0},"disposition":{"enum":["completed_with_evidence","cancelled_with_reason","blocked_with_impact","deferred_with_impact","incorporated","failure_with_impact","not_needed_with_reason"]},"reason":{"type":"string"},"fingerprint":{"type":"string"}},"additionalProperties":false}) }
     }
     async fn execute(&self, args: Value, context: &ToolContext) -> Result<String, ToolError> {
+        tokio::select! {
+            biased;
+            _ = context.cancellation.cancelled() => Err(ToolError::Cancelled),
+            result = tokio::time::timeout(context.timeout, self.execute_operation(args, context)) => result.unwrap_or(Err(ToolError::Timeout(context.timeout))),
+        }
+    }
+}
+
+impl CompletionTool {
+    async fn execute_operation(
+        &self,
+        args: Value,
+        context: &ToolContext,
+    ) -> Result<String, ToolError> {
         if context.cancellation.is_cancelled() {
             return Err(ToolError::Cancelled);
         }
