@@ -19,7 +19,14 @@ pub(super) fn input_schema() -> Value {
         "author":{"type":["string","null"],"description":"Optional attribution for note/progress/evidence; defaults to null."},
         "include_archived":{"type":"boolean","description":"List archived records too; defaults to false."}
     });
-    let actions: [(&str, &str, &[&str], &[&str], &[&str]); 14] = [
+    type ActionFields = (
+        &'static str,
+        &'static str,
+        &'static [&'static str],
+        &'static [&'static str],
+        &'static [&'static str],
+    );
+    let actions: [ActionFields; 14] = [
         (
             "create",
             "Create work; description/priority/order/assignees have defaults.",

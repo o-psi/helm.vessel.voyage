@@ -41,7 +41,13 @@ fn definition(root: &std::path::Path) -> ToolDefinition {
 // schema construction. Omission/default/null behavior must remain compatible.
 fn corpus() -> Vec<(Value, bool)> {
     let fields = json!({"id":ID,"title":"Verify measured records","description":"Read actual.txt","priority":"normal","status":"pending","order":-1,"assignees":["worker"],"blockers":["waiting for approval"],"add":[ID],"remove":[ID],"text":"Measured records: 42 雪\n","author":"operator","include_archived":true});
-    let specs: [(&str, &[&str], &[&str], &[&str]); 14] = [
+    type ActionFields = (
+        &'static str,
+        &'static [&'static str],
+        &'static [&'static str],
+        &'static [&'static str],
+    );
+    let specs: [ActionFields; 14] = [
         (
             "create",
             &["title"],
