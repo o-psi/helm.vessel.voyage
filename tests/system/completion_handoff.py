@@ -115,6 +115,9 @@ def main():
                 wait_until(lambda: b"Type /help for commands." in output, "plain child startup")
                 os.write(master, b"after-handoff\n")
                 wait_until(lambda: saved() and any(m["content"] == "handoff-success" for m in saved()["messages"]), "successful resumed turn")
+                # Canonical text is checkpointed before durable acceptance. Seeing
+                # the proposal is intentionally insufficient to prove completion.
+                wait_until(lambda: saved() and saved().get("run_summaries") and saved()["run_summaries"][-1]["phase"] == "completed", "durably accepted resumed turn")
                 after = saved()
                 assert before["id"] == after["id"]
                 assert after["messages"][:len(before["messages"])] == before["messages"]

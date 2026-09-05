@@ -64,3 +64,16 @@ and who can unblock it. For intentionally postponed pending work use
 run, including a nonzero one-shot exit. Neither disposition changes the task to
 completed. A later CLI prompt starts a new run; use explicit adoption if that new
 run is to own the prior task. Resuming a transcript alone does not adopt old work.
+
+## Observed integration run (2026-09-05)
+
+The integrated Linux debug binary built from `09ed9e3` plus `25e054f` passed all
+21 native gate cases (seven each for Chat, Responses and Anthropic), the complete
+ownership fixture, and the PTY handoff fixture. The handoff wait now distinguishes
+canonical text publication from durable acceptance; all original ownership,
+interruption, transcript, runtime-release and completion assertions remain.
+The older root debug binary fails before its first response because it has not
+published the accepted session; it is not evidence of the integrated behavior.
+
+These are debug/offline Linux results. Release baseline, packaging, actual current
+macOS/Windows CI and live-provider evaluation remain required delivery evidence.
