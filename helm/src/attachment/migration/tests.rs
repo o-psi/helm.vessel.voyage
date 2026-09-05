@@ -682,7 +682,7 @@ async fn legacy_journal_requires_explicit_upgrade_before_source_transition() {
     let fixture = Fixture::new().await;
     drop(Journal::open(fixture.journal.clone()).unwrap());
     let db = rusqlite::Connection::open(fixture.journal.join("journal.sqlite3")).unwrap();
-    db.execute_batch("DROP TABLE imports; UPDATE attachment_schema SET version=2 WHERE id=1;")
+    db.execute_batch("DROP TABLE steering; DROP TABLE imports; UPDATE attachment_schema SET version=2 WHERE id=1;")
         .unwrap();
     assert!(
         fixture

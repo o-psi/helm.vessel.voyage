@@ -58,8 +58,10 @@ revisions and callbacks; duplicate commands; exactly-once usage and effects; and
 canonical/provider-state preservation. Platform execution/storage guarantees remain
 those of the journal's verified native storage implementation.
 
-Remaining dependent work is receipt-aware durable steering, guarded metadata and
-branch/deletion operations, stable local actor identity, explicit managed selection,
+[Durable managed steering](durable-steering.md) now provides receipt-aware queue,
+application and rejection persistence. Its frontend projection remains dependent
+work alongside guarded metadata and branch/deletion operations, stable local actor
+identity, explicit managed selection,
 and complete run/plain/TUI integration. A managed frontend must reload committed
 usage after a run rather than add its outcome usage again. No JSON/SQLite dual-write
 backend is introduced by this prerequisite.
