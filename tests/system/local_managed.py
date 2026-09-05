@@ -66,6 +66,8 @@ class Provider(BaseHTTPRequestHandler):
                     value = ('subagent', {'action': 'wait', 'id': child_id})
                 else:
                     value = 'managed-final-雪'
+            elif case.mode == 'question' and step == 0:
+                value = ('questions', {'question': 'Choose an option', 'options': ['One', 'Two']})
             elif case.mode in ('shell', 'denied') and step == 0:
                 value = ('shell', {'command': "printf 'one-effect\\n' >> effects.txt"})
             elif case.mode == 'terminal' and step == 0:
@@ -185,6 +187,14 @@ def transports(root):
             assert (case.workspace / 'effects.txt').read_text() == 'one-effect\n'
             assert len(case.requests) == 2
             assert case.sql('SELECT confirmation FROM local_cleanup_obligations') == [('observed',), ('observed',)]
+            canonical = json.loads(case.sql('SELECT state FROM sessions WHERE id=?', (session,))[0][0])
+            runs = [json.loads(row[0]) for row in case.sql('SELECT record FROM runs WHERE session_id=?', (session,))]
+            for kind in ('input_tokens', 'output_tokens'):
+                assert canonical['usage'][kind] == sum(row['usage'][kind] for row in runs)
+            assert 'managed-final-雪' in json.dumps(case.requests[0], ensure_ascii=False)
+            before = len(case.requests)
+            run(case.command(session, expiry=1), case.env, expected=1)
+            assert len(case.requests) == before
         finally:
             case.close()
 
@@ -192,7 +202,7 @@ def transports(root):
 def cancellation(root):
     case = Case(root)
     try:
-        for interrupt in ('remote', 'signal', 'crash'):
+        for interrupt in ('remote', 'signal', 'terminate', 'crash'):
             session = case.create()
             case.reset('hold')
             command = case.command(session)
@@ -213,8 +223,8 @@ def cancellation(root):
                 cancelled = run([*case.args, 'cancel', session, '--run', run_id], case.env)[0]
                 assert cancelled['event'] == 'cancel_requested'
                 case.config.write_text(original)
-            elif interrupt == 'signal':
-                process.send_signal(signal.SIGINT)
+            elif interrupt in ('signal', 'terminate'):
+                process.send_signal(signal.SIGINT if interrupt == 'signal' else signal.SIGTERM)
             else:
                 process.kill()
             stdout, stderr = process.communicate(timeout=25)
@@ -253,6 +263,9 @@ def failures_and_policy(root):
         assert len(case.requests) == 2
         outputs = json.dumps(case.requests[-1])
         assert 'denied' in outputs.lower() or 'approval' in outputs.lower(), outputs
+        case.reset('question')
+        final(run(case.command(session), case.env))
+        assert len(case.requests) == 2 and 'unavailable' in json.dumps(case.requests[-1])
         # Unsupported effectful configurations must fail before command admission/startup.
         original = case.config.read_text()
         before = case.sql('SELECT count(*) FROM commands')[0][0]
