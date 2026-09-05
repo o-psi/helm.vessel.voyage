@@ -434,11 +434,11 @@ async fn corrupt_storage_and_wrong_local_model_prevent_provider_dispatch() {
 #[tokio::test]
 async fn steering_is_checkpointed_in_fifo_order_before_provider_dispatch() {
     let (dir, mut owner, agent, _, _, retry) = setup("success", Arc::new(SilentSink)).await;
-    let (sender, receiver) = crate::agent::steering_channel(2);
-    sender.try_send("first steering".into()).unwrap();
-    sender.try_send("second steering".into()).unwrap();
+    let sender = owner.enable_steering(Arc::new(steering::allow_actor)).unwrap();
+    sender.submit(steering::request(&owner, "first steering").await, 1).await.unwrap();
+    sender.submit(steering::request(&owner, "second steering").await, 1).await.unwrap();
     owner
-        .execute(&agent, CancellationToken::new(), Some(receiver))
+        .execute(&agent, CancellationToken::new(), None)
         .await
         .unwrap();
     let stored = Journal::open(dir.path().join("attachment"))
@@ -456,7 +456,7 @@ async fn steering_is_checkpointed_in_fifo_order_before_provider_dispatch() {
         inputs,
         vec!["accepted prompt", "first steering", "second steering"]
     );
-    assert!(sender.try_send("too late".into()).is_err());
+    assert!(sender.submit(steering::request(&owner, "too late").await, 1).await.is_err());
 }
 
 #[tokio::test]
@@ -531,13 +531,13 @@ async fn checkpointed_run_uses_pinned_model_instead_of_mutable_next_turn_model()
 async fn failed_steering_checkpoint_never_announces_durable_application() {
     let sink = Arc::new(Observed::default());
     let (dir, mut owner, agent, requests, effects, _) = setup("success", sink.clone()).await;
-    let (sender, receiver) = crate::agent::steering_channel(2);
-    sender.try_send("steering-sentinel".into()).unwrap();
+    let sender = owner.enable_steering(Arc::new(steering::allow_actor)).unwrap();
+    sender.submit(steering::request(&owner, "steering-sentinel").await, 1).await.unwrap();
     fixture_database(dir.path().join("attachment/journal.sqlite3")).unwrap()
         .execute_batch("CREATE TRIGGER fail_steering BEFORE UPDATE ON sessions WHEN NEW.state LIKE '%steering-sentinel%' BEGIN SELECT RAISE(ABORT,'injected steering failure'); END;").unwrap();
     assert!(matches!(
         owner
-            .execute(&agent, CancellationToken::new(), Some(receiver))
+            .execute(&agent, CancellationToken::new(), None)
             .await,
         Err(AgentError::Checkpoint(_))
     ));
@@ -662,3 +662,5 @@ async fn scoped_checkpoint_uses_admitted_identity_and_seals_only_accepted_work()
 }
 
 mod owner;
+
+mod steering;
