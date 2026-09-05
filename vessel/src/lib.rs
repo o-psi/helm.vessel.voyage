@@ -3,3 +3,5 @@
 pub mod enrollment;
 
 pub mod enrollment_http;
+
+pub mod attachment_transport;

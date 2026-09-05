@@ -6,7 +6,10 @@ license.workspace = true
 description = "Voyage management plane"
 
 [dependencies]
+log.workspace = true
 anyhow.workspace = true
+futures-util = "0.3"
+tokio-util = { version = "0.7", features = ["rt"] }
 axum.workspace = true
 clap = { version = "4.5", features = ["derive", "env"] }
 clap_complete = "4.5"
@@ -28,6 +31,7 @@ url = "2.5"
 libc = "0.2"
 
 [dev-dependencies]
+tokio-tungstenite.workspace = true
 reqwest.workspace = true
 tower = { version = "0.5", features = ["util"] }
 tempfile = "3.21"
