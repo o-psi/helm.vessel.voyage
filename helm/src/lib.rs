@@ -9,6 +9,7 @@ pub mod markdown;
 pub mod model;
 pub mod onboarding;
 pub mod policy;
+pub mod policy_profile;
 pub mod provider;
 pub mod session;
 pub mod subagent;
