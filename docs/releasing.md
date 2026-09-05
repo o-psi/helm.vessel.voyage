@@ -1,6 +1,7 @@
 # Release engineering
 
-Voyage publishes `helm` and `vessel` together from one versioned commit. Tags use
+Voyage has no product releases yet. The release workflow packages `helm` and
+`vessel` together from one versioned commit. Tags use
 `vMAJOR.MINOR.PATCH`. A release is immutable: corrections receive a new tag.
 
 Push and pull-request quality checks run on Linux only to limit development costs.

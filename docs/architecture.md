@@ -67,7 +67,7 @@ supervision, distinct from planned cross-Helm participation. See
 
 - `GET /health`: process liveness.
 - `GET /ready`: database connection check, not remote-execution readiness.
-- `GET /metrics`: configured attachment presence and bounded process metrics.
+- `GET /metrics`: whether attachment presence is configured.
 - `GET /v1/diagnostics`: authenticated status and bounded current presence metadata.
 - `GET /ui`: authenticated static status page; a browser console is deferred.
 - Explicitly configured enrollment administration and `/v2/attachment` transport.

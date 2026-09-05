@@ -33,10 +33,12 @@ request approval according to policy, and kill timed-out child processes.
 
 ## Build and configure
 
+Run these commands from the repository root:
+
 ```sh
 cargo install --path helm --locked
 mkdir -p ~/.config/helm
-cp config.example.toml ~/.config/helm/config.toml
+cp helm/config.example.toml ~/.config/helm/config.toml
 export OPENAI_API_KEY=...
 ```
 
@@ -162,7 +164,7 @@ enumerated arguments show their valid values. Path arguments browse from the act
 multi-stage commands continue suggesting their next flags or values, and `/set ` is generated
 from the same complete configuration schema used to validate runtime overrides.
 
-Every startup capability also has a slash-command path. `/provider`, `/workspace`, `/access`,
+The following startup settings and utilities have slash-command paths. `/provider`, `/workspace`, `/access`,
 and `/config PATH` safely save the session and relaunch with a rebuilt provider, tool registry,
 and security policy. `/set KEY VALUE` changes any validated configuration field, including
 limits, environment, allowed roots, MCP servers, retries, and redaction settings. `/verbose`,
@@ -171,6 +173,11 @@ limits, environment, allowed roots, MCP servers, retries, and redaction settings
 run the corresponding Helm operation, and offer to return to the current session. `/run` runs a
 one-shot prompt and can then return.
 `/sessions`, `/resume REF`, `/models`, `/model ID`, and `/activity` operate directly inside the TUI.
+
+Some authority configurations deliberately refuse subprocess relaunch when it could
+lose the original invocation policy. See [named profiles](../docs/policy-profiles.md)
+and [private defaults](../docs/policy-defaults.md); live in-TUI profile switching
+remains unfinished. Remote administration is not exposed by these local controls.
 
 Runtime configuration used during a safe relaunch is held in a securely created temporary file
 in Helm's data directory, with owner-only Unix permissions, and removed when the handoff ends.
@@ -347,5 +354,5 @@ project guidance. Commands remain unverified and existing instructions are prese
 See [repository onboarding](../docs/repo-onboarding.md) for editing, explicit acceptance
 and rerun diffs.
 
-Saved nonsecret task definitions support typed parameters, preview, digest-bound repository trust,
-and ordinary CLI execution. See [Saved workflows](../docs/saved-workflows.md).
+Saved workflows support typed public inputs, preview, digest-bound repository trust,
+and explicit transient private shell bindings. See [Saved workflows](../docs/saved-workflows.md).
