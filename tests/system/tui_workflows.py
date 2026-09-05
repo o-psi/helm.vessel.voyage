@@ -190,7 +190,7 @@ def main():
                         assert b'hidden-input-canary' not in case.output
                         case.assert_unaccepted()
                         case.send(b'\x1b')
-                        case.text('HELM')
+                        case.wait(lambda: 'Input 2/2' not in rendered_screen(bytes(case.output), 40, 140), 'secret form closed')
                         case.finish()
                         print('workflow secret: hidden input cancelled without invocation or dispatch')
                         continue

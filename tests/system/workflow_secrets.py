@@ -147,6 +147,9 @@ def cli_cases(root, port):
     invoke('policy', 'create', 'private-fresh', '--preset', 'autonomous')
     snapshot = json.loads(invoke('policy', 'inspect', 'private-fresh').stdout)
     flags = ['--policy-profile', 'private-fresh', '--policy-revision', '1', '--policy-digest', snapshot['digest']]
+    preview = json.loads(invoke('policy', 'preview', 'private-fresh', '--revision', '1', '--digest', snapshot['digest']).stdout)['preview']
+    if preview['requires_confirmation']:
+        flags += ['--policy-confirm', preview['transition_digest']]
     Provider.before_tool = lambda: invoke('policy', 'delete', 'private-fresh', '--expected-revision', '1')
     invoke(*flags, 'workflow', '--user-directory', str(workflows), 'run', 'review-change', *source, values={'FIXTURE_PRIVATE_SOURCE': values[0]}, ok=False)
     assert not (root / 'value-digest').exists()
@@ -177,6 +180,7 @@ def tui_case(root, port):
         assert_private([value], case.output.decode(errors='replace'))
         case.send('tr')
         case.text('private-workflow-finished')
+        case.wait(lambda: case.saved().get('run_summaries', [{}])[-1].get('phase') == 'completed', 'canonical completion')
         assert (root / 'value-digest').read_text() == hashlib.sha256(value.encode()).hexdigest()
         saved = case.saved()
         assert saved['workflow_runs'][0]['inputs'] == {'count': 2}

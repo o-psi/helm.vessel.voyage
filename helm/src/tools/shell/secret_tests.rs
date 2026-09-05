@@ -301,7 +301,7 @@ async fn private_shell_preserves_approval_denial_environment_conflicts_and_sanit
         ctx.policy = context(dir.path()).policy;
         ctx.timeout = Duration::from_millis(80);
         let error = registry.execute_with_workflow_secrets("shell", serde_json::json!({"command":"printf '%s' \"$HELM_WORKFLOW_TOKEN\"; sleep 2", "workflow_secrets":["token"]}), &ctx, Some(&bound)).await.unwrap_err();
-        assert!(matches!(error, ToolError::Timeout));
+        assert!(matches!(error, ToolError::Timeout(_)));
         assert!(!error.to_string().contains("sensitive-error"));
         if let Some(manager) = manager {
             assert!(
