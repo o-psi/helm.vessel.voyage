@@ -305,3 +305,25 @@ async fn root_owned_macos_temp_alias_supports_session_lifecycle_without_allowing
         assert!(store.load(session.id).await.is_err());
     }
 }
+
+#[cfg(windows)]
+#[tokio::test]
+async fn canonical_windows_store_path_supports_leases_and_session_lifecycle() {
+    let dir = tempfile::tempdir().unwrap();
+    let canonical = dir.path().canonicalize().unwrap();
+    assert!(matches!(
+        canonical.components().next(),
+        Some(std::path::Component::Prefix(prefix)) if prefix.kind().is_verbatim()
+    ));
+    // The root remains checked, but its incomplete drive prefix must never be
+    // queried as an ancestor. Missing descendants are valid for initial stores.
+    reject_symlinks(&canonical).unwrap();
+    let store = SessionStore::new(canonical.join("sessions"));
+    let mut session = Session::new(canonical, "test".into());
+    let lease = store.acquire_execution(session.id).await.unwrap();
+    store.save_with_lease(&mut session, &lease).await.unwrap();
+    store.save_with_lease(&mut session, &lease).await.unwrap();
+    assert_eq!(store.load(session.id).await.unwrap().revision, 2);
+    store.delete_with_lease(session.id, &lease).await.unwrap();
+    assert!(store.load(session.id).await.is_err());
+}
