@@ -306,7 +306,7 @@ impl EventSink for Terminal {
                 "[context: estimated {}/{} tokens, {} messages omitted]",
                 report.estimated, report.limit, report.omitted_messages
             ),
-            AgentEvent::SteeringApplied => eprintln!("[steering applied]"),
+            AgentEvent::SteeringApplied { .. } => eprintln!("[steering applied]"),
             AgentEvent::Cancelled => eprintln!("[cancelled]"),
         }
     }

@@ -12,10 +12,23 @@ use crate::{
     tools::{ToolContext, ToolRegistry},
 };
 
+/// Each message is bounded independently of the queue count (UTF-8 bytes).
+pub const MAX_STEERING_BYTES: usize = 64 * 1024;
+
+#[derive(Debug, Error)]
+pub enum SteeringError {
+    #[error("steering queue is full")]
+    Full(String),
+    #[error("run already finished")]
+    Closed(String),
+    #[error("steering exceeds the 64 KiB message limit")]
+    TooLarge(String),
+}
+
 struct SteeringState {
     open: bool,
     capacity: usize,
-    messages: VecDeque<String>,
+    messages: VecDeque<Message>,
 }
 
 struct SteeringShared {
@@ -44,16 +57,20 @@ pub fn steering_channel(capacity: usize) -> (SteeringSender, SteeringReceiver) {
 }
 
 impl SteeringSender {
-    pub fn try_send(
-        &self,
-        message: String,
-    ) -> Result<(), tokio::sync::mpsc::error::TrySendError<String>> {
+    pub fn try_send(&self, message: String) -> Result<(), SteeringError> {
+        self.try_send_message(Message::steering(message))
+    }
+
+    pub(crate) fn try_send_message(&self, message: Message) -> Result<(), SteeringError> {
+        if message.content.len() > MAX_STEERING_BYTES {
+            return Err(SteeringError::TooLarge(message.content));
+        }
         let mut state = self.0.state.lock().expect("steering channel poisoned");
         if !state.open {
-            return Err(tokio::sync::mpsc::error::TrySendError::Closed(message));
+            return Err(SteeringError::Closed(message.content));
         }
         if state.messages.len() >= state.capacity {
-            return Err(tokio::sync::mpsc::error::TrySendError::Full(message));
+            return Err(SteeringError::Full(message.content));
         }
         state.messages.push_back(message);
         Ok(())
@@ -67,10 +84,10 @@ impl SteeringSender {
             let space = self.0.space.notified();
             match self.try_send(message) {
                 Ok(()) => return Ok(()),
-                Err(tokio::sync::mpsc::error::TrySendError::Closed(message)) => {
+                Err(SteeringError::Closed(message) | SteeringError::TooLarge(message)) => {
                     return Err(tokio::sync::mpsc::error::SendError(message));
                 }
-                Err(tokio::sync::mpsc::error::TrySendError::Full(value)) => message = value,
+                Err(SteeringError::Full(value)) => message = value,
             }
             space.await;
         }
@@ -78,7 +95,7 @@ impl SteeringSender {
 }
 
 impl SteeringReceiver {
-    fn drain(&mut self) -> Vec<String> {
+    fn drain(&mut self) -> Vec<Message> {
         let mut state = self.0.state.lock().expect("steering channel poisoned");
         let messages = state.messages.drain(..).collect();
         drop(state);
@@ -88,7 +105,7 @@ impl SteeringReceiver {
 
     /// Atomically refuse later sends if no guidance is waiting. This closes the
     /// completion race without imposing an artificial grace period.
-    fn drain_or_close(&mut self) -> Vec<String> {
+    fn drain_or_close(&mut self) -> Vec<Message> {
         let mut state = self.0.state.lock().expect("steering channel poisoned");
         if state.messages.is_empty() {
             state.open = false;
@@ -133,7 +150,9 @@ pub enum AgentEvent {
         error: String,
     },
     ContextBudget(crate::context::ContextReport),
-    SteeringApplied,
+    SteeringApplied {
+        history: Vec<Message>,
+    },
     Cancelled,
 }
 
@@ -299,6 +318,10 @@ impl Agent {
         *mirror.write().expect("model mirror lock poisoned") = self.model();
         self.model_mirror = Some(mirror);
         self
+    }
+
+    pub fn supports_steering(&self) -> bool {
+        self.provider.supports_steering()
     }
 
     pub fn model(&self) -> String {
@@ -494,14 +517,24 @@ impl Agent {
             turn = turn.saturating_add(1);
             let mut applied = 0;
             if let Some(receiver) = &mut input {
-                for message in receiver.drain() {
-                    history.push(Message::new(crate::model::Role::User, message));
+                for mut message in receiver.drain() {
+                    if !self.supports_steering() {
+                        return Err(ProviderError::Request("active steering is unavailable with this compatibility provider; send a new turn after completion".into()).into());
+                    }
+                    if let Some(receipt) = &mut message.steering {
+                        receipt.status = crate::model::SteeringStatus::Applied;
+                    }
+                    history.push(message);
                     applied += 1;
                 }
             }
             self.checkpoint(checkpoint, &history, &usage).await?;
-            for _ in 0..applied {
-                self.sink.emit(AgentEvent::SteeringApplied).await;
+            if applied > 0 {
+                self.sink
+                    .emit(AgentEvent::SteeringApplied {
+                        history: history.clone(),
+                    })
+                    .await;
             }
             if cancel.is_cancelled() {
                 return Err(AgentError::Cancelled);
@@ -544,16 +577,24 @@ impl Agent {
             if calls.is_empty() {
                 let mut received_input = 0;
                 if let Some(receiver) = &mut input {
-                    for message in receiver.drain_or_close() {
-                        history.push(Message::new(crate::model::Role::User, message));
+                    for mut message in receiver.drain_or_close() {
+                        if !self.supports_steering() {
+                            return Err(ProviderError::Request("active steering is unavailable with this compatibility provider; send a new turn after completion".into()).into());
+                        }
+                        if let Some(receipt) = &mut message.steering {
+                            receipt.status = crate::model::SteeringStatus::Applied;
+                        }
+                        history.push(message);
                         received_input += 1;
                     }
                 }
                 if received_input > 0 {
                     self.checkpoint(checkpoint, &history, &usage).await?;
-                    for _ in 0..received_input {
-                        self.sink.emit(AgentEvent::SteeringApplied).await;
-                    }
+                    self.sink
+                        .emit(AgentEvent::SteeringApplied {
+                            history: history.clone(),
+                        })
+                        .await;
                     continue;
                 }
                 return Ok(AgentOutcome {
@@ -1400,7 +1441,7 @@ mod tests {
         sender.try_send("second steering".into()).unwrap();
         assert!(matches!(
             sender.try_send("overflow".into()),
-            Err(tokio::sync::mpsc::error::TrySendError::Full(_))
+            Err(SteeringError::Full(_))
         ));
         release.notify_one();
         let outcome = run.await.unwrap().unwrap();
@@ -1415,7 +1456,7 @@ mod tests {
         assert_eq!(users, ["original", "first steering", "second steering"]);
         assert!(matches!(
             sender.try_send("too late".into()),
-            Err(tokio::sync::mpsc::error::TrySendError::Closed(_))
+            Err(SteeringError::Closed(_))
         ));
     }
 
@@ -1730,5 +1771,105 @@ mod tests {
         .await
         .expect("title discovery must not hang");
         assert!(result.is_none());
+    }
+    #[tokio::test]
+    async fn steering_bounds_and_closed_waiters_are_explicit() {
+        let (sender, mut receiver) = steering_channel(1);
+        assert!(matches!(
+            sender.try_send("界".repeat(MAX_STEERING_BYTES / 3 + 1)),
+            Err(SteeringError::TooLarge(_))
+        ));
+        assert!(
+            sender
+                .send("x".repeat(MAX_STEERING_BYTES + 1))
+                .await
+                .is_err()
+        );
+        sender.try_send("x".repeat(MAX_STEERING_BYTES)).unwrap();
+        let waiting = sender.clone();
+        let wait = tokio::spawn(async move { waiting.send("second".into()).await });
+        tokio::task::yield_now().await;
+        assert_eq!(receiver.drain().len(), 1);
+        tokio::time::timeout(Duration::from_secs(1), wait)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        let waiting = sender.clone();
+        let wait = tokio::spawn(async move { waiting.send("third".into()).await });
+        tokio::task::yield_now().await;
+        drop(receiver);
+        assert!(
+            tokio::time::timeout(Duration::from_secs(1), wait)
+                .await
+                .unwrap()
+                .unwrap()
+                .is_err()
+        );
+        assert!(matches!(
+            sender.try_send("after exit".into()),
+            Err(SteeringError::Closed(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn steering_cancellation_during_request_never_dispatches_another_request() {
+        let directory = tempfile::tempdir().unwrap();
+        let entered = Arc::new(tokio::sync::Notify::new());
+        let calls = Arc::new(AtomicUsize::new(0));
+        let runtime = agent(
+            Box::new(GateThenEcho {
+                calls: calls.clone(),
+                entered: entered.clone(),
+                release: Arc::new(tokio::sync::Notify::new()),
+            }),
+            &directory,
+        );
+        let (sender, receiver) = steering_channel(2);
+        let cancel = CancellationToken::new();
+        let token = cancel.clone();
+        let run = tokio::spawn(async move {
+            runtime
+                .run_with_cancel_and_input(vec![], "original".into(), token, Some(receiver))
+                .await
+        });
+        entered.notified().await;
+        sender.try_send("not dispatched".into()).unwrap();
+        cancel.cancel();
+        assert!(matches!(run.await.unwrap(), Err(AgentError::Cancelled)));
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert!(matches!(
+            sender.try_send("after cancel".into()),
+            Err(SteeringError::Closed(_))
+        ));
+    }
+    struct NoSteering;
+    #[async_trait]
+    impl Provider for NoSteering {
+        fn supports_steering(&self) -> bool {
+            false
+        }
+        async fn complete(&self, _: ModelRequest) -> Result<ModelResponse, ProviderError> {
+            panic!("unsupported steering must never dispatch");
+        }
+    }
+
+    #[tokio::test]
+    async fn unsupported_steering_is_explicit_before_dispatch() {
+        let directory = tempfile::tempdir().unwrap();
+        let (sender, receiver) = steering_channel(1);
+        sender.try_send("new direction".into()).unwrap();
+        let runtime = agent(Box::new(NoSteering), &directory);
+        assert!(!runtime.supports_steering());
+        let error = runtime
+            .run_with_cancel_and_input(
+                vec![],
+                "original".into(),
+                CancellationToken::new(),
+                Some(receiver),
+            )
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("steering is unavailable"));
     }
 }

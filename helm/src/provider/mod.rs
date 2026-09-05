@@ -139,6 +139,11 @@ pub trait Provider: Send + Sync {
     fn context_window(&self, _model: &str) -> Option<usize> {
         None
     }
+    /// Whether new canonical user input is honored at every request boundary.
+    fn supports_steering(&self) -> bool {
+        true
+    }
+
     async fn models(&self) -> Result<Vec<ModelInfo>, ProviderError> {
         Err(ProviderError::Unavailable(
             "this provider does not expose model discovery".into(),

@@ -161,6 +161,17 @@ impl Drop for Running {
 }
 
 impl App {
+    fn insert_composer(&mut self, text: &str) {
+        if self.is_running()
+            && self.composer.text.len().saturating_add(text.len())
+                > crate::agent::MAX_STEERING_BYTES
+        {
+            self.status = "Steering input limit is 64 KiB; draft preserved".into();
+        } else {
+            self.composer.insert_str(text);
+        }
+    }
+
     fn palette_context(&self) -> PaletteContext<'_> {
         PaletteContext {
             input: &self.composer.text,
@@ -327,7 +338,7 @@ pub async fn run(
                             } else if matches!(app.todo_panel.todo_mode, Some(TodoMode::Input { .. })) {
                                 app.todo_panel.todo_input.insert_str(&text);
                             } else if app.supervisor_panel.supervisor_mode.is_none() {
-                                app.composer.insert_str(&text);
+                                app.insert_composer(&text);
                                 reset_slash_palette(&mut app);
                                 request_slash_models_if_needed(&mut app, &agent, &tx);
                             }
@@ -467,7 +478,25 @@ async fn handle_ui_event(
                 report.estimated, report.limit, report.omitted_messages
             );
         }
-        UiEvent::Agent(AgentEvent::SteeringApplied) => {
+        UiEvent::Agent(AgentEvent::SteeringApplied { mut history }) => {
+            // The boundary snapshot carries real tool IDs and the completed response.
+            // Keep later accepted inputs which have not reached this boundary yet.
+            for message in &app.session.messages {
+                if let Some(receipt) = &message.steering
+                    && receipt.status == crate::model::SteeringStatus::Queued
+                    && !history.iter().any(|item| {
+                        item.steering
+                            .as_ref()
+                            .is_some_and(|other| other.id == receipt.id)
+                    })
+                {
+                    history.push(message.clone());
+                }
+            }
+            app.session.messages = history;
+            app.live_messages.clear();
+            app.streaming_response.clear();
+            store.save(&mut app.session).await?;
             app.status = "Steering applied · continuing…  Esc cancels".into();
         }
         UiEvent::Agent(AgentEvent::Cancelled) => {
@@ -524,7 +553,30 @@ async fn handle_ui_event(
                 Err(error) => {
                     let detail = compact_line(&error, 1_000);
                     app.activity.push(format!("✗ provider error: {detail}"));
-                    app.status = format!("Error: {}", compact_line(&error, 120));
+                    let mut undelivered = 0;
+                    for message in &mut app.session.messages {
+                        if let Some(receipt) = &mut message.steering
+                            && receipt.status == crate::model::SteeringStatus::Queued
+                        {
+                            receipt.status = crate::model::SteeringStatus::NotApplied;
+                            undelivered += 1;
+                        }
+                    }
+                    if !app.streaming_response.is_empty() {
+                        app.session.messages.push(crate::Message::new(
+                            Role::Assistant,
+                            std::mem::take(&mut app.streaming_response),
+                        ));
+                    }
+                    store.save(&mut app.session).await?;
+                    app.status = if undelivered > 0 {
+                        format!(
+                            "Run stopped; {undelivered} steering message(s) not applied · {}",
+                            compact_line(&error, 80)
+                        )
+                    } else {
+                        format!("Error: {}", compact_line(&error, 120))
+                    };
                 }
             }
             app.streaming_response.clear();
@@ -863,33 +915,62 @@ async fn handle_key(
     }
     match key.code {
         KeyCode::Esc if app.is_running() => app.cancel(),
-        KeyCode::Enter if key.modifiers.contains(KeyModifiers::SHIFT) => app.composer.insert('\n'),
+        KeyCode::Enter if key.modifiers.contains(KeyModifiers::SHIFT) => app.insert_composer("\n"),
         KeyCode::Enter if app.is_running() => {
             let message = app.composer.take();
             app.prompt_history.reset_navigation();
             reset_slash_palette(app);
             if !message.trim().is_empty() {
+                if !agent.supports_steering() {
+                    app.composer.insert_str(&message);
+                    app.status = "This compatibility provider cannot steer active runs; draft kept for the next turn".into();
+                    return Ok(());
+                }
                 let steering = app
                     .running
                     .as_ref()
                     .expect("running state checked")
                     .steering
                     .clone();
-                match steering.try_send(message.clone()) {
+                let queued = crate::Message::steering(message.clone());
+                if message.len() > crate::agent::MAX_STEERING_BYTES {
+                    app.composer.insert_str(&message);
+                    app.status =
+                        "Steering exceeds 64 KiB; shorten the message before sending".into();
+                    return Ok(());
+                }
+                // Persist before making the input visible to the running agent.
+                app.session.messages.push(queued.clone());
+                if let Err(error) = store.save(&mut app.session).await {
+                    app.session.messages.pop();
+                    app.composer.insert_str(&message);
+                    app.status = format!(
+                        "Steering was not sent: {}",
+                        compact_line(&error.to_string(), 100)
+                    );
+                    return Ok(());
+                }
+                let result = steering.try_send_message(queued);
+                if result.is_err() {
+                    app.session.messages.pop();
+                    store.save(&mut app.session).await?;
+                }
+                match result {
                     Ok(()) => {
                         app.prompt_history.record(&message);
-                        app.session
-                            .messages
-                            .push(crate::Message::new(Role::User, message));
-                        store.save(&mut app.session).await?;
                         app.status =
                             "Steering queued for the next model boundary · Esc cancels".into();
                     }
-                    Err(tokio::sync::mpsc::error::TrySendError::Full(message)) => {
+                    Err(crate::agent::SteeringError::TooLarge(message)) => {
+                        app.composer.insert_str(&message);
+                        app.status =
+                            "Steering exceeds 64 KiB; shorten the message before sending".into();
+                    }
+                    Err(crate::agent::SteeringError::Full(message)) => {
                         app.composer.insert_str(&message);
                         app.status = "Steering queue is full; message kept in composer".into();
                     }
-                    Err(tokio::sync::mpsc::error::TrySendError::Closed(message)) => {
+                    Err(crate::agent::SteeringError::Closed(message)) => {
                         app.composer.insert_str(&message);
                         app.status =
                             "Run already finished; press Enter to send as a new turn".into();
@@ -940,7 +1021,7 @@ async fn handle_key(
             }
         }
         KeyCode::Char(character) => {
-            app.composer.insert(character);
+            app.insert_composer(character.encode_utf8(&mut [0; 4]));
             reset_slash_palette(app);
             request_slash_models_if_needed(app, agent, tx);
         }

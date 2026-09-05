@@ -24,6 +24,10 @@ jobs:
         env:
           HELM_BIN: target/release/helm
         run: python3 tests/system/session_titles.py
+      - name: Verify active steering with an offline provider
+        env:
+          HELM_BIN: target/release/helm
+        run: python3 tests/system/steering.py
       - name: Verify interactive questions with an offline provider
         env:
           HELM_BIN: target/release/helm

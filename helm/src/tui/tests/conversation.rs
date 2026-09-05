@@ -696,3 +696,189 @@ async fn unavailable_title_model_does_not_send_a_repaint_event() {
     assert!(rx.try_recv().is_err());
     assert!(!app.is_running());
 }
+
+#[tokio::test]
+async fn steering_boundary_preserves_fifo_receipts_and_separates_streams() {
+    use crate::model::SteeringStatus;
+    let directory = tempfile::tempdir().unwrap();
+    let store = SessionStore::new(directory.path().join("sessions"));
+    let mut app = App::new(Session::new(directory.path().into(), "test".into()), vec![]);
+    let original = crate::Message::new(Role::User, "original");
+    let first = crate::Message::steering("first");
+    let later = crate::Message::steering("later");
+    app.session.messages = vec![original.clone(), first.clone(), later.clone()];
+    app.streaming_response = "old response".into();
+    let mut applied = first;
+    applied.steering.as_mut().unwrap().status = SteeringStatus::Applied;
+    handle_ui_event(
+        UiEvent::Agent(AgentEvent::SteeringApplied {
+            history: vec![
+                original,
+                crate::Message::new(Role::Assistant, "old response"),
+                applied,
+            ],
+        }),
+        &mut app,
+        &store,
+        &FakeTerminals::new(),
+    )
+    .await
+    .unwrap();
+    assert!(app.streaming_response.is_empty());
+    assert_eq!(
+        app.session
+            .messages
+            .iter()
+            .map(|m| m.content.as_str())
+            .collect::<Vec<_>>(),
+        ["original", "old response", "first", "later"]
+    );
+    handle_ui_event(
+        UiEvent::Agent(AgentEvent::AssistantTextDelta("new response".into())),
+        &mut app,
+        &store,
+        &FakeTerminals::new(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(app.streaming_response, "new response");
+    let rendered = transcript(&app, 48).to_string();
+    assert!(rendered.find("new response").unwrap() < rendered.find("later").unwrap());
+    handle_ui_event(
+        UiEvent::Finished(Err("cancelled".into())),
+        &mut app,
+        &store,
+        &FakeTerminals::new(),
+    )
+    .await
+    .unwrap();
+    assert!(app.status.contains("1 steering message(s) not applied"));
+    let saved = store.load(app.session.id).await.unwrap();
+    assert_eq!(
+        saved.messages[2].steering.as_ref().unwrap().status,
+        SteeringStatus::Applied
+    );
+    assert_eq!(
+        saved.messages[3].steering.as_ref().unwrap().status,
+        SteeringStatus::NotApplied
+    );
+    assert_eq!(saved.messages.last().unwrap().content, "new response");
+    assert_eq!(
+        saved
+            .messages
+            .iter()
+            .filter(|m| m.content == "first")
+            .count(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn steering_backpressure_and_closed_run_preserve_draft_without_phantom_history() {
+    for closed in [false, true] {
+        let directory = tempfile::tempdir().unwrap();
+        let store = SessionStore::new(directory.path().join("sessions"));
+        let mut app = App::new(Session::new(directory.path().into(), "test".into()), vec![]);
+        let agent = Arc::new(navigation_agent_for_conversation(&directory));
+        let (sender, receiver) = crate::agent::steering_channel(1);
+        let _receiver = if closed {
+            drop(receiver);
+            None
+        } else {
+            sender.try_send("already queued".into()).unwrap();
+            Some(receiver)
+        };
+        app.running = Some(Running {
+            task: tokio::spawn(std::future::pending()),
+            cancel: tokio_util::sync::CancellationToken::new(),
+            steering: sender,
+        });
+        app.composer.insert_str("retained λ");
+        let (tx, _) = mpsc::unbounded_channel();
+        handle_key(
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+            &mut app,
+            &agent,
+            &store,
+            &tx,
+            &FakeTerminals::new(),
+            Arc::new(FakeSupervisor::new(vec![])),
+            todo_store(&directory),
+        )
+        .await
+        .unwrap();
+        assert_eq!(app.composer.text, "retained λ");
+        assert!(app.session.messages.is_empty());
+        assert!(
+            store
+                .load(app.session.id)
+                .await
+                .unwrap()
+                .messages
+                .is_empty()
+        );
+        assert!(app.status.contains(if closed {
+            "already finished"
+        } else {
+            "queue is full"
+        }));
+    }
+}
+
+#[tokio::test]
+async fn steering_input_bounds_unicode_and_paste_without_losing_draft() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut app = App::new(Session::new(directory.path().into(), "test".into()), vec![]);
+    let (sender, _receiver) = crate::agent::steering_channel(1);
+    app.running = Some(Running {
+        task: tokio::spawn(std::future::pending()),
+        cancel: tokio_util::sync::CancellationToken::new(),
+        steering: sender,
+    });
+    app.composer
+        .insert_str(&"x".repeat(crate::agent::MAX_STEERING_BYTES - 1));
+    app.insert_composer("界");
+    assert_eq!(
+        app.composer.text.len(),
+        crate::agent::MAX_STEERING_BYTES - 1
+    );
+    app.insert_composer("\n");
+    assert_eq!(app.composer.text.len(), crate::agent::MAX_STEERING_BYTES);
+    app.insert_composer("large paste");
+    assert_eq!(app.composer.text.len(), crate::agent::MAX_STEERING_BYTES);
+    assert!(app.status.contains("draft preserved"));
+}
+
+#[tokio::test]
+async fn steering_save_failure_never_reaches_the_provider_queue() {
+    let directory = tempfile::tempdir().unwrap();
+    let blocked = directory.path().join("not-a-directory");
+    std::fs::write(&blocked, "fixture").unwrap();
+    let store = SessionStore::new(blocked.join("sessions"));
+    let mut app = App::new(Session::new(directory.path().into(), "test".into()), vec![]);
+    let agent = Arc::new(navigation_agent_for_conversation(&directory));
+    let (sender, _receiver) = crate::agent::steering_channel(1);
+    app.running = Some(Running {
+        task: tokio::spawn(std::future::pending()),
+        cancel: tokio_util::sync::CancellationToken::new(),
+        steering: sender.clone(),
+    });
+    app.composer.insert_str("must remain unsent");
+    let (tx, _) = mpsc::unbounded_channel();
+    handle_key(
+        KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+        &mut app,
+        &agent,
+        &store,
+        &tx,
+        &FakeTerminals::new(),
+        Arc::new(FakeSupervisor::new(vec![])),
+        todo_store(&directory),
+    )
+    .await
+    .unwrap();
+    assert_eq!(app.composer.text, "must remain unsent");
+    assert!(app.session.messages.is_empty());
+    assert!(app.status.contains("was not sent"));
+    sender.try_send("queue still empty".into()).unwrap();
+}

@@ -535,7 +535,7 @@ async fn failed_steering_checkpoint_never_announces_durable_application() {
             .lock()
             .unwrap()
             .iter()
-            .any(|event| matches!(event, AgentEvent::SteeringApplied))
+            .any(|event| matches!(event, AgentEvent::SteeringApplied { .. }))
     );
     let record = owner.record().await.unwrap();
     assert_eq!(record.state, RunState::Failed);

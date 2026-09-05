@@ -490,6 +490,9 @@ impl SessionStore {
         for message in &session.messages {
             use std::fmt::Write as _;
             let _ = writeln!(output, "## {:?}\n\n{}\n", message.role, message.content);
+            if let Some(receipt) = &message.steering {
+                let _ = writeln!(output, "Steering delivery: {:?}\n", receipt.status);
+            }
         }
         fs::write(path, output)
             .await
@@ -616,6 +619,13 @@ fn read_session(path: &Path) -> Result<Session> {
     anyhow::ensure!(session.id == id, "session ID does not match filename");
     session.loaded_from = Some(std::fs::canonicalize(path)?);
     session.ensure_name();
+    for message in &mut session.messages {
+        if let Some(receipt) = &mut message.steering
+            && receipt.status == crate::model::SteeringStatus::Queued
+        {
+            receipt.status = crate::model::SteeringStatus::UnknownAfterRestart;
+        }
+    }
     // Migrate older session files that embedded the then-current runtime prompt.
     session
         .messages
@@ -910,6 +920,35 @@ mod tests {
         assert_eq!(
             restored.terminals[0].state,
             crate::terminal::TerminalState::Disconnected
+        );
+    }
+    #[tokio::test]
+    async fn steering_recovery_preserves_text_and_reports_unknown_delivery() {
+        use crate::model::SteeringStatus;
+        let directory = tempfile::tempdir().unwrap();
+        let store = SessionStore::new(directory.path().join("sessions"));
+        let mut session = Session::new(directory.path().into(), "test".into());
+        session
+            .messages
+            .push(Message::steering("pending before crash"));
+        let mut applied = Message::steering("already applied");
+        applied.steering.as_mut().unwrap().status = SteeringStatus::Applied;
+        session.messages.push(applied);
+        store.save(&mut session).await.unwrap();
+        let saved = store.load(session.id).await.unwrap();
+        assert_eq!(saved.messages.len(), 2);
+        assert_eq!(saved.messages[0].content, "pending before crash");
+        assert_eq!(
+            saved.messages[0].steering.as_ref().unwrap().status,
+            SteeringStatus::UnknownAfterRestart
+        );
+        assert_eq!(
+            saved.messages[1].steering.as_ref().unwrap().status,
+            SteeringStatus::Applied
+        );
+        assert_eq!(
+            saved.messages[0].steering.as_ref().unwrap().id,
+            session.messages[0].steering.as_ref().unwrap().id
         );
     }
 }

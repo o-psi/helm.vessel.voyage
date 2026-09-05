@@ -10,6 +10,21 @@ pub enum Role {
     Tool,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SteeringStatus {
+    Queued,
+    Applied,
+    NotApplied,
+    UnknownAfterRestart,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SteeringReceipt {
+    pub id: uuid::Uuid,
+    pub status: SteeringStatus,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Message {
     pub role: Role,
@@ -24,6 +39,9 @@ pub struct Message {
     /// Providers must use a typed, versioned, bounded envelope; model switches clear it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider_state: Option<Value>,
+    /// Local delivery receipt; provider adapters never send this metadata.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub steering: Option<SteeringReceipt>,
 }
 
 impl Message {
@@ -35,7 +53,17 @@ impl Message {
             tool_calls: Vec::new(),
             tool_success: None,
             provider_state: None,
+            steering: None,
         }
+    }
+
+    pub fn steering(content: impl Into<String>) -> Self {
+        let mut message = Self::new(Role::User, content);
+        message.steering = Some(SteeringReceipt {
+            id: uuid::Uuid::new_v4(),
+            status: SteeringStatus::Queued,
+        });
+        message
     }
 
     pub fn tool(call_id: impl Into<String>, content: impl Into<String>) -> Self {
@@ -53,6 +81,7 @@ impl Message {
             tool_calls: Vec::new(),
             tool_success: Some(success),
             provider_state: None,
+            steering: None,
         }
     }
 }
