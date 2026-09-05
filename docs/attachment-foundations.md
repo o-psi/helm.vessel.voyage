@@ -124,8 +124,11 @@ required before remote exposure.
 
 ## Integration requirements still open
 
-- All local CLI/TUI and remote writers must use one coordinator. Today existing
-  SessionStore JSON writes do not consult this journal or its execution locks.
+- All local CLI/TUI and remote writers must use one coordinator. Local CLI/TUI now
+  retain [JSON session execution ownership](session-ownership.md), including
+  checkpoint/steering writers and in-process session changes. Those sidecars do not
+  consult this journal or atomically commit command identity with canonical history;
+  a single-authority coordinator migration remains required.
 - Canonical tool-call/result checkpoints, usage accounting, cancellation intent,
   live runtime ownership and cleanup must integrate with the agent loop. Text-only
   journal fixtures are not proof of complete provider/tool durability.
@@ -167,7 +170,13 @@ Unix. Windows directory-entry power-loss durability remains unproven; portable
 save/load/replace/delete tests do not establish that guarantee. Dedicated enrollment
 storage uses the native Windows ACL implementation described in
 [security operations](security-operations.md#windows-enrollment-storage). This does
-not upgrade SessionStore or the attachment journal to verified Windows ACL storage.
+not upgrade SessionStore to verified Windows ACL storage. The attachment journal
+now uses the same native private storage boundary, with separate execution locks;
+see [journal storage](security-operations.md#windows-attachment-journal-storage).
+
+The explicit local [session transfer foundation](session-journal-transfer.md) provides
+crash-resumable JSON-to-journal authority transfer and a quiescent schema upgrade,
+without frontend wiring or automatic operator-state migration.
 
 The subsequent [event/replay contract](attachment-events.md) adds negotiated,
 bounded observation frames and receive-side cursor checks. Its frames alone do not
@@ -175,9 +184,15 @@ authenticate a connection, execute work or expose a raw snapshot.
 
 The [authenticated socket libraries](attachment-transport.md) add an outbound
 Helm connection and a separately constructed Vessel attachment router. Production
-routing and operator execution remain unwired pending authoritative local dispatch
+routing supports [heartbeat-only presence](attachment-presence.md). Operator
+execution and session disclosure remain unwired pending authoritative local dispatch
 and current sharing integration; transport observations never grant effect authority.
 
 The [enrollment lifecycle CLI](attachment-cli.md) exposes explicit enroll, status,
 resume, rotate, revoke and offline detach commands. It reuses durable client
 transactions and does not start a worker or expose remote execution.
+
+The [durable local sharing declarations](local-sharing-consent.md) preserve explicit
+consent previews, immutable receipts and unshare tombstones in private storage.
+They remain inert administrative metadata; current authorization and frontend
+integration are separate requirements.

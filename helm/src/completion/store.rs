@@ -4,8 +4,8 @@
 //! serialize ledger reads/writes with a stable sidecar lock; contention fails
 //! immediately (never wait on an operator or hold an async executor blocked).
 //! Do not delete/replace the lock file while any store handle is in use.
-//! Windows currently guarantees atomic visibility, not power-loss-durable rename;
-//! do not use it as a durable session-publication boundary until that is resolved.
+//! Windows uses a flushed temporary file and a same-directory write-through
+//! MoveFileExW operation. Filesystem/device flush guarantees still apply.
 use super::{MAX_LEDGER_BYTES, RunId, RunLedger};
 use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
@@ -128,6 +128,7 @@ impl RunLedgerStore {
             "stale completion ledger revision"
         );
         let original = ledger.clone();
+        ledger.ensure_open()?;
         operation(&mut ledger)?;
         ensure!(ledger.run_id() == run_id, "completion run identity changed");
         ensure!(
@@ -236,6 +237,9 @@ impl RunLedgerStore {
         temp.write_all(&bytes)?;
         temp.as_file().sync_all()?;
         // NamedTempFile is owner-only on Unix from creation, not chmod-after-write.
+        #[cfg(windows)]
+        persist_windows(temp, &path, replace)?;
+        #[cfg(not(windows))]
         if replace {
             temp.persist(path).context("replace completion ledger")?;
         } else {
@@ -248,6 +252,47 @@ impl RunLedgerStore {
             .context("sync completion directory; commit may already be visible")?;
         Ok(())
     }
+}
+
+/// Request same-volume write-through publication, with no copy/delete fallback.
+/// MoveFileExW's WRITE_THROUGH flag is the documented Windows flush boundary:
+/// https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-movefileexw
+#[cfg(windows)]
+fn persist_windows(temp: tempfile::NamedTempFile, destination: &Path, replace: bool) -> Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn MoveFileExW(existing: *const u16, new: *const u16, flags: u32) -> i32;
+    }
+    fn wide(path: &Path) -> Result<Vec<u16>> {
+        let mut value: Vec<_> = path.as_os_str().encode_wide().collect();
+        ensure!(
+            !value.contains(&0),
+            "completion path contains a null character"
+        );
+        value.push(0);
+        Ok(value)
+    }
+    // Close the file before renaming, keeping TempPath cleanup on every error.
+    let source = temp.into_temp_path();
+    let existing = wide(&source)?;
+    let new = wide(destination)?;
+    const MOVEFILE_REPLACE_EXISTING: u32 = 1;
+    const MOVEFILE_WRITE_THROUGH: u32 = 8;
+    let flags = MOVEFILE_WRITE_THROUGH
+        | if replace {
+            MOVEFILE_REPLACE_EXISTING
+        } else {
+            0
+        };
+    // SAFETY: both pointers refer to live, NUL-terminated UTF-16 buffers for the
+    // duration of the synchronous call; flags request only documented operations.
+    let result = unsafe { MoveFileExW(existing.as_ptr(), new.as_ptr(), flags) };
+    if result == 0 {
+        return Err(std::io::Error::last_os_error())
+            .context("write-through completion publication");
+    }
+    Ok(())
 }
 
 fn reject_non_file(path: &Path) -> Result<()> {
@@ -306,6 +351,41 @@ mod tests {
         let mut value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
         edit(&mut value);
         fs::write(path, serde_json::to_vec(&value).unwrap()).unwrap();
+    }
+
+    #[test]
+    fn sealed_store_cannot_be_reopened_by_replacement_candidate() {
+        let root = tempfile::tempdir().unwrap();
+        let scope = RunScope::new(root.path(), Uuid::new_v4()).unwrap();
+        let store = RunLedgerStore::open(root.path().join("ledgers"), scope).unwrap();
+        let mut ledger = RunLedger::new();
+        let readiness = super::super::Readiness {
+            run_id: ledger.run_id(),
+            revision: 0,
+            fingerprint: "a".repeat(64),
+            total: 0,
+            accounted: 0,
+            completed: 0,
+            incomplete: 0,
+            incomplete_obligations: vec![],
+            unresolved: vec![],
+            omitted_unresolved: 0,
+        };
+        ledger
+            .seal(readiness, super::super::FinalOutcome::Completed, None)
+            .unwrap();
+        store.create(&ledger).unwrap();
+        let before = fs::read(store.path(ledger.run_id())).unwrap();
+        assert!(
+            store
+                .update(ledger.run_id(), ledger.revision(), |candidate| {
+                    *candidate = RunLedger::with_id(ledger.run_id());
+                    Ok(())
+                })
+                .is_err()
+        );
+        assert_eq!(store.load(ledger.run_id()).unwrap(), ledger);
+        assert_eq!(fs::read(store.path(ledger.run_id())).unwrap(), before);
     }
 
     #[test]
@@ -406,7 +486,7 @@ mod tests {
                 v["ledger"] = v["ledger"]
                     .as_str()
                     .unwrap()
-                    .replacen("\"version\":1", "\"version\":1,\"version\":1", 1)
+                    .replacen("\"version\":2", "\"version\":2,\"version\":2", 1)
                     .into();
             },
         ];

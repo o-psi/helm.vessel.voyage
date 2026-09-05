@@ -9,7 +9,7 @@ use super::{
 };
 use crate::{
     Agent,
-    session::{Session, SessionStore, compact_messages},
+    session::{Session, SessionStore},
 };
 use anyhow::{Context, Result};
 use std::{path::PathBuf, sync::Arc};
@@ -48,25 +48,33 @@ pub(super) fn parse_words(argument: &str, usage: &str) -> Result<Vec<String>> {
     shell_words::split(argument).with_context(|| format!("invalid arguments; usage: {usage}"))
 }
 
-pub(super) fn start_new_session(app: &mut App, name: Option<&str>) {
+pub(super) async fn start_new_session(
+    app: &mut App,
+    store: &mut SessionStore,
+    name: Option<&str>,
+) -> Result<()> {
     let mut session = Session::new(app.session.workspace.clone(), app.session.model.clone());
     if let Some(name) = name.filter(|name| !name.trim().is_empty()) {
         session.set_name(name.trim().to_owned());
     }
+    let owner = store.with_execution(session.id).await?;
     let name = session.display_name();
+    app.title_job = None;
     app.session = session;
+    *store = owner;
     app.prompt_history = PromptHistory::default();
     app.activity.clear();
     app.live_messages.clear();
     app.streaming_response.clear();
     app.scroll = 0;
     app.status = format!("New session: {name}");
+    Ok(())
 }
 
 pub(super) async fn handle_command(
     command: &str,
     app: &mut App,
-    store: &SessionStore,
+    store: &mut SessionStore,
     agent: Option<&Arc<Agent>>,
     tx: Option<&mpsc::UnboundedSender<UiEvent>>,
 ) -> Result<bool> {
@@ -255,10 +263,14 @@ pub(super) async fn handle_command(
             }
         }
         "resume" => app.status = "Usage: /resume SESSION".into(),
-        "new" => start_new_session(
-            app,
-            (!argument.trim().is_empty()).then_some(argument.trim()),
-        ),
+        "new" => {
+            start_new_session(
+                app,
+                store,
+                (!argument.trim().is_empty()).then_some(argument.trim()),
+            )
+            .await?
+        }
         "name" if !argument.trim().is_empty() => {
             app.session.set_name(argument.trim().into());
             store.save(&mut app.session).await?;
@@ -267,7 +279,10 @@ pub(super) async fn handle_command(
         }
         "branch" => {
             let branch_name = (!argument.trim().is_empty()).then(|| argument.trim().to_owned());
-            app.session = store.branch(&app.session, branch_name).await?;
+            app.title_job = None;
+            let (owner, branch) = store.branch_owned(&app.session, branch_name).await?;
+            app.session = branch;
+            *store = owner;
             app.sessions = store.list().await?;
             app.streaming_response.clear();
             app.scroll = 0;
@@ -282,7 +297,7 @@ pub(super) async fn handle_command(
                     .parse()
                     .context("/compact expects a message count")?
             };
-            let removed = compact_messages(&mut app.session.messages, retain);
+            let removed = app.session.compact(retain);
             store.save(&mut app.session).await?;
             app.scroll = 0;
             app.status = format!("Compacted {removed} messages");

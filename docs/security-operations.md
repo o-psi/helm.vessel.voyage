@@ -138,3 +138,32 @@ and retained PERSIST mode. They do not prove survival of sudden hardware
 power loss on every storage device. Windows ACL support here is limited to the
 dedicated enrollment stores; the existing SessionStore and attachment-journal
 Windows security prerequisites remain separate.
+
+
+### Windows attachment journal storage
+
+The attachment journal uses the same local NTFS, current-user ownership, protected
+inheritable DACL, and no-reparse rules as enrollment storage. It precreates private
+`journal.sqlite3` and `journal.sqlite3-journal` files, verifies any existing WAL/SHM
+sidecars before SQLite opens them, and uses the same exclusive-to-PERSIST-to-normal
+bootstrap to retain a private hot rollback journal. Temporary SQLite data stays in
+memory. This keeps independent SQLite clients possible; it does not take a global
+lifetime database lock.
+
+Each session's execution sidecar is checked before OS locking. Database handles
+and execution guards retain checked ancestor handles; a guard keeps these pins
+alive even after its Journal is dropped. Native tests require directory rename
+rejection until the last guard closes, real subprocess lock exclusion/release,
+and restoration of committed canonical text, run state, replay and deduplication
+after killing a writer with spilled pages and a verified hot journal. Existing
+schema 2/3 upgrade and import provenance rules are unchanged. Unix database and
+execution sidecars additionally reject hard links before and after opening.
+
+These APIs remain local persistence foundations. They do not enable attachment
+network access or automatically transfer any JSON SessionStore state. Source
+session transfer remains unsupported outside Unix. Other unsupported storage
+platforms fail before creating journal data. Windows tests must run natively before
+this journal slice is ready for delivery; Linux results alone are insufficient.
+Persistent rollback journals contain prior session pages and must remain inside
+the private storage and backup boundary. Do not delete a journal to recover an
+error. Hardware power-loss guarantees remain limited by the storage device.

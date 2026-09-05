@@ -140,15 +140,18 @@ impl Tool for SubagentTool {
                 };
                 let spawned = self
                     .runtime
-                    .spawn(SpawnRequest {
-                        parent_id: self.parent_id,
-                        name,
-                        task,
-                        policy: self.policy.clone(),
-                        budget: self.budget.clone(),
-                        worktree: lease.as_ref().map(|lease| lease.path.clone()),
-                        branch: lease.as_ref().map(|lease| lease.branch.clone()),
-                    })
+                    .spawn_for_run(
+                        SpawnRequest {
+                            parent_id: self.parent_id,
+                            name,
+                            task,
+                            policy: self.policy.clone(),
+                            budget: self.budget.clone(),
+                            worktree: lease.as_ref().map(|lease| lease.path.clone()),
+                            branch: lease.as_ref().map(|lease| lease.branch.clone()),
+                        },
+                        context.completion.clone(),
+                    )
                     .await;
                 let id = match spawned {
                     Ok(id) => id,
@@ -220,7 +223,12 @@ impl Tool for SubagentTool {
             Args::FollowUp { id, message } => {
                 let follow_up_id = self
                     .runtime
-                    .follow_up_as(self.parent_id, AgentId(id), message)
+                    .follow_up_in_run(
+                        self.parent_id,
+                        AgentId(id),
+                        message,
+                        context.completion.clone(),
+                    )
                     .await
                     .map_err(failed)?;
                 json!({"id":follow_up_id,"queued":true})
@@ -443,6 +451,7 @@ mod tests {
             ..crate::Config::default()
         };
         let context = ToolContext {
+            completion: None,
             policy: Arc::new(crate::policy::Policy::new(&config, workspace).unwrap()),
             approver: Arc::new(crate::tools::UnattendedApprover { allow: true }),
             timeout: Duration::from_secs(2),
@@ -581,6 +590,7 @@ mod tests {
                 ..crate::Config::default()
             };
             let context = ToolContext {
+                completion: None,
                 policy: Arc::new(crate::policy::Policy::new(&config, workspace.clone()).unwrap()),
                 approver: Arc::new(crate::tools::UnattendedApprover { allow: true }),
                 timeout: Duration::from_secs(2),
@@ -734,6 +744,7 @@ mod tests {
             ..crate::Config::default()
         };
         let context = ToolContext {
+            completion: None,
             policy: Arc::new(crate::policy::Policy::new(&config, workspace.clone()).unwrap()),
             approver: Arc::new(crate::tools::UnattendedApprover { allow: true }),
             timeout: Duration::from_secs(2),
@@ -857,6 +868,7 @@ mod tests {
             ..crate::config::Config::default()
         };
         let context = ToolContext {
+            completion: None,
             policy: Arc::new(crate::policy::Policy::new(&config, directory.path().into()).unwrap()),
             approver: approver.clone(),
             timeout: Duration::from_secs(2),

@@ -14,14 +14,35 @@ use anyhow::{Context, Result, ensure};
 use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+#[cfg(all(test, not(unix)))]
+use std::fs;
+#[cfg(unix)]
+use std::fs::{self, OpenOptions};
 use std::{
-    fs::{self, File, OpenOptions},
+    fs::File,
     path::{Path, PathBuf},
     time::Duration,
 };
 use uuid::Uuid;
+#[cfg(windows)]
+mod storage;
+#[cfg(windows)]
+use std::sync::Arc;
 
-const SCHEMA_VERSION: i64 = 2;
+const SCHEMA_VERSION: i64 = 6;
+mod reconciliation;
+pub use reconciliation::{LocalReconcileOutcome, LocalReconcileRequest};
+const STEERING_SCHEMA_VERSION: i64 = 4;
+mod catalogue;
+pub use catalogue::{
+    CancelRequestOutcome, LocalCancelRequest, RunSummary, SessionPage, SessionSummary,
+};
+mod steering;
+pub use steering::{
+    MAX_PENDING_STEERING, MAX_STEERING_PER_RUN, SteeringActor, SteeringAdmission, SteeringOutcome,
+    SteeringRecord, SteeringRejection,
+};
+const IMPORT_SCHEMA: &str = "CREATE TABLE imports(session_id TEXT PRIMARY KEY REFERENCES sessions(id), transfer_id TEXT NOT NULL UNIQUE, provenance TEXT NOT NULL);";
 const MAX_DATABASE_BYTES: i64 = 256 * 1024 * 1024;
 const MAX_SESSIONS: i64 = 4096;
 const MAX_COMMANDS: i64 = 100_000;
@@ -32,7 +53,11 @@ const REPLAY_LIMIT: i64 = 1024;
 
 pub struct Journal {
     connection: Connection,
+    opened_schema: i64,
     directory: PathBuf,
+    // Keep checked ancestors pinned until after SQLite/the sidecar file closes.
+    #[cfg(windows)]
+    _private_directory: Arc<voyage_storage::PrivateDirectory>,
 }
 
 /// A stable OS-sidecar lock, not a lock on an atomically replaced session inode.
@@ -41,6 +66,8 @@ pub struct ExecutionGuard {
     file: File,
     directory: PathBuf,
     session_id: Uuid,
+    #[cfg(windows)]
+    _private_directory: Arc<voyage_storage::PrivateDirectory>,
 }
 impl Drop for ExecutionGuard {
     fn drop(&mut self) {
@@ -54,6 +81,7 @@ pub enum RunState {
     Accepted,
     Running,
     Completed,
+    Incomplete,
     Cancelled,
     Failed,
     Interrupted,
@@ -125,6 +153,9 @@ pub enum EventKind {
     Accepted,
     Started,
     CanonicalCheckpoint,
+    SteeringQueued(Uuid),
+    SteeringApplied(Uuid),
+    SteeringRejected { id: Uuid, reason: SteeringRejection },
     TextDelta(String),
     Terminal(RunState),
 }
@@ -137,33 +168,34 @@ pub enum Replay {
     },
 }
 
+fn check_transaction_schema(tx: &Transaction<'_>, expected: i64) -> Result<()> {
+    let actual: i64 = tx.query_row(
+        "SELECT version FROM attachment_schema WHERE id=1",
+        [],
+        |r| r.get(0),
+    )?;
+    ensure!(
+        actual == expected,
+        "journal schema changed; reopen after quiescent upgrade"
+    );
+    Ok(())
+}
+
 impl Journal {
     /// Dedicated local store under a trusted private parent. Network filesystems
     /// and hostile same-OS-user processes are outside the OS-lock trust boundary.
     pub fn open(directory: PathBuf) -> Result<Self> {
-        let mut builder = fs::DirBuilder::new();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::DirBuilderExt;
-            builder.mode(0o700);
-        }
-        match builder.create(&directory) {
-            Ok(()) => (),
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => (),
-            Err(e) => return Err(e).context("create attachment journal directory"),
-        }
-        let metadata = fs::symlink_metadata(&directory)?;
-        ensure!(
-            metadata.is_dir() && !metadata.file_type().is_symlink(),
-            "journal directory is not a real directory"
-        );
-        private(&metadata)?;
-        let directory = directory.canonicalize()?;
+        #[cfg(windows)]
+        let (directory, private_directory) = storage::prepare(directory)?;
+        #[cfg(not(windows))]
+        let directory = prepare_directory(directory)?;
         let database_path = directory.join("journal.sqlite3");
         let file = open_private_file(&database_path)?;
         drop(file);
         let mut connection = Connection::open(&database_path)?;
         connection.busy_timeout(Duration::ZERO)?; // fail boundedly, never stall an async reactor
+        #[cfg(windows)]
+        storage::configure(&connection)?;
         connection.execute_batch("PRAGMA foreign_keys=ON; PRAGMA synchronous=FULL;")?;
         let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         tx.execute_batch("CREATE TABLE IF NOT EXISTS attachment_schema(id INTEGER PRIMARY KEY CHECK(id=1), version INTEGER NOT NULL);")?;
@@ -176,7 +208,7 @@ impl Journal {
             .optional()?;
         if let Some(version) = version {
             ensure!(
-                version == SCHEMA_VERSION,
+                matches!(version, 2 | 3 | 4 | 5 | SCHEMA_VERSION),
                 "unsupported attachment journal schema"
             );
         } else {
@@ -187,6 +219,10 @@ impl Journal {
                 CREATE UNIQUE INDEX one_active_run ON runs(session_id) WHERE active=1;
                 CREATE TABLE commands(id TEXT PRIMARY KEY, digest BLOB NOT NULL, run_id TEXT NOT NULL UNIQUE REFERENCES runs(id));
                 CREATE TABLE events(session_id TEXT NOT NULL REFERENCES sessions(id), sequence INTEGER NOT NULL, event TEXT NOT NULL, PRIMARY KEY(session_id,sequence));")?;
+            tx.execute_batch(IMPORT_SCHEMA)?;
+            tx.execute_batch(steering::SCHEMA)?;
+            tx.execute_batch(catalogue::SCHEMA)?;
+            tx.execute_batch(reconciliation::SCHEMA)?;
             tx.execute(
                 "INSERT INTO attachment_schema VALUES(1, ?1)",
                 [SCHEMA_VERSION],
@@ -195,6 +231,7 @@ impl Journal {
         tx.commit()?;
         // Bound durable storage without pruning command evidence. SQLite FULL
         // rolls the transaction back; the caller must stop further dispatch.
+        #[cfg(not(windows))]
         connection.pragma_update(None, "journal_mode", "DELETE")?;
         let page_size: i64 = connection.pragma_query_value(None, "page_size", |r| r.get(0))?;
         ensure!(page_size > 0, "invalid SQLite page size");
@@ -209,20 +246,187 @@ impl Journal {
             File::open(&directory)?.sync_all()?;
             File::open(directory.parent().context("journal has no parent")?)?.sync_all()?;
         }
+        #[cfg(windows)]
+        storage::verify(&private_directory)?;
         Ok(Self {
             connection,
+            opened_schema: version.unwrap_or(SCHEMA_VERSION),
             directory,
+            #[cfg(windows)]
+            _private_directory: private_directory,
         })
+    }
+
+    fn check_schema(&self) -> Result<()> {
+        let current: i64 = self.connection.query_row(
+            "SELECT version FROM attachment_schema WHERE id=1",
+            [],
+            |r| r.get(0),
+        )?;
+        ensure!(
+            current == self.opened_schema,
+            "journal schema changed; reopen after quiescent upgrade"
+        );
+        Ok(())
+    }
+
+    /// Explicit process-quiescent upgrade. Legacy processes must be stopped first.
+    /// SQLite excludes concurrent admissions/creation; sidecars exclude effects.
+    pub fn upgrade_quiescent(&mut self) -> Result<()> {
+        self.upgrade_with(|| Ok(()))
+    }
+
+    fn upgrade_with(&mut self, after_fencing: impl FnOnce() -> Result<()>) -> Result<()> {
+        self.check_schema()?;
+        if self.opened_schema == SCHEMA_VERSION {
+            return Ok(());
+        }
+        let tx = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        check_transaction_schema(&tx, self.opened_schema)?;
+        let active: i64 =
+            tx.query_row("SELECT count(*) FROM runs WHERE active=1", [], |r| r.get(0))?;
+        ensure!(
+            active == 0,
+            "journal has active runs; recover or finish before upgrade"
+        );
+        let ids = tx
+            .prepare("SELECT id FROM sessions")?
+            .query_map([], |r| r.get::<_, String>(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        let mut guards = Vec::new();
+        for id in ids {
+            let session_id = Uuid::parse_str(&id)?;
+            let file =
+                open_private_file(&self.directory.join(format!("{session_id}.execution.lock")))?;
+            file.try_lock()
+                .context("session busy during journal upgrade")?;
+            guards.push(ExecutionGuard {
+                file,
+                directory: self.directory.clone(),
+                session_id,
+                #[cfg(windows)]
+                _private_directory: self._private_directory.clone(),
+            });
+        }
+        after_fencing()?;
+        steering::validate_existing_ids(&tx)?;
+        if self.opened_schema == 2 {
+            tx.execute_batch(IMPORT_SCHEMA)?;
+        }
+        if self.opened_schema < STEERING_SCHEMA_VERSION {
+            tx.execute_batch(steering::SCHEMA)?;
+        }
+        if self.opened_schema < 5 {
+            tx.execute_batch(catalogue::SCHEMA)?;
+        }
+        tx.execute_batch(reconciliation::SCHEMA)?;
+        tx.execute(
+            "UPDATE attachment_schema SET version=?1 WHERE id=1",
+            [SCHEMA_VERSION],
+        )?;
+        tx.commit()?;
+        self.opened_schema = SCHEMA_VERSION;
+        drop(guards);
+        Ok(())
+    }
+
+    #[cfg_attr(not(unix), allow(dead_code))]
+    pub(crate) fn preflight_import(
+        &self,
+        provenance: &super::migration::Provenance,
+    ) -> Result<Option<u64>> {
+        self.check_schema()?;
+        ensure!(
+            self.opened_schema == SCHEMA_VERSION,
+            "explicit quiescent journal upgrade required"
+        );
+        let existing: Option<String> = self
+            .connection
+            .query_row(
+                "SELECT provenance FROM imports WHERE session_id=?1 OR transfer_id=?2",
+                params![
+                    provenance.session_id.to_string(),
+                    provenance.transfer_id.to_string()
+                ],
+                |r| r.get(0),
+            )
+            .optional()?;
+        if let Some(existing) = existing {
+            let existing: super::migration::Provenance = serde_json::from_str(&existing)?;
+            ensure!(existing == *provenance, "transfer provenance conflict");
+            return Ok(Some(self.load_session(provenance.session_id)?.revision));
+        }
+        let collision: i64 = self.connection.query_row(
+            "SELECT count(*) FROM sessions WHERE id=?1",
+            [provenance.session_id.to_string()],
+            |r| r.get(0),
+        )?;
+        ensure!(
+            collision == 0,
+            "destination already owns this session without matching provenance"
+        );
+        let count: i64 = self
+            .connection
+            .query_row("SELECT count(*) FROM sessions", [], |r| r.get(0))?;
+        ensure!(count < MAX_SESSIONS, "attachment session capacity reached");
+        Ok(None)
+    }
+
+    #[cfg_attr(not(unix), allow(dead_code))]
+    pub(crate) fn import_session(
+        &mut self,
+        session: &Session,
+        provenance: &super::migration::Provenance,
+    ) -> Result<(u64, bool)> {
+        let encoded = snapshot(session)?;
+        ensure!(
+            session.id == provenance.session_id && session.revision == provenance.source_revision,
+            "source identity or revision mismatch"
+        );
+        if let Some(revision) = self.preflight_import(provenance)? {
+            return Ok((revision, true));
+        }
+        let tx = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        check_transaction_schema(&tx, self.opened_schema)?;
+        if self.opened_schema >= STEERING_SCHEMA_VERSION {
+            steering::validate_snapshot_ids(&tx, session)?;
+        }
+        let count: i64 = tx.query_row("SELECT count(*) FROM sessions", [], |r| r.get(0))?;
+        ensure!(count < MAX_SESSIONS, "attachment session capacity reached");
+        let revision = i64::try_from(session.revision)?;
+        tx.execute(
+            "INSERT INTO sessions(id,revision,state) VALUES(?1,?2,?3)",
+            params![session.id.to_string(), revision, encoded],
+        )?;
+        tx.execute(
+            "INSERT INTO imports VALUES(?1,?2,?3)",
+            params![
+                session.id.to_string(),
+                provenance.transfer_id.to_string(),
+                serde_json::to_string(provenance)?
+            ],
+        )?;
+        tx.commit()?;
+        Ok((session.revision, false))
     }
 
     /// Import/create is explicit and create-only. Caller controls consent. A UUID
     /// collision never replaces another canonical session or its command history.
     pub fn create_session(&mut self, session: &Session) -> Result<()> {
+        self.check_schema()?;
         ensure!(!session.id.is_nil(), "nil session identity");
         let encoded = snapshot(session)?;
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        check_transaction_schema(&tx, self.opened_schema)?;
+        if self.opened_schema >= STEERING_SCHEMA_VERSION {
+            steering::validate_snapshot_ids(&tx, session)?;
+        }
         let count: i64 = tx.query_row("SELECT count(*) FROM sessions", [], |r| r.get(0))?;
         ensure!(count < MAX_SESSIONS, "attachment session capacity reached");
         tx.execute(
@@ -238,6 +442,7 @@ impl Journal {
     }
 
     pub fn acquire_execution(&self, session_id: Uuid) -> Result<ExecutionGuard> {
+        self.check_schema()?;
         ensure!(!session_id.is_nil(), "nil session identity");
         self.load_session(session_id)?; // Unknown IDs must not allocate lock files.
         let file = open_private_file(&self.directory.join(format!("{session_id}.execution.lock")))?;
@@ -247,12 +452,15 @@ impl Journal {
             file,
             directory: self.directory.clone(),
             session_id,
+            #[cfg(windows)]
+            _private_directory: self._private_directory.clone(),
         };
         self.load_session(session_id)?;
         Ok(guard)
     }
 
     fn check_guard(&self, guard: &ExecutionGuard, session: Uuid) -> Result<()> {
+        self.check_schema()?;
         ensure!(
             guard.directory == self.directory && guard.session_id == session,
             "execution guard belongs to another journal or session"
@@ -263,6 +471,13 @@ impl Journal {
     /// Retrieve an identical accepted command without taking execution ownership.
     /// Authentication/sharing must still be checked by the caller on every retry.
     pub fn lookup_command(&self, request: &TurnAdmission) -> Result<Option<RunRecord>> {
+        self.check_schema()?;
+        if self.opened_schema >= STEERING_SCHEMA_VERSION {
+            ensure!(
+                !steering::reserved_receipt_exists(&self.connection, request.command_id)?,
+                "turn command collides with steering receipt"
+            );
+        }
         ensure!(request.prompt.len() <= MAX_PROMPT, "invalid prompt size");
         let digest = Sha256::digest(serde_json::to_vec(request)?).to_vec();
         let existing: Option<(Vec<u8>, String)> = self
@@ -292,6 +507,15 @@ impl Journal {
         request: &TurnAdmission,
         now_ms: i64,
     ) -> Result<Admission> {
+        self.admit_turn_with_clock(guard, request, || Ok(now_ms))
+    }
+
+    pub(crate) fn admit_turn_with_clock(
+        &mut self,
+        guard: &ExecutionGuard,
+        request: &TurnAdmission,
+        clock: impl FnOnce() -> Result<i64>,
+    ) -> Result<Admission> {
         self.check_guard(guard, request.session_id)?;
         ensure!(
             !request.command_id.is_nil()
@@ -307,6 +531,13 @@ impl Journal {
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        check_transaction_schema(&tx, self.opened_schema)?;
+        if self.opened_schema >= STEERING_SCHEMA_VERSION {
+            ensure!(
+                !steering::reserved_receipt_exists(&tx, request.command_id)?,
+                "turn command collides with steering receipt"
+            );
+        }
         let existing: Option<(Vec<u8>, String)> = tx
             .query_row(
                 "SELECT digest,run_id FROM commands WHERE id=?1",
@@ -325,6 +556,13 @@ impl Journal {
                 run,
             });
         }
+        if self.opened_schema >= 5 {
+            ensure!(
+                catalogue::pending_cleanup(&tx, request.session_id)?.is_none(),
+                "session cleanup remains unconfirmed"
+            );
+        }
+        let now_ms = clock()?;
         ensure!(
             now_ms >= 0
                 && request.expires_at_ms > now_ms
@@ -394,11 +632,18 @@ impl Journal {
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        check_transaction_schema(&tx, self.opened_schema)?;
         let mut run = read_run(&tx, run_id)?;
         ensure!(
             run.state == RunState::Accepted,
             "run already dispatched or terminal"
         );
+        if self.opened_schema >= 5 {
+            ensure!(
+                !catalogue::pending(&tx, run.session_id, run_id)?,
+                "run cancellation requested"
+            );
+        }
         run.state = RunState::Running;
         tx.execute(
             "UPDATE runs SET record=?1 WHERE id=?2",
@@ -431,6 +676,7 @@ impl Journal {
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        check_transaction_schema(&tx, self.opened_schema)?;
         let mut run = read_run(&tx, run_id)?;
         ensure!(run.state == RunState::Running, "run is terminal");
         ensure!(
@@ -460,11 +706,38 @@ impl Journal {
         messages: &[Message],
         usage: &Usage,
     ) -> Result<()> {
+        self.checkpoint_canonical_with_clock(guard, run_id, messages, usage, || {
+            Ok(i64::try_from(
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)?
+                    .as_millis(),
+            )?)
+        })
+    }
+    pub fn checkpoint_canonical_at(
+        &mut self,
+        guard: &ExecutionGuard,
+        run_id: Uuid,
+        messages: &[Message],
+        usage: &Usage,
+        now_ms: i64,
+    ) -> Result<()> {
+        self.checkpoint_canonical_with_clock(guard, run_id, messages, usage, || Ok(now_ms))
+    }
+    pub(crate) fn checkpoint_canonical_with_clock(
+        &mut self,
+        guard: &ExecutionGuard,
+        run_id: Uuid,
+        messages: &[Message],
+        usage: &Usage,
+        clock: impl FnOnce() -> Result<i64>,
+    ) -> Result<()> {
         let run = self.run(run_id)?;
         self.check_guard(guard, run.session_id)?;
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        check_transaction_schema(&tx, self.opened_schema)?;
         let mut run = read_run(&tx, run_id)?;
         ensure!(
             run.state == RunState::Running,
@@ -493,7 +766,28 @@ impl Journal {
         if messages.len() == previous && input_delta == 0 && output_delta == 0 {
             return Ok(());
         }
-        current.session.messages = messages.to_vec();
+        if self.opened_schema >= STEERING_SCHEMA_VERSION {
+            steering::apply(
+                &tx,
+                &run,
+                &messages[previous..],
+                previous,
+                current
+                    .revision
+                    .checked_add(1)
+                    .context("revision overflow")?,
+                clock()?,
+            )?;
+        } else {
+            ensure!(
+                messages[previous..]
+                    .iter()
+                    .all(|message| message.steering.is_none()),
+                "steering requires quiescent journal upgrade"
+            );
+        }
+        current.session.replace_messages(messages.to_vec());
+        current.session.refresh_active_run_summary();
         current.session.usage.input_tokens = current
             .session
             .usage
@@ -507,10 +801,97 @@ impl Journal {
             .checked_add(output_delta)
             .context("session usage overflow")?;
         run.usage = usage.clone();
-        run.final_checkpointed = messages
-            .last()
-            .is_some_and(|m| m.role == Role::Assistant && m.tool_calls.is_empty());
+        // Canonical text is provisional. Only the runtime's explicit acceptance
+        // hook may classify a final response; no-tool text alone is insufficient.
+        run.final_checkpointed = false;
         update_session(&tx, &current)?;
+        tx.execute(
+            "UPDATE runs SET record=?1 WHERE id=?2",
+            params![serde_json::to_string(&run)?, run.id.to_string()],
+        )?;
+        append_event(&tx, &run, EventKind::CanonicalCheckpoint)?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Record trusted run ownership before any provider or tool dispatch.
+    pub fn register_run_scope(
+        &mut self,
+        guard: &ExecutionGuard,
+        run_id: Uuid,
+        reference: crate::completion::runtime::RunReference,
+    ) -> Result<()> {
+        let run = self.run(run_id)?;
+        self.check_guard(guard, run.session_id)?;
+        ensure!(
+            reference.session_id == run.session_id && reference.run_id == run_id,
+            "completion scope does not match admitted run"
+        );
+        let tx = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        check_transaction_schema(&tx, self.opened_schema)?;
+        let run = read_run(&tx, run_id)?;
+        ensure!(
+            run.state == RunState::Running,
+            "scope requires running admission"
+        );
+        let mut current = read_session(&tx, run.session_id)?;
+        ensure!(
+            !current.session.completion_runs.contains(&reference),
+            "scope already registered"
+        );
+        current.session.begin_run_summary(reference.run_id);
+        current.session.completion_runs.push(reference);
+        update_session(&tx, &current)?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Mark an already-durable canonical proposal accepted. Scoped callers invoke
+    /// this only after sealing readiness. A failed write cannot become completion.
+    pub fn accept_checkpoint(
+        &mut self,
+        guard: &ExecutionGuard,
+        run_id: Uuid,
+        messages: &[Message],
+        usage: &Usage,
+    ) -> Result<()> {
+        let run = self.run(run_id)?;
+        self.check_guard(guard, run.session_id)?;
+        let tx = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        check_transaction_schema(&tx, self.opened_schema)?;
+        let mut run = read_run(&tx, run_id)?;
+        ensure!(
+            run.state == RunState::Running,
+            "acceptance requires running admission"
+        );
+        if self.opened_schema >= 5 {
+            ensure!(
+                !catalogue::pending(&tx, run.session_id, run_id)?,
+                "run cancellation requested"
+            );
+        }
+        if self.opened_schema >= STEERING_SCHEMA_VERSION {
+            steering::ensure_no_pending(&tx, run_id)?;
+        }
+        let current = read_session(&tx, run.session_id)?;
+        ensure!(
+            serde_json::to_vec(messages)? == serde_json::to_vec(&current.session.messages)?
+                && serde_json::to_vec(usage)? == serde_json::to_vec(&run.usage)?,
+            "acceptance does not match canonical checkpoint"
+        );
+        ensure!(
+            messages
+                .last()
+                .is_some_and(|m| m.role == Role::Assistant && m.tool_calls.is_empty())
+                && !has_pending_tools(messages),
+            "acceptance requires a final proposal without pending tools"
+        );
+        ensure!(!run.final_checkpointed, "proposal already accepted");
+        run.final_checkpointed = true;
         tx.execute(
             "UPDATE runs SET record=?1 WHERE id=?2",
             params![serde_json::to_string(&run)?, run.id.to_string()],
@@ -529,6 +910,20 @@ impl Journal {
         state: RunState,
         reason: Option<&str>,
         final_text: Option<&str>,
+    ) -> Result<RunRecord> {
+        self.finish_classified(guard, run_id, state, reason, final_text, None)
+    }
+
+    /// Commit terminal status and local transcript classification together.
+    #[allow(clippy::too_many_arguments)]
+    pub fn finish_classified(
+        &mut self,
+        guard: &ExecutionGuard,
+        run_id: Uuid,
+        state: RunState,
+        reason: Option<&str>,
+        final_text: Option<&str>,
+        classification: Option<&crate::agent::StopReason>,
     ) -> Result<RunRecord> {
         ensure!(
             !matches!(state, RunState::Accepted | RunState::Running),
@@ -553,11 +948,25 @@ impl Journal {
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        check_transaction_schema(&tx, self.opened_schema)?;
         let mut run = read_run(&tx, run_id)?;
         ensure!(
             matches!(run.state, RunState::Accepted | RunState::Running),
             "run is already terminal"
         );
+        let cancelled = self.opened_schema >= 5
+            && state != RunState::Interrupted
+            && catalogue::pending(&tx, run.session_id, run_id)?;
+        let (state, reason, final_text, classification) = if cancelled {
+            (
+                RunState::Cancelled,
+                Some("local cancellation requested"),
+                None,
+                None,
+            )
+        } else {
+            (state, reason, final_text, classification)
+        };
         ensure!(
             state != RunState::Completed || run.state == RunState::Running,
             "undispatched run cannot complete"
@@ -572,7 +981,12 @@ impl Journal {
             "unresolved tool effects cannot be completed"
         );
         ensure!(
-            !(run.final_checkpointed && final_text.is_some()),
+            !(final_text.is_some()
+                && current
+                    .session
+                    .messages
+                    .last()
+                    .is_some_and(|m| m.role == Role::Assistant && m.tool_calls.is_empty())),
             "final answer already checkpointed"
         );
         if let Some(text) = final_text {
@@ -585,6 +999,42 @@ impl Journal {
             for terminal in &mut current.session.terminals {
                 terminal.state = crate::terminal::TerminalState::Disconnected;
             }
+        }
+        if let Some(classification) = classification {
+            ensure!(
+                matches!(
+                    (&state, classification),
+                    (RunState::Completed, crate::agent::StopReason::Completed)
+                        | (
+                            RunState::Incomplete,
+                            crate::agent::StopReason::Incomplete { .. }
+                        )
+                ),
+                "run state and transcript classification disagree"
+            );
+            current.session.finish_run_summary(classification);
+        } else if state == RunState::Completed {
+            current
+                .session
+                .finish_run_summary(&crate::agent::StopReason::Completed);
+        } else {
+            current
+                .session
+                .interrupt_run_summary(reason.unwrap_or("run interrupted").to_owned());
+        }
+        if self.opened_schema >= STEERING_SCHEMA_VERSION {
+            if state == RunState::Completed {
+                steering::ensure_no_pending(&tx, run_id)?;
+            }
+            steering::settle(
+                &tx,
+                &run,
+                &state,
+                current
+                    .revision
+                    .checked_add(1)
+                    .context("revision overflow")?,
+            )?;
         }
         update_session(&tx, &current)?;
         run.state = state.clone();
@@ -685,8 +1135,8 @@ impl Journal {
 
 // Preserve uncertain intent rather than inventing tool results or replaying an
 // effect. Older orphan result messages may exist after legacy compaction; they
-// cannot satisfy a different outstanding call. A future explicit reconciliation
-// operation must account for unknown effects before reopening this session.
+// cannot satisfy a different outstanding call. Explicit local reconciliation must
+// append unknown outcomes after cleanup before this session accepts another turn.
 fn has_pending_tools(messages: &[Message]) -> bool {
     let mut pending = std::collections::BTreeSet::new();
     for message in messages {
@@ -807,6 +1257,35 @@ fn append_event(tx: &Transaction<'_>, run: &RunRecord, kind: EventKind) -> Resul
     )?;
     Ok(sequence as u64)
 }
+#[cfg(unix)]
+fn prepare_directory(directory: PathBuf) -> Result<PathBuf> {
+    let mut builder = fs::DirBuilder::new();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        builder.mode(0o700);
+    }
+    match builder.create(&directory) {
+        Ok(()) => (),
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => (),
+        Err(e) => return Err(e).context("create attachment journal directory"),
+    }
+    let metadata = fs::symlink_metadata(&directory)?;
+    ensure!(
+        metadata.is_dir() && !metadata.file_type().is_symlink(),
+        "journal directory is not a real directory"
+    );
+    private(&metadata)?;
+    let directory = directory.canonicalize()?;
+    Ok(directory)
+}
+
+#[cfg(not(any(unix, windows)))]
+fn prepare_directory(_directory: PathBuf) -> Result<PathBuf> {
+    anyhow::bail!("private attachment storage unsupported on this platform")
+}
+
+#[cfg(unix)]
 fn private(metadata: &fs::Metadata) -> Result<()> {
     #[cfg(unix)]
     {
@@ -820,10 +1299,14 @@ fn private(metadata: &fs::Metadata) -> Result<()> {
             "attachment storage has another owner"
         );
     }
-    #[cfg(not(unix))]
-    let _ = metadata; // Windows ACL verification is a delivery prerequisite.
+    use std::os::unix::fs::MetadataExt;
+    ensure!(
+        !metadata.is_file() || metadata.nlink() == 1,
+        "attachment storage has hard links"
+    );
     Ok(())
 }
+#[cfg(unix)]
 fn open_private_file(path: &Path) -> Result<File> {
     match fs::symlink_metadata(path) {
         Ok(m) => {
@@ -852,6 +1335,22 @@ fn open_private_file(path: &Path) -> Result<File> {
     );
     private(&file.metadata()?)?;
     Ok(file)
+}
+
+#[cfg(windows)]
+fn open_private_file(path: &Path) -> Result<File> {
+    let parent = path.parent().context("private sidecar has no parent")?;
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .context("invalid private filename")?;
+    let private = voyage_storage::PrivateDirectory::open(parent)?;
+    Ok(private.open_file(name, true)?)
+}
+
+#[cfg(not(any(unix, windows)))]
+fn open_private_file(_path: &Path) -> Result<File> {
+    anyhow::bail!("private attachment storage unsupported on this platform")
 }
 
 #[cfg(test)]

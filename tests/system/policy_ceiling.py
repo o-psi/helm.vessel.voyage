@@ -6,6 +6,8 @@ report SKIP honestly; deterministic loader/runtime unit coverage remains require
 """
 from __future__ import annotations
 import json
+import sqlite3
+import uuid
 import re
 import unicodedata
 import os
@@ -62,6 +64,8 @@ def inside() -> None:
     scenario = ['plain']
     nested_cwds: list[str] = []
     nested_failures: list[str] = []
+    nested_snapshots = {}
+    nested_summaries = {}
 
     def nested_response(body, outputs):
         users = ' '.join(str(value.get('content', '')) for value in body['input'] if value.get('role') == 'user')
@@ -86,9 +90,27 @@ def inside() -> None:
         if len(outputs) == 1:
             child = json.loads(outputs[0]['output'])['id']
             return call('subagent', {'action': 'wait', 'id': child})
-        result = json.loads(outputs[-1]['output'])
-        assert result['status'] == 'completed', result
-        return message(result['result']['summary'])
+        if len(outputs) == 2:
+            result = json.loads(outputs[-1]['output'])
+            assert result['status'] == 'completed', result
+            nested_summaries[role] = result['result']['summary']
+            if role == 'child': return message(nested_summaries[role])
+            return call('completion', {'action': 'snapshot'})
+        previous = next(value for value in reversed(body['input']) if value.get('type') == 'function_call')
+        action = json.loads(previous['arguments'])['action']
+        value = json.loads(outputs[-1]['output'])
+        if action == 'snapshot':
+            if not value['unresolved']: return message(nested_summaries[role])
+            nested_snapshots[role] = value
+            return call('completion', {'action': 'read', 'kind': 'agent', 'id': value['unresolved'][0]['obligation']['agent']})
+        if action == 'read':
+            snapshot = nested_snapshots[role]
+            assert value['status'] == 'completed' and value['result'], value
+            return call('completion', {'action': 'account', 'kind': 'agent', 'id': value['id'],
+                'revision': snapshot['revision'], 'fingerprint': snapshot['fingerprint'],
+                'disposition': 'incorporated', 'reason': 'Reviewed child workspace evidence: ' + value['result']})
+        assert action == 'account', previous
+        return call('completion', {'action': 'snapshot'})
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *_args):
@@ -289,6 +311,37 @@ for line in sys.stdin:
         result = run('chat', '--plain', input='/models\n/exit\n')
         assert not requests and not model_requests and 'model discovery failed' in result.stderr, (invalid, result.stdout, result.stderr)
         if invalid == 'hardlink': Path('/work/hardlinked-ceiling').unlink()
+    # Managed submission validates the fixed ceiling before durable admission.
+    # Create/list remain local administrative metadata operations.
+    config.write_text(base)
+    cap()
+    managed_id = str(uuid.uuid4())
+    managed_args = ('managed', '--directory', '/work/managed', '--json')
+    created = run(*managed_args, 'create', '--id', managed_id)
+    assert created.returncode == 0, created.stderr
+    database = Path('/work/managed/journal/journal.sqlite3')
+    def managed_counts():
+        with sqlite3.connect(database) as connection:
+            return (connection.execute('SELECT count(*) FROM runs').fetchone()[0],
+                    connection.execute('SELECT revision FROM sessions WHERE id=?', (managed_id,)).fetchone()[0])
+    before_managed = managed_counts()
+    assert before_managed == (0, 0), before_managed
+    requests.clear()
+    ceiling.write_text('malformed =')
+    denied = run(*managed_args, 'submit', managed_id, '--expected-revision', '0', 'policy denied')
+    assert denied.returncode != 0 and not requests and 'run_accepted' not in denied.stdout, (denied.stdout, denied.stderr, requests)
+    assert managed_counts() == before_managed
+    # The common managed builder must also use the clamped environment.
+    cap()
+    scenario[0] = 'environment'
+    submitted = run(*managed_args, 'submit', managed_id, '--expected-revision', '0', 'managed environment')
+    assert submitted.returncode == 0, (submitted.stdout, submitted.stderr)
+    managed_outputs = [value['output'] for request in requests for value in request.get('input', []) if value.get('type') == 'function_call_output']
+    assert managed_outputs and any('EXPLICIT=[REDACTED]' in value for value in managed_outputs), managed_outputs
+    assert all('\nREMOVED=' not in value and '\nAMBIENT_REMOVED=' not in value and 'do-not-export-canary' not in value and 'ambient-canary' not in value for value in managed_outputs), managed_outputs
+    assert managed_counts()[0] == 1
+    scenario[0] = 'plain'
+
     # A worktree child loses the root workspace under a workspace-relative ceiling.
     # Its non-owning descendant must execute in that child's cwd, not regain /work.
     Path('/state').mkdir()
@@ -328,7 +381,7 @@ def main() -> None:
     if sys.platform != 'linux' or not shutil.which('unshare'):
         print('SKIP policy ceiling namespace fixture: Linux user/mount namespaces unavailable')
         return
-    probe = subprocess.run(['unshare', '--user', '--map-root-user', '--mount', '--propagation', 'private', 'true'], capture_output=True, timeout=10)
+    probe = subprocess.run(['unshare', '--user', '--map-root-user', '--mount', '--pid', '--fork', '--propagation', 'private', 'true'], capture_output=True, timeout=10)
     if probe.returncode:
         print('SKIP policy ceiling namespace fixture: user/mount namespace permission unavailable')
         return
@@ -346,6 +399,7 @@ def main() -> None:
         script = '''set -eu
 root=$1
 mount --bind /usr "$root/usr"
+mount -t proc proc "$root/proc"
 mkdir "$root/dev/pts"
 mount -t devpts devpts "$root/dev/pts" -o newinstance,ptmxmode=0666,mode=0620
 ln -s pts/ptmx "$root/dev/ptmx"
@@ -358,7 +412,7 @@ for part in lib lib64 bin sbin; do
 done
 exec chroot "$root" /usr/bin/python3 /fixture.py --inside
 '''
-        subprocess.run(['unshare', '--user', '--map-root-user', '--mount', '--propagation', 'private',
+        subprocess.run(['unshare', '--user', '--map-root-user', '--mount', '--pid', '--fork', '--propagation', 'private',
                         '/bin/sh', '-c', script, 'fixture', str(root)], check=True, timeout=180)
 
 if __name__ == '__main__':

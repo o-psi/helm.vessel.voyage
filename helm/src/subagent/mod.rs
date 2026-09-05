@@ -123,6 +123,8 @@ impl AgentPolicy {
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AgentRecord {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub completion: Option<crate::completion::runtime::RunReference>,
     pub id: AgentId,
     pub parent_id: Option<AgentId>,
     pub name: String,

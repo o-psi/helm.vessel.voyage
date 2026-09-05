@@ -1,7 +1,7 @@
 # Runtime administrator ceiling
 
-On Linux, Helm agent execution through `run`/`chat`, the TUI, resumed sessions and
-child builders reads the fixed
+On Linux, Helm agent execution through `run`/`chat`, the TUI, resumed sessions,
+`managed submit` and child builders reads the fixed
 protected `/etc/helm/policy-ceiling.toml` source described in
 [policy-profiles.md](policy-profiles.md). There is no user-configurable path or
 skip flag. An absent source under trusted ancestry preserves the existing Config
@@ -100,3 +100,12 @@ A child delegates its resolved roots to descendants, including narrowing from
 workspace-relative ceiling roots, so a nested child cannot regain the root
 session workspace. New worktree destinations and retained leases still undergo
 the current policy and Git checks described above.
+
+Managed submission checks the fixed source before accepting a new durable run;
+its shared runtime builder resolves matching policy and environment again before
+resources are constructed. A failed recheck after admission remains an honestly
+failed run subject to the existing cleanup obligation. Exact retries of previously
+accepted commands remain inert receipt observations, not new execution grants.
+Managed create/list/recover are separate administrative operations. Common run
+preparation also checks freshness before creating a completion scope or allowing
+CLI/TUI canonical insertion; dispatch retains its independent check.

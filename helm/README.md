@@ -17,6 +17,7 @@ administer scoped systems, and maintain a durable working conversation.
 - Full-screen Ratatui chat, one-shot/plain modes, session management, and token accounting
 - Bounded parallel subagents with messaging, cancellation, durable results, and Git worktrees
 - Atomic JSON session persistence under the platform data directory
+- Explicit private managed sessions with SQLite history, exact command retries, and cross-process cancellation
 - Library interfaces for custom providers, event sinks, approvers, and tools
 
 Helm treats safety as a runtime boundary, not a prompt convention. Filesystem tools
@@ -88,6 +89,20 @@ helm --access unrestricted chat
 helm sessions
 helm run --resume 0198... "continue, but export the findings as markdown"
 ```
+
+For private sessions driven by separate CLI invocations, use `helm managed`:
+
+```sh
+helm --workspace "$PWD" managed --directory "$HOME/.local/share/helm-managed" create
+helm managed --directory "$HOME/.local/share/helm-managed" list
+helm managed --directory "$HOME/.local/share/helm-managed" submit SESSION_UUID \
+  --expected-revision REVISION "Continue the work"
+```
+
+These sessions use an explicitly selected private SQLite journal. See
+[Private managed sessions](../docs/local-managed-sessions.md) for receipts,
+cancellation, cleanup recovery, and the native-provider execution boundary.
+Existing chat/run JSON sessions are not automatically transferred.
 
 The full-screen chat keeps the user/assistant conversation in focus. A sent prompt appears
 immediately, and remains in saved history even when a run is cancelled or fails. Tool activity

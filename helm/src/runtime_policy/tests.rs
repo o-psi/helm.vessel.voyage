@@ -212,6 +212,7 @@ async fn changed_ceiling_stops_reused_agent_before_provider_or_run_events() {
         Box::new(Count(calls.clone())),
         ToolRegistry::default(),
         ToolContext {
+            completion: None,
             policy: Arc::new(runtime.policy().clone()),
             approver: Arc::new(UnattendedApprover { allow: false }),
             timeout: std::time::Duration::from_secs(1),
@@ -235,6 +236,12 @@ async fn changed_ceiling_stops_reused_agent_before_provider_or_run_events() {
         .run(first.messages, "must not reach provider".into())
         .await;
     assert!(matches!(second, Err(AgentError::Policy(_))));
+    let session = crate::session::Session::new(root.path().join("workspace"), "fixture".into());
+    assert!(matches!(
+        agent.prepare_run(&session).await,
+        Err(AgentError::Policy(_))
+    ));
+    assert!(session.messages.is_empty() && session.completion_runs.is_empty());
     assert_eq!(calls.load(Ordering::SeqCst), 1);
     assert!(matches!(
         agent.models(true).await,
