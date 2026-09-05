@@ -11,6 +11,9 @@ turn-command UUID, including commands in another session. The request binds text
 session, run, submitting machine/principal, expected revision and deadline. Exact
 retries return the durable outcome without sending again, even after the original
 deadline; changed bindings conflict and current caller authorization still applies.
+Production handles sample a trusted system clock after acquiring the storage
+transaction and again before applying pending input; callers cannot supply a
+stale timestamp. Newly expired receipts cannot reach provider dispatch.
 Pending text is not inserted into the canonical transcript or provider context.
 
 A managed steering handle commits Queued before sending to its bounded channel.

@@ -37,9 +37,19 @@ impl RunOwner {
         &mut self,
         authority: Arc<dyn SteeringAuthorization>,
     ) -> anyhow::Result<ManagedSteeringHandle> {
+        self.enable_steering_with_clock(authority, Arc::new(SystemClock))
+    }
+    pub(super) fn enable_steering_with_clock(
+        &mut self,
+        authority: Arc<dyn SteeringAuthorization>,
+        clock: Arc<dyn RuntimeClock>,
+    ) -> anyhow::Result<ManagedSteeringHandle> {
         anyhow::ensure!(self.input.is_some(), "turn already executing");
         anyhow::ensure!(
-            self.token.steering_authority.set(authority).is_ok(),
+            self.token
+                .steering_authority
+                .set((authority, clock))
+                .is_ok(),
             "steering authority already configured"
         );
         Ok(ManagedSteeringHandle {
@@ -51,10 +61,13 @@ impl RunOwner {
 impl ManagedSteeringHandle {
     /// Commit queue evidence before delivery. Exact retries observe durable state,
     /// never resend. Failed rejection persistence poisons further dispatch/acceptance.
-    pub async fn submit(
+    pub async fn submit(&self, request: SteeringAdmission) -> anyhow::Result<SteeringOutcome> {
+        self.submit_after_queue(request, || {}).await
+    }
+    pub(super) async fn submit_after_queue(
         &self,
         request: SteeringAdmission,
-        now_ms: i64,
+        after_queue: impl FnOnce() + Send + 'static,
     ) -> anyhow::Result<SteeringOutcome> {
         let checkpoint = self.checkpoint.clone();
         let sender = self.sender.clone();
@@ -73,15 +86,17 @@ impl ManagedSteeringHandle {
                 !checkpoint.token.poisoned.load(Ordering::SeqCst),
                 "steering persistence uncertain"
             );
-            let authority = checkpoint
+            let (authority, clock) = checkpoint
                 .token
                 .steering_authority
                 .get()
                 .ok_or_else(|| anyhow::anyhow!("steering authority unavailable"))?;
             authority.authorize(request.actor, request.session_id, request.run_id)?;
             let Store { journal, guard, .. } = &mut *store;
-            let mut outcome = journal.queue_steering(guard, &request, now_ms)?;
+            let mut outcome =
+                journal.queue_steering_with_clock(guard, &request, || clock.now_ms())?;
             if !outcome.duplicate {
+                after_queue();
                 if let Err(error) = sender.try_send_message(outcome.record.queued_message()) {
                     let reason = match error {
                         crate::agent::SteeringError::Full(_) => SteeringRejection::QueueFull,
@@ -108,7 +123,7 @@ pub(super) fn authorize(store: &Store, token: &TurnToken) -> anyhow::Result<()> 
         "steering persistence uncertain"
     );
     for actor in store.journal.steering_actors(store.run_id)? {
-        let authority = token
+        let (authority, _) = token
             .steering_authority
             .get()
             .ok_or_else(|| anyhow::anyhow!("steering authority unavailable"))?;

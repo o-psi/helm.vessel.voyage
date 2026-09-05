@@ -435,14 +435,14 @@ async fn corrupt_storage_and_wrong_local_model_prevent_provider_dispatch() {
 async fn steering_is_checkpointed_in_fifo_order_before_provider_dispatch() {
     let (dir, mut owner, agent, _, _, retry) = setup("success", Arc::new(SilentSink)).await;
     let sender = owner
-        .enable_steering(Arc::new(steering::allow_actor))
+        .enable_steering_with_clock(Arc::new(steering::allow_actor), Arc::new(|| Ok(1)))
         .unwrap();
     sender
-        .submit(steering::request(&owner, "first steering").await, 1)
+        .submit(steering::request(&owner, "first steering").await)
         .await
         .unwrap();
     sender
-        .submit(steering::request(&owner, "second steering").await, 1)
+        .submit(steering::request(&owner, "second steering").await)
         .await
         .unwrap();
     owner
@@ -466,7 +466,7 @@ async fn steering_is_checkpointed_in_fifo_order_before_provider_dispatch() {
     );
     assert!(
         sender
-            .submit(steering::request(&owner, "too late").await, 1)
+            .submit(steering::request(&owner, "too late").await)
             .await
             .is_err()
     );
@@ -545,10 +545,10 @@ async fn failed_steering_checkpoint_never_announces_durable_application() {
     let sink = Arc::new(Observed::default());
     let (dir, mut owner, agent, requests, effects, _) = setup("success", sink.clone()).await;
     let sender = owner
-        .enable_steering(Arc::new(steering::allow_actor))
+        .enable_steering_with_clock(Arc::new(steering::allow_actor), Arc::new(|| Ok(1)))
         .unwrap();
     sender
-        .submit(steering::request(&owner, "steering-sentinel").await, 1)
+        .submit(steering::request(&owner, "steering-sentinel").await)
         .await
         .unwrap();
     fixture_database(dir.path().join("attachment/journal.sqlite3")).unwrap()

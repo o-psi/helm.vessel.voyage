@@ -498,3 +498,61 @@ fn actual_process_exit_preserves_receipt_and_never_requeues_execution() {
         );
     }
 }
+
+#[test]
+fn exact_byte_limit_evidence_capacity_and_replay_eviction_preserve_dedup() {
+    let (_dir, mut journal, session, request) = setup();
+    let guard = journal.acquire_execution(session.id).unwrap();
+    let run = journal.admit_turn(&guard, &request, 1).unwrap().run;
+    journal.mark_running(&guard, run.id).unwrap();
+    let mut first = pending(&journal, &run);
+    first.text = "x".repeat(crate::agent::MAX_STEERING_BYTES);
+    journal.queue_steering(&guard, &first, 1).unwrap();
+    journal
+        .reject_steering(&guard, run.id, first.receipt_id, SteeringRejection::Closed)
+        .unwrap();
+    for _ in 1..MAX_STEERING_PER_RUN {
+        let next = pending(&journal, &run);
+        journal.queue_steering(&guard, &next, 1).unwrap();
+        journal
+            .reject_steering(&guard, run.id, next.receipt_id, SteeringRejection::Closed)
+            .unwrap();
+    }
+    let before = journal.load_session(session.id).unwrap().revision;
+    assert!(
+        journal
+            .queue_steering(&guard, &pending(&journal, &run), 1)
+            .is_err()
+    );
+    assert_eq!(journal.load_session(session.id).unwrap().revision, before);
+    // Eviction is independent of receipt storage; exactly retry the original
+    // payload after its queued event has fallen outside the replay window.
+    for _ in 0..REPLAY_LIMIT {
+        journal.append_text(&guard, run.id, "x").unwrap();
+    }
+    assert!(
+        journal
+            .queue_steering(&guard, &first, 90_000)
+            .unwrap()
+            .duplicate
+    );
+    assert_eq!(journal.load_session(session.id).unwrap().revision, before);
+}
+
+#[test]
+fn steering_revision_overflow_rolls_back_queue_and_replay_evidence() {
+    let (_dir, mut journal, session, request) = setup();
+    let guard = journal.acquire_execution(session.id).unwrap();
+    let run = journal.admit_turn(&guard, &request, 1).unwrap().run;
+    journal
+        .connection
+        .execute("UPDATE sessions SET revision=?1", [i64::MAX])
+        .unwrap();
+    let guidance = pending(&journal, &run);
+    assert!(journal.queue_steering(&guard, &guidance, 1).is_err());
+    assert!(journal.steering_record(guidance.receipt_id).is_err());
+    assert_eq!(
+        journal.load_session(session.id).unwrap().revision,
+        i64::MAX as u64
+    );
+}

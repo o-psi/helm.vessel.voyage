@@ -53,7 +53,7 @@ pub struct ManagedSessionOwner {
 }
 struct TurnToken {
     run_id: Uuid,
-    steering_authority: OnceLock<Arc<dyn SteeringAuthorization>>,
+    steering_authority: OnceLock<(Arc<dyn SteeringAuthorization>, Arc<dyn RuntimeClock>)>,
     poisoned: AtomicBool,
 }
 impl TurnToken {
@@ -406,9 +406,16 @@ impl RunCheckpoint for ManagedRunCheckpoint {
         let token = self.token.clone();
         self.storage(move |store| {
             steering::authorize(store, &token)?;
-            store
-                .journal
-                .checkpoint_canonical(&store.guard, store.run_id, &messages, &usage)
+            store.journal.checkpoint_canonical_with_clock(
+                &store.guard,
+                store.run_id,
+                &messages,
+                &usage,
+                || match token.steering_authority.get() {
+                    Some((_, clock)) => clock.now_ms(),
+                    None => SystemClock.now_ms(),
+                },
+            )
         })
         .await
     }

@@ -558,7 +558,7 @@ async fn failed_or_invalid_clocks_leave_no_admission_but_duplicates_remain_obser
     let failed: Arc<dyn RuntimeClock> = Arc::new(|| anyhow::bail!("clock unavailable"));
     for clock in [
         failed.clone(),
-        Arc::new(|| Ok(-1)) as Arc<dyn RuntimeClock>,
+        Arc::new(|| Ok(-1_i64)) as Arc<dyn RuntimeClock>,
         Arc::new(|| Ok(i64::MAX)),
     ] {
         assert!(

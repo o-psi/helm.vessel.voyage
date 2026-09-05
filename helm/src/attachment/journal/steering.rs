@@ -69,6 +69,7 @@ impl SteeringRecord {
         self.message(SteeringStatus::Queued)
     }
 }
+#[derive(Debug)]
 pub struct SteeringOutcome {
     pub duplicate: bool,
     pub record: SteeringRecord,
