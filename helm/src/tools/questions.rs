@@ -637,4 +637,46 @@ mod tests {
             assert!(!error.to_string().contains("diagnostic"));
         }
     }
+    #[tokio::test]
+    async fn questions_redacts_each_answer_once_when_secret_matches_placeholder() {
+        let dir = tempfile::tempdir().unwrap();
+        for secret in ["REDACTED", "REDA", "CTED"] {
+            for selected in [false, true] {
+                let answer = if selected {
+                    QuestionAnswer::Selected {
+                        index: 1,
+                        answer: secret.into(),
+                    }
+                } else {
+                    QuestionAnswer::Custom {
+                        answer: format!("before {secret} after"),
+                    }
+                };
+                let (mut ctx, _) = context(dir.path(), answer, false);
+                ctx.redactor = Arc::new(Redactor::new([secret.to_owned()]));
+                let result = ToolRegistry::standard()
+                    .execute(
+                        "questions",
+                        json!({"question":"Which format?","options":["public",secret]}),
+                        &ctx,
+                    )
+                    .await
+                    .unwrap();
+                let expected = if selected {
+                    QuestionAnswer::Selected {
+                        index: 1,
+                        answer: "[REDACTED]".into(),
+                    }
+                } else {
+                    QuestionAnswer::Custom {
+                        answer: "before [REDACTED] after".into(),
+                    }
+                };
+                assert_eq!(
+                    serde_json::from_str::<QuestionAnswer>(&result).unwrap(),
+                    expected
+                );
+            }
+        }
+    }
 }
