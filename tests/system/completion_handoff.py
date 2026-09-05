@@ -111,6 +111,21 @@ def main():
                 os.write(master, b"\x1b")
                 wait_until(lambda: saved() and saved().get("run_summaries") and saved()["run_summaries"][0]["phase"] == "interrupted", "root cancellation and owned shutdown")
                 before = saved()
+                # The worker persists interruption before the TUI processes its
+                # Finished event. Enter is still steering until that event clears
+                # the active run; observe a finished redraw before issuing /plain.
+                deadline = time.monotonic() + 20
+                size = 24
+                while True:
+                    start = len(output)
+                    size = 25 if size == 24 else 24
+                    fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack("HHHH", size, 101, 0, 0))
+                    redraw_deadline = time.monotonic() + 0.2
+                    while time.monotonic() < redraw_deadline:
+                        drain()
+                    if b"Error: run was not accepted:" in output[start:]:
+                        break
+                    assert time.monotonic() < deadline, ("finished TUI cancellation acknowledgement", bytes(output[-5000:]))
                 os.write(master, b"/plain\r")
                 wait_until(lambda: b"Type /help for commands." in output, "plain child startup")
                 os.write(master, b"after-handoff\n")
