@@ -476,3 +476,74 @@ fn active_guidance_accept_matches_loader_limit_and_sidecar_keeps_larger_limit() 
         }
     }
 }
+
+#[cfg(target_os = "linux")]
+#[test]
+fn active_guidance_preview_limit_keeps_sidecar_capacity() {
+    let root = tempfile::tempdir().unwrap();
+    for index in 0..64 {
+        let directory = root
+            .path()
+            .join(format!("project-{index}-{}", "x".repeat(100)));
+        fs::create_dir(&directory).unwrap();
+        for name in GUIDANCE {
+            fs::write(directory.join(name), "instructions").unwrap();
+        }
+        fs::write(directory.join("Cargo.toml"), "[workspace]\nmembers=[]\n").unwrap();
+    }
+    let text = render(&inspect(root.path()).unwrap());
+    assert!(text.len() > 65536 && text.len() <= MAX_FILE);
+    for name in ["AGENTS.md", "agents.md", "sidecar.md"] {
+        let result = run(
+            OnboardArgs {
+                command: OnboardCommand::Preview {
+                    against: None,
+                    output: Some(name.into()),
+                    confirm: true,
+                },
+            },
+            &Config::default(),
+            Some(root.path().into()),
+        );
+        assert_eq!(result.is_ok(), name == "sidecar.md");
+        assert_eq!(root.path().join(name).exists(), name == "sidecar.md");
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn active_guidance_opposite_spelling_writers_serialize_and_release_guard_on_error() {
+    use std::sync::mpsc;
+    let root = tempfile::tempdir().unwrap();
+    let store = storage::Root::open(root.path()).unwrap();
+    let (entered_tx, entered_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let worker = std::thread::spawn(move || {
+        store.publish_observed(Path::new("AGENTS.md"), b"first", |published| {
+            if !published {
+                entered_tx.send(()).unwrap();
+                release_rx
+                    .recv_timeout(std::time::Duration::from_secs(5))
+                    .unwrap();
+            }
+            Ok(())
+        })
+    });
+    entered_rx
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .unwrap();
+    let other = storage::Root::open(root.path()).unwrap();
+    assert!(other.publish(Path::new("agents.md"), b"second").is_err());
+    release_tx.send(()).unwrap();
+    worker.join().unwrap().unwrap();
+    assert!(other.publish(Path::new("agents.md"), b"second").is_err());
+    fs::remove_file(root.path().join("AGENTS.md")).unwrap();
+    // The previous early return on existing guidance must have released its lock.
+    other
+        .publish(Path::new("agents.md"), b"after explicit removal")
+        .unwrap();
+    assert_eq!(
+        fs::read(root.path().join("agents.md")).unwrap(),
+        b"after explicit removal"
+    );
+}

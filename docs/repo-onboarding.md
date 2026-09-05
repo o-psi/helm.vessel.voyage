@@ -48,13 +48,19 @@ helm --workspace /absolute/project onboard accept \
   --draft guidance-draft.md --sha256 REVIEWED_SHA256 --output AGENTS.generated.md
 ```
 
-An existing destination, including a dangling symlink, is never replaced. When no
-`AGENTS.md` exists, you can explicitly choose that destination; otherwise keep a
+An existing destination, including a dangling symlink, is never replaced. When neither
+`AGENTS.md` nor `agents.md` exists in the destination directory, you can explicitly
+choose either active filename; otherwise keep a
 sidecar and manually merge the reviewed guidance using your usual editing process.
 A sidecar is not automatically loaded into model instructions. Edited content must
 remain bounded UTF-8 without terminal controls. A digest mismatch rejects the
 operation; it does not accept newly changed content. The digest confirms selected
 bytes, not authorship, command verification or permission to broaden policy.
+Both preview and acceptance limit active `AGENTS.md`/`agents.md` files to the
+runtime loader’s 64 KiB; sidecar drafts retain the 256 KiB limit. Cooperating
+onboarding writers serialize active-name publication within each destination
+directory and fail promptly when busy. Coordinate external guidance edits manually:
+this does not lock out editors or arbitrary processes writing the other spelling.
 Read-only mode rejects both draft creation and acceptance.
 
 Rerun discovery and inspect differences from a previous draft:

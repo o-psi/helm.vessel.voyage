@@ -114,6 +114,33 @@ def main():
                 run('accept','--draft',str(draft),'--sha256',hashlib.sha256(draft.read_bytes()).hexdigest(),
                     '--output',str(nested/output),expected=0 if allowed else 1)
                 assert (nested/output).exists()==allowed
+        # Separate onboarding processes cannot each install a different active spelling.
+        race= root/'racing-guidance';race.mkdir()
+        workers=[subprocess.Popen([str(HELM),'--config',str(config),'--workspace',str(race),
+                 'onboard','preview','--output',name,'--confirm'],env=env,stdin=subprocess.DEVNULL,
+                 stdout=subprocess.PIPE,stderr=subprocess.PIPE) for name in ['AGENTS.md','agents.md']]
+        results=[]
+        for worker in workers:
+            worker.communicate(timeout=8)
+            results.append(worker.returncode)
+        assert sorted(results)==[0,1],results
+        assert sum((race/name).exists() for name in ['AGENTS.md','agents.md'])==1
+        # Large generated previews are usable as sidecars but cannot break the loader.
+        original_workspace=workspace
+        workspace=root/'large-preview';workspace.mkdir()
+        for index in range(64):
+            directory=workspace/('project-'+str(index)+'-'+'x'*100);directory.mkdir()
+            for name in ['AGENTS.md','agents.md','README.md','README','CONTRIBUTING.md']:
+                (directory/name).write_text('instructions')
+            (directory/'Cargo.toml').write_text('[workspace]\nmembers=[]\n')
+        generated=run('preview').stdout
+        assert 65536 < len(generated.encode()) <= 256*1024
+        for name in ['AGENTS.md','agents.md']:
+            run('preview','--output',name,'--confirm',expected=1)
+            assert not (workspace/name).exists()
+        run('preview','--output','sidecar.md','--confirm')
+        assert (workspace/'sidecar.md').read_text()==generated
+        workspace=original_workspace
         assert not (root / 'data').exists(), 'onboarding initialized session/provider state'
     print('repo onboarding: deterministic inspect, preview, edit, acceptance, diff and preservation passed')
 

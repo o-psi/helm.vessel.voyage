@@ -84,6 +84,7 @@ impl Root {
     }
     pub(super) fn publish(&self, path: &Path, bytes: &[u8]) -> Result<()> {
         let (directory, name) = self.parent(path)?;
+        let _guard = instruction_guard(&directory, &name, bytes)?;
         crate::file_publication::Publication::prepare(directory, &name)?.publish(bytes)
     }
     #[cfg(test)]
@@ -94,7 +95,60 @@ impl Root {
         observe: impl FnMut(bool) -> Result<()>,
     ) -> Result<()> {
         let (directory, name) = self.parent(path)?;
+        let _guard = instruction_guard(&directory, &name, bytes)?;
         crate::file_publication::Publication::prepare(directory, &name)?
             .publish_observed(bytes, observe)
     }
+}
+
+// The fresh directory open gives every writer its own flock description. A dup
+// of Root's descriptor would share a lock and fail to serialize same-process use.
+struct InstructionGuard {
+    #[cfg(target_os = "linux")]
+    file: cap_std::fs::File,
+}
+#[cfg(target_os = "linux")]
+impl Drop for InstructionGuard {
+    fn drop(&mut self) {
+        use std::os::fd::AsRawFd;
+        // Explicit unlock also releases locks inherited by a concurrent fork.
+        unsafe {
+            libc::flock(self.file.as_raw_fd(), libc::LOCK_UN);
+        }
+    }
+}
+fn instruction_guard(
+    directory: &Dir,
+    name: &Path,
+    bytes: &[u8],
+) -> Result<Option<InstructionGuard>> {
+    if name != Path::new("AGENTS.md") && name != Path::new("agents.md") {
+        return Ok(None);
+    }
+    if bytes.len() as u64 > crate::workspace_instructions::MAX_BYTES {
+        bail!("active workspace guidance exceeds the runtime 64 KiB limit; use a sidecar draft")
+    }
+    #[cfg(target_os = "linux")]
+    let guard = {
+        use std::os::fd::AsRawFd;
+        let file = directory.open(".")?;
+        if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
+            bail!(
+                "another onboarding guidance publication owns this directory; retry after it finishes"
+            )
+        }
+        InstructionGuard { file }
+    };
+    #[cfg(not(target_os = "linux"))]
+    let guard = InstructionGuard {};
+    for existing in ["AGENTS.md", "agents.md"] {
+        match directory.symlink_metadata(existing) {
+            Ok(_) => bail!(
+                "existing agent guidance must be preserved; publish a sidecar and merge manually"
+            ),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Ok(Some(guard))
 }
