@@ -688,3 +688,53 @@ async fn registry_private_branch_uses_common_authority_guard_and_wrapped_approve
         assert_eq!(approval.calls.load(SeqCst), usize::from(during_approval));
     }
 }
+
+#[tokio::test]
+async fn private_environment_reserves_configured_case_aliases_before_effects() {
+    for managed in [false, true] {
+        if managed && !cfg!(target_os = "linux") {
+            continue;
+        }
+        for alias in [
+            "HELM_WORKFLOW_TOKEN",
+            "helm_workflow_token",
+            "HeLm_WoRkFlOw_ToKeN",
+            "HELM_WORKFLOW_TOKEN",
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let mut ctx = context(dir.path());
+            ctx.environment
+                .insert(alias.into(), "configured-private-value".into());
+            let bound = bindings(ctx.execution_id, "bound-private-value");
+            let mut registry = ToolRegistry::default();
+            let manager = managed.then(ManagedShell::new);
+            if let Some(manager) = &manager {
+                registry.register(manager.clone());
+            } else {
+                registry.register(Shell);
+            }
+            let result = registry
+                .execute_with_workflow_secrets(
+                    "shell",
+                    serde_json::json!({"command":"touch forbidden", "workflow_secrets":["token"]}),
+                    &ctx,
+                    Some(&bound),
+                )
+                .await;
+            assert!(
+                matches!(result, Err(ToolError::InvalidArguments(_))),
+                "configured alias was not refused: {alias}"
+            );
+            assert!(!dir.path().join("forbidden").exists());
+            assert!(!result.unwrap_err().to_string().contains("private-value"));
+            if let Some(manager) = manager {
+                assert!(
+                    manager
+                        .shutdown(Duration::from_secs(5))
+                        .await
+                        .observation_complete
+                );
+            }
+        }
+    }
+}
