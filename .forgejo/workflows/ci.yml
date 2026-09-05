@@ -57,6 +57,10 @@ jobs:
           HELM_BIN: target/release/helm
         run: python3 tests/system/completion_handoff.py
       - run: python3 tests/system/vessel_lifecycle.py
+      - name: Verify evaluation runner and timeout evidence with an offline provider
+        env:
+          HELM_BIN: target/release/helm
+        run: python3 tests/system/eval_runner.py
       - run: python3 eval/run.py validate
       - run: ./scripts/package-release "ci-${{ github.sha }}"
       - run: cd dist && sha256sum -c *.sha256
