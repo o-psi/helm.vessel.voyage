@@ -138,3 +138,9 @@ CLI/TUI/Vessel outcome and provisional-output coverage; offline reconciliation E
 adversarial behavioral evaluations; approved/budgeted real-provider smoke; and
 Linux/macOS/Windows delivery evidence. Unit serialization tests are not disk recovery
 or E2E evidence, and evaluation manifest validation is not a live evaluation.
+
+Frontend handoffs stop accepting new subagents, cancel active/queued children,
+and await their tracked persistence/archival tasks before releasing the workspace
+writer lease. A ten-second drain timeout refuses the handoff instead of bypassing
+ownership. The offline `tests/system/completion_handoff.py` regression exercises a
+live child, TUI-to-plain relaunch and a subsequent turn in the same saved session.

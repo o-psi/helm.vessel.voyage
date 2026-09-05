@@ -52,6 +52,10 @@ jobs:
         env:
           HELM_BIN: target/release/helm
         run: python3 tests/system/completion_readiness.py
+      - name: Verify runtime ownership release during frontend handoff
+        env:
+          HELM_BIN: target/release/helm
+        run: python3 tests/system/completion_handoff.py
       - run: python3 tests/system/vessel_lifecycle.py
       - run: python3 eval/run.py validate
       - run: ./scripts/package-release "ci-${{ github.sha }}"

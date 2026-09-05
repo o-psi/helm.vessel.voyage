@@ -1062,7 +1062,7 @@ async fn tui_chat(
         redactor: redactor(&active_config),
     };
     let subagents = build_subagents(&active_config, &session.workspace).await?;
-    let subagent_runtime = subagents.runtime.clone();
+    let subagent_runtime = subagents.runtime;
     let todo = subagents.todos.clone();
     let tools = build_tools(
         &active_config,
@@ -1104,14 +1104,23 @@ async fn tui_chat(
         bridge.sender(),
         terminals,
         Arc::new(helm::supervision::RuntimeAgentSupervisor::new(
-            subagent_runtime,
+            subagent_runtime.clone(),
         )),
         todo.store(),
         provider_label,
         active_config.access_mode(),
     )
-    .await?;
-    match exit {
+    .await;
+    // A relaunched process must acquire the same workspace writer lease. Drain
+    // workers before dropping the last runtime owner, including on UI errors.
+    tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        subagent_runtime.shutdown(),
+    )
+    .await
+    .context("subagent shutdown timed out; refusing frontend handoff")?;
+    drop(subagent_runtime);
+    match exit? {
         helm::tui::TuiExit::Quit => Ok(()),
         helm::tui::TuiExit::Launch(request) => {
             launch_from_tui(&active_config, session_id, request, verbose, log_format).await

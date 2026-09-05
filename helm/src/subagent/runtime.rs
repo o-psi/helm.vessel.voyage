@@ -125,6 +125,7 @@ pub struct SubagentRuntime {
 }
 struct Inner {
     executor: Arc<dyn SubagentExecutor>,
+    tasks: tokio_util::task::TaskTracker,
     limits: RuntimeLimits,
     permits: Arc<Semaphore>,
     agents: RwLock<BTreeMap<AgentId, Arc<Control>>>,
@@ -204,6 +205,7 @@ impl SubagentRuntime {
         Ok(Self {
             inner: Arc::new(Inner {
                 executor,
+                tasks: tokio_util::task::TaskTracker::new(),
                 permits: Arc::new(Semaphore::new(limits.max_concurrency)),
                 limits,
                 agents: RwLock::new(BTreeMap::new()),
@@ -413,6 +415,21 @@ impl SubagentRuntime {
             .collect()
     }
 
+    /// Stop accepting work and drain cancelled workers before a frontend handoff.
+    /// Callers may bound this wait, but must not release or bypass the writer
+    /// lease if draining fails. Tracked workers finish persistence before exit.
+    pub async fn shutdown(&self) {
+        {
+            let _mutation = self.inner.mutations.lock().await;
+            self.inner.permits.close();
+            for control in self.inner.agents.read().await.values() {
+                control.cancel.cancel();
+            }
+            self.inner.tasks.close();
+        }
+        self.inner.tasks.wait().await;
+    }
+
     pub async fn spawn(&self, request: SpawnRequest) -> Result<AgentId, RuntimeError> {
         self.spawn_for_run(request, None).await
     }
@@ -422,6 +439,9 @@ impl SubagentRuntime {
         mut completion: Option<crate::completion::runtime::RunHandle>,
     ) -> Result<AgentId, RuntimeError> {
         let _mutation = self.inner.mutations.lock().await;
+        if self.inner.permits.is_closed() {
+            return Err(RuntimeError::Invalid("runtime is shutting down".into()));
+        }
         if request.task.trim().is_empty() || request.name.trim().is_empty() {
             return Err(RuntimeError::Invalid(
                 "name and task cannot be empty".into(),
@@ -537,7 +557,7 @@ impl SubagentRuntime {
         drop(agents);
         self.emit(id, SubagentEventKind::Queued).await;
         let runtime = self.clone();
-        tokio::spawn(async move {
+        self.inner.tasks.spawn(async move {
             runtime.run(id, inbox_rx, control).await;
         });
         Ok(id)
@@ -1178,6 +1198,68 @@ mod tests {
         executor.gate.notify_one();
         assert_eq!(runtime.wait(first).await.unwrap().unwrap().summary, "done");
         assert_eq!(executor.peak.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn shutdown_drains_active_and_queued_workers_before_writer_handoff() {
+        let root = tempfile::tempdir().unwrap();
+        let coordinator = crate::completion::runtime::Coordinator::open(
+            root.path().join("completion"),
+            root.path(),
+        )
+        .unwrap();
+        let store =
+            AgentTreeStore::new(root.path().join("agents.json")).with_coordinator(coordinator);
+        let runtime = SubagentRuntime::new_persistent(
+            Arc::new(GateExecutor::new()),
+            RuntimeLimits {
+                max_concurrency: 1,
+                event_history: 32,
+            },
+            store.clone(),
+        )
+        .await
+        .unwrap();
+        let first = runtime.spawn(request("active")).await.unwrap();
+        let second = runtime.spawn(request("queued")).await.unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(3), async {
+            while runtime.get(first).await.unwrap().status != AgentStatus::Running {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(3), runtime.shutdown())
+            .await
+            .unwrap();
+        for id in [first, second] {
+            assert!(runtime.wait(id).await.unwrap().is_err());
+            assert!(runtime.get(id).await.unwrap().status.is_terminal());
+        }
+        assert!(runtime.spawn(request("too late")).await.is_err());
+        // Shutdown drains work but does not bypass the owner lease.
+        assert!(
+            SubagentRuntime::new_persistent(
+                Arc::new(GateExecutor::new()),
+                RuntimeLimits::default(),
+                store.clone()
+            )
+            .await
+            .is_err()
+        );
+        drop(runtime);
+        let next = SubagentRuntime::new_persistent(
+            Arc::new(GateExecutor::new()),
+            RuntimeLimits::default(),
+            store,
+        )
+        .await
+        .unwrap();
+        for id in [first, second] {
+            assert!(next.wait(id).await.unwrap().is_err());
+            assert!(next.get(id).await.unwrap().status.is_terminal());
+        }
+        next.shutdown().await;
     }
 
     #[tokio::test]
