@@ -38,6 +38,7 @@ impl std::fmt::Debug for FinalizationFailure {
             AgentError::ReconciliationExpired => "reconciliation_deadline",
             AgentError::Completion(_) => "completion_store",
             AgentError::Context(_) => "context",
+            AgentError::Policy(_) => "policy",
             AgentError::Provider(_) => "provider",
             AgentError::WorkspaceInstructions(_) => "workspace_instructions",
             AgentError::Cancelled => "cancelled",

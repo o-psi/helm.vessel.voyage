@@ -11,6 +11,7 @@ pub mod onboarding;
 pub mod policy;
 pub mod policy_profile;
 pub mod provider;
+pub mod runtime_policy;
 pub mod session;
 pub mod subagent;
 pub mod supervision;
