@@ -409,6 +409,9 @@ async fn run(
 }
 
 #[cfg(test)]
+mod socket_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
