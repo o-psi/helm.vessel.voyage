@@ -2,36 +2,25 @@
 
 Voyage is a system for general-purpose LLM work across local and remote machines.
 
-- **Helm** is the Rust TUI and agent runtime. `helm --voyage` pairs it with a Vessel;
-  Helm then maintains an outbound worker connection while preserving local policy.
-- **Vessel** is the management plane. It claims pairing strings, tracks liveness,
-  queues work, and dispatches it over connections initiated by Helms.
-- **voyage-protocol** owns the versioned wire types shared by both binaries.
-
-```text
-operator ── Helm TUI ── local tools
-    │
-    └── Vessel ◀── outbound paired Helm worker(s) ── scoped tools/workspaces
-```
+- **Helm** is the Rust TUI and agent runtime for local work.
+- **Vessel** is the management plane, currently retaining health/readiness and an
+  authenticated status UI while its connection model is rebuilt.
+- **voyage-protocol** holds shared management-plane response types; the replacement
+  attachment wire contract is not implemented yet.
 
 ## Run locally
 
 ```sh
 cargo build --workspace
-
-# management plane
+cargo run -p helm -- chat
 cargo run -p vessel -- --bind 127.0.0.1:9480
-
-# In another terminal: print a one-time pairing string and wait
-OPENAI_API_KEY=... cargo run -p helm -- --voyage --name workstation
-
-# Give the printed string to Vessel
-cargo run -p vessel -- pair voyage:v1:XXXXXXXXXX
 ```
 
-Helm does not listen on a public port. Pairing codes expire after ten minutes. Once
-claimed, Helm authenticates outbound heartbeats, pulls queued tasks, executes them
-under local policy, and posts results to Vessel.
+**Helm-to-Vessel connectivity is temporarily unavailable.** Legacy pairing and
+HTTP task workers have been removed as an intentional clean break. Local Helm
+functionality remains available. See [retirement and data preservation](docs/vessel-connectivity-retirement.md)
+before upgrading existing deployments. No saved sessions or legacy enrollment/database
+data are automatically deleted or reused.
 
 See [Helm's README](helm/README.md) for provider, policy, session, and CLI details.
 Helm's native providers do not require Codex; see [provider architecture and
@@ -62,3 +51,11 @@ instructions as conversation history. See [Runtime guidance](docs/runtime-guidan
 Assistant responses use safe, streaming-aware Markdown presentation without changing the canonical
 session text. See [Markdown rendering](docs/markdown-rendering.md) for syntax, fallback, and terminal
 safety behavior.
+
+## Planned Vessel session management
+
+The agreed [Vessel-managed session design](docs/vessel-session-management.md) specifies
+`helm attach VESSEL_URL JOIN_KEY`, outbound interactive control, explicit sharing,
+and phased service/approval support. These are planned capabilities, not current
+CLI commands; the legacy path has been removed, not retained as a fallback. Delivery is
+tracked in [#77](https://github.com/o-psi/voyage/issues/77).

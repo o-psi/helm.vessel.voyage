@@ -7,10 +7,13 @@ conversation to open it. If a direct terminal is attached, detach with `Ctrl+T`
 
 The tree shows each retained agent's short ID, explicit state, elapsed time, task,
 hierarchy, and latest progress. Its header and refresh status distinguish active
-agents from retained terminal history. Terminal leaves are retired oldest-first as
-needed so the total stays within `subagent_max_agents`; active agents and ancestors
-required by retained children are never pruned, nor are completed descendants of an
-active agent. The selected row remains visible as the tree grows. `Enter`
+agents from retained terminal history. Finished terminal leaves archive automatically;
+active agents and ancestors required by retained children stay retained. Completed
+non-worktree leaves archive even under a live parent. Completed worktree records
+stay retained while ancestors are active to permit commit and integration. There
+is no fixed retained-record capacity. Models can browse them with `subagent` action
+`archive` and retrieve their original IDs with `status` or `wait`; see
+[archive behavior and retention](subagents.md#automatic-archive). The selected row remains visible as the tree grows. `Enter`
 opens the complete agent record, including parent, worktree, recent progress,
 sequenced events, result, and error. `PageUp` and `PageDown` scroll that record.
 The layout falls back to Helm's resize guidance below 32 columns by 10 rows.
@@ -18,15 +21,23 @@ The layout falls back to Helm's resize guidance below 32 columns by 10 rows.
 Controls in tree and inspection views:
 
 - `m` composes a message for the selected agent.
-- `f` composes a follow-up task. `Alt+Enter` inserts a newline and `Enter` sends.
+- `f` composes a follow-up task. `Shift+Enter` inserts a newline and `Enter` sends.
 - `c`, then `c` again, requests cancellation. Terminal agents cannot be cancelled.
 - `r` refreshes the snapshot and, while inspecting, its event history.
 - `Esc` returns from composer to inspection, inspection to tree, and tree to chat.
 
 Requests run asynchronously, so a slow supervision backend does not freeze input or
-rendering. Live events use a bounded broadcast channel. On lag, Helm reports skipped
+rendering. Live events use bounded text previews and a bounded broadcast channel;
+full stored results remain available through inspection or `status`/`wait`. On lag, Helm reports skipped
 history and refreshes the tree; durable inspection remains available through the
 adapter.
+
+Actively running subagents default to half the logical processors available to the
+process, rounded down with a minimum of one. An explicit positive
+`subagent_max_concurrency` overrides this value. Agents blocked in `wait` or
+`wait_many` release their slot and reacquire it before continuing. Entire subagent
+tasks have no automatic two-minute deadline. Message/follow-up delivery also
+yields a sender’s slot when a full mailbox needs its recipient to run.
 
 ## Runtime adapter contract
 

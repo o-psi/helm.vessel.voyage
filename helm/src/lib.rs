@@ -1,4 +1,6 @@
 pub mod agent;
+pub mod attachment;
+pub mod completion;
 pub mod config;
 pub mod markdown;
 pub mod model;
@@ -11,8 +13,9 @@ pub mod terminal;
 pub mod todo;
 pub mod tools;
 pub mod tui;
-pub mod voyage;
 
 pub use agent::{Agent, AgentEvent, AgentOutcome, EventSink};
 pub use config::{Config, ProviderKind};
 pub use model::{Message, Role};
+
+mod workspace_instructions;

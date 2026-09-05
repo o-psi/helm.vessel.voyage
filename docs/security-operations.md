@@ -14,8 +14,9 @@ Set `access = "approval"` in configuration or pass
   remain enforced; this mode is not an OS sandbox bypass.
 
 Subagents inherit the same Helm configuration and therefore cannot use commands or writes when
-the parent is read-only. Unattended Vessel work cannot display an approval prompt, so actions
-that require one follow `unattended_approval`.
+the parent is read-only. Unattended execution cannot display an approval prompt, so actions
+that require one follow `unattended_approval`. Vessel connectivity is currently
+[unavailable](vessel-connectivity-retirement.md).
 
 ## Execution boundary
 
@@ -39,10 +40,10 @@ display an approval prompt. Each request carries a unique approval ID, execution
 action, redacted target, reason, and interaction mode; the outcome is emitted as a
 structured tracing event.
 
-Vessel work is unattended and never waits for terminal input. By default,
+Unattended execution never waits for terminal input. By default,
 `unattended_approval = "deny"`: a tool requiring approval immediately returns an
 unavailable/denied result and the agent can report the blocked action. Operators may
-set it to `allow` only when Vessel, prompts, workspace, and OS identity form a trusted
+set it to `allow` only when prompts, workspace, and OS identity form a trusted
 automation boundary. `approval = "never"` bypasses questions for both modes but does
 not bypass roots or the deny list.
 
@@ -54,10 +55,10 @@ Approval and tool events carry correlation identifiers. Vessel accepts a safe
 request span.
 
 - `GET /health` is process liveness and does not inspect dependencies.
-- `GET /ready` verifies database access and gates traffic readiness.
-- `GET /metrics` exposes Prometheus text gauges for Helm and task states.
-- `GET /v1/diagnostics` returns a secret-free version, protocol, fleet, pairing, and
-  queue snapshot.
+- `GET /ready` verifies database access, not attachment availability.
+- `GET /metrics` exposes `voyage_connectivity_enabled 0`; no fleet/task gauges remain.
+- `GET /v1/diagnostics` requires operator authentication and reports version,
+  unavailable connectivity, unloaded legacy state and unimplemented attachment.
 - `helm doctor` prints a secret-free JSON check of configuration, workspace,
   credential presence, session location, environment allowlist, and MCP names.
 
@@ -65,7 +66,7 @@ Do not expose diagnostics or metrics publicly without network-layer authenticati
 They contain no credentials or prompts but reveal operational topology. Retain JSON
 logs according to local policy and restrict them as potentially sensitive metadata.
 
-The embedded Vessel operator console at `/ui` is disabled unless
+The Vessel status page at `/ui` and diagnostics are disabled unless
 `VESSEL_OPERATOR_TOKEN` (or `--operator-token`) is set. It accepts that secret as an
 HTTP Bearer token or as the password in HTTP Basic authentication. Use a randomly
 generated secret, keep it out of command history by preferring the environment
@@ -77,7 +78,8 @@ the configured token into HTML, logs, diagnostics, or persisted control-plane st
 1. Capture UTC time, release version, execution/request/approval IDs, and redacted
    logs.
 2. Stop new dispatch while preserving database and session files.
-3. Revoke enrollment credentials for suspected compromise.
+3. Isolate old workers/servers and their credentials for suspected compromise. This
+   interim build has no enrollment or revocation API; preserve private evidence.
 4. Confirm no managed or shell child process remains.
 5. Run `helm doctor`, Vessel `/ready`, `/metrics`, and `/v1/diagnostics` locally.
 6. Preserve evidence and follow the cutover rollback runbook for material failures.

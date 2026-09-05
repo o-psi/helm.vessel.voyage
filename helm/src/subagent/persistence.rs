@@ -19,10 +19,8 @@ mod tests {
     fn record(status: AgentStatus) -> AgentRecord {
         let now = Utc::now();
         let budget = AgentBudget {
-            max_turns: 2,
             max_tokens: 10,
-            max_runtime_secs: 30,
-            max_children: 1,
+
             max_terminals: 1,
         };
         AgentRecord {
@@ -62,6 +60,36 @@ mod tests {
         assert_eq!(restored.status, AgentStatus::Interrupted);
         assert!(restored.finished_at.is_some());
     }
+    #[tokio::test]
+    async fn legacy_turn_budgets_load_and_are_removed_on_save() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("tree.json");
+        let item = record(AgentStatus::Running);
+        let id = item.id;
+        let mut tree = AgentTree::default();
+        tree.insert(item.clone()).unwrap();
+        let mut legacy = serde_json::to_value(tree).unwrap();
+        for agent in legacy["agents"].as_object_mut().unwrap().values_mut() {
+            agent["budget"]["max_turns"] = serde_json::json!(1);
+            for field in ["max_runtime_secs", "max_children"] {
+                agent["budget"][field] = serde_json::json!(0);
+                agent["policy"]["budget"][field] = serde_json::json!(0);
+            }
+            agent["policy"]["budget"]["max_turns"] = serde_json::json!(64);
+        }
+        std::fs::write(&path, serde_json::to_vec(&legacy).unwrap()).unwrap();
+        let store = AgentTreeStore::new(path.clone());
+        assert_eq!(store.get(id).await.unwrap().unwrap().budget, item.budget);
+        assert_eq!(store.recover_after_restart().await.unwrap(), 1);
+        let restored = store.get(id).await.unwrap().unwrap();
+        assert_eq!(restored.status, AgentStatus::Interrupted);
+        assert_eq!(restored.policy, item.policy);
+        let saved = std::fs::read_to_string(path).unwrap();
+        for field in ["max_turns", "max_runtime_secs", "max_children"] {
+            assert!(!saved.contains(field));
+        }
+    }
+
     #[test]
     fn terminal_states_cannot_transition() {
         for status in [
@@ -89,6 +117,7 @@ mod tests {
 
         let mut child = record(AgentStatus::Completed);
         child.parent_id = Some(root_id);
+        child.worktree = Some("/worktree-for-integration".into());
         let child_id = child.id;
         tree.insert(child).unwrap();
 
@@ -139,6 +168,209 @@ mod tests {
                 .len(),
             2
         );
+    }
+    #[tokio::test]
+    async fn archive_preserves_every_terminal_outcome_and_original_links() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("tree.json");
+        let store = AgentTreeStore::new(path.clone());
+        let mut parent = None;
+        let mut expected = Vec::new();
+        for status in [
+            AgentStatus::Completed,
+            AgentStatus::Failed,
+            AgentStatus::Cancelled,
+            AgentStatus::TimedOut,
+            AgentStatus::Interrupted,
+        ] {
+            let mut item = record(status);
+            item.parent_id = parent;
+            item.result = Some("retained result α".into());
+            item.error = Some("retained error".into());
+            item.recent_progress = vec!["checkpoint".into()];
+            item.worktree = Some(directory.path().join("untouched"));
+            std::fs::write(item.worktree.as_ref().unwrap(), "user data").unwrap();
+            parent = Some(item.id);
+            expected.push(item.clone());
+            store.create(item).await.unwrap();
+        }
+        assert_eq!(store.prune_terminal_leaves(0, None).await.unwrap().len(), 5);
+        assert!(store.list().await.unwrap().is_empty());
+        let reopened = AgentTreeStore::new(path);
+        for item in expected {
+            assert_eq!(
+                reopened
+                    .get_archived(item.id)
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .record,
+                item
+            );
+            assert_eq!(
+                std::fs::read_to_string(item.worktree.unwrap()).unwrap(),
+                "user data"
+            );
+        }
+        assert_eq!(
+            reopened
+                .list_archived(None, 100)
+                .await
+                .unwrap()
+                .agents
+                .len(),
+            5
+        );
+    }
+
+    #[tokio::test]
+    async fn archive_failure_retains_original_and_retry_deduplicates() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("tree.json");
+        let store = AgentTreeStore::new(path.clone());
+        let item = record(AgentStatus::Completed);
+        store.create(item.clone()).await.unwrap();
+        std::fs::write(path.with_extension("archive"), "blocked archive directory").unwrap();
+        assert!(store.prune_terminal_leaves(0, None).await.is_err());
+        assert_eq!(store.get(item.id).await.unwrap(), Some(item.clone()));
+        std::fs::remove_file(path.with_extension("archive")).unwrap();
+        // Simulate crash after durable archive write, before working-tree retirement.
+        super::super::archive::AgentArchive::new(&path)
+            .put(&item)
+            .await
+            .unwrap();
+        assert!(
+            store
+                .list_archived(None, 20)
+                .await
+                .unwrap()
+                .agents
+                .is_empty()
+        );
+        assert_eq!(
+            store.prune_terminal_leaves(0, None).await.unwrap(),
+            vec![item.id]
+        );
+        assert_eq!(store.list_archived(None, 20).await.unwrap().agents.len(), 1);
+        assert!(
+            store
+                .prune_terminal_leaves(0, None)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn archive_pagination_is_bounded_and_workspace_scoped() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = AgentTreeStore::new(directory.path().join("tree.json"));
+        let other = AgentTreeStore::new(directory.path().join("other.json"));
+        let mut expected = Vec::new();
+        for _ in 0..5 {
+            let mut item = record(AgentStatus::Completed);
+            item.name = "α".repeat(500);
+            item.task = "β".repeat(1000);
+            expected.push(item.id);
+            store.create(item).await.unwrap();
+        }
+        store.prune_terminal_leaves(0, None).await.unwrap();
+        expected.sort();
+        let mut after = None;
+        let mut actual = Vec::new();
+        loop {
+            let page = store.list_archived(after, 2).await.unwrap();
+            assert!(page.agents.len() <= 2);
+            for agent in page.agents {
+                assert!(agent.name.chars().count() <= 120);
+                assert!(agent.task_preview.chars().count() <= 240);
+                actual.push(agent.id);
+            }
+            after = page.next_after;
+            if after.is_none() {
+                break;
+            }
+        }
+        assert_eq!(actual, expected);
+        assert!(store.list_archived(None, 0).await.is_err());
+        assert!(store.list_archived(None, 101).await.is_err());
+        assert!(
+            other
+                .list_archived(None, 20)
+                .await
+                .unwrap()
+                .agents
+                .is_empty()
+        );
+        assert!(other.get_archived(expected[0]).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn malformed_or_conflicting_archive_never_retires_original() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("tree.json");
+        let store = AgentTreeStore::new(path.clone());
+        let item = record(AgentStatus::Completed);
+        store.create(item.clone()).await.unwrap();
+        let archive = super::super::archive::AgentArchive::new(&path);
+        archive.put(&item).await.unwrap();
+        let archive_path = path
+            .with_extension("archive")
+            .join(format!("{}.json", item.id));
+        let valid = std::fs::read(&archive_path).unwrap();
+        for field in ["version", "id", "status", "result", "json"] {
+            let mut value: serde_json::Value = serde_json::from_slice(&valid).unwrap();
+            match field {
+                "version" => value["version"] = serde_json::json!(999),
+                "id" => value["record"]["id"] = serde_json::json!(AgentId::new()),
+                "status" => value["record"]["status"] = serde_json::json!("running"),
+                "result" => value["record"]["result"] = serde_json::json!("different evidence"),
+                _ => value = serde_json::json!("invalid envelope"),
+            }
+            std::fs::write(&archive_path, serde_json::to_vec(&value).unwrap()).unwrap();
+            assert!(
+                store.prune_terminal_leaves(0, None).await.is_err(),
+                "{field}"
+            );
+            assert_eq!(store.get(item.id).await.unwrap(), Some(item.clone()));
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn archive_rejects_symlinks_and_uses_private_permissions() {
+        use std::os::unix::fs::{PermissionsExt, symlink};
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("tree.json");
+        let store = AgentTreeStore::new(path.clone());
+        let item = record(AgentStatus::Completed);
+        store.create(item.clone()).await.unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        symlink(outside.path(), path.with_extension("archive")).unwrap();
+        assert!(store.prune_terminal_leaves(0, None).await.is_err());
+        assert!(std::fs::read_dir(outside.path()).unwrap().next().is_none());
+        std::fs::remove_file(path.with_extension("archive")).unwrap();
+        store.prune_terminal_leaves(0, None).await.unwrap();
+        let file = path
+            .with_extension("archive")
+            .join(format!("{}.json", item.id));
+        assert_eq!(
+            std::fs::metadata(&file).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        assert_eq!(
+            std::fs::metadata(path.with_extension("archive"))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o700
+        );
+        std::fs::remove_file(&file).unwrap();
+        let outside_file = outside.path().join("secret");
+        std::fs::write(&outside_file, "not an agent").unwrap();
+        symlink(outside_file, file).unwrap();
+        assert!(store.get_archived(item.id).await.is_err());
     }
 }
 impl AgentTree {
@@ -215,7 +447,7 @@ impl AgentTree {
                 .filter(|record| {
                     record.status.is_terminal()
                         && Some(record.id) != protected
-                        && !self.has_active_ancestor(record)
+                        && !(record.worktree.is_some() && self.has_active_ancestor(record))
                         && !self
                             .agents
                             .values()
@@ -267,7 +499,24 @@ impl AgentTreeStore {
     }
     pub async fn load(&self) -> Result<AgentTree> {
         match tokio::fs::read(&self.path).await {
-            Ok(bytes) => serde_json::from_slice(&bytes).context("invalid agent tree"),
+            Ok(bytes) => {
+                let tree: AgentTree =
+                    serde_json::from_slice(&bytes).context("invalid agent tree")?;
+                for (id, record) in &tree.agents {
+                    anyhow::ensure!(*id == record.id, "agent tree identity mismatch");
+                    let mut visited = std::collections::BTreeSet::from([*id]);
+                    let mut parent = record.parent_id;
+                    while let Some(id) = parent {
+                        anyhow::ensure!(visited.insert(id), "cycle in agent tree");
+                        parent = tree
+                            .agents
+                            .get(&id)
+                            .context("missing parent in agent tree")?
+                            .parent_id;
+                    }
+                }
+                Ok(tree)
+            }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(AgentTree::default()),
             Err(e) => Err(e.into()),
         }
@@ -304,6 +553,20 @@ impl AgentTreeStore {
     pub async fn get(&self, id: AgentId) -> Result<Option<AgentRecord>> {
         Ok(self.load().await?.agents.remove(&id))
     }
+    pub async fn get_archived(&self, id: AgentId) -> Result<Option<super::ArchivedAgent>> {
+        super::archive::AgentArchive::new(&self.path).get(id).await
+    }
+    pub async fn list_archived(
+        &self,
+        after: Option<AgentId>,
+        limit: usize,
+    ) -> Result<super::ArchivePage> {
+        let _guard = self.gate.lock().await;
+        let retained = self.load().await?.agents.into_keys().collect();
+        super::archive::AgentArchive::new(&self.path)
+            .list(after, limit, &retained)
+            .await
+    }
     pub async fn list(&self) -> Result<Vec<AgentRecord>> {
         Ok(self.load().await?.agents.into_values().collect())
     }
@@ -314,8 +577,13 @@ impl AgentTreeStore {
     ) -> Result<Vec<AgentId>> {
         let _guard = self.gate.lock().await;
         let mut tree = self.load().await?;
+        let original = tree.clone();
         let removed = tree.prune_terminal_leaves(max_records, protected);
         if !removed.is_empty() {
+            let archive = super::archive::AgentArchive::new(&self.path);
+            for id in &removed {
+                archive.put(&original.agents[id]).await?;
+            }
             self.save(&tree).await?;
         }
         Ok(removed)

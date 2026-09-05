@@ -1,91 +1,196 @@
 #!/usr/bin/env python3
-"""Adversarial black-box coverage for Vessel's durable worker lifecycle."""
-import concurrent.futures, json, pathlib, socket, subprocess, tempfile, time, urllib.error, urllib.request, uuid
-ROOT = pathlib.Path(__file__).resolve().parents[2]; BINARY = ROOT / "target/release/vessel"
+"""Black-box clean-break regression: no legacy work, preserved data, honest status.
 
-def request(base, method, path, body=None, token=None, expected=200, timeout=30):
-    data = None if body is None else json.dumps(body).encode(); headers = {"Content-Type": "application/json"}
-    if token: headers["Authorization"] = f"Bearer {token}"
+The former positive pairing/lease/retry tests are superseded because those features
+are deliberately removed (#77). Every former route is now tested for rejection.
+"""
+import base64
+import concurrent.futures
+import json
+import os
+import pathlib
+import socket
+import sqlite3
+import subprocess
+import tempfile
+import time
+import urllib.error
+import urllib.request
+
+ROOT = pathlib.Path(__file__).resolve().parents[2]
+BINARY = pathlib.Path(os.environ.get("VESSEL_BIN", ROOT / "target/release/vessel")).resolve()
+HELM = pathlib.Path(os.environ.get("HELM_BIN", ROOT / "target/release/helm")).resolve()
+TOKEN = "fixture-operator-not-a-real-secret"
+ID = "00000000-0000-0000-0000-000000000001"
+RETIRED = [
+    ("POST", "/v1/pairings/start"), ("POST", "/v1/pairings/claim"),
+    ("GET", "/v1/pairings/TEST"), ("POST", "/v1/worker/heartbeat"),
+    ("GET", "/v1/worker/tasks/next"),
+    ("POST", f"/v1/worker/tasks/{ID}/result"),
+    ("POST", f"/v1/worker/tasks/{ID}/failure"),
+    ("GET", "/v1/helms"), ("GET", f"/v1/helms/{ID}"),
+    ("DELETE", f"/v1/helms/{ID}"), ("POST", f"/v1/helms/{ID}/tasks"),
+    ("GET", "/v1/tasks"), ("GET", f"/v1/tasks/{ID}"),
+    ("POST", f"/v1/tasks/{ID}/cancel"), ("GET", "/v1/fleet/summary"),
+    ("GET", f"/ui/helms/{ID}"), ("POST", f"/ui/helms/{ID}/tasks"),
+    ("GET", f"/ui/tasks/{ID}"), ("POST", f"/ui/tasks/{ID}/cancel"),
+    ("POST", f"/ui/tasks/{ID}/retry"),
+]
+
+
+def request(base, method, path, expected=200, authorization=None, body=None, request_id=None):
+    headers = {"Content-Type": "application/json"}
+    if authorization is not None:
+        headers["Authorization"] = authorization
+    if request_id is not None:
+        headers["X-Request-ID"] = request_id
+    req = urllib.request.Request(base + path, data=body, headers=headers, method=method)
     try:
-        with urllib.request.urlopen(urllib.request.Request(base+path, data=data, headers=headers, method=method), timeout=timeout) as response: status, payload = response.status, response.read()
-    except urllib.error.HTTPError as error: status, payload = error.code, error.read()
-    assert status == expected, f"{method} {path}: expected {expected}, got {status}: {payload!r}"
-    return json.loads(payload) if payload else None
+        response = urllib.request.urlopen(req, timeout=3)
+    except urllib.error.HTTPError as error:
+        response = error
+    with response:
+        status, payload, headers = response.code, response.read(), response.headers
+    assert status == expected, (method, path, expected, status, payload)
+    assert headers.get("X-Request-ID"), (method, path, "missing correlation")
+    return payload.decode(), headers
 
-def request_text(base, path, token=None, expected=200):
-    headers={} if token is None else {"Authorization":f"Bearer {token}"}
-    try:
-        with urllib.request.urlopen(urllib.request.Request(base+path,headers=headers),timeout=3) as response: status,payload=response.status,response.read()
-    except urllib.error.HTTPError as error: status,payload=error.code,error.read()
-    assert status==expected,f"GET {path}: expected {expected}, got {status}"
-    return payload.decode()
-
-def start(database, pairing_ttl=30):
-    with socket.socket() as candidate: candidate.bind(("127.0.0.1",0)); port=candidate.getsockname()[1]
-    base=f"http://127.0.0.1:{port}"; process=subprocess.Popen([str(BINARY),"--bind",f"127.0.0.1:{port}","--database",str(database),"--lease-secs","1","--stale-after-secs","1","--pairing-ttl-secs",str(pairing_ttl),"--operator-token","operator-test-secret"],stdout=subprocess.DEVNULL,stderr=subprocess.PIPE)
-    for _ in range(50):
-        try:
-            if request(base,"GET","/health",timeout=1)["status"]=="ok":
-                assert request(base,"GET","/ready",timeout=1)["status"]=="ready"
-                diagnostics=request(base,"GET","/v1/diagnostics",timeout=1)
-                assert diagnostics["protocol_version"] >= 1
-                with urllib.request.urlopen(base+"/metrics",timeout=1) as response:
-                    assert response.headers.get("X-Request-ID") and "voyage_tasks" in response.read().decode()
-                return process,base
-        except Exception: time.sleep(.1)
-    raise AssertionError("Vessel failed to become healthy")
 
 def stop(process):
     process.terminate()
-    try: process.wait(timeout=5)
-    except subprocess.TimeoutExpired: process.kill()
+    try:
+        process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(timeout=5)
 
-def begin(base, helm_id=None, version=1):
-    helm_id=helm_id or str(uuid.uuid4()); body={"protocol_version":version,"helm":{"id":helm_id,"name":"system-test","version":"test","model":"mock","capabilities":["shell"]}}
-    return helm_id,request(base,"POST","/v1/pairings/start",body,expected=200 if version==1 else 426)
 
-def claim(base,pairing): return request(base,"POST","/v1/pairings/claim",{"connection_string":f"voyage:v1:{pairing['code']}"})
-def heartbeat(base,token,version=1,expected=200): return request(base,"POST","/v1/worker/heartbeat",{"status":"online","protocol_version":version},token,expected)
-def enqueue(base,helm_id,prompt="task"): return request(base,"POST",f"/v1/helms/{helm_id}/tasks",{"prompt":prompt,"session_id":None})
+def start(database, log, enabled=True):
+    with socket.socket() as candidate:
+        candidate.bind(("127.0.0.1", 0))
+        port = candidate.getsockname()[1]
+    base = f"http://127.0.0.1:{port}"
+    env = os.environ.copy()
+    env.pop("VESSEL_OPERATOR_TOKEN", None)
+    if enabled:
+        env["VESSEL_OPERATOR_TOKEN"] = TOKEN
+    process = subprocess.Popen(
+        [str(BINARY), "--bind", f"127.0.0.1:{port}", "--database", str(database)],
+        env=env, stdout=log, stderr=log,
+    )
+    try:
+        for _ in range(50):
+            if process.poll() is not None:
+                raise AssertionError("Vessel exited before becoming healthy")
+            try:
+                payload, _ = request(base, "GET", "/health")
+                assert json.loads(payload)["status"] == "ok"
+                return process, base
+            except (OSError, urllib.error.URLError):
+                time.sleep(0.1)
+        raise AssertionError("Vessel failed to become healthy")
+    except BaseException:
+        stop(process)
+        raise
+
+
+def reject_cli(binary, args, env):
+    result = subprocess.run([str(binary), *args], env=env, capture_output=True, timeout=5)
+    assert result.returncode == 2, (binary.name, args, result.returncode)
+    assert b"unexpected argument" in result.stderr or b"unrecognized subcommand" in result.stderr
+
 
 def main():
-    assert BINARY.is_file(),f"missing {BINARY}; run cargo build --release"
+    assert BINARY.is_file() and HELM.is_file(), "build release binaries first"
     with tempfile.TemporaryDirectory() as temporary:
-      database=pathlib.Path(temporary)/"vessel.db"; server,base=start(database)
-      try:
-        begin(base,version=999); helm_id,pairing=begin(base); token=pairing["worker_token"]
-        request(base,"GET",f"/v1/pairings/{pairing['code']}",token="wrong",expected=401); claim(base,pairing)
-        request_text(base,"/ui",expected=401); dashboard=request_text(base,"/ui",token="operator-test-secret"); assert "system-test" in dashboard and "Fleet" in dashboard
-        request(base,"POST","/v1/pairings/claim",{"connection_string":pairing["code"]},expected=409); heartbeat(base,token,999,426); heartbeat(base,token)
-        with concurrent.futures.ThreadPoolExecutor() as pool:
-            started=time.monotonic(); future=pool.submit(request,base,"GET","/v1/worker/tasks/next",None,token); time.sleep(.2); task=enqueue(base,helm_id,"wake"); envelope=future.result(timeout=3)
-            assert envelope["id"]==task["id"] and time.monotonic()-started<3
-        other_id,other=begin(base); claim(base,other)
-        completion={"lease_id":envelope["lease_id"],"result":{"task_id":task["id"],"session_id":str(uuid.uuid4()),"answer":"done","input_tokens":1,"output_tokens":1}}
-        request(base,"POST",f"/v1/worker/tasks/{task['id']}/result",completion,other["worker_token"],403)
-        request(base,"POST",f"/v1/worker/tasks/{task['id']}/result",{**completion,"lease_id":str(uuid.uuid4())},token,409)
-        assert request(base,"POST",f"/v1/worker/tasks/{task['id']}/result",completion,token)["state"]=="completed"
-        cancelled=enqueue(base,helm_id,"cancel"); env=request(base,"GET","/v1/worker/tasks/next",token=token); request(base,"POST",f"/v1/tasks/{cancelled['id']}/cancel")
-        late={"lease_id":env["lease_id"],"result":{**completion["result"],"task_id":cancelled["id"]}}; request(base,"POST",f"/v1/worker/tasks/{cancelled['id']}/result",late,token,409)
-        failed=enqueue(base,helm_id,"fail")
-        for attempt in range(3):
-            env=request(base,"GET","/v1/worker/tasks/next",token=token)
-            failure={"task_id":failed["id"],"lease_id":env["lease_id"],"error":f"failure {attempt}","retryable":True}
-            if attempt == 0: request(base,"POST",f"/v1/worker/tasks/{failed['id']}/failure",failure,other["worker_token"],403)
-            state=request(base,"POST",f"/v1/worker/tasks/{failed['id']}/failure",failure,token)
-        assert state["state"]=="failed" and state["attempt"]==3
-        leased=enqueue(base,helm_id,"lease"); first=request(base,"GET","/v1/worker/tasks/next",token=token); time.sleep(2.2); second=request(base,"GET","/v1/worker/tasks/next",token=token)
-        assert second["id"]==leased["id"] and second["lease_id"]!=first["lease_id"] and second["attempt"]==2
-        queued=enqueue(base,helm_id,"restart")
-      finally: stop(server)
-      server,base=start(database)
-      try:
-        heartbeat(base,token); assert request(base,"GET",f"/v1/tasks/{queued['id']}")["state"]=="queued"; assert request(base,"GET","/v1/worker/tasks/next",token=token)["id"]==queued["id"]
-      finally: stop(server)
-      server,base=start(database,pairing_ttl=1)
-      try:
-        _,expiring=begin(base); time.sleep(1.2); request(base,"POST","/v1/pairings/claim",{"connection_string":expiring["code"]},expected=410)
-      finally: stop(server)
-    print("Vessel adversarial lifecycle passed"); return 0
+        root = pathlib.Path(temporary)
+        # Isolate local Helm data and preserve even malformed old enrollment bytes.
+        config = root / "config"
+        data = root / "data"
+        (config / "helm").mkdir(parents=True)
+        (data / "helm/sessions").mkdir(parents=True)
+        enrollment = config / "helm/voyage.json"
+        enrollment.write_bytes(b"obsolete enrollment: must not be loaded or changed")
+        saved = data / "helm/sessions/preserved.json"
+        saved.write_bytes(b"canonical local history sentinel")
+        env = {**os.environ, "XDG_CONFIG_HOME": str(config), "XDG_DATA_HOME": str(data), "HOME": str(root)}
+        before = {path: path.read_bytes() for path in [enrollment, saved]}
+        for args in [["--voyage"], ["--voyage=http://127.0.0.1:1"], ["chat", "--voyage"],
+                     ["--name", "old-worker"], ["attach", "https://example.invalid", "fixture-key"]]:
+            reject_cli(HELM, args, env)
+        for args in [["pair", "voyage:v1:TEST"], ["fleet"], ["--lease-secs", "1"],
+                     ["--stale-after-secs", "1"], ["--pairing-ttl-secs", "1"]]:
+            reject_cli(BINARY, args, env)
+        for binary in [HELM, BINARY]:
+            for args in [["--help"], ["completions", "bash"], ["manpage"]]:
+                result = subprocess.run([str(binary), *args], env=env, capture_output=True, timeout=5, check=True)
+                assert b"--voyage" not in result.stdout
+                assert b"pairing-ttl-secs" not in result.stdout
+        assert all(path.read_bytes() == content for path, content in before.items())
 
-if __name__=="__main__": raise SystemExit(main())
+        database = root / "vessel.db"
+        # Seed a realistic legacy snapshot containing credentials, queued/running work,
+        # and private transcript data. It must never enter any response or log.
+        private = "PRIVATE-LEGACY-SENTINEL"
+        snapshot = json.dumps({"pairings": {"OLD": private}, "worker_tokens": {private: ID},
+                               "helms": {ID: {"status": "online"}},
+                               "queues": {ID: [{"prompt": private}]},
+                               "tasks": {ID: {"state": "running", "result": private}}})
+        with sqlite3.connect(database) as connection:
+            connection.executescript("CREATE TABLE control_plane(id INTEGER PRIMARY KEY, state TEXT);"
+                                     "CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY);"
+                                     "INSERT INTO schema_migrations VALUES(1);")
+            connection.execute("INSERT INTO control_plane VALUES(1, ?)", [snapshot])
+        database_before = database.read_bytes()
+        log_path = root / "server.log"
+        with log_path.open("wb") as log:
+            for enabled in [True, True, False]:  # restart must not recover/retry legacy work
+                server, base = start(database, log, enabled)
+                try:
+                    payload, _ = request(base, "GET", "/ready")
+                    assert json.loads(payload)["status"] == "ready"
+                    payload, _ = request(base, "GET", "/metrics")
+                    assert "voyage_connectivity_enabled 0" in payload
+                    assert "voyage_tasks" not in payload and "voyage_helms" not in payload
+                    for path in ["/ui", "/v1/diagnostics"]:
+                        request(base, "GET", path, 401 if enabled else 503)
+                        request(base, "GET", path, 401 if enabled else 503, "Bearer wrong")
+                        if enabled:
+                            for auth in ["Bearer " + TOKEN, "Basic " + base64.b64encode(("operator:" + TOKEN).encode()).decode()]:
+                                payload, _ = request(base, "GET", path, authorization=auth)
+                                assert "unavailable" in payload and private not in payload
+                            if path == "/v1/diagnostics":
+                                assert json.loads(payload)["legacy_state"] == "not_loaded"
+                    # Authentication cannot restore old routes; malformed bodies don't
+                    # reach retired parsers. Parallel requests cannot enqueue anything.
+                    def reject(route):
+                        method, path = route
+                        for auth in [None, "Bearer " + private, "Bearer " + TOKEN]:
+                            payload, _ = request(base, method, path, 404, auth, b"{malformed")
+                            assert private not in payload
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
+                        list(pool.map(reject, RETIRED))
+                    _, headers = request(base, "GET", "/health", request_id="safe-request_1")
+                    assert headers["X-Request-ID"] == "safe-request_1"
+                    for unsafe in ["bad id", "x" * 129]:
+                        _, headers = request(base, "GET", "/health", request_id=unsafe)
+                        assert headers["X-Request-ID"] != unsafe
+                    request(base, "POST", "/ui", 405, "Bearer " + TOKEN, b"{}")
+                    assert database.read_bytes() == database_before
+                finally:
+                    stop(server)
+                assert database.read_bytes() == database_before
+            # Fresh installations remain usable as a management-plane shell.
+            fresh_server, base = start(root / "fresh.db", log)
+            try:
+                request(base, "GET", "/ready")
+            finally:
+                stop(fresh_server)
+        logs = log_path.read_text()
+        assert TOKEN not in logs and private not in logs
+        assert all(path.read_bytes() == content for path, content in before.items())
+    print("Vessel clean-break lifecycle passed: retired CLI/routes, auth, restart, data preservation")
+
+
+if __name__ == "__main__":
+    main()

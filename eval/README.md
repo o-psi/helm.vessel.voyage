@@ -14,7 +14,9 @@ python3 eval/run.py live
 `live` uses the normal Helm provider configuration and writes structured evidence to
 `eval/evidence/latest.json`. Evidence is intentionally ignored by Git: attach it to
 the release/cutover record instead. A passing run is necessary but not sufficient for
-cutover; complete the manual Vessel and interruption drills in the operator runbook.
+cutover; complete the manual interruption drills in the operator runbook. Remote
+Vessel cutover is blocked during the [connectivity transition](../docs/vessel-connectivity-retirement.md),
+not established by these local evaluations.
 
 Parallel scenarios require Helm to delegate independent work to multiple children,
 wait for their terminal states, and synthesize attributed results. Runtime tests

@@ -4,6 +4,15 @@ This runbook governs replacing an incumbent terminal LLM harness. Feature comple
 alone is not approval to cut over. The operator owns the evidence record and final
 decision.
 
+## Connectivity transition
+
+This build deliberately removes legacy pairing and task workers before implementing
+attachment. The remote adoption gates and legacy drills below are **blocked**, not
+passing or skippable evidence of remote readiness. Do not run the old pairing commands
+against this build. Local-only trials can continue with that limitation recorded.
+See [retirement, backups and rollback hazards](vessel-connectivity-retirement.md).
+The remote drill checklist must be updated for the new protocol when it ships.
+
 ## Entry gates
 
 - CI is green on Linux, macOS, and Windows for the exact release commit.

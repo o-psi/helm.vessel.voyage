@@ -5,7 +5,6 @@ api_key_env = "OPENAI_API_KEY"
 # codex_command = "codex" # only for the optional "codex-compatibility" bridge
 # base_url = "http://localhost:11434/v1"
 # chatgpt_base_url is intentionally separate; normally leave it unset.
-max_turns = 64
 max_tokens = 8192
 provider_retry_attempts = 4
 provider_retry_initial_ms = 500
@@ -14,14 +13,14 @@ command_timeout_secs = 120
 max_output_bytes = 131072
 terminal_max_count = 16
 terminal_max_unread_bytes = 8388608
-subagent_max_concurrency = 4
-subagent_max_agents = 64
+# Defaults to half the available logical CPUs (minimum 1). Uncomment to override.
+# subagent_max_concurrency = 4
 subagent_event_history = 2048
 # Agent authority: "read-only", "approval", or "unrestricted".
 access = "approval"
 # Deprecated compatibility setting for older Helm versions:
 # approval = "on-risk"
-# Remote Vessel tasks cannot display prompts. "deny" fails approval-required tools
+# Unattended execution cannot display prompts. "deny" fails approval-required tools
 # immediately; "allow" is an explicit high-trust override.
 unattended_approval = "deny"
 

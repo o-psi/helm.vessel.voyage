@@ -10,6 +10,7 @@ name = "helm"
 path = "src/main.rs"
 
 [dependencies]
+rusqlite = { version = "0.37", features = ["bundled"] }
 anyhow = "1.0"
 async-trait = "0.1"
 bytes = "1"
@@ -45,6 +46,6 @@ unicode-width = "0.2"
 unicode-segmentation = "1.12"
 pulldown-cmark = "0.13"
 syntect = { version = "5.3", default-features = false, features = ["default-syntaxes", "default-themes", "regex-fancy"] }
-voyage-protocol.workspace = true
 
 [dev-dependencies]
+tokio = { version = "1.47", features = ["test-util"] }

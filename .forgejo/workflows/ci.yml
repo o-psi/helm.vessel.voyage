@@ -16,6 +16,18 @@ jobs:
       - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
       - run: cargo test --workspace --all-features
       - run: cargo build --workspace --release --locked
+      - name: Verify interactive questions with an offline provider
+        env:
+          HELM_BIN: target/release/helm
+        run: python3 tests/system/questions.py
+      - name: Verify automatic subagent archival and lookup
+        env:
+          HELM_BIN: target/release/helm
+        run: python3 tests/system/subagent_archive.py
+      - name: Verify subagent scheduling and resource behavior
+        env:
+          HELM_BIN: target/release/helm
+        run: python3 tests/system/subagent_resources.py
       - run: python3 tests/system/vessel_lifecycle.py
       - run: python3 eval/run.py validate
       - run: ./scripts/package-release "ci-${{ github.sha }}"

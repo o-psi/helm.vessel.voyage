@@ -18,7 +18,6 @@ use helm::{
         ApprovalOutcome, ApprovalRequest, Approver, InteractionMode, Redactor, TodoTool,
         ToolContext, ToolRegistry, UnattendedApprover,
     },
-    voyage::{Enrollment, EnrollmentStore, normalize_vessel_url},
 };
 use sha2::{Digest, Sha256};
 use std::{
@@ -28,11 +27,6 @@ use std::{
     sync::{Arc, OnceLock, RwLock, Weak},
 };
 use tracing_subscriber::EnvFilter;
-use voyage_protocol::{
-    HeartbeatRequest, HelmDescriptor, HelmStatus, PROTOCOL_VERSION, PairingStartRequest,
-    PairingStartResponse, PairingStatus, TaskCompletion, TaskEnvelope, TaskFailure, TaskResult,
-};
-
 #[derive(Parser)]
 #[command(version, about = "A general-purpose LLM harness for terminal work")]
 struct Cli {
@@ -57,195 +51,8 @@ struct Cli {
     verbose: bool,
     #[arg(long, global = true, value_enum, default_value = "text")]
     log_format: LogFormat,
-    /// Pair with Vessel and work over an outbound connection.
-    #[arg(long, global = true, num_args = 0..=1, default_missing_value = "http://127.0.0.1:9480")]
-    voyage: Option<String>,
-    #[arg(long, global = true, default_value = "helm")]
-    name: String,
     #[command(subcommand)]
     command: Option<Command>,
-}
-
-async fn voyage_worker(
-    config: Config,
-    workspace_arg: Option<PathBuf>,
-    vessel: String,
-    name: String,
-) -> Result<()> {
-    let vessel = normalize_vessel_url(&vessel)?;
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .build()?;
-    let workspace = config.resolve_workspace(workspace_arg)?;
-    let enrollment_store = EnrollmentStore::new(EnrollmentStore::default_path()?);
-    let saved = enrollment_store.load().await?;
-    let descriptor = HelmDescriptor {
-        id: saved
-            .as_ref()
-            .filter(|e| e.vessel_url == vessel)
-            .map_or_else(uuid::Uuid::new_v4, |e| e.helm_id),
-        name,
-        version: env!("CARGO_PKG_VERSION").into(),
-        model: config.model.clone(),
-        capabilities: vec!["shell".into(), "filesystem".into(), "search".into()],
-    };
-    let enrollment = if let Some(saved) = saved.filter(|e| e.vessel_url == vessel) {
-        eprintln!("Reconnecting to Vessel as {}", saved.helm_id);
-        saved
-    } else {
-        let pairing: PairingStartResponse = client
-            .post(format!("{vessel}/v1/pairings/start"))
-            .json(&PairingStartRequest {
-                helm: descriptor.clone(),
-                protocol_version: PROTOCOL_VERSION,
-            })
-            .send()
-            .await
-            .context("could not reach Vessel")?
-            .error_for_status()
-            .context("Vessel rejected pairing")?
-            .json()
-            .await
-            .context("invalid pairing response")?;
-
-        println!("{}", pairing.connection_string());
-        eprintln!(
-            "Give this one-time string to Vessel. Waiting for approval until {}…",
-            pairing.expires_at
-        );
-        loop {
-            if chrono::Utc::now() >= pairing.expires_at {
-                bail!("pairing code expired");
-            }
-            let status: PairingStatus = client
-                .get(format!("{vessel}/v1/pairings/{}", pairing.code))
-                .bearer_auth(&pairing.worker_token)
-                .send()
-                .await?
-                .error_for_status()?
-                .json()
-                .await?;
-            if status.claimed {
-                break;
-            }
-            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-        }
-        let enrollment = Enrollment {
-            helm_id: descriptor.id,
-            vessel_url: vessel.clone(),
-            worker_token: pairing.worker_token,
-            name: descriptor.name.clone(),
-        };
-        enrollment_store.save(&enrollment).await?;
-        enrollment
-    };
-    eprintln!(
-        "Paired with Vessel as {}. Helm uses outbound connections only.",
-        descriptor.id
-    );
-
-    let agent = build_agent(&config, workspace.clone(), false).await?;
-    let store = SessionStore::default();
-    let mut last_heartbeat = std::time::Instant::now() - std::time::Duration::from_secs(60);
-    let mut reconnect_delay = std::time::Duration::from_secs(1);
-    loop {
-        if last_heartbeat.elapsed() >= std::time::Duration::from_secs(20) {
-            let heartbeat = client
-                .post(format!("{vessel}/v1/worker/heartbeat"))
-                .bearer_auth(&enrollment.worker_token)
-                .json(&HeartbeatRequest {
-                    status: HelmStatus::Online,
-                    protocol_version: PROTOCOL_VERSION,
-                })
-                .send()
-                .await
-                .and_then(reqwest::Response::error_for_status);
-            if let Err(error) = heartbeat {
-                eprintln!("Vessel connection lost: {error}; retrying in {reconnect_delay:?}");
-                tokio::time::sleep(reconnect_delay).await;
-                reconnect_delay = (reconnect_delay * 2).min(std::time::Duration::from_secs(30));
-                continue;
-            }
-            last_heartbeat = std::time::Instant::now();
-            reconnect_delay = std::time::Duration::from_secs(1);
-        }
-        let response = match client
-            .get(format!("{vessel}/v1/worker/tasks/next"))
-            .bearer_auth(&enrollment.worker_token)
-            .send()
-            .await
-            .and_then(reqwest::Response::error_for_status)
-        {
-            Ok(response) => response,
-            Err(error) => {
-                eprintln!("could not pull task: {error}; retrying in {reconnect_delay:?}");
-                tokio::time::sleep(reconnect_delay).await;
-                reconnect_delay = (reconnect_delay * 2).min(std::time::Duration::from_secs(30));
-                continue;
-            }
-        };
-        let task: Option<TaskEnvelope> = match response.json().await {
-            Ok(task) => task,
-            Err(error) => {
-                eprintln!("invalid task response: {error}");
-                continue;
-            }
-        };
-        reconnect_delay = std::time::Duration::from_secs(1);
-        let Some(task) = task else {
-            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-            continue;
-        };
-        eprintln!("[Vessel task {}]", task.id);
-        let mut session = match task.request.session_id {
-            Some(id) => store.load(id).await?,
-            None => Session::new(workspace.clone(), config.model.clone()),
-        };
-        agent.set_model(session.model.clone())?;
-        match agent
-            .run(session.messages.clone(), task.request.prompt)
-            .await
-        {
-            Ok(outcome) => {
-                session.messages = outcome.messages;
-                session.usage.input_tokens += outcome.usage.input_tokens;
-                session.usage.output_tokens += outcome.usage.output_tokens;
-                store.save(&mut session).await?;
-                let result = TaskResult {
-                    task_id: task.id,
-                    session_id: session.id,
-                    answer: outcome.answer,
-                    input_tokens: outcome.usage.input_tokens,
-                    output_tokens: outcome.usage.output_tokens,
-                };
-                client
-                    .post(format!("{vessel}/v1/worker/tasks/{}/result", task.id))
-                    .bearer_auth(&enrollment.worker_token)
-                    .json(&TaskCompletion {
-                        lease_id: task.lease_id,
-                        result,
-                    })
-                    .send()
-                    .await?
-                    .error_for_status()?;
-            }
-            Err(error) => {
-                let safe_error = redactor(&config).redact(format!("{error:#}"));
-                eprintln!("task {} failed: {safe_error}", task.id);
-                let _ = client
-                    .post(format!("{vessel}/v1/worker/tasks/{}/failure", task.id))
-                    .bearer_auth(&enrollment.worker_token)
-                    .json(&TaskFailure {
-                        task_id: task.id,
-                        lease_id: task.lease_id,
-                        error: safe_error,
-                        retryable: true,
-                    })
-                    .send()
-                    .await;
-            }
-        }
-    }
 }
 
 #[derive(Clone, clap::ValueEnum)]
@@ -495,6 +302,7 @@ impl EventSink for Terminal {
                 delay.as_secs_f32(),
                 error = safe_diagnostic(&error)
             ),
+            AgentEvent::SteeringApplied => eprintln!("[steering applied]"),
             AgentEvent::Cancelled => eprintln!("[cancelled]"),
         }
     }
@@ -572,9 +380,6 @@ async fn main() -> Result<()> {
     if let Some(access) = cli.access {
         config.access = Some(access.into());
     }
-    if let Some(vessel) = cli.voyage {
-        return voyage_worker(config, cli.workspace, vessel, cli.name).await;
-    }
     match cli.command.unwrap_or(Command::Chat {
         resume: None,
         plain: false,
@@ -636,8 +441,7 @@ fn command_uses_full_screen_tui(
     stdout_terminal: bool,
     term: Option<&str>,
 ) -> bool {
-    cli.voyage.is_none()
-        && stdin_terminal
+    stdin_terminal
         && stdout_terminal
         && term.is_some_and(|term| !term.is_empty() && term != "dumb")
         && matches!(
@@ -932,7 +736,6 @@ impl SubagentExecutor for CliSubagentExecutor {
         );
         config.allow_read = context.policy.readable_roots.clone();
         config.allow_write = context.policy.writable_roots.clone();
-        config.max_turns = (context.budget.max_turns as usize).min(config.max_turns);
         config.max_tokens =
             (context.budget.max_tokens.min(u32::MAX as u64) as u32).min(config.max_tokens);
         let workspace = config.resolve_workspace(None).map_err(|e| e.to_string())?;
@@ -948,22 +751,14 @@ impl SubagentExecutor for CliSubagentExecutor {
             interaction: InteractionMode::Unattended,
             redactor: redactor(&config),
         };
-        let child_budget = AgentBudget {
-            max_children: context.budget.max_children.saturating_sub(1),
-            ..context.budget.clone()
-        };
+        let child_budget = context.budget.clone();
         let mut child_policy = context.policy.clone();
         child_policy.budget = child_budget.clone();
-        let child_tool = self
-            .runtime
-            .get()
-            .and_then(Weak::upgrade)
-            .filter(|_| context.budget.max_children > 0)
-            .map(|runtime| {
-                SubagentTool::new(runtime, child_policy, child_budget)
-                    .with_parent(context.id)
-                    .with_worktrees(self.worktrees.clone())
-            });
+        let child_tool = self.runtime.get().and_then(Weak::upgrade).map(|runtime| {
+            SubagentTool::new(runtime, child_policy, child_budget)
+                .with_parent(context.id)
+                .with_worktrees(self.worktrees.clone())
+        });
         // Worktree-isolated children still coordinate through the parent's workspace plan.
         // Keying todos by the temporary worktree would silently fork task state.
         let mut tools = build_tools(&config, child_tool, Some(todo_tool(&self.workspace)))
@@ -977,7 +772,6 @@ impl SubagentExecutor for CliSubagentExecutor {
             Arc::new(helm::agent::SilentSink),
             config.model.clone(),
             config.system_prompt.clone(),
-            config.max_turns,
             config.max_tokens,
             config.temperature,
         )
@@ -987,7 +781,7 @@ impl SubagentExecutor for CliSubagentExecutor {
             max_delay: std::time::Duration::from_millis(config.provider_retry_max_ms),
         });
         let mut inbox = context.take_inbox();
-        let (input_tx, input_rx) = tokio::sync::mpsc::channel(64);
+        let (input_tx, input_rx) = helm::agent::steering_channel(64);
         let input_cancel = context.cancellation.clone();
         tokio::spawn(async move {
             loop {
@@ -1024,10 +818,8 @@ async fn build_subagents(config: &Config, workspace: &std::path::Path) -> Result
     allowed_tools.insert("subagent".to_string());
     allowed_tools.insert("todo".to_string());
     let budget = AgentBudget {
-        max_turns: config.max_turns.min(u32::MAX as usize) as u32,
         max_tokens: config.max_tokens as u64,
-        max_runtime_secs: config.command_timeout_secs,
-        max_children: 8,
+
         max_terminals: config.terminal_max_count.min(u32::MAX as usize) as u32,
     };
     let policy = AgentPolicy {
@@ -1061,7 +853,6 @@ async fn build_subagents(config: &Config, workspace: &std::path::Path) -> Result
             executor.clone(),
             RuntimeLimits {
                 max_concurrency: config.subagent_max_concurrency,
-                max_agents: config.subagent_max_agents,
                 event_history: config.subagent_event_history,
             },
             store,
@@ -1133,7 +924,6 @@ async fn build_agent(config: &Config, workspace: PathBuf, attended: bool) -> Res
         terminal,
         config.model.clone(),
         config.system_prompt.clone(),
-        config.max_turns,
         config.max_tokens,
         config.temperature,
     )
@@ -1230,7 +1020,6 @@ async fn tui_chat(
             bridge.clone(),
             session.model.clone(),
             active_config.system_prompt.clone(),
-            active_config.max_turns,
             active_config.max_tokens,
             active_config.temperature,
         )
@@ -1745,6 +1534,23 @@ fn render_terminal_markdown(source: &str, width: usize) -> String {
 
 #[cfg(test)]
 mod cli_tests {
+    #[test]
+    fn legacy_connectivity_is_not_a_cli_mode() {
+        for args in [
+            vec!["helm", "--voyage"],
+            vec!["helm", "--voyage=http://127.0.0.1:9480"],
+            vec!["helm", "chat", "--voyage"],
+            vec!["helm", "--name", "workstation"],
+            vec!["helm", "attach", "https://vessel.example", "not-a-real-key"],
+        ] {
+            assert!(Cli::try_parse_from(&args).is_err(), "accepted {args:?}");
+        }
+        let help = Cli::command().render_long_help().to_string();
+        assert!(!help.contains("--voyage"));
+        assert!(!help.contains("--name"));
+        assert!(Cli::try_parse_from(["helm", "chat", "--plain"]).is_ok());
+    }
+
     use super::*;
 
     #[test]
@@ -1803,13 +1609,13 @@ mod cli_tests {
         let cli = Cli::try_parse_from([
             "helm",
             "--set",
-            "max_turns=32",
+            "max_tokens=32",
             "--set",
             "access=unrestricted",
             "config",
         ])
         .unwrap();
-        assert_eq!(cli.set, ["max_turns=32", "access=unrestricted"]);
+        assert_eq!(cli.set, ["max_tokens=32", "access=unrestricted"]);
     }
 
     #[test]

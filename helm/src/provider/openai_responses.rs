@@ -105,13 +105,13 @@ pub(crate) fn request_body(request: ModelRequest, stream: bool) -> Result<Value,
                     calls.insert(id.to_owned());
                 }
             }
-            Some("function_call_output") => {
-                if !item["call_id"].as_str().is_some_and(|id| calls.remove(id)) {
-                    *item = json!({"type":"message","role":"user","content":format!(
-                        "[Tool result retained from earlier history; original call unavailable]\n{}",
-                        item["output"].as_str().unwrap_or_default()
-                    )});
-                }
+            Some("function_call_output")
+                if !item["call_id"].as_str().is_some_and(|id| calls.remove(id)) =>
+            {
+                *item = json!({"type":"message","role":"user","content":format!(
+                    "[Tool result retained from earlier history; original call unavailable]\n{}",
+                    item["output"].as_str().unwrap_or_default()
+                )});
             }
             _ => {}
         }

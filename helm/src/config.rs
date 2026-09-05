@@ -93,7 +93,6 @@ pub struct Config {
     /// Kept separate from `base_url` so provider switching cannot redirect OAuth tokens.
     pub chatgpt_base_url: Option<String>,
     pub system_prompt: String,
-    pub max_turns: usize,
     pub max_tokens: u32,
     pub temperature: Option<f32>,
     pub provider_retry_attempts: usize,
@@ -104,7 +103,6 @@ pub struct Config {
     pub terminal_max_count: usize,
     pub terminal_max_unread_bytes: usize,
     pub subagent_max_concurrency: usize,
-    pub subagent_max_agents: usize,
     pub subagent_event_history: usize,
     /// User-facing authority level. When omitted, the legacy `approval` setting
     /// is translated for backwards compatibility.
@@ -193,11 +191,6 @@ pub const CONFIG_OVERRIDE_SPECS: &[ConfigOverrideSpec] = &[
         kind: ConfigValueKind::Text,
     },
     ConfigOverrideSpec {
-        key: "max_turns",
-        description: "Maximum model turns",
-        kind: ConfigValueKind::PositiveInteger,
-    },
-    ConfigOverrideSpec {
         key: "max_tokens",
         description: "Maximum response tokens",
         kind: ConfigValueKind::PositiveInteger,
@@ -245,11 +238,6 @@ pub const CONFIG_OVERRIDE_SPECS: &[ConfigOverrideSpec] = &[
     ConfigOverrideSpec {
         key: "subagent_max_concurrency",
         description: "Concurrent subagent limit",
-        kind: ConfigValueKind::PositiveInteger,
-    },
-    ConfigOverrideSpec {
-        key: "subagent_max_agents",
-        description: "Total subagent limit",
         kind: ConfigValueKind::PositiveInteger,
     },
     ConfigOverrideSpec {
@@ -368,7 +356,6 @@ impl Default for Config {
             base_url: None,
             chatgpt_base_url: None,
             system_prompt: include_str!("../prompts/system.md").trim().into(),
-            max_turns: 64,
             max_tokens: 8192,
             temperature: None,
             provider_retry_attempts: 4,
@@ -378,8 +365,7 @@ impl Default for Config {
             max_output_bytes: 128 * 1024,
             terminal_max_count: 16,
             terminal_max_unread_bytes: 8 * 1024 * 1024,
-            subagent_max_concurrency: 4,
-            subagent_max_agents: 64,
+            subagent_max_concurrency: crate::subagent::default_concurrency(),
             subagent_event_history: 2048,
             access: None,
             approval: ApprovalMode::OnRisk,
@@ -525,9 +511,6 @@ impl Config {
         if self.model.trim().is_empty() {
             bail!("model cannot be empty");
         }
-        if self.max_turns == 0 {
-            bail!("max_turns must be greater than zero");
-        }
         if self.max_output_bytes < 1024 {
             bail!("max_output_bytes must be at least 1024");
         }
@@ -535,7 +518,7 @@ impl Config {
             bail!("terminal limits require a positive count and at least 1024 unread bytes");
         }
         if self.subagent_max_concurrency == 0
-            || self.subagent_max_agents == 0
+            || self.subagent_max_concurrency > tokio::sync::Semaphore::MAX_PERMITS
             || self.subagent_event_history == 0
         {
             bail!("subagent limits must be greater than zero");
@@ -595,10 +578,10 @@ mod tests {
     #[test]
     fn validated_runtime_overrides_support_scalars_and_nested_maps() {
         let mut config = Config::default();
-        config.apply_override("max_turns", "32").unwrap();
+        config.apply_override("max_tokens", "32").unwrap();
         config.apply_override("access", "unrestricted").unwrap();
         config.apply_override("env.HELM_TEST", "enabled").unwrap();
-        assert_eq!(config.max_turns, 32);
+        assert_eq!(config.max_tokens, 32);
         assert_eq!(config.access, Some(AccessMode::Unrestricted));
         assert_eq!(
             config.env.get("HELM_TEST").map(String::as_str),
@@ -606,6 +589,58 @@ mod tests {
         );
         assert!(config.apply_override("not_a_setting", "true").is_err());
         assert!(config.apply_override("max_turns", "0").is_err());
+    }
+
+    #[test]
+    fn legacy_turn_limit_is_ignored_and_not_exposed() {
+        for value in [0, 1, 64, 256] {
+            let directory = tempfile::tempdir().unwrap();
+            let path = directory.path().join("config.toml");
+            std::fs::write(&path, format!("max_turns = {value}\nmax_tokens = 1234\n")).unwrap();
+            let mut config = Config::load(Some(&path)).unwrap();
+            assert_eq!(config.max_tokens, 1234);
+            assert!(!toml::to_string(&config).unwrap().contains("max_turns"));
+            assert!(
+                config
+                    .apply_override("max_turns", &value.to_string())
+                    .is_err()
+            );
+        }
+        assert!(
+            !CONFIG_OVERRIDE_SPECS
+                .iter()
+                .any(|spec| spec.key == "max_turns")
+        );
+    }
+
+    #[test]
+    fn subagent_defaults_and_legacy_capacity_migrate() {
+        for cpus in [0, 1, 2, 3, 4, 16, 127] {
+            assert_eq!(
+                crate::subagent::concurrency_for_cpus(cpus),
+                (cpus / 2).max(1)
+            );
+        }
+        let mut config: Config = toml::from_str("subagent_max_agents = 1\n").unwrap();
+        assert_eq!(
+            config.subagent_max_concurrency,
+            crate::subagent::default_concurrency()
+        );
+        assert!(
+            !toml::to_string(&config)
+                .unwrap()
+                .contains("subagent_max_agents")
+        );
+        assert!(config.apply_override("subagent_max_agents", "1").is_err());
+        config
+            .apply_override("subagent_max_concurrency", "3")
+            .unwrap();
+        assert_eq!(config.subagent_max_concurrency, 3);
+        assert!(
+            config
+                .apply_override("subagent_max_concurrency", "0")
+                .is_err()
+        );
     }
 
     #[test]

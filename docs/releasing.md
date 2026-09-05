@@ -21,3 +21,9 @@ from each archive, attach evaluation/cutover evidence, and publish known limitat
 The workflow uploads build artifacts but intentionally does not auto-publish or sign
 a release. Add repository-specific signing and Forgejo release credentials only after
 the project establishes its key custody and release-approval policy.
+
+## Connectivity transition release note
+
+This build intentionally removes legacy pairing/task-worker connectivity before
+`helm attach` is implemented. Include [retirement and data-preservation guidance](vessel-connectivity-retirement.md)
+in the release notes; do not advertise remote readiness from successful local tests.

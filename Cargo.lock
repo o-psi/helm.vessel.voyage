@@ -880,6 +880,7 @@ dependencies = [
  "pulldown-cmark",
  "ratatui",
  "reqwest",
+ "rusqlite",
  "serde",
  "serde_json",
  "sha2",
@@ -895,7 +896,6 @@ dependencies = [
  "unicode-segmentation",
  "unicode-width 0.2.0",
  "uuid",
- "voyage-protocol",
  "vt100",
 ]
 
@@ -2552,19 +2552,22 @@ dependencies = [
  "anyhow",
  "axum",
  "base64",
- "chrono",
  "clap",
  "clap_complete",
  "clap_mangen",
+ "libc",
  "reqwest",
+ "ring",
  "rusqlite",
  "serde",
  "serde_json",
  "sha2",
  "tempfile",
  "tokio",
+ "tower",
  "tracing",
  "tracing-subscriber",
+ "url",
  "uuid",
  "voyage-protocol",
 ]
@@ -2573,9 +2576,11 @@ dependencies = [
 name = "voyage-protocol"
 version = "0.1.0"
 dependencies = [
- "chrono",
+ "ring",
  "serde",
+ "serde_json",
  "uuid",
+ "zeroize",
 ]
 
 [[package]]

@@ -1,0 +1,115 @@
+//! Provider-neutral event and operator-response channels.
+
+use crate::{
+    AgentEvent, EventSink,
+    provider::ModelInfo,
+    supervision::{AgentEvent as SupervisionEvent, AgentId, AgentView},
+    todo::TodoList,
+    tools::{ApprovalOutcome, ApprovalRequest as ToolApprovalRequest, Approver},
+};
+use anyhow::Result;
+use async_trait::async_trait;
+use std::sync::Arc;
+use tokio::sync::{mpsc, oneshot};
+
+#[derive(Debug)]
+#[doc(hidden)]
+pub enum UiEvent {
+    Agent(AgentEvent),
+    Approval(ApprovalRequest),
+    Question(QuestionRequest),
+    Finished(Result<crate::AgentOutcome, String>),
+    SupervisorTree(Result<Vec<AgentView>, String>),
+    SupervisorInspect(AgentId, Result<Vec<SupervisionEvent>, String>),
+    SupervisorAction(Result<String, String>),
+    TodoSnapshot(Result<TodoList, String>),
+    TodoAction(Result<String, String>),
+    Models(Result<Vec<ModelInfo>, String>),
+}
+
+#[derive(Debug)]
+#[doc(hidden)]
+pub struct ApprovalRequest {
+    pub(super) id: uuid::Uuid,
+    pub(super) action: String,
+    pub(super) target: String,
+    pub(super) reason: String,
+    pub(super) response: oneshot::Sender<ApprovalOutcome>,
+}
+
+#[derive(Debug)]
+#[doc(hidden)]
+pub struct QuestionRequest {
+    pub(super) question: crate::tools::Question,
+    pub(super) response: oneshot::Sender<crate::tools::QuestionAnswer>,
+}
+
+#[derive(Clone)]
+pub struct UiBridge {
+    pub(super) tx: mpsc::UnboundedSender<UiEvent>,
+}
+
+#[async_trait]
+impl EventSink for UiBridge {
+    async fn emit(&self, event: AgentEvent) {
+        let _ = self.tx.send(UiEvent::Agent(event));
+    }
+}
+
+#[async_trait]
+impl Approver for UiBridge {
+    async fn ask_question(
+        &self,
+        question: &crate::tools::Question,
+    ) -> crate::tools::QuestionAnswer {
+        let (response, receive) = oneshot::channel();
+        if self
+            .tx
+            .send(UiEvent::Question(QuestionRequest {
+                question: question.clone(),
+                response,
+            }))
+            .is_err()
+        {
+            return crate::tools::QuestionAnswer::Unavailable;
+        }
+        receive
+            .await
+            .unwrap_or(crate::tools::QuestionAnswer::Unavailable)
+    }
+
+    async fn approve(&self, request: &ToolApprovalRequest) -> ApprovalOutcome {
+        let (response, receive) = oneshot::channel();
+        if self
+            .tx
+            .send(UiEvent::Approval(ApprovalRequest {
+                id: request.id,
+                action: request.action.clone(),
+                target: request.target.clone(),
+                reason: request.reason.clone(),
+                response,
+            }))
+            .is_err()
+        {
+            return ApprovalOutcome::Unavailable;
+        }
+        let outcome = receive.await.unwrap_or(ApprovalOutcome::Unavailable);
+        tracing::info!(approval_id = %request.id, execution_id = %request.execution_id,
+            action = %request.action, target = %request.target, outcome = ?outcome,
+            "approval decided");
+        outcome
+    }
+}
+
+impl UiBridge {
+    #[doc(hidden)]
+    pub fn sender(&self) -> mpsc::UnboundedSender<UiEvent> {
+        self.tx.clone()
+    }
+}
+
+/// The pair passed into an Agent and [`super::run`] respectively.
+pub fn bridge() -> (Arc<UiBridge>, mpsc::UnboundedReceiver<UiEvent>) {
+    let (tx, rx) = mpsc::unbounded_channel();
+    (Arc::new(UiBridge { tx }), rx)
+}

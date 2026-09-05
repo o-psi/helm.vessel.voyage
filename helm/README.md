@@ -16,7 +16,6 @@ administer scoped systems, and maintain a durable working conversation.
 - Configurable approvals, deny list, command timeout, and output limits
 - Full-screen Ratatui chat, one-shot/plain modes, session management, and token accounting
 - Bounded parallel subagents with messaging, cancellation, durable results, and Git worktrees
-- `helm --voyage` short-lived pairing and authenticated outbound task worker
 - Atomic JSON session persistence under the platform data directory
 - Library interfaces for custom providers, event sinks, approvers, and tools
 
@@ -100,11 +99,24 @@ approvals appear as keyboard-driven modals. Use `Ctrl+S` to browse
 and restore sessions, `Ctrl+N` for a new session, `Ctrl+B` to branch, `Ctrl+K` to
 compact context, and `Ctrl+E` to export Markdown. Every session receives a stable generated
 name; use `/new [TITLE]` to start a fresh session and optionally name it immediately.
+
+The composer remains editable while Helm is working. Press `Enter` to queue its text as steering
+for the active run; `Shift+Enter` still inserts a newline. Helm records accepted steering in the
+session immediately and applies queued messages in order before the next provider request. A
+provider request already in flight is not mutated: Helm finishes that response, adds the steering
+at the next safe model boundary, and continues automatically. `Esc` still cancels the active run.
+
 `/name TITLE`, `/branch [TITLE]`,
 `/compact [KEEP]`, `/export [PATH]`, and `/clear confirm` provide explicit session operations.
 Long conversations compact automatically while retaining recent turns.
 The conversation footer shows current status rather than permanently listing global shortcuts;
 press `F1` to open contextual keyboard help and `F1` or `Esc` to close it.
+Use `Up` and `Down` in the chat input to recall previously sent messages in the current
+session (including messages from a resumed session). `Down` past the newest message
+restores your unsent draft. Recalled messages can be edited before sending; slash-command
+suggestions and open pickers retain their existing arrow-key controls. A new session
+starts with empty input history.
+
 Scroll the conversation with the mouse wheel or `PageUp` and `PageDown`; a divider keeps the
 composer visually distinct without enclosing it in a permanent box.
 Typing `/` opens the slash-command palette above the composer. Continue typing to filter it,
@@ -122,7 +134,7 @@ limits, environment, allowed roots, MCP servers, retries, and redaction settings
 `/log-format`, and `/plain` relaunch into the requested presentation mode. `/auth`, `/doctor`,
 `/config`, `/models json`, `/completions`, and `/manpage` temporarily leave the full-screen view,
 run the corresponding Helm operation, and offer to return to the current session. `/run` runs a
-one-shot prompt and can then return; `/voyage [URL] [NAME]` hands off to Vessel worker mode.
+one-shot prompt and can then return.
 `/sessions`, `/resume REF`, `/models`, `/model ID`, and `/activity` operate directly inside the TUI.
 
 Runtime configuration used during a safe relaunch is held in a securely created temporary file
@@ -161,19 +173,23 @@ Plain and `NO_COLOR` output streams sanitized assistant text token by token for 
 does not repeat it at completion. Styled line-oriented output buffers one response so Markdown can
 be rendered coherently, then writes it once.
 
-Pair the same Helm runtime with a Vessel without exposing an inbound port:
+Helm-to-Vessel connectivity is temporarily unavailable: `--voyage`, worker `--name`
+and `/voyage` have been removed. The planned `helm attach` command is not implemented.
+See [legacy connectivity retirement](../docs/vessel-connectivity-retirement.md) for
+upgrade limitations and preservation of existing enrollment and session data.
 
-```sh
-helm --voyage https://vessel.example.com --name workstation
-# prints voyage:v1:XXXXXXXXXX; claim it in Vessel
-```
+Helm does not impose a model-turn count limit: work continues until completion, cancellation,
+or an error. Child assignments also have no elapsed-time deadline, child-count,
+nesting-depth, or retained-record cutoff. Legacy `max_turns`
+entries in configuration are ignored and omitted when configuration is saved;
+`--set max_turns=...` and `/set max_turns ...` are no longer supported.
 
 ## Architecture
 
 The crate is split around stable boundaries:
 
 - `provider`: translates the internal message/tool protocol to remote APIs
-- `agent`: owns the bounded model → tool → model state machine
+- `agent`: owns the cancellable model → tool → model state machine
 - `tools`: capability registry and execution context
 - `policy`: validates filesystem and process actions before execution
 - `session`: durable neutral messages plus bounded/versioned provider continuation state
@@ -191,12 +207,11 @@ The active workspace is the default read/write boundary. Add other roots explici
 privileged. `always` asks for every shell command and write. `never` suppresses asks,
 but the command deny list and filesystem roots remain enforced.
 
-Vessel queues work and Helm retrieves it over authenticated outbound requests. A Helm
-can therefore operate behind NAT or a firewall without being publicly reachable.
-Remote work is non-interactive: approval-required actions are denied immediately by
-default rather than blocking on an invisible prompt. See the [security and operations
-guide](../docs/security-operations.md) for unattended overrides, environment
-isolation, redaction, structured logs, and diagnostics.
+Vessel cannot currently dispatch work to this Helm build. Future attachment must
+remain outbound and enforce local policy. Unattended approval-required actions are
+denied by default rather than blocking on an invisible prompt. See the [security and
+operations guide](../docs/security-operations.md) for the retained unattended policy,
+environment isolation, redaction, structured logs, and diagnostics.
 
 This is capability control, not an OS sandbox. Shell commands inherit the user's OS
 permissions and can access resources available to that account. For hostile prompts
@@ -218,14 +233,33 @@ when loaded; metadata is not treated as a live attachment.
 For reconnectable workflows use a policy-approved external supervisor such as tmux,
 systemd, or a container rather than assuming Helm can resurrect a process.
 
+### Questions
+
+The model can call `questions` to open a multiple-choice clarification dialog with
+an always-available **Other / custom answer** option. It replaces the bottom input
+and grows upward as needed while keeping conversation visible. Use arrows/Tab to select,
+Enter to submit, and Esc to cancel. Answers are shared with the model and saved in
+session history—never enter secrets. This is not a security approval. The initial
+interactive frontend is full-screen TUI only; plain and unattended runs return
+`unavailable` without reading stdin. See [Questions](../docs/questions.md) for the
+schema, limits, controls, and lifecycle.
+
 ### Agent supervision
 
 Press `Ctrl+A` in the full-screen UI to supervise concurrent agent work. The tree,
 inspection, messaging, follow-up, and confirmed cancellation controls are described
 in the [agent supervision guide](../docs/agent-supervision.md).
 The model-facing `subagent` tool supports `spawn`, `status`, `list`, `wait`, `wait_many`,
-`cancel`, `message`, `follow_up`, conflict inspection, guarded commit/integration, and
-safe cleanup. A spawn can request `worktree: true` when the workspace is a
+`cancel`, `message`, `follow_up`, `archive`, conflict inspection, guarded commit/integration, and
+safe cleanup. Active subagent concurrency defaults to half the logical processors
+available to Helm, rounded down with a minimum of one; an explicit positive
+`subagent_max_concurrency` overrides it. Excess work queues, and parents waiting
+for subagents release their execution slots until they can resume. Legacy
+`subagent_max_agents` settings are ignored on load and omitted on save; runtime
+overrides of that removed setting are rejected. See the [subagent guide](../docs/subagents.md)
+for storage behavior and budget-schema rollback precautions.
+
+A spawn can request `worktree: true` when the workspace is a
 supported Git repository; Helm records the managed branch and path and refuses
 destructive cleanup of dirty work.
 
@@ -241,3 +275,8 @@ The next durable layers include structured audit logs and model-generated semant
 context summarization. Native token streaming, cancellation, managed PTYs, MCP tools,
 conflict-safe patches, and the full-screen interface are implemented behind the shared
 agent, event, tool, and session contracts.
+
+Finished subagents [archive automatically](../docs/subagents.md#automatic-archive).
+Models can page through historical IDs with `subagent` action `archive`, then read
+results with `status` or `wait`, including after restart. Archived records do not
+consume execution slots; failed outcomes keep their original status.

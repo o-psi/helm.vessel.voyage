@@ -1,36 +1,52 @@
 # Vessel
 
-Vessel is the durable Voyage control plane. Its SQLite database is migrated at
-startup and written with WAL and full synchronous durability. Worker credentials
-are stored as SHA-256 verifier hashes, never as bearer-token plaintext.
+Vessel is Voyage's management plane. Its legacy pairing and HTTP task-worker
+implementation has been removed ahead of the replacement attachment flow.
+**Helm connectivity, fleet/task operations and session management are currently
+unavailable.** Local Helm functionality remains usable independently.
+
+## Run the interim management plane
 
 ```sh
-vessel --database /var/lib/voyage/vessel.db --bind 127.0.0.1:9480
-vessel pair voyage:v1:PAIRINGCODE
-vessel fleet
+cargo run -p vessel -- --bind 127.0.0.1:9480 --database vessel.db
 ```
 
-## Operator console
+Set `VESSEL_OPERATOR_TOKEN` securely in the environment to enable the status page
+and diagnostics. They accept a Bearer token or the token as the password in HTTP
+Basic authentication. Prefer the environment over `--operator-token` to avoid
+command-history/process-list disclosure. Terminate TLS before non-loopback access.
 
-Set `VESSEL_OPERATOR_TOKEN` to enable the embedded web console, then open `/ui`.
-The browser uses HTTP Basic authentication: any username is accepted and the token
-is the password. Bearer authentication is also supported for scripted UI checks.
-Serve Vessel behind TLS whenever it is not bound exclusively to loopback; Basic and
-Bearer credentials must not traverse plaintext networks.
+Retained endpoints:
 
-The console refreshes every five seconds and provides fleet totals, worker status,
-version, model, capabilities and last-seen time; recent task inventory; full task
-state, attempt, lease, error, result, token usage and session details; task creation;
-cancellation; and explicit retry of failed or cancelled tasks. Task UUIDs are the
-durable correlation identifiers shown in logs and the console. Empty, missing,
-disabled-auth and validation states produce explicit operator messages.
+| Endpoint | Behavior |
+| --- | --- |
+| `/health` | Process liveness |
+| `/ready` | Database connection check; does not claim attachment is ready |
+| `/metrics` | `voyage_connectivity_enabled 0`; no legacy fleet/task gauges |
+| `/v1/diagnostics` | Authenticated status: connectivity unavailable, legacy state not loaded |
+| `/ui` | Authenticated explanation of the transition; no task forms |
 
-Task delivery uses ownership leases: every pull creates a unique lease, stale
-completions are rejected, expired work is requeued up to three attempts, and
-explicit failures can be retryable or terminal. `POST /v1/tasks/{id}/cancel`
-cancels queued or running work. Operational APIs include `GET /v1/helms`, `GET
-/v1/tasks`, and `GET /v1/fleet/summary`.
-Operational endpoints are `/health` for liveness, `/ready` for database readiness,
-`/metrics` for Prometheus-compatible fleet/task gauges, and `/v1/diagnostics` for a
-secret-free support snapshot. Run with `--log-format json` for structured request
-spans and correlation IDs. See [security and operations](../docs/security-operations.md).
+UI/diagnostics return 503 without a configured operator token and 401 for missing or
+invalid authentication when enabled. Request correlation and `--log-format json`
+remain supported, as do `completions` and `manpage`.
+
+`pair`, `fleet`, lease/pairing/staleness timing flags, and all old pairing, worker,
+fleet and task API/UI routes have been removed. Retired routes return 404 even for
+authenticated clients. There is no new invitation or attachment endpoint yet.
+
+## Stored data and upgrade
+
+The server opens SQLite for readiness but does not load, rewrite, migrate or delete
+legacy `control_plane` snapshots or `schema_migrations`. Stored running tasks do not
+represent live execution and are not retried. No credentials or history are imported
+into the future connection model. See [retirement and data preservation](../docs/vessel-connectivity-retirement.md)
+before upgrading or rolling back; stop old processes separately and protect backups.
+
+The agreed [Vessel-managed session design](../docs/vessel-session-management.md)
+remains the target: `helm attach VESSEL_URL JOIN_KEY`, outbound interactive control,
+explicit sharing and phased service/approval support. Delivery is tracked in
+[#77](https://github.com/o-psi/voyage/issues/77). These are not implemented commands.
+
+See [security and operations](../docs/security-operations.md) for retained access and
+logging boundaries. The system regression fixture `tests/system/vessel_lifecycle.py`
+now verifies the clean break and data preservation rather than the removed scheduler.

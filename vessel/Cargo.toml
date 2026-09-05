@@ -3,17 +3,14 @@ name = "vessel"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Voyage management plane for paired outbound Helm workers"
+description = "Voyage management plane"
 
 [dependencies]
 anyhow.workspace = true
 axum.workspace = true
-chrono.workspace = true
 clap = { version = "4.5", features = ["derive", "env"] }
 clap_complete = "4.5"
 clap_mangen = "0.2"
-reqwest.workspace = true
-serde.workspace = true
 serde_json.workspace = true
 rusqlite = { version = "0.37", features = ["bundled"] }
 sha2 = "0.10"
@@ -23,6 +20,14 @@ tracing.workspace = true
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
 uuid.workspace = true
 voyage-protocol.workspace = true
+serde.workspace = true
+ring = "0.17"
+url = "2.5"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 [dev-dependencies]
+reqwest.workspace = true
+tower = { version = "0.5", features = ["util"] }
 tempfile = "3.21"
