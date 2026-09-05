@@ -109,10 +109,12 @@ enum LogFormat {
 }
 #[derive(Subcommand)]
 enum Command {
-    /// Use private local sessions with an authoritative SQLite journal.
-    Managed(managed::Args),
+    /// Discover, inspect and run saved nonsecret workflows.
+    Workflow(helm::workflow::WorkflowArgs),
     /// Inspect a repository and explicitly review generated project guidance.
     Onboard(helm::onboarding::OnboardArgs),
+    /// Use private local sessions with an authoritative SQLite journal.
+    Managed(managed::Args),
     /// Manage dedicated Vessel enrollment; no worker is started.
     Attachment(helm::attachment::cli::AttachmentArgs),
     /// Manage Helm's native ChatGPT subscription credentials.
@@ -428,6 +430,24 @@ async fn main() -> Result<()> {
     if let Some(Command::LocalProvider { command }) = cli.command {
         return helm::local_provider::run(command).await;
     }
+    if matches!(&cli.command, Some(Command::Workflow(args)) if !matches!(args.command, helm::workflow::WorkflowCommand::Run(_)))
+    {
+        let Some(Command::Workflow(args)) = cli.command else {
+            unreachable!()
+        };
+        let json = args.json;
+        let workspace = cli
+            .workspace
+            .unwrap_or(std::env::current_dir()?)
+            .canonicalize()?;
+        if let Some(prepared) = helm::workflow::prepare(args, &workspace)? {
+            helm::workflow::print_value(
+                &serde_json::json!({"prompt":prepared.prompt,"workflow":prepared.invocation}),
+                json,
+            )?;
+        }
+        return Ok(());
+    }
     let mut config = Config::load(cli.config.as_deref())?;
     let set_overrides_model = cli.set.iter().any(|assignment| {
         assignment
@@ -475,10 +495,30 @@ async fn main() -> Result<()> {
             print_config(&config)?;
             Ok(())
         }
+        Command::Workflow(args) => {
+            anyhow::ensure!(
+                !args.json,
+                "workflow run streams ordinary agent output; --json is for list, inspect, validate and preview"
+            );
+            let workspace = config.resolve_workspace(cli.workspace)?;
+            let prepared =
+                helm::workflow::prepare(args, &workspace)?.context("workflow run required")?;
+            execute_workflow(
+                config,
+                Some(workspace),
+                None,
+                prepared.prompt,
+                prepared.no_save,
+                model_overridden,
+                Some(prepared.invocation),
+            )
+            .await
+            .map(|_| ())
+        }
+        Command::Onboard(args) => helm::onboarding::run(args, &config, cli.workspace),
         Command::Managed(args) => managed::run(args, Some(config), cli.workspace, model_overridden)
             .await
             .map_err(managed::safe_error),
-        Command::Onboard(args) => helm::onboarding::run(args, &config, cli.workspace),
         Command::Models { json } => list_models(&config, cli.workspace, json).await,
         Command::Doctor => doctor(&config, cli.workspace).await,
         Command::Auth { command } => auth(command, &config).await,
@@ -1559,6 +1599,27 @@ async fn execute(
     no_save: bool,
     model_overridden: bool,
 ) -> Result<Session> {
+    execute_workflow(
+        config,
+        workspace_arg,
+        resume,
+        prompt,
+        no_save,
+        model_overridden,
+        None,
+    )
+    .await
+}
+#[allow(clippy::too_many_arguments)]
+async fn execute_workflow(
+    config: Config,
+    workspace_arg: Option<PathBuf>,
+    resume: Option<String>,
+    prompt: String,
+    no_save: bool,
+    model_overridden: bool,
+    workflow: Option<helm::workflow::Invocation>,
+) -> Result<Session> {
     let store = SessionStore::default();
     let (store, mut session) = if let Some(reference) = resume {
         store.load_owned(&reference).await?
@@ -1574,7 +1635,19 @@ async fn execute(
     }
     let mut active_config = config.clone();
     active_config.model = session.model.clone();
-    let agent = build_agent(&active_config, session.workspace.clone(), true).await?;
+    let workflow_run = workflow.is_some();
+    if let Some(invocation) = workflow {
+        anyhow::ensure!(
+            session.workflow_runs.len() < 128,
+            "session workflow history is full"
+        );
+        session.workflow_runs.push(invocation);
+        if !no_save {
+            store.save(&mut session).await?;
+        }
+    }
+    let attended = !workflow_run || (io::stdin().is_terminal() && io::stdout().is_terminal());
+    let agent = build_agent(&active_config, session.workspace.clone(), attended).await?;
     let scope = agent.prepare_run(&session).await?;
     if let Some(scope) = &scope {
         session.completion_runs.push(scope.reference());
@@ -2310,5 +2383,20 @@ mod cli_tests {
                 .await
                 .is_err()
         );
+    }
+}
+
+#[cfg(test)]
+mod workflow_command_tests {
+    use super::*;
+    #[test]
+    fn workflow_names_cannot_shadow_cli_commands() {
+        for command in Cli::command().get_subcommands() {
+            assert!(
+                helm::workflow::RESERVED.contains(&command.get_name()),
+                "{}",
+                command.get_name()
+            );
+        }
     }
 }

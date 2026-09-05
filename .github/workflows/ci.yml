@@ -87,6 +87,10 @@ jobs:
         run: python3 tests/system/local_provider.py
       - name: Verify foreground outbound attachment presence with real binaries
         run: python3 tests/system/attachment_presence.py
+      - name: Verify saved workflow CLI and native execution
+        env:
+          HELM_BIN: target/release/helm
+        run: python3 tests/system/saved_workflows.py
       - run: python3 eval/run.py validate
       - run: ./scripts/package-release "ci-${{ github.sha }}"
       - run: cd dist && sha256sum -c *.sha256
