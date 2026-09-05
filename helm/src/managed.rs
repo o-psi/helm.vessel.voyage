@@ -465,7 +465,10 @@ impl EventSink for Progress {
 }
 
 // Keep this observation bounded independently of the foreground execution.
-async fn poll_local_cancellation<F, Fut>(mut read: F) -> anyhow::Result<bool>
+async fn poll_local_cancellation<F, Fut>(
+    mut read: F,
+    _stopped: &tokio_util::sync::CancellationToken,
+) -> anyhow::Result<bool>
 where
     F: FnMut() -> Fut,
     Fut: std::future::Future<Output = anyhow::Result<bool>>,
@@ -627,7 +630,8 @@ async fn submit(
                     _=done.cancelled()=> return Ok::<_,anyhow::Error>(()),
                     _=tokio::time::sleep(Duration::from_millis(50))=>{}
                 }
-                match poll_local_cancellation(|| owner.local_cancel_requested(run_id)).await {
+                match poll_local_cancellation(|| owner.local_cancel_requested(run_id), &done).await
+                {
                     Ok(true) => {
                         cancel.cancel();
                         return Ok(());

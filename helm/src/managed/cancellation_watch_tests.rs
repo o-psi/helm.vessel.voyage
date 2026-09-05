@@ -167,3 +167,71 @@ async fn polling_real_exclusive_lock_waits_then_observes_same_run_cancel() {
     );
     assert_eq!(run.record().await.unwrap().state, RunState::Accepted);
 }
+
+// Default live-watch token for existing observation behavior checks.
+async fn poll_local_cancellation<F, Fut>(read: F) -> anyhow::Result<bool>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = anyhow::Result<bool>>,
+{
+    super::poll_local_cancellation(read, &tokio_util::sync::CancellationToken::new()).await
+}
+
+#[tokio::test(start_paused = true)]
+async fn polling_stop_between_busy_attempts_does_not_exhaust_budget() {
+    let stopped = tokio_util::sync::CancellationToken::new();
+    let watch_stop = stopped.clone();
+    let (first, seen) = tokio::sync::oneshot::channel();
+    let mut first = Some(first);
+    let start = tokio::time::Instant::now();
+    let polling = tokio::spawn(async move {
+        super::poll_local_cancellation(
+            || {
+                if let Some(first) = first.take() {
+                    first.send(()).unwrap();
+                }
+                async { Err(busy()) }
+            },
+            &watch_stop,
+        )
+        .await
+    });
+    seen.await.unwrap();
+    stopped.cancel();
+    assert!(!polling.await.unwrap().unwrap());
+    assert!(start.elapsed() < Duration::from_secs(5));
+}
+
+#[tokio::test]
+async fn polling_stop_waits_for_inflight_read_to_finish() {
+    let stopped = tokio_util::sync::CancellationToken::new();
+    let watch_stop = stopped.clone();
+    let (started, seen) = tokio::sync::oneshot::channel();
+    let (release, released) = tokio::sync::oneshot::channel();
+    let mut attempt = Some((started, released));
+    let polling = tokio::spawn(async move {
+        super::poll_local_cancellation(
+            || {
+                let (started, released) = attempt
+                    .take()
+                    .expect("stopped watch must not start another read");
+                async move {
+                    started.send(()).unwrap();
+                    released.await.unwrap();
+                    Err(busy())
+                }
+            },
+            &watch_stop,
+        )
+        .await
+    });
+    seen.await.unwrap();
+    stopped.cancel();
+    tokio::task::yield_now().await;
+    assert!(
+        !polling.is_finished(),
+        "active storage read must retain ownership until it returns"
+    );
+    release.send(()).unwrap();
+    assert!(!polling.await.unwrap().unwrap());
+}
