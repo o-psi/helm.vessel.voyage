@@ -1,3 +1,4 @@
+mod shutdown;
 use super::{Tool, ToolContext, ToolError};
 use crate::terminal::{
     InteractiveTerminals, TerminalCell, TerminalColor, TerminalError, TerminalEvent, TerminalId,
@@ -8,6 +9,8 @@ use async_trait::async_trait;
 use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use shutdown::{OwnedChild, ReaderDone, StartupChild};
+pub use shutdown::{TerminalShutdown, TerminalShutdownFailure};
 use std::{
     collections::BTreeMap,
     io::Write,
@@ -22,6 +25,10 @@ use uuid::Uuid;
 #[derive(Clone)]
 pub struct ProcessTool {
     processes: Arc<Mutex<BTreeMap<Uuid, Managed>>>,
+    pending: Arc<Mutex<BTreeMap<Uuid, OwnedChild>>>,
+    starting: Arc<Mutex<()>>,
+    shutting_down: Arc<AtomicBool>,
+    uncertain: Arc<AtomicBool>,
     selected: Arc<Mutex<Option<Uuid>>>,
     max_count: usize,
     max_unread_bytes: usize,
@@ -54,7 +61,7 @@ struct Managed {
     rows: u16,
     cols: u16,
     master: Box<dyn MasterPty + Send>,
-    child: Box<dyn Child + Send + Sync>,
+    child: OwnedChild,
     writer: Arc<Mutex<Box<dyn Write + Send>>>,
     output: Arc<Mutex<Capture>>,
     notification_pending: Arc<AtomicBool>,
@@ -78,13 +85,6 @@ impl Capture {
     }
 }
 const MAX_CAPTURE_BYTES: usize = 8 * 1024 * 1024;
-
-impl Drop for Managed {
-    fn drop(&mut self) {
-        terminate_process_group(self.child.process_id());
-        let _ = self.child.kill();
-    }
-}
 
 #[derive(Deserialize)]
 #[serde(tag = "action", rename_all = "snake_case")]
@@ -210,6 +210,10 @@ impl ProcessTool {
         let (events, _) = broadcast::channel(64);
         Self {
             processes: Arc::new(Mutex::new(BTreeMap::new())),
+            pending: Arc::new(Mutex::new(BTreeMap::new())),
+            starting: Arc::new(Mutex::new(())),
+            shutting_down: Arc::new(AtomicBool::new(false)),
+            uncertain: Arc::new(AtomicBool::new(false)),
             selected: Arc::new(Mutex::new(None)),
             max_count: max_count.max(1),
             max_unread_bytes: max_unread_bytes.max(1024),
@@ -271,9 +275,24 @@ impl ProcessTool {
         cols: u16,
         ctx: &ToolContext,
     ) -> Result<String, ToolError> {
+        if self.shutting_down.load(Ordering::SeqCst) {
+            return Err(ToolError::Failed(
+                "terminal manager is shutting down".into(),
+            ));
+        }
+        let _starting = self.starting.lock().map_err(failed)?;
+        if self.shutting_down.load(Ordering::SeqCst) {
+            return Err(ToolError::Failed(
+                "terminal manager is shutting down".into(),
+            ));
+        }
         {
             let map = self.processes.lock().map_err(failed)?;
-            if map.len() >= self.max_count {
+            if map
+                .len()
+                .saturating_add(self.pending.lock().map_err(failed)?.len())
+                >= self.max_count
+            {
                 return Err(ToolError::Failed(format!(
                     "terminal limit {} reached",
                     self.max_count
@@ -313,14 +332,17 @@ impl ProcessTool {
         for (key, value) in environment {
             builder.env(key, value);
         }
-        let child = pair.slave.spawn_command(builder).map_err(failed)?;
+        let child = StartupChild::new(self, pair.slave.spawn_command(builder).map_err(failed)?);
         drop(pair.slave);
         let mut reader = pair.master.try_clone_reader().map_err(failed)?;
         let writer = Arc::new(Mutex::new(pair.master.take_writer().map_err(failed)?));
         let output = Arc::new(Mutex::new(Capture::new(rows, cols)));
         let max_unread_bytes = self.max_unread_bytes;
         let sink = output.clone();
-        let id = Uuid::new_v4();
+        let id = child.id();
+        let reader_done = child.reader_done();
+        reader_done.store(false, Ordering::Release);
+        let reader_finished = reader_done.clone();
         let events = self.events.clone();
         let notification_pending = Arc::new(AtomicBool::new(false));
         let reader_pending = notification_pending.clone();
@@ -328,6 +350,7 @@ impl ProcessTool {
         std::thread::Builder::new()
             .name("helm-pty-reader".into())
             .spawn(move || {
+                let _done = ReaderDone(reader_finished);
                 let mut buffer = [0_u8; 8192];
                 loop {
                     match std::io::Read::read(&mut reader, &mut buffer) {
@@ -363,7 +386,10 @@ impl ProcessTool {
                     }
                 }
             })
-            .map_err(failed)?;
+            .map_err(|error| {
+                reader_done.store(true, Ordering::Release);
+                failed(error)
+            })?;
         self.processes.lock().map_err(failed)?.insert(
             id,
             Managed {
@@ -373,7 +399,7 @@ impl ProcessTool {
                 rows,
                 cols,
                 master: pair.master,
-                child,
+                child: child.take(),
                 writer,
                 output,
                 notification_pending,

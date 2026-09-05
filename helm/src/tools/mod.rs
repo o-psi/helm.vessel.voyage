@@ -17,7 +17,9 @@ use crate::{
     policy::{Decision, Policy},
 };
 pub use filesystem::{ApplyPatch, ListDirectory, ReadFile, SearchFiles, WriteFile};
-pub use process::{ProcessTool, TerminalManager, TerminalMetadata};
+pub use process::{
+    ProcessTool, TerminalManager, TerminalMetadata, TerminalShutdown, TerminalShutdownFailure,
+};
 pub use questions::{MAX_ANSWER_BYTES, Question, QuestionAnswer, Questions};
 pub use shell::Shell;
 pub use todo::TodoTool;
@@ -180,6 +182,12 @@ impl ToolRegistry {
         registry.terminals = Some(terminals.clone());
         registry.register(terminals);
         registry
+    }
+    pub async fn shutdown_terminals(&self, timeout: Duration) -> TerminalShutdown {
+        match &self.terminals {
+            Some(terminals) => terminals.shutdown(timeout).await,
+            None => TerminalShutdown::empty(),
+        }
     }
     pub fn terminals(&self) -> Option<ProcessTool> {
         self.terminals.clone()
