@@ -31,6 +31,10 @@ pub enum UiEvent {
     TodoSnapshot(Result<TodoList, String>),
     TodoAction(Result<String, String>),
     Models(Result<Vec<ModelInfo>, String>),
+    Workflows {
+        request: uuid::Uuid,
+        definitions: Result<Vec<crate::workflow::Definition>, String>,
+    },
 }
 
 #[derive(Debug)]

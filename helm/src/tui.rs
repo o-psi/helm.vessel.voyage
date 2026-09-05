@@ -32,6 +32,7 @@ mod text;
 mod tool_output;
 use text::*;
 mod commands;
+mod workflows;
 use commands::*;
 
 use crate::{
@@ -82,6 +83,7 @@ struct App {
     terminal_panel: TerminalPanel,
     supervisor_panel: SupervisorPanel,
     todo_panel: TodoPanel,
+    workflow_panel: workflows::Panel,
     session: Session,
     sessions: Vec<Session>,
     provider_label: String,
@@ -201,6 +203,7 @@ impl App {
             terminal_panel: TerminalPanel::default(),
             supervisor_panel: SupervisorPanel::default(),
             todo_panel: TodoPanel::default(),
+            workflow_panel: workflows::Panel::default(),
             session,
             sessions,
             provider_label: "provider unknown".into(),
@@ -237,6 +240,7 @@ impl App {
     }
 
     fn cancel(&mut self) {
+        self.workflow_panel.close();
         if let Some(question) = self.question.take() {
             let _ = question
                 .request
@@ -341,7 +345,9 @@ pub async fn run(
                             }
                         } else if !app.terminal_panel.terminal_picker {
                             let text = text.replace("\r\n", "\n").replace('\r', "\n");
-                            if app.model_panel.model_picker {
+                            if app.workflow_panel.is_open() {
+                                app.workflow_panel.paste(&text);
+                            } else if app.model_panel.model_picker {
                                 app.model_panel.model_filter.insert_str(&text);
                                 app.model_panel.selected_model = 0;
                             } else if matches!(app.supervisor_panel.supervisor_mode, Some(SupervisorMode::Message { .. })) {
@@ -365,6 +371,14 @@ pub async fn run(
                 let title_due = matches!(&event, UiEvent::Finished(Ok(outcome)) if matches!(outcome.stop_reason, crate::agent::StopReason::Completed))
                     && app.session.title_due_after_turn();
                 handle_ui_event(event, &mut app, store, terminals.as_ref()).await?;
+                if let Some(prepared) = app.workflow_panel.ready.take() {
+                    if start_run(&mut app, &agent, store, &tx, prepared.prompt, Some(prepared.invocation)).await? {
+                        app.workflow_panel.close();
+                        app.composer.take();
+                    } else {
+                        app.workflow_panel.rejected(&app.status);
+                    }
+                }
                 if title_due { start_title_job(&mut app, &agent, &tx); }
             }
             _ = &mut termination => {
@@ -415,6 +429,12 @@ async fn handle_ui_event(
     terminals: &dyn InteractiveTerminals,
 ) -> Result<()> {
     match event {
+        UiEvent::Workflows {
+            request,
+            definitions,
+        } => {
+            app.workflow_panel.discovered(request, definitions);
+        }
         UiEvent::Checkpoint(request) => checkpoint::handle(request, app, store).await,
         UiEvent::Agent(AgentEvent::CompletionState {
             phase,
@@ -833,6 +853,11 @@ async fn handle_key(
         handle_attached_key(id, key, &mut app.terminal_panel, &mut app.status, terminals).await;
         return Ok(());
     }
+    if app.workflow_panel.is_open() {
+        app.workflow_panel
+            .key(key, app.session.workspace.clone(), tx);
+        return Ok(());
+    }
     if handle_shortcut_help_key(key, app) {
         return Ok(());
     }
@@ -1033,6 +1058,11 @@ async fn handle_key(
             app.prompt_history.reset_navigation();
             reset_slash_palette(app);
             if !message.trim().is_empty() {
+                if message.split_whitespace().next() == Some("/workflow") {
+                    app.composer.insert_str(&message);
+                    app.status = "Finish or cancel the active run before opening a workflow".into();
+                    return Ok(());
+                }
                 if !agent.supports_steering() {
                     app.composer.insert_str(&message);
                     app.status = "This compatibility provider cannot steer active runs; draft kept for the next turn".into();
@@ -1099,72 +1129,9 @@ async fn handle_key(
                 if handle_command(&prompt, app, store, Some(agent), Some(tx)).await? {
                     return Ok(());
                 }
-                if let Err(error) = agent.check_current_policy() {
+                if !start_run(app, agent, store, tx, prompt.clone(), None).await? {
                     app.composer.insert_str(&prompt);
-                    app.status = format!(
-                        "Policy changed; restart or rebuild: {}",
-                        compact_line(&error.to_string(), 120)
-                    );
-                    return Ok(());
                 }
-                let scope = match agent.prepare_run(&app.session).await {
-                    Ok(scope) => scope,
-                    Err(error) => {
-                        app.composer.insert_str(&prompt);
-                        app.status = format!("Cannot start run: {error}");
-                        return Ok(());
-                    }
-                };
-                app.prompt_history.record(&prompt);
-                if let Some(scope) = &scope {
-                    app.session.completion_runs.push(scope.reference());
-                }
-                let history = app.session.messages.clone();
-                app.session
-                    .messages
-                    .push(crate::Message::new(Role::User, prompt.clone()));
-                let run_id = scope
-                    .as_ref()
-                    .map(|scope| scope.run_id())
-                    .unwrap_or_else(uuid::Uuid::new_v4);
-                app.session.begin_run_summary(run_id);
-                store.save(&mut app.session).await?;
-                app.checkpoint = Some(checkpoint::State::new(&app.session, run_id));
-                let agent = agent.clone();
-                let events = tx.clone();
-                app.live_messages.clear();
-                app.working_since = Instant::now();
-                app.status = "Starting…  Esc cancels".into();
-                let cancel = tokio_util::sync::CancellationToken::new();
-                let run_cancel = cancel.clone();
-                let (steering, steering_input) = steering_channel(64);
-                let checkpoint = checkpoint::UiCheckpoint {
-                    run_id,
-                    tx: events.clone(),
-                    cancel: run_cancel.clone(),
-                };
-                let model = agent.model();
-                let run_owner = store.clone();
-                let task = tokio::spawn(async move {
-                    let _run_owner = run_owner;
-                    let result = agent
-                        .run_checkpointed_scoped(
-                            history,
-                            prompt,
-                            run_cancel,
-                            Some(steering_input),
-                            &checkpoint,
-                            model,
-                            scope,
-                        )
-                        .await;
-                    let _ = events.send(UiEvent::Finished(result));
-                });
-                app.running = Some(Running {
-                    task,
-                    cancel,
-                    steering,
-                });
             }
         }
         KeyCode::Char(character) => {
@@ -1266,6 +1233,7 @@ fn handle_mouse(mouse: MouseEvent, app: &mut App) {
         && !app.terminal_panel.terminal_picker
         && !app.model_panel.model_picker
         && !app.shortcut_help
+        && !app.workflow_panel.is_open()
         && app.supervisor_panel.supervisor_mode.is_none()
         && app.todo_panel.todo_mode.is_none();
     if !conversation_is_visible {
@@ -1279,3 +1247,93 @@ fn handle_mouse(mouse: MouseEvent, app: &mut App) {
 }
 #[cfg(test)]
 mod tests;
+
+/// Ordinary text and workflows share policy, ownership, canonical save and checkpoints.
+/// A false result is preparation rejection. Canonical save errors remain fatal and
+/// propagate without dispatch; uncertain publication must not invite blind retry.
+async fn start_run(
+    app: &mut App,
+    agent: &Arc<Agent>,
+    store: &mut SessionStore,
+    tx: &mpsc::UnboundedSender<UiEvent>,
+    prompt: String,
+    invocation: Option<crate::workflow::Invocation>,
+) -> Result<bool> {
+    if app.is_running() {
+        app.status = "A run is already active; workflow inputs were retained".into();
+        return Ok(false);
+    }
+    if invocation.is_some() && app.session.workflow_runs.len() >= 128 {
+        app.status = "Workflow invocation history is full; start a new session".into();
+        return Ok(false);
+    }
+    app.title_job = None;
+    if let Err(error) = agent.check_current_policy() {
+        app.status = format!(
+            "Policy changed; restart or rebuild: {}",
+            compact_line(&error.to_string(), 120)
+        );
+        return Ok(false);
+    }
+    let scope = match agent.prepare_run(&app.session).await {
+        Ok(scope) => scope,
+        Err(error) => {
+            app.status = format!("Cannot start run: {error}");
+            return Ok(false);
+        }
+    };
+    app.prompt_history.record(&prompt);
+    if let Some(invocation) = invocation {
+        app.session.workflow_runs.push(invocation);
+    }
+    if let Some(scope) = &scope {
+        app.session.completion_runs.push(scope.reference());
+    }
+    let history = app.session.messages.clone();
+    app.session
+        .messages
+        .push(crate::Message::new(Role::User, prompt.clone()));
+    let run_id = scope
+        .as_ref()
+        .map(|scope| scope.run_id())
+        .unwrap_or_else(uuid::Uuid::new_v4);
+    app.session.begin_run_summary(run_id);
+    store.save(&mut app.session).await?;
+    app.checkpoint = Some(checkpoint::State::new(&app.session, run_id));
+    let agent = agent.clone();
+    let events = tx.clone();
+    app.live_messages.clear();
+    app.working_since = Instant::now();
+    app.status = "Starting…  Esc cancels".into();
+    let cancel = tokio_util::sync::CancellationToken::new();
+    let run_cancel = cancel.clone();
+    let (steering, steering_input) = steering_channel(64);
+    let checkpoint = checkpoint::UiCheckpoint {
+        run_id,
+        tx: events.clone(),
+        cancel: run_cancel.clone(),
+    };
+    let model = agent.model();
+    let run_owner = store.clone();
+    let task = tokio::spawn(async move {
+        let _run_owner = run_owner;
+        let result = agent
+            .run_checkpointed_scoped(
+                history,
+                prompt,
+                run_cancel,
+                Some(steering_input),
+                &checkpoint,
+                model,
+                scope,
+            )
+            .await;
+        let _ = events.send(UiEvent::Finished(result));
+    });
+    app.running = Some(Running {
+        task,
+        cancel,
+        steering,
+    });
+    Ok(true)
+}
