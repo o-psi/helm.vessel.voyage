@@ -59,13 +59,25 @@ semantic truth of a reason. Deferred and blocked work remains unfinished.
 acceptance decision. Never hold it over provider calls, tools, approvals or waits.
 A plain `snapshot` releases the lease immediately and is not an acceptance lock.
 All writers must participate; old binaries and uncoordinated direct store users
-cannot safely share an enabled acceptance boundary. Mutation locks do not prove a
-process has exited: the existing `new_persistent` startup globally recovers a
-workspace's agent tree. Before supporting simultaneous independent runtimes on the
-same workspace, admission/recovery must establish a lifetime execution lease or
-scope recovery to runs whose owner is known to have stopped. Otherwise startup
-could mark another process's active records interrupted. The completion snapshot
-must not be advertised as solving that existing lifecycle ownership problem.
+cannot safely share an enabled acceptance boundary.
+
+## Exclusive subagent writer ownership
+
+A coordinated `SubagentRuntime` acquires a separate lifetime OS lease before
+reading/recovering its agent tree. A second runtime/process fails clearly as busy
+before it can mark the live owner's records interrupted. The lease is shared by
+the runtime's store clones and admitted persistence tasks; dropping a cancelled
+waiter does not release it early. Coordinated direct writes without this lease
+are rejected. Process exit releases the lease, after which a new runtime can
+honestly mark unrecoverable running records interrupted and preserve obligations.
+
+This intentionally permits one cooperating subagent runtime per workspace. Reuse
+the existing runtime within a process when building additional clients. Separate
+processes must not bypass the busy result, open old uncoordinated writers, or
+remove the lease file. This is an admission restriction, not implementation of
+#78's multi-client session coordinator. Independent run ledgers and workspace todos
+remain isolated for readiness; a foreign unfinished todo does not block a run.
+
 
 ## Delivery boundaries and tests
 

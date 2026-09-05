@@ -185,7 +185,7 @@ impl SubagentRuntime {
     pub fn new(
         executor: Arc<dyn SubagentExecutor>,
         limits: RuntimeLimits,
-        store: Option<AgentTreeStore>,
+        mut store: Option<AgentTreeStore>,
     ) -> Result<Self, RuntimeError> {
         if limits.max_concurrency == 0
             || limits.max_concurrency > Semaphore::MAX_PERMITS
@@ -194,6 +194,11 @@ impl SubagentRuntime {
             return Err(RuntimeError::Invalid(
                 "runtime limits must be greater than zero".into(),
             ));
+        }
+        if let Some(store) = &mut store {
+            store
+                .acquire_runtime_owner()
+                .map_err(|e| RuntimeError::Persistence(e.to_string()))?;
         }
         let (events, _) = broadcast::channel(limits.event_history.clamp(16, 4096));
         Ok(Self {
@@ -218,6 +223,16 @@ impl SubagentRuntime {
         limits: RuntimeLimits,
         store: AgentTreeStore,
     ) -> Result<Self, RuntimeError> {
+        // Acquire exclusive writer lifetime before reading or recovering records.
+        // Store clones retain this lease through detached persistence operations.
+        let store = tokio::task::spawn_blocking(move || {
+            let mut store = store;
+            store.acquire_runtime_owner()?;
+            Ok::<_, anyhow::Error>(store)
+        })
+        .await
+        .map_err(|e| RuntimeError::Persistence(e.to_string()))?
+        .map_err(|e| RuntimeError::Persistence(e.to_string()))?;
         // Validate known ownership before recovery can archive retained records.
         // A missing/corrupt ledger must never silently turn owned work into legacy.
         for record in store

@@ -34,6 +34,15 @@ impl Drop for CoordinationGuard {
     }
 }
 
+/// Exclusive lifetime of one cooperating subagent writer for this workspace.
+#[derive(Debug)]
+pub(crate) struct AgentWriterLease(File);
+impl Drop for AgentWriterLease {
+    fn drop(&mut self) {
+        let _ = self.0.unlock();
+    }
+}
+
 impl Coordinator {
     /// Dedicated private directory beneath an existing trusted data directory.
     pub fn open(directory: PathBuf, workspace: &Path) -> Result<Self> {
@@ -85,6 +94,36 @@ impl Coordinator {
             workspace,
             gate,
         })
+    }
+    pub(crate) fn acquire_agent_writer(&self) -> Result<AgentWriterLease> {
+        let path = self.directory.join("agents.execution.lock");
+        let mut options = OpenOptions::new();
+        options.read(true).write(true).create(true).truncate(false);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options
+                .mode(0o600)
+                .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+        }
+        let file = options.open(&path)?;
+        ensure!(
+            file.metadata()?.is_file()
+                && !std::fs::symlink_metadata(path)?.file_type().is_symlink(),
+            "invalid subagent writer lease"
+        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            ensure!(
+                file.metadata()?.permissions().mode() & 0o077 == 0,
+                "subagent writer lease is not private"
+            );
+        }
+        file.try_lock().context(
+            "workspace subagent runtime is busy; another owner still holds its execution lease",
+        )?;
+        Ok(AgentWriterLease(file))
     }
     pub(crate) async fn lock(&self) -> Result<CoordinationGuard> {
         let local = tokio::time::timeout(
@@ -890,5 +929,117 @@ mod tests {
         })
         .await
         .unwrap();
+    }
+    #[tokio::test]
+    async fn runtime_owner_excludes_second_process_and_recovers_after_owner_exit() {
+        const ENV: &str = "HELM_COMPLETION_RUNTIME_OWNER_CHILD";
+        if let Ok(root) = std::env::var(ENV) {
+            let root = PathBuf::from(root);
+            let coordinator = Coordinator::open(root.join("completion"), &root).unwrap();
+            let store = AgentTreeStore::new(root.join("agents/tree.json"))
+                .with_coordinator(coordinator.clone());
+            let run = RunHandle::create(coordinator, Uuid::new_v4(), Uuid::new_v4())
+                .await
+                .unwrap();
+            let runtime = SubagentRuntime::new_persistent(
+                Arc::new(OwnedExecutor),
+                RuntimeLimits::default(),
+                store,
+            )
+            .await
+            .unwrap();
+            let mut task = request(None);
+            task.task = "hold".into();
+            let id = runtime
+                .spawn_for_run(task, Some(run.clone()))
+                .await
+                .unwrap();
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+            while runtime.get(id).await.unwrap().status != crate::subagent::AgentStatus::Running {
+                assert!(std::time::Instant::now() < deadline);
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+            std::fs::write(
+                root.join("owner-ready.tmp"),
+                serde_json::to_vec(&(id, run.reference())).unwrap(),
+            )
+            .unwrap();
+            std::fs::rename(root.join("owner-ready.tmp"), root.join("owner-ready.json")).unwrap();
+            std::future::pending::<()>().await;
+            return;
+        }
+        struct Child(std::process::Child);
+        impl Drop for Child {
+            fn drop(&mut self) {
+                let _ = self.0.kill();
+                let _ = self.0.wait();
+            }
+        }
+        let fixture = Fixture::new();
+        let mut child=Child(std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact","completion::runtime::tests::runtime_owner_excludes_second_process_and_recovers_after_owner_exit"])
+            .env(ENV,fixture._root.path()).stdout(std::process::Stdio::null()).spawn().unwrap());
+        let marker = fixture._root.path().join("owner-ready.json");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !marker.exists() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "owner child failed to become ready"
+            );
+            assert!(
+                child.0.try_wait().unwrap().is_none(),
+                "owner child exited early"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        let (id, reference): (crate::subagent::AgentId, RunReference) =
+            serde_json::from_slice(&std::fs::read(marker).unwrap()).unwrap();
+        let before = fixture.agents.get(id).await.unwrap().unwrap();
+        assert_eq!(before.status, crate::subagent::AgentStatus::Running);
+        let second = SubagentRuntime::new_persistent(
+            Arc::new(OwnedExecutor),
+            RuntimeLimits::default(),
+            fixture.agents.clone(),
+        )
+        .await;
+        assert!(matches!(second,Err(error) if error.to_string().contains("busy")));
+        assert_eq!(
+            fixture.agents.get(id).await.unwrap().unwrap(),
+            before,
+            "second startup rewrote live owner state"
+        );
+        assert!(
+            fixture.agents.update(before).await.is_err(),
+            "unleased direct store overwrote the owner"
+        );
+        child.0.kill().unwrap();
+        child.0.wait().unwrap();
+        let recovered = SubagentRuntime::new_persistent(
+            Arc::new(OwnedExecutor),
+            RuntimeLimits::default(),
+            fixture.agents.clone(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            recovered.get(id).await.unwrap().status,
+            crate::subagent::AgentStatus::Interrupted
+        );
+        let run = RunHandle::resume(
+            fixture.coordinator.clone(),
+            reference.session_id,
+            reference.run_id,
+        )
+        .await
+        .unwrap();
+        let snapshot = fixture.snapshot(&run).await;
+        assert_eq!(snapshot.total, 1);
+        assert!(!snapshot.ready());
+        assert_eq!(
+            snapshot.unresolved[0].status,
+            Some(super::super::WorkStatus::Agent(
+                crate::subagent::AgentStatus::Interrupted
+            ))
+        );
     }
 }

@@ -491,6 +491,7 @@ pub struct AgentTreeStore {
     path: PathBuf,
     gate: std::sync::Arc<tokio::sync::Mutex<()>>,
     coordinator: Option<crate::completion::runtime::Coordinator>,
+    execution_lease: Option<std::sync::Arc<crate::completion::runtime::AgentWriterLease>>,
 }
 impl AgentTreeStore {
     pub fn new(path: PathBuf) -> Self {
@@ -498,6 +499,7 @@ impl AgentTreeStore {
             path,
             gate: std::sync::Arc::new(tokio::sync::Mutex::new(())),
             coordinator: None,
+            execution_lease: None,
         }
     }
     pub fn with_coordinator(
@@ -505,7 +507,23 @@ impl AgentTreeStore {
         coordinator: crate::completion::runtime::Coordinator,
     ) -> Self {
         self.coordinator = Some(coordinator);
+        self.execution_lease = None;
         self
+    }
+    pub(crate) fn acquire_runtime_owner(&mut self) -> Result<()> {
+        if self.execution_lease.is_none()
+            && let Some(coordinator) = &self.coordinator
+        {
+            self.execution_lease = Some(std::sync::Arc::new(coordinator.acquire_agent_writer()?));
+        }
+        Ok(())
+    }
+    fn require_runtime_owner(&self) -> Result<()> {
+        anyhow::ensure!(
+            self.coordinator.is_none() || self.execution_lease.is_some(),
+            "coordinated agent writes require the runtime execution lease"
+        );
+        Ok(())
     }
     pub fn coordinator(&self) -> Option<&crate::completion::runtime::Coordinator> {
         self.coordinator.as_ref()
@@ -535,6 +553,7 @@ impl AgentTreeStore {
         }
     }
     pub async fn save(&self, tree: &AgentTree) -> Result<()> {
+        self.require_runtime_owner()?;
         let tree = tree.clone();
         let store = self.clone();
         tokio::spawn(async move {
@@ -561,6 +580,7 @@ impl AgentTreeStore {
         Ok(())
     }
     pub async fn create(&self, record: AgentRecord) -> Result<()> {
+        self.require_runtime_owner()?;
         let store = self.clone();
         tokio::spawn(async move {
             let _coordination = match &store.coordinator {
@@ -576,6 +596,7 @@ impl AgentTreeStore {
         .context("agent writer task failed")?
     }
     pub async fn update(&self, record: AgentRecord) -> Result<()> {
+        self.require_runtime_owner()?;
         let store = self.clone();
         tokio::spawn(async move {
             let _coordination = match &store.coordinator {
@@ -620,6 +641,7 @@ impl AgentTreeStore {
         max_records: usize,
         protected: Option<AgentId>,
     ) -> Result<Vec<AgentId>> {
+        self.require_runtime_owner()?;
         let store = self.clone();
         tokio::spawn(async move {
             let _coordination = match &store.coordinator {
@@ -643,6 +665,7 @@ impl AgentTreeStore {
         .context("agent writer task failed")?
     }
     pub async fn recover_after_restart(&self) -> Result<usize> {
+        self.require_runtime_owner()?;
         let store = self.clone();
         tokio::spawn(async move {
             let _coordination = match &store.coordinator {
