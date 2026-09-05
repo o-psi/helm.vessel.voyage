@@ -202,7 +202,7 @@ impl Journal {
     ) -> Result<SteeringOutcome> {
         self.check_guard(guard, request.session_id)?;
         ensure!(
-            self.opened_schema == SCHEMA_VERSION,
+            self.opened_schema >= STEERING_SCHEMA_VERSION,
             "steering requires quiescent journal upgrade"
         );
         validate(request)?;
@@ -298,7 +298,7 @@ impl Journal {
     pub fn steering_record(&self, id: Uuid) -> Result<SteeringRecord> {
         self.check_schema()?;
         ensure!(
-            self.opened_schema == SCHEMA_VERSION,
+            self.opened_schema >= STEERING_SCHEMA_VERSION,
             "steering requires quiescent journal upgrade"
         );
         read(&self.connection, id)
@@ -312,7 +312,8 @@ impl Journal {
     ) -> Result<Vec<SteeringRecord>> {
         self.check_schema()?;
         ensure!(
-            self.opened_schema == SCHEMA_VERSION && (1..=MAX_PENDING_STEERING).contains(&limit),
+            self.opened_schema >= STEERING_SCHEMA_VERSION
+                && (1..=MAX_PENDING_STEERING).contains(&limit),
             "invalid steering projection bound/schema"
         );
         let ids = self
@@ -339,7 +340,7 @@ impl Journal {
         let run = self.run(run_id)?;
         self.check_guard(guard, run.session_id)?;
         ensure!(
-            self.opened_schema == SCHEMA_VERSION,
+            self.opened_schema >= STEERING_SCHEMA_VERSION,
             "steering requires quiescent journal upgrade"
         );
         let tx = self
@@ -377,7 +378,7 @@ impl Journal {
         Ok(record)
     }
     pub(crate) fn steering_actors(&self, run_id: Uuid) -> Result<Vec<SteeringActor>> {
-        if self.opened_schema < SCHEMA_VERSION {
+        if self.opened_schema < STEERING_SCHEMA_VERSION {
             return Ok(Vec::new());
         }
         let actors = self.connection.prepare("SELECT DISTINCT machine_id,principal_id FROM steering WHERE run_id=?1 AND status IN ('queued','applied')")?.query_map([run_id.to_string()], |r| Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;

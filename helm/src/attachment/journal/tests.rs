@@ -767,7 +767,7 @@ fn uncertain_tool_intent_cannot_be_completed_or_dispatched_on_a_new_turn() {
 fn legacy_v2(journal: &mut Journal) {
     journal
         .connection
-        .execute_batch("DROP TABLE IF EXISTS steering; DROP TABLE imports; UPDATE attachment_schema SET version=2 WHERE id=1;")
+        .execute_batch("DROP TABLE local_cancel_intents; DROP TABLE IF EXISTS steering; DROP TABLE imports; UPDATE attachment_schema SET version=2 WHERE id=1;")
         .unwrap();
     journal.opened_schema = 2;
 }
@@ -1098,3 +1098,5 @@ fn killed_hot_writer_preserves_canonical_run_dedup_and_replay() {
 mod windows_tests;
 
 mod steering;
+
+mod catalogue;

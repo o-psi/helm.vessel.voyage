@@ -29,7 +29,12 @@ mod storage;
 #[cfg(windows)]
 use std::sync::Arc;
 
-const SCHEMA_VERSION: i64 = 4;
+const SCHEMA_VERSION: i64 = 5;
+const STEERING_SCHEMA_VERSION: i64 = 4;
+mod catalogue;
+pub use catalogue::{
+    CancelRequestOutcome, LocalCancelRequest, RunSummary, SessionPage, SessionSummary,
+};
 mod steering;
 pub use steering::{
     MAX_PENDING_STEERING, MAX_STEERING_PER_RUN, SteeringActor, SteeringAdmission, SteeringOutcome,
@@ -201,7 +206,7 @@ impl Journal {
             .optional()?;
         if let Some(version) = version {
             ensure!(
-                matches!(version, 2 | 3 | SCHEMA_VERSION),
+                matches!(version, 2 | 3 | 4 | SCHEMA_VERSION),
                 "unsupported attachment journal schema"
             );
         } else {
@@ -214,6 +219,7 @@ impl Journal {
                 CREATE TABLE events(session_id TEXT NOT NULL REFERENCES sessions(id), sequence INTEGER NOT NULL, event TEXT NOT NULL, PRIMARY KEY(session_id,sequence));")?;
             tx.execute_batch(IMPORT_SCHEMA)?;
             tx.execute_batch(steering::SCHEMA)?;
+            tx.execute_batch(catalogue::SCHEMA)?;
             tx.execute(
                 "INSERT INTO attachment_schema VALUES(1, ?1)",
                 [SCHEMA_VERSION],
@@ -306,7 +312,10 @@ impl Journal {
         if self.opened_schema == 2 {
             tx.execute_batch(IMPORT_SCHEMA)?;
         }
-        tx.execute_batch(steering::SCHEMA)?;
+        if self.opened_schema < STEERING_SCHEMA_VERSION {
+            tx.execute_batch(steering::SCHEMA)?;
+        }
+        tx.execute_batch(catalogue::SCHEMA)?;
         tx.execute(
             "UPDATE attachment_schema SET version=?1 WHERE id=1",
             [SCHEMA_VERSION],
@@ -377,7 +386,7 @@ impl Journal {
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         check_transaction_schema(&tx, self.opened_schema)?;
-        if self.opened_schema == SCHEMA_VERSION {
+        if self.opened_schema >= STEERING_SCHEMA_VERSION {
             steering::validate_snapshot_ids(&tx, session)?;
         }
         let count: i64 = tx.query_row("SELECT count(*) FROM sessions", [], |r| r.get(0))?;
@@ -409,7 +418,7 @@ impl Journal {
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         check_transaction_schema(&tx, self.opened_schema)?;
-        if self.opened_schema == SCHEMA_VERSION {
+        if self.opened_schema >= STEERING_SCHEMA_VERSION {
             steering::validate_snapshot_ids(&tx, session)?;
         }
         let count: i64 = tx.query_row("SELECT count(*) FROM sessions", [], |r| r.get(0))?;
@@ -457,7 +466,7 @@ impl Journal {
     /// Authentication/sharing must still be checked by the caller on every retry.
     pub fn lookup_command(&self, request: &TurnAdmission) -> Result<Option<RunRecord>> {
         self.check_schema()?;
-        if self.opened_schema == SCHEMA_VERSION {
+        if self.opened_schema >= STEERING_SCHEMA_VERSION {
             ensure!(
                 !steering::reserved_receipt_exists(&self.connection, request.command_id)?,
                 "turn command collides with steering receipt"
@@ -517,7 +526,7 @@ impl Journal {
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         check_transaction_schema(&tx, self.opened_schema)?;
-        if self.opened_schema == SCHEMA_VERSION {
+        if self.opened_schema >= STEERING_SCHEMA_VERSION {
             ensure!(
                 !steering::reserved_receipt_exists(&tx, request.command_id)?,
                 "turn command collides with steering receipt"
@@ -617,6 +626,12 @@ impl Journal {
             run.state == RunState::Accepted,
             "run already dispatched or terminal"
         );
+        if self.opened_schema >= 5 {
+            ensure!(
+                !catalogue::pending(&tx, run.session_id, run_id)?,
+                "run cancellation requested"
+            );
+        }
         run.state = RunState::Running;
         tx.execute(
             "UPDATE runs SET record=?1 WHERE id=?2",
@@ -739,7 +754,7 @@ impl Journal {
         if messages.len() == previous && input_delta == 0 && output_delta == 0 {
             return Ok(());
         }
-        if self.opened_schema == SCHEMA_VERSION {
+        if self.opened_schema >= STEERING_SCHEMA_VERSION {
             steering::apply(
                 &tx,
                 &run,
@@ -841,7 +856,13 @@ impl Journal {
             run.state == RunState::Running,
             "acceptance requires running admission"
         );
-        if self.opened_schema == SCHEMA_VERSION {
+        if self.opened_schema >= 5 {
+            ensure!(
+                !catalogue::pending(&tx, run.session_id, run_id)?,
+                "run cancellation requested"
+            );
+        }
+        if self.opened_schema >= STEERING_SCHEMA_VERSION {
             steering::ensure_no_pending(&tx, run_id)?;
         }
         let current = read_session(&tx, run.session_id)?;
@@ -921,6 +942,19 @@ impl Journal {
             matches!(run.state, RunState::Accepted | RunState::Running),
             "run is already terminal"
         );
+        let cancelled = self.opened_schema >= 5
+            && state != RunState::Interrupted
+            && catalogue::pending(&tx, run.session_id, run_id)?;
+        let (state, reason, final_text, classification) = if cancelled {
+            (
+                RunState::Cancelled,
+                Some("local cancellation requested"),
+                None,
+                None,
+            )
+        } else {
+            (state, reason, final_text, classification)
+        };
         ensure!(
             state != RunState::Completed || run.state == RunState::Running,
             "undispatched run cannot complete"
@@ -976,7 +1010,7 @@ impl Journal {
                 .session
                 .interrupt_run_summary(reason.unwrap_or("run interrupted").to_owned());
         }
-        if self.opened_schema == SCHEMA_VERSION {
+        if self.opened_schema >= STEERING_SCHEMA_VERSION {
             if state == RunState::Completed {
                 steering::ensure_no_pending(&tx, run_id)?;
             }
