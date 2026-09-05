@@ -60,7 +60,8 @@ impl ManagedShell {
                 })
                 .collect::<Vec<_>>()
         };
-        let deadline = tokio::time::Instant::now() + timeout;
+        let now = tokio::time::Instant::now();
+        let deadline = now.checked_add(timeout).unwrap_or(now);
         loop {
             let remaining = jobs
                 .iter()
@@ -89,6 +90,11 @@ impl Tool for ManagedShell {
         Shell.definition()
     }
     async fn execute(&self, value: Value, ctx: &ToolContext) -> Result<String, ToolError> {
+        if Instant::now().checked_add(ctx.timeout).is_none() {
+            return Err(ToolError::InvalidArguments(
+                "shell timeout is out of range".into(),
+            ));
+        }
         let args: Args = serde_json::from_value(value)
             .map_err(|e| ToolError::InvalidArguments(e.to_string()))?;
         match ctx.policy.command(&args.command) {
@@ -227,6 +233,12 @@ mod linux {
         ctx: &ToolContext,
         tx: &mut Option<tokio::sync::oneshot::Sender<Result<String, ToolError>>>,
     ) -> Result<String, ToolError> {
+        let Some(deadline) = Instant::now().checked_add(ctx.timeout) else {
+            job.observed.store(true, Ordering::Release);
+            return Err(ToolError::InvalidArguments(
+                "shell timeout is out of range".into(),
+            ));
+        };
         let Some(state) = state.upgrade() else {
             job.observed.store(true, Ordering::Release);
             return Err(ToolError::Cancelled);
@@ -288,54 +300,49 @@ mod linux {
                 Ok((Capture::new(out, limit + 1)?, Capture::new(err, limit + 1)?))
             });
         let result = match captures {
-            Ok((mut stdout, mut stderr)) => {
-                let deadline = Instant::now() + ctx.timeout;
-                loop {
-                    if job.cancel.is_cancelled() {
-                        break Err(ToolError::Cancelled);
-                    }
-                    if tx.is_some() && Instant::now() >= deadline {
-                        break Err(ToolError::Timeout(ctx.timeout));
-                    }
-                    if let Err(e) = stdout.drain().and_then(|()| stderr.drain()) {
-                        break Err(ToolError::Failed(e.to_string()));
-                    }
-                    match identity.exit_status() {
-                        Err(_) => {
-                            break Err(ToolError::Failed(
-                                "managed shell exit observation unavailable".into(),
-                            ));
-                        }
-                        Ok(Some(status)) if stdout.eof && stderr.eof => {
-                            if let Some(tx) = tx.take() {
-                                let combined = format!(
-                                    "exit: {}\nstdout:\n{}\nstderr:\n{}",
-                                    status
-                                        .signal()
-                                        .map(|_| "signal".to_owned())
-                                        .unwrap_or_else(|| status.exit_code().to_string()),
-                                    String::from_utf8_lossy(&stdout.bytes),
-                                    String::from_utf8_lossy(&stderr.bytes)
-                                );
-                                let _ = tx.send(Ok(truncate(combined.into_bytes(), limit)));
-                            }
-                            if identity.observe_empty(Instant::now() + Duration::from_millis(100))
-                                == Ok(true)
-                            {
-                                if child.wait().is_ok() {
-                                    job.observed.store(true, Ordering::Release);
-                                    return Ok(String::new());
-                                }
-                                break Err(ToolError::Failed(
-                                    "managed shell child reap failed".into(),
-                                ));
-                            }
-                        }
-                        _ => {}
-                    }
-                    std::thread::sleep(Duration::from_millis(if tx.is_some() { 5 } else { 100 }));
+            Ok((mut stdout, mut stderr)) => loop {
+                if job.cancel.is_cancelled() {
+                    break Err(ToolError::Cancelled);
                 }
-            }
+                if tx.is_some() && Instant::now() >= deadline {
+                    break Err(ToolError::Timeout(ctx.timeout));
+                }
+                if let Err(e) = stdout.drain().and_then(|()| stderr.drain()) {
+                    break Err(ToolError::Failed(e.to_string()));
+                }
+                match identity.exit_status() {
+                    Err(_) => {
+                        break Err(ToolError::Failed(
+                            "managed shell exit observation unavailable".into(),
+                        ));
+                    }
+                    Ok(Some(status)) if stdout.eof && stderr.eof => {
+                        if let Some(tx) = tx.take() {
+                            let combined = format!(
+                                "exit: {}\nstdout:\n{}\nstderr:\n{}",
+                                status
+                                    .signal()
+                                    .map(|_| "signal".to_owned())
+                                    .unwrap_or_else(|| status.exit_code().to_string()),
+                                String::from_utf8_lossy(&stdout.bytes),
+                                String::from_utf8_lossy(&stderr.bytes)
+                            );
+                            let _ = tx.send(Ok(truncate(combined.into_bytes(), limit)));
+                        }
+                        if identity.observe_empty(Instant::now() + Duration::from_millis(100))
+                            == Ok(true)
+                        {
+                            if child.wait().is_ok() {
+                                job.observed.store(true, Ordering::Release);
+                                return Ok(String::new());
+                            }
+                            break Err(ToolError::Failed("managed shell child reap failed".into()));
+                        }
+                    }
+                    _ => {}
+                }
+                std::thread::sleep(Duration::from_millis(if tx.is_some() { 5 } else { 100 }));
+            },
             Err(e) => Err(ToolError::Failed(e.to_string())),
         };
         let deadline = Instant::now() + Duration::from_secs(5);
