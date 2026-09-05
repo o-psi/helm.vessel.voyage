@@ -168,3 +168,7 @@ save/load/replace/delete tests do not establish that guarantee. Dedicated enroll
 storage uses the native Windows ACL implementation described in
 [security operations](security-operations.md#windows-enrollment-storage). This does
 not upgrade SessionStore or the attachment journal to verified Windows ACL storage.
+
+The subsequent [event/replay contract](attachment-events.md) adds negotiated,
+bounded observation frames and receive-side cursor checks. It remains a partial
+#9 foundation with no authenticated socket, execution or raw snapshot exposure.
