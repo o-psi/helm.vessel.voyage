@@ -322,7 +322,10 @@ impl PrivateDirectory {
             }
             let handle = open_handle(
                 &prefix_path,
-                FILE_READ_ATTRIBUTES,
+                // Metadata-only handles do not participate in delete sharing
+                // checks. Directory read access makes the no-delete share pin
+                // effective against renaming any checked ancestor.
+                FILE_READ_ATTRIBUTES | FILE_LIST_DIRECTORY,
                 OPEN_EXISTING,
                 true,
                 None,

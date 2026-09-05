@@ -44,6 +44,28 @@ fn rejects_linked_files_alternate_streams_and_replaced_directory() {
 }
 
 #[test]
+fn pins_every_ancestor_until_the_private_directory_is_dropped() {
+    let root = tempfile::tempdir().unwrap();
+    let parent = root.path().join("parent");
+    std::fs::create_dir(&parent).unwrap();
+    let path = parent.join("private");
+    let directory = PrivateDirectory::open(&path).unwrap();
+    let moved_parent = root.path().join("moved-parent");
+    assert!(std::fs::rename(&parent, &moved_parent).is_err());
+    assert!(std::fs::rename(&path, parent.join("moved-private")).is_err());
+    directory
+        .publish("client.json", b"same verified directory")
+        .unwrap();
+    drop(directory);
+    std::fs::rename(&parent, &moved_parent).unwrap();
+    let reopened = PrivateDirectory::open(&moved_parent.join("private")).unwrap();
+    assert_eq!(
+        std::fs::read(reopened.path().join("client.json")).unwrap(),
+        b"same verified directory"
+    );
+}
+
+#[test]
 fn failed_publication_keeps_original_state() {
     let root = tempfile::tempdir().unwrap();
     let directory = PrivateDirectory::open(&root.path().join("private")).unwrap();
