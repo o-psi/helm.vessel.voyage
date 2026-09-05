@@ -1,4 +1,6 @@
 use super::*;
+#[cfg(windows)]
+use std::fs;
 use voyage_protocol::enrollment::SigningKey;
 const ORIGIN: &str = "https://vessel.example";
 fn store() -> EnrollmentStore {
@@ -372,7 +374,7 @@ fn private_storage_restart_lost_response_revocation_and_symlinks() {
     assert!(EnrollmentStore::open(&path, ORIGIN, false).is_err());
 }
 #[test]
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn independent_connections_serialize_competing_redemption_and_busy_is_not_success() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("authority");
@@ -393,6 +395,15 @@ fn independent_connections_serialize_competing_redemption_and_busy_is_not_succes
         b.complete(&p, Some(&i.key), 1).unwrap_err(),
         EnrollmentError::Busy
     );
+    // A deterministic held write lock must grant no enrollment authority.
+    for table in ["machines", "receipts", "challenges"] {
+        assert_eq!(
+            a.db.query_row(&format!("SELECT count(*) FROM {table}"), [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+    }
     a.db.execute_batch("ROLLBACK").unwrap();
     let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
     let join = std::thread::spawn({
@@ -407,9 +418,48 @@ fn independent_connections_serialize_competing_redemption_and_busy_is_not_succes
     barrier.wait();
     let first = a.complete(&p, Some(&i.key), 1);
     let second = join.join().unwrap();
-    assert_eq!(usize::from(first.is_ok()) + usize::from(second.is_ok()), 1);
+    let results = [first, second];
+    let mut successes = results.iter().filter(|result| result.is_ok()).count();
+    assert!(successes <= 1, "a proof was redeemed more than once");
+    // observe_time and complete use separate fail-fast transactions. Contending
+    // watermark/effect locks may make BOTH initial attempts Busy. After joining,
+    // retry each Busy attempt once with the identical signed proof; never retry
+    // a denial or invent a new transaction/challenge.
+    for result in results {
+        match result {
+            Ok(_) | Err(EnrollmentError::Denied) => {}
+            Err(EnrollmentError::Busy) => match a.complete(&p, Some(&i.key), 1) {
+                Ok(_) => successes += 1,
+                Err(error) => assert_eq!(error, EnrollmentError::Denied),
+            },
+            Err(error) => panic!("unexpected competing redemption error: {error:?}"),
+        }
+    }
+    assert_eq!(successes, 1);
     assert_eq!(
-        a.db.query_row("SELECT count(*) FROM machines", [], |r| r.get::<_, i64>(0))
+        a.complete(&p, Some(&i.key), 1).unwrap_err(),
+        EnrollmentError::Denied
+    );
+    drop(a);
+    let reopened = EnrollmentStore::open(&path, ORIGIN, false).unwrap();
+    for table in ["machines", "receipts", "challenges"] {
+        assert_eq!(
+            reopened
+                .db
+                .query_row(&format!("SELECT count(*) FROM {table}"), [], |r| r
+                    .get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
+    }
+    assert_eq!(
+        reopened
+            .db
+            .query_row(
+                "SELECT count(*) FROM audit WHERE machine_id IS NOT NULL",
+                [],
+                |r| r.get::<_, i64>(0)
+            )
             .unwrap(),
         1
     );
@@ -515,5 +565,192 @@ fn reserved_revocation_capacity_survives_full_ordinary_receipts_and_audit() {
                 .unwrap(),
             count
         );
+    }
+}
+
+#[test]
+#[cfg(windows)]
+fn native_private_sqlite_restart_and_journal_permissions() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("authority");
+    let mut store = EnrollmentStore::open(&path, ORIGIN, false).unwrap();
+    let owner = store.owner_id();
+    let (key, receipt, operation) = enroll(&mut store);
+    let private = store._private_directory.as_ref().unwrap();
+    private.open_file("enrollment.sqlite3", false).unwrap();
+    private
+        .open_file("enrollment.sqlite3-journal", false)
+        .unwrap();
+    let mode: String = store
+        .db
+        .pragma_query_value(None, "journal_mode", |row| row.get(0))
+        .unwrap();
+    assert_eq!(mode, "persist");
+    drop(store);
+    let mut reopened = EnrollmentStore::open(&path, ORIGIN, false).unwrap();
+    assert_eq!(reopened.owner_id(), owner);
+    assert_eq!(
+        reopened.current(receipt.machine_id, receipt.epoch).unwrap(),
+        receipt
+    );
+    let challenge = reopened.challenge(operation, None, 2).unwrap();
+    assert_eq!(
+        reopened.complete(&proof(&key, challenge), None, 2).unwrap(),
+        receipt
+    );
+}
+
+#[test]
+#[cfg(windows)]
+fn native_sqlite_linked_database_and_journal_are_rejected() {
+    for file in ["enrollment.sqlite3", "enrollment.sqlite3-journal"] {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("authority");
+        drop(EnrollmentStore::open(&path, ORIGIN, false).unwrap());
+        let original = fs::read(path.join(file)).unwrap();
+        fs::hard_link(path.join(file), path.join("linked-alias")).unwrap();
+        assert!(EnrollmentStore::open(&path, ORIGIN, false).is_err());
+        assert_eq!(fs::read(path.join(file)).unwrap(), original);
+    }
+}
+
+// Run in a separate process so termination cannot run Connection's rollback/drop.
+#[test]
+#[cfg(any(unix, windows))]
+fn abrupt_sqlite_writer_fixture() {
+    let Some(path) = std::env::var_os("VOYAGE_ENROLLMENT_CRASH_DIRECTORY") else {
+        return;
+    };
+    let path = std::path::PathBuf::from(path);
+    let store = EnrollmentStore::open(&path, ORIGIN, false).unwrap();
+    store
+        .db
+        .execute_batch(
+            "PRAGMA cache_size=1; PRAGMA cache_spill=ON; BEGIN IMMEDIATE;
+         UPDATE machines SET revoked=1;
+         UPDATE enrollment_schema SET last_time=999999;
+         WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM n WHERE x<256)
+         INSERT INTO audit(machine_id,kind,time) SELECT NULL,hex(zeroblob(2048)),999999 FROM n;",
+        )
+        .unwrap();
+    let journal = std::fs::read(path.join("enrollment.sqlite3-journal")).unwrap();
+    assert_eq!(
+        &journal[..8],
+        &[0xd9, 0xd5, 0x05, 0xf9, 0x20, 0xa1, 0x63, 0xd7]
+    );
+    std::fs::write(path.join("crash-ready"), b"hot journal synced before spill").unwrap();
+    loop {
+        std::thread::park();
+    }
+}
+
+#[test]
+#[cfg(any(unix, windows))]
+fn abrupt_hot_journal_recovers_original_private_identity() {
+    struct KillOnDrop(std::process::Child);
+    impl Drop for KillOnDrop {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("authority");
+    let mut store = EnrollmentStore::open(&path, ORIGIN, false).unwrap();
+    let owner = store.owner_id();
+    let (_, receipt, _) = enroll(&mut store);
+    let audit_count: i64 = store
+        .db
+        .query_row("SELECT count(*) FROM audit", [], |r| r.get(0))
+        .unwrap();
+    drop(store);
+    let mut child = KillOnDrop(
+        std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "enrollment::tests::abrupt_sqlite_writer_fixture",
+                "--nocapture",
+            ])
+            .env("VOYAGE_ENROLLMENT_CRASH_DIRECTORY", &path)
+            .spawn()
+            .unwrap(),
+    );
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    while !path.join("crash-ready").exists() {
+        assert!(
+            child.0.try_wait().unwrap().is_none(),
+            "writer exited before hot journal"
+        );
+        assert!(
+            std::time::Instant::now() < deadline,
+            "writer did not spill transaction"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    child.0.kill().unwrap();
+    assert!(!child.0.wait().unwrap().success());
+    let journal = std::fs::read(path.join("enrollment.sqlite3-journal")).unwrap();
+    assert_eq!(
+        &journal[..8],
+        &[0xd9, 0xd5, 0x05, 0xf9, 0x20, 0xa1, 0x63, 0xd7]
+    );
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let original = std::fs::metadata(path.join("enrollment.sqlite3-journal")).unwrap();
+        let db = Connection::open(path.join("enrollment.sqlite3")).unwrap();
+        configure_private_journal(&db).unwrap();
+        db.query_row("SELECT count(*) FROM machines", [], |r| r.get::<_, i64>(0))
+            .unwrap();
+        let mode: String = db
+            .pragma_query_value(None, "locking_mode", |r| r.get(0))
+            .unwrap();
+        assert_eq!(mode, "normal");
+        // The bootstrap must not leave an exclusive lifetime lock behind.
+        let second = Connection::open(path.join("enrollment.sqlite3")).unwrap();
+        second.busy_timeout(Duration::ZERO).unwrap();
+        second.execute_batch("BEGIN IMMEDIATE; ROLLBACK;").unwrap();
+        let retained = std::fs::metadata(path.join("enrollment.sqlite3-journal")).unwrap();
+        assert_eq!(
+            retained.ino(),
+            original.ino(),
+            "bootstrap replaced hot journal"
+        );
+    }
+    let recovered = EnrollmentStore::open(&path, ORIGIN, false).unwrap();
+    assert_eq!(recovered.owner_id(), owner);
+    assert_eq!(
+        recovered
+            .current(receipt.machine_id, receipt.epoch)
+            .unwrap(),
+        receipt
+    );
+    assert_eq!(
+        recovered
+            .db
+            .query_row("SELECT count(*) FROM audit", [], |r| r.get::<_, i64>(0))
+            .unwrap(),
+        audit_count
+    );
+    assert_eq!(
+        recovered
+            .db
+            .query_row("SELECT last_time FROM enrollment_schema", [], |r| r
+                .get::<_, i64>(0))
+            .unwrap(),
+        1
+    );
+    #[cfg(windows)]
+    {
+        let private = recovered._private_directory.as_ref().unwrap();
+        private.open_file("enrollment.sqlite3", false).unwrap();
+        private
+            .open_file("enrollment.sqlite3-journal", false)
+            .unwrap();
+        let mode: String = recovered
+            .db
+            .pragma_query_value(None, "journal_mode", |r| r.get(0))
+            .unwrap();
+        assert_eq!(mode, "persist");
     }
 }
