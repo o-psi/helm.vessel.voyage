@@ -51,6 +51,9 @@ class Fixture(BaseHTTPRequestHandler):
 def main() -> None:
     helm = Path(os.environ.get("HELM_BIN", "target/release/helm")).resolve()
     assert helm.is_file(), f"Build Helm first or set HELM_BIN: {helm}"
+    # Small reads exercise redraws fragmented across PTY reads.
+    read_bytes = int(os.environ.get("HELM_PTY_READ_BYTES", "65536"))
+    assert 0 < read_bytes <= 65536
     server = ThreadingHTTPServer(("127.0.0.1", 0), Fixture)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -82,7 +85,7 @@ approval = "never"
             def read_output(timeout: float = 0.1) -> None:
                 if select.select([master], [], [], timeout)[0]:
                     try:
-                        output.extend(os.read(master, 65536))
+                        output.extend(os.read(master, read_bytes))
                     except OSError:
                         pass
 
@@ -94,7 +97,8 @@ approval = "never"
 
             def resize(rows: int, cols: int) -> None:
                 fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
-                os.kill(pid, signal.SIGWINCH)
+                # TIOCSWINSZ already sends SIGWINCH to this PTY's foreground
+                # process group. A second signal can queue an extra redraw.
 
             def saved_messages() -> list[dict]:
                 paths = list((root / "data" / "helm" / "sessions").glob("*.json"))
@@ -133,6 +137,11 @@ approval = "never"
                 resize(55, 76)
                 wait_for(TAIL, resize_start)
                 wait_for(b"fixture fatal diagnostic", resize_start)
+                # Body text is not a completed redraw: the footer and final
+                # cursor placement are still pending. Injecting Ctrl+O here
+                # previously raced queued resize processing in Linux CI.
+                # With 55 rows, the four-row composer begins on row 51.
+                wait_for(b"\x1b[?25h\x1b[51;1H", resize_start)
 
                 collapse_start = len(output)
                 os.write(master, b"\x0f")
