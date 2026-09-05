@@ -303,6 +303,17 @@ impl RunOwner {
         cancel: CancellationToken,
         input: Option<SteeringReceiver>,
     ) -> Result<AgentOutcome, AgentError> {
+        self.execute_before_finish(agent, cancel, input, || Ok(()))
+            .await
+    }
+
+    async fn execute_before_finish(
+        &mut self,
+        agent: &Agent,
+        cancel: CancellationToken,
+        input: Option<SteeringReceiver>,
+        before_finish: impl FnOnce() -> Result<(), AgentError>,
+    ) -> Result<AgentOutcome, AgentError> {
         let external_input = input.is_some();
         drop(input);
         let input = self.steering_receiver.take();
@@ -380,18 +391,24 @@ impl RunOwner {
             .as_ref()
             .ok()
             .map(|outcome| outcome.stop_reason.clone());
-        self.storage(move |store| {
-            store.journal.finish_classified(
-                &store.guard,
-                store.run_id,
-                state,
-                reason,
-                None,
-                classification.as_ref(),
-            )
-        })
-        .await?;
-        result
+        before_finish()?;
+        let durable = self
+            .storage(move |store| {
+                store.journal.finish_classified(
+                    &store.guard,
+                    store.run_id,
+                    state,
+                    reason,
+                    None,
+                    classification.as_ref(),
+                )
+            })
+            .await?;
+        if durable.state == RunState::Cancelled {
+            Err(AgentError::Cancelled)
+        } else {
+            result
+        }
     }
 }
 

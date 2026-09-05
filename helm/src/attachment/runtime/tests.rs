@@ -680,3 +680,43 @@ async fn scoped_checkpoint_uses_admitted_identity_and_seals_only_accepted_work()
 mod owner;
 
 mod steering;
+
+#[tokio::test]
+async fn durable_cancel_after_model_acceptance_overrides_stale_success() {
+    let (dir, mut owner, agent, requests, effects, request) =
+        setup("success", Arc::new(SilentSink)).await;
+    let cancel = CancellationToken::new();
+    let run_id = owner.record().await.unwrap().id;
+    let result = owner
+        .execute_before_finish(&agent, cancel.clone(), None, || {
+            let mut journal = Journal::open(dir.path().join("attachment")).unwrap();
+            let accepted = journal.run(run_id).unwrap();
+            assert_eq!(accepted.state, RunState::Running);
+            assert!(accepted.final_checkpointed);
+            let outcome = journal
+                .request_cancel_local(&super::super::journal::LocalCancelRequest {
+                    session_id: request.session_id,
+                    run_id,
+                    installation_id: request.machine_id,
+                    principal_id: request.principal_id,
+                    expires_at_ms: SystemClock.now_ms().unwrap() + 60000,
+                })
+                .unwrap();
+            assert_eq!(
+                outcome,
+                super::super::journal::CancelRequestOutcome::Requested { duplicate: false }
+            );
+            Ok(())
+        })
+        .await;
+    assert!(
+        !cancel.is_cancelled(),
+        "durable intent must win without watcher/token help"
+    );
+    assert!(matches!(result, Err(AgentError::Cancelled)));
+    assert_eq!(owner.record().await.unwrap().state, RunState::Cancelled);
+    assert_eq!(requests.load(Ordering::SeqCst), 2);
+    assert_eq!(effects.load(Ordering::SeqCst), 1);
+    assert!(owner.execute(&agent, cancel, None).await.is_err());
+    assert_eq!(effects.load(Ordering::SeqCst), 1);
+}
