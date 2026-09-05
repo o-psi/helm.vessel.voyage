@@ -146,8 +146,9 @@ one unresolved obligation and zero accounted obligations; no final was accepted.
 The advertised completion schema requires only `action` and permits fields from
 all actions, while the strict decoder requires `kind`/`id` for `read` and rejects
 `reason`/`revision`. This contract gap corresponds to the observed invalid calls
-and needs a scoped follow-up; loosening evidence or accounting checks is not a
-solution. The local run reported 41678 input and 941 output tokens, exactly matching
+and motivated the [action schema correction](completion-tool-contract.md).
+That correction retains strict decoding and all evidence/accounting checks;
+it does not convert this live failure into successful reconciliation. The local run reported 41678 input and 941 output tokens, exactly matching
 canonical usage; the largest observed response was 250 output tokens. Both owned
 Helm and model-server processes were reaped. Full prompt, raw requests/responses,
 artifacts, canonical state, usage and cleanup evidence are retained locally.

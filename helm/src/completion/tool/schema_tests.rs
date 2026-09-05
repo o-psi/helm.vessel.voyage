@@ -22,8 +22,9 @@ fn definition(root: &std::path::Path) -> ToolDefinition {
 }
 
 fn validator(schema: &Value) -> jsonschema::Validator {
+    jsonschema::draft202012::meta::validate(schema).unwrap();
     jsonschema::options()
-        .with_draft(jsonschema::Draft::Draft7)
+        .with_draft(jsonschema::Draft::Draft202012)
         .should_validate_formats(true)
         .build(schema)
         .unwrap()
@@ -51,6 +52,10 @@ fn corpus() -> Vec<(Value, bool)> {
             cases.push((json!({"action":"account","kind":kind,"id":ID,"revision":1,"fingerprint":"snapshot-fingerprint","disposition":disposition,"reason":"Verified evidence 雪\nwith a concrete impact"}),true));
         }
     }
+    cases.push((
+        json!({"action":"adopt","kind":"todo","id":ID,"revision":u64::MAX}),
+        true,
+    ));
     // Empty review strings are syntactically valid. Runtime semantics still
     // reject inadequate evidence/reasons/fingerprints; schemas cannot grant them.
     cases.push((json!({"action":"account","kind":"todo","id":ID,"revision":0,"fingerprint":"","disposition":"completed_with_evidence","reason":""}),true));
@@ -81,6 +86,7 @@ fn corpus() -> Vec<(Value, bool)> {
         }
     }
     cases.extend([
+        (json!({"action":"adopt","kind":"todo","id":ID,"revision":(u64::MAX as f64)*2.0}),false),
         (json!({"action":"read","kind":"todo","reason":"","revision":1}),false),
         (json!({"action":"read","id":ID}),false),
         (json!({"action":"read","kind":"unknown","id":ID}),false),
