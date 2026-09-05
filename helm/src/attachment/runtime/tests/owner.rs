@@ -74,12 +74,12 @@ async fn next_turn_reuses_guard_only_after_run_and_callback_cleanup_and_accounts
     );
     assert!(
         owner
-            .admit(next_request(&request, after_first.revision), 1)
+            .admit_at(next_request(&request, after_first.revision), 1)
             .await
             .is_err()
     );
     assert!(owner.recover_interrupted().await.is_err());
-    let Admission::Existing(existing) = owner.admit(request, 90000).await.unwrap() else {
+    let Admission::Existing(existing) = owner.admit_at(request, 90000).await.unwrap() else {
         panic!("retry must not dispatch")
     };
     assert_eq!(existing.id, first.run_id);
@@ -96,12 +96,12 @@ async fn next_turn_reuses_guard_only_after_run_and_callback_cleanup_and_accounts
     };
     assert!(
         owner
-            .admit(next_request(&request, after_first.revision), 1)
+            .admit_at(next_request(&request, after_first.revision), 1)
             .await
             .is_err()
     );
     drop(callback);
-    let Admission::New(mut second) = owner.admit(request, 1).await.unwrap() else {
+    let Admission::New(mut second) = owner.admit_at(request, 1).await.unwrap() else {
         panic!()
     };
     second
@@ -137,7 +137,7 @@ async fn mismatched_session_revision_and_callback_identity_cannot_mutate_or_disp
     let before = owner.snapshot().await.unwrap();
     let mut wrong = next_request(&request, before.revision);
     wrong.session_id = Uuid::new_v4();
-    assert!(owner.admit(wrong, 1).await.is_err());
+    assert!(owner.admit_at(wrong, 1).await.is_err());
     let mut wrong_callback = run.checkpoint();
     wrong_callback.token = Arc::new(TurnToken {
         run_id: Uuid::new_v4(),
@@ -149,7 +149,7 @@ async fn mismatched_session_revision_and_callback_identity_cannot_mutate_or_disp
     let recovered = owner.snapshot().await.unwrap();
     assert!(
         owner
-            .admit(next_request(&request, recovered.revision + 1), 1)
+            .admit_at(next_request(&request, recovered.revision + 1), 1)
             .await
             .is_err()
     );
@@ -329,7 +329,7 @@ async fn aborted_execution_stays_owned_and_requires_explicit_recovery_before_nex
     let before = owner.snapshot().await.unwrap();
     assert!(
         owner
-            .admit(next_request(&request, before.revision), 1)
+            .admit_at(next_request(&request, before.revision), 1)
             .await
             .is_err()
     );
@@ -344,7 +344,7 @@ async fn aborted_execution_stays_owned_and_requires_explicit_recovery_before_nex
     );
     let snapshot = owner.snapshot().await.unwrap();
     let Admission::New(next) = owner
-        .admit(next_request(&request, snapshot.revision), 1)
+        .admit_at(next_request(&request, snapshot.revision), 1)
         .await
         .unwrap()
     else {
@@ -405,7 +405,7 @@ async fn aborted_admission_keeps_fence_until_commit_and_never_dispatches_on_retr
     let admitting = owner.clone();
     let task = tokio::spawn(async move {
         admitting
-            .admit_after(request, 1, move || {
+            .admit_after(request, Arc::new(|| Ok(1)), move || {
                 let _ = started.send(());
                 wait.recv_timeout(Duration::from_secs(20)).unwrap();
                 Ok(())
@@ -446,13 +446,13 @@ async fn aborted_admission_keeps_fence_until_commit_and_never_dispatches_on_retr
     assert_eq!(snapshot.session.usage.input_tokens, 0);
     assert!(
         recovered_owner
-            .admit(next_request(&retry, snapshot.revision), 1)
+            .admit_at(next_request(&retry, snapshot.revision), 1)
             .await
             .is_err()
     );
     let next = next_request(&retry, snapshot.revision);
     assert!(
-        matches!(recovered_owner.admit(retry, 90000).await.unwrap(), Admission::Existing(record) if record.id == durable.id && record.state == RunState::Accepted)
+        matches!(recovered_owner.admit_at(retry, 90000).await.unwrap(), Admission::Existing(record) if record.id == durable.id && record.state == RunState::Accepted)
     );
     assert_eq!(
         recovered_owner
@@ -466,7 +466,7 @@ async fn aborted_admission_keeps_fence_until_commit_and_never_dispatches_on_retr
     let revision = recovered_owner.snapshot().await.unwrap().revision;
     assert!(matches!(
         recovered_owner
-            .admit(next_request(&next, revision), 1)
+            .admit_at(next_request(&next, revision), 1)
             .await
             .unwrap(),
         Admission::New(_)
@@ -474,5 +474,147 @@ async fn aborted_admission_keeps_fence_until_commit_and_never_dispatches_on_retr
     assert_eq!(
         journal.run(durable.id).unwrap().state,
         RunState::Interrupted
+    );
+}
+
+#[tokio::test]
+async fn command_expiring_while_admission_waits_is_not_committed() {
+    use std::sync::atomic::{AtomicI64, Ordering};
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("journal");
+    let session = Session::new(root.path().to_owned(), "fixture".into());
+    let mut journal = Journal::open(path.clone()).unwrap();
+    journal.create_session(&session).unwrap();
+    let owner = ManagedSessionOwner::open(path, session.id).await.unwrap();
+    let request = TurnAdmission {
+        command_id: Uuid::new_v4(),
+        machine_id: Uuid::new_v4(),
+        principal_id: Uuid::new_v4(),
+        session_id: session.id,
+        expected_revision: 0,
+        expires_at_ms: 10,
+        prompt: "must expire before acceptance".into(),
+    };
+    let mut retry = next_request(&request, 0);
+    retry.command_id = request.command_id;
+    retry.expires_at_ms = request.expires_at_ms;
+    retry.prompt = request.prompt.clone();
+    let clock = Arc::new(AtomicI64::new(1));
+    let sampled = clock.clone();
+    let result = owner
+        .admit_after(
+            request,
+            Arc::new(move || Ok(sampled.load(Ordering::SeqCst))),
+            move || {
+                clock.store(10, Ordering::SeqCst);
+                Ok(())
+            },
+        )
+        .await;
+    assert!(result.is_err(), "expired queued command was accepted");
+    assert!(journal.lookup_command(&retry).unwrap().is_none());
+    assert_eq!(journal.load_session(session.id).unwrap().revision, 0);
+    assert!(
+        journal
+            .load_session(session.id)
+            .unwrap()
+            .session
+            .messages
+            .is_empty()
+    );
+}
+
+fn clock_request(id: Uuid) -> TurnAdmission {
+    TurnAdmission {
+        command_id: Uuid::new_v4(),
+        machine_id: Uuid::new_v4(),
+        principal_id: Uuid::new_v4(),
+        session_id: id,
+        expected_revision: 0,
+        expires_at_ms: 60000,
+        prompt: "clock fixture".into(),
+    }
+}
+fn copy_request(r: &TurnAdmission) -> TurnAdmission {
+    TurnAdmission {
+        command_id: r.command_id,
+        machine_id: r.machine_id,
+        principal_id: r.principal_id,
+        session_id: r.session_id,
+        expected_revision: r.expected_revision,
+        expires_at_ms: r.expires_at_ms,
+        prompt: r.prompt.clone(),
+    }
+}
+#[tokio::test]
+async fn failed_or_invalid_clocks_leave_no_admission_but_duplicates_remain_observable() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("journal");
+    let session = Session::new(root.path().to_owned(), "fixture".into());
+    let mut journal = Journal::open(path.clone()).unwrap();
+    journal.create_session(&session).unwrap();
+    let owner = ManagedSessionOwner::open(path.clone(), session.id)
+        .await
+        .unwrap();
+    let request = clock_request(session.id);
+    let failed: Arc<dyn RuntimeClock> = Arc::new(|| anyhow::bail!("clock unavailable"));
+    for clock in [
+        failed.clone(),
+        Arc::new(|| Ok(-1_i64)) as Arc<dyn RuntimeClock>,
+        Arc::new(|| Ok(i64::MAX)),
+    ] {
+        assert!(
+            owner
+                .admit_with_clock(copy_request(&request), clock)
+                .await
+                .is_err()
+        );
+        assert!(journal.lookup_command(&request).unwrap().is_none());
+        assert_eq!(owner.snapshot().await.unwrap().revision, 0);
+    }
+    let Admission::New(run) = owner.admit_at(copy_request(&request), 1).await.unwrap() else {
+        panic!("fresh admission")
+    };
+    let revision = owner.snapshot().await.unwrap().revision;
+    assert!(
+        matches!(owner.admit_with_clock(copy_request(&request), failed.clone()).await.unwrap(), Admission::Existing(record) if record.id == run.run_id)
+    );
+    assert!(
+        matches!(RunOwner::admit_with_clock(path, request, failed).await.unwrap(), Admission::Existing(record) if record.id == run.run_id)
+    );
+    assert_eq!(owner.snapshot().await.unwrap().revision, revision);
+}
+#[test]
+fn journal_samples_new_command_clock_inside_write_transaction_only() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("journal");
+    let session = Session::new(root.path().to_owned(), "fixture".into());
+    let mut journal = Journal::open(path.clone()).unwrap();
+    journal.create_session(&session).unwrap();
+    let guard = journal.acquire_execution(session.id).unwrap();
+    let request = clock_request(session.id);
+    let other = fixture_database(path.join("journal.sqlite3")).unwrap();
+    let admitted = journal
+        .admit_turn_with_clock(&guard, &request, || {
+            let result = other.execute_batch("BEGIN IMMEDIATE");
+            if result.is_ok() {
+                other.execute_batch("ROLLBACK")?;
+                anyhow::bail!("clock sampled outside the admission transaction");
+            }
+            assert_eq!(
+                result.unwrap_err().sqlite_error_code(),
+                Some(rusqlite::ErrorCode::DatabaseBusy)
+            );
+            Ok(1)
+        })
+        .unwrap();
+    assert!(!admitted.duplicate);
+    assert!(
+        journal
+            .admit_turn_with_clock(&guard, &request, || panic!(
+                "duplicate must not sample clock"
+            ))
+            .unwrap()
+            .duplicate
     );
 }
