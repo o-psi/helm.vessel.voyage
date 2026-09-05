@@ -272,7 +272,8 @@ pub async fn run(
     let mut todo_refresh = tokio::time::interval(std::time::Duration::from_secs(1));
     let _guard = TerminalGuard::enter().context("failed to initialize terminal")?;
     let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
-    terminal.clear()?;
+    // Fullscreen redraws need no cursor-position query from the terminal.
+    terminal.resize(terminal.size()?.into())?;
     if let Ok(size) = terminal.size() {
         app.conversation_width = size.width.max(1) as usize;
         app.conversation_height = size.height.saturating_sub(9).max(1) as usize;
@@ -317,7 +318,7 @@ pub async fn run(
                             let _ = terminals.resize(id, columns, rows.saturating_sub(1)).await;
                         }
                         // Discard any stale cells after the terminal changes its backing grid.
-                        terminal.clear()?;
+                        terminal.resize(ratatui::layout::Rect::new(0, 0, columns, rows))?;
                     }
                     Some(Ok(Event::Mouse(mouse))) => handle_mouse(mouse, &mut app),
                     Some(Ok(Event::Paste(text))) if app.question.is_some() => {
