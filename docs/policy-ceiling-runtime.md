@@ -90,3 +90,13 @@ no new canonical input or provider call. Dispatch repeats the check. These are n
 an atomic lock over an administrator edit and a session save: an edit between the
 checks can leave already-recorded input whose later dispatch is refused. Recorded
 input alone is not proof that execution occurred.
+
+A non-owning descendant inherits the nearest ancestor worktree as its execution
+workspace, without acquiring that ancestor’s lease ownership. A finite retained
+ancestry snapshot must have unique IDs and a complete, acyclic parent chain;
+missing or malformed ancestry refuses execution. Each child workspace must fit
+both requested read and write roots before implicit workspace roots are added.
+A child delegates its resolved roots to descendants, including narrowing from
+workspace-relative ceiling roots, so a nested child cannot regain the root
+session workspace. New worktree destinations and retained leases still undergo
+the current policy and Git checks described above.

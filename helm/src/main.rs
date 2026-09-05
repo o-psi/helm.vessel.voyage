@@ -768,6 +768,62 @@ fn probe_codex_compatibility(command: &str) -> CodexCompatibilityProbe {
     }
 }
 
+/// Resolve a finite retained-record snapshot without transferring lease ownership.
+fn inherited_child_workspace(
+    records: Vec<(
+        helm::subagent::AgentId,
+        Option<helm::subagent::AgentId>,
+        Option<PathBuf>,
+    )>,
+    id: helm::subagent::AgentId,
+    fallback: &std::path::Path,
+) -> Result<PathBuf> {
+    let count = records.len();
+    let records = records
+        .into_iter()
+        .map(|(id, parent, path)| (id, (parent, path)))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    anyhow::ensure!(
+        records.len() == count,
+        "duplicate subagent workspace ancestry"
+    );
+    let mut visited = std::collections::BTreeSet::new();
+    let mut cursor = Some(id);
+    let mut nearest = None;
+    while let Some(id) = cursor {
+        anyhow::ensure!(visited.insert(id), "cyclic subagent workspace ancestry");
+        let (parent, path) = records
+            .get(&id)
+            .context("subagent workspace ancestry unavailable")?;
+        if nearest.is_none() {
+            nearest = path.clone();
+        }
+        cursor = *parent;
+    }
+    // Every visited node must be a distinct member of the captured finite map.
+    Ok(nearest.unwrap_or_else(|| fallback.to_path_buf()))
+}
+fn check_requested_workspace(
+    workspace: &std::path::Path,
+    read: &[PathBuf],
+    write: &[PathBuf],
+) -> Result<()> {
+    let workspace = workspace.canonicalize()?;
+    let contains = |roots: &[PathBuf]| -> Result<bool> {
+        Ok(roots
+            .iter()
+            .map(|root| root.canonicalize())
+            .collect::<std::io::Result<Vec<_>>>()?
+            .iter()
+            .any(|root| workspace.starts_with(root)))
+    };
+    anyhow::ensure!(
+        contains(read)? && contains(write)?,
+        "child workspace exceeds requested read/write delegation before implicit roots"
+    );
+    Ok(())
+}
+
 struct CliSubagentExecutor {
     config: Config,
     parent_policy: Arc<Policy>,
@@ -789,12 +845,31 @@ impl SubagentExecutor for CliSubagentExecutor {
             .read()
             .expect("subagent model lock poisoned")
             .clone();
-        config.workspace = Some(
-            context
-                .worktree
-                .clone()
-                .unwrap_or_else(|| self.workspace.clone()),
-        );
+        let workspace = if let Some(worktree) = &context.worktree {
+            worktree.clone()
+        } else {
+            let runtime = self
+                .runtime
+                .get()
+                .and_then(Weak::upgrade)
+                .context("subagent runtime unavailable")
+                .map_err(|error| error.to_string())?;
+            let records = runtime
+                .list()
+                .await
+                .into_iter()
+                .map(|record| (record.id, record.parent_id, record.worktree))
+                .collect();
+            inherited_child_workspace(records, context.id, &self.workspace)
+                .map_err(|error| error.to_string())?
+        };
+        check_requested_workspace(
+            &workspace,
+            &context.policy.readable_roots,
+            &context.policy.writable_roots,
+        )
+        .map_err(|error| error.to_string())?;
+        config.workspace = Some(workspace);
         config.allow_read = context.policy.readable_roots.clone();
         config.allow_write = context.policy.writable_roots.clone();
         config.max_tokens =
@@ -829,6 +904,8 @@ impl SubagentExecutor for CliSubagentExecutor {
         let child_budget = context.budget.clone();
         let mut child_policy = context.policy.clone();
         child_policy.budget = child_budget.clone();
+        child_policy.readable_roots = config.allow_read.clone();
+        child_policy.writable_roots = config.allow_write.clone();
         let child_tool = self.runtime.get().and_then(Weak::upgrade).map(|runtime| {
             SubagentTool::new(runtime, child_policy, child_budget)
                 .with_parent(context.id)
@@ -1739,6 +1816,119 @@ async fn attachment_interrupt() {
 
 #[cfg(test)]
 mod cli_tests {
+    #[test]
+    fn nested_children_inherit_nearest_workspace_without_ownership_transfer() {
+        use helm::subagent::AgentId;
+        let owner = AgentId::new();
+        let child = AgentId::new();
+        let grandchild = AgentId::new();
+        let records = vec![
+            (
+                owner,
+                None,
+                Some(std::path::PathBuf::from("/isolated/owner")),
+            ),
+            (child, Some(owner), None),
+            (grandchild, Some(child), None),
+        ];
+        let before = records.clone();
+        assert_eq!(
+            super::inherited_child_workspace(
+                records.clone(),
+                grandchild,
+                std::path::Path::new("/root")
+            )
+            .unwrap(),
+            std::path::PathBuf::from("/isolated/owner")
+        );
+        assert_eq!(records, before);
+        let nearest = vec![
+            (
+                owner,
+                None,
+                Some(std::path::PathBuf::from("/isolated/owner")),
+            ),
+            (
+                child,
+                Some(owner),
+                Some(std::path::PathBuf::from("/isolated/child")),
+            ),
+            (grandchild, Some(child), None),
+        ];
+        assert_eq!(
+            super::inherited_child_workspace(nearest, grandchild, std::path::Path::new("/root"))
+                .unwrap(),
+            std::path::PathBuf::from("/isolated/child")
+        );
+        assert_eq!(
+            super::inherited_child_workspace(
+                vec![(child, None, None)],
+                child,
+                std::path::Path::new("/root")
+            )
+            .unwrap(),
+            std::path::PathBuf::from("/root")
+        );
+    }
+    #[test]
+    fn malformed_workspace_ancestry_never_falls_back_to_broader_root() {
+        use helm::subagent::AgentId;
+        let a = AgentId::new();
+        let b = AgentId::new();
+        for records in [
+            vec![],
+            vec![(a, Some(b), None)],
+            vec![(a, Some(b), None), (b, Some(a), None)],
+            vec![(a, None, None), (a, None, None)],
+        ] {
+            assert!(
+                super::inherited_child_workspace(records, a, std::path::Path::new("/root"))
+                    .is_err()
+            );
+        }
+        let mut records = Vec::new();
+        let mut parent = None;
+        for _ in 0..1024 {
+            let id = AgentId::new();
+            records.push((id, parent, None));
+            parent = Some(id);
+        }
+        assert_eq!(
+            super::inherited_child_workspace(
+                records,
+                parent.unwrap(),
+                std::path::Path::new("/root")
+            )
+            .unwrap(),
+            std::path::PathBuf::from("/root")
+        );
+    }
+    #[test]
+    fn requested_child_roots_must_contain_workspace_before_implicit_roots() {
+        let root = tempfile::tempdir().unwrap();
+        let isolated = root.path().join("isolated");
+        std::fs::create_dir(&isolated).unwrap();
+        assert!(
+            super::check_requested_workspace(
+                root.path(),
+                std::slice::from_ref(&isolated),
+                std::slice::from_ref(&isolated)
+            )
+            .is_err()
+        );
+        assert!(
+            super::check_requested_workspace(
+                &isolated,
+                std::slice::from_ref(&isolated),
+                std::slice::from_ref(&isolated)
+            )
+            .is_ok()
+        );
+        assert!(
+            super::check_requested_workspace(&isolated, std::slice::from_ref(&isolated), &[])
+                .is_err()
+        );
+    }
     #[test]
     fn legacy_connectivity_is_not_a_cli_mode() {
         for args in [

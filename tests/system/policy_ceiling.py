@@ -60,6 +60,35 @@ def inside() -> None:
     requests: list[dict] = []
     model_requests: list[str] = []
     scenario = ['plain']
+    nested_cwds: list[str] = []
+    nested_failures: list[str] = []
+
+    def nested_response(body, outputs):
+        users = ' '.join(str(value.get('content', '')) for value in body['input'] if value.get('role') == 'user')
+        role = re.search(r'nested-role-(root|child|grandchild)', users).group(1)
+        def call(name, args):
+            serial = len(requests)
+            return [{'type': 'function_call', 'id': f'fc_nested_{serial}', 'call_id': f'nested_{serial}', 'name': name, 'arguments': json.dumps(args)}]
+        def message(text):
+            return [{'type': 'message', 'role': 'assistant', 'content': [{'type': 'output_text', 'text': text}]}]
+        if role == 'grandchild':
+            if not outputs: return call('shell', {'command': 'pwd'})
+            if len(outputs) == 1:
+                value = outputs[0]['output']
+                assert value.startswith('exit: 0\nstdout:\n'), value
+                cwd = value.split('stdout:\n', 1)[1].split('\nstderr:', 1)[0].strip()
+                nested_cwds.append(cwd)
+                return call('read_file', {'path': '/work/tracked.txt'})
+            assert 'read outside allowed roots' in outputs[-1]['output'], outputs[-1]
+            return message(nested_cwds[-1])
+        if not outputs:
+            return call('subagent', {'action': 'spawn', 'name': 'isolated' if role == 'root' else 'nested', 'task': 'nested-role-child' if role == 'root' else 'nested-role-grandchild', 'worktree': role == 'root'})
+        if len(outputs) == 1:
+            child = json.loads(outputs[0]['output'])['id']
+            return call('subagent', {'action': 'wait', 'id': child})
+        result = json.loads(outputs[-1]['output'])
+        assert result['status'] == 'completed', result
+        return message(result['result']['summary'])
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *_args):
@@ -80,7 +109,12 @@ def inside() -> None:
             if scenario[0] == 'change':
                 cap('unrestricted')
             outputs = [v for v in body.get('input', []) if v.get('type') == 'function_call_output']
-            if scenario[0] == 'environment' and not outputs:
+            if scenario[0] == 'nested':
+                try: output = nested_response(body, outputs)
+                except Exception as error:
+                    nested_failures.append(repr(error) + " outputs=" + repr(outputs)[-2500:])
+                    output = [{'type': 'message', 'role': 'assistant', 'content': [{'type': 'output_text', 'text': 'nested fixture failed'}]}]
+            elif scenario[0] == 'environment' and not outputs:
                 output = [{'type': 'function_call', 'id': 'fc_env', 'call_id': 'env',
                            'name': 'shell', 'arguments': json.dumps({'command': '/usr/bin/env'})}]
             else:
@@ -255,6 +289,24 @@ for line in sys.stdin:
         result = run('chat', '--plain', input='/models\n/exit\n')
         assert not requests and not model_requests and 'model discovery failed' in result.stderr, (invalid, result.stdout, result.stderr)
         if invalid == 'hardlink': Path('/work/hardlinked-ceiling').unlink()
+    # A worktree child loses the root workspace under a workspace-relative ceiling.
+    # Its non-owning descendant must execute in that child's cwd, not regain /work.
+    Path('/state').mkdir()
+    for arguments in [('init', '-q'), ('config', 'user.email', 'fixture@example.invalid'), ('config', 'user.name', 'Fixture')]:
+        subprocess.run(['/usr/bin/git', *arguments], cwd=work, check=True, capture_output=True)
+    (work / 'tracked.txt').write_text('base')
+    subprocess.run(['/usr/bin/git', 'add', 'tracked.txt'], cwd=work, check=True, capture_output=True)
+    subprocess.run(['/usr/bin/git', 'commit', '-qm', 'base'], cwd=work, check=True, capture_output=True)
+    config.write_text(base.replace('[env]', 'allow_read = ["/state"]\nallow_write = ["/state"]\nsubagent_max_concurrency = 2\n[env]'))
+    cap(roots='["$workspace", "/state"]')
+    environment['XDG_DATA_HOME'] = '/state'
+    scenario[0] = 'nested'
+    result = run('run', '--no-save', 'nested-role-root')
+    assert result.returncode == 0 and not nested_failures, (result.stderr, nested_failures)
+    assert len(nested_cwds) == 1 and nested_cwds[0].startswith('/state/helm/worktrees/'), nested_cwds
+    scenario[0] = 'plain'
+    environment['XDG_DATA_HOME'] = '/work/data'
+
     # The compatibility bridge cannot spawn through model discovery under denial.
     sentinel = work / 'codex-sentinel'
     sentinel.write_text('#!/bin/sh\ntouch /work/bridge-started\nexit 99\n')
