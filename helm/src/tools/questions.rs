@@ -432,4 +432,80 @@ mod tests {
             }
         }
     }
+    #[tokio::test]
+    async fn questions_redaction_preserves_empty_outcomes_and_rejects_control_answers() {
+        let dir = tempfile::tempdir().unwrap();
+        let secret = "private\"\\日本語";
+        for answer in [QuestionAnswer::Cancelled, QuestionAnswer::Unavailable] {
+            let (mut ctx, _) = context(dir.path(), answer.clone(), false);
+            ctx.redactor = Arc::new(Redactor::new([secret.to_owned()]));
+            let result = ToolRegistry::standard()
+                .execute("questions", args(), &ctx)
+                .await
+                .unwrap();
+            assert_eq!(
+                serde_json::from_str::<QuestionAnswer>(&result).unwrap(),
+                answer
+            );
+            assert!(!result.contains("answer"));
+        }
+        for answer in [
+            format!("{secret}\nsecond line"),
+            format!("{secret}\r"),
+            format!("{secret}\u{1b}[2J"),
+        ] {
+            let (mut ctx, _) = context(dir.path(), QuestionAnswer::Custom { answer }, false);
+            ctx.redactor = Arc::new(Redactor::new([secret.to_owned()]));
+            let error = ToolRegistry::standard()
+                .execute("questions", args(), &ctx)
+                .await
+                .unwrap_err();
+            assert!(matches!(error, ToolError::Failed(_)));
+            assert!(!error.to_string().contains("private"));
+        }
+    }
+    #[tokio::test]
+    async fn questions_escaped_secrets_are_redacted_before_provider_continuation_and_persistence() {
+        let dir = tempfile::tempdir().unwrap();
+        let secret = "private\"\\日本語";
+        let expected = QuestionAnswer::Custom {
+            answer: "before [REDACTED] after".into(),
+        };
+        let (mut ctx, _) = context(
+            dir.path(),
+            QuestionAnswer::Custom {
+                answer: format!("before {secret} after"),
+            },
+            false,
+        );
+        ctx.redactor = Arc::new(Redactor::new([secret.to_owned()]));
+        let agent = crate::Agent::new(
+            Box::new(QuestionProvider {
+                expected: expected.clone(),
+            }),
+            ToolRegistry::standard(),
+            ctx,
+            Arc::new(crate::agent::SilentSink),
+            "fixture".into(),
+            "Ask for clarification".into(),
+            1024,
+            None,
+        );
+        let outcome = agent.run(vec![], "Choose a format".into()).await.unwrap();
+        assert_eq!(outcome.turns, 2);
+        let mut session = crate::session::Session::new(dir.path().into(), "fixture".into());
+        session.messages = outcome.messages;
+        let store = crate::session::SessionStore::new(dir.path().join("sessions"));
+        store.save(&mut session).await.unwrap();
+        let restored = store.load(session.id).await.unwrap();
+        let result = restored
+            .messages
+            .iter()
+            .find(|m| m.role == crate::Role::Tool)
+            .unwrap();
+        assert_eq!(
+            serde_json::from_str::<QuestionAnswer>(&result.content).unwrap(),
+            expected
+        );
+    }
 }
