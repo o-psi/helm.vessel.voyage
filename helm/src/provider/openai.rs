@@ -413,3 +413,6 @@ mod tests {
         assert_eq!(completed.usage.output_tokens, 3);
     }
 }
+
+#[cfg(test)]
+mod leading_system_tests;
