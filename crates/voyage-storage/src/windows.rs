@@ -283,6 +283,13 @@ pub struct PrivateDirectory {
 }
 impl PrivateDirectory {
     pub fn open(path: &Path) -> io::Result<Self> {
+        Self::open_mode(path, true)
+    }
+    /// Verify and pin existing private storage without creating any directory.
+    pub fn open_existing(path: &Path) -> io::Result<Self> {
+        Self::open_mode(path, false)
+    }
+    fn open_mode(path: &Path, create: bool) -> io::Result<Self> {
         let path = if path.is_absolute() {
             path.to_path_buf()
         } else {
@@ -311,7 +318,7 @@ impl PrivateDirectory {
             if index == 0 {
                 continue;
             }
-            if index == components.len() - 1 {
+            if create && index == components.len() - 1 {
                 let name = wide(&prefix_path)?;
                 if unsafe { CreateDirectoryW(name.as_ptr(), &attributes(&sd)) } == 0 {
                     let error = io::Error::last_os_error();
