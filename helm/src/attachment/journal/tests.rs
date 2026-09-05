@@ -1102,3 +1102,92 @@ mod steering;
 mod catalogue;
 
 mod reconciliation;
+
+/// A rollback-journal reader permits BEGIN IMMEDIATE and cached row updates,
+/// but prevents COMMIT's exclusive lock. Keep this independent of timing/polling.
+#[cfg(target_os = "linux")]
+#[test]
+fn append_commit_busy_rolls_back_every_row_before_an_exact_once_retry() {
+    let (_dir, mut journal, session, request) = setup();
+    let guard = journal.acquire_execution(session.id).unwrap();
+    let run = journal.admit_turn(&guard, &request, 1).unwrap().run;
+    journal.mark_running(&guard, run.id).unwrap();
+    let mode: String = journal
+        .connection
+        .pragma_query_value(None, "journal_mode", |r| r.get(0))
+        .unwrap();
+    assert_eq!(mode, "delete");
+    // Prevent dirty-page spilling from moving the lock failure into an UPDATE.
+    journal
+        .connection
+        .pragma_update(None, "cache_spill", false)
+        .unwrap();
+    let snapshot = |db: &Connection| {
+        let run: String = db
+            .query_row(
+                "SELECT record FROM runs WHERE id=?1",
+                [run.id.to_string()],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let session_state: (String, i64, i64) = db
+            .query_row(
+                "SELECT state,revision,next_sequence FROM sessions WHERE id=?1",
+                [session.id.to_string()],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        let events = db
+            .prepare("SELECT sequence,event FROM events WHERE session_id=?1 ORDER BY sequence")
+            .unwrap()
+            .query_map([session.id.to_string()], |r| {
+                Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?))
+            })
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .unwrap();
+        (run, session_state, events)
+    };
+    let before = snapshot(&journal.connection);
+    let reader = Connection::open(journal.directory.join("journal.sqlite3")).unwrap();
+    reader.execute_batch("BEGIN DEFERRED").unwrap();
+    // BEGIN alone has no read lock: execute a SELECT and retain the transaction.
+    assert_eq!(snapshot(&reader), before);
+    let changes = journal.connection.total_changes();
+    let error = journal
+        .append_text(&guard, run.id, "retained-delta")
+        .unwrap_err();
+    assert!(
+        matches!(error.downcast_ref::<rusqlite::Error>(),
+        Some(rusqlite::Error::SqliteFailure(code, _)) if code.code == rusqlite::ErrorCode::DatabaseBusy),
+        "{error:#}"
+    );
+    // Row updates actually ran, proving this was not an admission/BEGIN failure.
+    assert_eq!(journal.connection.total_changes() - changes, 3);
+    // rusqlite's consuming commit failure must have rolled back before retry.
+    assert!(journal.connection.is_autocommit());
+    assert_eq!(snapshot(&journal.connection), before);
+    assert_eq!(snapshot(&reader), before);
+    reader.execute_batch("ROLLBACK").unwrap();
+    let sequence = journal
+        .append_text(&guard, run.id, "retained-delta")
+        .unwrap();
+    assert_eq!(sequence, before.1.2 as u64);
+    let after = snapshot(&journal.connection);
+    let mut expected_run: serde_json::Value = serde_json::from_str(&before.0).unwrap();
+    assert_eq!(expected_run["partial_text"], "");
+    expected_run["partial_text"] = "retained-delta".into();
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&after.0).unwrap(),
+        expected_run
+    );
+    assert_eq!((&after.1.0, after.1.1), (&before.1.0, before.1.1));
+    assert_eq!(after.1.2, before.1.2 + 1);
+    assert_eq!(after.2.len(), before.2.len() + 1);
+    assert_eq!(&after.2[..before.2.len()], &before.2);
+    let event: JournalEvent = serde_json::from_str(&after.2.last().unwrap().1).unwrap();
+    assert_eq!(event.sequence, sequence);
+    assert_eq!(event.run_id, run.id);
+    assert!(matches!(event.kind, EventKind::TextDelta(ref text) if text == "retained-delta"));
+    assert_eq!(snapshot(&reader), after);
+}
