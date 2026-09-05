@@ -388,3 +388,131 @@ async fn cancelling_private_approval_does_not_spawn_or_expose_binding() {
         }
     }
 }
+
+fn delete_private_profile(directory: &std::path::Path) {
+    use crate::policy_profile::store::{Action, ProfileChange, ProfileStore};
+    ProfileStore::open(directory)
+        .unwrap()
+        .change(&ProfileChange {
+            operation_id: Uuid::new_v4(),
+            name: "private".into(),
+            expected_revision: 1,
+            action: Action::Delete {},
+        })
+        .unwrap();
+}
+struct ChangingProfileApproval {
+    directory: std::path::PathBuf,
+    calls: std::sync::atomic::AtomicUsize,
+}
+#[async_trait]
+impl crate::tools::Approver for ChangingProfileApproval {
+    async fn approve(&self, _: &crate::tools::ApprovalRequest) -> crate::tools::ApprovalOutcome {
+        self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        if crate::policy_profile::store::ProfileStore::open(&self.directory)
+            .unwrap()
+            .inspect("private")
+            .unwrap()
+            .unwrap()
+            .rules
+            .is_some()
+        {
+            delete_private_profile(&self.directory);
+        }
+        crate::tools::ApprovalOutcome::Approved
+    }
+}
+
+#[tokio::test]
+async fn private_binding_rechecks_selected_profile_before_and_after_approval() {
+    use crate::policy_profile::{
+        Builtin,
+        selection::{Selection, SelectionRequest},
+        store::{Action, ProfileChange, ProfileStore},
+    };
+    for managed in [false, true] {
+        if managed && !cfg!(target_os = "linux") {
+            continue;
+        }
+        for stale_before_approval in [true, false] {
+            let dir = tempfile::tempdir().unwrap();
+            let directory = dir.path().join("profiles");
+            let snapshot = ProfileStore::open(&directory)
+                .unwrap()
+                .change(&ProfileChange {
+                    operation_id: Uuid::new_v4(),
+                    name: "private".into(),
+                    expected_revision: 0,
+                    action: Action::Create {
+                        rules: Builtin::Balanced.document().rules,
+                    },
+                })
+                .unwrap()
+                .snapshot;
+            let mut config = Config {
+                access: Some(AccessMode::Unrestricted),
+                ..Config::default()
+            };
+            let request = SelectionRequest {
+                directory: directory.clone(),
+                name: "private".into(),
+                revision: 1,
+                digest: snapshot.digest().unwrap(),
+                explicit: Default::default(),
+            };
+            let preview = Selection::preview(&config, dir.path(), &request).unwrap();
+            config.policy_profile = Some(
+                Selection::bind(
+                    &config,
+                    dir.path(),
+                    request,
+                    Some(&preview.transition_digest),
+                )
+                .unwrap(),
+            );
+            let mut ctx = context(dir.path());
+            ctx.policy = Arc::new(Policy::new(&config, dir.path().into()).unwrap());
+            let approver = Arc::new(ChangingProfileApproval {
+                directory: directory.clone(),
+                calls: Default::default(),
+            });
+            ctx.approver = approver.clone();
+            if stale_before_approval {
+                delete_private_profile(&directory);
+            }
+            let bound = bindings(ctx.execution_id, "private-freshness-秘密");
+            let mut registry = ToolRegistry::default();
+            let manager = managed.then(ManagedShell::new);
+            if let Some(manager) = &manager {
+                registry.register(manager.clone());
+            } else {
+                registry.register(Shell);
+            }
+            let result = registry
+                .execute_with_workflow_secrets(
+                    "shell",
+                    serde_json::json!({"command":"touch forbidden", "workflow_secrets":["token"]}),
+                    &ctx,
+                    Some(&bound),
+                )
+                .await;
+            assert!(
+                matches!(result, Err(ToolError::Denied(_))),
+                "stale private binding admitted: {result:?}"
+            );
+            assert!(!dir.path().join("forbidden").exists());
+            assert_eq!(
+                approver.calls.load(std::sync::atomic::Ordering::SeqCst),
+                usize::from(!stale_before_approval)
+            );
+            if let Some(manager) = manager {
+                assert!(
+                    manager
+                        .shutdown(Duration::from_secs(5))
+                        .await
+                        .observation_complete
+                );
+            }
+        }
+    }
+}
