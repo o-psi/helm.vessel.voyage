@@ -103,6 +103,24 @@ impl Journal {
         guard: &ExecutionGuard,
         request: &LocalReconcileRequest,
     ) -> Result<LocalReconcileOutcome> {
+        self.reconcile_tools_authorized(guard, request, None)
+    }
+    /// Local-only recovery of a dedicated remote run. The receipt records the
+    /// verified installation actor, not an impersonated remote principal.
+    pub fn reconcile_remote_tools(
+        &mut self,
+        guard: &ExecutionGuard,
+        request: &LocalReconcileRequest,
+        binding: &super::remote::RemoteBinding,
+    ) -> Result<LocalReconcileOutcome> {
+        self.reconcile_tools_authorized(guard, request, Some(binding))
+    }
+    fn reconcile_tools_authorized(
+        &mut self,
+        guard: &ExecutionGuard,
+        request: &LocalReconcileRequest,
+        binding: Option<&super::remote::RemoteBinding>,
+    ) -> Result<LocalReconcileOutcome> {
         self.check_guard(guard, request.session_id)?;
         ensure!(
             self.opened_schema >= 6,
@@ -113,12 +131,24 @@ impl Journal {
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         check_transaction_schema(&tx, self.opened_schema)?;
         let run = read_run(&tx, request.run_id)?;
-        ensure!(
-            run.session_id == request.session_id
-                && run.machine_id == request.installation_id
-                && run.principal_id == request.principal_id,
-            "reconciliation actor or run mismatch"
-        );
+        if let Some(binding) = binding {
+            super::remote::require(&tx, binding, request.session_id)?;
+            ensure!(
+                run.session_id == request.session_id
+                    && run.machine_id == binding.machine_id
+                    && run.principal_id == binding.owner_id
+                    && request.installation_id == binding.local_installation_id
+                    && request.principal_id == binding.local_principal_id,
+                "remote recovery attribution mismatch"
+            );
+        } else {
+            ensure!(
+                run.session_id == request.session_id
+                    && run.machine_id == request.installation_id
+                    && run.principal_id == request.principal_id,
+                "reconciliation actor or run mismatch"
+            );
+        }
         let existing: Option<(String, String)> = tx.query_row(
             "SELECT session_id,record FROM local_tool_reconciliations WHERE run_id=?1 AND length(CAST(record AS BLOB))<=?2",
             params![request.run_id.to_string(), MAX_RECEIPT], |r| Ok((r.get(0)?,r.get(1)?)),
@@ -162,7 +192,7 @@ impl Journal {
             latest == request.run_id.to_string(),
             "reconciliation requires the latest run"
         );
-        let confirmation: Option<String> = tx.query_row("SELECT confirmation FROM local_cleanup_obligations WHERE run_id=?1 AND session_id=?2 AND installation_id=?3 AND principal_id=?4", params![request.run_id.to_string(),request.session_id.to_string(),request.installation_id.to_string(),request.principal_id.to_string()], |r| r.get(0))?;
+        let confirmation: Option<String> = tx.query_row("SELECT confirmation FROM local_cleanup_obligations WHERE run_id=?1 AND session_id=?2 AND installation_id=?3 AND principal_id=?4", params![request.run_id.to_string(),request.session_id.to_string(),run.machine_id.to_string(),run.principal_id.to_string()], |r| r.get(0))?;
         ensure!(
             confirmation
                 .as_deref()
@@ -209,7 +239,8 @@ impl Journal {
             ],
         )?;
         // Local snapshot revision changes; the terminal run/event stream remains
-        // immutable. A future remote adapter needs authorized session notification.
+        // immutable. Remote operators explicitly inspect the current snapshot revision;
+        // reconciliation never emits a successful tool result or replays an effect.
         tx.commit()?;
         Ok(LocalReconcileOutcome {
             duplicate: false,

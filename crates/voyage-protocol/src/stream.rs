@@ -77,6 +77,15 @@ pub enum DenialCode {
     Internal,
 }
 #[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExecutionView {
+    pub run_id: Uuid,
+    pub state: RunState,
+    pub cleanup: crate::events::CleanupState,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+}
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Reply {
     Sessions {
@@ -89,6 +98,12 @@ pub enum Reply {
         session_id: Uuid,
         run_id: Uuid,
         state: RunState,
+    },
+    /// Bounded current projection, independent from canonical/private history.
+    ExecutionSnapshot {
+        session: SessionView,
+        run: Option<ExecutionView>,
+        latest: EventCursor,
     },
     Accepted {},
     Denied {
@@ -188,6 +203,15 @@ impl Frame {
         self.validate_structure()?;
         negotiated.validate()?;
         match self {
+            Self::Result {
+                reply: Reply::ExecutionSnapshot { .. },
+                ..
+            } => {
+                if !negotiated.contains(Feature::ManagedExecution) {
+                    return Err("managed execution not negotiated");
+                }
+                Ok(())
+            }
             Self::Event { event, .. } => negotiated.permits_event(&event.event),
             Self::Replay { events, .. } => {
                 if !negotiated.contains(Feature::Replay) {
@@ -328,6 +352,28 @@ impl Reply {
                 }
             }
             Self::Session { session } => session.validate()?,
+            Self::ExecutionSnapshot {
+                session,
+                run,
+                latest,
+            } => {
+                session.validate()?;
+                crate::events::bound(latest.get())?;
+                if let Some(run) = run {
+                    identities(&[run.run_id])?;
+                    crate::events::bound(run.input_tokens)?;
+                    crate::events::bound(run.output_tokens)?;
+                    if matches!(run.state, RunState::Accepted | RunState::Running)
+                        && !matches!(
+                            run.cleanup,
+                            crate::events::CleanupState::Pending
+                                | crate::events::CleanupState::Unconfirmed
+                        )
+                    {
+                        return Err("active run cannot have confirmed cleanup");
+                    }
+                }
+            }
             Self::Run {
                 session_id, run_id, ..
             } => identities(&[*session_id, *run_id])?,
@@ -432,6 +478,62 @@ impl std::fmt::Debug for Frame {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn managed_snapshot_and_post_terminal_cleanup_require_explicit_negotiation() {
+        use crate::events::{CleanupState, Feature, RunEvent};
+        let id = Uuid::new_v4();
+        let mut frame = Frame::Result {
+            connection_id: id,
+            command_id: id,
+            reply: Reply::ExecutionSnapshot {
+                session: SessionView {
+                    id,
+                    revision: 9,
+                    name: "dedicated".into(),
+                    model: "fixture".into(),
+                    sharing: SharingMode::LiveEvents,
+                    archived: false,
+                },
+                run: Some(ExecutionView {
+                    run_id: id,
+                    state: RunState::Completed,
+                    cleanup: CleanupState::Pending,
+                    input_tokens: 3,
+                    output_tokens: 2,
+                }),
+                latest: EventCursor::new(12).unwrap(),
+            },
+        };
+        let old = Features::new(vec![Feature::SequencedEvents]).unwrap();
+        let selected =
+            Features::new(vec![Feature::SequencedEvents, Feature::ManagedExecution]).unwrap();
+        assert!(frame.validate_features(&old).is_err());
+        assert!(frame.validate_features(&selected).is_ok());
+        assert!(Frame::decode(frame.encode().unwrap().as_bytes()).is_ok());
+        if let Frame::Result {
+            reply: Reply::ExecutionSnapshot { run: Some(run), .. },
+            ..
+        } = &mut frame
+        {
+            run.state = RunState::Running;
+            run.cleanup = CleanupState::Observed;
+        }
+        assert!(frame.encode().is_err());
+        let cleanup = Frame::Event {
+            connection_id: id,
+            session_id: id,
+            event: SequencedEvent {
+                cursor: EventCursor::new(13).unwrap(),
+                run_id: id,
+                event: RunEvent::Cleanup {
+                    state: CleanupState::Observed,
+                },
+            },
+        };
+        assert!(cleanup.validate_features(&old).is_err());
+        assert!(cleanup.validate_features(&selected).is_ok());
+        assert!(Frame::decode(cleanup.encode().unwrap().as_bytes()).is_ok());
+    }
     #[test]
     fn frames_are_bounded_strict_and_content_free() {
         let id = Uuid::new_v4();

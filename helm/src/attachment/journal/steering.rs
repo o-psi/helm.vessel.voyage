@@ -215,7 +215,10 @@ impl Journal {
             [request.receipt_id.to_string()],
             |r| r.get(0),
         )?;
-        ensure!(!command, "receipt identity collides with a turn command");
+        ensure!(
+            !command && !super::remote::receipt_exists(&tx, request.receipt_id)?,
+            "receipt identity collides with a command"
+        );
         if receipt_exists(&tx, request.receipt_id)? {
             let record = read(&tx, request.receipt_id)?;
             ensure!(

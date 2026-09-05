@@ -4,8 +4,8 @@ These libraries connect Helm outbound to Vessel using the version-2
 [event/replay codec](attachment-events.md) and existing single-owner enrollment.
 They are dependencies for the full [production contract](attachment-production-contract.md).
 The production binaries now expose [foreground presence](attachment-presence.md)
-when enrollment is explicitly configured. Operator session execution remains
-unavailable. Enrollment HTTP and its existing administration remain separate. No inbound Helm task port, provider credentials, raw Session,
+when enrollment is explicitly configured, and separately opt-in
+[dedicated remote execution](remote-sessions.md). Enrollment HTTP and its existing administration remain separate. No inbound Helm task port, provider credentials, raw Session,
 runtime system instructions or human PTY input are introduced.
 
 ## APIs and authority boundaries
@@ -14,7 +14,8 @@ runtime system instructions or human PTY input are introduced.
 an API and bounded receiver of `AuthenticatedFrame` observations. `router()`
 constructs only `/v2/attachment`; a caller must explicitly mount that router.
 `AttachmentApi::presence(enrollment)` closes the application receiver and offers
-no event features. The Vessel binary uses this presence-only constructor.
+no event features. The Vessel binary uses this constructor unless
+`--remote-execution` explicitly selects the managed-session relay.
 `connections()` returns bounded metadata for an already-authenticated operator;
 `shutdown()` closes admission and cancels pending and established sockets.
 `send(machine_id, frame)` validates direction, connection/machine/owner identities,

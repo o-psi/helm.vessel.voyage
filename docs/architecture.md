@@ -49,9 +49,12 @@ Vessel provides:
 - `GET /v1/diagnostics`: authenticated status and bounded current presence metadata.
 - `GET /ui`: authenticated static status page.
 - Explicitly configured enrollment administration and `/v2/attachment` presence.
+- With `--remote-execution`, authenticated dedicated-session command and replay
+  endpoints described in [remote sessions](remote-sessions.md).
 
 `voyage-protocol` contains strict v2 command, feature and event contracts. The
 [attachment foundations](attachment-foundations.md) include a transactional local
-command/run journal. Production presence does not connect these foundations to
-remote execution. Full coordination, sharing, operator sessions, approvals and
+command/run journal. An explicit foreground remote worker connects one newly
+created dedicated journal session to the authenticated transport; presence alone
+still grants no execution. Broader coordination, sharing, operator sessions, approvals and
 services remain open under #9/#10/#78/#79 and #77.

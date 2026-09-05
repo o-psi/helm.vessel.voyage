@@ -332,6 +332,12 @@ mod linux {
                 }
             });
         }
+        if ctx.policy.check_execution_authority().is_err() {
+            job.observed.store(true, Ordering::Release);
+            return Err(ToolError::Denied(
+                "foreground execution authority unavailable".into(),
+            ));
+        }
         if environment.is_some() {
             // A worker may have waited after approval. Recheck immediately before
             // releasing its private environment; no subprocess exists on failure.
