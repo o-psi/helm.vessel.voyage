@@ -17,14 +17,17 @@ both `VersionedSession.revision` and the returned `Session.revision`. Only this
 returned revision is normalized: canonical text, provider continuation, usage and
 other metadata are preserved, and snapshot reads do not write the database.
 
-`owner.admit(request, now_ms)` uses the existing guard. The request must name the
+`owner.admit(request)` uses the existing guard. The request must name the
 owned session and satisfy journal identity, revision, expiry and durable admission
 checks. Identical accepted command retries return `Admission::Existing`, including
 while execution or cleanup retains the owner; they never produce another executor.
-A conflicting command digest remains an error. The explicit time argument is for
-the existing caller clock contract; authenticated/local frontend adapters must
-supply current time and authorization at admission, not treat this API as proof
-of sharing or policy permission.
+A conflicting command digest remains an error. The production asynchronous entrypoints sample `SystemClock` inside the blocking
+admission transaction after duplicate lookup; waiting for a worker or mutex cannot
+reuse an earlier timestamp. Clock failures and invalid values prevent new admission.
+Existing identical receipts remain readable without consulting the clock. The
+trusted `RuntimeClock` abstraction also supports deterministic boundary tests.
+Authenticated/local frontend adapters must still check current authorization;
+this API is not proof of sharing or policy permission.
 
 Each new `RunOwner` holds a distinct turn token. `run.checkpoint()` produces a
 cloneable `ManagedRunCheckpoint`; every callback and in-flight storage operation
