@@ -50,6 +50,9 @@ review; no executable, argument or package script is inferred from arbitrary pro
 Multiple package-manager mentions, disagreement with `packageManager`, undeclared
 scripts, shell composition, unsupported commands, and recognized caution or
 negation words cause conservative omission with a conflict/uncertainty warning.
+Commented text, quotation blocks, unsupported or unclosed code fences also require
+manual interpretation rather than supplying positive command evidence. Supported
+fence labels are empty, `sh`, `bash`, `shell` and `console`.
 Thus guidance saying not to use npm cannot silently become an npm recommendation.
 This is deliberately conservative: even an unrelated caution or an illustrative
 example can require manual review. It is not complete natural-language negation,

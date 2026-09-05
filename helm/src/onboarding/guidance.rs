@@ -22,6 +22,7 @@ pub(super) struct Guidance {
     path: String,
     limited: bool,
     negative: bool,
+    ambiguous_context: bool,
     mentions: BTreeSet<&'static str>,
     managers: BTreeSet<String>,
     commands: Vec<Vec<String>>,
@@ -33,6 +34,7 @@ impl Guidance {
             path,
             limited: true,
             negative: false,
+            ambiguous_context: false,
             mentions: BTreeSet::new(),
             managers: BTreeSet::new(),
             commands: Vec::new(),
@@ -45,6 +47,7 @@ impl Guidance {
             return result;
         };
         result.limited = false;
+        let mut in_fence = false;
         for (index, line) in text.lines().enumerate() {
             if index >= MAX_LINES || line.len() > MAX_LINE {
                 result.limited = true;
@@ -53,6 +56,25 @@ impl Guidance {
             if line.chars().any(|c| c.is_control() && c != '\t') {
                 result.limited = true;
                 break;
+            }
+            let trimmed = line.trim();
+            if let Some(language) = trimmed.strip_prefix("```") {
+                let allowed = if in_fence {
+                    language.is_empty()
+                } else {
+                    matches!(language, "" | "sh" | "bash" | "shell" | "console")
+                };
+                result.ambiguous_context |= !allowed;
+                in_fence = !in_fence;
+                continue;
+            }
+            if line.contains("<!--")
+                || line.contains("-->")
+                || trimmed.starts_with('>')
+                || trimmed.starts_with("~~~")
+                || matches!(trimmed, "\"" | "'" | "“" | "”" | "‘" | "’")
+            {
+                result.ambiguous_context = true;
             }
             let lower = line.to_ascii_lowercase().replace('’', "'");
             for word in lower.split(|c: char| !c.is_ascii_alphanumeric() && c != '\'') {
@@ -81,6 +103,9 @@ impl Guidance {
                         | "cannot"
                         | "can't"
                         | "mustn't"
+                        | "caution"
+                        | "warning"
+                        | "disabled"
                 ) {
                     result.negative = true;
                 }
@@ -116,6 +141,7 @@ impl Guidance {
                 result.commands.push(args);
             }
         }
+        result.ambiguous_context |= in_fence;
         result
     }
 }
@@ -130,7 +156,7 @@ fn applies(path: &str, project: &str) -> bool {
     project.starts_with(directory)
 }
 
-fn supported(project: &Project, args: &[String], manifest: Option<&[u8]>) -> bool {
+fn supported(project: &Project, args: &[String], scripts: &BTreeSet<&str>) -> bool {
     if project.ecosystem == "JavaScript/TypeScript" {
         return args.len() == 3
             && RUNNERS.contains(&args[0].as_str())
@@ -141,10 +167,7 @@ fn supported(project: &Project, args: &[String], manifest: Option<&[u8]>) -> boo
             && args[2]
                 .chars()
                 .all(|c| c.is_ascii_alphanumeric() || "-_:./".contains(c))
-            && manifest
-                .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(bytes).ok())
-                .and_then(|value| value.get("scripts")?.get(&args[2]).cloned())
-                .is_some_and(|value| value.is_string());
+            && scripts.contains(args[2].as_str());
     }
     project
         .commands
@@ -202,14 +225,20 @@ pub(super) fn reconcile(
             .iter()
             .flat_map(|item| item.managers.iter())
             .collect();
-        let declared_manager = manifest
-            .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(bytes).ok())
-            .and_then(|value| value.get("packageManager")?.as_str().map(str::to_owned))
-            .and_then(|value| value.split('@').next().map(str::to_owned));
-        let conflict = managers.len() > 1
-            || declared_manager
-                .as_ref()
-                .is_some_and(|declared| managers.iter().any(|manager| *manager != declared));
+        // Parse each manifest once, not once per untrusted command snippet.
+        let metadata =
+            manifest.and_then(|bytes| serde_json::from_slice::<serde_json::Value>(bytes).ok());
+        let declared_manager = metadata
+            .as_ref()
+            .and_then(|value| value.get("packageManager")?.as_str())
+            .and_then(|value| value.split('@').next());
+        let scripts: BTreeSet<_> = metadata
+            .as_ref()
+            .and_then(|value| value.get("scripts")?.as_object())
+            .into_iter()
+            .flat_map(|scripts| scripts.iter())
+            .filter_map(|(name, value)| value.is_string().then_some(name.as_str()))
+            .collect();
         let commands: Vec<_> = mentioned
             .iter()
             .flat_map(|item| {
@@ -221,20 +250,41 @@ pub(super) fn reconcile(
                     .map(|args| (*item, args))
             })
             .collect();
-        let uncertain = relevant.iter().any(|item| item.limited)
-            || mentioned.iter().any(|item| item.negative)
-            || (!mentioned.is_empty() && commands.is_empty())
-            || commands
-                .iter()
-                .any(|(_, args)| !supported(project, args, manifest));
-        if conflict || uncertain {
+        let mut reasons = Vec::new();
+        if managers.len() > 1 {
+            reasons.push("multiple package managers mentioned");
+        }
+        if declared_manager
+            .is_some_and(|declared| managers.iter().any(|manager| manager.as_str() != declared))
+        {
+            reasons.push("guidance and packageManager disagree");
+        }
+        if relevant.iter().any(|item| item.limited) {
+            reasons.push("guidance could not be inspected safely within bounds");
+        }
+        if mentioned.iter().any(|item| item.negative) {
+            reasons.push("caution, negation or illustrative examples need interpretation");
+        }
+        if mentioned.iter().any(|item| item.ambiguous_context) {
+            reasons.push("quoted, commented or unsupported Markdown context needs interpretation");
+        }
+        if !mentioned.is_empty() && commands.is_empty() {
+            reasons.push("no supported standalone command for the mentioned convention");
+        }
+        if commands
+            .iter()
+            .any(|(_, args)| !supported(project, args, &scripts))
+        {
+            reasons.push("unsupported command shape or undeclared script");
+        }
+        if !reasons.is_empty() {
             project.commands.clear();
             let sources = relevant
                 .iter()
                 .map(|item| item.path.as_str())
                 .collect::<Vec<_>>()
                 .join(", ");
-            report.warnings.push(format!("{} in {}: guidance conflict or uncertain/unsupported conventions ({sources}); candidate commands omitted for manual review", project.ecosystem, project.directory));
+            report.warnings.push(format!("{} in {}: guidance conflict or uncertainty ({sources}): {}; candidate commands omitted for manual review", project.ecosystem, project.directory, reasons.join("; ")));
         } else if !commands.is_empty() {
             let mut documented = BTreeMap::<Vec<String>, BTreeSet<&str>>::new();
             for (item, args) in commands {

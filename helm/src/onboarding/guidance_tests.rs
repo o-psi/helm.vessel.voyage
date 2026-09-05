@@ -266,3 +266,29 @@ fn guidance_cannot_introduce_option_shaped_or_expanding_script_arguments() {
         assert!(!root.path().join("CANARY").exists());
     }
 }
+
+#[test]
+fn commented_multiline_quoted_or_non_shell_contexts_are_not_positive_evidence() {
+    for guidance in [
+        "<!--\npnpm run test:ci\n-->\n",
+        "\"\npnpm run test:ci\n\"\n",
+        "“\npnpm run test:ci\n”\n",
+        "```json\npnpm run test:ci\n```\n",
+        "```sh\npnpm run test:ci\n",
+        "> quotation\npnpm run test:ci\n",
+        "Caution:\npnpm run test:ci\n",
+        "Warning: disabled\npnpm run test:ci\n",
+    ] {
+        let root = tempfile::tempdir().unwrap();
+        node(root.path(), None);
+        fs::write(root.path().join("README.md"), guidance).unwrap();
+        let report = inspect(root.path()).unwrap();
+        assert!(report.projects[0].commands.is_empty(), "{guidance}");
+        assert!(
+            report
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("omitted"))
+        );
+    }
+}
