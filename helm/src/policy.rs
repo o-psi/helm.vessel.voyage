@@ -11,8 +11,15 @@ pub enum Decision {
     Deny(String),
 }
 
+/// Optional foreground authority checked at each new dispatch boundary.
+/// Implementations must read current state; a stored positive check is not a grant.
+pub trait ExecutionAuthority: std::fmt::Debug + Send + Sync {
+    fn check(&self) -> Result<()>;
+}
+
 #[derive(Clone, Debug)]
 pub struct Policy {
+    execution_authority: Option<std::sync::Arc<dyn ExecutionAuthority>>,
     workspace: PathBuf,
     readable: Vec<PathBuf>,
     writable: Vec<PathBuf>,
@@ -28,6 +35,7 @@ impl Policy {
     pub(crate) fn from_runtime(snapshot: crate::runtime_policy::Snapshot) -> Self {
         let effective = &snapshot.effective;
         Self {
+            execution_authority: None,
             workspace: effective.workspace().path().into(),
             readable: effective.rules().read_roots.clone(),
             writable: effective.rules().write_roots.clone(),
@@ -38,7 +46,24 @@ impl Policy {
     }
     /// New turns refuse stale policy; existing effects are not instantaneously revoked.
     pub fn check_current(&self) -> Result<()> {
+        self.check_execution_authority()?;
         self.snapshot.check_current()
+    }
+    pub fn with_execution_authority(
+        mut self,
+        authority: std::sync::Arc<dyn ExecutionAuthority>,
+    ) -> Self {
+        self.execution_authority = Some(authority);
+        self
+    }
+    pub fn check_execution_authority(&self) -> Result<()> {
+        if let Some(authority) = &self.execution_authority {
+            authority.check()?;
+        }
+        Ok(())
+    }
+    pub(crate) fn inherit_execution_authority(&mut self, parent: &Self) {
+        self.execution_authority = parent.execution_authority.clone();
     }
     pub fn ceiling_present(&self) -> bool {
         self.snapshot.effective.ceiling_digest().is_some()

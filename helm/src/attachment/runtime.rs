@@ -53,6 +53,7 @@ pub struct ManagedSessionOwner {
 }
 struct TurnToken {
     run_id: Uuid,
+    execution_authority: Option<Arc<dyn crate::policy::ExecutionAuthority>>,
     steering_authority: OnceLock<(Arc<dyn SteeringAuthorization>, Arc<dyn RuntimeClock>)>,
     poisoned: AtomicBool,
 }
@@ -60,6 +61,7 @@ impl TurnToken {
     fn new(run_id: Uuid) -> Self {
         Self {
             run_id,
+            execution_authority: None,
             steering_authority: OnceLock::new(),
             poisoned: AtomicBool::new(false),
         }
@@ -179,6 +181,25 @@ impl ManagedSessionOwner {
         clock: Arc<dyn RuntimeClock>,
         before_admission: impl FnOnce() -> anyhow::Result<()> + Send + 'static,
     ) -> anyhow::Result<Admission> {
+        self.admit_authorized_after(request, clock, before_admission, None)
+            .await
+    }
+    /// Foreground authority is fresh even for observation of an identical receipt.
+    pub async fn admit_authorized(
+        &self,
+        request: TurnAdmission,
+        authority: Arc<dyn crate::policy::ExecutionAuthority>,
+    ) -> anyhow::Result<Admission> {
+        self.admit_authorized_after(request, Arc::new(SystemClock), || Ok(()), Some(authority))
+            .await
+    }
+    async fn admit_authorized_after(
+        &self,
+        request: TurnAdmission,
+        clock: Arc<dyn RuntimeClock>,
+        before_admission: impl FnOnce() -> anyhow::Result<()> + Send + 'static,
+        authority: Option<Arc<dyn crate::policy::ExecutionAuthority>>,
+    ) -> anyhow::Result<Admission> {
         anyhow::ensure!(
             request.session_id == self.session_id,
             "managed owner belongs to another session"
@@ -188,6 +209,9 @@ impl ManagedSessionOwner {
             let mut store = shared
                 .lock()
                 .map_err(|_| anyhow::anyhow!("managed owner poisoned"))?;
+            if let Some(authority) = &authority {
+                authority.check()?;
+            }
             anyhow::ensure!(
                 request.session_id == store.session_id,
                 "managed owner session mismatch"
@@ -203,12 +227,19 @@ impl ManagedSessionOwner {
             let session = store.journal.load_session(store.session_id)?.session;
             let workspace = session.workspace.canonicalize()?;
             let Store { journal, guard, .. } = &mut *store;
-            let admission = journal.admit_turn_with_clock(guard, &request, || clock.now_ms())?;
+            let admission = journal.admit_turn_with_clock(guard, &request, || {
+                if let Some(authority) = &authority {
+                    authority.check()?;
+                }
+                clock.now_ms()
+            })?;
             if admission.duplicate {
                 return Ok(Admission::Existing(admission.run));
             }
             let run_id = admission.run.id;
-            let token = Arc::new(TurnToken::new(run_id));
+            let mut token = TurnToken::new(run_id);
+            token.execution_authority = authority;
+            let token = Arc::new(token);
             let (steering_sender, steering_receiver) =
                 crate::agent::steering_channel(super::journal::MAX_PENDING_STEERING);
             store.run_id = run_id;
@@ -411,8 +442,14 @@ impl RunOwner {
             Err(CheckpointError.into())
         } else {
             async {
-                self.storage(|store| store.journal.mark_running(&store.guard, store.run_id))
-                    .await?;
+                let authority = self.token.execution_authority.clone();
+                self.storage(move |store| {
+                    if let Some(authority) = authority {
+                        authority.check()?;
+                    }
+                    store.journal.mark_running(&store.guard, store.run_id)
+                })
+                .await?;
                 let session = self
                     .storage(|store| {
                         let run = store.journal.run(store.run_id)?;
@@ -505,6 +542,9 @@ impl RunCheckpoint for ManagedRunCheckpoint {
         let usage = usage.clone();
         let token = self.token.clone();
         self.storage(move |store| {
+            if let Some(authority) = &token.execution_authority {
+                authority.check()?;
+            }
             steering::authorize(store, &token)?;
             store.journal.checkpoint_canonical_with_clock(
                 &store.guard,
@@ -527,6 +567,9 @@ impl RunCheckpoint for ManagedRunCheckpoint {
     ) -> Result<(), CheckpointError> {
         let token = self.token.clone();
         self.storage(move |store| {
+            if let Some(authority) = &token.execution_authority {
+                authority.check()?;
+            }
             steering::authorize(store, &token)?;
             anyhow::ensure!(
                 store.journal.run(store.run_id)?.state == RunState::Running,
@@ -540,6 +583,9 @@ impl RunCheckpoint for ManagedRunCheckpoint {
             let usage = usage.clone();
             let token = self.token.clone();
             self.storage(move |store| {
+                if let Some(authority) = &token.execution_authority {
+                    authority.check()?;
+                }
                 steering::authorize(store, &token)?;
                 store
                     .journal

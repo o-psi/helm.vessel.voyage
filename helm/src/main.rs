@@ -995,6 +995,10 @@ impl SubagentExecutor for CliSubagentExecutor {
             .and_then(Weak::upgrade)
             .and_then(|runtime| runtime.store())
             .map(|store| helm::completion::tool::CompletionTool::new(self.todos.store(), store));
+        tool_context
+            .policy
+            .check_execution_authority()
+            .map_err(|error| error.to_string())?;
         let mut tools = build_tools(
             &config,
             child_tool,
@@ -1009,6 +1013,10 @@ impl SubagentExecutor for CliSubagentExecutor {
                 .register(&mut tools)
                 .map_err(|error| error.to_string())?;
         }
+        tool_context
+            .policy
+            .check_execution_authority()
+            .map_err(|error| error.to_string())?;
         let agent = Agent::new(
             provider::from_config(&config, workspace).map_err(|e| e.to_string())?,
             tools,
@@ -1069,6 +1077,7 @@ async fn build_subagents_managed(
     parent_policy: Arc<Policy>,
     managed_resources: Option<Arc<ManagedResources>>,
 ) -> Result<SubagentBundle> {
+    parent_policy.check_execution_authority()?;
     let standard = ToolRegistry::standard();
     let mut allowed_tools: std::collections::BTreeSet<String> = standard
         .definitions()
@@ -1241,9 +1250,26 @@ async fn build_agent_bundle(
     attended: bool,
     sink: Option<Arc<dyn EventSink>>,
 ) -> Result<ManagedAgent> {
+    build_authorized_agent_bundle(config, workspace, attended, sink, None).await
+}
+async fn build_authorized_agent_bundle(
+    config: &Config,
+    workspace: PathBuf,
+    attended: bool,
+    sink: Option<Arc<dyn EventSink>>,
+    authority: Option<Arc<dyn helm::policy::ExecutionAuthority>>,
+) -> Result<ManagedAgent> {
+    if let Some(authority) = &authority {
+        authority.check()?;
+    }
     let resolved = helm::runtime_policy::RuntimePolicy::resolve(config, &workspace)?;
     let config = resolved.config();
-    let policy = Arc::new(resolved.policy().clone());
+    let mut policy = resolved.policy().clone();
+    if let Some(authority) = authority {
+        policy = policy.with_execution_authority(authority);
+    }
+    policy.check_execution_authority()?;
+    let policy = Arc::new(policy);
     let terminal = Arc::new(Terminal::default());
     let approver: Arc<dyn Approver> = if attended {
         terminal.clone()
@@ -1279,6 +1305,7 @@ async fn build_agent_bundle(
     let gate_runtime = subagents.runtime.clone();
     let gate_todos = subagents.todos.store();
     let gate_agents = gate_runtime.store().expect("persistent runtime");
+    context.policy.check_execution_authority()?;
     let mut tools = build_tools(
         config,
         Some(subagents.tool),
@@ -1290,6 +1317,7 @@ async fn build_agent_bundle(
         resources.register(&mut tools)?;
     }
     let retained_runtime = gate_runtime.clone();
+    context.policy.check_execution_authority()?;
     let agent = Agent::new(
         provider::from_config(config, context.policy.workspace().to_owned())?,
         tools,

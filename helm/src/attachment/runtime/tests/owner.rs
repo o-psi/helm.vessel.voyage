@@ -616,3 +616,70 @@ fn journal_samples_new_command_clock_inside_write_transaction_only() {
             .duplicate
     );
 }
+
+#[derive(Debug)]
+struct ForegroundAuthority(std::sync::atomic::AtomicBool);
+impl crate::policy::ExecutionAuthority for ForegroundAuthority {
+    fn check(&self) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.0.load(Ordering::SeqCst),
+            "foreground authority revoked"
+        );
+        Ok(())
+    }
+}
+#[tokio::test]
+async fn foreground_authority_is_checked_before_existing_receipt_observation() {
+    let (_root, run, _agent, _requests, _effects, request) =
+        setup("normal", Arc::new(SilentSink)).await;
+    let owner = managed(&run, &request);
+    let authority = Arc::new(ForegroundAuthority(std::sync::atomic::AtomicBool::new(
+        true,
+    )));
+    assert!(matches!(
+        owner
+            .admit_authorized(
+                TurnAdmission {
+                    prompt: request.prompt.clone(),
+                    ..request
+                },
+                authority.clone()
+            )
+            .await
+            .unwrap(),
+        Admission::Existing(_)
+    ));
+    authority.0.store(false, Ordering::SeqCst);
+    assert!(owner.admit_authorized(request, authority).await.is_err());
+    assert_eq!(run.record().await.unwrap().state, RunState::Accepted);
+    assert_eq!(owner.snapshot().await.unwrap().revision, 1);
+}
+#[tokio::test]
+async fn foreground_authority_rechecked_after_admission_wait_before_any_durable_acceptance() {
+    let (_root, run, _agent, _requests, _effects, request) =
+        setup("normal", Arc::new(SilentSink)).await;
+    let owner = managed(&run, &request);
+    drop(run);
+    owner.recover_interrupted().await.unwrap();
+    let revision = owner.snapshot().await.unwrap().revision;
+    let request = next_request(&request, revision);
+    let authority = Arc::new(ForegroundAuthority(std::sync::atomic::AtomicBool::new(
+        true,
+    )));
+    let revoke = authority.clone();
+    assert!(
+        owner
+            .admit_authorized_after(
+                request,
+                Arc::new(|| Ok(1)),
+                move || {
+                    revoke.0.store(false, Ordering::SeqCst);
+                    Ok(())
+                },
+                Some(authority)
+            )
+            .await
+            .is_err()
+    );
+    assert_eq!(owner.snapshot().await.unwrap().revision, revision);
+}

@@ -64,7 +64,10 @@ impl RuntimePolicy {
         parent.check_current()?;
         let mut config = config.clone();
         parent.limit_child_config(&mut config, workspace)?;
-        Self::resolve_with_source(&config, workspace, source)
+        let mut resolved = Self::resolve_with_source(&config, workspace, source)?;
+        resolved.policy.inherit_execution_authority(parent);
+        resolved.policy.check_execution_authority()?;
+        Ok(resolved)
     }
     fn resolve_with_source(config: &Config, workspace: &Path, source: Source) -> Result<Self> {
         let base = Rules {

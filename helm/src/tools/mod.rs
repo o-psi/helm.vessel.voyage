@@ -49,6 +49,29 @@ pub trait Approver: Send + Sync {
     }
 }
 
+/// Rechecks optional foreground authority after an awaited approval. It never grants access.
+struct DispatchApprover {
+    inner: Arc<dyn Approver>,
+    policy: Arc<Policy>,
+}
+#[async_trait]
+impl Approver for DispatchApprover {
+    async fn approve(&self, request: &ApprovalRequest) -> ApprovalOutcome {
+        if self.policy.check_execution_authority().is_err() {
+            return ApprovalOutcome::Denied;
+        }
+        let outcome = self.inner.approve(request).await;
+        if self.policy.check_execution_authority().is_err() {
+            ApprovalOutcome::Denied
+        } else {
+            outcome
+        }
+    }
+    async fn ask_question(&self, question: &Question) -> QuestionAnswer {
+        self.inner.ask_question(question).await
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum InteractionMode {
@@ -264,11 +287,23 @@ impl ToolRegistry {
                 _ => {}
             }
         }
+        context
+            .policy
+            .check_execution_authority()
+            .map_err(|_| ToolError::Denied("foreground execution authority unavailable".into()))?;
+        if context.cancellation.is_cancelled() {
+            return Err(ToolError::Cancelled);
+        }
+        let mut dispatch = context.clone();
+        dispatch.approver = Arc::new(DispatchApprover {
+            inner: context.approver.clone(),
+            policy: context.policy.clone(),
+        });
         let result = self
             .tools
             .get(name)
             .ok_or_else(|| ToolError::Failed(format!("unknown tool `{name}`")))?
-            .execute(arguments, context)
+            .execute(arguments, &dispatch)
             .await;
         result
             .and_then(|output| {
@@ -330,6 +365,50 @@ pub(crate) fn truncate(mut bytes: Vec<u8>, max: usize) -> String {
 #[cfg(test)]
 mod security_tests {
     use super::*;
+
+    #[derive(Debug)]
+    struct Revocable(std::sync::atomic::AtomicBool);
+    impl crate::policy::ExecutionAuthority for Revocable {
+        fn check(&self) -> anyhow::Result<()> {
+            anyhow::ensure!(self.0.load(std::sync::atomic::Ordering::SeqCst), "revoked");
+            Ok(())
+        }
+    }
+    struct RevokingApprover(Arc<Revocable>);
+    #[async_trait]
+    impl Approver for RevokingApprover {
+        async fn approve(&self, _: &ApprovalRequest) -> ApprovalOutcome {
+            tokio::task::yield_now().await;
+            self.0.0.store(false, std::sync::atomic::Ordering::SeqCst);
+            ApprovalOutcome::Approved
+        }
+    }
+    #[tokio::test]
+    async fn foreground_revocation_during_approval_does_not_grant_dispatch() {
+        let workspace = tempfile::tempdir().unwrap();
+        let authority = Arc::new(Revocable(std::sync::atomic::AtomicBool::new(true)));
+        let policy = Arc::new(
+            Policy::new(&crate::config::Config::default(), workspace.path().into())
+                .unwrap()
+                .with_execution_authority(authority.clone()),
+        );
+        let approver = DispatchApprover {
+            inner: Arc::new(RevokingApprover(authority)),
+            policy: policy.clone(),
+        };
+        assert!(policy.check_current().is_ok());
+        let request = ApprovalRequest {
+            id: uuid::Uuid::new_v4(),
+            execution_id: uuid::Uuid::new_v4(),
+            action: "write".into(),
+            target: "file".into(),
+            reason: "approval".into(),
+            mode: InteractionMode::Unattended,
+        };
+        assert_eq!(approver.approve(&request).await, ApprovalOutcome::Denied);
+        assert!(policy.check_current().is_err());
+        assert!(policy.clone().check_execution_authority().is_err());
+    }
 
     #[test]
     fn read_only_completion_allows_observation_but_not_adoption_or_reviews() {

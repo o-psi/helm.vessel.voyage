@@ -610,21 +610,76 @@ async fn submit(
         failed: std::sync::atomic::AtomicBool::new(false),
         streamed: std::sync::atomic::AtomicBool::new(false),
     });
-    let resources = match build_agent_bundle(
+    let execution = execute_admitted(
+        &owner,
+        &mut run,
         &config,
         saved.session.workspace,
+        progress.clone(),
+        cancel,
+        attachment_interrupt(),
+        None,
+    )
+    .await?;
+    let actual = execution.actual;
+    let observed = execution.cleanup_observed;
+    output.emit(run_result(&actual, observed)).await?;
+    ensure!(
+        !execution.construction_failed,
+        "managed runtime construction failed; cleanup obligation retained"
+    );
+    ensure!(
+        observed,
+        "managed cleanup unconfirmed; obligation retained; recover explicitly"
+    );
+    ensure!(
+        !progress.failed.load(std::sync::atomic::Ordering::SeqCst),
+        "managed output failed"
+    );
+    ensure!(
+        actual.state == RunState::Completed,
+        "managed run did not complete"
+    );
+    Ok(())
+}
+
+/// Actual durable terminal state and independent owned-resource cleanup observation.
+/// An unconfirmed result retains the durable admission blocker.
+pub(super) struct ManagedExecution {
+    pub actual: RunRecord,
+    pub cleanup_observed: bool,
+    pub construction_failed: bool,
+}
+#[allow(clippy::too_many_arguments)]
+pub(super) async fn execute_admitted(
+    owner: &ManagedSessionOwner,
+    run: &mut helm::attachment::runtime::RunOwner,
+    config: &Config,
+    workspace: PathBuf,
+    sink: Arc<dyn EventSink>,
+    cancel: tokio_util::sync::CancellationToken,
+    interrupt: impl std::future::Future<Output = ()>,
+    authority: Option<Arc<dyn helm::policy::ExecutionAuthority>>,
+) -> Result<ManagedExecution> {
+    use tokio_util::sync::CancellationToken;
+    let run_id = run.record().await?.id;
+    let resources = match build_authorized_agent_bundle(
+        config,
+        workspace,
         false,
-        Some(progress.clone()),
+        Some(sink),
+        authority,
     )
     .await
     {
         Ok(resources) => resources,
         Err(_) => {
             let actual = run.fail_before_execution().await?;
-            output
-                .emit(json!({"event":"run_terminal","run":record(&actual),"cleanup":"unconfirmed"}))
-                .await?;
-            bail!("managed runtime construction failed; cleanup obligation retained")
+            return Ok(ManagedExecution {
+                actual,
+                cleanup_observed: false,
+                construction_failed: true,
+            });
         }
     };
     let stop_watch = CancellationToken::new();
@@ -657,7 +712,7 @@ async fn submit(
     let result = await_execution(
         run.execute(&resources.agent, cancel.clone(), None),
         cancel.clone(),
-        attachment_interrupt(),
+        interrupt,
         Duration::from_secs(15),
     )
     .await;
@@ -711,20 +766,11 @@ async fn submit(
         run.confirm_local_cleanup_observed().await?;
     }
     let actual = run.record().await?;
-    output.emit(run_result(&actual, observed)).await?;
-    ensure!(
-        observed,
-        "managed cleanup unconfirmed; obligation retained; recover explicitly"
-    );
-    ensure!(
-        !progress.failed.load(std::sync::atomic::Ordering::SeqCst),
-        "managed output failed"
-    );
-    ensure!(
-        actual.state == RunState::Completed,
-        "managed run did not complete"
-    );
-    Ok(())
+    Ok(ManagedExecution {
+        actual,
+        cleanup_observed: observed,
+        construction_failed: false,
+    })
 }
 
 #[cfg(test)]
