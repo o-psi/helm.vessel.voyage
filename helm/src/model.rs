@@ -71,7 +71,7 @@ pub struct ToolDefinition {
     pub input_schema: Value,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 pub struct ModelRequest {
     pub model: String,
     pub messages: Vec<Message>,

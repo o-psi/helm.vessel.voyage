@@ -461,6 +461,12 @@ async fn handle_ui_event(
             preserve_manual_anchor(app, before);
             app.status = format!("Provider retry {attempt}…  Esc cancels");
         }
+        UiEvent::Agent(AgentEvent::ContextBudget(report)) => {
+            app.status = format!(
+                "Context: estimated {}/{} tokens; {} older messages omitted",
+                report.estimated, report.limit, report.omitted_messages
+            );
+        }
         UiEvent::Agent(AgentEvent::SteeringApplied) => {
             app.status = "Steering applied · continuing…  Esc cancels".into();
         }
@@ -901,11 +907,6 @@ async fn handle_key(
                     return Ok(());
                 }
                 app.prompt_history.record(&prompt);
-                if app.session.messages.len() > 96 {
-                    let removed = compact_messages(&mut app.session.messages, 64);
-                    app.activity
-                        .push(format!("context: compacted {removed} older messages"));
-                }
                 let history = app.session.messages.clone();
                 app.session
                     .messages

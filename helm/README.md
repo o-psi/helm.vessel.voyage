@@ -120,7 +120,9 @@ at the next safe model boundary, and continues automatically. `Esc` still cancel
 
 `/name TITLE`, `/branch [TITLE]`,
 `/compact [KEEP]`, `/export [PATH]`, and `/clear confirm` provide explicit session operations.
-Long conversations compact automatically while retaining recent turns.
+Every provider request is checked against a finite context budget. Older turns
+are omitted from the request copy when needed while saved history remains intact;
+oversized indivisible input fails locally. See [context limits](../docs/context-window.md).
 The conversation footer shows current status rather than permanently listing global shortcuts;
 press `F1` to open contextual keyboard help and `F1` or `Esc` to close it.
 Use `Up` and `Down` in the chat input to recall previously sent messages in the current

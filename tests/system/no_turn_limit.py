@@ -53,6 +53,9 @@ def run_no_turn_limit(helm: Path) -> None:
                 'provider = "openai-responses"\nmodel = "fixture"\n'
                 'api_key_env = "HELM_FIXTURE_KEY"\naccess = "read-only"\n'
                 f'base_url = "http://127.0.0.1:{server.server_port}/v1"\n'
+                # This test isolates turn-count behavior; budget the synthetic model
+                # for the complete 71-request history. Context rejection has its own fixture.
+                'context_window = 262144\n'
                 'max_turns = 1\nprovider_retry_attempts = 1\n'
             )
             env = dict(os.environ, HOME=str(root / "home"),

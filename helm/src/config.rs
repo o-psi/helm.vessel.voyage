@@ -94,6 +94,7 @@ pub struct Config {
     pub chatgpt_base_url: Option<String>,
     pub system_prompt: String,
     pub max_tokens: u32,
+    pub context_window: usize,
     pub temperature: Option<f32>,
     pub provider_retry_attempts: usize,
     pub provider_retry_initial_ms: u64,
@@ -189,6 +190,11 @@ pub const CONFIG_OVERRIDE_SPECS: &[ConfigOverrideSpec] = &[
         key: "system_prompt",
         description: "Agent system guidance",
         kind: ConfigValueKind::Text,
+    },
+    ConfigOverrideSpec {
+        key: "context_window",
+        description: "Effective model context limit (conservative fallback)",
+        kind: ConfigValueKind::PositiveInteger,
     },
     ConfigOverrideSpec {
         key: "max_tokens",
@@ -357,6 +363,7 @@ impl Default for Config {
             chatgpt_base_url: None,
             system_prompt: include_str!("../prompts/system.md").trim().into(),
             max_tokens: 8192,
+            context_window: crate::context::DEFAULT_CONTEXT_WINDOW,
             temperature: None,
             provider_retry_attempts: 4,
             provider_retry_initial_ms: 500,
@@ -380,6 +387,29 @@ impl Default for Config {
             mcp_servers: BTreeMap::new(),
             codex_command: "codex".into(),
         }
+    }
+}
+
+#[cfg(test)]
+mod context_tests {
+    use super::*;
+
+    #[test]
+    fn context_override_roundtrips_and_invalid_reserves_are_rejected() {
+        let mut config = Config::default();
+        config.apply_override("context_window", "16384").unwrap();
+        let restored: Config = toml::from_str(&toml::to_string(&config).unwrap()).unwrap();
+        assert_eq!(restored.context_window, 16384);
+        for value in ["0", "8192", "-1"] {
+            assert!(config.apply_override("context_window", value).is_err());
+            assert_eq!(config.context_window, 16384);
+        }
+        assert!(config.apply_override("max_tokens", "0").is_err());
+        assert!(config.apply_override("max_tokens", "16384").is_err());
+        assert_eq!(
+            Config::default().context_window,
+            crate::context::DEFAULT_CONTEXT_WINDOW
+        );
     }
 }
 
@@ -508,6 +538,12 @@ impl Config {
     }
 
     pub fn validate(&self) -> Result<()> {
+        if self.context_window == 0
+            || self.max_tokens == 0
+            || self.max_tokens as usize >= self.context_window
+        {
+            bail!("context_window must exceed the positive max_tokens output reserve");
+        }
         if self.model.trim().is_empty() {
             bail!("model cannot be empty");
         }

@@ -302,6 +302,10 @@ impl EventSink for Terminal {
                 delay.as_secs_f32(),
                 error = safe_diagnostic(&error)
             ),
+            AgentEvent::ContextBudget(report) => eprintln!(
+                "[context: estimated {}/{} tokens, {} messages omitted]",
+                report.estimated, report.limit, report.omitted_messages
+            ),
             AgentEvent::SteeringApplied => eprintln!("[steering applied]"),
             AgentEvent::Cancelled => eprintln!("[cancelled]"),
         }
@@ -775,6 +779,7 @@ impl SubagentExecutor for CliSubagentExecutor {
             config.max_tokens,
             config.temperature,
         )
+        .with_context_window(config.context_window)
         .with_retry_policy(RetryPolicy {
             max_attempts: config.provider_retry_attempts,
             initial_delay: std::time::Duration::from_millis(config.provider_retry_initial_ms),
@@ -927,6 +932,7 @@ async fn build_agent(config: &Config, workspace: PathBuf, attended: bool) -> Res
         config.max_tokens,
         config.temperature,
     )
+    .with_context_window(config.context_window)
     .with_model_mirror(subagents.model)
     .with_retry_policy(RetryPolicy {
         max_attempts: config.provider_retry_attempts,
@@ -1023,6 +1029,7 @@ async fn tui_chat(
             active_config.max_tokens,
             active_config.temperature,
         )
+        .with_context_window(active_config.context_window)
         .with_model_mirror(subagents.model)
         .with_retry_policy(RetryPolicy {
             max_attempts: active_config.provider_retry_attempts,

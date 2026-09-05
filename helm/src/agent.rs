@@ -132,6 +132,7 @@ pub enum AgentEvent {
         delay: Duration,
         error: String,
     },
+    ContextBudget(crate::context::ContextReport),
     SteeringApplied,
     Cancelled,
 }
@@ -177,6 +178,8 @@ pub enum StopReason {
 #[derive(Debug, Error)]
 pub enum AgentError {
     #[error(transparent)]
+    Context(#[from] crate::context::ContextError),
+    #[error(transparent)]
     Provider(#[from] ProviderError),
     #[error("cannot load workspace instructions: {0}")]
     WorkspaceInstructions(String),
@@ -198,6 +201,7 @@ pub struct Agent {
     model_cache: tokio::sync::Mutex<Option<(std::time::Instant, Vec<ModelInfo>)>>,
     system_prompt: String,
     max_tokens: u32,
+    context_window: usize,
     temperature: Option<f32>,
     retry: RetryPolicy,
 }
@@ -275,9 +279,15 @@ impl Agent {
             model_cache: tokio::sync::Mutex::new(None),
             system_prompt,
             max_tokens,
+            context_window: crate::context::DEFAULT_CONTEXT_WINDOW,
             temperature,
             retry: RetryPolicy::default(),
         }
+    }
+
+    pub fn with_context_window(mut self, limit: usize) -> Self {
+        self.context_window = limit;
+        self
     }
 
     pub fn with_retry_policy(mut self, retry: RetryPolicy) -> Self {
@@ -348,7 +358,9 @@ impl Agent {
             {
                 return None;
             }
-            let request = crate::titles::request(messages, model, &self.context.redactor)?;
+            let mut request = crate::titles::request(messages, model, &self.context.redactor)?;
+            let limit = self.context_limit(&request.model);
+            crate::context::preflight(&mut request, limit).ok()?;
             let mut stream = self.provider.stream(request).await.ok()?;
             let mut text_bytes = 0_usize;
             while let Some(event) = stream.next().await {
@@ -600,17 +612,35 @@ impl Agent {
         Ok(())
     }
 
+    fn context_limit(&self, model: &str) -> usize {
+        self.provider
+            .context_window(model)
+            .map_or(self.context_window, |limit| limit.min(self.context_window))
+    }
+
     async fn stream_with_retry(
         &self,
-        request: ModelRequest,
+        mut request: ModelRequest,
         cancel: &CancellationToken,
         checkpoint: Option<&dyn RunCheckpoint>,
     ) -> Result<crate::model::ModelResponse, AgentError> {
         use crate::provider::{ProviderDelta, ProviderStreamEvent};
         use futures_util::StreamExt;
+        if cancel.is_cancelled() {
+            return Err(AgentError::Cancelled);
+        }
+        let limit = self.context_limit(&request.model);
+        let report = crate::context::preflight(&mut request, limit)?;
+        tracing::info!(
+            estimated_tokens = report.estimated,
+            context_window = report.limit,
+            omitted_messages = report.omitted_messages,
+            "request context preflight"
+        );
+        self.sink.emit(AgentEvent::ContextBudget(report)).await;
         let mut delay = self.retry.initial_delay;
         for attempt in 1..=self.retry.max_attempts.max(1) {
-            let stream_result = tokio::select! {_ = cancel.cancelled()=>{self.sink.emit(AgentEvent::Cancelled).await;return Err(AgentError::Cancelled);}, value=self.provider.stream(request.clone())=>value};
+            let stream_result = tokio::select! {biased; _ = cancel.cancelled()=>{self.sink.emit(AgentEvent::Cancelled).await;return Err(AgentError::Cancelled);}, value=self.provider.stream(request.clone())=>value};
             let mut stream = match stream_result {
                 Ok(value) => value,
                 Err(error) if error.is_retryable() && attempt < self.retry.max_attempts => {
@@ -899,6 +929,102 @@ mod tests {
         calls: Arc<AtomicUsize>,
         cancel: Option<CancellationToken>,
         fail: bool,
+    }
+
+    struct BudgetFixture {
+        calls: Arc<AtomicUsize>,
+        limit: usize,
+        followup: bool,
+    }
+
+    #[async_trait]
+    impl Provider for BudgetFixture {
+        fn context_window(&self, model: &str) -> Option<usize> {
+            Some(if model == "tiny" { 1 } else { self.limit })
+        }
+        async fn complete(&self, request: ModelRequest) -> Result<ModelResponse, ProviderError> {
+            assert!(crate::context::estimate(&request) <= self.limit);
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            let mut message = Message::new(Role::Assistant, "done");
+            if self.followup {
+                message.tool_calls.push(crate::model::ToolCall {
+                    id: "call".into(),
+                    name: "missing".into(),
+                    arguments: serde_json::json!({"payload": "x".repeat(self.limit)}),
+                });
+            }
+            Ok(ModelResponse {
+                message,
+                usage: Usage::default(),
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn context_guard_blocks_initial_followup_and_changed_model_requests() {
+        let directory = tempfile::tempdir().unwrap();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let a = agent(
+            Box::new(BudgetFixture {
+                calls: calls.clone(),
+                limit: 10_000,
+                followup: true,
+            }),
+            &directory,
+        );
+        assert!(matches!(
+            a.run(vec![], "x".repeat(20_000)).await,
+            Err(AgentError::Context(_))
+        ));
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        assert!(matches!(
+            a.run(vec![], "small".into()).await,
+            Err(AgentError::Context(_))
+        ));
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "oversized tool followup must not dispatch"
+        );
+        a.set_model("tiny").unwrap();
+        assert!(matches!(
+            a.run(vec![], "small".into()).await,
+            Err(AgentError::Context(_))
+        ));
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        let cancel = CancellationToken::new();
+        cancel.cancel();
+        assert!(matches!(
+            a.run_with_cancel(vec![], "small".into(), cancel).await,
+            Err(AgentError::Cancelled)
+        ));
+    }
+
+    #[tokio::test]
+    async fn context_projection_keeps_full_outcome_for_save_and_resume() {
+        let directory = tempfile::tempdir().unwrap();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let a = agent(
+            Box::new(BudgetFixture {
+                calls: calls.clone(),
+                limit: 10_000,
+                followup: false,
+            }),
+            &directory,
+        );
+        let history = vec![
+            Message::new(Role::User, "x".repeat(20_000)),
+            Message::new(Role::Assistant, "old"),
+        ];
+        let outcome = a.run(history, "small".into()).await.unwrap();
+        assert_eq!(outcome.messages.len(), 4);
+        assert_eq!(outcome.messages[0].content.len(), 20_000);
+        assert!(outcome.messages.iter().all(|m| m.role != Role::System));
+        let resumed: Vec<Message> =
+            serde_json::from_str(&serde_json::to_string(&outcome.messages).unwrap()).unwrap();
+        let next = a.run(resumed, "again".into()).await.unwrap();
+        assert_eq!(next.messages.len(), 6);
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
     }
     #[async_trait]
     impl Provider for LongToolLoop {
