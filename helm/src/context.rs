@@ -24,8 +24,15 @@ pub struct ContextReport {
 /// Includes replay metadata, tool schemas and the response allowance. This is a
 /// conservative estimator, not provider-reported usage or a universal tokenizer.
 pub fn estimate(request: &ModelRequest) -> usize {
-    // Count serialization without allocating a second copy of potentially large
-    // tool results or continuation envelopes.
+    serialized_size(request)
+        .saturating_add(4096)
+        .saturating_add(request.messages.len().saturating_mul(256))
+        .saturating_add(request.tools.len().saturating_mul(256))
+        .saturating_add(request.max_tokens.unwrap_or(8192) as usize)
+}
+
+fn serialized_size(value: &impl serde::Serialize) -> usize {
+    // Count without allocating a second copy of potentially large tool results.
     struct Counter(usize);
     impl std::io::Write for Counter {
         fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
@@ -37,65 +44,85 @@ pub fn estimate(request: &ModelRequest) -> usize {
         }
     }
     let mut counter = Counter(0);
-    let bytes = if serde_json::to_writer(&mut counter, request).is_ok() {
+    if serde_json::to_writer(&mut counter, value).is_ok() {
         counter.0
     } else {
         usize::MAX
-    };
-    bytes
-        .saturating_add(4096)
-        .saturating_add(request.messages.len().saturating_mul(256))
-        .saturating_add(request.tools.len().saturating_mul(256))
-        .saturating_add(request.max_tokens.unwrap_or(8192) as usize)
+    }
 }
 
-/// Keep all system guidance and the latest user turn, including its complete tool
-/// groups. Drop oldest complete turns until the projection fits. A single large
-/// active turn fails locally; silently truncating its tools would falsify evidence.
+/// Preserve system guidance and the latest root user turn, including steering and
+/// complete tool groups. Find the smallest removable prefix in one linear scan;
+/// repeatedly serializing the remaining history would be quadratic.
 pub fn preflight(request: &mut ModelRequest, limit: usize) -> Result<ContextReport, ContextError> {
-    let mut omitted = 0;
-    let mut has_marker = false;
-    loop {
-        let estimated = estimate(request);
-        if estimated <= limit && limit > 0 {
-            return Ok(ContextReport {
-                estimated,
-                limit,
-                omitted_messages: omitted,
-            });
-        }
-        let users: Vec<_> = request
-            .messages
-            .iter()
-            .enumerate()
-            .filter_map(|(index, message)| (message.role == Role::User).then_some(index))
-            .take(2)
-            .collect();
-        if users.len() < 2 {
-            return Err(ContextError { estimated, limit });
-        }
-        let end = users[1];
-        let before = request.messages.len();
-        let mut index = 0;
-        request.messages.retain(|message| {
-            let keep = index >= end || message.role == Role::System;
-            index += 1;
-            keep
+    let estimated = estimate(request);
+    if estimated <= limit && limit > 0 {
+        return Ok(ContextReport {
+            estimated,
+            limit,
+            omitted_messages: 0,
         });
-        omitted += before - request.messages.len();
-        // This marker is runtime context only, never inserted in canonical history.
-        let marker = format!(
-            "[Context projection: {omitted} older messages omitted; canonical transcript retained locally.]"
-        );
-        if !has_marker {
-            request
-                .messages
-                .insert(0, crate::model::Message::new(Role::System, marker));
-            has_marker = true;
-        } else {
-            request.messages[0].content = marker;
+    }
+    if limit == 0 || estimated == usize::MAX {
+        return Err(ContextError { estimated, limit });
+    }
+    let mut omitted = 0;
+    let mut removed_cost = 0usize;
+    let mut seen_root = false;
+    let mut selected = None;
+    let mut smallest = estimated;
+    for (index, message) in request.messages.iter().enumerate() {
+        if message.role == Role::User && message.steering.is_none() {
+            if seen_root {
+                let marker = crate::model::Message::new(
+                    Role::System,
+                    format!(
+                        "[Context projection: {omitted} older messages omitted; canonical transcript retained locally.]"
+                    ),
+                );
+                // The retained list is nonempty, so each removed/added item also
+                // removes/adds exactly one JSON comma and 256 framing tokens.
+                let projected = estimated
+                    .saturating_sub(removed_cost)
+                    .saturating_add(serialized_size(&marker))
+                    .saturating_add(257);
+                smallest = smallest.min(projected);
+                if projected <= limit {
+                    selected = Some((index, omitted, marker));
+                    break;
+                }
+            }
+            seen_root = true;
+        }
+        if message.role != Role::System {
+            removed_cost = removed_cost
+                .saturating_add(serialized_size(message))
+                .saturating_add(257);
+            omitted += 1;
         }
     }
+    let Some((end, omitted, marker)) = selected else {
+        return Err(ContextError {
+            estimated: smallest,
+            limit,
+        });
+    };
+    let mut index = 0;
+    request.messages.retain(|message| {
+        let keep = index >= end || message.role == Role::System;
+        index += 1;
+        keep
+    });
+    request.messages.insert(0, marker);
+    let estimated = estimate(request);
+    if estimated > limit {
+        return Err(ContextError { estimated, limit });
+    }
+    Ok(ContextReport {
+        estimated,
+        limit,
+        omitted_messages: omitted,
+    })
 }
 
 #[cfg(test)]
@@ -184,6 +211,44 @@ mod tests {
             !r.messages
                 .iter()
                 .any(|m| m.role == Role::Tool || !m.tool_calls.is_empty())
+        );
+    }
+
+    #[test]
+    fn steering_cannot_replace_the_active_root_task_during_reduction() {
+        let mut r = request();
+        r.messages[1].content = "original task".repeat(2000);
+        for text in ["use CSV", "keep the header"] {
+            let mut message = Message::new(Role::User, text);
+            message.steering = Some(crate::model::SteeringReceipt {
+                id: uuid::Uuid::new_v4(),
+                status: crate::model::SteeringStatus::Applied,
+            });
+            r.messages.push(message);
+        }
+        assert!(preflight(&mut r, 6500).is_err());
+        assert_eq!(r.messages[1].content, "original task".repeat(2000));
+        r.messages.push(Message::new(Role::User, "a new task"));
+        assert_eq!(preflight(&mut r, 6500).unwrap().omitted_messages, 3);
+    }
+
+    #[test]
+    fn large_many_turn_history_reduces_with_exact_accounting() {
+        let mut r = request();
+        r.messages.truncate(1);
+        for index in 0..10_000 {
+            r.messages
+                .push(Message::new(Role::User, format!("turn {index} 雪")));
+            r.messages.push(Message::new(Role::Assistant, "reply"));
+        }
+        let report = preflight(&mut r, 6500).unwrap();
+        assert!(report.omitted_messages > 19_990);
+        assert_eq!(report.estimated, estimate(&r));
+        assert!(report.estimated <= 6500);
+        assert!(
+            r.messages
+                .iter()
+                .any(|message| message.content == "turn 9999 雪")
         );
     }
 }
