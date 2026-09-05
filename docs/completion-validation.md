@@ -6,8 +6,9 @@ Tracking [#81](https://github.com/o-psi/voyage/issues/81),
 
 The [operator contract](completion-gate.md) defines scope, one-pass reconciliation,
 request costs, failure recovery and provisional output. This map identifies executable
-coverage; a test's presence is not a passing result. Delivery still requires the
-integrated Linux release suite and separately budgeted live evidence. The operator
+coverage; a test's presence is not a passing result. Observed Linux release results
+are attributed to exact integration commits below. Later changes require their own
+checks; full #83 acceptance also requires separately budgeted live evidence. The operator
 removed required macOS/Windows runs for cost; Linux results do not establish
 unrun platform behavior.
 
@@ -48,10 +49,12 @@ fixtures cannot prove semantic honesty, actual external work, hardware power-los
 durability, native subscription authentication, every terminal layout, or platform
 behavior on systems where they did not run. The optional compatibility bridge has
 separate fake-process runtime tests; these HTTP fixtures do not exercise it. No new
-Helm/Vessel wire contract is introduced by the fixtures; worker/frontend coverage
-must still be inspected when their implementation changes. Live provider smoke
-previously returned HTTP 401 and remains a separate acceptance hold until successful
-authenticated execution is observed.
+Helm/Vessel wire contract is introduced by the fixtures. Local managed Journal
+execution is covered by `local_managed.py` and attachment runtime tests; the
+[production attachment transport](attachment-transport.md) is presence-only and
+does not provide remote task dispatch. Subscription provider smoke previously
+returned HTTP 401 and remains a separate authentication/cutover hold until
+successful authenticated execution is observed.
 
 For an ordinary completed task, use `completion snapshot`, read each returned owned
 ID with `completion read`, verify the underlying evidence through the live tools,
@@ -143,12 +146,14 @@ Context preflight rejected another dispatch at estimated 34959 tokens versus
 32768. The canonical session and sealed ledger honestly retain Interrupted,
 one unresolved obligation and zero accounted obligations; no final was accepted.
 
-The advertised completion schema requires only `action` and permits fields from
-all actions, while the strict decoder requires `kind`/`id` for `read` and rejects
-`reason`/`revision`. This contract gap corresponds to the observed invalid calls
-and motivated the [action schema correction](completion-tool-contract.md).
-That correction retains strict decoding and all evidence/accounting checks;
-it does not convert this live failure into successful reconciliation. The local run reported 41678 input and 941 output tokens, exactly matching
+At the time of that live run, the advertised completion schema required only
+`action` and permitted fields from all actions, while the strict decoder required
+`kind`/`id` for `read` and rejected `reason`/`revision`. This contract gap corresponded
+to the observed invalid calls. The [action schema correction](completion-tool-contract.md),
+integrated through PR121 at `68f5c9a`, now advertises action-specific requirements
+and has independent schema and six native HTTP complete/stream exposures. It
+retains strict decoding and all evidence/accounting checks; it does not convert
+this live failure into successful reconciliation. The local run reported 41678 input and 941 output tokens, exactly matching
 canonical usage; the largest observed response was 250 output tokens. Both owned
 Helm and model-server processes were reaped. Full prompt, raw requests/responses,
 artifacts, canonical state, usage and cleanup evidence are retained locally.
@@ -156,3 +161,36 @@ artifacts, canonical state, usage and cleanup evidence are retained locally.
 This supplies useful local failure and recovery evidence, not successful semantic
 reconciliation, subscription authentication, cutover or full #83 acceptance.
 No additional live attempt is implied by these results.
+
+## Remaining acceptance and merge boundaries
+
+- Verify subsequent schema/runtime changes at their final integrated Linux head.
+  PR121's Completion schema correction is included at `68f5c9a`; the separately
+  tracked Todo action-schema follow-up is not part of that commit's evidence.
+- Obtain an approved, bounded real-model run that actually reads source evidence,
+  records structured todo evidence, reads/accounts the owned records with fresh
+  revisions and reaches the intended durable outcome. Inspect the artifact and
+  ledger: the evaluation scenario's `42` substring checks alone do not prove
+  accurate counting, semantic honesty or correct accounting. A deliberately
+  incomplete run must retain truthful impact and cannot substitute for a required
+  completed task.
+- Verify remote worker/Vessel outcome and provisional-output behavior when remote
+  execution is delivered under #78/#79. Presence transport and local Journal tests
+  do not establish that end-to-end execution path.
+- Retain the separate subscription-authentication and cutover hold. Local-model
+  evidence cannot validate subscription credentials. No native-platform result is
+  claimed; the operator removed macOS/Windows as required gates for this delivery.
+
+The compatibility bridge's fake-process regression proves request-only guidance
+rebuilds the thread, preserves canonical history and rejects a second unsupported
+final. It does not demonstrate successful authenticated bridge accounting. The TUI
+has durable checkpoint/classification tests plus an actual PTY cancellation,
+handoff and resumed-turn fixture; those are stronger than rendering-only tests,
+but are not a live-model TUI semantic evaluation.
+
+These broader acceptance items keep #83 and the main completion cutover open.
+They do not independently block scope-complete ownership, cleanup, catalogue or
+local managed-CLI changes from merging into their tested feature parents. Such
+merges must retain explicit scope limits and passing checks for the exact merged
+code; they are not claims that the entire completion or remote-execution epic is
+finished.

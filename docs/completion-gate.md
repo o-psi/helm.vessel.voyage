@@ -117,23 +117,23 @@ are rejected. Existing todo/agent/session formats are unchanged. The integration
 must not treat an absent or corrupt ledger for a known run as a new empty ledger.
 Legacy sessions without a run reference must not implicitly adopt historical work.
 
-## Remaining integration requirements
+## Implementation and acceptance status
 
 ### #81: ownership and persistence
 
-1. Propagate trusted run identity from root invocation through tool context, child
-   spawn/executor context, nested children, and follow-up semantics. Preserve fresh
-   per-execution IDs; they serve a different purpose.
-2. Persist membership before work becomes visible/active. Serialize ownership,
-   record mutation, result publication, and acceptance at a shared coordinator
-   boundary, including other processes that can write the same stores.
-3. Add explicit, policy-controlled adoption and disposition operations with fresh
-   record reads, durable history, and session/run scope validation. Record text and
-   disposition reasons must use existing redaction paths before persistence/output.
-4. Use private atomic persistence, expected revisions, honest crash recovery and
-   failure handling. Do not downgrade to success on a store error or missing record.
-5. Provide bounded retrieval of owned results/evidence for the targeted prompt.
-   The current diagnostic snapshot deliberately does not embed those contents.
+The local runtime now propagates trusted root identity through tools, children and
+follow-ups, while preserving separate execution IDs. The coordinated stores publish
+ownership before dispatch, serialize owned mutations and acceptance, and fence
+competing processes. Explicit adoption/accounting requires fresh scoped reads;
+private persistence, expected revisions and recovery fail closed on missing or
+corrupt known-run state. Bounded `completion read` retrieves owned evidence without
+embedding it in the diagnostic snapshot.
+
+These are implemented local contracts, not remaining foundation work. Their
+executable coverage includes `completion::runtime`, `agent::gate_tests` and the
+real-process `completion_readiness.py` fixture. The
+[acceptance evidence map](completion-validation.md) records passing integration
+commits and distinguishes local ownership from future remote dispatch.
 
 ### #82: delivery verification
 
@@ -145,9 +145,10 @@ acceptance, post-seal cancellation/failure, missing stores, and a fake compatibi
 bridge process. Steering during reconciliation and content-free error diagnostics
 have dedicated regressions.
 
-Frontend status, saved-session annotations, attachment/Vessel classification,
-native HTTP fixtures, and platform CI are separate integration evidence; gate unit
-tests alone do not prove those surfaces. Run both focused suites with:
+Frontend status, saved-session annotations, managed Journal outcomes and native
+HTTP reconciliation have additional integration coverage in the acceptance map;
+gate unit tests alone do not prove those surfaces. Vessel remote execution is
+still a separate dependency. Run both focused suites with:
 
 ```sh
 cargo test -p helm --lib agent::gate_tests --all-features
@@ -175,12 +176,23 @@ Run the focused tests with:
 cargo test -p helm --lib completion:: --all-features
 ```
 
-Still required: runtime/provider integration and cross-store persistence failure injection;
-barrier-controlled spawn/result/edit/finalization races; cross-process writer tests;
-CLI/TUI/Vessel outcome and provisional-output coverage; offline reconciliation E2E;
-adversarial behavioral evaluations; approved/budgeted real-provider smoke; and
-Linux/macOS/Windows delivery evidence. Unit serialization tests are not disk recovery
-or E2E evidence, and evaluation manifest validation is not a live evaluation.
+Runtime/provider integration, cross-store failure injection, barrier-controlled
+ownership/finalization races, cross-process writers, local CLI/TUI outcomes and
+offline reconciliation are covered by the integration suites. The reviewed
+`3950fef` Linux release passed 713 workspace tests both normally and with two-CPU
+affinity, all 19 system fixtures, evaluation-definition validation and packaging;
+see [the dated evidence](completion-validation.md#managed-integration-and-bounded-local-verification-2026-09-05).
+These results belong to that commit, not automatically to later changes.
+
+Full #83 acceptance remains open for successful budgeted real-model evidence and
+remote worker/Vessel execution once that execution path is implemented. The local
+live attempt retained honest failure/recovery evidence; it did not establish
+successful evidence verification or reconciliation. Subscription authentication
+and cutover remain separate unverified requirements. Final dependency changes
+still need their own reviewed Linux checks. The operator waived required
+macOS/Windows runs for cost; Linux evidence does not establish their behavior.
+Unit tests, offline fixtures and evaluation manifest validation are not live
+semantic evaluations. See the [remaining acceptance checklist](completion-validation.md#remaining-acceptance-and-merge-boundaries).
 
 Frontend handoffs stop accepting new subagents, cancel active/queued children,
 and await their tracked persistence/archival tasks before releasing the workspace
