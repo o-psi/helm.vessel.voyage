@@ -86,3 +86,15 @@ Durable machine-readable status and exact logs are in ignored `.local-git/active
 The real socket branch `feat/attachment-transport` now passes 464 workspace tests with both client and server fixtures enabled for Unix and Windows. Four observed regression fixes cover Ping-before-Welcome, short lease renewal, enrollment ownership through socket teardown and expired queued writes. Logging canary tests preserve application TRACE while excluding dependency raw frame/proof/prompt/history logs. Release/system/package checks and native CI are in progress. Production routing and remote execution remain unwired until authoritative coordinator and sharing boundaries are complete.
 
 Parallel next slices are explicit enrollment lifecycle commands and read-only inspection (#10), and private native Windows Journal/database/sidecar storage (#78). The configured live provider still returns HTTP 401; login renewal was requested and live acceptance remains blocked. No additional issue or epic is closed by these partial foundations.
+
+## Delivery checkpoint: native verification and enrollment CLI
+
+Both current CI runs for #88 (62bce48), #92 (338adf5), and #94 (64e425f) pass on Linux, macOS and Windows. The completion live/operator acceptance remains blocked on provider authentication; dependencies stay draft. Native checks for #90 at 7c90033 are still running.
+
+[PR #95](https://github.com/o-psi/voyage/pull/95) passes the full Linux baseline with 464 workspace tests, all nine system fixtures, optimized build and development packaging, plus a separate two-CPU workspace run. Native Windows CI found four Vessel socket test failures; investigation is active and these are not treated as passing verification.
+
+[PR #96](https://github.com/o-psi/voyage/pull/96) adds native Windows journal storage, dependent on #94/#90. Full Linux verification at e5a1c5d passes 533 workspace tests, all 15 system fixtures, strict quality checks and development packaging. Native CI remains in progress.
+
+[PR #97](https://github.com/o-psi/voyage/pull/97) exposes enrollment lifecycle commands and read-only inspection, dependent on #90. Full Linux verification at f6ccc3e passes 438 workspace tests and all ten system fixtures, including the real enrollment CLI fixture, plus strict quality, optimized build and package checks. Native CI has started. Pending-transaction offline disable and Windows console interruption remain explicit unfinished criteria; #10 is open.
+
+The next #78 dependency is a persistent ManagedSessionOwner holding journal execution authority across idle periods, turns, terminal persistence and cleanup. Its issue scope is recorded at https://github.com/o-psi/voyage/issues/78#issuecomment-5552976793. Subsequent frontend integration must address persisted steering transitions, authoritative revision/usage accounting, metadata operations and truthful recovery; an ownership API alone does not complete the workflow or epic.
