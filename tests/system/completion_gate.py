@@ -87,7 +87,7 @@ class Fixture(BaseHTTPRequestHandler):
             case.requests.append(body)
             outputs, systems = normalize(case.provider, body)
             saved = case.latest_session()
-            assert saved["messages"][0]["content"] == "gate-fixture:" + case.mode
+            assert [m["content"] for m in saved["messages"] if m["role"] == "user"][-1] == "gate-fixture:" + case.mode
             assert saved["run_summaries"][-1]["phase"] in ("provisional", "reconciling")
             if step >= 2:
                 # Check disk at the actual provider boundary, not only after exit.
@@ -201,7 +201,7 @@ class GateCase(Case):
         assert len(self.requests) == expected[self.mode], (self.mode, len(self.requests))
         if self.mode not in ("failure", "cancel"):
             decision = self.ledger(saved["completion_runs"][-1])["state"]["decision"]
-            assert decision["outcome"] == ("successful" if success else "incomplete"), decision
+            assert decision["outcome"] == ("completed" if success else "incomplete"), decision
         if self.mode == "verified":
             # Restart is a fresh run; canonical proposals and classification survive.
             before = saved

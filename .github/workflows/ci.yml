@@ -52,6 +52,10 @@ jobs:
         env:
           HELM_BIN: target/release/helm
         run: python3 tests/system/completion_readiness.py
+      - name: Verify bounded final acceptance with three offline native providers
+        env:
+          HELM_BIN: target/release/helm
+        run: python3 tests/system/completion_gate.py
       - name: Verify runtime ownership release during frontend handoff
         env:
           HELM_BIN: target/release/helm
