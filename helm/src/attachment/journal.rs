@@ -485,6 +485,15 @@ impl Journal {
         request: &TurnAdmission,
         now_ms: i64,
     ) -> Result<Admission> {
+        self.admit_turn_with_clock(guard, request, || Ok(now_ms))
+    }
+
+    pub(crate) fn admit_turn_with_clock(
+        &mut self,
+        guard: &ExecutionGuard,
+        request: &TurnAdmission,
+        clock: impl FnOnce() -> Result<i64>,
+    ) -> Result<Admission> {
         self.check_guard(guard, request.session_id)?;
         ensure!(
             !request.command_id.is_nil()
@@ -525,6 +534,7 @@ impl Journal {
                 run,
             });
         }
+        let now_ms = clock()?;
         ensure!(
             now_ms >= 0
                 && request.expires_at_ms > now_ms

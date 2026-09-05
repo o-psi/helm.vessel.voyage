@@ -24,6 +24,26 @@ use uuid::Uuid;
 mod steering;
 pub use steering::{ManagedSteeringHandle, SteeringAuthorization};
 
+/// Trusted runtime time source; never supplied by a remote command or provider.
+pub trait RuntimeClock: Send + Sync {
+    fn now_ms(&self) -> anyhow::Result<i64>;
+}
+impl<F> RuntimeClock for F
+where
+    F: Fn() -> anyhow::Result<i64> + Send + Sync,
+{
+    fn now_ms(&self) -> anyhow::Result<i64> {
+        self()
+    }
+}
+pub struct SystemClock;
+impl RuntimeClock for SystemClock {
+    fn now_ms(&self) -> anyhow::Result<i64> {
+        let elapsed = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?;
+        Ok(i64::try_from(elapsed.as_millis())?)
+    }
+}
+
 /// Lifetime owner for one managed session, including idle time and cleanup.
 /// No legacy JSON backend is reachable through this owner.
 #[derive(Clone)]
@@ -88,13 +108,25 @@ impl ManagedSessionOwner {
     }
     /// New admission cannot overlap an earlier turn's callbacks or cleanup.
     /// Identical retries remain observations and never allocate another executor.
-    pub async fn admit(&self, request: TurnAdmission, now_ms: i64) -> anyhow::Result<Admission> {
-        self.admit_after(request, now_ms, || Ok(())).await
+    pub async fn admit(&self, request: TurnAdmission) -> anyhow::Result<Admission> {
+        self.admit_with_clock(request, Arc::new(SystemClock)).await
+    }
+    #[cfg(test)]
+    async fn admit_at(&self, request: TurnAdmission, now_ms: i64) -> anyhow::Result<Admission> {
+        self.admit_with_clock(request, Arc::new(move || Ok(now_ms)))
+            .await
+    }
+    async fn admit_with_clock(
+        &self,
+        request: TurnAdmission,
+        clock: Arc<dyn RuntimeClock>,
+    ) -> anyhow::Result<Admission> {
+        self.admit_after(request, clock, || Ok(())).await
     }
     async fn admit_after(
         &self,
         request: TurnAdmission,
-        now_ms: i64,
+        clock: Arc<dyn RuntimeClock>,
         before_admission: impl FnOnce() -> anyhow::Result<()> + Send + 'static,
     ) -> anyhow::Result<Admission> {
         anyhow::ensure!(
@@ -121,7 +153,7 @@ impl ManagedSessionOwner {
             let session = store.journal.load_session(store.session_id)?.session;
             let workspace = session.workspace.canonicalize()?;
             let Store { journal, guard, .. } = &mut *store;
-            let admission = journal.admit_turn(guard, &request, now_ms)?;
+            let admission = journal.admit_turn_with_clock(guard, &request, || clock.now_ms())?;
             if admission.duplicate {
                 return Ok(Admission::Existing(admission.run));
             }
@@ -212,10 +244,21 @@ impl ManagedRunCheckpoint {
 }
 impl RunOwner {
     /// Convenience entrypoint; duplicates remain readable without execution ownership.
-    pub async fn admit(
+    pub async fn admit(directory: PathBuf, request: TurnAdmission) -> anyhow::Result<Admission> {
+        Self::admit_with_clock(directory, request, Arc::new(SystemClock)).await
+    }
+    #[cfg(test)]
+    async fn admit_at(
         directory: PathBuf,
         request: TurnAdmission,
         now_ms: i64,
+    ) -> anyhow::Result<Admission> {
+        Self::admit_with_clock(directory, request, Arc::new(move || Ok(now_ms))).await
+    }
+    async fn admit_with_clock(
+        directory: PathBuf,
+        request: TurnAdmission,
+        clock: Arc<dyn RuntimeClock>,
     ) -> anyhow::Result<Admission> {
         let lookup_directory = directory.clone();
         let request = tokio::task::spawn_blocking(move || {
@@ -230,7 +273,7 @@ impl RunOwner {
         }
         ManagedSessionOwner::open(directory, request.session_id)
             .await?
-            .admit(request, now_ms)
+            .admit_with_clock(request, clock)
             .await
     }
     pub fn checkpoint(&self) -> ManagedRunCheckpoint {

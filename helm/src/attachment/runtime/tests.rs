@@ -198,7 +198,7 @@ async fn setup(
         expires_at_ms: request.expires_at_ms,
         prompt: request.prompt.clone(),
     };
-    let Admission::New(owner) = RunOwner::admit(path, request, 1).await.unwrap() else {
+    let Admission::New(owner) = RunOwner::admit_at(path, request, 1).await.unwrap() else {
         panic!()
     };
     let requests = Arc::new(AtomicUsize::new(0));
@@ -270,7 +270,7 @@ async fn canonical_tool_loop_is_durable_once_with_usage_and_local_provider_state
     );
     drop(owner);
     let Admission::Existing(existing) =
-        RunOwner::admit(dir.path().join("attachment"), retry, 90_000)
+        RunOwner::admit_at(dir.path().join("attachment"), retry, 90_000)
             .await
             .unwrap()
     else {
@@ -484,7 +484,7 @@ async fn duplicate_outcomes_are_readable_while_execution_ownership_is_held() {
         expires_at_ms: retry.expires_at_ms,
         prompt: retry.prompt.clone(),
     };
-    let Admission::Existing(run) = RunOwner::admit(dir.path().join("attachment"), duplicate, 1)
+    let Admission::Existing(run) = RunOwner::admit_at(dir.path().join("attachment"), duplicate, 1)
         .await
         .unwrap()
     else {
@@ -497,7 +497,7 @@ async fn duplicate_outcomes_are_readable_while_execution_ownership_is_held() {
         .unwrap();
     retry.prompt.push_str("changed");
     assert!(
-        RunOwner::admit(dir.path().join("attachment"), retry, 1)
+        RunOwner::admit_at(dir.path().join("attachment"), retry, 1)
             .await
             .is_err()
     );
