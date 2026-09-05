@@ -65,7 +65,7 @@ def run_terminal(env: dict[str, str], expected: int) -> bytes:
 
 def main() -> None:
     for case in ("success", "pinned", "local", "child_failure", "download_failure", "checksum_failure",
-                 "mismatch", "malformed", "traversal", "multiline", "corrupt_gzip", "unsupported", "bad_version", "bad_local", "terminated"):
+                 "mismatch", "malformed", "traversal", "multiline", "corrupt_gzip", "unsupported", "bad_version", "bad_local", "terminated", "hangup"):
         with tempfile.TemporaryDirectory(prefix="voyage bootstrap ") as raw:
             root = Path(raw)
             bindir = root / "bin"
@@ -100,8 +100,8 @@ assert url.startswith('https://github.com/o-psi/voyage/releases/')
 if os.environ['FIXTURE_CASE'] == 'pinned':
     assert '/download/v0.1.0/' in url
 (root / 'requested').write_text(url)
-if os.environ['FIXTURE_CASE'] == 'terminated':
-    os.kill(os.getppid(), signal.SIGTERM)
+if os.environ['FIXTURE_CASE'] in ('terminated', 'hangup'):
+    os.kill(os.getppid(), signal.SIGHUP if os.environ['FIXTURE_CASE'] == 'hangup' else signal.SIGTERM)
     sys.exit(0)
 checksum = url.endswith('.sha256')
 if os.environ['FIXTURE_CASE'] == ('checksum_failure' if checksum else 'download_failure'):
@@ -126,7 +126,7 @@ pathlib.Path(args[args.index('--output') + 1]).write_bytes((root / ('manifest' i
             if case == "child_failure":
                 env["FIXTURE_EXIT"] = "23"
             success = case in ("success", "pinned", "local", "child_failure")
-            output = run_terminal(env, 143 if case == "terminated" else 23 if case == "child_failure" else 0 if success else 1)
+            output = run_terminal(env, 129 if case == "hangup" else 143 if case == "terminated" else 23 if case == "child_failure" else 0 if success else 1)
             assert (root / "executed").exists() == success, (case, output)
             assert list(tmp.iterdir()) == [], (case, list(tmp.iterdir()))
             if case in ("local", "bad_local", "unsupported", "bad_version"):

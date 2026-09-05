@@ -32,6 +32,9 @@ jobs:
       - name: Package Unix archive
         if: runner.os != 'Windows'
         run: TARGET=${{ matrix.target }} ./scripts/package-release "${{ github.ref_name }}"
+      - name: Package standalone Unix installer
+        if: runner.os != 'Windows'
+        run: TARGET=${{ matrix.target }} ./scripts/package-installer "${{ github.ref_name }}"
       - name: Package Windows archive
         if: runner.os == 'Windows'
         shell: pwsh

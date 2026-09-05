@@ -3562,6 +3562,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "voyage-installer"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "crossterm",
+ "ratatui",
+ "signal-hook",
+ "url",
+]
+
+[[package]]
 name = "voyage-protocol"
 version = "0.1.0"
 dependencies = [

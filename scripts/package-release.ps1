@@ -4,7 +4,7 @@ $archive = "voyage-$Version-$Target"
 $stage = Join-Path ([System.IO.Path]::GetTempPath()) $archive
 Remove-Item $stage -Recurse -Force -ErrorAction SilentlyContinue
 New-Item "$stage/bin", "$stage/share/man/man1", "$stage/share/completions" -ItemType Directory -Force | Out-Null
-Copy-Item "target/$Target/release/helm.exe", "target/$Target/release/vessel.exe" "$stage/bin"
+Copy-Item "target/$Target/release/helm.exe", "target/$Target/release/vessel.exe", "target/$Target/release/voyage-installer.exe" "$stage/bin"
 foreach ($binary in @("helm", "vessel")) {
   & "target/$Target/release/$binary.exe" manpage | Out-File -Encoding utf8 "$stage/share/man/man1/$binary.1"
   foreach ($shell in @("bash", "zsh", "fish", "powershell", "elvish")) {

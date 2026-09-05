@@ -12,10 +12,14 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
+      - name: Verify installer download and packaging failures offline
+        run: python3 tests/system/installer_bootstrap.py
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
       - run: cargo test --workspace --all-features
       - run: cargo build --workspace --release --locked
+      - name: Verify mock installer through a real terminal and piped launcher
+        run: python3 tests/system/installer_tui.py
       - name: Prove native provider works without Codex
         env:
           HELM_BIN: target/release/helm
@@ -112,3 +116,5 @@ jobs:
       - run: python3 eval/run.py validate
       - run: ./scripts/package-release "ci-${{ github.sha }}"
       - run: cd dist && sha256sum -c *.sha256
+      - run: ./scripts/package-installer "ci-${{ github.sha }}"
+      - run: cd dist/installer-ci-${{ github.sha }} && sha256sum -c *.sha256

@@ -7,7 +7,7 @@ Push and pull-request quality checks run on Linux only to limit development cost
 The tag-triggered release workflow builds archives for Linux x86-64, macOS
 x86-64/ARM64, and Windows x86-64; it does not run the workspace test suite on
 macOS or Windows. Record separate platform testing before claiming validation.
-Archives contain both binaries, Helm and Vessel manpages, shell completions,
+Archives contain Helm, Vessel and the mock setup-preview executable, Helm and Vessel manpages, shell completions,
 the README, and a SHA-256 checksum. Linux builds can be reproduced locally with:
 
 ```sh
@@ -24,6 +24,13 @@ from each archive, attach evaluation/cutover evidence, and publish known limitat
 The workflow uploads build artifacts but intentionally does not auto-publish or sign
 a release. Add repository-specific signing and Forgejo release credentials only after
 the project establishes its key custody and release-approval policy.
+
+Unix builds also package a separate compressed `voyage-installer` with
+`scripts/package-installer`. See [setup preview](installer-preview.md) for asset
+names and local usage. The small `install.sh` launcher requires these files to be
+published as release assets before remote download works; it does not download the
+full Voyage archive. Keep the wizard explicitly marked as mocked until real
+provisioning is implemented and verified.
 
 ## Connectivity transition release note
 

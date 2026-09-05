@@ -16,6 +16,9 @@ reliable workflows that deliver tested value.
 
 ## Run locally
 
+Try the interactive [setup preview](docs/installer-preview.md) to explore local,
+remote and Vessel setup choices. All setup actions in that wizard are mocked.
+
 ```sh
 cargo build --workspace
 cargo run -p helm -- chat

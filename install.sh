@@ -27,7 +27,7 @@ else
     fail 'SHA-256 verification requires sha256sum or shasum.'
 fi
 version=${VOYAGE_INSTALLER_VERSION:-latest}
-case "$version" in ''|*[!A-Za-z0-9._-]*) fail 'invalid VOYAGE_INSTALLER_VERSION.' ;; esac
+case "$version" in ''|.|..|*[!A-Za-z0-9._-]*) fail 'invalid VOYAGE_INSTALLER_VERSION.' ;; esac
 base=https://github.com/o-psi/voyage/releases
 if [ "$version" = latest ]; then base="$base/latest/download"; else base="$base/download/$version"; fi
 asset="voyage-installer-$target.gz"
@@ -36,6 +36,7 @@ tmp=$(mktemp -d "${TMPDIR:-/tmp}/voyage-installer.XXXXXXXX") || fail 'cannot cre
 trap 'rm -rf "$tmp"' 0
 trap 'exit 130' INT
 trap 'exit 143' TERM
+trap 'exit 129' HUP
 fetch() {
     curl --proto '=https' --proto-redir '=https' --tlsv1.2 --fail --location --silent --show-error \
         --connect-timeout 10 --max-time 120 --output "$2" "$1"
