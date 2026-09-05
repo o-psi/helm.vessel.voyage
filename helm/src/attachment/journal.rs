@@ -29,7 +29,12 @@ mod storage;
 #[cfg(windows)]
 use std::sync::Arc;
 
-const SCHEMA_VERSION: i64 = 3;
+const SCHEMA_VERSION: i64 = 4;
+mod steering;
+pub use steering::{
+    MAX_PENDING_STEERING, MAX_STEERING_PER_RUN, SteeringActor, SteeringAdmission, SteeringOutcome,
+    SteeringRecord, SteeringRejection,
+};
 const IMPORT_SCHEMA: &str = "CREATE TABLE imports(session_id TEXT PRIMARY KEY REFERENCES sessions(id), transfer_id TEXT NOT NULL UNIQUE, provenance TEXT NOT NULL);";
 const MAX_DATABASE_BYTES: i64 = 256 * 1024 * 1024;
 const MAX_SESSIONS: i64 = 4096;
@@ -141,6 +146,9 @@ pub enum EventKind {
     Accepted,
     Started,
     CanonicalCheckpoint,
+    SteeringQueued(Uuid),
+    SteeringApplied(Uuid),
+    SteeringRejected { id: Uuid, reason: SteeringRejection },
     TextDelta(String),
     Terminal(RunState),
 }
@@ -193,7 +201,7 @@ impl Journal {
             .optional()?;
         if let Some(version) = version {
             ensure!(
-                matches!(version, 2 | SCHEMA_VERSION),
+                matches!(version, 2 | 3 | SCHEMA_VERSION),
                 "unsupported attachment journal schema"
             );
         } else {
@@ -205,6 +213,7 @@ impl Journal {
                 CREATE TABLE commands(id TEXT PRIMARY KEY, digest BLOB NOT NULL, run_id TEXT NOT NULL UNIQUE REFERENCES runs(id));
                 CREATE TABLE events(session_id TEXT NOT NULL REFERENCES sessions(id), sequence INTEGER NOT NULL, event TEXT NOT NULL, PRIMARY KEY(session_id,sequence));")?;
             tx.execute_batch(IMPORT_SCHEMA)?;
+            tx.execute_batch(steering::SCHEMA)?;
             tx.execute(
                 "INSERT INTO attachment_schema VALUES(1, ?1)",
                 [SCHEMA_VERSION],
@@ -293,7 +302,10 @@ impl Journal {
             });
         }
         after_fencing()?;
-        tx.execute_batch(IMPORT_SCHEMA)?;
+        if self.opened_schema == 2 {
+            tx.execute_batch(IMPORT_SCHEMA)?;
+        }
+        tx.execute_batch(steering::SCHEMA)?;
         tx.execute(
             "UPDATE attachment_schema SET version=?1 WHERE id=1",
             [SCHEMA_VERSION],
@@ -437,6 +449,13 @@ impl Journal {
     /// Retrieve an identical accepted command without taking execution ownership.
     /// Authentication/sharing must still be checked by the caller on every retry.
     pub fn lookup_command(&self, request: &TurnAdmission) -> Result<Option<RunRecord>> {
+        self.check_schema()?;
+        if self.opened_schema == SCHEMA_VERSION {
+            ensure!(
+                !steering::receipt_exists(&self.connection, request.command_id)?,
+                "turn command collides with steering receipt"
+            );
+        }
         ensure!(request.prompt.len() <= MAX_PROMPT, "invalid prompt size");
         let digest = Sha256::digest(serde_json::to_vec(request)?).to_vec();
         let existing: Option<(Vec<u8>, String)> = self
@@ -482,6 +501,12 @@ impl Journal {
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         check_transaction_schema(&tx, self.opened_schema)?;
+        if self.opened_schema == SCHEMA_VERSION {
+            ensure!(
+                !steering::receipt_exists(&tx, request.command_id)?,
+                "turn command collides with steering receipt"
+            );
+        }
         let existing: Option<(Vec<u8>, String)> = tx
             .query_row(
                 "SELECT digest,run_id FROM commands WHERE id=?1",
@@ -671,6 +696,25 @@ impl Journal {
         if messages.len() == previous && input_delta == 0 && output_delta == 0 {
             return Ok(());
         }
+        if self.opened_schema == SCHEMA_VERSION {
+            steering::apply(
+                &tx,
+                &run,
+                &messages[previous..],
+                previous,
+                current
+                    .revision
+                    .checked_add(1)
+                    .context("revision overflow")?,
+            )?;
+        } else {
+            ensure!(
+                messages[previous..]
+                    .iter()
+                    .all(|message| message.steering.is_none()),
+                "steering requires quiescent journal upgrade"
+            );
+        }
         current.session.replace_messages(messages.to_vec());
         current.session.refresh_active_run_summary();
         current.session.usage.input_tokens = current
@@ -753,6 +797,9 @@ impl Journal {
             run.state == RunState::Running,
             "acceptance requires running admission"
         );
+        if self.opened_schema == SCHEMA_VERSION {
+            steering::ensure_no_pending(&tx, run_id)?;
+        }
         let current = read_session(&tx, run.session_id)?;
         ensure!(
             serde_json::to_vec(messages)? == serde_json::to_vec(&current.session.messages)?
@@ -884,6 +931,20 @@ impl Journal {
             current
                 .session
                 .interrupt_run_summary(reason.unwrap_or("run interrupted").to_owned());
+        }
+        if self.opened_schema == SCHEMA_VERSION {
+            if state == RunState::Completed {
+                steering::ensure_no_pending(&tx, run_id)?;
+            }
+            steering::settle(
+                &tx,
+                &run,
+                &state,
+                current
+                    .revision
+                    .checked_add(1)
+                    .context("revision overflow")?,
+            )?;
         }
         update_session(&tx, &current)?;
         run.state = state.clone();

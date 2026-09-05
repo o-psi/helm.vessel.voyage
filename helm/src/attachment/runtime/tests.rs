@@ -434,9 +434,17 @@ async fn corrupt_storage_and_wrong_local_model_prevent_provider_dispatch() {
 #[tokio::test]
 async fn steering_is_checkpointed_in_fifo_order_before_provider_dispatch() {
     let (dir, mut owner, agent, _, _, retry) = setup("success", Arc::new(SilentSink)).await;
-    let sender = owner.enable_steering(Arc::new(steering::allow_actor)).unwrap();
-    sender.submit(steering::request(&owner, "first steering").await, 1).await.unwrap();
-    sender.submit(steering::request(&owner, "second steering").await, 1).await.unwrap();
+    let sender = owner
+        .enable_steering(Arc::new(steering::allow_actor))
+        .unwrap();
+    sender
+        .submit(steering::request(&owner, "first steering").await, 1)
+        .await
+        .unwrap();
+    sender
+        .submit(steering::request(&owner, "second steering").await, 1)
+        .await
+        .unwrap();
     owner
         .execute(&agent, CancellationToken::new(), None)
         .await
@@ -456,7 +464,12 @@ async fn steering_is_checkpointed_in_fifo_order_before_provider_dispatch() {
         inputs,
         vec!["accepted prompt", "first steering", "second steering"]
     );
-    assert!(sender.submit(steering::request(&owner, "too late").await, 1).await.is_err());
+    assert!(
+        sender
+            .submit(steering::request(&owner, "too late").await, 1)
+            .await
+            .is_err()
+    );
 }
 
 #[tokio::test]
@@ -531,14 +544,17 @@ async fn checkpointed_run_uses_pinned_model_instead_of_mutable_next_turn_model()
 async fn failed_steering_checkpoint_never_announces_durable_application() {
     let sink = Arc::new(Observed::default());
     let (dir, mut owner, agent, requests, effects, _) = setup("success", sink.clone()).await;
-    let sender = owner.enable_steering(Arc::new(steering::allow_actor)).unwrap();
-    sender.submit(steering::request(&owner, "steering-sentinel").await, 1).await.unwrap();
+    let sender = owner
+        .enable_steering(Arc::new(steering::allow_actor))
+        .unwrap();
+    sender
+        .submit(steering::request(&owner, "steering-sentinel").await, 1)
+        .await
+        .unwrap();
     fixture_database(dir.path().join("attachment/journal.sqlite3")).unwrap()
         .execute_batch("CREATE TRIGGER fail_steering BEFORE UPDATE ON sessions WHEN NEW.state LIKE '%steering-sentinel%' BEGIN SELECT RAISE(ABORT,'injected steering failure'); END;").unwrap();
     assert!(matches!(
-        owner
-            .execute(&agent, CancellationToken::new(), None)
-            .await,
+        owner.execute(&agent, CancellationToken::new(), None).await,
         Err(AgentError::Checkpoint(_))
     ));
     assert_eq!(requests.load(Ordering::SeqCst), 0);

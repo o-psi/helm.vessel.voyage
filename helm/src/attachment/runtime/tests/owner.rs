@@ -139,9 +139,7 @@ async fn mismatched_session_revision_and_callback_identity_cannot_mutate_or_disp
     wrong.session_id = Uuid::new_v4();
     assert!(owner.admit(wrong, 1).await.is_err());
     let mut wrong_callback = run.checkpoint();
-    wrong_callback.token = Arc::new(TurnToken {
-        run_id: Uuid::new_v4(),
-    });
+    wrong_callback.token = Arc::new(TurnToken::new(Uuid::new_v4()));
     assert!(wrong_callback.partial("must not persist").await.is_err());
     drop(wrong_callback);
     drop(run);

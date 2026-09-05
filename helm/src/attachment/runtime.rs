@@ -7,17 +7,22 @@ use super::journal::{ExecutionGuard, Journal, RunRecord, RunState, TurnAdmission
 use crate::{
     agent::{
         Agent, AgentError, AgentOutcome, CheckpointError, RunCheckpoint, SteeringReceiver,
-        StopReason,
+        SteeringSender, StopReason,
     },
     model::{Message, Usage},
 };
 use async_trait::async_trait;
 use std::{
     path::PathBuf,
-    sync::{Arc, Mutex, Weak},
+    sync::{
+        Arc, Mutex, OnceLock, Weak,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
+mod steering;
+pub use steering::{ManagedSteeringHandle, SteeringAuthorization};
 
 /// Lifetime owner for one managed session, including idle time and cleanup.
 /// No legacy JSON backend is reachable through this owner.
@@ -28,6 +33,17 @@ pub struct ManagedSessionOwner {
 }
 struct TurnToken {
     run_id: Uuid,
+    steering_authority: OnceLock<Arc<dyn SteeringAuthorization>>,
+    poisoned: AtomicBool,
+}
+impl TurnToken {
+    fn new(run_id: Uuid) -> Self {
+        Self {
+            run_id,
+            steering_authority: OnceLock::new(),
+            poisoned: AtomicBool::new(false),
+        }
+    }
 }
 struct Store {
     journal: Journal,
@@ -110,7 +126,9 @@ impl ManagedSessionOwner {
                 return Ok(Admission::Existing(admission.run));
             }
             let run_id = admission.run.id;
-            let token = Arc::new(TurnToken { run_id });
+            let token = Arc::new(TurnToken::new(run_id));
+            let (steering_sender, steering_receiver) =
+                crate::agent::steering_channel(super::journal::MAX_PENDING_STEERING);
             store.run_id = run_id;
             store.turn = Arc::downgrade(&token);
             drop(store);
@@ -121,6 +139,8 @@ impl ManagedSessionOwner {
                 workspace,
                 model: session.model,
                 input: Some((session.messages, request.prompt)),
+                steering_sender,
+                steering_receiver: Some(steering_receiver),
             }))
         })
         .await?
@@ -156,6 +176,8 @@ pub struct RunOwner {
     workspace: PathBuf,
     model: String,
     input: Option<(Vec<Message>, String)>,
+    steering_sender: SteeringSender,
+    steering_receiver: Option<SteeringReceiver>,
 }
 /// Clones retain both the session fence and the turn's cleanup exclusion.
 #[derive(Clone)]
@@ -238,10 +260,17 @@ impl RunOwner {
         cancel: CancellationToken,
         input: Option<SteeringReceiver>,
     ) -> Result<AgentOutcome, AgentError> {
+        let external_input = input.is_some();
+        drop(input);
+        let input = self.steering_receiver.take();
         let (history, prompt) = self.input.take().ok_or(CheckpointError)?;
         let result = if cancel.is_cancelled() {
             Err(AgentError::Cancelled)
-        } else if agent.workspace() != self.workspace || agent.model() != self.model {
+        } else if external_input
+            || self.token.poisoned.load(Ordering::SeqCst)
+            || agent.workspace() != self.workspace
+            || agent.model() != self.model
+        {
             Err(CheckpointError.into())
         } else {
             async {
@@ -331,7 +360,9 @@ impl RunCheckpoint for ManagedRunCheckpoint {
     async fn canonical(&self, messages: &[Message], usage: &Usage) -> Result<(), CheckpointError> {
         let messages = messages.to_vec();
         let usage = usage.clone();
+        let token = self.token.clone();
         self.storage(move |store| {
+            steering::authorize(store, &token)?;
             store
                 .journal
                 .checkpoint_canonical(&store.guard, store.run_id, &messages, &usage)
@@ -344,7 +375,9 @@ impl RunCheckpoint for ManagedRunCheckpoint {
         usage: &Usage,
         reason: &StopReason,
     ) -> Result<(), CheckpointError> {
-        self.storage(|store| {
+        let token = self.token.clone();
+        self.storage(move |store| {
+            steering::authorize(store, &token)?;
             anyhow::ensure!(
                 store.journal.run(store.run_id)?.state == RunState::Running,
                 "acceptance requires the current running turn"
@@ -355,7 +388,9 @@ impl RunCheckpoint for ManagedRunCheckpoint {
         if matches!(reason, StopReason::Completed) {
             let messages = messages.to_vec();
             let usage = usage.clone();
+            let token = self.token.clone();
             self.storage(move |store| {
+                steering::authorize(store, &token)?;
                 store
                     .journal
                     .accept_checkpoint(&store.guard, store.run_id, &messages, &usage)
@@ -366,7 +401,12 @@ impl RunCheckpoint for ManagedRunCheckpoint {
     }
     async fn partial(&self, text: &str) -> Result<(), CheckpointError> {
         let text = text.to_owned();
+        let token = self.token.clone();
         self.storage(move |store| {
+            anyhow::ensure!(
+                !token.poisoned.load(Ordering::SeqCst),
+                "steering persistence uncertain"
+            );
             store
                 .journal
                 .append_text(&store.guard, store.run_id, &text)

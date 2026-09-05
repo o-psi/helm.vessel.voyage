@@ -767,7 +767,7 @@ fn uncertain_tool_intent_cannot_be_completed_or_dispatched_on_a_new_turn() {
 fn legacy_v2(journal: &mut Journal) {
     journal
         .connection
-        .execute_batch("DROP TABLE imports; UPDATE attachment_schema SET version=2 WHERE id=1;")
+        .execute_batch("DROP TABLE IF EXISTS steering; DROP TABLE imports; UPDATE attachment_schema SET version=2 WHERE id=1;")
         .unwrap();
     journal.opened_schema = 2;
 }
@@ -803,7 +803,7 @@ fn explicit_upgrade_preserves_canonical_runs_replay_and_dedup_and_fences_writers
             Ok(())
         })
         .unwrap();
-    assert_eq!(journal.opened_schema, 3);
+    assert_eq!(journal.opened_schema, SCHEMA_VERSION);
     assert_eq!(
         serde_json::to_value(journal.load_session(session.id).unwrap().session).unwrap(),
         before
@@ -825,7 +825,7 @@ fn explicit_upgrade_preserves_canonical_runs_replay_and_dedup_and_fences_writers
         Journal::open(journal.directory.clone())
             .unwrap()
             .opened_schema,
-        3
+        SCHEMA_VERSION
     );
 }
 
