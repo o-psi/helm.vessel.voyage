@@ -17,6 +17,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 class Fixture(BaseHTTPRequestHandler):
     child_started = threading.Event()
+    root_waiting = threading.Event()
     release_child = threading.Event()
     requests = []
 
@@ -45,6 +46,8 @@ class Fixture(BaseHTTPRequestHandler):
             output = []
         elif any(item.get("type") == "function_call_output" for item in body["input"]):
             assert self.child_started.wait(10), "child was not dispatched"
+            self.root_waiting.set()
+            assert self.release_child.wait(30), "root handoff was never released"
             text = "root-ready"
             output = []
         else:
@@ -101,15 +104,22 @@ def main():
                 fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 100, 0, 0))
                 wait_until(lambda: b"HELM" in output, "initial TUI")
                 os.write(master, b"start-handoff\r")
-                wait_until(lambda: saved() and any(m["content"] == "root-ready" for m in saved()["messages"]), "root persisted with live child")
+                wait_until(lambda: Fixture.root_waiting.is_set() and Fixture.child_started.is_set() and saved(), "root and child active before handoff")
                 before = saved()
                 assert Fixture.child_started.is_set()
+                # Active Enter is steering; Escape is the explicit cancellation route.
+                os.write(master, b"\x1b")
+                wait_until(lambda: saved() and saved().get("run_summaries") and saved()["run_summaries"][0]["phase"] == "interrupted", "root cancellation and owned shutdown")
+                before = saved()
                 os.write(master, b"/plain\r")
                 wait_until(lambda: b"Type /help for commands." in output, "plain child startup")
                 os.write(master, b"after-handoff\n")
                 wait_until(lambda: saved() and any(m["content"] == "handoff-success" for m in saved()["messages"]), "successful resumed turn")
                 after = saved()
                 assert before["id"] == after["id"]
+                assert after["messages"][:len(before["messages"])] == before["messages"]
+                assert after["run_summaries"][0]["phase"] == "interrupted"
+                assert after["run_summaries"][-1]["phase"] == "completed"
                 assert len(after["completion_runs"]) == len(before["completion_runs"]) + 1
                 assert b"runtime is busy" not in output
                 archives = list((root / "data/helm/subagents").rglob("*.json"))

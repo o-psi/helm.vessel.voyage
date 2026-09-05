@@ -32,6 +32,7 @@ class Fixture(BaseHTTPRequestHandler):
     todos: dict[str, str] = {}
     agents: dict[str, str] = {}
     snapshots: dict[str, list[dict]] = {}
+    reconciliations: dict[str, dict] = {}
     serial = itertools.count()
     lock = threading.Lock()
     hold_started = threading.Event()
@@ -114,6 +115,35 @@ class Fixture(BaseHTTPRequestHandler):
         return value
 
     def respond(self, actor: str, step: int, outputs: list[str]) -> list[dict]:
+        baseline = {"create": 3, "resume": 4, "tree": 5}.get(actor)
+        if baseline is not None and step >= baseline:
+            state = self.reconciliations.setdefault(actor, {"next": "snapshot"})
+            if state["next"] == "snapshot":
+                state["next"] = "read"
+                return self.call("completion", {"action": "snapshot"})
+            if state["next"] == "read":
+                snapshot = json.loads(outputs[-1])
+                if not snapshot["unresolved"]:
+                    assert snapshot["accounted"] == snapshot["total"] and snapshot["incomplete"] > 0
+                    return message(actor + "-reconciled-with-pending-work")
+                kind, identity = next(iter(snapshot["unresolved"][0]["obligation"].items()))
+                state.update(snapshot=snapshot, kind=kind, identity=identity, next="account")
+                return self.call("completion", {"action": "read", "kind": kind, "id": identity})
+            assert state["next"] == "account"
+            record = json.loads(outputs[-1])
+            assert record["id"] == state["identity"]
+            if state["kind"] == "agent":
+                assert record["status"] == "completed" and "owned-evidence" in record["result"]
+                disposition = "incorporated"
+                reason = "Reviewed and incorporated " + record["result"]
+            else:
+                assert record["status"] == "pending"
+                disposition = "deferred_with_impact"
+                reason = "Ownership fixture preserves pending work; later operator action is needed"
+            state["next"] = "snapshot"
+            return self.call("completion", {"action": "account", "kind": state["kind"], "id": state["identity"],
+                "revision": state["snapshot"]["revision"], "fingerprint": state["snapshot"]["fingerprint"],
+                "disposition": disposition, "reason": reason})
         if actor == "create":
             if step == 0:
                 return self.call("todo", {"action": "create", "title": "first-run-owned"})
@@ -224,7 +254,7 @@ approval = "never"
 
     def run(self, actor: str, resume: str | None = None) -> tuple[str, dict]:
         args = ["run"] + (["--resume", resume] if resume else []) + [MARKER + actor]
-        result = self.invoke(*args)
+        result = self.invoke(*args, succeeds=actor not in ("create", "resume", "tree"))
         match = re.search(r"\[session ([0-9a-f-]{36})\]", result.stderr)
         assert match, result.stderr
         session_id = match.group(1)
@@ -268,7 +298,8 @@ def main() -> None:
             first_reference = first["completion_runs"][0]
             first_ledger = case.ledger(first_reference)
             assert [entry["obligation"] for entry in first_ledger["entries"]] == [{"todo": Fixture.todos["create"]}]
-            assert first_ledger["entries"][0]["dispositions"] == [], first_ledger
+            assert first_ledger["entries"][0]["dispositions"][-1]["kind"] == "deferred_with_impact", first_ledger
+            assert first_ledger["state"]["decision"]["outcome"] == "incomplete"
             _, resumed = case.run("resume", session_id)
             assert resumed["messages"][:len(first["messages"])] == first["messages"]
             assert len(resumed["completion_runs"]) == 2, resumed["completion_runs"]
@@ -302,7 +333,8 @@ def main() -> None:
             assert Fixture.references["tree"] == Fixture.references["branch"] == Fixture.references["leaf"] == tree_reference
             tree_ledger = case.ledger(tree_reference)
             assert len(tree_ledger["entries"]) == 4, tree_ledger
-            assert all(not entry["dispositions"] for entry in tree_ledger["entries"]), tree_ledger
+            assert all(entry["dispositions"][-1]["kind"] == ("incorporated" if "agent" in entry["obligation"] else "deferred_with_impact") for entry in tree_ledger["entries"]), tree_ledger
+            assert tree_ledger["state"]["decision"]["readiness"]["incomplete"] == 2
             records = {}
             for path in (case.root / "data/helm/subagents").rglob("*.json"):
                 value = json.loads(path.read_text())
@@ -338,8 +370,8 @@ def main() -> None:
                     raise
             assert owner.returncode == 0 and "owner-released" in stdout, (stdout, stderr)
             assert not Fixture.failures, Fixture.failures
-            assert Fixture.counts == {"create": 3, "resume": 4, "empty": 1,
-                                      "tree": 5, "branch": 5, "leaf": 3, "hold": 1}, Fixture.counts
+            assert Fixture.counts == {"create": 8, "resume": 9, "empty": 1,
+                                      "tree": 19, "branch": 5, "leaf": 3, "hold": 1}, Fixture.counts
             print("completion readiness: CLI/resume isolation, durable references, fail-closed recovery, nested ownership and runtime lease passed")
     finally:
         Fixture.release_hold.set()
