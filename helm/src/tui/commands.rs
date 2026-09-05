@@ -83,6 +83,24 @@ pub(super) async fn handle_command(
     };
     let (name, argument) = command.split_once(' ').unwrap_or((command, ""));
     match name {
+        "workflow" => {
+            // Restore the command draft until an actual invocation has been saved.
+            if app.composer.text.is_empty() {
+                app.composer.insert_str(&format!("/{command}"));
+            }
+            if app.is_running() {
+                app.status = "Finish or cancel the active run before opening a workflow".into();
+            } else if let Some(tx) = tx {
+                if let Err(error) =
+                    app.workflow_panel
+                        .open(argument, app.session.workspace.clone(), tx)
+                {
+                    app.status = super::text::display_safe(&error.to_string());
+                }
+            } else {
+                app.status = "Workflow form requires an active TUI event channel".into();
+            }
+        }
         "help" => {
             app.show_activity = true;
             app.activity.push("Slash commands:".into());
