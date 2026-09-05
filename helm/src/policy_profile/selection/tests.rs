@@ -254,3 +254,71 @@ fn selected_profile_and_explicit_override_cannot_bypass_fresh_protected_ceiling(
     std::fs::write(&ceiling, "bad =").unwrap();
     assert!(RuntimePolicy::resolve(&config, temp.path()).is_err());
 }
+#[test]
+fn transition_confirmation_binds_store_incarnation_and_source_directory() {
+    let (temp, mut config, mut request) = setup();
+    config.access = Some(AccessMode::ReadOnly);
+    request.explicit.access = Some(AccessMode::Unrestricted);
+    let preview = Selection::preview(&config, temp.path(), &request).unwrap();
+    assert!(preview.requires_confirmation);
+    let original = request.directory.clone();
+    let other = original.clone();
+    std::fs::rename(&original, temp.path().join("preserved-profiles")).unwrap();
+    let next = ProfileStore::open(&other)
+        .unwrap()
+        .change(&ProfileChange {
+            operation_id: Uuid::new_v4(),
+            name: request.name.clone(),
+            expected_revision: 0,
+            action: Action::Create {
+                rules: Builtin::Restricted.document().rules,
+            },
+        })
+        .unwrap()
+        .snapshot;
+    request.directory = other;
+    request.digest = next.digest().unwrap();
+    assert!(
+        Selection::bind(
+            &config,
+            temp.path(),
+            request.clone(),
+            Some(&preview.transition_digest)
+        )
+        .is_err(),
+        "new incarnation must require its own exact confirmation"
+    );
+    let second = Selection::preview(&config, temp.path(), &request).unwrap();
+    assert!(
+        Selection::bind(
+            &config,
+            temp.path(),
+            request.clone(),
+            Some(&second.transition_digest)
+        )
+        .is_ok()
+    );
+    // Even copied bytes at another store location are a different source choice.
+    std::fs::rename(&request.directory, temp.path().join("moved-profiles")).unwrap();
+    request.directory = temp.path().join("moved-profiles");
+    assert!(
+        Selection::bind(
+            &config,
+            temp.path(),
+            request.clone(),
+            Some(&second.transition_digest)
+        )
+        .is_err()
+    );
+    let relocated = Selection::preview(&config, temp.path(), &request).unwrap();
+    assert!(
+        Selection::bind(
+            &config,
+            temp.path(),
+            request,
+            Some(&relocated.transition_digest)
+        )
+        .is_ok()
+    );
+    assert!(temp.path().join("preserved-profiles").exists());
+}

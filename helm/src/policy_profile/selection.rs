@@ -54,10 +54,15 @@ impl SelectionRequest {
                 && snapshot.rules.is_some(),
             "selected policy profile changed or was deleted; explicitly reselect"
         );
-        let mut layers = vec![Layer::from_profile(
-            LayerKind::Session,
-            &snapshot.document()?,
-        )?];
+        let mut profile = Layer::from_profile(LayerKind::Session, &snapshot.document()?)?;
+        // Equal document rules/revisions in a recreated or relocated store are
+        // still a different explicit selection. Bind that identity into the
+        // effective provenance and therefore the transition confirmation.
+        profile.profile_digest = Some(super::hash(&(
+            snapshot.digest()?,
+            self.directory.canonicalize()?,
+        ))?);
+        let mut layers = vec![profile];
         if self.explicit != Overrides::default() {
             layers.push(Layer::new(
                 LayerKind::Explicit,

@@ -61,6 +61,36 @@ def handoff_refusal(common, flags, env, workspace):
         if process.poll() is None:os.killpg(process.pid,signal.SIGKILL);process.wait(5)
         os.close(master);os.close(slave)
 
+def selected_workflows(root, profiles, flags, mutate):
+    import tui_workflows as workflow
+    workflow.HELM=HELM
+    server=ThreadingHTTPServer(('127.0.0.1',0),workflow.Provider)
+    threading.Thread(target=server.serve_forever,daemon=True).start()
+    try:
+        for mode in ['denied','profile-stale']:
+            workflow.Provider.requests,workflow.Provider.failures=[],[]
+            workflow.Provider.release.clear()
+            case=workflow.Case(root/mode,server.server_port,mode,launch_args=['--policy-directory',str(profiles),*flags],access='unrestricted')
+            workflow.Provider.case=case
+            try:
+                case.text('HELM');case.text('read-only')
+                case.open('user');case.fill();case.expected_for('user')
+                if mode=='profile-stale':
+                    mutate()
+                    case.send('r');case.text('selected policy profile')
+                    case.assert_unaccepted()
+                    case.send(b'\x1b');case.text('Input 2/2')
+                    case.send(b'\x1b');case.text('HELM')
+                else:
+                    case.send('r');case.text('tui-workflow-finished')
+                    case.wait(lambda:any(r.get('phase')=='completed' for r in case.saved().get('run_summaries',[])),'selected workflow completed')
+                    assert len(workflow.Provider.requests)==2
+                    assert not (case.root/'must-not-exist').exists()
+                assert not workflow.Provider.failures,workflow.Provider.failures
+                case.finish()
+            finally:case.close()
+    finally:server.shutdown();server.server_close()
+
 def main():
     server=ThreadingHTTPServer(('127.0.0.1',0),Provider);threading.Thread(target=server.serve_forever,daemon=True).start()
     try:
@@ -149,6 +179,10 @@ def main():
             wrapper.chmod(0o700)
             import subagent_resources
             subagent_resources.run_resources(wrapper)
+            js('policy','create','workflow-selection','--preset','restricted')
+            flow=js('policy','inspect','workflow-selection')
+            flowflags=['--policy-profile','workflow-selection','--policy-revision','1','--policy-digest',flow['digest']]
+            selected_workflows(root/'workflow-cases',profiles,flowflags,lambda:invoke('policy','delete','workflow-selection','--expected-revision','1'))
             # Unknown schema/fields are rejected before any store change or provider request.
             malformed=json.loads(exported);malformed['unknown_secret_field']='file-secret-canary';exportfile.write_text(json.dumps(malformed))
             invoke('policy','import','bad','--input',str(exportfile),ok=False)

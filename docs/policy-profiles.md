@@ -169,7 +169,9 @@ Preview reports previous and proposed effective rules and provenance, plus exact
 `--policy-confirm TRANSITION_DIGEST`. No interactive confirmation wait is added;
 missing, stale, or wrong confirmation refuses the invocation before provider/tool
 construction. The digest binds this Config's policy, explicit CLI overrides, exact
-profile revision, canonical workspace identity, and current system ceiling. This
+profile revision/incarnation and canonical store directory, canonical workspace
+identity, and current system ceiling. Identical exported rules in a recreated or
+relocated store require a fresh selection and transition preview. This
 is an explicit local launch choice, not cryptographic authentication of a person.
 
 The actual precedence is Config base, selected profile, explicit policy CLI
