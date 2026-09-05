@@ -113,7 +113,7 @@ mod linux {
         assert_eq!(
             workers
                 .into_iter()
-                .filter_map(|w| w.join().ok())
+                .map(|w| w.join().unwrap())
                 .filter(|ok| *ok)
                 .count(),
             1
