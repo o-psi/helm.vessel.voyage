@@ -5,6 +5,7 @@ pub mod config;
 pub mod context;
 pub mod markdown;
 pub mod model;
+pub mod onboarding;
 pub mod policy;
 pub mod provider;
 pub mod session;

@@ -312,3 +312,10 @@ automatically. These user messages remain context if you explicitly start anothe
 Delivery receipts contain local IDs and states. They persist in session JSON and appear
 in Markdown exports, but provider adapters send only the canonical user text.
 Steering changes neither the selected tools nor local authority.
+
+## Repository onboarding
+
+Use `helm onboard inspect` or `helm onboard preview` to generate reviewable local
+project guidance. Commands remain unverified and existing instructions are preserved.
+See [repository onboarding](../docs/repo-onboarding.md) for editing, explicit acceptance
+and rerun diffs.
