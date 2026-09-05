@@ -2,11 +2,12 @@
 
 Tracking: [#81](https://github.com/o-psi/voyage/issues/81), prerequisite for
 [#82](https://github.com/o-psi/voyage/issues/82) and [#83](https://github.com/o-psi/voyage/issues/83).
-See the [completion contract and remaining integration work](completion-gate.md).
+See the [completion contract](completion-gate.md).
 
-`completion::store::{RunScope, RunLedgerStore}` is implemented but **not yet called
-by the runtime**. It is not a new tool, CLI command, session migration or enabled
-gate. Exporting this API does not modify existing runs or stores.
+`completion::store::{RunScope, RunLedgerStore}` supplies the durable ledgers used
+by the [scoped runtime](completion-runtime.md) and enabled completion gate. It is
+a local persistence API, not a cross-machine voyage ledger or an independent
+CLI command. The runtime coordinates its writers with local todo and agent stores.
 
 ## Scope and persistence
 
@@ -58,8 +59,7 @@ and `MOVEFILE_WRITE_THROUGH`; replacement additionally uses
 `MOVEFILE_REPLACE_EXISTING`. Both paths remain in the same directory and never
 allow a cross-volume copy/delete fallback. Creation keeps no-clobber semantics.
 The Win32 error propagates without publishing acceptance; temporary-file cleanup
-remains armed on failure. This replaces the previous `tempfile` rename durability
-hold with an explicit operating-system write-through request. Filesystem and device
+remains armed on failure. Filesystem and device
 flush semantics still bound the guarantee; this is not proof from power-loss tests
 or a multi-file session transaction. Windows CI must execute the storage and seal
 regressions before claiming platform verification.
@@ -77,6 +77,7 @@ cargo test -p helm --lib completion::store:: --all-features
 ```
 
 These are storage tests, **not completion-gate E2E evidence**. Windows/macOS execution
-and power-loss durability remain unverified for this API. There is no shared wire
-change, TUI behavior, provider dispatch or tool authority expansion in this slice;
-those integration layers remain mandatory before enabling the gate.
+and power-loss durability remain unverified for this API. The
+[acceptance evidence map](completion-validation.md) separately records runtime,
+frontend and provider integration evidence. Storage tests alone do not establish
+those workflows or the planned cross-machine voyage contract.

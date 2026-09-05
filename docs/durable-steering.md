@@ -1,9 +1,14 @@
 # Durable managed steering foundation
 
-This is a local backend prerequisite for #78. Managed TUI projection, backend
-selection, stable frontend actor identity and guarded frontend lifecycle operations
-remain dependencies. No network connection, automatic session transfer or operator
-data migration is enabled by this module.
+This is the local receipt backend for #78. Stable local actor identity and explicit
+managed CLI execution are implemented. Managed TUI projection, the remote steering
+frontend, and complete guarded frontend lifecycle operations remain planned. This
+module does not itself enable network steering or automatic session transfer.
+
+A planned [voyage](voyages.md) must route steering from an authorized interface
+Helm to the relevant coordinator or participant, preserving current authorization
+and honest delivery receipts. The interface Helm need not coordinate the voyage.
+These local receipts do not establish that cross-machine route or its handoff semantics.
 
 Schema 4 stores steering receipts separately from canonical session messages.
 The receipt UUID is also the request's idempotency key; it cannot collide with any

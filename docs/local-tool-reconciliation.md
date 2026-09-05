@@ -7,7 +7,7 @@ turn while unresolved calls remain. Ordinary Interrupted recovery does not creat
 results, retry tools, or infer that effects rolled back.
 
 After actual cleanup or an explicit operator cleanup attestation, the local
-coordinator can expose `Journal::reconcile_local_tools(&guard, &request)` as a
+managed executor can expose `Journal::reconcile_local_tools(&guard, &request)` as a
 separately selected recovery action. `LocalReconcileRequest` contains exact
 session/run/installation/principal identifiers and the expected session revision.
 The caller must derive the local actor from verified installation authority; UUIDs
@@ -49,9 +49,11 @@ silently downgrade or remove receipts to run an older binary.
 This is a local session edit, not a resumed run. It changes the snapshot/list
 revision without emitting activity after a run's terminal event. A future remote
 adapter needs an authorized session-change notification or snapshot contract before
-exposing this operation; the existing terminal replay stream alone cannot announce
-this change. This dependency and the broader coordinator/sharing work in issue 78
-remain open.
+exposing this operation remotely; the terminal replay stream alone cannot announce
+this change. The dedicated remote worker currently exposes recovery only through
+its explicit local command. Broader coordinator/sharing work in issue 78 remains
+open; a planned [voyage](voyages.md) handoff must not reinterpret reconciliation
+as successful execution or automatically repeat uncertain work.
 
 The companion frontend documents its explicit recovery flags and prerequisite
 cleanup selection. Library tests cover malformed and ambiguous histories, bounds,
