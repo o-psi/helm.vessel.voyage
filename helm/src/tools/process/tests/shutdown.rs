@@ -21,6 +21,7 @@ async fn empty_shutdown_is_repeatable_and_closes_shared_admission() {
 }
 
 #[tokio::test]
+#[allow(clippy::await_holding_lock)] // Deliberately hold the map to inject contention.
 async fn shutdown_reports_lock_timeout_without_waiting_forever() {
     let tool = ProcessTool::default();
     let lock = tool.processes.lock().unwrap();
@@ -38,6 +39,7 @@ async fn shutdown_reports_lock_timeout_without_waiting_forever() {
 }
 
 #[tokio::test]
+#[allow(clippy::await_holding_lock)] // Force the observer to remain pending until cancellation.
 async fn cancelled_shutdown_waiter_does_not_reopen_admission() {
     let dir = tempfile::tempdir().unwrap();
     let ctx = context(dir.path());
@@ -124,6 +126,15 @@ async fn approval_finishing_after_shutdown_cannot_spawn() {
 #[cfg(target_os = "linux")]
 #[tokio::test]
 async fn shutdown_observes_descendants_in_other_job_groups_and_preserves_other_sessions() {
+    descendants(false).await;
+}
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn explicit_close_retains_and_observes_descendants_before_empty_shutdown() {
+    descendants(true).await;
+}
+#[cfg(target_os = "linux")]
+async fn descendants(close_first: bool) {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(
         dir.path().join("child.py"),
@@ -163,6 +174,18 @@ while True: time.sleep(1)
         .split_whitespace()
         .map(|p| p.parse().unwrap())
         .collect();
+    if close_first {
+        let id = owned.metadata().unwrap()[0].id;
+        owned
+            .execute(json!({"action":"terminate","id":id}), &ctx)
+            .await
+            .unwrap();
+        assert!(owned.pending.lock().unwrap().is_empty());
+        owned
+            .execute(json!({"action":"start","command":"exec sleep 30"}), &ctx)
+            .await
+            .unwrap();
+    }
     let report = owned.shutdown(Duration::from_secs(3)).await;
     assert!(report.observation_complete, "{report:?}");
     assert!(report.remaining.is_empty());

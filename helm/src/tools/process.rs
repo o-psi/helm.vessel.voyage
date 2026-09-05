@@ -9,6 +9,8 @@ use async_trait::async_trait;
 use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+#[cfg(target_os = "linux")]
+pub(crate) use shutdown::linux::SessionIdentity;
 use shutdown::{OwnedChild, ReaderDone, StartupChild};
 pub use shutdown::{TerminalShutdown, TerminalShutdownFailure};
 use std::{
@@ -154,6 +156,13 @@ impl Tool for ProcessTool {
     async fn execute(&self, value: Value, ctx: &ToolContext) -> Result<String, ToolError> {
         let args: Args = serde_json::from_value(value)
             .map_err(|e| ToolError::InvalidArguments(e.to_string()))?;
+        if self.shutting_down.load(Ordering::SeqCst)
+            && !matches!(args, Args::Read { .. } | Args::List)
+        {
+            return Err(ToolError::Failed(
+                "terminal manager is shutting down".into(),
+            ));
+        }
         match args {
             Args::Start {
                 command,
@@ -188,7 +197,9 @@ impl Tool for ProcessTool {
                 rows,
                 cols,
             } => self.resize(self.resolve(id, name.as_deref())?, rows, cols),
-            Args::Terminate { id, name } => self.terminate(self.resolve(id, name.as_deref())?),
+            Args::Terminate { id, name } => {
+                self.terminate(self.resolve(id, name.as_deref())?).await
+            }
             Args::Rename {
                 id,
                 current_name,
@@ -275,6 +286,20 @@ impl ProcessTool {
         cols: u16,
         ctx: &ToolContext,
     ) -> Result<String, ToolError> {
+        self.start_after_spawn(command, name, cwd, environment, rows, cols, ctx, || Ok(()))
+    }
+    #[allow(clippy::too_many_arguments)]
+    fn start_after_spawn(
+        &self,
+        command: String,
+        name: Option<String>,
+        cwd: Option<std::path::PathBuf>,
+        environment: BTreeMap<String, String>,
+        rows: u16,
+        cols: u16,
+        ctx: &ToolContext,
+        after_spawn: impl FnOnce() -> Result<(), ToolError>,
+    ) -> Result<String, ToolError> {
         if self.shutting_down.load(Ordering::SeqCst) {
             return Err(ToolError::Failed(
                 "terminal manager is shutting down".into(),
@@ -333,6 +358,7 @@ impl ProcessTool {
             builder.env(key, value);
         }
         let child = StartupChild::new(self, pair.slave.spawn_command(builder).map_err(failed)?);
+        after_spawn()?;
         drop(pair.slave);
         let mut reader = pair.master.try_clone_reader().map_err(failed)?;
         let writer = Arc::new(Mutex::new(pair.master.take_writer().map_err(failed)?));
@@ -478,17 +504,21 @@ impl ProcessTool {
         interrupt_process_group(p.child.process_id());
         Ok(format!("interrupted {id}"))
     }
-    fn terminate(&self, id: Uuid) -> Result<String, ToolError> {
-        let mut map = self.processes.lock().map_err(failed)?;
-        let mut p = map
-            .remove(&id)
-            .ok_or_else(|| ToolError::Failed(format!("unknown process {id}")))?;
-        if p.child.try_wait().map_err(failed)?.is_none() {
-            terminate_process_group(p.child.process_id());
-            p.child.kill().map_err(failed)?;
+    async fn terminate(&self, id: Uuid) -> Result<String, ToolError> {
+        {
+            let _starting = self.starting.lock().map_err(failed)?;
+            let mut map = self.processes.lock().map_err(failed)?;
+            let mut pending = self.pending.lock().map_err(failed)?;
+            let mut process = map
+                .remove(&id)
+                .ok_or_else(|| ToolError::Failed(format!("unknown process {id}")))?;
+            process.child.stop_best_effort();
+            pending.insert(id, process.child);
+            let _ = self.events.send(TerminalEvent::Removed(TerminalId(id)));
         }
-        let _ = self.events.send(TerminalEvent::Removed(TerminalId(id)));
-        Ok(format!("terminated {id}"))
+        self.observe_closed(id, std::time::Duration::from_secs(1))
+            .await;
+        Ok(format!("termination requested for {id}"))
     }
     fn list(&self) -> Result<String, ToolError> {
         let mut map = self.processes.lock().map_err(failed)?;
@@ -581,6 +611,11 @@ impl InteractiveTerminals for ProcessTool {
         })
     }
     async fn write(&self, id: TerminalId, bytes: Vec<u8>) -> Result<(), TerminalError> {
+        if self.shutting_down.load(Ordering::SeqCst) {
+            return Err(TerminalError::Failed(
+                "terminal manager is shutting down".into(),
+            ));
+        }
         let mut map = self
             .processes
             .lock()
@@ -693,7 +728,7 @@ mod tests {
             crate::tools::ApprovalOutcome::Approved
         }
     }
-    fn context(root: &std::path::Path) -> ToolContext {
+    pub(super) fn context(root: &std::path::Path) -> ToolContext {
         let config = Config {
             approval: ApprovalMode::Never,
             ..Config::default()
