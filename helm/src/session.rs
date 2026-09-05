@@ -1,3 +1,6 @@
+mod checkpoint;
+pub use checkpoint::SessionCheckpoint;
+
 mod outcomes;
 pub use outcomes::RunSummary;
 
