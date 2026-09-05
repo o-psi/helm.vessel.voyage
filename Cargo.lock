@@ -922,6 +922,7 @@ dependencies = [
  "uuid",
  "vessel",
  "voyage-protocol",
+ "voyage-storage",
  "vt100",
 ]
 
@@ -2689,6 +2690,7 @@ dependencies = [
  "url",
  "uuid",
  "voyage-protocol",
+ "voyage-storage",
 ]
 
 [[package]]
@@ -2700,6 +2702,15 @@ dependencies = [
  "serde_json",
  "uuid",
  "zeroize",
+]
+
+[[package]]
+name = "voyage-storage"
+version = "0.1.0"
+dependencies = [
+ "tempfile",
+ "uuid",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

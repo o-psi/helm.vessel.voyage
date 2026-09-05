@@ -54,3 +54,6 @@ syntect = { version = "5.3", default-features = false, features = ["default-synt
 axum.workspace = true
 vessel = { path = "../vessel" }
 tokio = { version = "1.47", features = ["test-util"] }
+
+[target.'cfg(windows)'.dependencies]
+voyage-storage.workspace = true
