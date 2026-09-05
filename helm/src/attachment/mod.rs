@@ -12,6 +12,6 @@ pub mod client;
 
 pub mod migration;
 
-pub mod local_actor;
 /// Explicit enrollment lifecycle CLI; no execution transport.
 pub mod cli;
+pub mod local_actor;
