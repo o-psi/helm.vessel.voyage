@@ -332,9 +332,16 @@ async fn main() -> Result<()> {
     };
     // Enrollment never loads provider config or initializes runtime/session logs.
     if let Some(Command::Attachment(args)) = cli.command {
+        let prompt = helm::attachment::cli::prompt::PromptControl::default();
         return tokio::select! { biased;
-            _=tokio::signal::ctrl_c()=>{eprintln!("attachment operation interrupted; inspect status and resume pending work");std::process::exit(130)},
-            result=helm::attachment::cli::run(args)=>result.map_err(anyhow::Error::from),
+            _=attachment_interrupt()=>{
+                if prompt.cancel_and_restore().is_err(){eprintln!("attachment terminal restoration failed");}
+                eprintln!("attachment operation interrupted; inspect status and resume pending work");std::process::exit(130)
+            },
+            result=helm::attachment::cli::run_with_prompt(args,prompt.clone())=>match result {
+                Err(helm::attachment::cli::CliError::Cancelled)=>{eprintln!("attachment input cancelled");std::process::exit(130)},
+                other=>other.map_err(anyhow::Error::from),
+            },
         };
     }
     let filter = if cli.verbose {
@@ -1610,6 +1617,28 @@ fn render_terminal_markdown(source: &str, width: usize) -> String {
         }
     }
     output
+}
+
+async fn attachment_interrupt() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{SignalKind, signal};
+        if let (Ok(mut term), Ok(mut hangup)) = (
+            signal(SignalKind::terminate()),
+            signal(SignalKind::hangup()),
+        ) {
+            tokio::select! { _=tokio::signal::ctrl_c()=>(), _=term.recv()=>(), _=hangup.recv()=>() }
+            return;
+        }
+    }
+    #[cfg(windows)]
+    {
+        if let Ok(mut interrupt) = tokio::signal::windows::ctrl_break() {
+            tokio::select! { _=tokio::signal::ctrl_c()=>(), _=interrupt.recv()=>() }
+            return;
+        }
+    }
+    let _ = tokio::signal::ctrl_c().await;
 }
 
 #[cfg(test)]

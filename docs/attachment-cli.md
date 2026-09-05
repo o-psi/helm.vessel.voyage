@@ -14,7 +14,13 @@ the enrollment client; unsafe storage is rejected, not silently repaired.
 The operator supplies the invitation ID and its one-use secret through their
 existing authenticated distribution process. The CLI never accepts the secret in
 a positional argument, environment option or flag value. For example, with a
-secret-producing program that does not print or log the key:
+terminal, omit the stdin flag and enter the key only at the hidden prompt:
+
+```sh
+helm attachment --origin https://vessel.example enroll --invitation-id INVITATION_UUID
+```
+
+For automation, use a secret-producing program that does not print or log the key:
 
 ```sh
 secret-source | helm attachment --origin https://vessel.example \
@@ -26,11 +32,28 @@ helm attachment revoke
 
 `secret-source` is a placeholder for your chosen secret input source, not a Voyage
 command. Avoid typing an invitation into a shell command/history. Stdin must be a
-pipe or file, not an interactive terminal. Exactly 43 base64url characters are
+pipe or file when `--invitation-key-stdin` is explicit, not an interactive terminal. Exactly 43 base64url characters are
 accepted, optionally followed by LF or CRLF; other whitespace, extra input and
 oversized values are rejected. Reads are capped and time out after 30 seconds.
 Secrets are not printed, logged or placed in session records. Error messages omit
 raw HTTP responses and potentially secret-bearing invalid arguments.
+
+Without the stdin flag, both stdin and stderr must be a terminal; redirected or
+unattended invocation fails immediately without reading a pipe. The fixed hidden
+prompt accepts 43 ASCII base64url characters, Enter (CR or LF), and Backspace.
+Invalid characters, bracketed-paste control sequences and oversized input fail
+closed. Escape, Ctrl-C and Ctrl-D cancel; the prompt times out after 30 seconds.
+Unix SIGINT/SIGTERM/SIGHUP and Windows Ctrl-Break also cancel. The reader serializes
+mode entry, native reads and cancellation, discards queued input before restoring
+the exact saved terminal mode, and finishes restoration before returning/exiting.
+A bounded quiet drain catches queued paste tails, not keystrokes arriving after the
+prompt has returned. No program can restore a destroyed terminal or run cleanup
+after forced process termination (for example SIGKILL or TerminateProcess).
+
+Unix uses native termios; Windows saves and restores the complete console mode and
+reads console input records. See Microsoft's
+[console-mode contract](https://learn.microsoft.com/en-us/windows/console/setconsolemode).
+No input is routed through the model, TUI conversation, provider, or session store.
 
 New enrollment requires `--origin`; the stored origin is then authoritative.
 Omit it for existing lifecycle commands, or pass the same origin explicitly.
@@ -55,7 +78,8 @@ material before sending requests. A lost response, denial, cancellation or netwo
 failure leaves that original transaction available. Inspect status, then resume:
 
 ```sh
-secret-source | helm attachment resume --invitation-key-stdin  # pending enroll
+helm attachment resume                                      # pending enroll: hidden prompt
+secret-source | helm attachment resume --invitation-key-stdin  # pending enroll: automation
 helm attachment resume                                      # rotate/revoke
 ```
 
@@ -89,6 +113,11 @@ a request after the server commits; native Windows cancellation needs separate
 console-control validation. Client unit tests verify inspection does not create
 missing storage or rewrite existing state and rejects unsafe/missing locks.
 Both CI workflow families run the CLI fixture, including native portability jobs.
+The dedicated `tests/system/attachment_secret_prompt.py` uses actual Unix PTYs or
+an allocated native Windows console with the Helm binary. It checks nondefault
+mode restoration, no echo, input bounds/editing, cancellation, empty input queues,
+nonterminal refusal and real Vessel enrollment/denial/lost-response resume. Windows
+coverage must come from its native CI job; Linux PTY results do not establish it.
 
 These commands do not implement the production attachment socket, local coordinator,
 operator session UI, approval dispatch or services. Those remain required by

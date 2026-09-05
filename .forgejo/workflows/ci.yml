@@ -47,6 +47,8 @@ jobs:
       - run: python3 tests/system/vessel_lifecycle.py
       - name: Verify enrollment lifecycle CLI with real local Vessel
         run: python3 tests/system/attachment_enrollment.py
+      - name: Verify hidden enrollment invitation entry on real terminal
+        run: python3 tests/system/attachment_secret_prompt.py
       - run: python3 eval/run.py validate
       - run: ./scripts/package-release "ci-${{ github.sha }}"
       - run: cd dist && sha256sum -c *.sha256
@@ -65,3 +67,5 @@ jobs:
       - run: cargo build --workspace --release --locked
       - name: Verify native enrollment CLI lifecycle
         run: python tests/system/attachment_enrollment.py
+      - name: Verify native hidden invitation entry and terminal restoration
+        run: python tests/system/attachment_secret_prompt.py
