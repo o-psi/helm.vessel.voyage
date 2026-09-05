@@ -615,6 +615,13 @@ async fn handle_ui_event(
                         app.session.usage.input_tokens += outcome.usage.input_tokens;
                         app.session.usage.output_tokens += outcome.usage.output_tokens;
                     }
+                    for message in &mut app.session.messages {
+                        if let Some(receipt) = &mut message.steering
+                            && receipt.status == crate::model::SteeringStatus::Queued
+                        {
+                            receipt.status = crate::model::SteeringStatus::NotApplied;
+                        }
+                    }
                     app.session.finish_run_summary(&outcome.stop_reason);
                     let completed =
                         matches!(outcome.stop_reason, crate::agent::StopReason::Completed);

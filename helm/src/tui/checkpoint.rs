@@ -116,7 +116,9 @@ pub(super) async fn handle(request: Request, app: &mut App, store: &SessionStore
     if request.response.is_closed() {
         return;
     }
+    let before = super::transcript_height(app, app.conversation_width);
     let result = apply(&request, app, store).await;
+    super::preserve_manual_anchor(app, before);
     if result.is_err() {
         app.status = "Session checkpoint failed; stopping run".into();
     }

@@ -1194,6 +1194,9 @@ async fn durable_tui_checkpoints_precede_presentation_and_finished_counts_usage_
             .assistant_classification(1),
         Some("completed")
     );
+    app.session
+        .messages
+        .push(crate::Message::steering("late accepted steering"));
     handle_ui_event(
         UiEvent::Finished(Ok(crate::agent::AgentOutcome {
             messages: history,
@@ -1208,6 +1211,21 @@ async fn durable_tui_checkpoints_precede_presentation_and_finished_counts_usage_
     )
     .await
     .unwrap();
+    assert_eq!(
+        app.session.messages.last().unwrap().content,
+        "late accepted steering"
+    );
+    assert_eq!(
+        app.session
+            .messages
+            .last()
+            .unwrap()
+            .steering
+            .as_ref()
+            .unwrap()
+            .status,
+        crate::model::SteeringStatus::NotApplied
+    );
     assert_eq!(app.session.usage.input_tokens, 14);
     assert_eq!(app.session.usage.output_tokens, 2);
     assert_eq!(app.session.title_state.as_ref().unwrap().completed_runs, 1);
@@ -1259,4 +1277,62 @@ async fn cancelled_tui_checkpoint_keeps_partial_annotation_outside_canonical_his
     let text = transcript(&app, 90).to_string();
     assert_eq!(text.matches("interrupted 世界").count(), 1);
     assert!(text.contains("interrupted partial response"));
+}
+
+#[tokio::test]
+async fn checkpoint_recovery_uses_baseline_usage_and_preserves_partial_annotation() {
+    use crate::agent::{AgentError, CanonicalRecovery, ContextFailure, RunCheckpoint};
+    let directory = tempfile::tempdir().unwrap();
+    let store = SessionStore::new(directory.path().join("sessions"));
+    let terminals = FakeTerminals::new();
+    let mut app = App::new(Session::new(directory.path().into(), "test".into()), vec![]);
+    app.session
+        .messages
+        .push(crate::Message::new(Role::User, "work"));
+    app.session.usage.input_tokens = 40;
+    let run_id = Uuid::new_v4();
+    app.session.begin_run_summary(run_id);
+    app.checkpoint = Some(checkpoint::State::new(&app.session, run_id));
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let checkpoint = checkpoint::UiCheckpoint {
+        run_id,
+        tx,
+        cancel: tokio_util::sync::CancellationToken::new(),
+    };
+    let mut history = app.session.messages.clone();
+    history.push(crate::Message::new(Role::Assistant, "canonical"));
+    let usage = crate::model::Usage {
+        input_tokens: 5,
+        output_tokens: 7,
+    };
+    let (ack, _) = tokio::join!(checkpoint.canonical(&history, &usage), async {
+        handle_ui_event(rx.recv().await.unwrap(), &mut app, &store, &terminals)
+            .await
+            .unwrap();
+    });
+    ack.unwrap();
+    let (ack, _) = tokio::join!(checkpoint.partial("unfinished"), async {
+        handle_ui_event(rx.recv().await.unwrap(), &mut app, &store, &terminals)
+            .await
+            .unwrap();
+    });
+    ack.unwrap();
+    let error = AgentError::Context(ContextFailure {
+        source: crate::context::ContextError {
+            estimated: 90000,
+            limit: 65536,
+        },
+        recovery: Some(Box::new(CanonicalRecovery {
+            messages: history,
+            usage,
+        })),
+    });
+    handle_ui_event(UiEvent::Finished(Err(error)), &mut app, &store, &terminals)
+        .await
+        .unwrap();
+    let saved = store.load(app.session.id).await.unwrap();
+    assert_eq!(saved.usage.input_tokens, 45);
+    assert_eq!(saved.usage.output_tokens, 7);
+    assert_eq!(saved.messages.len(), 2);
+    assert_eq!(saved.run_summaries[0].partial_output, "unfinished");
 }
