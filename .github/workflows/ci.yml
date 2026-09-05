@@ -48,6 +48,10 @@ jobs:
         env:
           HELM_BIN: target/release/helm
         run: python3 tests/system/context_window.py
+      - name: Verify session execution fencing across independent frontends
+        env:
+          HELM_BIN: target/release/helm
+        run: python3 tests/system/session_fencing.py
       - name: Verify run ownership and readiness with an offline provider
         env:
           HELM_BIN: target/release/helm

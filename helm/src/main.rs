@@ -1046,7 +1046,7 @@ async fn tui_chat(
     log_format: LogFormat,
 ) -> Result<()> {
     let store = SessionStore::default();
-    let (store, mut session) = if let Some(reference) = resume {
+    let (mut store, mut session) = if let Some(reference) = resume {
         store.load_owned(&reference).await?
     } else {
         let session = Session::new(

@@ -30,14 +30,14 @@ fn model_picker_filters_and_renders_manual_fallback() {
 #[tokio::test]
 async fn tool_calls_remain_in_conversation_order_live_and_after_completion() {
     let directory = tempfile::tempdir().unwrap();
-    let mut store = SessionStore::new(directory.path().join("sessions"));
+    let store = SessionStore::new(directory.path().join("sessions"));
     let mut app = App::new(Session::new(directory.path().into(), "test".into()), vec![]);
     let terminals = FakeTerminals::new();
     for index in 0..4 {
         handle_ui_event(
             UiEvent::Agent(AgentEvent::AssistantText(format!("before-{index}"))),
             &mut app,
-            &mut store,
+            &store,
             &terminals,
         )
         .await
@@ -48,7 +48,7 @@ async fn tool_calls_remain_in_conversation_order_live_and_after_completion() {
                 arguments: serde_json::json!({"index": index}),
             }),
             &mut app,
-            &mut store,
+            &store,
             &terminals,
         )
         .await
@@ -65,7 +65,7 @@ async fn tool_calls_remain_in_conversation_order_live_and_after_completion() {
                 success: index != 2,
             }),
             &mut app,
-            &mut store,
+            &store,
             &terminals,
         )
         .await
@@ -377,7 +377,7 @@ async fn failed_run_does_not_remove_submitted_prompt_from_session() {
         .messages
         .push(crate::Message::new(Role::User, "keep this request"));
     let mut app = App::new(session, Vec::new());
-    let mut store = SessionStore::new(directory.path().join("sessions"));
+    let store = SessionStore::new(directory.path().join("sessions"));
     store.save(&mut app.session).await.unwrap();
 
     handle_ui_event(
@@ -386,7 +386,7 @@ async fn failed_run_does_not_remove_submitted_prompt_from_session() {
         )
         .into())),
         &mut app,
-        &mut store,
+        &store,
         &crate::terminal::NoInteractiveTerminals::default(),
     )
     .await
@@ -615,7 +615,7 @@ fn renders_tiny_terminal_with_resize_guidance() {
 #[tokio::test]
 async fn title_results_preserve_manual_names_and_reject_stale_sessions_and_turns() {
     let directory = tempfile::tempdir().unwrap();
-    let mut store = SessionStore::new(directory.path().into());
+    let store = SessionStore::new(directory.path().into());
     let mut app = App::new(Session::new(directory.path().into(), "main".into()), vec![]);
     app.session.record_completed_turn();
     store.save(&mut app.session).await.unwrap();
@@ -632,7 +632,7 @@ async fn title_results_preserve_manual_names_and_reject_stale_sessions_and_turns
                 }),
             },
             &mut app,
-            &mut store,
+            &store,
             &crate::terminal::NoInteractiveTerminals::default(),
         )
         .await
@@ -652,7 +652,7 @@ async fn title_results_preserve_manual_names_and_reject_stale_sessions_and_turns
             }),
         },
         &mut app,
-        &mut store,
+        &store,
         &crate::terminal::NoInteractiveTerminals::default(),
     )
     .await
@@ -674,7 +674,7 @@ async fn title_results_preserve_manual_names_and_reject_stale_sessions_and_turns
             }),
         },
         &mut app,
-        &mut store,
+        &store,
         &crate::terminal::NoInteractiveTerminals::default(),
     )
     .await
@@ -705,7 +705,7 @@ async fn unavailable_title_model_does_not_send_a_repaint_event() {
 async fn steering_boundary_preserves_fifo_receipts_and_separates_streams() {
     use crate::model::SteeringStatus;
     let directory = tempfile::tempdir().unwrap();
-    let mut store = SessionStore::new(directory.path().join("sessions"));
+    let store = SessionStore::new(directory.path().join("sessions"));
     let mut app = App::new(Session::new(directory.path().into(), "test".into()), vec![]);
     let original = crate::Message::new(Role::User, "original");
     let first = crate::Message::steering("first");
@@ -723,7 +723,7 @@ async fn steering_boundary_preserves_fifo_receipts_and_separates_streams() {
             ],
         }),
         &mut app,
-        &mut store,
+        &store,
         &FakeTerminals::new(),
     )
     .await
@@ -740,7 +740,7 @@ async fn steering_boundary_preserves_fifo_receipts_and_separates_streams() {
     handle_ui_event(
         UiEvent::Agent(AgentEvent::AssistantTextDelta("new response".into())),
         &mut app,
-        &mut store,
+        &store,
         &FakeTerminals::new(),
     )
     .await
@@ -751,7 +751,7 @@ async fn steering_boundary_preserves_fifo_receipts_and_separates_streams() {
     handle_ui_event(
         UiEvent::Finished(Err(crate::agent::AgentError::Cancelled)),
         &mut app,
-        &mut store,
+        &store,
         &FakeTerminals::new(),
     )
     .await
@@ -892,7 +892,7 @@ async fn context_recovery_preserves_tools_and_late_steering_without_duplicates()
     use crate::agent::{AgentError, CanonicalRecovery, ContextFailure};
     use crate::model::{Message, SteeringStatus, ToolCall, Usage};
     let directory = tempfile::tempdir().unwrap();
-    let mut store = SessionStore::new(directory.path().join("sessions"));
+    let store = SessionStore::new(directory.path().join("sessions"));
     let mut app = App::new(Session::new(directory.path().into(), "test".into()), vec![]);
     let prompt = Message::new(Role::User, "read evidence");
     let mut assistant = Message::new(Role::Assistant, "checking");
@@ -930,7 +930,7 @@ async fn context_recovery_preserves_tools_and_late_steering_without_duplicates()
     handle_ui_event(
         UiEvent::Finished(Err(error)),
         &mut app,
-        &mut store,
+        &store,
         &FakeTerminals::new(),
     )
     .await
@@ -972,7 +972,7 @@ async fn completion_summaries_render_provisional_and_incomplete_after_resume_wit
 {
     use crate::agent::{CompletionPhase, StopReason};
     let directory = tempfile::tempdir().unwrap();
-    let mut store = SessionStore::new(directory.path().join("sessions"));
+    let store = SessionStore::new(directory.path().join("sessions"));
     let mut app = App::new(Session::new(directory.path().into(), "test".into()), vec![]);
     app.session
         .messages
@@ -987,7 +987,7 @@ async fn completion_summaries_render_provisional_and_incomplete_after_resume_wit
             detail: Some("checking remaining work".into()),
         }),
         &mut app,
-        &mut store,
+        &store,
         &terminals,
     )
     .await
@@ -1016,7 +1016,7 @@ async fn completion_summaries_render_provisional_and_incomplete_after_resume_wit
             },
         })),
         &mut app,
-        &mut store,
+        &store,
         &terminals,
     )
     .await
@@ -1043,7 +1043,7 @@ async fn completion_summaries_render_provisional_and_incomplete_after_resume_wit
 async fn terminal_completion_event_waits_for_canonical_outcome_and_interruption_is_durable() {
     use crate::agent::{CompletionPhase, StopReason};
     let directory = tempfile::tempdir().unwrap();
-    let mut store = SessionStore::new(directory.path().join("sessions"));
+    let store = SessionStore::new(directory.path().join("sessions"));
     let terminals = FakeTerminals::new();
     let mut app = App::new(Session::new(directory.path().into(), "test".into()), vec![]);
     app.session
@@ -1058,7 +1058,7 @@ async fn terminal_completion_event_waits_for_canonical_outcome_and_interruption_
             detail: None,
         }),
         &mut app,
-        &mut store,
+        &store,
         &terminals,
     )
     .await
@@ -1071,7 +1071,7 @@ async fn terminal_completion_event_waits_for_canonical_outcome_and_interruption_
     handle_ui_event(
         UiEvent::Finished(Err(crate::agent::AgentError::Cancelled)),
         &mut app,
-        &mut store,
+        &store,
         &terminals,
     )
     .await
@@ -1100,7 +1100,7 @@ async fn terminal_completion_event_waits_for_canonical_outcome_and_interruption_
             stop_reason: StopReason::Completed,
         })),
         &mut app,
-        &mut store,
+        &store,
         &terminals,
     )
     .await
@@ -1113,7 +1113,7 @@ async fn terminal_completion_event_waits_for_canonical_outcome_and_interruption_
 async fn durable_tui_checkpoints_precede_presentation_and_finished_counts_usage_once() {
     use crate::agent::{RunCheckpoint, StopReason};
     let directory = tempfile::tempdir().unwrap();
-    let mut store = SessionStore::new(directory.path().join("sessions"));
+    let store = SessionStore::new(directory.path().join("sessions"));
     let terminals = FakeTerminals::new();
     let mut app = App::new(Session::new(directory.path().into(), "test".into()), vec![]);
     app.session.usage.input_tokens = 9;
@@ -1139,7 +1139,7 @@ async fn durable_tui_checkpoints_precede_presentation_and_finished_counts_usage_
         output_tokens: 2,
     };
     let (ack, _) = tokio::join!(checkpoint.canonical(&history, &usage), async {
-        handle_ui_event(rx.recv().await.unwrap(), &mut app, &mut store, &terminals)
+        handle_ui_event(rx.recv().await.unwrap(), &mut app, &store, &terminals)
             .await
             .unwrap();
     });
@@ -1149,7 +1149,7 @@ async fn durable_tui_checkpoints_precede_presentation_and_finished_counts_usage_
             "single canonical response".into(),
         )),
         &mut app,
-        &mut store,
+        &store,
         &terminals,
     )
     .await
@@ -1168,7 +1168,7 @@ async fn durable_tui_checkpoints_precede_presentation_and_finished_counts_usage_
             arguments: serde_json::json!({}),
         }),
         &mut app,
-        &mut store,
+        &store,
         &terminals,
     )
     .await
@@ -1180,7 +1180,7 @@ async fn durable_tui_checkpoints_precede_presentation_and_finished_counts_usage_
     let (ack, _) = tokio::join!(
         checkpoint.accepted(&history, &usage, &StopReason::Completed),
         async {
-            handle_ui_event(rx.recv().await.unwrap(), &mut app, &mut store, &terminals)
+            handle_ui_event(rx.recv().await.unwrap(), &mut app, &store, &terminals)
                 .await
                 .unwrap();
         }
@@ -1206,7 +1206,7 @@ async fn durable_tui_checkpoints_precede_presentation_and_finished_counts_usage_
             stop_reason: StopReason::Completed,
         })),
         &mut app,
-        &mut store,
+        &store,
         &terminals,
     )
     .await
@@ -1236,7 +1236,7 @@ async fn durable_tui_checkpoints_precede_presentation_and_finished_counts_usage_
 async fn cancelled_tui_checkpoint_keeps_partial_annotation_outside_canonical_history() {
     use crate::agent::RunCheckpoint;
     let directory = tempfile::tempdir().unwrap();
-    let mut store = SessionStore::new(directory.path().join("sessions"));
+    let store = SessionStore::new(directory.path().join("sessions"));
     let terminals = FakeTerminals::new();
     let mut app = App::new(Session::new(directory.path().into(), "test".into()), vec![]);
     app.session
@@ -1252,7 +1252,7 @@ async fn cancelled_tui_checkpoint_keeps_partial_annotation_outside_canonical_his
         cancel: tokio_util::sync::CancellationToken::new(),
     };
     let (ack, _) = tokio::join!(checkpoint.partial("interrupted 世界"), async {
-        handle_ui_event(rx.recv().await.unwrap(), &mut app, &mut store, &terminals)
+        handle_ui_event(rx.recv().await.unwrap(), &mut app, &store, &terminals)
             .await
             .unwrap();
     });
@@ -1261,7 +1261,7 @@ async fn cancelled_tui_checkpoint_keeps_partial_annotation_outside_canonical_his
     handle_ui_event(
         UiEvent::Finished(Err(crate::agent::AgentError::Cancelled)),
         &mut app,
-        &mut store,
+        &store,
         &terminals,
     )
     .await
@@ -1283,7 +1283,7 @@ async fn cancelled_tui_checkpoint_keeps_partial_annotation_outside_canonical_his
 async fn checkpoint_recovery_uses_baseline_usage_and_preserves_partial_annotation() {
     use crate::agent::{AgentError, CanonicalRecovery, ContextFailure, RunCheckpoint};
     let directory = tempfile::tempdir().unwrap();
-    let mut store = SessionStore::new(directory.path().join("sessions"));
+    let store = SessionStore::new(directory.path().join("sessions"));
     let terminals = FakeTerminals::new();
     let mut app = App::new(Session::new(directory.path().into(), "test".into()), vec![]);
     app.session
@@ -1306,13 +1306,13 @@ async fn checkpoint_recovery_uses_baseline_usage_and_preserves_partial_annotatio
         output_tokens: 7,
     };
     let (ack, _) = tokio::join!(checkpoint.canonical(&history, &usage), async {
-        handle_ui_event(rx.recv().await.unwrap(), &mut app, &mut store, &terminals)
+        handle_ui_event(rx.recv().await.unwrap(), &mut app, &store, &terminals)
             .await
             .unwrap();
     });
     ack.unwrap();
     let (ack, _) = tokio::join!(checkpoint.partial("unfinished"), async {
-        handle_ui_event(rx.recv().await.unwrap(), &mut app, &mut store, &terminals)
+        handle_ui_event(rx.recv().await.unwrap(), &mut app, &store, &terminals)
             .await
             .unwrap();
     });
@@ -1327,14 +1327,9 @@ async fn checkpoint_recovery_uses_baseline_usage_and_preserves_partial_annotatio
             usage,
         })),
     });
-    handle_ui_event(
-        UiEvent::Finished(Err(error)),
-        &mut app,
-        &mut store,
-        &terminals,
-    )
-    .await
-    .unwrap();
+    handle_ui_event(UiEvent::Finished(Err(error)), &mut app, &store, &terminals)
+        .await
+        .unwrap();
     let saved = store.load(app.session.id).await.unwrap();
     assert_eq!(saved.usage.input_tokens, 45);
     assert_eq!(saved.usage.output_tokens, 7);

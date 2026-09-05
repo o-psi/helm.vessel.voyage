@@ -357,3 +357,61 @@ async fn todo_panel_can_edit_without_application_or_conversation_state() {
     assert!(second.todo_mode.is_none());
     assert!(rx.try_recv().is_err());
 }
+
+#[tokio::test]
+async fn new_and_branch_shortcuts_rebind_execution_owner() {
+    let directory = tempfile::tempdir().unwrap();
+    let agent = navigation_agent(&directory);
+    let unbound = SessionStore::new(directory.path().join("sessions"));
+    let mut session = Session::new(directory.path().into(), "test".into());
+    let mut store = unbound.with_execution(session.id).await.unwrap();
+    store.save(&mut session).await.unwrap();
+    let original_id = session.id;
+    let mut app = App::new(session, vec![]);
+    let terminals = FakeTerminals::new();
+    let supervisor = Arc::new(FakeSupervisor::new(vec![]));
+    let todos = todo_store(&directory);
+    let (tx, _rx) = mpsc::unbounded_channel();
+    handle_key(
+        KeyEvent::new(KeyCode::Char('n'), KeyModifiers::CONTROL),
+        &mut app,
+        &agent,
+        &mut store,
+        &tx,
+        &terminals,
+        supervisor.clone(),
+        todos.clone(),
+    )
+    .await
+    .unwrap();
+    let next_id = app.session.id;
+    assert_ne!(next_id, original_id);
+    assert_eq!(store.owned_session_id(), Some(next_id));
+    unbound.with_execution(original_id).await.unwrap();
+    assert!(
+        tokio::time::timeout(Duration::from_millis(50), unbound.with_execution(next_id))
+            .await
+            .is_err()
+    );
+    handle_key(
+        KeyEvent::new(KeyCode::Char('b'), KeyModifiers::CONTROL),
+        &mut app,
+        &agent,
+        &mut store,
+        &tx,
+        &terminals,
+        supervisor,
+        todos,
+    )
+    .await
+    .unwrap();
+    let branch_id = app.session.id;
+    assert_eq!(app.session.parent_id, Some(next_id));
+    assert_eq!(store.owned_session_id(), Some(branch_id));
+    unbound.with_execution(next_id).await.unwrap();
+    assert!(
+        tokio::time::timeout(Duration::from_millis(50), unbound.with_execution(branch_id))
+            .await
+            .is_err()
+    );
+}
