@@ -167,7 +167,6 @@ async fn abandoned_submit_keeps_fence_until_durable_closed_rejection() {
     let receipt_id = guidance.receipt_id;
     let (queued_tx, queued_rx) = tokio::sync::oneshot::channel();
     let (release_tx, release_rx) = std::sync::mpsc::channel();
-    let weak = Arc::downgrade(&owner.store);
     let submit = tokio::spawn(async move {
         handle
             .submit_after_queue(guidance, move || {
@@ -189,14 +188,18 @@ async fn abandoned_submit_keeps_fence_until_durable_closed_rejection() {
     drop(owner); // closes the receiver, but the worker still owns its fence
     assert!(journal.acquire_execution(session_id).is_err());
     release_tx.send(()).unwrap();
-    tokio::time::timeout(std::time::Duration::from_secs(10), async {
-        while weak.strong_count() != 0 {
+    // Arc's strong count reaches zero before Store finishes dropping its
+    // journal and execution guard. Observe the OS lease itself, not refcounts.
+    let _guard = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        loop {
+            if let Ok(guard) = journal.acquire_execution(session_id) {
+                break guard;
+            }
             tokio::task::yield_now().await;
         }
     })
     .await
     .unwrap();
-    let _guard = journal.acquire_execution(session_id).unwrap();
     let receipt = journal.steering_record(receipt_id).unwrap();
     assert_eq!(receipt.status, crate::model::SteeringStatus::NotApplied);
     assert_eq!(
