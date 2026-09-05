@@ -85,6 +85,9 @@ impl ProviderKind {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
+    /// Explicit invocation authority; never persisted or restored from sessions.
+    #[serde(skip)]
+    pub policy_profile: Option<crate::policy_profile::selection::Selection>,
     pub provider: ProviderKind,
     pub model: String,
     pub api_key_env: String,
@@ -401,6 +404,7 @@ impl Default for Config {
             env: BTreeMap::new(),
             inherit_env: vec!["PATH".into(), "LANG".into(), "LC_ALL".into(), "TERM".into()],
             redact_values: Vec::new(),
+            policy_profile: None,
             mcp_servers: BTreeMap::new(),
             codex_command: "codex".into(),
         }
@@ -571,6 +575,9 @@ impl Config {
         }
         table.insert(segments[segments.len() - 1].to_owned(), parsed);
         let mut updated: Self = document.try_into()?;
+        // Serialization deliberately drops launch authority; in-process edits must
+        // retain it so the next rebuild checks the same profile and transition.
+        updated.policy_profile = self.policy_profile.clone();
         if updated.provider != self.provider {
             updated.api_key_required = true;
         }
