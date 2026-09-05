@@ -12,6 +12,7 @@ pub enum Feature {
     Replay,
     ToolActivity,
     Usage,
+    ManagedExecution,
 }
 #[derive(Clone, Default, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -29,7 +30,7 @@ impl Features {
         self.0.contains(&feature)
     }
     pub fn validate(&self) -> Result<(), &'static str> {
-        if self.0.len() > 4
+        if self.0.len() > 5
             || self
                 .0
                 .iter()
@@ -68,6 +69,7 @@ impl Features {
         let extra = match event {
             RunEvent::ToolStarted { .. } | RunEvent::ToolFinished { .. } => Feature::ToolActivity,
             RunEvent::Usage { .. } => Feature::Usage,
+            RunEvent::Cleanup { .. } => Feature::ManagedExecution,
             _ => Feature::SequencedEvents,
         };
         if !self.contains(Feature::SequencedEvents) || !self.contains(extra) {
@@ -112,6 +114,15 @@ pub enum ToolOutcome {
     Cancelled,
     Interrupted,
 }
+/// Terminal model state is never proof of observed owned-resource cleanup.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CleanupState {
+    Pending,
+    Observed,
+    Unconfirmed,
+    OperatorAttested,
+}
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum RunEvent {
@@ -142,6 +153,10 @@ pub enum RunEvent {
     CancellationRequested {},
     Terminal {
         state: TerminalState,
+    },
+    /// Explicitly negotiated lifecycle observation; may follow the terminal event.
+    Cleanup {
+        state: CleanupState,
     },
 }
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]

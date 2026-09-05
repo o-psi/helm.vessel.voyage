@@ -61,6 +61,7 @@ pub const RESERVED: &[&str] = &[
     "log-format",
     "version",
     "managed",
+    "remote-worker",
 ];
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]

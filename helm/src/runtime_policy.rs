@@ -100,6 +100,7 @@ impl RuntimePolicy {
         config.policy_explicit = Default::default();
         let mut resolved = Self::resolve_with_source(&config, workspace, source)?;
         resolved.policy.inherit_profile_freshness(parent);
+        resolved.policy.inherit_execution_authority(parent);
         resolved.policy.check_current()?;
         Ok(resolved)
     }

@@ -7,7 +7,8 @@ reliable workflows that deliver tested value.
 
 - **Helm** is the Rust TUI and agent runtime for local work.
 - **Vessel** is the management plane for remote session management. It currently
-  provides health checks, an authenticated status UI and optional outbound Helm presence.
+  provides health checks, an authenticated status UI, outbound Helm presence, and
+  explicitly enabled dedicated remote-session HTTP operations.
 - **voyage-protocol** holds shared management-plane and attachment protocol types.
 
 - **voyage-storage** supplies native private enrollment storage on Windows, shared
@@ -22,7 +23,8 @@ cargo run -p vessel -- --bind 127.0.0.1:9480
 ```
 
 Helm runs locally. [Authenticated attachment presence](docs/attachment-presence.md)
-connects enrolled Helm machines to Vessel. Remote session management remains planned.
+connects enrolled Helm machines to Vessel. [Dedicated remote sessions](docs/remote-sessions.md)
+add opt-in foreground execution with authenticated list, submit, watch and cancel APIs.
 
 See [Helm's README](helm/README.md) for provider, policy, session, and CLI details.
 [Private managed sessions](docs/local-managed-sessions.md) support local CLI turns,
@@ -53,9 +55,9 @@ Assistant responses use safe, streaming-aware Markdown presentation without chan
 session text. See [Markdown rendering](docs/markdown-rendering.md) for syntax, fallback, and terminal
 safety behavior.
 
-## Planned Vessel session management
+## Broader Vessel session management
 
 The agreed [Vessel-managed session design](docs/vessel-session-management.md) specifies
 `helm attach VESSEL_URL JOIN_KEY`, outbound interactive control, explicit sharing,
-and phased service/approval support. These are planned capabilities, not current
-CLI commands. Delivery is tracked in [#77](https://github.com/o-psi/voyage/issues/77).
+and phased service/approval support. Those broader capabilities remain planned; the current foreground command is
+`helm remote-worker`, scoped to one new dedicated session. Delivery is tracked in [#77](https://github.com/o-psi/voyage/issues/77).

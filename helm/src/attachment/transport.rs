@@ -62,7 +62,76 @@ pub struct Connection {
     task: Option<JoinHandle<()>>,
 }
 
+/// A fresh, read-only observation of one authenticated connection generation.
+/// Holding it also retains enrollment ownership through admitted work cleanup.
+#[derive(Clone)]
+pub struct ConnectionLease {
+    _client: Arc<EnrollmentClient>,
+    context: ConnectionContext,
+    closed: CancellationToken,
+    deadline: Arc<Mutex<Instant>>,
+}
+impl std::fmt::Debug for ConnectionLease {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ConnectionLease")
+            .field("connection_id", &self.context.connection_id)
+            .finish_non_exhaustive()
+    }
+}
+impl ConnectionLease {
+    pub fn context(&self) -> &ConnectionContext {
+        &self.context
+    }
+    pub fn is_active(&self) -> bool {
+        !self.closed.is_cancelled()
+            && self
+                .deadline
+                .lock()
+                .is_ok_and(|deadline| Instant::now() < *deadline)
+    }
+}
+#[derive(Clone)]
+pub struct ConnectionSender {
+    lease: ConnectionLease,
+    outgoing: mpsc::Sender<String>,
+}
+impl ConnectionSender {
+    pub fn lease(&self) -> ConnectionLease {
+        self.lease.clone()
+    }
+    pub fn send(&self, frame: Frame) -> Result<()> {
+        if !self.lease.is_active() {
+            return Err(TransportError::Closed);
+        }
+        validate_outbound(&self.lease.context, &frame)?;
+        let encoded = frame.encode().map_err(|_| TransportError::Invalid)?;
+        self.outgoing
+            .try_send(encoded)
+            .map_err(|error| match error {
+                mpsc::error::TrySendError::Full(_) => {
+                    self.lease.closed.cancel();
+                    TransportError::Busy
+                }
+                mpsc::error::TrySendError::Closed(_) => TransportError::Closed,
+            })
+    }
+}
+
 impl Connection {
+    pub fn lease(&self) -> ConnectionLease {
+        ConnectionLease {
+            _client: self.client.clone(),
+            context: self.context.clone(),
+            closed: self.closed.clone(),
+            deadline: self.deadline.clone(),
+        }
+    }
+    pub fn sender(&self) -> ConnectionSender {
+        ConnectionSender {
+            lease: self.lease(),
+            outgoing: self.outgoing.clone(),
+        }
+    }
     pub fn context(&self) -> &ConnectionContext {
         &self.context
     }
@@ -83,19 +152,9 @@ impl Connection {
     /// Bounded delivery only; success does not establish receipt, persistence or
     /// execution. A disconnected connection never replays this queue.
     pub fn send(&self, frame: Frame) -> Result<()> {
-        if !self.is_active() {
-            return Err(TransportError::Closed);
-        }
-        validate_outbound(&self.context, &frame)?;
-        let encoded = frame.encode().map_err(|_| TransportError::Invalid)?;
-        self.outgoing.try_send(encoded).map_err(|e| match e {
-            mpsc::error::TrySendError::Full(_) => {
-                self.closed.cancel();
-                TransportError::Busy
-            }
-            mpsc::error::TrySendError::Closed(_) => TransportError::Closed,
-        })
+        self.sender().send(frame)
     }
+
     pub async fn detach(&mut self) -> Result<()> {
         self.stop().await;
         Arc::get_mut(&mut self.client)

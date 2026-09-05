@@ -53,6 +53,7 @@ pub struct ManagedSessionOwner {
 }
 struct TurnToken {
     run_id: Uuid,
+    execution_authority: Option<Arc<dyn crate::policy::ExecutionAuthority>>,
     steering_authority: OnceLock<(Arc<dyn SteeringAuthorization>, Arc<dyn RuntimeClock>)>,
     poisoned: AtomicBool,
 }
@@ -60,6 +61,7 @@ impl TurnToken {
     fn new(run_id: Uuid) -> Self {
         Self {
             run_id,
+            execution_authority: None,
             steering_authority: OnceLock::new(),
             poisoned: AtomicBool::new(false),
         }
@@ -156,6 +158,119 @@ impl ManagedSessionOwner {
         })
         .await?
     }
+    /// Observe a dedicated remote projection under this session's existing connection.
+    pub async fn remote_snapshot(
+        &self,
+        binding: super::journal::RemoteBinding,
+        authority: Arc<dyn crate::policy::ExecutionAuthority>,
+    ) -> anyhow::Result<voyage_protocol::stream::Reply> {
+        let shared = self.store.clone();
+        tokio::task::spawn_blocking(move || {
+            let store = shared
+                .lock()
+                .map_err(|_| anyhow::anyhow!("managed owner poisoned"))?;
+            authority.check()?;
+            let result = store.journal.remote_snapshot(&binding, store.session_id)?;
+            authority.check()?;
+            Ok(result)
+        })
+        .await?
+    }
+    pub async fn remote_replay(
+        &self,
+        binding: super::journal::RemoteBinding,
+        after: u64,
+        limit: usize,
+        authority: Arc<dyn crate::policy::ExecutionAuthority>,
+    ) -> anyhow::Result<super::journal::RemoteReplay> {
+        let shared = self.store.clone();
+        tokio::task::spawn_blocking(move || {
+            let store = shared
+                .lock()
+                .map_err(|_| anyhow::anyhow!("managed owner poisoned"))?;
+            authority.check()?;
+            let result = store
+                .journal
+                .remote_replay(&binding, store.session_id, after, limit)?;
+            authority.check()?;
+            Ok(result)
+        })
+        .await?
+    }
+    /// The deadline and authority are sampled after waiting for this owner's connection,
+    /// inside the new-receipt transaction; existing receipts still recheck authority.
+    pub async fn remote_cancel(
+        &self,
+        binding: super::journal::RemoteBinding,
+        command: voyage_protocol::attachment::Command,
+        authority: Arc<dyn crate::policy::ExecutionAuthority>,
+    ) -> anyhow::Result<super::journal::RemoteCancelReceipt> {
+        self.remote_cancel_clock(binding, command, authority, Arc::new(SystemClock))
+            .await
+    }
+    async fn remote_cancel_clock(
+        &self,
+        binding: super::journal::RemoteBinding,
+        command: voyage_protocol::attachment::Command,
+        authority: Arc<dyn crate::policy::ExecutionAuthority>,
+        clock: Arc<dyn RuntimeClock>,
+    ) -> anyhow::Result<super::journal::RemoteCancelReceipt> {
+        anyhow::ensure!(
+            matches!(&command.operation, voyage_protocol::attachment::Operation::Cancel {session_id,..} if *session_id == self.session_id),
+            "managed owner session mismatch"
+        );
+        let shared = self.store.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut store = shared
+                .lock()
+                .map_err(|_| anyhow::anyhow!("managed owner poisoned"))?;
+            authority.check()?;
+            store
+                .journal
+                .remote_cancel_with_clock(&binding, &command, || {
+                    authority.check()?;
+                    clock.now_ms()
+                })
+        })
+        .await?
+    }
+    pub async fn attest_remote_cleanup(
+        &self,
+        binding: super::journal::RemoteBinding,
+        run_id: Uuid,
+        actor: super::local_actor::LocalActor,
+    ) -> anyhow::Result<()> {
+        let shared = self.store.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut store = shared
+                .lock()
+                .map_err(|_| anyhow::anyhow!("managed owner poisoned"))?;
+            anyhow::ensure!(store.turn.upgrade().is_none(), "managed turn still owned");
+            let Store { journal, guard, .. } = &mut *store;
+            journal.attest_remote_cleanup(guard, &binding, run_id, &actor)
+        })
+        .await?
+    }
+    pub async fn reconcile_remote_tools(
+        &self,
+        binding: super::journal::RemoteBinding,
+        request: super::journal::LocalReconcileRequest,
+    ) -> anyhow::Result<super::journal::LocalReconcileOutcome> {
+        anyhow::ensure!(
+            request.session_id == self.session_id,
+            "managed owner session mismatch"
+        );
+        let shared = self.store.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut store = shared
+                .lock()
+                .map_err(|_| anyhow::anyhow!("managed owner poisoned"))?;
+            anyhow::ensure!(store.turn.upgrade().is_none(), "managed turn still owned");
+            let Store { journal, guard, .. } = &mut *store;
+            journal.reconcile_remote_tools(guard, &request, &binding)
+        })
+        .await?
+    }
     /// New admission cannot overlap an earlier turn's callbacks or cleanup.
     /// Identical retries remain observations and never allocate another executor.
     pub async fn admit(&self, request: TurnAdmission) -> anyhow::Result<Admission> {
@@ -179,6 +294,25 @@ impl ManagedSessionOwner {
         clock: Arc<dyn RuntimeClock>,
         before_admission: impl FnOnce() -> anyhow::Result<()> + Send + 'static,
     ) -> anyhow::Result<Admission> {
+        self.admit_authorized_after(request, clock, before_admission, None)
+            .await
+    }
+    /// Foreground authority is fresh even for observation of an identical receipt.
+    pub async fn admit_authorized(
+        &self,
+        request: TurnAdmission,
+        authority: Arc<dyn crate::policy::ExecutionAuthority>,
+    ) -> anyhow::Result<Admission> {
+        self.admit_authorized_after(request, Arc::new(SystemClock), || Ok(()), Some(authority))
+            .await
+    }
+    async fn admit_authorized_after(
+        &self,
+        request: TurnAdmission,
+        clock: Arc<dyn RuntimeClock>,
+        before_admission: impl FnOnce() -> anyhow::Result<()> + Send + 'static,
+        authority: Option<Arc<dyn crate::policy::ExecutionAuthority>>,
+    ) -> anyhow::Result<Admission> {
         anyhow::ensure!(
             request.session_id == self.session_id,
             "managed owner belongs to another session"
@@ -188,6 +322,9 @@ impl ManagedSessionOwner {
             let mut store = shared
                 .lock()
                 .map_err(|_| anyhow::anyhow!("managed owner poisoned"))?;
+            if let Some(authority) = &authority {
+                authority.check()?;
+            }
             anyhow::ensure!(
                 request.session_id == store.session_id,
                 "managed owner session mismatch"
@@ -203,12 +340,19 @@ impl ManagedSessionOwner {
             let session = store.journal.load_session(store.session_id)?.session;
             let workspace = session.workspace.canonicalize()?;
             let Store { journal, guard, .. } = &mut *store;
-            let admission = journal.admit_turn_with_clock(guard, &request, || clock.now_ms())?;
+            let admission = journal.admit_turn_with_clock(guard, &request, || {
+                if let Some(authority) = &authority {
+                    authority.check()?;
+                }
+                clock.now_ms()
+            })?;
             if admission.duplicate {
                 return Ok(Admission::Existing(admission.run));
             }
             let run_id = admission.run.id;
-            let token = Arc::new(TurnToken::new(run_id));
+            let mut token = TurnToken::new(run_id);
+            token.execution_authority = authority;
+            let token = Arc::new(token);
             let (steering_sender, steering_receiver) =
                 crate::agent::steering_channel(super::journal::MAX_PENDING_STEERING);
             store.run_id = run_id;
@@ -293,6 +437,18 @@ impl ManagedRunCheckpoint {
     }
 }
 impl RunOwner {
+    pub async fn configure_remote_redaction(
+        &self,
+        redactor: Arc<crate::tools::Redactor>,
+    ) -> Result<(), CheckpointError> {
+        self.storage(move |store| {
+            store
+                .journal
+                .configure_remote_redaction(&store.guard, store.run_id, redactor)
+        })
+        .await
+    }
+
     /// Convenience entrypoint; duplicates remain readable without execution ownership.
     pub async fn admit(directory: PathBuf, request: TurnAdmission) -> anyhow::Result<Admission> {
         Self::admit_with_clock(directory, request, Arc::new(SystemClock)).await
@@ -411,8 +567,14 @@ impl RunOwner {
             Err(CheckpointError.into())
         } else {
             async {
-                self.storage(|store| store.journal.mark_running(&store.guard, store.run_id))
-                    .await?;
+                let authority = self.token.execution_authority.clone();
+                self.storage(move |store| {
+                    if let Some(authority) = authority {
+                        authority.check()?;
+                    }
+                    store.journal.mark_running(&store.guard, store.run_id)
+                })
+                .await?;
                 let session = self
                     .storage(|store| {
                         let run = store.journal.run(store.run_id)?;
@@ -505,6 +667,9 @@ impl RunCheckpoint for ManagedRunCheckpoint {
         let usage = usage.clone();
         let token = self.token.clone();
         self.storage(move |store| {
+            if let Some(authority) = &token.execution_authority {
+                authority.check()?;
+            }
             steering::authorize(store, &token)?;
             store.journal.checkpoint_canonical_with_clock(
                 &store.guard,
@@ -527,6 +692,9 @@ impl RunCheckpoint for ManagedRunCheckpoint {
     ) -> Result<(), CheckpointError> {
         let token = self.token.clone();
         self.storage(move |store| {
+            if let Some(authority) = &token.execution_authority {
+                authority.check()?;
+            }
             steering::authorize(store, &token)?;
             anyhow::ensure!(
                 store.journal.run(store.run_id)?.state == RunState::Running,
@@ -540,6 +708,9 @@ impl RunCheckpoint for ManagedRunCheckpoint {
             let usage = usage.clone();
             let token = self.token.clone();
             self.storage(move |store| {
+                if let Some(authority) = &token.execution_authority {
+                    authority.check()?;
+                }
                 steering::authorize(store, &token)?;
                 store
                     .journal

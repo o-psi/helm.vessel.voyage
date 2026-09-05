@@ -580,6 +580,7 @@ impl Agent {
             let mut request = crate::titles::request(messages, model, &self.context.redactor)?;
             let limit = self.context_limit(&request.model);
             crate::context::preflight(&mut request, limit).ok()?;
+            self.context.policy.check_execution_authority().ok()?;
             let mut stream = self.provider.stream(request).await.ok()?;
             let mut text_bytes = 0_usize;
             while let Some(event) = stream.next().await {
@@ -1041,6 +1042,12 @@ impl Agent {
         self.sink.emit(AgentEvent::ContextBudget(report)).await;
         let mut delay = self.retry.initial_delay;
         for attempt in 1..=self.retry.max_attempts.max(1) {
+            self.context
+                .policy
+                .check_execution_authority()
+                .map_err(|_| {
+                    AgentError::Policy("foreground execution authority unavailable".into())
+                })?;
             let stream_result = tokio::select! {biased; _ = cancel.cancelled()=>{self.sink.emit(AgentEvent::Cancelled).await;return Err(AgentError::Cancelled);}, value=self.provider.stream(request.clone())=>value};
             let mut stream = match stream_result {
                 Ok(value) => value,

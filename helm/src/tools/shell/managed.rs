@@ -271,6 +271,12 @@ mod linux {
                 }
             });
         }
+        if ctx.policy.check_execution_authority().is_err() {
+            job.observed.store(true, Ordering::Release);
+            return Err(ToolError::Denied(
+                "foreground execution authority unavailable".into(),
+            ));
+        }
         let child = cmd.spawn();
         let mut child = match child {
             Ok(child) => child,
