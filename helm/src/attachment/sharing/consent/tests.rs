@@ -536,3 +536,101 @@ fn independent_process_locking_and_crash_recovery_keep_exact_intent() {
         );
     }
 }
+
+#[test]
+fn historical_receipt_does_not_expose_current_policy_during_pending_publication() {
+    let (_temp, store, change) = setup();
+    let receipt = commit(&store, &change);
+    let mut next = change.clone();
+    next.operation_id = Uuid::new_v4();
+    next.expected_revision = 1;
+    next.destination = None;
+    next.settings = SharingSettings::new(Disclosure::None, false);
+    let preview = store.preview_local(&next).unwrap();
+    assert_eq!(
+        store
+            .commit_with(&next, &preview.confirmation_digest, |boundary| {
+                if boundary == Boundary::BeforePublish {
+                    Err(ConsentError::Storage)
+                } else {
+                    Ok(())
+                }
+            })
+            .unwrap_err(),
+        ConsentError::Storage
+    );
+    let historical = store
+        .commit_local(&change, &receipt.confirmation_digest)
+        .unwrap();
+    assert!(historical.duplicate);
+    assert_eq!(historical.snapshot, receipt.snapshot);
+    assert_eq!(
+        store.inspect_local(change.session_id).unwrap_err(),
+        ConsentError::Pending
+    );
+    assert_eq!(
+        store.list_local(None, 100).unwrap_err(),
+        ConsentError::Pending
+    );
+    assert_eq!(
+        store.audit_local(0, 100).unwrap_err(),
+        ConsentError::Pending
+    );
+    store
+        .commit_local(&next, &preview.confirmation_digest)
+        .unwrap();
+    assert_eq!(
+        store
+            .inspect_local(change.session_id)
+            .unwrap()
+            .unwrap()
+            .settings
+            .disclosure,
+        Disclosure::None
+    );
+}
+
+#[test]
+fn exact_candidate_cannot_repair_partial_mismatched_or_wrong_sequence_witness() {
+    for variant in 0..3 {
+        let (temp, store, change) = setup();
+        let preview = store.preview_local(&change).unwrap();
+        assert!(
+            store
+                .commit_with(&change, &preview.confirmation_digest, |boundary| {
+                    if boundary == Boundary::BeforePublish {
+                        Err(ConsentError::Storage)
+                    } else {
+                        Ok(())
+                    }
+                })
+                .is_err()
+        );
+        let root = temp.path().join("consent");
+        match variant {
+            0 => std::fs::write(root.join(witness_name(1)), b"{").unwrap(),
+            1 => std::fs::write(
+                root.join(witness_name(1)),
+                encoded(&Witness {
+                    version: VERSION,
+                    sequence: 1,
+                    record_hash: ZERO_HASH.into(),
+                })
+                .unwrap(),
+            )
+            .unwrap(),
+            _ => std::fs::rename(root.join(witness_name(1)), root.join(witness_name(2))).unwrap(),
+        }
+        assert_eq!(
+            store.inspect_local(change.session_id).unwrap_err(),
+            ConsentError::Evidence
+        );
+        assert_eq!(
+            store
+                .commit_local(&change, &preview.confirmation_digest)
+                .unwrap_err(),
+            ConsentError::Evidence
+        );
+        assert!(!root.join(record_name(1)).exists());
+    }
+}
