@@ -1,11 +1,11 @@
-# Authenticated attachment socket libraries (partial #9)
+# Authenticated attachment transport (partial #9)
 
 These libraries connect Helm outbound to Vessel using the version-2
 [event/replay codec](attachment-events.md) and existing single-owner enrollment.
 They are dependencies for the full [production contract](attachment-production-contract.md).
-Neither production binary mounts the attachment route or exposes operator session
-execution through these libraries. Enrollment HTTP and its existing administration
-remain separate. No inbound Helm task port, provider credentials, raw Session,
+The production binaries now expose [foreground presence](attachment-presence.md)
+when enrollment is explicitly configured. Operator session execution remains
+unavailable. Enrollment HTTP and its existing administration remain separate. No inbound Helm task port, provider credentials, raw Session,
 runtime system instructions or human PTY input are introduced.
 
 ## APIs and authority boundaries
@@ -13,6 +13,10 @@ runtime system instructions or human PTY input are introduced.
 `vessel::attachment_transport::AttachmentApi::new(enrollment, supported)` returns
 an API and bounded receiver of `AuthenticatedFrame` observations. `router()`
 constructs only `/v2/attachment`; a caller must explicitly mount that router.
+`AttachmentApi::presence(enrollment)` closes the application receiver and offers
+no event features. The Vessel binary uses this presence-only constructor.
+`connections()` returns bounded metadata for an already-authenticated operator;
+`shutdown()` closes admission and cancels pending and established sockets.
 `send(machine_id, frame)` validates direction, connection/machine/owner identities,
 current enrollment and selected features before enqueueing. The socket checks
 current enrollment and generation again before dequeue delivery. Only Command and
@@ -101,9 +105,10 @@ every production slow-peer network condition.
 Real client/server fixtures compile on Unix and Windows with the private enrollment
 storage implementation. Native platform results must be observed on this integrated
 branch before claiming coverage.
-Protocol and library tests do not prove proxy/TLS deployment, production routing,
-operator access, local execution coordination, sharing/approval dispatch, complete
-replay recovery, frontend behavior or service lifecycle. Those acceptance criteria
+The actual-binary presence fixture covers configured production routing and
+operator metadata access. These tests do not prove proxy/TLS deployment, local
+execution coordination, sharing/approval dispatch, complete replay recovery,
+interactive session frontend behavior or automatic service lifecycle. Those acceptance criteria
 remain open under #9 and its related production-contract issues.
 
 

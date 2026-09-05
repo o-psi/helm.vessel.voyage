@@ -122,16 +122,18 @@ input and offline detach with preserved session data. Unix additionally interrup
 a request after the server commits; native Windows cancellation needs separate
 console-control validation. Client unit tests verify inspection does not create
 missing storage or rewrite existing state and rejects unsafe/missing locks.
-Both CI workflow families run the CLI fixture, including native portability jobs.
+Both CI workflow families run the CLI fixture on Linux. Native portability jobs
+are not required development gates.
 The dedicated `tests/system/attachment_secret_prompt.py` uses actual Unix PTYs or
 an allocated native Windows console with the Helm binary. It checks nondefault
 mode restoration, no echo, input bounds/editing, cancellation, empty input queues,
 nonterminal refusal and real Vessel enrollment/denial/lost-response resume. Unix
 also stops terminal output and verifies cancellation restores modes and clears
 queued secret input even while the marker write is blocked. Windows
-coverage must come from its native CI job; Linux PTY results do not establish it.
+coverage requires a separate native run; Linux PTY results do not establish it.
 
-These commands do not implement the production attachment socket, local coordinator,
-operator session UI, approval dispatch or services. Those remain required by
+The explicit [foreground presence command](attachment-presence.md) maintains the
+authenticated production socket without dispatching work. The local coordinator,
+operator session UI, approval dispatch and services remain required by
 [the full attachment contract](attachment-production-contract.md), and #10 remains
 open beyond this lifecycle interface.

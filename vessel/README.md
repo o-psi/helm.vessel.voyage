@@ -1,7 +1,8 @@
 # Vessel
 
 Vessel is Voyage's management plane. It currently provides health checks and an
-authenticated status UI. Remote session management is planned.
+authenticated status UI, with optional authenticated outbound Helm presence.
+Remote session management is planned.
 
 ## Run
 
@@ -20,13 +21,20 @@ Status endpoints:
 | --- | --- |
 | `/health` | Process liveness |
 | `/ready` | Database connection check |
-| `/metrics` | `voyage_connectivity_enabled 0` |
+| `/metrics` | Whether attachment presence is configured |
 | `/v1/diagnostics` | Authenticated service status |
 | `/ui` | Authenticated status page |
 
 UI/diagnostics return 503 without a configured operator token and 401 for missing or
 invalid authentication when enabled. Request correlation and `--log-format json`
 are supported, as are `completions` and `manpage`.
+
+## Attachment presence
+
+Configure enrollment and run an explicit foreground Helm connection using the
+[attachment presence guide](../docs/attachment-presence.md). Operator diagnostics
+show bounded current connection metadata. Presence does not grant execution or
+share session content.
 
 ## Planned session management
 
