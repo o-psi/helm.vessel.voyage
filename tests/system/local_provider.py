@@ -73,6 +73,10 @@ def main():
         try:
             assert len(json.loads(run('local-provider','presets').stdout)['presets'])==4
             assert Handler.requests==[]
+            # A non-writable/unsupported publication directory must fail before HTTP.
+            before=len(Handler.requests)
+            run('local-provider','setup','custom','--endpoint',base,'--output','/proc/helm-fixture-publication.toml',ok=False)
+            assert len(Handler.requests)==before
             for preset in ['ollama','lm-studio','vllm','llama-cpp','custom']:
                 for transport in ['chat','responses']:
                     cfg=root/f'{preset}-{transport}.toml'

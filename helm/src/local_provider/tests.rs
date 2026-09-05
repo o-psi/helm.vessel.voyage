@@ -55,6 +55,7 @@ fn endpoint_validation_rejects_embedded_secrets_and_nonloopback_cleartext() {
         assert!(validate_endpoint(endpoint).is_ok(), "{endpoint}");
     }
 }
+#[cfg(target_os = "linux")]
 #[test]
 fn save_is_create_only_and_roundtrips_without_secrets() {
     let dir = tempfile::tempdir().unwrap();
@@ -171,11 +172,17 @@ fn publication_retains_reviewed_bytes_despite_staging_substitution() {
         save_observed(&config, &output, || {
             for entry in std::fs::read_dir(dir.path())? {
                 let path = entry?.path();
-                if replace { std::fs::remove_file(&path)?; }
+                if replace {
+                    std::fs::remove_file(&path)?;
+                }
                 std::fs::write(path, b"base_url = 'https://unvalidated.example/v1'\n")?;
             }
             Ok(())
-        }).unwrap();
-        assert_eq!(std::fs::read(&output).unwrap(), toml::to_string_pretty(&config).unwrap().as_bytes());
+        })
+        .unwrap();
+        assert_eq!(
+            std::fs::read(&output).unwrap(),
+            toml::to_string_pretty(&config).unwrap().as_bytes()
+        );
     }
 }

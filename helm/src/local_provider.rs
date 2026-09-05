@@ -4,7 +4,7 @@ use anyhow::{Result, bail};
 use clap::{Args, Subcommand, ValueEnum};
 use serde::Serialize;
 use serde_json::{Value, json};
-use std::{io::Write, path::PathBuf, time::Duration};
+use std::{path::PathBuf, time::Duration};
 
 const MAX_BODY: usize = 1024 * 1024;
 #[derive(Clone, Copy, Debug, ValueEnum, Serialize)]
@@ -300,22 +300,33 @@ pub async fn probe(args: &EndpointArgs) -> Result<(Config, Report)> {
         .await
         .map_err(|_| anyhow::anyhow!("connection timeout: endpoint probe deadline elapsed"))?
 }
-fn save(config: &Config, output: &std::path::Path) -> Result<()> {
-    save_observed(config, output, || Ok(()))
-}
-fn save_observed(config: &Config, output: &std::path::Path, observe: impl FnOnce() -> Result<()>) -> Result<()> {
+fn publication(output: &std::path::Path) -> Result<crate::file_publication::Publication> {
     let parent = output
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
         .unwrap_or(std::path::Path::new("."));
-    let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
-    temporary.write_all(toml::to_string_pretty(config)?.as_bytes())?;
-    temporary.as_file().sync_all()?;
-    observe()?;
-    temporary.persist_noclobber(output).map_err(|_| anyhow::anyhow!("config publication failed; inspect destination before retrying (existing files are never replaced)"))?;
-    #[cfg(unix)]
-    std::fs::File::open(parent)?.sync_all()?;
-    Ok(())
+    let name = output
+        .file_name()
+        .ok_or_else(|| anyhow::anyhow!("config destination needs a filename"))?;
+    let directory = cap_std::fs::Dir::open_ambient_dir(parent, cap_std::ambient_authority())?;
+    crate::file_publication::Publication::prepare(directory, std::path::Path::new(name))
+}
+#[cfg(all(test, target_os = "linux"))]
+fn save(config: &Config, output: &std::path::Path) -> Result<()> {
+    publication(output)?.publish(toml::to_string_pretty(config)?.as_bytes())
+}
+#[cfg(all(test, target_os = "linux"))]
+fn save_observed(
+    config: &Config,
+    output: &std::path::Path,
+    mut observe: impl FnMut() -> Result<()>,
+) -> Result<()> {
+    publication(output)?.publish_observed(toml::to_string_pretty(config)?.as_bytes(), |published| {
+        if !published {
+            observe()?;
+        }
+        Ok(())
+    })
 }
 pub async fn run(command: Command) -> Result<()> {
     match command {
@@ -356,8 +367,9 @@ pub async fn run(command: Command) -> Result<()> {
             if !key.is_empty() && output.to_string_lossy().contains(&key) {
                 bail!("credential-bearing configuration metadata is not allowed");
             }
+            let publication = publication(&output)?;
             let (config, report) = probe(&endpoint).await?;
-            save(&config, &output)?;
+            publication.publish(toml::to_string_pretty(&config)?.as_bytes())?;
             println!(
                 "{}",
                 serde_json::to_string_pretty(&json!({"saved":output,"provider":report}))?

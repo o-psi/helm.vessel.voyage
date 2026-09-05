@@ -14,7 +14,14 @@ helm --config ./helm-local.toml run "Explain the files in this directory"
 ```
 
 The output config is created only after validation. An existing destination,
-including a symlink, is never replaced. If output is lost or publication reports
+including a symlink, is never replaced. Setup publication currently requires Linux
+and a filesystem supporting anonymous `O_TMPFILE` staging plus `/proc/self/fd`.
+The destination directory and anonymous file are retained before probing; no named
+temporary file can be substituted or edited before publication. If the directory
+is renamed meanwhile, publication remains in that retained directory. Unsupported
+publication fails before endpoint requests; there is no weaker staging fallback.
+Presets, probe, scan, existing configs and normal inference remain usable on other
+platforms. macOS and Windows publication adapters are not implemented. If output is lost or publication reports
 an error, inspect the destination before retrying. Setup creates an ordinary
 Helm config with default local policy; review the file before using it for work.
 Existing configs are not edited or imported implicitly.
