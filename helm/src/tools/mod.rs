@@ -261,7 +261,13 @@ impl ToolRegistry {
             .execute(arguments, context)
             .await;
         result
-            .map(|output| context.redactor.redact(output))
+            .and_then(|output| {
+                if name == "questions" {
+                    questions::redact_result(&output, &context.redactor)
+                } else {
+                    Ok(context.redactor.redact(output))
+                }
+            })
             .map_err(|error| error.redacted(&context.redactor))
     }
 }
