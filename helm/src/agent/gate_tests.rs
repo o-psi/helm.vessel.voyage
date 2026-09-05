@@ -1211,6 +1211,9 @@ async fn owned_shutdown_does_not_claim_blocked_terminal_persistence_finished() {
         crate::subagent::AgentStatus::Running
     );
     drop(guard);
+    // The artificial deadline above proves blocked persistence is inconclusive.
+    // Once released, allow the production budget for actual durable publication.
+    let agent = agent.with_completion_deadlines(Duration::from_secs(1), Duration::from_secs(5));
     let report = agent
         .completion_gate
         .as_ref()
