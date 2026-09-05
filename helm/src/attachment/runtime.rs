@@ -73,6 +73,14 @@ impl ManagedSessionOwner {
     /// New admission cannot overlap an earlier turn's callbacks or cleanup.
     /// Identical retries remain observations and never allocate another executor.
     pub async fn admit(&self, request: TurnAdmission, now_ms: i64) -> anyhow::Result<Admission> {
+        self.admit_after(request, now_ms, || Ok(())).await
+    }
+    async fn admit_after(
+        &self,
+        request: TurnAdmission,
+        now_ms: i64,
+        before_admission: impl FnOnce() -> anyhow::Result<()> + Send + 'static,
+    ) -> anyhow::Result<Admission> {
         anyhow::ensure!(
             request.session_id == self.session_id,
             "managed owner belongs to another session"
@@ -93,6 +101,7 @@ impl ManagedSessionOwner {
                 store.turn.upgrade().is_none(),
                 "managed turn busy; callbacks or cleanup retain ownership"
             );
+            before_admission()?;
             let session = store.journal.load_session(store.session_id)?.session;
             let workspace = session.workspace.canonicalize()?;
             let Store { journal, guard, .. } = &mut *store;

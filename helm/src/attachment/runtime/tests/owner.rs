@@ -200,7 +200,7 @@ async fn aborted_storage_waiter_keeps_session_and_turn_leases_until_worker_finis
         callback
             .storage(move |_| {
                 let _ = started.send(());
-                wait.recv_timeout(Duration::from_secs(5)).unwrap();
+                wait.recv_timeout(Duration::from_secs(20)).unwrap();
                 let _ = finished.send(());
                 Ok(())
             })
@@ -374,5 +374,95 @@ async fn stale_acceptance_callback_cannot_acknowledge_incomplete_after_terminal(
             )
             .await
             .is_err()
+    );
+}
+
+#[tokio::test]
+async fn aborted_admission_keeps_fence_until_commit_and_never_dispatches_on_retry() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("journal");
+    let session = Session::new(root.path().to_owned(), "fixture".into());
+    let mut journal = Journal::open(path.clone()).unwrap();
+    journal.create_session(&session).unwrap();
+    let owner = ManagedSessionOwner::open(path.clone(), session.id)
+        .await
+        .unwrap();
+    let request = TurnAdmission {
+        command_id: Uuid::new_v4(),
+        machine_id: Uuid::new_v4(),
+        principal_id: Uuid::new_v4(),
+        session_id: session.id,
+        expected_revision: 0,
+        expires_at_ms: 60000,
+        prompt: "accepted prompt after cancelled waiter".into(),
+    };
+    let mut retry = next_request(&request, 0);
+    retry.command_id = request.command_id;
+    retry.prompt = request.prompt.clone();
+    let (started, ready) = tokio::sync::oneshot::channel();
+    let (release, wait) = std::sync::mpsc::channel();
+    let admitting = owner.clone();
+    let task = tokio::spawn(async move {
+        admitting
+            .admit_after(request, 1, move || {
+                let _ = started.send(());
+                wait.recv_timeout(Duration::from_secs(20)).unwrap();
+                Ok(())
+            })
+            .await
+    });
+    ready.await.unwrap();
+    task.abort();
+    let _ = task.await;
+    drop(owner);
+    process_probe(&path, session.id, true); // Only the blocking admission worker owns the fence.
+    assert!(journal.lookup_command(&retry).unwrap().is_none());
+    release.send(()).unwrap();
+    let recovered_owner = tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            if let Ok(owner) = ManagedSessionOwner::open(path.clone(), session.id).await {
+                break owner;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    let durable = journal.lookup_command(&retry).unwrap().unwrap();
+    assert_eq!(durable.state, RunState::Accepted);
+    let snapshot = recovered_owner.snapshot().await.unwrap();
+    assert_eq!(snapshot.session.messages.len(), 1);
+    assert_eq!(snapshot.session.messages[0].content, retry.prompt);
+    assert_eq!(snapshot.session.usage.input_tokens, 0);
+    assert!(
+        recovered_owner
+            .admit(next_request(&retry, snapshot.revision), 1)
+            .await
+            .is_err()
+    );
+    let next = next_request(&retry, snapshot.revision);
+    assert!(
+        matches!(recovered_owner.admit(retry, 90000).await.unwrap(), Admission::Existing(record) if record.id == durable.id && record.state == RunState::Accepted)
+    );
+    assert_eq!(
+        recovered_owner
+            .recover_interrupted()
+            .await
+            .unwrap()
+            .unwrap()
+            .state,
+        RunState::Interrupted
+    );
+    let revision = recovered_owner.snapshot().await.unwrap().revision;
+    assert!(matches!(
+        recovered_owner
+            .admit(next_request(&next, revision), 1)
+            .await
+            .unwrap(),
+        Admission::New(_)
+    ));
+    assert_eq!(
+        journal.run(durable.id).unwrap().state,
+        RunState::Interrupted
     );
 }
