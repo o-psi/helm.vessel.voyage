@@ -274,7 +274,22 @@ async fn real_socket_proof_replay_replacement_queue_and_revocation() {
         .unwrap(),
         Frame::Lease { .. }
     ));
-    f.store.revoke(f.machine, 1, Uuid::new_v4(), now()).unwrap();
+    // The live connection independently checks enrollment through SQLite. A
+    // fail-fast Busy is not a rejected revocation; retry the same operation,
+    // yielding to that connection, while keeping every other error a failure.
+    let revocation = Uuid::new_v4();
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+    loop {
+        match f.store.revoke(f.machine, 1, revocation, now()) {
+            Ok(_) => break,
+            Err(crate::enrollment::EnrollmentError::Busy)
+                if tokio::time::Instant::now() < deadline =>
+            {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+            Err(error) => panic!("revocation must commit within its fixture deadline: {error}"),
+        }
+    }
     closed(&mut two).await;
     assert!(!f.api.is_current(f.machine, second).await);
 }
