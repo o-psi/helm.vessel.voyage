@@ -42,6 +42,9 @@ impl PromptControl {
             return Err(CliError::Cancelled);
         }
         state.terminal = Some(native::Terminal::enter().map_err(|_| CliError::Input)?);
+        // Terminal output can stall. Never hold the restoration lock while
+        // writing the fixed marker: signal cancellation must still complete.
+        drop(state);
         io::stderr()
             .write_all(b"Invitation key (hidden): ")
             .and_then(|_| io::stderr().flush())
@@ -100,7 +103,9 @@ pub(super) async fn read(control: PromptControl) -> Result<Secret, CliError> {
             }
         })();
         control.finish(false)?;
-        let _ = io::stderr().write_all(b"\n");
+        if result.is_ok() {
+            let _ = io::stderr().write_all(b"\n");
+        }
         result
     })
     .await
@@ -128,10 +133,13 @@ mod native {
             };
             let mut raw = terminal.saved;
             unsafe { libc::cfmakeraw(&mut raw) };
-            if unsafe { libc::tcsetattr(0, libc::TCSAFLUSH, &raw) } != 0 {
+            if unsafe { libc::tcsetattr(0, libc::TCSANOW, &raw) } != 0 {
                 return Err(io::Error::last_os_error());
             }
             terminal.active = true;
+            if unsafe { libc::tcflush(0, libc::TCIFLUSH) } != 0 {
+                return Err(io::Error::last_os_error());
+            }
             Ok(terminal)
         }
         pub fn read(&mut self) -> io::Result<Option<(u8, u16)>> {
@@ -182,7 +190,10 @@ mod native {
         }
         pub fn restore(&mut self) -> io::Result<()> {
             if self.active {
-                if unsafe { libc::tcsetattr(0, libc::TCSAFLUSH, &self.saved) } != 0 {
+                // Do not wait for output to drain: a stopped/full terminal must
+                // not prevent cancellation from restoring the saved input mode.
+                let _ = unsafe { libc::tcflush(0, libc::TCIFLUSH) };
+                if unsafe { libc::tcsetattr(0, libc::TCSANOW, &self.saved) } != 0 {
                     return Err(io::Error::last_os_error());
                 }
                 self.active = false;
@@ -287,10 +298,11 @@ mod native {
             let deadline = Instant::now() + Duration::from_millis(250);
             loop {
                 self.flush()?;
-                if unsafe { WaitForSingleObject(self.handle(), 50) } != WAIT_OBJECT_0
-                    || Instant::now() >= deadline
-                {
-                    return Ok(());
+                match unsafe { WaitForSingleObject(self.handle(), 50) } {
+                    WAIT_TIMEOUT => return Ok(()),
+                    WAIT_OBJECT_0 if Instant::now() >= deadline => return self.flush(),
+                    WAIT_OBJECT_0 => (),
+                    _ => return Err(io::Error::last_os_error()),
                 }
             }
         }

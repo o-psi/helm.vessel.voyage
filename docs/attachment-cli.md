@@ -46,6 +46,8 @@ closed. Escape, Ctrl-C and Ctrl-D cancel; the prompt times out after 30 seconds.
 Unix SIGINT/SIGTERM/SIGHUP and Windows Ctrl-Break also cancel. The reader serializes
 mode entry, native reads and cancellation, discards queued input before restoring
 the exact saved terminal mode, and finishes restoration before returning/exiting.
+Mode changes do not wait for terminal output to drain; cancellation diagnostics
+are a bounded best effort so stopped terminal output cannot trap cancellation.
 A bounded quiet drain catches queued paste tails, not keystrokes arriving after the
 prompt has returned. No program can restore a destroyed terminal or run cleanup
 after forced process termination (for example SIGKILL or TerminateProcess).
@@ -116,7 +118,9 @@ Both CI workflow families run the CLI fixture, including native portability jobs
 The dedicated `tests/system/attachment_secret_prompt.py` uses actual Unix PTYs or
 an allocated native Windows console with the Helm binary. It checks nondefault
 mode restoration, no echo, input bounds/editing, cancellation, empty input queues,
-nonterminal refusal and real Vessel enrollment/denial/lost-response resume. Windows
+nonterminal refusal and real Vessel enrollment/denial/lost-response resume. Unix
+also stops terminal output and verifies cancellation restores modes and clears
+queued secret input even while the marker write is blocked. Windows
 coverage must come from its native CI job; Linux PTY results do not establish it.
 
 These commands do not implement the production attachment socket, local coordinator,

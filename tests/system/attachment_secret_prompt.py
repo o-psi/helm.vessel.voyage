@@ -25,7 +25,7 @@ def unix_case(args, data, expected, signal_number=None):
         assert not termios.tcgetattr(slave)[3]&termios.ECHO
         if data:os.write(master,data)
         if signal_number:proc.send_signal(signal_number)
-        proc.wait(timeout=40 if not data else 8)
+        proc.wait(timeout=40 if not data or b'\r' in data or b'\n' in data else 8)
         while select.select([master],[],[],.05)[0]:transcript.extend(os.read(master,65536))
         assert proc.returncode==expected, f'unexpected exit {proc.returncode}; expected {expected}'
         assert CANARY not in transcript and b'PromptSecret' not in transcript, 'secret echoed'
@@ -39,6 +39,40 @@ def unix_case(args, data, expected, signal_number=None):
     finally:
         if proc.poll() is None:proc.kill();proc.wait()
         os.close(master);os.close(slave)
+
+def unix_stalled_output():
+    import pty, select, termios, signal
+    master,slave=pty.openpty()
+    before=termios.tcgetattr(slave);before[3]&=~termios.ECHOK
+    termios.tcsetattr(slave,termios.TCSANOW,before)
+    # The marker write blocks in the kernel. Cancellation must restore modes
+    # without acquiring an output lock or waiting for queued output to drain.
+    termios.tcflow(slave,termios.TCOOFF)
+    proc=None
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            directory=pathlib.Path(tmp)/'identity'
+            proc=subprocess.Popen([str(HELM),'attachment','--directory',str(directory),'--origin','http://127.0.0.1:1',
+                '--allow-insecure-loopback','enroll','--invitation-id',str(uuid.uuid4())],stdin=slave,stdout=slave,stderr=slave)
+            until=time.monotonic()+5
+            while termios.tcgetattr(slave)[3]&termios.ECHO:
+                assert proc.poll() is None and time.monotonic()<until, 'stalled prompt did not enter hidden mode'
+                time.sleep(.01)
+            os.write(master,CANARY)
+            proc.send_signal(signal.SIGINT);proc.wait(timeout=3)
+            assert proc.returncode==130 and not directory.exists()
+            assert termios.tcgetattr(slave)==before, 'stalled-output cancellation did not restore prior mode'
+            probe=termios.tcgetattr(slave);probe[3]&=~termios.ICANON;probe[6][termios.VMIN]=0;probe[6][termios.VTIME]=0
+            termios.tcsetattr(slave,termios.TCSANOW,probe)
+            assert os.read(slave,65536)==b'', 'stalled-output cancellation left queued secret'
+            termios.tcsetattr(slave,termios.TCSANOW,before)
+            termios.tcflow(slave,termios.TCOON)
+            output=bytearray()
+            while select.select([master],[],[],.05)[0]:output.extend(os.read(master,65536))
+            assert CANARY not in output and b'PromptSecret' not in output, 'stalled output echoed secret'
+    finally:
+        if proc is not None and proc.poll() is None:proc.kill();proc.wait()
+        termios.tcflow(slave,termios.TCOON);os.close(master);os.close(slave)
 
 def windows_case(args, data, expected, signal_number=None):
     # Allocate a real native console even on a redirected CI runner. Child uses
@@ -99,7 +133,7 @@ def windows_case(args, data, expected, signal_number=None):
         assert k.WriteConsoleInputW(incoming,records,len(records),c.byref(count)) and count.value==len(records)
         if signal_number=='break':
             assert k.GenerateConsoleCtrlEvent(1,proc.pid), 'console cancellation event failed'
-        proc.wait(timeout=40 if not data else 15)
+        proc.wait(timeout=40 if not data or b'\r' in data or b'\n' in data else 8)
         output=transcript()
         assert proc.returncode==expected, f'unexpected exit {proc.returncode}; expected {expected}'
         assert CANARY not in output and b'PromptSecret' not in output, 'secret echoed'
@@ -190,6 +224,7 @@ def main():
         finally:
             if proc.poll() is None:proc.kill();proc.wait()
         assert not (pathlib.Path(tmp)/'identity').exists()
+    if os.name!='nt':unix_stalled_output()
     enrollment_flow(native_case)
     print('hidden invitation prompt: native restoration, bounds, cancellation and no echo passed')
 if __name__=='__main__':main()

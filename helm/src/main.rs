@@ -335,11 +335,11 @@ async fn main() -> Result<()> {
         let prompt = helm::attachment::cli::prompt::PromptControl::default();
         return tokio::select! { biased;
             _=attachment_interrupt()=>{
-                if prompt.cancel_and_restore().is_err(){eprintln!("attachment terminal restoration failed");}
-                eprintln!("attachment operation interrupted; inspect status and resume pending work");std::process::exit(130)
+                let notice = if prompt.cancel_and_restore().is_err(){"attachment terminal restoration failed"}else{"attachment operation interrupted; inspect status and resume pending work"};
+                attachment_notice(notice).await;std::process::exit(130)
             },
             result=helm::attachment::cli::run_with_prompt(args,prompt.clone())=>match result {
-                Err(helm::attachment::cli::CliError::Cancelled)=>{eprintln!("attachment input cancelled");std::process::exit(130)},
+                Err(helm::attachment::cli::CliError::Cancelled)=>{attachment_notice("attachment input cancelled").await;std::process::exit(130)},
                 other=>other.map_err(anyhow::Error::from),
             },
         };
@@ -1617,6 +1617,16 @@ fn render_terminal_markdown(source: &str, width: usize) -> String {
         }
     }
     output
+}
+
+// A stalled terminal (or full stderr pipe) must not obstruct cancellation after
+// native mode restoration. The process exits after this bounded best effort.
+async fn attachment_notice(message: &'static str) {
+    let _ = tokio::time::timeout(
+        std::time::Duration::from_millis(100),
+        tokio::task::spawn_blocking(move || eprintln!("{message}")),
+    )
+    .await;
 }
 
 async fn attachment_interrupt() {
