@@ -112,6 +112,16 @@ Capacity failure rejects further writes; command evidence is not pruned to make 
 Replay eviction alone does not erase partial text or deduplication history. Product
 retention/export/archival controls remain necessary for long-term operation.
 
+## Current sharing checks
+
+The [in-memory sharing authority](attachment-sharing.md) owns current policies and
+intersects installation delegation, authenticated principal capabilities and consent.
+Copied snapshots cannot authorize operations; per-session updates use a revision CAS,
+and branch checks/insertion share one registry lock. These are local library checks,
+not durable sharing or a transport authorization fence. All production adapters,
+sharing persistence, dispatch-time rechecks and confirmation/audit integration remain
+required before remote exposure.
+
 ## Integration requirements still open
 
 - All local CLI/TUI and remote writers must use one coordinator. Today existing
