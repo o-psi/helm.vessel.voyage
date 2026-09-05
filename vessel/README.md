@@ -1,11 +1,10 @@
 # Vessel
 
-Vessel is Voyage's management plane. Its legacy pairing and HTTP task-worker
-implementation has been removed ahead of the replacement attachment flow.
-**Helm connectivity, fleet/task operations and session management are currently
-unavailable.** Local Helm functionality remains usable independently.
+Vessel is Voyage's management plane. It currently provides health checks and an
+authenticated status UI, with optional authenticated outbound Helm presence.
+Remote session management is planned.
 
-## Run the interim management plane
+## Run
 
 ```sh
 cargo run -p vessel -- --bind 127.0.0.1:9480 --database vessel.db
@@ -16,37 +15,33 @@ and diagnostics. They accept a Bearer token or the token as the password in HTTP
 Basic authentication. Prefer the environment over `--operator-token` to avoid
 command-history/process-list disclosure. Terminate TLS before non-loopback access.
 
-Retained endpoints:
+Status endpoints:
 
 | Endpoint | Behavior |
 | --- | --- |
 | `/health` | Process liveness |
-| `/ready` | Database connection check; does not claim attachment is ready |
-| `/metrics` | `voyage_connectivity_enabled 0`; no legacy fleet/task gauges |
-| `/v1/diagnostics` | Authenticated status: connectivity unavailable, legacy state not loaded |
-| `/ui` | Authenticated explanation of the transition; no task forms |
+| `/ready` | Database connection check |
+| `/metrics` | Whether attachment presence is configured |
+| `/v1/diagnostics` | Authenticated service status |
+| `/ui` | Authenticated status page |
 
 UI/diagnostics return 503 without a configured operator token and 401 for missing or
 invalid authentication when enabled. Request correlation and `--log-format json`
-remain supported, as do `completions` and `manpage`.
+are supported, as are `completions` and `manpage`.
 
-`pair`, `fleet`, lease/pairing/staleness timing flags, and all old pairing, worker,
-fleet and task API/UI routes have been removed. Retired routes return 404 even for
-authenticated clients. There is no new invitation or attachment endpoint yet.
+## Attachment presence
 
-## Stored data and upgrade
+Configure enrollment and run an explicit foreground Helm connection using the
+[attachment presence guide](../docs/attachment-presence.md). Operator diagnostics
+show bounded current connection metadata. Presence does not grant execution or
+share session content.
 
-The server opens SQLite for readiness but does not load, rewrite, migrate or delete
-legacy `control_plane` snapshots or `schema_migrations`. Stored running tasks do not
-represent live execution and are not retried. No credentials or history are imported
-into the future connection model. See [retirement and data preservation](../docs/vessel-connectivity-retirement.md)
-before upgrading or rolling back; stop old processes separately and protect backups.
+## Planned session management
 
 The agreed [Vessel-managed session design](../docs/vessel-session-management.md)
-remains the target: `helm attach VESSEL_URL JOIN_KEY`, outbound interactive control,
+specifies: `helm attach VESSEL_URL JOIN_KEY`, outbound interactive control,
 explicit sharing and phased service/approval support. Delivery is tracked in
 [#77](https://github.com/o-psi/voyage/issues/77). These are not implemented commands.
 
-See [security and operations](../docs/security-operations.md) for retained access and
-logging boundaries. The system regression fixture `tests/system/vessel_lifecycle.py`
-now verifies the clean break and data preservation rather than the removed scheduler.
+See [security and operations](../docs/security-operations.md) for access and
+logging boundaries.

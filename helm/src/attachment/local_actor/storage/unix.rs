@@ -10,7 +10,7 @@ use std::{
     path::{Component, PathBuf},
 };
 
-pub(in crate::attachment::local_actor) struct Directory {
+pub(crate) struct Directory {
     path: PathBuf,
     file: File,
     parent: File,
@@ -31,6 +31,9 @@ fn checked(file: File, directory: bool) -> io::Result<File> {
     Ok(file)
 }
 fn open_at(dir: &File, name: &str, flags: i32) -> io::Result<File> {
+    if flags & libc::O_DIRECTORY == 0 {
+        validate_name(name).map_err(|_| io::Error::from(io::ErrorKind::InvalidInput))?;
+    }
     let name = CString::new(name)?;
     let fd = unsafe {
         libc::openat(
@@ -77,7 +80,7 @@ fn walk(path: &Path) -> Result<File> {
     Ok(current)
 }
 impl Directory {
-    pub(in crate::attachment::local_actor) fn open(path: &Path) -> Result<Self> {
+    pub(crate) fn open(path: &Path) -> Result<Self> {
         let parent = walk(
             path.parent()
                 .context("local actor directory needs a parent")?,
@@ -108,7 +111,7 @@ impl Directory {
         directory.verify()?;
         Ok(directory)
     }
-    pub(in crate::attachment::local_actor) fn verify(&self) -> Result<()> {
+    pub(crate) fn verify(&self) -> Result<()> {
         let current = checked(walk(&self.path)?, true)?;
         let a = current.metadata()?;
         let b = self.file.metadata()?;
@@ -119,7 +122,7 @@ impl Directory {
         checked(self.file.try_clone()?, true)?;
         Ok(())
     }
-    pub(in crate::attachment::local_actor) fn lock(&self) -> Result<super::Lock> {
+    pub(crate) fn lock(&self) -> Result<super::Lock> {
         self.lock_after(|_| Ok(()))
     }
     fn lock_after(&self, acquired: impl FnOnce(&File) -> Result<()>) -> Result<super::Lock> {
@@ -128,21 +131,27 @@ impl Directory {
             open_at(&self.file, "actor.lock", libc::O_RDWR | libc::O_CREAT)?,
             false,
         )?;
-        ensure!(
-            unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0,
-            "local actor storage busy"
-        );
+        if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
+            return Err(io::Error::last_os_error()).context("local actor storage busy");
+        }
         let lock = super::Lock(file);
         acquired(&lock.0)?;
         self.sync()?;
         self.verify()?;
         Ok(lock)
     }
-    pub(in crate::attachment::local_actor) fn read(&self, name: &str) -> Result<Option<Vec<u8>>> {
-        self.verify()?;
-        super::read(open_at(&self.file, name, libc::O_RDONLY).and_then(|f| checked(f, false)))
+    pub(crate) fn read(&self, name: &str) -> Result<Option<Vec<u8>>> {
+        self.read_bounded(name, MAX_BYTES)
     }
-    pub(in crate::attachment::local_actor) fn create(&self, name: &str) -> Result<File> {
+    pub(crate) fn read_bounded(&self, name: &str, limit: usize) -> Result<Option<Vec<u8>>> {
+        validate_limit(limit)?;
+        self.verify()?;
+        super::read_bounded(
+            open_at(&self.file, name, libc::O_RDONLY).and_then(|f| checked(f, false)),
+            limit,
+        )
+    }
+    pub(crate) fn create(&self, name: &str) -> Result<File> {
         self.verify()?;
         Ok(checked(
             open_at(
@@ -153,33 +162,31 @@ impl Directory {
             false,
         )?)
     }
-    pub(in crate::attachment::local_actor) fn sync_file(&self, name: &str) -> Result<()> {
+    pub(crate) fn sync_file(&self, name: &str) -> Result<()> {
         checked(open_at(&self.file, name, libc::O_RDONLY)?, false)?.sync_all()?;
         Ok(())
     }
-    pub(in crate::attachment::local_actor) fn sync(&self) -> Result<()> {
+    pub(crate) fn sync(&self) -> Result<()> {
         self.file.sync_all()?;
         self.parent.sync_all()?;
         Ok(())
     }
-    pub(in crate::attachment::local_actor) fn publish_new(
-        &self,
-        name: &str,
-        bytes: &[u8],
-    ) -> Result<()> {
-        let temporary = "publication.json";
-        match self.read(temporary)? {
+    pub(crate) fn publish_new(&self, name: &str, bytes: &[u8]) -> Result<()> {
+        validate_name(name)?;
+        validate_limit(bytes.len())?;
+        let temporary = publication_name(name)?;
+        match self.read_bounded(&temporary, MAX_PRIVATE_BYTES)? {
             Some(existing) => ensure!(
                 existing == bytes,
                 "uncertain local actor publication conflicts"
             ),
             None => {
-                let mut file = self.create(temporary)?;
+                let mut file = self.create(&temporary)?;
                 file.write_all(bytes)?;
                 file.sync_all()?;
             }
         }
-        self.sync_file(temporary)?;
+        self.sync_file(&temporary)?;
         self.sync()?;
         self.verify()?;
         let source = CString::new(temporary)?;
