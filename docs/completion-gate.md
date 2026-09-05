@@ -144,3 +144,26 @@ and await their tracked persistence/archival tasks before releasing the workspac
 writer lease. A ten-second drain timeout refuses the handoff instead of bypassing
 ownership. The offline `tests/system/completion_handoff.py` regression exercises a
 live child, TUI-to-plain relaunch and a subsequent turn in the same saved session.
+
+## Provisional output and saved outcomes
+
+Root CLI/TUI runs install the completion gate. Plain stdout explicitly marks
+`completion: provisional`, reconciliation and terminal completion states; streamed
+text is emitted once. A one-shot incomplete outcome saves its session first and
+returns an error exit status. Plain chat can continue with another turn. Only a
+completed outcome advances automatic-title checkpoints or completed-run counters.
+
+Session `run_summaries` retain each run's phase, bounded detail, optional structured
+readiness and canonical message range with content fingerprints. These are local
+presentation annotations, never provider messages or authority. Earlier no-tool
+assistant proposals remain labelled provisional; the final proposal is labelled
+completed, incomplete or interrupted. Transcript rendering and Markdown export
+preserve original text while displaying these classifications separately. A latest
+run banner remains visible after resume even if no assistant output was saved.
+
+A provisional/reconciling summary loads as interrupted after restart. Branches copy
+historical classifications but clear execution ownership references. Clearing the
+conversation removes its annotations. Compaction/recovery reanchors only exact
+message sequences; missing or ambiguous sequences retain an unlinked historical
+summary instead of attributing an old outcome to different text. Old sessions with
+no summaries remain readable. `--no-save` still does not create a session file.

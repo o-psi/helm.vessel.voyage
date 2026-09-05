@@ -1365,6 +1365,13 @@ async fn execute(
             if let Some(recovery) = error.recovery() {
                 session.recover_context_failure(recovery)?;
             }
+            if let helm::agent::AgentError::Finalization(failure) = &error {
+                session.update_run_summary(
+                    helm::agent::CompletionPhase::Interrupted,
+                    failure.readiness.clone(),
+                    None,
+                );
+            }
             session.interrupt_run_summary(safe_diagnostic(&error.to_string()));
             if !no_save {
                 session.terminals = agent.terminal_metadata();
@@ -1632,6 +1639,13 @@ async fn chat(
                         .as_ref()
                         .expect("agent initialized")
                         .terminal_metadata();
+                }
+                if let helm::agent::AgentError::Finalization(failure) = &error {
+                    session.update_run_summary(
+                        helm::agent::CompletionPhase::Interrupted,
+                        failure.readiness.clone(),
+                        None,
+                    );
                 }
                 session.interrupt_run_summary(safe_diagnostic(&error.to_string()));
                 store.save(&mut session).await?;

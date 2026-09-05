@@ -966,3 +966,145 @@ async fn context_recovery_preserves_tools_and_late_steering_without_duplicates()
     assert!(app.status.contains("1 steering message(s) not applied"));
     assert_eq!(saved.title_state.as_ref().unwrap().completed_runs, 0);
 }
+
+#[tokio::test]
+async fn completion_summaries_render_provisional_and_incomplete_after_resume_without_success_count()
+{
+    use crate::agent::{CompletionPhase, StopReason};
+    let directory = tempfile::tempdir().unwrap();
+    let store = SessionStore::new(directory.path().join("sessions"));
+    let mut app = App::new(Session::new(directory.path().into(), "test".into()), vec![]);
+    app.session
+        .messages
+        .push(crate::Message::new(Role::User, "finish work"));
+    app.session.begin_run_summary(Uuid::new_v4());
+    let terminals = FakeTerminals::new();
+    app.streaming_response = "premature completion".into();
+    handle_ui_event(
+        UiEvent::Agent(AgentEvent::CompletionState {
+            phase: CompletionPhase::Reconciling,
+            readiness: None,
+            detail: Some("checking remaining work".into()),
+        }),
+        &mut app,
+        &store,
+        &terminals,
+    )
+    .await
+    .unwrap();
+    assert!(app.status.contains("reconciling"));
+    assert!(app.streaming_response.is_empty());
+    assert_eq!(
+        app.live_messages.last().unwrap().content,
+        "premature completion"
+    );
+    let mut messages = app.session.messages.clone();
+    messages.push(crate::Message::new(Role::Assistant, "premature completion"));
+    messages.push(crate::Message::new(
+        Role::Assistant,
+        "honest remaining work",
+    ));
+    handle_ui_event(
+        UiEvent::Finished(Ok(crate::agent::AgentOutcome {
+            messages,
+            answer: "honest remaining work".into(),
+            usage: Default::default(),
+            turns: 2,
+            stop_reason: StopReason::Incomplete {
+                reason: "blocked by dependency".into(),
+                readiness: None,
+            },
+        })),
+        &mut app,
+        &store,
+        &terminals,
+    )
+    .await
+    .unwrap();
+    assert!(app.status.starts_with("Incomplete"));
+    assert_eq!(app.session.title_state.as_ref().unwrap().completed_runs, 0);
+    let restored = store.load(app.session.id).await.unwrap();
+    assert_eq!(restored.assistant_classification(1), Some("provisional"));
+    assert_eq!(restored.assistant_classification(2), Some("incomplete"));
+    app.session = restored;
+    let text = transcript(&app, 90).to_string();
+    assert!(text.contains("helm · provisional"));
+    assert!(text.contains("helm · incomplete"));
+    assert!(text.contains("Run incomplete"));
+    assert!(!text.contains("Run completed"));
+    for (width, height) in [(24, 10), (90, 30)] {
+        let mut terminal =
+            Terminal::new(ratatui::backend::TestBackend::new(width, height)).unwrap();
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+    }
+}
+
+#[tokio::test]
+async fn terminal_completion_event_waits_for_canonical_outcome_and_interruption_is_durable() {
+    use crate::agent::{CompletionPhase, StopReason};
+    let directory = tempfile::tempdir().unwrap();
+    let store = SessionStore::new(directory.path().join("sessions"));
+    let terminals = FakeTerminals::new();
+    let mut app = App::new(Session::new(directory.path().into(), "test".into()), vec![]);
+    app.session
+        .messages
+        .push(crate::Message::new(Role::User, "work"));
+    app.session.begin_run_summary(Uuid::new_v4());
+    store.save(&mut app.session).await.unwrap();
+    handle_ui_event(
+        UiEvent::Agent(AgentEvent::CompletionState {
+            phase: CompletionPhase::Completed,
+            readiness: None,
+            detail: None,
+        }),
+        &mut app,
+        &store,
+        &terminals,
+    )
+    .await
+    .unwrap();
+    assert_ne!(
+        store.load(app.session.id).await.unwrap().run_summaries[0].phase,
+        CompletionPhase::Completed
+    );
+    app.streaming_response = "partial output".into();
+    handle_ui_event(
+        UiEvent::Finished(Err(crate::agent::AgentError::Cancelled)),
+        &mut app,
+        &store,
+        &terminals,
+    )
+    .await
+    .unwrap();
+    let restored = store.load(app.session.id).await.unwrap();
+    assert_eq!(
+        restored.run_summaries[0].phase,
+        CompletionPhase::Interrupted
+    );
+    assert_eq!(restored.assistant_classification(1), Some("interrupted"));
+    assert_eq!(restored.messages[1].content, "partial output");
+    assert_eq!(restored.title_state.as_ref().unwrap().completed_runs, 0);
+    // A subsequent actual completed outcome increments the counter once.
+    app.session
+        .messages
+        .push(crate::Message::new(Role::User, "again"));
+    app.session.begin_run_summary(Uuid::new_v4());
+    let mut messages = app.session.messages.clone();
+    messages.push(crate::Message::new(Role::Assistant, "verified"));
+    handle_ui_event(
+        UiEvent::Finished(Ok(crate::agent::AgentOutcome {
+            messages,
+            answer: "verified".into(),
+            usage: Default::default(),
+            turns: 1,
+            stop_reason: StopReason::Completed,
+        })),
+        &mut app,
+        &store,
+        &terminals,
+    )
+    .await
+    .unwrap();
+    assert_eq!(app.session.title_state.as_ref().unwrap().completed_runs, 1);
+    assert!(app.status.starts_with("Completed"));
+}

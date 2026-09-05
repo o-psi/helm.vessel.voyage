@@ -375,6 +375,7 @@ impl SessionStore {
         persisted
             .messages
             .retain(|message| message.role != crate::model::Role::System);
+        persisted.reanchor_run_summaries();
         let bytes = serde_json::to_vec_pretty(&persisted)?;
         anyhow::ensure!(
             bytes.len() as u64 <= MAX_SESSION_BYTES,
@@ -534,9 +535,12 @@ impl SessionStore {
             session.workspace.display(),
             session.updated_at.to_rfc3339()
         );
-        for message in &session.messages {
+        for (index, message) in session.messages.iter().enumerate() {
             use std::fmt::Write as _;
             let _ = writeln!(output, "## {:?}\n\n{}\n", message.role, message.content);
+            if let Some(classification) = session.assistant_classification(index) {
+                let _ = writeln!(output, "Run output classification: {classification}\n");
+            }
             if let Some(receipt) = &message.steering {
                 let _ = writeln!(output, "Steering delivery: {:?}\n", receipt.status);
             }
@@ -707,7 +711,6 @@ fn read_session(path: &Path) -> Result<Session> {
     );
     session.loaded_from = Some(std::fs::canonicalize(path)?);
     session.ensure_name();
-    session.recover_run_summaries();
     for message in &mut session.messages {
         if let Some(receipt) = &mut message.steering
             && receipt.status == crate::model::SteeringStatus::Queued
@@ -719,6 +722,7 @@ fn read_session(path: &Path) -> Result<Session> {
     session
         .messages
         .retain(|message| message.role != crate::model::Role::System);
+    session.recover_run_summaries();
     for terminal in &mut session.terminals {
         terminal.state = crate::terminal::TerminalState::Disconnected;
     }

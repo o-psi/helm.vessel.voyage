@@ -169,6 +169,19 @@ pub(super) fn transcript(app: &App, width: usize) -> Text<'static> {
         );
         lines.push(Line::raw(""));
     }
+    if let Some(summary) = app.session.run_summaries.last() {
+        let phase = format!("{:?}", summary.phase).to_lowercase();
+        let detail = summary
+            .detail
+            .as_deref()
+            .map(display_safe)
+            .unwrap_or_default();
+        lines.push(Line::styled(
+            format!("Run {phase} · {detail}"),
+            Style::default().fg(Color::Yellow),
+        ));
+        lines.push(Line::raw(""));
+    }
     // Pending inputs have not acquired a canonical position in the model history.
     // Present them after live output until the boundary snapshot reconciles ordering.
     for message in &app.session.messages {

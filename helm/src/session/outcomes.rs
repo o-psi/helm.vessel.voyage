@@ -48,7 +48,8 @@ impl Session {
         if let Some(summary) = self.run_summaries.last_mut() {
             summary.phase = phase;
             summary.readiness = readiness;
-            summary.detail = detail.map(|s| s.chars().take(4000).collect());
+            summary.detail =
+                detail.map(|s| s.chars().filter(|c| !c.is_control()).take(4000).collect());
         }
     }
 
@@ -171,5 +172,122 @@ impl Session {
                 summary.detail = Some("Execution was not durably finalized before restart".into());
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn session(root: &Path) -> Session {
+        Session::new(root.into(), "fixture".into())
+    }
+    fn proposal(session: &mut Session, prompt: &str) -> Uuid {
+        session
+            .messages
+            .push(Message::new(crate::Role::User, prompt));
+        let id = Uuid::new_v4();
+        session.begin_run_summary(id);
+        session
+            .messages
+            .push(Message::new(crate::Role::Assistant, "premature final"));
+        session
+            .messages
+            .push(Message::new(crate::Role::Assistant, "verified final"));
+        id
+    }
+
+    #[tokio::test]
+    async fn summaries_preserve_provisional_and_terminal_text_on_resume_export_and_branch() {
+        let root = tempfile::tempdir().unwrap();
+        let store = SessionStore::new(root.path().join("sessions"));
+        for stop in [
+            StopReason::Completed,
+            StopReason::Incomplete {
+                reason: "remaining work".into(),
+                readiness: None,
+            },
+        ] {
+            let mut session = session(root.path());
+            let run_id = proposal(&mut session, "work");
+            session
+                .completion_runs
+                .push(crate::completion::runtime::RunReference {
+                    session_id: session.id,
+                    run_id,
+                });
+            let canonical = serde_json::to_value(&session.messages).unwrap();
+            session.finish_run_summary(&stop);
+            assert_eq!(session.assistant_classification(1), Some("provisional"));
+            let expected = if matches!(stop, StopReason::Completed) {
+                "completed"
+            } else {
+                "incomplete"
+            };
+            assert_eq!(session.assistant_classification(2), Some(expected));
+            store.save(&mut session).await.unwrap();
+            let restored = store.load(session.id).await.unwrap();
+            assert_eq!(serde_json::to_value(&restored.messages).unwrap(), canonical);
+            assert_eq!(restored.assistant_classification(1), Some("provisional"));
+            assert_eq!(restored.assistant_classification(2), Some(expected));
+            let branch = store.branch(&restored, None).await.unwrap();
+            assert!(branch.completion_runs.is_empty());
+            assert_eq!(branch.run_summaries[0].run_id, run_id);
+            assert_eq!(branch.assistant_classification(2), Some(expected));
+            let path = root.path().join("export.md");
+            store.export_markdown(&restored, &path).await.unwrap();
+            assert!(
+                std::fs::read_to_string(path)
+                    .unwrap()
+                    .contains(&format!("classification: {expected}"))
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn unsealed_run_loads_interrupted_clear_removes_annotations_and_legacy_still_loads() {
+        let root = tempfile::tempdir().unwrap();
+        let store = SessionStore::new(root.path().join("sessions"));
+        let mut session = session(root.path());
+        proposal(&mut session, "work");
+        session.extend_run_summary();
+        session.update_run_summary(CompletionPhase::Reconciling, None, None);
+        store.save(&mut session).await.unwrap();
+        let mut restored = store.load(session.id).await.unwrap();
+        assert_eq!(
+            restored.run_summaries[0].phase,
+            CompletionPhase::Interrupted
+        );
+        assert_eq!(restored.assistant_classification(2), Some("interrupted"));
+        restored.clear_conversation();
+        assert!(restored.run_summaries.is_empty());
+        let mut legacy = serde_json::to_value(&restored).unwrap();
+        legacy.as_object_mut().unwrap().remove("run_summaries");
+        let legacy: Session = serde_json::from_value(legacy).unwrap();
+        assert!(legacy.run_summaries.is_empty());
+    }
+
+    #[test]
+    fn compaction_and_replacement_never_reclassify_unrelated_or_changed_messages() {
+        let mut s = session(Path::new("/tmp"));
+        proposal(&mut s, "first");
+        s.finish_run_summary(&StopReason::Completed);
+        proposal(&mut s, "second");
+        s.finish_run_summary(&StopReason::Incomplete {
+            reason: "blocked".into(),
+            readiness: None,
+        });
+        let recent = s.messages[3..].to_vec();
+        s.replace_messages(recent);
+        assert_eq!(s.run_summaries[0].message_start, None);
+        assert_eq!(s.run_summaries[1].message_start, Some(0));
+        assert_eq!(s.assistant_classification(2), Some("incomplete"));
+        s.messages[2].content = "different text".into();
+        assert_eq!(s.assistant_classification(2), None);
+        s.compact(2);
+        assert!(
+            s.run_summaries
+                .iter()
+                .all(|summary| summary.message_start.is_none())
+        );
     }
 }

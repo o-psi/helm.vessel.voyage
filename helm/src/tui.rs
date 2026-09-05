@@ -409,6 +409,14 @@ async fn handle_ui_event(
             readiness,
             detail,
         }) => {
+            if matches!(phase, crate::agent::CompletionPhase::Reconciling)
+                && !app.streaming_response.is_empty()
+            {
+                app.live_messages.push(crate::Message::new(
+                    Role::Assistant,
+                    std::mem::take(&mut app.streaming_response),
+                ));
+            }
             let label = format!("{phase:?}").to_lowercase();
             app.status = format!(
                 "Run {label}{}",
@@ -521,7 +529,7 @@ async fn handle_ui_event(
                     history.push(message.clone());
                 }
             }
-            app.session.messages = history;
+            app.session.replace_messages(history);
             app.live_messages.clear();
             app.streaming_response.clear();
             store.save(&mut app.session).await?;
