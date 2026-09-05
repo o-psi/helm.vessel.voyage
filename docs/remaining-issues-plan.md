@@ -328,3 +328,10 @@ PR #124 is merged into main as 8dfc9f05f00035e2f5bbd4a3aa1ad315a10cae24 (observe
 Onboarding #69 candidate7edd048 adds conservative bounded command evidence and omits commands from ambiguous quoted/commented/fenced Markdown contexts. Thirty targeted onboarding tests and strict Clippy pass; actual CLI and full baseline follow integration with current main. Independent review found no remaining context-guard blocker.
 
 Remote lifecycle under #77/#9/#78/#79 is implementing an explicit foreground dedicated managed session, authenticated submit/watch/cancel/reconnect, transactional public event projection and durable command receipts. Scope: https://github.com/o-psi/voyage/issues/77#issuecomment-5554450723 . Tests-first implementation and independent authority review are underway; no execution delivery or passing baseline is claimed.
+
+
+## PR 129 review and browser deferral
+
+The operator explicitly requested review and merge of [PR #129](https://github.com/o-psi/voyage/pull/129) to main. Refreshed all 83 open/closed issue titles, bodies and states. The dedicated remote-session scope remains [#77](https://github.com/o-psi/voyage/issues/77#issuecomment-5554450723), with #9/#78/#79 retaining broader unfinished criteria. Review found the old-schema simulation must remove schema-7 tables and foreground shutdown must return failure when cleanup is unconfirmed. Both corrections require regression evidence and a fresh final Linux baseline/CI before merge.
+
+The operator deferred all browser console work. The isolated vessel-session-console experiment is preserved unmerged; no JavaScript or Livewire console is included in PR129. Secret-workflow and policy-default work continue independently in isolated branches.
