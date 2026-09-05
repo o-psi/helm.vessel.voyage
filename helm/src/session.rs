@@ -95,6 +95,42 @@ pub struct ModelChange {
 }
 
 impl Session {
+    /// Replace provisional frontend history with rejected-run canonical state.
+    /// Inputs accepted after that snapshot remain visible and are not duplicated.
+    pub fn recover_context_failure(
+        &mut self,
+        recovery: &crate::agent::CanonicalRecovery,
+    ) -> Result<()> {
+        let input_tokens = self
+            .usage
+            .input_tokens
+            .checked_add(recovery.usage.input_tokens)
+            .context("session input usage overflow during recovery")?;
+        let output_tokens = self
+            .usage
+            .output_tokens
+            .checked_add(recovery.usage.output_tokens)
+            .context("session output usage overflow during recovery")?;
+        let mut messages = recovery.messages.clone();
+        for message in &self.messages {
+            if let Some(receipt) = &message.steering
+                && receipt.status == crate::model::SteeringStatus::Queued
+                && !messages.iter().any(|other| {
+                    other
+                        .steering
+                        .as_ref()
+                        .is_some_and(|other| other.id == receipt.id)
+                })
+            {
+                messages.push(message.clone());
+            }
+        }
+        self.messages = messages;
+        self.usage.input_tokens = input_tokens;
+        self.usage.output_tokens = output_tokens;
+        Ok(())
+    }
+
     pub fn new(workspace: PathBuf, model: String) -> Self {
         let now = Utc::now();
         let id = Uuid::new_v4();

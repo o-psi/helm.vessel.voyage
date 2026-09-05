@@ -380,7 +380,10 @@ async fn failed_run_does_not_remove_submitted_prompt_from_session() {
     store.save(&mut app.session).await.unwrap();
 
     handle_ui_event(
-        UiEvent::Finished(Err("provider unavailable".into())),
+        UiEvent::Finished(Err(crate::provider::ProviderError::Unavailable(
+            "provider unavailable".into(),
+        )
+        .into())),
         &mut app,
         &store,
         &crate::terminal::NoInteractiveTerminals::default(),
@@ -745,7 +748,7 @@ async fn steering_boundary_preserves_fifo_receipts_and_separates_streams() {
     let rendered = transcript(&app, 48).to_string();
     assert!(rendered.find("new response").unwrap() < rendered.find("later").unwrap());
     handle_ui_event(
-        UiEvent::Finished(Err("cancelled".into())),
+        UiEvent::Finished(Err(crate::agent::AgentError::Cancelled)),
         &mut app,
         &store,
         &FakeTerminals::new(),
@@ -881,4 +884,84 @@ async fn steering_save_failure_never_reaches_the_provider_queue() {
     assert!(app.session.messages.is_empty());
     assert!(app.status.contains("was not sent"));
     sender.try_send("queue still empty".into()).unwrap();
+}
+
+#[tokio::test]
+async fn context_recovery_preserves_tools_and_late_steering_without_duplicates() {
+    use crate::agent::{AgentError, CanonicalRecovery, ContextFailure};
+    use crate::model::{Message, SteeringStatus, ToolCall, Usage};
+    let directory = tempfile::tempdir().unwrap();
+    let store = SessionStore::new(directory.path().join("sessions"));
+    let mut app = App::new(Session::new(directory.path().into(), "test".into()), vec![]);
+    let prompt = Message::new(Role::User, "read evidence");
+    let mut assistant = Message::new(Role::Assistant, "checking");
+    assistant.tool_calls.push(ToolCall {
+        id: "real-call".into(),
+        name: "read_file".into(),
+        arguments: serde_json::json!({"path":"evidence"}),
+    });
+    assistant.provider_state = Some(serde_json::json!({"kind":"local-replay-fixture"}));
+    let tool = Message::tool("real-call", "large original evidence");
+    let mut applied = Message::steering("earlier steering");
+    applied.steering.as_mut().unwrap().status = SteeringStatus::Applied;
+    let late = Message::steering("accepted during failure");
+    app.session.messages = vec![prompt.clone(), applied.clone(), late];
+    app.session.usage = Usage {
+        input_tokens: 5,
+        output_tokens: 7,
+    };
+    app.live_messages = vec![Message::tool("fake-ui-call", "large original evidence")];
+    app.streaming_response = "checking".into();
+    let recovery = CanonicalRecovery {
+        messages: vec![prompt, assistant, tool, applied],
+        usage: Usage {
+            input_tokens: 11,
+            output_tokens: 13,
+        },
+    };
+    let error = AgentError::Context(ContextFailure {
+        source: crate::context::ContextError {
+            estimated: 90000,
+            limit: 65536,
+        },
+        recovery: Some(Box::new(recovery)),
+    });
+    handle_ui_event(
+        UiEvent::Finished(Err(error)),
+        &mut app,
+        &store,
+        &FakeTerminals::new(),
+    )
+    .await
+    .unwrap();
+    let saved = store.load(app.session.id).await.unwrap();
+    assert_eq!(saved.messages.len(), 5);
+    assert_eq!(
+        saved
+            .messages
+            .iter()
+            .filter(|message| message.content == "checking")
+            .count(),
+        1
+    );
+    assert_eq!(saved.messages[2].tool_call_id.as_deref(), Some("real-call"));
+    assert_eq!(
+        saved.messages[1].provider_state.as_ref().unwrap()["kind"],
+        "local-replay-fixture"
+    );
+    assert_eq!(
+        saved.messages[3].steering.as_ref().unwrap().status,
+        SteeringStatus::Applied
+    );
+    assert_eq!(
+        saved.messages[4].steering.as_ref().unwrap().status,
+        SteeringStatus::NotApplied
+    );
+    assert_eq!(saved.messages[4].content, "accepted during failure");
+    assert_eq!(saved.usage.input_tokens, 16);
+    assert_eq!(saved.usage.output_tokens, 20);
+    assert!(app.live_messages.is_empty());
+    assert!(app.streaming_response.is_empty());
+    assert!(app.status.contains("1 steering message(s) not applied"));
+    assert_eq!(saved.title_state.as_ref().unwrap().completed_runs, 0);
 }
