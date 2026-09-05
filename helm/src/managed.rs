@@ -470,9 +470,26 @@ where
     F: FnMut() -> Fut,
     Fut: std::future::Future<Output = anyhow::Result<bool>>,
 {
-    tokio::time::timeout(Duration::from_secs(5), read())
-        .await
-        .context("durable cancellation polling deadline elapsed")?
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            match read().await {
+                Err(error)
+                    if error
+                        .downcast_ref::<rusqlite::Error>()
+                        .and_then(rusqlite::Error::sqlite_error_code)
+                        == Some(rusqlite::ErrorCode::DatabaseBusy) =>
+                {
+                    // Independent managed commands can briefly hold the journal.
+                    // Retry only this read, with the same run identity, after its
+                    // transaction has returned. Other errors remain fail-closed.
+                    tokio::time::sleep(Duration::from_millis(5)).await;
+                }
+                result => return result,
+            }
+        }
+    })
+    .await
+    .context("durable cancellation polling deadline elapsed")?
 }
 
 async fn await_execution<T>(

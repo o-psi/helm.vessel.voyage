@@ -38,6 +38,27 @@ async fn polling_nonbusy_failure_and_boolean_observations_are_not_retried() {
         );
         assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
+    let locked_calls = AtomicUsize::new(0);
+    let locked = poll_local_cancellation(|| {
+        locked_calls.fetch_add(1, Ordering::SeqCst);
+        async {
+            Err(rusqlite::Error::SqliteFailure(
+                rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_LOCKED),
+                None,
+            )
+            .into())
+        }
+    })
+    .await
+    .unwrap_err();
+    assert_eq!(
+        locked
+            .downcast_ref::<rusqlite::Error>()
+            .unwrap()
+            .sqlite_error_code(),
+        Some(rusqlite::ErrorCode::DatabaseLocked)
+    );
+    assert_eq!(locked_calls.load(Ordering::SeqCst), 1);
     let calls = AtomicUsize::new(0);
     let error = poll_local_cancellation(|| {
         calls.fetch_add(1, Ordering::SeqCst);
