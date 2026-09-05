@@ -49,11 +49,28 @@ impl Drop for Fixture {
         self.task.abort();
     }
 }
+// Security/lifecycle fixtures use production deadlines. Only tests asserting a
+// particular deadline shorten that deadline; native ACL/SQLite work must not
+// inherit a150ms handshake or30ms authorization budget accidentally.
+fn functional_limits() -> Limits {
+    Limits {
+        sockets: 2,
+        machines: 1,
+        queue: 2,
+        ..Limits::default()
+    }
+}
 impl Fixture {
     async fn new() -> Self {
         Self::new_at(now()).await
     }
     async fn new_at(seed_time: i64) -> Self {
+        Self::new_at_with_limits(seed_time, functional_limits()).await
+    }
+    async fn new_with_limits(limits: Limits) -> Self {
+        Self::new_at_with_limits(now(), limits).await
+    }
+    async fn new_at_with_limits(seed_time: i64, limits: Limits) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap().to_string();
@@ -85,20 +102,8 @@ impl Fixture {
             "fixture-operator-token-at-least-32-bytes",
         )
         .unwrap();
-        let (api, rx) = AttachmentApi::with_limits(
-            enrollment,
-            Features::default(),
-            Limits {
-                auth: Duration::from_millis(150),
-                lease: Duration::from_millis(1000),
-                check: Duration::from_millis(30),
-                write: Duration::from_millis(100),
-                sockets: 2,
-                machines: 1,
-                queue: 2,
-            },
-        )
-        .unwrap();
+        let (api, rx) =
+            AttachmentApi::with_limits(enrollment, Features::default(), limits).unwrap();
         let router = api.clone().router();
         let task = tokio::spawn(async move {
             axum::serve(listener, router).await.unwrap();
@@ -272,7 +277,11 @@ async fn real_socket_proof_replay_replacement_queue_and_revocation() {
 }
 #[tokio::test]
 async fn unauthenticated_capacity_deadline_wrong_first_and_oversize() {
-    let f = Fixture::new().await;
+    let f = Fixture::new_with_limits(Limits {
+        auth: Duration::from_millis(150),
+        ..functional_limits()
+    })
+    .await;
     let mut one = f.socket().await;
     let mut two = f.socket().await;
     // Both unauthenticated sockets count; HTTP upgrade capacity is bounded.
@@ -360,7 +369,11 @@ fn now() -> i64 {
 }
 #[tokio::test]
 async fn lost_welcome_requires_fresh_proof_and_idle_closes() {
-    let mut f = Fixture::new().await;
+    let mut f = Fixture::new_with_limits(Limits {
+        lease: Duration::from_millis(1000),
+        ..functional_limits()
+    })
+    .await;
     let proof = f.proof();
     let mut lost = f.socket().await;
     lost.send(ClientMessage::Text(
@@ -375,7 +388,7 @@ async fn lost_welcome_requires_fresh_proof_and_idle_closes() {
     ))
     .await
     .unwrap();
-    tokio::time::timeout(Duration::from_secs(1), async {
+    tokio::time::timeout(Duration::from_secs(6), async {
         loop {
             if !f.api.registry.lock().await.is_empty() {
                 break;
@@ -386,7 +399,13 @@ async fn lost_welcome_requires_fresh_proof_and_idle_closes() {
     .await
     .unwrap();
     drop(lost);
-    tokio::time::sleep(Duration::from_millis(20)).await;
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while !f.api.registry.lock().await.is_empty() || f.api.sockets.available_permits() != 2 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("lost socket must release its generation and admission slot");
     let mut retry = f.socket().await;
     retry
         .send(ClientMessage::Text(
@@ -697,7 +716,7 @@ async fn authenticated_machine_limit_denies_new_machine_but_allows_replacement()
     assert!(f.api.is_current(first_machine, first_id).await);
     assert_eq!(f.api.registry.lock().await.len(), 1);
     drop(first);
-    tokio::time::timeout(Duration::from_secs(1), async {
+    tokio::time::timeout(Duration::from_secs(6), async {
         while f.api.is_current(first_machine, first_id).await {
             tokio::task::yield_now().await;
         }
@@ -711,7 +730,11 @@ async fn authenticated_machine_limit_denies_new_machine_but_allows_replacement()
 }
 #[tokio::test]
 async fn websocket_ping_is_supported_before_auth_and_does_not_renew_lease() {
-    let mut f = Fixture::new().await;
+    let mut f = Fixture::new_with_limits(Limits {
+        lease: Duration::from_millis(1000),
+        ..functional_limits()
+    })
+    .await;
     let proof = f.proof();
     let mut socket = f.socket().await;
     socket
@@ -743,7 +766,11 @@ async fn websocket_ping_is_supported_before_auth_and_does_not_renew_lease() {
 }
 #[tokio::test]
 async fn unauthenticated_ping_does_not_extend_authentication_deadline() {
-    let f = Fixture::new().await;
+    let f = Fixture::new_with_limits(Limits {
+        auth: Duration::from_millis(150),
+        ..functional_limits()
+    })
+    .await;
     let mut socket = f.socket().await;
     let started = tokio::time::Instant::now();
     let pings = async {
@@ -767,4 +794,15 @@ async fn unauthenticated_ping_does_not_extend_authentication_deadline() {
         .expect("pings cannot keep an unauthenticated socket alive");
     assert!(started.elapsed() < Duration::from_millis(500));
     assert!(f.api.registry.lock().await.is_empty());
+}
+#[tokio::test]
+async fn functional_fixture_accepts_authentication_within_production_deadline() {
+    let mut f = Fixture::new().await;
+    let proof = f.proof();
+    let mut socket = f.socket().await;
+    // A valid client may need more than the old fixture's150ms to schedule its
+    // proof. This is well inside the actual five-second authentication contract.
+    tokio::time::sleep(Duration::from_millis(250)).await;
+    let id = f.authenticate(&mut socket, proof).await;
+    assert!(f.api.is_current(f.machine, id).await);
 }
