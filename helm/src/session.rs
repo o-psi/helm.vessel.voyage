@@ -70,6 +70,8 @@ pub struct Session {
     pub title_state: Option<TitleState>,
     #[serde(default)]
     pub parent_id: Option<Uuid>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub workflow_runs: Vec<crate::workflow::Invocation>,
     pub messages: Vec<Message>,
     pub usage: Usage,
     #[serde(default)]
@@ -151,6 +153,7 @@ impl Session {
                 usage: Usage::default(),
             }),
             parent_id: None,
+            workflow_runs: Vec::new(),
             messages: Vec::new(),
             usage: Usage::default(),
             terminals: Vec::new(),
