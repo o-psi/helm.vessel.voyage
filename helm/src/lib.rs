@@ -20,6 +20,7 @@ pub mod titles;
 pub mod todo;
 pub mod tools;
 pub mod tui;
+pub mod voyage;
 pub mod workflow;
 
 pub use agent::{Agent, AgentEvent, AgentOutcome, EventSink};

@@ -208,6 +208,43 @@ impl Directory {
         self.parent.sync_all()?;
         Ok(())
     }
+    /// Replace a private record under the caller's exclusive directory lock.
+    pub(crate) fn publish(&self, name: &str, bytes: &[u8]) -> Result<()> {
+        validate_name(name)?;
+        validate_limit(bytes.len())?;
+        // Check existing destinations without following links before any write.
+        self.read_bounded(name, MAX_PRIVATE_BYTES)?;
+        let temporary = format!(".tmp-{}", uuid::Uuid::new_v4());
+        let mut file = self.create(&temporary)?;
+        let source = CString::new(temporary)?;
+        let target = CString::new(name)?;
+        let result = (|| {
+            file.write_all(bytes)?;
+            file.sync_all()?;
+            self.verify()?;
+            self.read_bounded(name, MAX_PRIVATE_BYTES)?;
+            ensure!(
+                unsafe {
+                    libc::renameat(
+                        self.file.as_raw_fd(),
+                        source.as_ptr(),
+                        self.file.as_raw_fd(),
+                        target.as_ptr(),
+                    )
+                } == 0,
+                "private record publication failed: {}",
+                io::Error::last_os_error()
+            );
+            self.sync()?;
+            self.verify()?;
+            Ok(())
+        })();
+        // This random name belongs only to this operation, never existing data.
+        unsafe {
+            libc::unlinkat(self.file.as_raw_fd(), source.as_ptr(), 0);
+        }
+        result
+    }
     pub(crate) fn publish_new(&self, name: &str, bytes: &[u8]) -> Result<()> {
         validate_name(name)?;
         validate_limit(bytes.len())?;

@@ -71,6 +71,11 @@ impl Directory {
         validate_limit(bytes.len())?;
         Ok(self.0.publish_new(name, bytes)?)
     }
+    pub(crate) fn publish(&self, name: &str, bytes: &[u8]) -> Result<()> {
+        validate_name(name)?;
+        validate_limit(bytes.len())?;
+        Ok(self.0.publish(name, bytes)?)
+    }
 }
 
 #[cfg(not(any(unix, windows)))]
