@@ -143,3 +143,16 @@ The next usable #78 slice is private local managed CLI create/list/submit/cancel
 
 
 Dependency maintenance is tracked in [#105](https://github.com/o-psi/voyage/issues/105): resolve the confirmed transitive lru soundness advisory through the maintained Ratatui dependency path. Preserve pre-update dependency evidence; acceptance requires no affected locked lru version plus full Linux/TUI/system/release/package verification. This is independent of the managed-session coordinator work.
+
+
+## Delivery checkpoint: dependency advisory and observed cleanup
+
+[PR #101](https://github.com/o-psi/voyage/pull/101) merged as 73f18e1 after its 441-test/11-system baseline and both Linux CI runs passed. [PR #95](https://github.com/o-psi/voyage/pull/95) merged as 9bb3f86 after 475 tests, 11 system fixtures and both Linux CI runs. These provide enrollment and authenticated transport foundations; production routing and broad #9/#10/#77 acceptance remain open.
+
+[PR #106](https://github.com/o-psi/voyage/pull/106) merged as e3d4d1b after the full integrated 475-test/11-system Linux baseline and both CI runs. Ratatui 0.30.2 resolves lru 0.18.4; real PTY tests found and now cover the upstream fullscreen cursor-query compatibility change. GitHub reports #105 closed and Dependabot alert 1 fixed.
+
+The steering fixture follow-up in #104 (07d8734) waits for the worker before probing the actual OS execution lease. Fifty two-CPU repetitions passed, each executing the intended test. Earlier failed probes injected SQLite contention and remain recorded as invalid synchronization attempts. Current CI is running.
+
+Managed catalogue/cancellation/cleanup obligations passed 579 tests and 15 system fixtures. The terminal cleanup helper passed 606 workspace tests plus an additional privacy regression, all 16 current Linux system fixtures and the release/package baseline. Focused draft PR publication and integration are in progress. Managed CLI integration retains root/subagent resource managers, checks durable cancellation before publishing terminal outcomes, and preserves cleanup blockers when observation is uncertain.
+
+Managed shell cleanup scope and acceptance plan: https://github.com/o-psi/voyage/issues/78#issuecomment-5553399036. A separate adapter preserves local command policy and retains unreaped Linux session leaders through bounded cleanup; independent regression tests cover output, cancellation, background commands, limits and admission races. This is application-level observation, not containment of deliberately detached sessions (#62). Full integrated CLI verification remains pending. The completion live-provider HTTP 401 blocker is unchanged.
