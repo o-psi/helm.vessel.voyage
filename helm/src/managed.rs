@@ -464,6 +464,17 @@ impl EventSink for Progress {
     }
 }
 
+// Keep this observation bounded independently of the foreground execution.
+async fn poll_local_cancellation<F, Fut>(mut read: F) -> anyhow::Result<bool>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = anyhow::Result<bool>>,
+{
+    tokio::time::timeout(Duration::from_secs(5), read())
+        .await
+        .context("durable cancellation polling deadline elapsed")?
+}
+
 async fn await_execution<T>(
     execution: impl std::future::Future<Output = T>,
     cancel: tokio_util::sync::CancellationToken,
@@ -599,17 +610,12 @@ async fn submit(
                     _=done.cancelled()=> return Ok::<_,anyhow::Error>(()),
                     _=tokio::time::sleep(Duration::from_millis(50))=>{}
                 }
-                match tokio::time::timeout(
-                    Duration::from_secs(5),
-                    owner.local_cancel_requested(run_id),
-                )
-                .await
-                {
-                    Ok(Ok(true)) => {
+                match poll_local_cancellation(|| owner.local_cancel_requested(run_id)).await {
+                    Ok(true) => {
                         cancel.cancel();
                         return Ok(());
                     }
-                    Ok(Ok(false)) => {}
+                    Ok(false) => {}
                     _ => {
                         cancel.cancel();
                         bail!("durable cancellation polling failed");
@@ -871,3 +877,6 @@ mod tests {
         assert!(!progress.cancel.is_cancelled());
     }
 }
+
+#[cfg(test)]
+mod cancellation_watch_tests;
