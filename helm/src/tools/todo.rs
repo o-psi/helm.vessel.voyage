@@ -439,3 +439,6 @@ mod tests {
         assert!(tool.store.snapshot().await.unwrap().items.is_empty());
     }
 }
+
+#[cfg(test)]
+mod schema_tests;
