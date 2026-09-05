@@ -105,7 +105,8 @@ impl RunAttribution {
 
 /// Trusted local consent configuration. Remote changes require independently
 /// authorized and confirmed lifecycle handling, not a direct call to update_local.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SharingSettings {
     pub disclosure: Disclosure,
     pub archived: bool,
@@ -427,3 +428,6 @@ impl State {
 
 #[cfg(test)]
 mod tests;
+
+/// Private durable declarations, never an authorization adapter.
+pub mod consent;

@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 use uuid::Uuid;
 
-mod storage;
+pub(crate) mod storage;
 
 /// Stable attribution within one explicitly selected Helm installation.
 /// Neither identifier authenticates a caller or grants permission.
