@@ -128,7 +128,10 @@ the database. Do not delete a journal to resolve an enrollment error.
 
 Native tests cover ACL rejection, inherited permissions, junctions/hard links,
 failed replacement, real subprocess lock exclusion/release, client state recovery,
-and SQLite restart and contention. They do not prove survival of sudden hardware
+and SQLite restart, contention, and abrupt subprocess termination with a verified
+hot rollback journal. The crash fixture requires recovery of the original owner,
+receipt, and committed state; Windows also rechecks private database/journal ACLs
+and retained PERSIST mode. They do not prove survival of sudden hardware
 power loss on every storage device. Windows ACL support here is limited to the
 dedicated enrollment stores; the existing SessionStore and attachment-journal
 Windows security prerequisites remain separate.
