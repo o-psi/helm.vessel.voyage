@@ -244,32 +244,6 @@ pub struct ContextFailure {
     pub recovery: Option<Box<CanonicalRecovery>>,
 }
 
-/// Canonical run state retained when a locally rejected request stops execution.
-/// Runtime-only system messages are excluded; provider continuation stays local.
-#[derive(Clone)]
-pub struct CanonicalRecovery {
-    pub messages: Vec<Message>,
-    pub usage: Usage,
-}
-
-impl std::fmt::Debug for CanonicalRecovery {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter
-            .debug_struct("CanonicalRecovery")
-            .field("message_count", &self.messages.len())
-            .field("usage", &self.usage)
-            .finish_non_exhaustive()
-    }
-}
-
-#[derive(Debug, Error)]
-#[error("{source}")]
-pub struct ContextFailure {
-    #[source]
-    pub source: crate::context::ContextError,
-    pub recovery: Option<Box<CanonicalRecovery>>,
-}
-
 #[derive(Debug, Error)]
 pub enum AgentError {
     #[error(transparent)]
@@ -989,7 +963,9 @@ impl Agent {
                         }
                     };
                     let _ = tokio::time::timeout(gate.shutdown_timeout, cleanup).await;
-                    if !partial_output.is_empty() {
+                    // Durable checkpoints retain unfinished text separately; do
+                    // not duplicate it as an accepted canonical assistant message.
+                    if checkpoint.is_none() && !partial_output.is_empty() {
                         history.push(Message::new(crate::model::Role::Assistant, partial_output));
                     }
                     self.sink.emit(AgentEvent::CompletionState { phase: CompletionPhase::Interrupted, readiness: last_readiness.clone(), detail: Some(format!("Run interrupted; owned child shutdown observed: {}; remaining IDs: {:?}", shutdown.observation_complete, shutdown.remaining)) }).await;
