@@ -10,6 +10,7 @@ name = "helm"
 path = "src/main.rs"
 
 [dependencies]
+log.workspace = true
 voyage-protocol.workspace = true
 tokio-tungstenite.workspace = true
 rusqlite = { version = "0.37", features = ["bundled"] }

@@ -53,7 +53,7 @@ pub struct ConnectionContext {
 /// request is not admitted work: callers must recheck this lease, current sharing,
 /// local policy and durable command admission at effect commitment.
 pub struct Connection {
-    client: EnrollmentClient,
+    client: Arc<EnrollmentClient>,
     context: ConnectionContext,
     closed: CancellationToken,
     deadline: Arc<Mutex<Instant>>,
@@ -96,11 +96,17 @@ impl Connection {
             mpsc::error::TrySendError::Closed(_) => TransportError::Closed,
         })
     }
-    pub fn detach(&mut self) -> Result<()> {
-        self.closed.cancel();
-        self.client.detach().map_err(|_| TransportError::Enrollment)
+    pub async fn detach(&mut self) -> Result<()> {
+        self.stop().await;
+        Arc::get_mut(&mut self.client)
+            .ok_or(TransportError::Busy)?
+            .detach()
+            .map_err(|_| TransportError::Enrollment)
     }
     pub async fn close(mut self) {
+        self.stop().await;
+    }
+    async fn stop(&mut self) {
         self.closed.cancel();
         if let Some(mut task) = self.task.take() {
             if tokio::time::timeout(WRITE_TIMEOUT, &mut task)
@@ -272,8 +278,16 @@ pub async fn connect(
             .send(Message::Text(frame.into()))
             .await
             .map_err(|_| TransportError::Network)?;
-        let Some(Ok(Message::Text(text))) = socket.next().await else {
-            return Err(TransportError::Invalid);
+        let text = loop {
+            match socket.next().await {
+                Some(Ok(Message::Text(text))) => break text,
+                Some(Ok(Message::Ping(bytes))) => socket
+                    .send(Message::Pong(bytes))
+                    .await
+                    .map_err(|_| TransportError::Network)?,
+                Some(Ok(Message::Pong(_))) => (),
+                _ => return Err(TransportError::Invalid),
+            }
         };
         let frame = Frame::decode(text.as_bytes()).map_err(|_| TransportError::Invalid)?;
         let (context, lease_ms) = welcome(frame, &client, &offered)?;
@@ -289,10 +303,14 @@ pub async fn connect(
         result = tokio::time::timeout(HANDSHAKE_TIMEOUT, handshake) => result.map_err(|_| TransportError::Timeout)??,
     };
     let deadline = Arc::new(Mutex::new(expires));
+    let client = Arc::new(client);
     let (outgoing, outgoing_rx) = mpsc::channel(QUEUE);
     let (incoming_tx, incoming) = mpsc::channel(QUEUE);
     let task = tokio::spawn(run(
-        socket,
+        SocketOwner {
+            socket,
+            _client: client.clone(),
+        },
         context.clone(),
         closed.clone(),
         deadline.clone(),
@@ -310,10 +328,22 @@ pub async fn connect(
     })
 }
 
-async fn run(
-    mut socket: tokio_tungstenite::WebSocketStream<
+// Field order deliberately drops the socket before releasing enrollment, including
+// when Tokio aborts/drops the task future before it is first polled.
+struct SocketOwner {
+    socket: tokio_tungstenite::WebSocketStream<
         tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
     >,
+    _client: Arc<EnrollmentClient>,
+}
+
+fn heartbeat_at(deadline: Instant) -> Instant {
+    let now = Instant::now();
+    now + deadline.saturating_duration_since(now) / 3
+}
+
+async fn run(
+    mut owner: SocketOwner,
     context: ConnectionContext,
     closed: CancellationToken,
     deadline: Arc<Mutex<Instant>>,
@@ -321,11 +351,10 @@ async fn run(
     incoming: mpsc::Sender<Frame>,
 ) {
     let _close_on_exit = closed.clone().drop_guard();
-    let mut heartbeat = tokio::time::interval_at(
-        Instant::now() + Duration::from_secs(3),
-        Duration::from_secs(3),
-    );
-    heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut heartbeat = match deadline.lock() {
+        Ok(d) => heartbeat_at(*d),
+        Err(_) => return,
+    };
     let mut pending_heartbeat = None;
     loop {
         let expires = match deadline.lock() {
@@ -333,14 +362,16 @@ async fn run(
             Err(_) => break,
         };
         let next = tokio::select! {
-            biased;
             _ = closed.cancelled() => break,
             _ = tokio::time::sleep_until(expires) => break,
-            _ = heartbeat.tick(), if pending_heartbeat.is_none() => {
+            _ = tokio::time::sleep_until(heartbeat), if pending_heartbeat.is_none() => {
                 pending_heartbeat = Some(Instant::now());
                 match (Frame::Heartbeat { connection_id: context.connection_id }).encode() { Ok(text) => Some(Message::Text(text.into())), Err(_) => break }
             },
-            message = socket.next() => {
+            message = owner.socket.next() => {
+                // Fair selection cannot revive an already expired grant when
+                // a queued Lease and its deadline become ready together.
+                if closed.is_cancelled() || Instant::now() >= expires { break; }
                 match message {
                     Some(Ok(Message::Text(text))) => {
                         let Ok(frame) = Frame::decode(text.as_bytes()) else { break };
@@ -350,6 +381,7 @@ async fn run(
                             let next = sent + Duration::from_millis(u64::from(lease_ms));
                             if Instant::now() >= next { break; }
                             match deadline.lock() { Ok(mut d) => *d = next, Err(_) => break }
+                            heartbeat = heartbeat_at(next);
                         } else if validate_inbound(&context, &frame).is_err() || incoming.try_send(frame).is_err() { break; }
                         None
                     },
@@ -365,7 +397,7 @@ async fn run(
             let result = tokio::select! {
                 biased;
                 _ = closed.cancelled() => break,
-                result = tokio::time::timeout_at(until, socket.send(message)) => result,
+                result = tokio::time::timeout_at(until, owner.socket.send(message)) => result,
             };
             if !matches!(result, Ok(Ok(()))) {
                 break;
@@ -446,10 +478,9 @@ mod tests {
             )
             .is_ok()
         );
-        for mut wrong in [command.clone(), command.clone(), command.clone()] {
-            wrong.connection_id = Uuid::new_v4();
-            assert!(validate_inbound(&scope, &Frame::Command { command: wrong }).is_err());
-        }
+        let mut wrong = command.clone();
+        wrong.connection_id = Uuid::new_v4();
+        assert!(validate_inbound(&scope, &Frame::Command { command: wrong }).is_err());
         let mut wrong = command.clone();
         wrong.machine_id = Uuid::new_v4();
         assert!(validate_inbound(&scope, &Frame::Command { command: wrong }).is_err());

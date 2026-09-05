@@ -6,6 +6,7 @@ license.workspace = true
 description = "Voyage management plane"
 
 [dependencies]
+log.workspace = true
 anyhow.workspace = true
 futures-util = "0.3"
 tokio-util = { version = "0.7", features = ["rt"] }
