@@ -387,4 +387,49 @@ mod tests {
             );
         }
     }
+    #[tokio::test]
+    async fn questions_redacts_json_escaped_known_secrets_without_breaking_answers() {
+        let dir = tempfile::tempdir().unwrap();
+        for secret in [
+            r#"private"quote"#,
+            r"private\path",
+            "日本語\"secret",
+            r#"private\"combined"#,
+        ] {
+            for selected in [false, true] {
+                let answer = if selected {
+                    QuestionAnswer::Selected {
+                        index: 1,
+                        answer: secret.into(),
+                    }
+                } else {
+                    QuestionAnswer::Custom {
+                        answer: format!("before {secret} after"),
+                    }
+                };
+                let (mut ctx, _) = context(dir.path(), answer, false);
+                ctx.redactor = Arc::new(Redactor::new([secret.to_owned()]));
+                let result = ToolRegistry::standard()
+                    .execute(
+                        "questions",
+                        json!({"question":"Which format?", "options":["public",secret]}),
+                        &ctx,
+                    )
+                    .await
+                    .unwrap();
+                let decoded: QuestionAnswer = serde_json::from_str(&result).unwrap();
+                let expected = if selected {
+                    QuestionAnswer::Selected {
+                        index: 1,
+                        answer: "[REDACTED]".into(),
+                    }
+                } else {
+                    QuestionAnswer::Custom {
+                        answer: "before [REDACTED] after".into(),
+                    }
+                };
+                assert_eq!(decoded, expected);
+            }
+        }
+    }
 }
