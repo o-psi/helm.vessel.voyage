@@ -668,3 +668,21 @@ fn an_older_terminal_run_cannot_reconcile_calls_created_by_a_later_run() {
         ["later-call"]
     );
 }
+
+#[test]
+fn duplicate_receipt_rejects_revision_outside_sqlite_range() {
+    let (_dir, mut journal, session, _admission, guard, _run, mut request) = interrupted();
+    journal.reconcile_local_tools(&guard, &request).unwrap();
+    request.expected_revision = i64::MAX as u64;
+    let corrupt = serde_json::json!({"request":request,"revision":(i64::MAX as u64)+1,"tool_call_ids":["call-1"]});
+    journal
+        .connection
+        .execute(
+            "UPDATE local_tool_reconciliations SET record=?1",
+            [corrupt.to_string()],
+        )
+        .unwrap();
+    let revision = journal.load_session(session.id).unwrap().revision;
+    assert!(journal.reconcile_local_tools(&guard, &request).is_err());
+    assert_eq!(journal.load_session(session.id).unwrap().revision, revision);
+}
