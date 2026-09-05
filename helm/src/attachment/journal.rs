@@ -29,7 +29,9 @@ mod storage;
 #[cfg(windows)]
 use std::sync::Arc;
 
-const SCHEMA_VERSION: i64 = 5;
+const SCHEMA_VERSION: i64 = 6;
+mod reconciliation;
+pub use reconciliation::{LocalReconcileOutcome, LocalReconcileRequest};
 const STEERING_SCHEMA_VERSION: i64 = 4;
 mod catalogue;
 pub use catalogue::{
@@ -206,7 +208,7 @@ impl Journal {
             .optional()?;
         if let Some(version) = version {
             ensure!(
-                matches!(version, 2 | 3 | 4 | SCHEMA_VERSION),
+                matches!(version, 2 | 3 | 4 | 5 | SCHEMA_VERSION),
                 "unsupported attachment journal schema"
             );
         } else {
@@ -220,6 +222,7 @@ impl Journal {
             tx.execute_batch(IMPORT_SCHEMA)?;
             tx.execute_batch(steering::SCHEMA)?;
             tx.execute_batch(catalogue::SCHEMA)?;
+            tx.execute_batch(reconciliation::SCHEMA)?;
             tx.execute(
                 "INSERT INTO attachment_schema VALUES(1, ?1)",
                 [SCHEMA_VERSION],
@@ -315,7 +318,10 @@ impl Journal {
         if self.opened_schema < STEERING_SCHEMA_VERSION {
             tx.execute_batch(steering::SCHEMA)?;
         }
-        tx.execute_batch(catalogue::SCHEMA)?;
+        if self.opened_schema < 5 {
+            tx.execute_batch(catalogue::SCHEMA)?;
+        }
+        tx.execute_batch(reconciliation::SCHEMA)?;
         tx.execute(
             "UPDATE attachment_schema SET version=?1 WHERE id=1",
             [SCHEMA_VERSION],
@@ -1129,8 +1135,8 @@ impl Journal {
 
 // Preserve uncertain intent rather than inventing tool results or replaying an
 // effect. Older orphan result messages may exist after legacy compaction; they
-// cannot satisfy a different outstanding call. A future explicit reconciliation
-// operation must account for unknown effects before reopening this session.
+// cannot satisfy a different outstanding call. Explicit local reconciliation must
+// append unknown outcomes after cleanup before this session accepts another turn.
 fn has_pending_tools(messages: &[Message]) -> bool {
     let mut pending = std::collections::BTreeSet::new();
     for message in messages {
