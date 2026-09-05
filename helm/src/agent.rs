@@ -403,12 +403,17 @@ impl Agent {
         Ok(model.trim().to_owned())
     }
 
-    pub async fn models(&self, refresh: bool) -> Result<Vec<ModelInfo>, AgentError> {
-        let mut cache = self.model_cache.lock().await;
+    /// Frontends call before recording a new turn; the run repeats this check at dispatch.
+    pub fn check_current_policy(&self) -> Result<(), AgentError> {
         self.context
             .policy
             .check_current()
-            .map_err(|error| AgentError::Policy(error.to_string()))?;
+            .map_err(|error| AgentError::Policy(error.to_string()))
+    }
+
+    pub async fn models(&self, refresh: bool) -> Result<Vec<ModelInfo>, AgentError> {
+        let mut cache = self.model_cache.lock().await;
+        self.check_current_policy()?;
         if !refresh
             && let Some((created, models)) = cache.as_ref()
             && created.elapsed() < Duration::from_secs(300)
@@ -545,10 +550,7 @@ impl Agent {
         checkpoint: Option<&dyn RunCheckpoint>,
         selected_model: Option<String>,
     ) -> Result<AgentOutcome, AgentError> {
-        self.context
-            .policy
-            .check_current()
-            .map_err(|error| AgentError::Policy(error.to_string()))?;
+        self.check_current_policy()?;
         let mut context = self.context.clone();
         context.cancellation = cancel.child_token();
         context.execution_id = checkpoint.map_or_else(uuid::Uuid::new_v4, RunCheckpoint::run_id);

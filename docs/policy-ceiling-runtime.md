@@ -83,3 +83,10 @@ worktree merely by loading its ID or following an old symlink. Explicit read acc
 permits inspection without granting removal. Denied cleanup preserves the lease
 record and durable evidence. Startup-archived records retain their existing
 immutable-evidence refusal independently of these root checks.
+
+The TUI additionally checks before inserting or saving a new user message. A known
+stale ceiling keeps the prompt in the composer and requests restart/rebuild, with
+no new canonical input or provider call. Dispatch repeats the check. These are not
+an atomic lock over an administrator edit and a session save: an edit between the
+checks can leave already-recorded input whose later dispatch is refused. Recorded
+input alone is not proof that execution occurred.

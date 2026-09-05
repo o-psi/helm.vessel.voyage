@@ -6,6 +6,8 @@ report SKIP honestly; deterministic loader/runtime unit coverage remains require
 """
 from __future__ import annotations
 import json
+import re
+import unicodedata
 import os
 from pathlib import Path
 import shutil
@@ -16,6 +18,33 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 
+def rendered_screen(data: bytes, rows: int = 14, columns: int = 60) -> str:
+    """Decode the cursor-addressed full redraw; Ratatui skips blank cells."""
+    grid = [[' '] * columns for _ in range(rows)]
+    row = column = 0
+    for part in re.split(r'(\x1b\[[0-?]*[ -/]*[@-~])', data.decode('utf-8', errors='replace')):
+        if part.startswith('\x1b['):
+            if part.endswith('H') or part.endswith('f'):
+                coordinates = part[2:-1].split(';')
+                row = int(coordinates[0] or '1') - 1
+                column = int(coordinates[1] or '1') - 1 if len(coordinates) > 1 else 0
+            elif part == '\x1b[2J':
+                grid = [[' '] * columns for _ in range(rows)]
+            continue
+        for char in part:
+            if char == '\r': column = 0
+            elif char == '\n': row += 1
+            elif char.isprintable():
+                width = 0 if unicodedata.combining(char) else 2 if unicodedata.east_asian_width(char) in ('W', 'F') else 1
+                if 0 <= row < rows and 0 <= column < columns:
+                    if width == 0 and column: grid[row][column - 1] += char
+                    else:
+                        grid[row][column] = char
+                        if width == 2 and column + 1 < columns: grid[row][column + 1] = ''
+                column += width
+    return '\n'.join(''.join(line) for line in grid)
+
+
 def inside() -> None:
     import pty
     import select
@@ -23,6 +52,7 @@ def inside() -> None:
     import termios
     import fcntl
     import struct
+    import signal
     work = Path('/work')
     work.mkdir()
     Path('/etc/helm').mkdir(parents=True)
@@ -146,6 +176,7 @@ for line in sys.stdin:
     master, slave = pty.openpty()
     fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH', 30, 100, 0, 0))
     prior_mode = termios.tcgetattr(slave)
+    request_count, model_count = len(requests), len(model_requests)
     child = subprocess.Popen(['/helm', '--config', str(config), 'chat'], stdin=slave, stdout=slave, stderr=slave,
                              env=dict(environment, TERM='xterm-256color'))
     captured = bytearray()
@@ -156,11 +187,28 @@ for line in sys.stdin:
                 captured.extend(os.read(master, 65536))
             if child.poll() is not None: break
         assert b'read-only' in captured, captured[-2000:]
+        cap('unrestricted')
+        cutoff = len(captured)
+        refused = 'tui refused before canonical 界'
+        os.write(master, (refused + '\r').encode())
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline and b'policy' not in captured[cutoff:].lower():
+            if select.select([master], [], [], .1)[0]: captured.extend(os.read(master, 65536))
+        assert b'policy' in captured[cutoff:].lower(), captured[-2000:]
+        cutoff = len(captured)
+        fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH', 14, 60, 0, 0))
+        os.kill(child.pid, signal.SIGWINCH)
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline and refused not in rendered_screen(captured[cutoff:]):
+            if select.select([master], [], [], .1)[0]: captured.extend(os.read(master, 65536))
+        assert refused in rendered_screen(captured[cutoff:]), ('refused prompt must stay in composer after resize', rendered_screen(captured[cutoff:]))
         os.write(master, b'\x11')
         child.wait(timeout=10)
         assert child.returncode == 0, captured[-2000:]
+        assert (len(requests), len(model_requests)) == (request_count, model_count)
         assert termios.tcgetattr(slave) == prior_mode
         assert not (work / 'mcp-started').exists()
+        assert all(refused not in path.read_text() for path in Path('/work/data').rglob('sessions/*.json'))
     finally:
         if child.poll() is None: child.kill(); child.wait()
         os.close(master)
@@ -168,6 +216,7 @@ for line in sys.stdin:
 
     # Reused line-mode Agent observes a changed ceiling before a second turn.
     requests.clear()
+    cap('read-only')
     scenario[0] = 'change'
     result = run('chat', '--plain', input='first accepted\nsecond must not be sent\n/exit\n')
     assert result.returncode == 0, result.stderr
