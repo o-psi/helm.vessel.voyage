@@ -399,13 +399,12 @@ impl ConsentStore {
                 state.records.push(record);
             } else {
                 gap = true;
-                if let Some(witness) = witness {
-                    if missing_record_witness
+                if let Some(witness) = witness
+                    && missing_record_witness
                         .replace((sequence, witness))
                         .is_some()
-                    {
-                        return Err(ConsentError::Evidence);
-                    }
+                {
+                    return Err(ConsentError::Evidence);
                 }
             }
         }
@@ -429,10 +428,10 @@ impl ConsentStore {
                 return Err(ConsentError::Evidence);
             }
             self.check_record(&record, &state)?;
-            if let Some((witness_sequence, witness)) = missing_record_witness {
-                if witness_sequence != next || witness != witness_bytes(next as u64, &bytes)? {
-                    return Err(ConsentError::Evidence);
-                }
+            if let Some((witness_sequence, witness)) = missing_record_witness
+                && (witness_sequence != next || witness != witness_bytes(next as u64, &bytes)?)
+            {
+                return Err(ConsentError::Evidence);
             }
             state.pending = Some(record);
         } else if missing_record_witness.is_some() {
@@ -523,10 +522,10 @@ impl ConsentStore {
             confirmation_digest: expected,
         };
         let bytes = encoded(&record)?;
-        if let Some(pending) = state.pending {
-            if encoded(&pending)? != bytes {
-                return Err(ConsentError::Pending);
-            }
+        if let Some(pending) = state.pending
+            && encoded(&pending)? != bytes
+        {
+            return Err(ConsentError::Pending);
         }
         let name = record_name(record.sequence as usize);
         let candidate = storage::publication_name(&name).map_err(storage_error)?;
