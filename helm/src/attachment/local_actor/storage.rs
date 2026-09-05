@@ -24,6 +24,20 @@ impl Directory {
         ensure!(path.is_absolute(), "local actor directory must be absolute");
         Ok(Self(voyage_storage::PrivateDirectory::open(path)?))
     }
+    pub(crate) fn open_existing(path: &Path) -> Result<Self> {
+        ensure!(path.is_absolute(), "local actor directory must be absolute");
+        Ok(Self(voyage_storage::PrivateDirectory::open_existing(path)?))
+    }
+    pub(crate) fn read_lock(&self) -> Result<Lock> {
+        let file = self.0.open_file("actor.lock", false)?;
+        file.try_lock_shared().map_err(|error| match error {
+            std::fs::TryLockError::WouldBlock => {
+                std::io::Error::from(std::io::ErrorKind::WouldBlock)
+            }
+            std::fs::TryLockError::Error(error) => error,
+        })?;
+        Ok(Lock(file))
+    }
     pub(crate) fn verify(&self) -> Result<()> {
         // Retained native directory handles deny rename/delete of the directory
         // and its ancestors; each child open separately verifies owner-only ACLs.

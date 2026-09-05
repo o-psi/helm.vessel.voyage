@@ -3,7 +3,7 @@ use crate::{
     Config,
     config::UnattendedApprovalMode,
     policy::Policy,
-    policy_profile::{self, EffectivePolicy, Rules},
+    policy_profile::{self, EffectivePolicy, Layer, Rules, selection::Selection},
 };
 use anyhow::{Result, ensure};
 use std::path::{Path, PathBuf};
@@ -14,11 +14,20 @@ pub(crate) enum Source {
     Test(PathBuf),
 }
 impl Source {
-    fn resolve(&self, workspace: &Path, base: &Rules) -> Result<EffectivePolicy> {
+    pub(crate) fn resolve(
+        &self,
+        workspace: &Path,
+        base: &Rules,
+        layers: &[Layer],
+    ) -> Result<EffectivePolicy> {
         match self {
-            Self::System => Ok(policy_profile::resolve_runtime_current(workspace, base)?),
+            Self::System => Ok(policy_profile::resolve_runtime_layers(
+                workspace, base, layers,
+            )?),
             #[cfg(all(test, target_os = "linux"))]
-            Self::Test(root) => Ok(policy_profile::resolve_test_source(workspace, base, root)?),
+            Self::Test(root) => Ok(policy_profile::resolve_test_layers(
+                workspace, base, layers, root,
+            )?),
         }
     }
 }
@@ -26,18 +35,31 @@ impl Source {
 pub(crate) struct Snapshot {
     source: Source,
     base: Rules,
+    selection: Option<Selection>,
+    pub(crate) ancestor_selection: Option<Selection>,
     pub(crate) effective: EffectivePolicy,
 }
 impl Snapshot {
     pub(crate) fn check_current(&self) -> Result<()> {
-        let current = self
-            .source
-            .resolve(self.effective.workspace().path(), &self.base)?;
+        if let Some(selection) = &self.ancestor_selection {
+            selection.check_current()?;
+        }
+        let current = if let Some(selection) = &self.selection {
+            selection.resolve(self.effective.workspace().path(), &self.base)?
+        } else {
+            self.source
+                .resolve(self.effective.workspace().path(), &self.base, &[])?
+        };
         ensure!(
             current.digest() == self.effective.digest(),
             "system policy or workspace changed; restart or rebuild the session before another run"
         );
         Ok(())
+    }
+    pub(crate) fn inherited_selection(&self) -> Option<Selection> {
+        self.selection
+            .clone()
+            .or_else(|| self.ancestor_selection.clone())
     }
     pub(crate) fn verify_workspace(&self) -> Result<()> {
         Ok(self.effective.workspace().verify_current()?)
@@ -64,21 +86,22 @@ impl RuntimePolicy {
         parent.check_current()?;
         let mut config = config.clone();
         parent.limit_child_config(&mut config, workspace)?;
+        // The child gets resolved parent maxima, never the parent's broader layer.
+        config.policy_profile = None;
         let mut resolved = Self::resolve_with_source(&config, workspace, source)?;
+        resolved.policy.inherit_profile_freshness(parent);
         resolved.policy.inherit_execution_authority(parent);
-        resolved.policy.check_execution_authority()?;
+        resolved.policy.check_current()?;
         Ok(resolved)
     }
     fn resolve_with_source(config: &Config, workspace: &Path, source: Source) -> Result<Self> {
-        let base = Rules {
-            access: config.access_mode(),
-            unattended: config.unattended_approval.clone(),
-            read_roots: root_names(&config.allow_read)?,
-            write_roots: root_names(&config.allow_write)?,
-            deny_commands: config.deny_commands.clone(),
-            inherit_env: config.inherit_env.clone(),
+        let base = config_rules(config)?;
+        let selection = config.policy_profile.clone();
+        let effective = if let Some(selection) = &selection {
+            selection.resolve(workspace, &base)?
+        } else {
+            source.resolve(workspace, &base, &[])?
         };
-        let effective = source.resolve(workspace, &base)?;
         let mut config = config.clone();
         let rules = effective.rules();
         config.access = Some(rules.access);
@@ -95,6 +118,8 @@ impl RuntimePolicy {
             policy: Policy::from_runtime(Snapshot {
                 source,
                 base,
+                selection,
+                ancestor_selection: None,
                 effective,
             }),
         })
@@ -111,6 +136,16 @@ impl RuntimePolicy {
     pub(crate) fn into_policy(self) -> Policy {
         self.policy
     }
+}
+pub(crate) fn config_rules(config: &Config) -> Result<Rules> {
+    Ok(Rules {
+        access: config.access_mode(),
+        unattended: config.unattended_approval.clone(),
+        read_roots: root_names(&config.allow_read)?,
+        write_roots: root_names(&config.allow_write)?,
+        deny_commands: config.deny_commands.clone(),
+        inherit_env: config.inherit_env.clone(),
+    })
 }
 fn root_names(roots: &[PathBuf]) -> Result<Vec<String>> {
     roots

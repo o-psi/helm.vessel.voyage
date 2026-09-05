@@ -15,6 +15,12 @@ const MAX_RENDER: usize = 128 * 1024;
 const MAX_FILES: usize = 128;
 const MAX_PARAMETERS: usize = 32;
 pub const RESERVED: &[&str] = &[
+    "policy",
+    "policy-directory",
+    "policy-profile",
+    "policy-revision",
+    "policy-digest",
+    "policy-confirm",
     "activity",
     "branch",
     "plain",

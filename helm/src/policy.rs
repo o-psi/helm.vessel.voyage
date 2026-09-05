@@ -65,6 +65,9 @@ impl Policy {
     pub(crate) fn inherit_execution_authority(&mut self, parent: &Self) {
         self.execution_authority = parent.execution_authority.clone();
     }
+    pub(crate) fn inherit_profile_freshness(&mut self, parent: &Policy) {
+        self.snapshot.ancestor_selection = parent.snapshot.inherited_selection();
+    }
     pub fn ceiling_present(&self) -> bool {
         self.snapshot.effective.ceiling_digest().is_some()
     }

@@ -1,7 +1,10 @@
 //! Inspectable profile metadata and the administrator ceiling used by runtime builders.
 //! Public profile-layer resolution checks the fixed system ceiling; ordinary runtime
-//! integration currently selects no profile layers. Confirmation is not dispatch authority.
+//! integration also checks explicit named-profile selection. Confirmation is not dispatch authority.
 mod ceiling;
+pub mod cli;
+pub mod selection;
+pub mod store;
 use crate::config::{AccessMode, UnattendedApprovalMode};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -477,14 +480,21 @@ fn resolve_loaded(
     resolve_loaded_inner(workspace, base, layers, ceiling, false)
 }
 
-pub(crate) fn resolve_runtime_current(workspace: &Path, base: &Rules) -> Result<EffectivePolicy> {
+pub(crate) fn resolve_runtime_layers(
+    workspace: &Path,
+    base: &Rules,
+    layers: &[Layer],
+) -> Result<EffectivePolicy> {
     #[cfg(target_os = "linux")]
     let ceiling = ceiling::load()?;
-    // This internal zero-layer Config adapter preserves existing non-Linux runtime
-    // behavior. Public profile resolution still refuses unsupported enforcement.
     #[cfg(not(target_os = "linux"))]
-    let ceiling: Option<CeilingDocument> = None;
-    resolve_loaded_inner(workspace, base, &[], ceiling.as_ref(), true)
+    let ceiling = {
+        if !layers.is_empty() {
+            return Err(Error::UnsupportedPlatform);
+        }
+        None
+    };
+    resolve_loaded_inner(workspace, base, layers, ceiling.as_ref(), true)
 }
 fn resolve_loaded_inner(
     workspace: &Path,
@@ -531,7 +541,13 @@ fn resolve_loaded_inner(
             .filter(|(_, v)| !v.is_null())
             .map(|(k, _)| k.clone())
             .collect::<BTreeSet<_>>();
-        prepared_layers.push((source, prepare(&raw, &workspace.path)?, fields));
+        let prepared = if trusted_config && layer.kind == LayerKind::Explicit {
+            // Explicit CLI Config retains the existing exact-file root contract.
+            prepare_trusted_config(&raw, &workspace.path)?
+        } else {
+            prepare(&raw, &workspace.path)?
+        };
+        prepared_layers.push((source, prepared, fields));
     }
     let prepared_ceiling = ceiling
         .map(|ceiling| {
@@ -658,11 +674,12 @@ pub fn transition(previous: &EffectivePolicy, proposed: &EffectivePolicy) -> Res
 mod tests;
 
 #[cfg(all(test, target_os = "linux"))]
-pub(crate) fn resolve_test_source(
+pub(crate) fn resolve_test_layers(
     workspace: &Path,
     base: &Rules,
+    layers: &[Layer],
     root: &Path,
 ) -> Result<EffectivePolicy> {
     let ceiling = ceiling::test_load(root)?;
-    resolve_loaded_inner(workspace, base, &[], ceiling.as_ref(), true)
+    resolve_loaded_inner(workspace, base, layers, ceiling.as_ref(), true)
 }
