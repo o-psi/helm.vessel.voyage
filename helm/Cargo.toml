@@ -52,6 +52,8 @@ unicode-segmentation = "1.12"
 pulldown-cmark = "0.13"
 syntect = { version = "5.3", default-features = false, features = ["default-syntaxes", "default-themes", "regex-fancy"] }
 
+zeroize = "1.9"
+
 [dev-dependencies]
 jsonschema = { version = "0.30", default-features = false }
 axum.workspace = true

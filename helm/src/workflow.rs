@@ -569,4 +569,8 @@ pub fn print_value(value: &Value, json: bool) -> Result<()> {
 }
 
 #[cfg(test)]
+mod secret_tests;
+pub mod secrets;
+
+#[cfg(test)]
 mod tests;
