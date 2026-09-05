@@ -100,3 +100,26 @@ The required verification platform is Linux. Other platform code remains
 available, but native macOS and Windows behavior is not claimed as verified for
 this release. Observed owned-PTY cleanup is not an OS sandbox; a process that
 escapes into a different session needs separate operating-system containment.
+
+Cleanup obligations are recorded before runtime construction. If Helm is killed,
+construction fails, or cleanup cannot be observed, `list` shows a pending cleanup
+run and subsequent new submissions remain blocked. Ordinary recovery preserves
+that blocker. After independently stopping that run's old effects, explicitly
+attest to the cleanup:
+
+```sh
+helm managed --directory "$STORE" recover SESSION_UUID \
+  --acknowledge-cleanup RUN_UUID
+```
+
+This records an operator attestation, distinct from Helm observing cleanup.
+An execution that has not reached durable terminal state is reported as
+`run_unconfirmed`, with its actual saved state; dropping a future does not mean
+its work stopped.
+
+This release supports native providers and built-in tools for managed execution.
+`codex-compatibility` and effectful MCP server configurations are rejected before
+admission because their cleanup adapters do not yet provide the required
+observation. Read-only mode does not start MCP servers. Metadata, cancellation,
+and recovery remain available independently of provider configuration. These
+adapters and additional frontend integration remain tracked under #78 and #65.

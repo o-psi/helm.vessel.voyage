@@ -104,8 +104,7 @@ impl Output {
         let line = if self.json {
             serde_json::to_string(&value)?
         } else {
-            // Structured human output is control-safe even for stored workspace/name text.
-            safe_diagnostic(&serde_json::to_string(&value)?)
+            human_record(&value)
         };
         ensure!(line.len() <= 1024 * 1024, "managed output record too large");
         let (sender, receiver) = tokio::sync::oneshot::channel();
@@ -122,6 +121,111 @@ impl Output {
         Ok(())
     }
 }
+fn human_record(value: &Value) -> String {
+    fn text(value: &Value, key: &str) -> String {
+        safe_diagnostic(value.get(key).and_then(Value::as_str).unwrap_or("unknown"))
+    }
+    match value["event"].as_str().unwrap_or("") {
+        "session_created" => {
+            let session = &value["session"];
+            format!(
+                "Created session {} (revision 0).\n{} · {}",
+                text(session, "id"),
+                text(session, "name"),
+                text(session, "model")
+            )
+        }
+        "session_list" => {
+            let mut lines = Vec::new();
+            for session in value["sessions"].as_array().into_iter().flatten() {
+                let mut line = format!(
+                    "{}  revision {}  {}",
+                    text(session, "id"),
+                    session["revision"],
+                    text(session, "name")
+                );
+                if !session["active_run"].is_null() {
+                    line.push_str(&format!(
+                        "  active {} ({})",
+                        text(&session["active_run"], "id"),
+                        text(&session["active_run"], "state")
+                    ));
+                }
+                if !session["pending_cleanup_run"].is_null() {
+                    line.push_str(&format!(
+                        "  cleanup required: {}",
+                        text(session, "pending_cleanup_run")
+                    ));
+                }
+                lines.push(line);
+            }
+            if lines.is_empty() {
+                lines.push("No managed sessions.".into());
+            }
+            if !value["next_after"].is_null() {
+                lines.push(format!("Next page: --after {}", text(value, "next_after")));
+            }
+            lines.join("\n")
+        }
+        "run_accepted" => format!(
+            "Accepted run {} for session {}.\nRetry receipt: --expected-revision {} --command-id {} --expires-at-ms {}\nModel output is provisional until durable completion and cleanup.",
+            text(value, "run_id"),
+            text(value, "session_id"),
+            value["expected_revision"],
+            text(value, "command_id"),
+            value["expires_at_ms"]
+        ),
+        "provisional_text" => safe_assistant(value["text"].as_str().unwrap_or("")),
+        "thinking" => format!("[model turn {}]", value["turn"]),
+        "tool_started" => format!("[tool {}]", text(value, "name")),
+        "tool_finished" => format!(
+            "[tool {}: {}]",
+            text(value, "name"),
+            if value["success"] == true {
+                "done"
+            } else {
+                "failed"
+            }
+        ),
+        "cancel_requested" => format!(
+            "Cancellation requested for run {}. Work may still be stopping.",
+            text(value, "run_id")
+        ),
+        "already_terminal" => format!(
+            "Run {} is already {}.",
+            text(value, "run_id"),
+            text(value, "state")
+        ),
+        "existing_run" => format!(
+            "Existing run {}: {}. No work replayed; use list to inspect cleanup obligations.",
+            text(&value["run"], "id"),
+            text(&value["run"], "state")
+        ),
+        "run_unconfirmed" => format!(
+            "Run {} has unconfirmed execution; saved state {}; cleanup obligation retained.",
+            text(&value["run"], "id"),
+            text(&value["run"], "state")
+        ),
+        "run_terminal" => format!(
+            "Run {}: {}; cleanup {}.",
+            text(&value["run"], "id"),
+            text(&value["run"], "state"),
+            text(value, "cleanup")
+        ),
+        "session_recovered" => format!(
+            "Session {} recovered; prior run {}. Cleanup {}. No tools replayed.",
+            text(value, "session_id"),
+            value["run"]
+                .get("state")
+                .and_then(Value::as_str)
+                .unwrap_or("not active"),
+            text(value, "cleanup")
+        ),
+        "journal_upgraded" => "Managed journal upgraded.".into(),
+        _ => "Managed operation finished.".into(),
+    }
+}
+
 fn installation(
     directory: &std::path::Path,
     create: bool,
@@ -141,9 +245,34 @@ fn installation(
     let actor = store.identity()?;
     Ok((store, actor, journal))
 }
+fn retry_busy<T>(mut operation: impl FnMut() -> Result<T>) -> Result<T> {
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    loop {
+        match operation() {
+            Err(error)
+                if error.chain().any(|cause| {
+                    matches!(cause.downcast_ref::<rusqlite::Error>(),
+                Some(rusqlite::Error::SqliteFailure(code, _)) if matches!(code.code,
+                    rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked))
+                }) && std::time::Instant::now() < deadline =>
+            {
+                std::thread::sleep(Duration::from_millis(10))
+            }
+            result => return result,
+        }
+    }
+}
+fn open_journal(directory: &std::path::Path) -> Result<Journal> {
+    retry_busy(|| Journal::open(directory.to_owned()))
+}
 fn record(run: &RunRecord) -> Value {
     json!({"id":run.id,"session_id":run.session_id,"command_id":run.command_id,
         "state":run.state,"usage":run.usage,"reason":run.terminal_reason})
+}
+fn run_result(actual: &RunRecord, observed: bool) -> Value {
+    let terminal = !matches!(actual.state, RunState::Accepted | RunState::Running);
+    json!({"event":if terminal {"run_terminal"}else{"run_unconfirmed"},"run":record(actual),
+        "cleanup":if observed && terminal {"observed"}else{"unconfirmed"}})
 }
 pub(super) async fn run(
     args: Args,
@@ -171,18 +300,18 @@ pub(super) async fn run(
                 );
                 session.set_name(name);
             }
-            let mut journal = Journal::open(directory)?;
+            let mut journal = open_journal(&directory)?;
             journal.create_session(&session)?;
             output.emit(json!({"event":"session_created","session":{"id":session.id,"revision":0,"name":session.name,"model":session.model,"workspace":session.workspace}})).await
         }
         ManagedCommand::List { after, limit } => {
-            let journal = Journal::open(directory)?;
+            let journal = open_journal(&directory)?;
             let page = journal.list_session_summaries(after, limit)?;
             output.emit(json!({"event":"session_list","sessions":page.sessions,"next_after":page.next_after})).await
         }
         ManagedCommand::Cancel { session, run } => {
-            let mut journal = Journal::open(directory)?;
-            let outcome = journal.request_cancel_local(&LocalCancelRequest {
+            let mut journal = open_journal(&directory)?;
+            let request = LocalCancelRequest {
                 session_id: session,
                 run_id: run,
                 installation_id: actor.installation_id,
@@ -191,7 +320,8 @@ pub(super) async fn run(
                     .now_ms()?
                     .checked_add(60_000)
                     .context("clock overflow")?,
-            })?;
+            };
+            let outcome = retry_busy(|| journal.request_cancel_local(&request))?;
             match outcome {
                 CancelRequestOutcome::Requested { duplicate } => output.emit(json!({"event":"cancel_requested","session_id":session,"run_id":run,"duplicate":duplicate})).await,
                 CancelRequestOutcome::AlreadyTerminal { state } => output.emit(json!({"event":"already_terminal","session_id":session,"run_id":run,"state":state})).await,
@@ -209,7 +339,7 @@ pub(super) async fn run(
             output.emit(json!({"event":"session_recovered","session_id":session,"run":recovered.as_ref().map(record),"cleanup":if acknowledge_cleanup.is_some(){"operator_attested"}else{"unchanged"}})).await
         }
         ManagedCommand::Upgrade => {
-            let mut journal = Journal::open(directory)?;
+            let mut journal = open_journal(&directory)?;
             journal.upgrade_quiescent()?;
             output.emit(json!({"event":"journal_upgraded"})).await
         }
@@ -298,12 +428,13 @@ async fn submit(
     use tokio_util::sync::CancellationToken;
     ensure!(!session.is_nil(), "nil session ID");
     let command_id = command_id.unwrap_or_else(Uuid::new_v4);
-    let expires_at_ms = expires_at_ms.unwrap_or(
-        SystemClock
+    let expires_at_ms = match expires_at_ms {
+        Some(expiry) => expiry,
+        None => SystemClock
             .now_ms()?
             .checked_add(300_000)
             .context("clock overflow")?,
-    );
+    };
     let request = TurnAdmission {
         command_id,
         machine_id: actor.installation_id,
@@ -313,7 +444,7 @@ async fn submit(
         expires_at_ms,
         prompt: prompt.join(" "),
     };
-    let journal = Journal::open(directory.clone())?;
+    let journal = open_journal(&directory)?;
     if let Some(existing) = journal.lookup_command(&request)? {
         output
             .emit(json!({"event":"existing_run","run":record(&existing)}))
@@ -442,7 +573,7 @@ async fn submit(
         run.confirm_local_cleanup_observed().await?;
     }
     let actual = run.record().await?;
-    output.emit(json!({"event":"run_terminal","run":record(&actual),"cleanup":if observed{"observed"}else{"unconfirmed"}})).await?;
+    output.emit(run_result(&actual, observed)).await?;
     ensure!(
         observed,
         "managed cleanup unconfirmed; obligation retained; recover explicitly"
@@ -456,4 +587,95 @@ async fn submit(
         "managed run did not complete"
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn active_durable_state_is_never_published_as_terminal() {
+        for state in [RunState::Accepted, RunState::Running] {
+            let record = RunRecord {
+                id: Uuid::new_v4(),
+                command_id: Uuid::new_v4(),
+                machine_id: Uuid::new_v4(),
+                principal_id: Uuid::new_v4(),
+                session_id: Uuid::new_v4(),
+                state,
+                partial_text: "private partial".into(),
+                terminal_reason: None,
+                usage: Default::default(),
+                final_checkpointed: false,
+            };
+            let event = run_result(&record, false);
+            assert_eq!(event["event"], "run_unconfirmed");
+            assert_eq!(event["cleanup"], "unconfirmed");
+            assert!(!event.to_string().contains("private partial"));
+        }
+    }
+    #[test]
+    fn human_output_is_concise_control_safe_and_keeps_recovery_ids() {
+        let id = Uuid::new_v4();
+        let value = json!({"event":"session_list","sessions":[{"id":id,"revision":7,"name":"name\u{1b}[2J\u{202e}","active_run":null,"pending_cleanup_run":id}],"next_after":null});
+        let text = human_record(&value);
+        assert!(
+            text.contains(&id.to_string())
+                && text.contains("revision 7")
+                && text.contains("cleanup required")
+        );
+        assert!(!text.contains('\u{1b}') && !text.contains('\u{202e}'));
+        assert!(!text.starts_with('{'));
+    }
+    #[tokio::test]
+    async fn failed_or_saturated_output_cancels_without_claiming_completion() {
+        for full in [false, true] {
+            let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+            if full {
+                let (receipt, _) = tokio::sync::oneshot::channel();
+                sender.try_send(("occupied".into(), receipt)).unwrap();
+            } else {
+                drop(receiver);
+            }
+            let progress = Progress {
+                output: Output { sender, json: true },
+                cancel: tokio_util::sync::CancellationToken::new(),
+                failed: Default::default(),
+                streamed: Default::default(),
+            };
+            tokio::time::timeout(
+                Duration::from_secs(1),
+                progress.emit(AgentEvent::AssistantTextDelta("provisional".into())),
+            )
+            .await
+            .unwrap();
+            assert!(progress.cancel.is_cancelled());
+            assert!(progress.failed.load(std::sync::atomic::Ordering::SeqCst));
+        }
+    }
+    #[tokio::test]
+    async fn terminal_looking_agent_event_waits_for_durable_publication() {
+        use helm::agent::CompletionPhase;
+        let (sender, receiver) = std::sync::mpsc::sync_channel(16);
+        let progress = Progress {
+            output: Output { sender, json: true },
+            cancel: tokio_util::sync::CancellationToken::new(),
+            failed: Default::default(),
+            streamed: Default::default(),
+        };
+        for phase in [
+            CompletionPhase::Completed,
+            CompletionPhase::Incomplete,
+            CompletionPhase::Interrupted,
+        ] {
+            progress
+                .emit(AgentEvent::CompletionState {
+                    phase,
+                    readiness: None,
+                    detail: Some("not durable".into()),
+                })
+                .await;
+        }
+        assert!(receiver.try_recv().is_err());
+        assert!(!progress.cancel.is_cancelled());
+    }
 }
