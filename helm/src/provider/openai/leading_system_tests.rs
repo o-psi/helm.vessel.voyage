@@ -131,10 +131,17 @@ async fn native_http_accepts_coalesced_reconciliation_preserving_canonical_histo
     let temp = tempfile::tempdir().unwrap();
     let store = SessionStore::new(temp.path().join("sessions"));
     let mut session = Session::new(temp.path().to_owned(), "compatible-fixture".into());
+    let mut call = Message::new(Role::Assistant, "");
+    call.tool_calls.push(ToolCall {
+        id: "read-evidence".into(),
+        name: "read_file".into(),
+        arguments: json!({"path":"actual.txt"}),
+    });
     session.messages = vec![
         Message::new(Role::User, "verify 99 against 42"),
-        Message::new(Role::Assistant, "provisional proposal"),
+        call,
         Message::tool("read-evidence", "Measured records: 42"),
+        Message::new(Role::Assistant, "provisional proposal"),
     ];
     let canonical = serde_json::to_value(&session.messages).unwrap();
     store.save(&mut session).await.unwrap();
