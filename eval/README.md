@@ -15,7 +15,11 @@ python3 eval/run.py live
 `eval/evidence/latest.json`. Evidence is intentionally ignored by Git: attach it to
 the evaluation record instead. Complete the manual interruption drills in the
 [operator runbook](../docs/cutover.md) alongside automated evaluations. These
-evaluations exercise local Helm workflows.
+evaluations exercise local Helm workflows. They do not establish readiness for
+the planned [multi-Helm voyage model](../docs/voyages.md): remote coordination,
+user-scoped machine selection, interface disconnect/reconnect, and authorized
+steering across Helms need additional end-to-end and behavioral evidence. Local
+subagent delegation is not evidence of delegation to another machine.
 
 Parallel scenarios require Helm to delegate independent work to multiple children,
 wait for their terminal states, and synthesize attributed results. Runtime tests
@@ -25,8 +29,7 @@ edit-conflict behavior without spending provider capacity.
 The runner uses the documented `--access unrestricted` CLI mode, closes stdin, and
 sets each scenario's working directory to its disposable workspace. This permits
 required file/todo writes and completion accounting without waiting for approval.
-The hidden legacy `--approval never` option still exists, but new integrations
-should use `--access`. Normal configured filesystem roots and command denials
+Use `--access` for integrations. Normal configured filesystem roots and command denials
 remain active. Additional roots or external tools in the operator configuration
 remain configured; a disposable directory is not an OS sandbox. Use a provider and
 configuration approved for these tasks and review capacity/cost before live runs.

@@ -6,19 +6,24 @@ messages and tool definitions and returns text and structured tool calls. Creden
 never enter saved sessions. A native provider may persist only a typed, versioned,
 size-bounded continuation envelope; Helm clears that state when a model changes.
 
+For planned [multi-Helm voyages](voyages.md), this boundary applies separately to
+each executing Helm. Provider configuration and credentials stay on that Helm;
+Vessel relays control and events. The interface or coordinating role does not
+select a shared provider account or transfer credentials to participants.
+
 ## Access and billing boundaries
 
 | Configuration | Current transport | Credential and billing boundary | External Codex process |
 | --- | --- | --- | --- |
 | `provider = "openai-responses"` | Native Responses HTTP/SSE | API key named by `api_key_env`; API-account usage | Not used |
-| `provider = "openai-chat"` | Legacy OpenAI-compatible Chat Completions HTTP/SSE | API key named by `api_key_env`; endpoint-defined billing | Not used |
+| `provider = "openai-chat"` | OpenAI-compatible Chat Completions HTTP/SSE | API key named by `api_key_env`; endpoint-defined billing | Not used |
 | `provider = "chatgpt-oauth"` | Native ChatGPT Codex Responses HTTP/SSE | Helm-managed OAuth tokens; ChatGPT plan limits | Not used |
 | `provider = "anthropic"` | Native Messages HTTP/SSE | API key named by `api_key_env`; Anthropic API-account usage | Not used |
 | `provider = "codex-compatibility"` | Codex app-server compatibility bridge | Existing Codex sign-in and applicable plan limits | Required today |
 
-`openai` and `openai-compatible` retain their historical Chat Completions behavior
+`openai` and `openai-compatible` select Chat Completions
 and serialize canonically as `openai-chat`. Select `openai-responses` explicitly for
-the native Responses protocol. The legacy `codex-subscription` name is accepted as
+the native Responses protocol. The `codex-subscription` name is accepted as
 an alias for `codex-compatibility`.
 
 ChatGPT/Codex subscription access and OpenAI API access are separate billing and
@@ -34,14 +39,14 @@ HTTP/SSE APIs and stream into Helm's own loop. Helm therefore works when no `cod
 executable is installed or discoverable, and it never launches Codex for a native
 provider. An OpenAI-compatible service can be selected with `provider =
 "openai-responses"` when it implements the Responses API, or `provider =
-"openai-chat"` for the older Chat Completions protocol. Set `base_url` for either
+"openai-chat"` for the Chat Completions protocol. Set `base_url` for either
 custom endpoint.
 
 The native subscription architecture follows the same principle: `helm auth login`
 uses ChatGPT OAuth and `provider = "chatgpt-oauth"` talks directly to the Codex
 Responses backend, with credentials managed by Helm and no Codex child process.
 `helm auth login --device` supports headless machines; `helm auth status`, `logout`,
-and the one-time `import-codex` migration command complete the credential lifecycle.
+and explicit `import-codex` credential import complete the credential lifecycle.
 The explicitly named `codex-compatibility` provider remains available but is not the
 native subscription architecture.
 
@@ -60,10 +65,10 @@ elevation disabled, and rejects foreign tool requests. Helm still owns every too
 execution and approval. The bridge can require updates when the external app-server
 protocol changes and is never selected implicitly by a native provider.
 
-## Migrate off the compatibility bridge
+## Configure a native provider
 
 1. For an existing ChatGPT subscription login, either run `helm auth login` (or
-   `helm auth login --device` on a headless host), or migrate once with
+   `helm auth login --device` on a headless host), or explicitly import it with
    `helm auth import-codex`. The import reads the credential file; it never executes
    Codex. Then set `provider = "chatgpt-oauth"` and run `helm models`.
 2. For separately billed API usage, obtain an API credential and keep it in an
@@ -85,9 +90,9 @@ protocol changes and is never selected implicitly by a native provider.
 5. Codex may now be removed from `PATH`; `codex_command` is ignored by native
    providers.
 
-For rollback, restore `provider = "codex-compatibility"`, install a compatible Codex
-CLI, authenticate it, and rerun `helm doctor`. A transport change never expands
-filesystem, command, approval, or tool authority.
+To select the optional bridge, set `provider = "codex-compatibility"`, install a
+compatible Codex CLI, authenticate it, and run `helm doctor`. A transport change
+never expands filesystem, command, approval, or tool authority.
 
 ## Independence release gate
 

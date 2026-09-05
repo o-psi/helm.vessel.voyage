@@ -15,8 +15,27 @@ Set `access = "approval"` in configuration or pass
 
 Subagents inherit the same Helm configuration and therefore cannot use commands or writes when
 the parent is read-only. Unattended execution cannot display an approval prompt, so actions
-that require one follow `unattended_approval`. Vessel connectivity is currently
-[unavailable](vessel-connectivity-retirement.md).
+that require one follow `unattended_approval`. Dedicated
+[remote workers](remote-sessions.md) use unattended execution and retain the
+executing Helm's local policy. Enrollment and presence alone grant no execution
+or session-sharing authority.
+
+## Voyage authority and operator interfaces
+
+The planned [voyage model](voyages.md) separates the interface Helm, coordinating
+Helm and executing participants. Selecting machines for a voyage limits where
+coordination may send work; it does not grant permissions on those machines.
+A coordinating Helm may run remotely and must remain subject to every executing
+Helm's local roots, policy, approvals and credentials. Viewing or coordinating a
+voyage does not imply approval authority. Remote approval routing and scoped
+operator capabilities remain unfinished.
+
+Today, the dedicated worker API supports an enrolled owner and explicitly started
+worker. The authenticated `/ui` route is a status page, not the planned Helm
+operator interface or a multi-Helm voyage console. Disconnecting an operator HTTP
+request does not cancel its accepted work; losing the worker's Vessel transport
+conservatively cancels its current turn. A durable remote voyage coordinator and
+interface reconnection must not be inferred from this existing worker behavior.
 
 ## Execution boundary
 
@@ -56,9 +75,10 @@ request span.
 
 - `GET /health` is process liveness and does not inspect dependencies.
 - `GET /ready` verifies database access, not attachment availability.
-- `GET /metrics` exposes `voyage_connectivity_enabled 0`; no fleet/task gauges remain.
+- `GET /metrics` exposes `voyage_connectivity_enabled`: 1 when attachment presence
+  is configured, otherwise 0. This is not a remote-execution readiness signal.
 - `GET /v1/diagnostics` requires operator authentication and reports version,
-  unavailable connectivity, unloaded legacy state and unimplemented attachment.
+  configured presence or managed execution separately from current connections.
 - `helm doctor` prints a secret-free JSON check of configuration, workspace,
   credential presence, session location, environment allowlist, and MCP names.
 
@@ -70,25 +90,33 @@ The Vessel status page at `/ui` and diagnostics are disabled unless
 `VESSEL_OPERATOR_TOKEN` (or `--operator-token`) is set. It accepts that secret as an
 HTTP Bearer token or as the password in HTTP Basic authentication. Use a randomly
 generated secret, keep it out of command history by preferring the environment
-variable, and terminate TLS before Vessel outside loopback. The console never emits
+variable, and terminate TLS before Vessel outside loopback. The status page never emits
 the configured token into HTML, logs, diagnostics, or persisted control-plane state.
 
 ## Incident checklist
 
-1. Capture UTC time, release version, execution/request/approval IDs, and redacted
+1. Capture UTC time, build version, execution/request/approval IDs, and redacted
    logs.
 2. Stop new dispatch while preserving database and session files.
-3. Isolate old workers/servers and their credentials for suspected compromise. This
-   interim build has no enrollment or revocation API; preserve private evidence.
-4. Confirm no managed or shell child process remains.
+3. Stop affected workers and isolate suspected compromised hosts. Use the
+   [enrollment lifecycle](attachment-cli.md) to request revocation; inspect and
+   resume uncertain transactions instead of assuming a lost reply means success.
+   Local detach disables an identity locally and does not revoke it on Vessel.
+4. Confirm no managed or shell child process remains. Follow the
+   [remote recovery procedure](remote-sessions.md#recover-locally-after-a-crash)
+   for interrupted runs and unresolved cleanup; a cancellation receipt alone is
+   not evidence that effects stopped.
 5. Run `helm doctor`, Vessel `/ready`, `/metrics`, and `/v1/diagnostics` locally.
-6. Preserve evidence and follow the cutover rollback runbook for material failures.
+6. Preserve private evidence and follow the [operator runbook](cutover.md) for
+   material failures.
 
 
 ## Windows enrollment storage
 
 The dedicated enrollment client and authority use `voyage-storage` on Windows.
-This is a storage implementation, not an exposed enrollment CLI or HTTP service.
+The [enrollment CLI](attachment-cli.md) and authenticated Vessel enrollment HTTP
+service use these storage primitives; storage support alone does not establish
+complete native-platform workflow validation.
 Native Windows test results are required before treating the implementation as
 ready for deployment; Linux tests and Windows cross-compilation are not runtime
 ACL or durability evidence.
@@ -163,7 +191,8 @@ These APIs remain local persistence foundations. They do not enable attachment
 network access or automatically transfer any JSON SessionStore state. Source
 session transfer remains unsupported outside Unix. Other unsupported storage
 platforms fail before creating journal data. Windows tests must run natively before
-this journal slice is ready for delivery; Linux results alone are insufficient.
+this journal is ready for native Windows deployment; Linux results alone are
+insufficient.
 Persistent rollback journals contain prior session pages and must remain inside
 the private storage and backup boundary. Do not delete a journal to recover an
 error. Hardware power-loss guarantees remain limited by the storage device.

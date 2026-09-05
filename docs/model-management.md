@@ -23,6 +23,11 @@ discard the workspace todo list, or rebuild the subagent runtime. Newly spawned 
 the selected model. The session stores both its current model and timestamped change history, so a
 resumed session continues with its last selection even when the configuration default differs.
 
+These controls apply to the current local Helm session and its local subagents.
+They do not remotely switch another Helm's model. In the planned
+[voyage model](voyages.md), interface, coordinator and participants can be different
+Helms; voyage scope does not imply shared model settings or credentials.
+
 Provider selection itself remains a startup concern because changing providers can change
 credentials, protocol semantics, and model compatibility.
 
@@ -40,8 +45,8 @@ Automatic titles refresh after successful top-level runs 1, 2, 3, 5, 8, 13, 21,
 and subsequent Fibonacci checkpoints. Tool/model iterations and steering messages
 within one run do not count separately. The completed-run counter persists across
 resume and compaction. A failed title attempt consumes its checkpoint rather than
-retrying on every input. Legacy sessions start their counter at zero; existing
-custom names remain manual. `/name`, `/new TITLE`, and `/branch TITLE` disable
+retrying on every input. Sessions without a completed-run counter start at zero;
+existing custom names remain manual. `/name`, `/new TITLE`, and `/branch TITLE` disable
 automatic naming. A branch starts its own counter; `/clear` resets the counter and
 an automatic name, while preserving a manual name.
 
@@ -65,9 +70,10 @@ name remains the fallback until a valid generated title is available.
 
 Validation: `tests/system/session_titles.py` exercises the real CLI with an offline
 provider, covering independent model requests, Fibonacci scheduling across restart,
-manual/legacy names, failures, and discovery fallback. Unit tests additionally
+manual names and sessions without title metadata, failures, and discovery fallback.
+Unit tests additionally
 cover title sanitization, redaction, timeout/cancellation, branch/clear/compaction,
 and stale UI results. No shared protocol changes are involved. Live model title
 quality and macOS/Windows execution need their own validation; Linux fixtures do
-not establish those results. Rollback ignores the additional title metadata and
-retains the latest persisted name; older Helm builds will not refresh it.
+not establish those results. The persisted name remains readable independently of
+automatic-title metadata.

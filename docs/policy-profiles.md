@@ -9,6 +9,11 @@ limitations. Explicit named-profile CLI management and launch selection are
 implemented below. [Persistent private defaults](policy-defaults.md) are available;
 in-TUI switching remains unfinished under issue #70.
 
+Policy layers named global, project and session refer to local policy resolution;
+they do not define a mandatory voyage project or a fleet-wide grant. The planned
+[voyage scope](voyages.md) selects eligible Helms, while each executing Helm resolves
+its own effective policy. A coordinator or interface cannot broaden those rules.
+
 ## Typed rules and presets
 
 Schema 1 profiles contain a name, positive revision and complete rules. Restricted,
@@ -177,7 +182,7 @@ relocated store require a fresh selection and transition preview. This
 is an explicit local launch choice, not cryptographic authentication of a person.
 
 The actual precedence is Config base, selected profile, explicit policy CLI
-options (`--access`, legacy `--approval`, and supported policy `--set` keys), then
+options (`--access`, `--approval`, and supported policy `--set` keys), then
 the mandatory administrator ceiling. The comparison baseline is the actual Config
 including those same explicit overrides. Explicit Config/MCP environment values
 retain existing precedence and are restricted only by the actual administrator

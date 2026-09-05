@@ -5,6 +5,11 @@ inputs become model-visible data; explicitly bound secrets remain transient.
 A workflow supplies a prompt, not permissions: Helm keeps your selected provider,
 model, workspace, access mode, approvals and resource limits.
 
+Workflows are optional conveniences for local execution. The planned
+[voyage model](voyages.md) does not require a saved workflow, repository or fixed
+component map. A workflow definition cannot select additional participant Helms
+or widen a voyage's user-selected machine scope.
+
 Place personal definitions in the `workflows` directory beside Helm's default
 configuration file (normally `~/.config/helm/workflows` on Linux). Repository
 files belong in `<workspace>/.helm/workflows`. Discovery uses the selected workspace
@@ -235,4 +240,4 @@ no-save, selected-profile denial and stale-profile refusal. Unit tests cover exa
 fencing without completion scope, short/Unicode and split/encoded output, typed bounds,
 unknown/duplicate refs, environment conflicts, approval denial, timeout, cancellation,
 abandoned execution and observed managed cleanup. Linux validation is required;
-macOS/Windows native tests and new live-model evaluations are not part of this slice.
+macOS/Windows native execution and live-model behavior require separate evidence.

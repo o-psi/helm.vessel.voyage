@@ -65,7 +65,7 @@ choice is useful; do not use this tool to solicit secrets or bypass approvals.
 
 ## Availability and lifecycle
 
-The initial interactive implementation is **full-screen TUI only**. Plain chat,
+The current interactive implementation is **full-screen TUI only**. Plain chat,
 one-shot runs and standard child-agent frontends return
 `unavailable` without reading stdin. Library frontends can opt in by implementing
 `Approver::ask_question`; its default is unavailable. The shared frontend trait is
@@ -79,8 +79,11 @@ returns a tool timeout error and removes the stale dialog. Run cancellation drop
 the pending request and stale responses are ignored. The dialog is in-memory only:
 restart restores completed tool history, never a live question or invented answer.
 
-No Vessel wire contract or stored session schema changes are required. Older Helm
-versions can read the generic tool history; they cannot invoke the new tool.
+Question results use ordinary tool history; there is no Vessel question-routing
+contract. In the planned [voyage model](voyages.md), a question may originate on a
+coordinating or participant Helm away from the operator interface. Forwarding it
+to an authorized interface, with clear origin and bounded response lifetime, remains
+unfinished; the current local dialog does not supply that behavior.
 
 ## Verification
 
