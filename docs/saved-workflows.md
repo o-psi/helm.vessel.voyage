@@ -194,7 +194,10 @@ A `{{token}}` placeholder becomes the public JSON reference
 `{"workflow_secret":"token","environment":"HELM_WORKFLOW_TOKEN"}`. Optional unbound
 secrets become `null`; required secrets must be supplied. Secret names are normalized
 to uppercase with hyphens replaced by underscores after the `HELM_WORKFLOW_` prefix;
-colliding names are rejected. Only nonsecret values enter `workflow_runs.inputs`.
+colliding names are rejected. Generated environment keys and their configured case
+aliases are reserved consistently across platforms; a private binding cannot replace
+a configured alias. This deliberately rejects some names that Unix would distinguish.
+Only nonsecret values enter `workflow_runs.inputs`.
 References reveal the parameter's name and intended environment key, never its value.
 
 The provider may explicitly request the existing one-shot `shell` tool with

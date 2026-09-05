@@ -441,10 +441,15 @@ impl ToolRegistry {
             policy: context.policy.clone(),
         });
         if let Some(environment) = private_environment {
-            if environment
-                .iter()
-                .any(|(name, _)| context.environment.contains_key(name))
-            {
+            if environment.iter().any(|(name, _)| {
+                // Generated keys are ASCII. Conservatively reserve their case
+                // aliases on every platform, including Unicode case mappings,
+                // rather than allowing a Windows Command.env overwrite.
+                context.environment.keys().any(|configured| {
+                    configured.to_uppercase() == name
+                        || configured.to_lowercase() == name.to_ascii_lowercase()
+                })
+            }) {
                 return Err(ToolError::InvalidArguments(
                     "workflow secret environment conflicts with configured environment".into(),
                 ));

@@ -42,6 +42,7 @@ class Provider(BaseHTTPRequestHandler):
     sessions = None
     no_save = False
     denied = False
+    environment_conflict = False
     before_tool = None
 
     def log_message(self, *_):
@@ -83,7 +84,9 @@ class Provider(BaseHTTPRequestHandler):
                     callback()
                 delta = {'tool_calls': [{'index': 0, 'id': 'private-workflow-shell', 'type': 'function', 'function': {'name': 'shell', 'arguments': json.dumps({'command': COMMAND, 'workflow_secrets': ['target']})}}]}
             else:
-                if self.denied:
+                if self.environment_conflict:
+                    assert 'conflicts with configured environment' in tool['content'], 'private binding replaced configured alias'
+                elif self.denied:
                     assert 'denied' in tool['content'].lower() or 'policy' in tool['content'].lower(), 'private shell ignored selected profile'
                 else:
                     assert json.loads(tool['content']) == {'status': 'exited', 'code': 0}, tool['content']
@@ -146,6 +149,14 @@ def cli_cases(root, port):
     Provider.no_save = False
     assert len(list(Provider.sessions.glob('*.json'))) == count
     (root / 'value-digest').unlink()
+    # Portable reserved-name rejection happens before a private subprocess exists.
+    original_config = config.read_text()
+    config.write_text(original_config + '[env]\nhelm_workflow_target="configured-public-sentinel"\n')
+    Provider.environment_conflict = True
+    workflow('run', 'review-change', *source, values={'FIXTURE_PRIVATE_SOURCE': values[0]})
+    assert not (root / 'value-digest').exists()
+    Provider.environment_conflict = False
+    config.write_text(original_config)
     # Read-only selected profile is stricter than the ordinary unrestricted config.
     invoke('policy', 'create', 'private-review', '--preset', 'restricted')
     snapshot = json.loads(invoke('policy', 'inspect', 'private-review').stdout)
