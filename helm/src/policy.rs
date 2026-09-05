@@ -11,35 +11,112 @@ pub enum Decision {
     Deny(String),
 }
 
+/// Optional foreground authority checked at each new dispatch boundary.
+/// Implementations must read current state; a stored positive check is not a grant.
+pub trait ExecutionAuthority: std::fmt::Debug + Send + Sync {
+    fn check(&self) -> Result<()>;
+}
+
 #[derive(Clone, Debug)]
 pub struct Policy {
+    execution_authority: Option<std::sync::Arc<dyn ExecutionAuthority>>,
     workspace: PathBuf,
     readable: Vec<PathBuf>,
     writable: Vec<PathBuf>,
     deny_commands: Vec<String>,
     mode: AccessMode,
+    snapshot: crate::runtime_policy::Snapshot,
 }
 
 impl Policy {
     pub fn new(config: &Config, workspace: PathBuf) -> Result<Self> {
-        // macOS exposes temporary directories through `/var`, which resolves to
-        // `/private/var`. Keep the policy root in the same canonical namespace
-        // used by `resolve_read` and `resolve_write`; otherwise legitimate paths
-        // beneath a symlinked system root are incorrectly rejected.
-        let workspace = workspace.canonicalize().map_err(|error| {
-            anyhow::anyhow!("cannot resolve workspace {}: {error}", workspace.display())
-        })?;
-        let mut readable = vec![workspace.clone()];
-        readable.extend(canonical_roots(&config.allow_read)?);
-        let mut writable = vec![workspace.clone()];
-        writable.extend(canonical_roots(&config.allow_write)?);
-        Ok(Self {
-            workspace,
-            readable,
-            writable,
-            deny_commands: config.deny_commands.clone(),
-            mode: config.access_mode(),
-        })
+        Ok(crate::runtime_policy::RuntimePolicy::resolve(config, &workspace)?.into_policy())
+    }
+    pub(crate) fn from_runtime(snapshot: crate::runtime_policy::Snapshot) -> Self {
+        let effective = &snapshot.effective;
+        Self {
+            execution_authority: None,
+            workspace: effective.workspace().path().into(),
+            readable: effective.rules().read_roots.clone(),
+            writable: effective.rules().write_roots.clone(),
+            deny_commands: effective.rules().deny_commands.clone(),
+            mode: effective.rules().access,
+            snapshot,
+        }
+    }
+    /// New turns refuse stale policy; existing effects are not instantaneously revoked.
+    pub fn check_current(&self) -> Result<()> {
+        self.check_execution_authority()?;
+        self.snapshot.check_current()
+    }
+    pub fn with_execution_authority(
+        mut self,
+        authority: std::sync::Arc<dyn ExecutionAuthority>,
+    ) -> Self {
+        self.execution_authority = Some(authority);
+        self
+    }
+    pub fn check_execution_authority(&self) -> Result<()> {
+        if let Some(authority) = &self.execution_authority {
+            authority.check()?;
+        }
+        Ok(())
+    }
+    pub(crate) fn inherit_execution_authority(&mut self, parent: &Self) {
+        self.execution_authority = parent.execution_authority.clone();
+    }
+    pub(crate) fn inherit_profile_freshness(&mut self, parent: &Policy) {
+        self.snapshot.ancestor_selection = parent.snapshot.inherited_selection();
+    }
+    pub fn ceiling_present(&self) -> bool {
+        self.snapshot.effective.ceiling_digest().is_some()
+    }
+    pub fn check_delegated_workspace(&self, path: &Path) -> Result<()> {
+        self.snapshot.verify_workspace()?;
+        let (ancestor, suffix) = existing_ancestor(path)?;
+        let mut resolved = ancestor.canonicalize()?;
+        for part in suffix {
+            resolved.push(part);
+        }
+        anyhow::ensure!(
+            within_any(&resolved, &self.readable) && within_any(&resolved, &self.writable),
+            "child/worktree workspace requires explicit parent read and write root delegation"
+        );
+        Ok(())
+    }
+    pub(crate) fn limit_child_config(&self, config: &mut Config, workspace: &Path) -> Result<()> {
+        self.check_delegated_workspace(workspace)?;
+        anyhow::ensure!(
+            canonical_roots(&config.allow_read)?
+                .iter()
+                .all(|p| within_any(p, &self.readable))
+                && canonical_roots(&config.allow_write)?
+                    .iter()
+                    .all(|p| within_any(p, &self.writable)),
+            "child roots exceed captured parent authority"
+        );
+        let rank = |m| match m {
+            AccessMode::ReadOnly => 0,
+            AccessMode::Approval => 1,
+            AccessMode::Unrestricted => 2,
+        };
+        if rank(config.access_mode()) > rank(self.mode) {
+            config.access = Some(self.mode);
+        }
+        crate::runtime_policy::restrictive_unattended(
+            &mut config.unattended_approval,
+            &self.snapshot.effective.rules().unattended,
+        );
+        config.deny_commands.extend(self.deny_commands.clone());
+        config.deny_commands.sort();
+        config.deny_commands.dedup();
+        config
+            .inherit_env
+            .retain(|name| self.snapshot.effective.rules().inherit_env.contains(name));
+        if let Some(allowed) = self.snapshot.effective.environment_ceiling() {
+            crate::runtime_policy::restrict_environment(config, allowed);
+        }
+        Ok(())
     }
 
     pub fn workspace(&self) -> &Path {
@@ -75,20 +152,30 @@ impl Policy {
         Ok(resolved)
     }
 
+    /// Deny-list check for exact argv of internal operations. This does not grant
+    /// access or replace the operation's separate mode/approval checks.
+    pub fn check_command_denials(&self, arguments: &[&str]) -> Result<()> {
+        for argument in arguments {
+            if let Some(name) = Path::new(argument)
+                .file_name()
+                .and_then(|name| name.to_str())
+                && self.deny_commands.iter().any(|denied| denied == name)
+            {
+                bail!("command `{name}` is denied by policy");
+            }
+        }
+        Ok(())
+    }
+
     pub fn command(&self, command: &str) -> Decision {
         let parsed = shell_words::split(command).unwrap_or_default();
         if parsed.is_empty() {
             return Decision::Deny("command could not be parsed safely".into());
         }
-        let denied = parsed.iter().find_map(|word| {
-            let executable = Path::new(word).file_name()?.to_str()?;
-            self.deny_commands
-                .iter()
-                .any(|denied| denied == executable)
-                .then_some(executable)
-        });
-        if let Some(executable) = denied {
-            return Decision::Deny(format!("command `{executable}` is denied by policy"));
+        if let Err(error) =
+            self.check_command_denials(&parsed.iter().map(String::as_str).collect::<Vec<_>>())
+        {
+            return Decision::Deny(error.to_string());
         }
         let risky = looks_risky(command, &parsed);
         match (self.mode, risky) {

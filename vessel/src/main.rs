@@ -1,3 +1,4 @@
+mod remote_http;
 use anyhow::Result;
 use axum::{
     Json, Router,
@@ -23,21 +24,21 @@ use uuid::Uuid;
 use voyage_protocol::{ApiError, HealthResponse};
 
 #[derive(Parser)]
-#[command(
-    version,
-    about = "Voyage management plane (Helm connectivity under reconstruction)"
-)]
+#[command(version, about = "Voyage management plane")]
 struct Cli {
     #[arg(long, default_value = "127.0.0.1:9480")]
     bind: String,
     #[arg(long, default_value = "vessel.db")]
     database: PathBuf,
-    /// Explicit private directory for the new enrollment authority (not legacy state).
+    /// Private enrollment authority directory; enables authenticated attachment presence.
     #[arg(long, requires = "public_origin")]
     attachment_directory: Option<PathBuf>,
     /// Canonical HTTPS origin served by a TLS proxy on this host.
     #[arg(long, requires = "attachment_directory")]
     public_origin: Option<String>,
+    /// Enable authenticated relay to explicitly running dedicated Helm remote workers.
+    #[arg(long, requires = "attachment_directory")]
+    remote_execution: bool,
     /// Allow HTTP only for literal loopback development origins.
     #[arg(long, requires = "attachment_directory")]
     allow_insecure_loopback: bool,
@@ -71,6 +72,8 @@ enum LogFormat {
 struct AppState {
     database: Arc<Mutex<Connection>>,
     operator_token_hash: Option<String>,
+    attachment: Option<vessel::attachment_transport::AttachmentApi>,
+    remote: Option<remote_http::RemoteApi>,
 }
 type ApiResult<T> = Result<Json<T>, (StatusCode, Json<ApiError>)>;
 
@@ -128,10 +131,31 @@ async fn main() -> Result<()> {
         } else {
             None
         };
+    let remote = if cli.remote_execution {
+        Some(remote_http::RemoteApi::new(
+            enrollment
+                .clone()
+                .ok_or_else(|| anyhow::anyhow!("enrollment required"))?,
+            cli.public_origin
+                .clone()
+                .ok_or_else(|| anyhow::anyhow!("origin required"))?,
+        )?)
+    } else {
+        None
+    };
+    let attachment = match &remote {
+        Some(remote) => Some(remote.attachment()),
+        None => enrollment
+            .clone()
+            .map(vessel::attachment_transport::AttachmentApi::presence)
+            .transpose()?,
+    };
     let database = open_database(&cli.database)?;
     let state = AppState {
         database: Arc::new(Mutex::new(database)),
         operator_token_hash: cli.operator_token.as_deref().map(token_hash),
+        attachment: attachment.clone(),
+        remote,
     };
     let app = Router::new()
         .route("/health", get(health))
@@ -139,6 +163,14 @@ async fn main() -> Result<()> {
         .route("/metrics", get(metrics))
         .route("/v1/diagnostics", get(diagnostics))
         .route("/ui", get(operator_dashboard))
+        .route(
+            "/v1/remote/{machine}/command",
+            axum::routing::post(remote_http::command),
+        )
+        .route("/v1/remote/{machine}/events", get(remote_http::watch))
+        .layer(axum::extract::DefaultBodyLimit::max(
+            voyage_protocol::attachment::MAX_FRAME_BYTES,
+        ))
         .layer(middleware::from_fn(correlate))
         .with_state(state);
     let app = if let Some(enrollment) = enrollment {
@@ -146,14 +178,41 @@ async fn main() -> Result<()> {
     } else {
         app
     };
+    let app = if let Some(attachment) = &attachment {
+        app.merge(attachment.clone().router())
+    } else {
+        app
+    };
     let listener = tokio::net::TcpListener::bind(&cli.bind).await?;
-    tracing::info!(address = %cli.bind, "Vessel ready; Helm connectivity is unavailable pending attachment implementation");
+    tracing::info!(address = %cli.bind, attachment_presence = attachment.is_some(), remote_execution = cli.remote_execution, "Vessel ready");
     axum::serve(listener, app)
-        .with_graceful_shutdown(async {
-            let _ = tokio::signal::ctrl_c().await;
+        .with_graceful_shutdown(async move {
+            shutdown_signal().await;
+            if let Some(attachment) = attachment {
+                attachment.shutdown().await;
+            }
         })
         .await?;
     Ok(())
+}
+
+async fn shutdown_signal() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{SignalKind, signal};
+        match signal(SignalKind::terminate()) {
+            Ok(mut terminate) => {
+                tokio::select! { _ = tokio::signal::ctrl_c() => {}, _ = terminate.recv() => {} }
+            }
+            Err(_) => {
+                let _ = tokio::signal::ctrl_c().await;
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = tokio::signal::ctrl_c().await;
+    }
 }
 
 async fn health() -> Json<HealthResponse> {
@@ -176,8 +235,11 @@ async fn readiness(State(state): State<AppState>) -> ApiResult<HealthResponse> {
     }))
 }
 
-async fn metrics() -> &'static str {
-    "# HELP voyage_connectivity_enabled Whether Helm connectivity is implemented.\n# TYPE voyage_connectivity_enabled gauge\nvoyage_connectivity_enabled 0\n"
+async fn metrics(State(state): State<AppState>) -> String {
+    format!(
+        "# HELP voyage_connectivity_enabled Whether attachment presence is enabled (not remote execution).\n# TYPE voyage_connectivity_enabled gauge\nvoyage_connectivity_enabled {}\n",
+        u8::from(state.attachment.is_some())
+    )
 }
 
 async fn diagnostics(
@@ -185,11 +247,17 @@ async fn diagnostics(
     headers: HeaderMap,
 ) -> UiResult<Json<serde_json::Value>> {
     operator_auth(&state, &headers)?;
+    let connections = match &state.attachment {
+        Some(api) => api.connections().await,
+        None => Vec::new(),
+    };
     Ok(Json(serde_json::json!({
         "version": env!("CARGO_PKG_VERSION"),
-        "connectivity": "unavailable",
+        "connectivity": if state.remote.is_some() { "outbound_managed_sessions" } else if state.attachment.is_some() { "presence_only" } else { "unavailable" },
         "legacy_state": "not_loaded",
-        "attachment": "not_implemented"
+        "attachment": if state.remote.is_some() { "managed_execution" } else if state.attachment.is_some() { "presence_only" } else { "disabled" },
+        "remote_execution": if state.remote.is_some() { "enabled" } else { "unavailable" },
+        "connections": connections,
     })))
 }
 
@@ -277,11 +345,20 @@ fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
 async fn operator_dashboard(
     State(state): State<AppState>,
     headers: HeaderMap,
-) -> UiResult<Html<&'static str>> {
+) -> UiResult<Html<String>> {
     operator_auth(&state, &headers)?;
-    Ok(Html(
-        "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width\"><title>Vessel</title></head><body><main><h1>Vessel</h1><p>Helm connectivity is unavailable. Legacy pairing and HTTP task workers have been removed. The replacement attachment flow is not implemented yet.</p><p>Existing stored data is preserved but is not loaded or executed.</p></main></body></html>",
-    ))
+    let status = if state.attachment.is_some() {
+        if state.remote.is_some() {
+            "Dedicated remote workers are available through authenticated /v1/remote operator endpoints. Local approval and cleanup remain on Helm."
+        } else {
+            "Authenticated Helm attachment presence is enabled. Remote execution is unavailable."
+        }
+    } else {
+        "Helm connectivity is unavailable until enrollment is configured. Remote execution is unavailable."
+    };
+    Ok(Html(format!(
+        "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width\"><title>Vessel</title></head><body><main><h1>Vessel</h1><p>{status}</p><p><a href=\"/v1/diagnostics\">Connection diagnostics</a></p></main></body></html>"
+    )))
 }
 
 fn token_hash(token: &str) -> String {
@@ -392,6 +469,8 @@ mod tests {
         let mut state = AppState {
             database: Arc::new(Mutex::new(Connection::open_in_memory().unwrap())),
             operator_token_hash: None,
+            attachment: None,
+            remote: None,
         };
         let mut headers = HeaderMap::new();
         assert!(operator_auth(&state, &headers).is_err());
@@ -427,6 +506,8 @@ mod tests {
         let result = readiness(State(AppState {
             database,
             operator_token_hash: None,
+            attachment: None,
+            remote: None,
         }))
         .await;
         assert_eq!(result.unwrap_err().0, StatusCode::INTERNAL_SERVER_ERROR);

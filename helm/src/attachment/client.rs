@@ -6,10 +6,12 @@ use reqwest::{Client, Url};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::{
     fs::{self, File},
-    io::{Read, Write},
-    path::{Path, PathBuf},
+    io::Read,
+    path::Path,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
+#[cfg(not(windows))]
+use std::{io::Write, path::PathBuf};
 use uuid::Uuid;
 use voyage_protocol::enrollment::{
     Challenge, MAX_PROOF_BYTES, ProofOperation, SignedChallenge, SigningKey,
@@ -66,6 +68,8 @@ struct State {
     owner_id: Option<Uuid>,
     epoch: u64,
     status: Status,
+    #[serde(default)]
+    locally_disabled: bool,
     private_key: Vec<u8>,
     pending: Option<Pending>,
 }
@@ -124,26 +128,121 @@ pub fn validate_origin(origin: &str, allow_loopback_http: bool) -> Result<String
     Ok(url.origin().ascii_serialization())
 }
 
+/// Safe local projection; never contains private keys, invitations or proofs.
+#[derive(Clone, Debug, Serialize)]
+pub struct Inspection {
+    pub origin: String,
+    pub machine_id: Uuid,
+    pub owner_id: Option<Uuid>,
+    pub epoch: u64,
+    pub status: Status,
+    pub locally_disabled: bool,
+    pub pending: Option<&'static str>,
+    pub transaction_id: Option<Uuid>,
+}
+impl State {
+    fn inspection(&self) -> Inspection {
+        let (pending, transaction_id) = match self.pending.as_ref().map(|p| &p.operation) {
+            Some(ProofOperation::Enroll { transaction_id, .. }) => {
+                (Some("enroll"), Some(*transaction_id))
+            }
+            Some(ProofOperation::Rotate { transaction_id, .. }) => {
+                (Some("rotate"), Some(*transaction_id))
+            }
+            Some(ProofOperation::Revoke { transaction_id, .. }) => {
+                (Some("revoke"), Some(*transaction_id))
+            }
+            _ => (None, None),
+        };
+        Inspection {
+            origin: self.origin.clone(),
+            machine_id: self.machine_id,
+            owner_id: self.owner_id,
+            epoch: self.epoch,
+            status: self.status,
+            locally_disabled: self.locally_disabled
+                || matches!(self.status, Status::Detached | Status::Revoked),
+            pending,
+            transaction_id,
+        }
+    }
+}
+// Unix flock is shared by fork-inherited file descriptions. Closing this
+// descriptor alone does not release ownership while an inherited copy survives.
+#[cfg(unix)]
+struct EnrollmentLock(File);
+#[cfg(not(unix))]
+type EnrollmentLock = File;
+
+#[cfg(unix)]
+impl Drop for EnrollmentLock {
+    fn drop(&mut self) {
+        use std::os::fd::AsRawFd;
+        // The descriptor remains valid until this guard finishes dropping.
+        unsafe { libc::flock(self.0.as_raw_fd(), libc::LOCK_UN) };
+    }
+}
+
 pub struct EnrollmentClient {
+    #[cfg(not(windows))]
     directory: PathBuf,
-    _lock: File,
+    #[cfg(windows)]
+    private_directory: voyage_storage::PrivateDirectory,
+    _lock: EnrollmentLock,
     http: Client,
     state: State,
     poisoned: bool,
 }
 impl EnrollmentClient {
     /// Explicit dedicated directory (not an existing Helm/session data root).
-    /// Unix requires owned 0700 directory and owned 0600 regular files; other
-    /// platforms fail closed until equivalent native ACL checks are implemented.
+    /// Unix requires owned 0700/0600 storage. Windows requires verified owner-only
+    /// native ACLs on a local NTFS volume; other platforms fail closed.
     pub fn open(directory: &Path, origin: &str, allow_loopback_http: bool) -> Result<Self> {
+        Self::open_mode(directory, origin, allow_loopback_http, true)
+    }
+    /// Existing identity only; no directory/key/lock creation or initial rewrite.
+    pub fn open_existing(
+        directory: &Path,
+        origin: &str,
+        allow_loopback_http: bool,
+    ) -> Result<Self> {
+        Self::open_mode(directory, origin, allow_loopback_http, false)
+    }
+    fn open_mode(
+        directory: &Path,
+        origin: &str,
+        allow_loopback_http: bool,
+        create: bool,
+    ) -> Result<Self> {
         let origin = validate_origin(origin, allow_loopback_http)?;
-        let lock = lock_directory(directory)?;
+        #[cfg(windows)]
+        let private_directory = if create {
+            voyage_storage::PrivateDirectory::open(directory)
+        } else {
+            voyage_storage::PrivateDirectory::open_existing(directory)
+        }
+        .map_err(storage_error)?;
+        #[cfg(windows)]
+        let lock = if create {
+            private_directory
+                .lock("client.lock")
+                .map_err(storage_error)?
+        } else {
+            lock_existing_windows(&private_directory)?
+        };
+        #[cfg(not(windows))]
+        let lock = lock_directory_mode(directory, create)?;
         let path = directory.join("client.json");
         let state = match fs::symlink_metadata(&path) {
             Ok(_) => {
                 let mut bytes = Vec::new();
-                private_file(&path, false)?
-                    .take(65537)
+                #[cfg(windows)]
+                let file = private_directory
+                    .open_file("client.json", false)
+                    .map_err(storage_error)?;
+                #[cfg(not(windows))]
+                let file = private_file(&path, false)?;
+                file.take(65537)
                     .read_to_end(&mut bytes)
                     .map_err(|_| ClientError::Storage)?;
                 if bytes.len() > 65536 {
@@ -157,13 +256,14 @@ impl EnrollmentClient {
                 validate_state(&state)?;
                 state
             }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => State {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound && create => State {
                 version: 2,
                 origin,
                 machine_id: Uuid::new_v4(),
                 owner_id: None,
                 epoch: 0,
                 status: Status::Unenrolled,
+                locally_disabled: false,
                 private_key: SigningKey::generate()
                     .map_err(|_| ClientError::Crypto)?
                     .as_pkcs8()
@@ -180,14 +280,78 @@ impl EnrollmentClient {
             .build()
             .map_err(|_| ClientError::Network)?;
         let mut client = Self {
+            #[cfg(not(windows))]
             directory: directory.into(),
+            #[cfg(windows)]
+            private_directory,
             _lock: lock,
             http,
             state,
             poisoned: false,
         };
-        client.persist()?;
+        if create {
+            client.persist()?;
+        }
         Ok(client)
+    }
+    /// Read a consistent private snapshot without creating files or identities.
+    /// Busy is reported honestly when another process owns the existing lock.
+    pub fn inspect(directory: &Path) -> Result<Option<Inspection>> {
+        #[cfg(unix)]
+        crate::session::reject_symlinks(directory).map_err(|_| ClientError::Storage)?;
+        #[cfg(windows)]
+        let private_directory = match voyage_storage::PrivateDirectory::open_existing(directory) {
+            Ok(value) => value,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(e) => return Err(storage_error(e)),
+        };
+        #[cfg(not(windows))]
+        match fs::symlink_metadata(directory) {
+            Ok(metadata) => {
+                #[cfg(unix)]
+                check_private(&metadata, true)?;
+                #[cfg(not(unix))]
+                {
+                    let _ = metadata;
+                    return Err(ClientError::Unsupported);
+                }
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(_) => return Err(ClientError::Storage),
+        }
+        // A never-initialized directory has no identity to inspect. If a state
+        // exists, its existing lock is mandatory; do not synthesize one.
+        match fs::symlink_metadata(directory.join("client.json")) {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(_) => return Err(ClientError::Storage),
+            Ok(_) => (),
+        }
+        #[cfg(windows)]
+        let _lock = lock_existing_windows(&private_directory)?;
+        #[cfg(not(windows))]
+        let _lock = lock_directory_mode(directory, false)?;
+        #[cfg(windows)]
+        let file = private_directory
+            .open_file("client.json", false)
+            .map_err(storage_error)?;
+        #[cfg(not(windows))]
+        let file = private_file(&directory.join("client.json"), false)?;
+        let mut bytes = Vec::new();
+        file.take(65537)
+            .read_to_end(&mut bytes)
+            .map_err(|_| ClientError::Storage)?;
+        if bytes.len() > 65536 {
+            return Err(ClientError::Storage);
+        }
+        let state: State = serde_json::from_slice(&bytes).map_err(|_| ClientError::Storage)?;
+        if state.version != 2 || validate_origin(&state.origin, true)? != state.origin {
+            return Err(ClientError::Storage);
+        }
+        validate_state(&state)?;
+        Ok(Some(state.inspection()))
+    }
+    pub fn inspection(&self) -> Inspection {
+        self.state.inspection()
     }
     pub fn status(&self) -> Status {
         self.state.status
@@ -213,7 +377,10 @@ impl EnrollmentClient {
     }
     fn active(&self) -> Result<()> {
         self.ready()?;
-        if self.state.status != Status::Active || self.state.pending.is_some() {
+        if self.state.status != Status::Active
+            || self.state.pending.is_some()
+            || self.state.locally_disabled
+        {
             Err(ClientError::Conflict)
         } else {
             Ok(())
@@ -223,16 +390,25 @@ impl EnrollmentClient {
         self.ready()?;
         let result = (|| {
             let bytes = serde_json::to_vec(&self.state).map_err(|_| ClientError::Storage)?;
-            let mut temp = tempfile::NamedTempFile::new_in(&self.directory)
-                .map_err(|_| ClientError::Storage)?;
-            temp.write_all(&bytes)
-                .and_then(|_| temp.as_file().sync_all())
-                .map_err(|_| ClientError::Storage)?;
-            temp.persist(self.directory.join("client.json"))
-                .map_err(|_| ClientError::Storage)?;
-            File::open(&self.directory)
-                .and_then(|f| f.sync_all())
-                .map_err(|_| ClientError::Storage)
+            #[cfg(windows)]
+            {
+                self.private_directory
+                    .publish("client.json", &bytes)
+                    .map_err(storage_error)
+            }
+            #[cfg(not(windows))]
+            {
+                let mut temp = tempfile::NamedTempFile::new_in(&self.directory)
+                    .map_err(|_| ClientError::Storage)?;
+                temp.write_all(&bytes)
+                    .and_then(|_| temp.as_file().sync_all())
+                    .map_err(|_| ClientError::Storage)?;
+                temp.persist(self.directory.join("client.json"))
+                    .map_err(|_| ClientError::Storage)?;
+                File::open(&self.directory)
+                    .and_then(|f| f.sync_all())
+                    .map_err(|_| ClientError::Storage)
+            }
         })();
         if result.is_err() {
             self.poisoned = true;
@@ -283,7 +459,14 @@ impl EnrollmentClient {
         self.resume(None).await
     }
     pub async fn revoke(&mut self) -> Result<Receipt> {
-        self.active()?;
+        self.ready()?;
+        if !matches!(self.state.status, Status::Active | Status::Detached)
+            || self.state.pending.is_some()
+            || self.state.epoch == 0
+            || self.state.owner_id.is_none()
+        {
+            return Err(ClientError::Conflict);
+        }
         self.state.pending = Some(Pending {
             operation: ProofOperation::Revoke {
                 machine_id: self.state.machine_id,
@@ -297,13 +480,18 @@ impl EnrollmentClient {
         self.resume(None).await
     }
     /// Local detach is NOT server revocation. Retains identity/tombstone and never
-    /// deletes user sessions. Resolve pending server mutations before detaching.
+    /// deletes user sessions. Pending mutations retain their original recovery state.
+    /// Recovering a receipt never clears a durable local disable.
     pub fn detach(&mut self) -> Result<()> {
         self.ready()?;
-        if self.state.pending.is_some() {
-            return Err(ClientError::Conflict);
+        // Do not erase observed server confirmation on a redundant local disable.
+        if self.state.status == Status::Revoked || self.state.locally_disabled {
+            return Ok(());
         }
-        self.state.status = Status::Detached;
+        self.state.locally_disabled = true;
+        if self.state.pending.is_none() {
+            self.state.status = Status::Detached;
+        }
         self.persist()
     }
     /// Fresh challenge for the ORIGINAL operation; never retry a consumed proof.
@@ -425,6 +613,8 @@ impl EnrollmentClient {
         self.state.owner_id = Some(receipt.owner_id);
         self.state.status = if revoked {
             Status::Revoked
+        } else if self.state.locally_disabled {
+            Status::Detached
         } else {
             Status::Active
         };
@@ -476,6 +666,9 @@ fn validate_state(s: &State) -> Result<()> {
         || s.owner_id.is_some_and(|id| id.is_nil())
         || s.epoch >= i64::MAX as u64
     {
+        return Err(invalid());
+    }
+    if s.locally_disabled && matches!(s.status, Status::Active | Status::Unenrolled) {
         return Err(invalid());
     }
     let enrolled = s.epoch > 0 && s.owner_id.is_some();
@@ -576,7 +769,7 @@ fn private_file(path: &Path, create: bool) -> Result<File> {
     Ok(file)
 }
 #[cfg(unix)]
-fn lock_directory(directory: &Path) -> Result<File> {
+fn lock_directory_mode(directory: &Path, create: bool) -> Result<EnrollmentLock> {
     use std::os::{
         fd::AsRawFd,
         unix::fs::{DirBuilderExt, OpenOptionsExt},
@@ -592,10 +785,12 @@ fn lock_directory(directory: &Path) -> Result<File> {
     crate::session::reject_symlinks(&absolute).map_err(|_| ClientError::Storage)?;
     let mut builder = fs::DirBuilder::new();
     builder.mode(0o700);
-    match builder.create(directory) {
-        Ok(()) => (),
-        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => (),
-        Err(_) => return Err(ClientError::Storage),
+    if create {
+        match builder.create(directory) {
+            Ok(()) => (),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => (),
+            Err(_) => return Err(ClientError::Storage),
+        }
     }
     check_private(
         &fs::symlink_metadata(directory).map_err(|_| ClientError::Storage)?,
@@ -607,25 +802,50 @@ fn lock_directory(directory: &Path) -> Result<File> {
         .open(directory)
         .map_err(|_| ClientError::Storage)?;
     check_private(&dir.metadata().map_err(|_| ClientError::Storage)?, true)?;
-    let lock = private_file(&directory.join("client.lock"), true)?;
+    let lock = private_file(&directory.join("client.lock"), create)?;
     if unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
         return Err(ClientError::Busy);
     }
-    dir.sync_all().map_err(|_| ClientError::Storage)?;
-    File::open(absolute.parent().ok_or(ClientError::Storage)?)
-        .and_then(|f| f.sync_all())
-        .map_err(|_| ClientError::Storage)?;
+    // Install cleanup before any fallible operation after acquisition.
+    let lock = EnrollmentLock(lock);
+    if create {
+        dir.sync_all().map_err(|_| ClientError::Storage)?;
+        File::open(absolute.parent().ok_or(ClientError::Storage)?)
+            .and_then(|f| f.sync_all())
+            .map_err(|_| ClientError::Storage)?;
+    }
     Ok(lock)
 }
-#[cfg(not(unix))]
-fn lock_directory(_: &Path) -> Result<File> {
+#[cfg(not(any(unix, windows)))]
+fn lock_directory_mode(_: &Path, _: bool) -> Result<File> {
     Err(ClientError::Unsupported)
 }
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 fn private_file(_: &Path, _: bool) -> Result<File> {
     Err(ClientError::Unsupported)
 }
 
+#[cfg(windows)]
+fn storage_error(error: std::io::Error) -> ClientError {
+    match error.kind() {
+        std::io::ErrorKind::WouldBlock => ClientError::Busy,
+        std::io::ErrorKind::Unsupported => ClientError::Unsupported,
+        _ => ClientError::Storage,
+    }
+}
+
 #[cfg(test)]
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 mod tests;
+
+#[cfg(windows)]
+fn lock_existing_windows(directory: &voyage_storage::PrivateDirectory) -> Result<File> {
+    let file = directory
+        .open_file("client.lock", false)
+        .map_err(storage_error)?;
+    file.try_lock().map_err(|e| match e {
+        std::fs::TryLockError::WouldBlock => ClientError::Busy,
+        std::fs::TryLockError::Error(_) => ClientError::Storage,
+    })?;
+    Ok(file)
+}

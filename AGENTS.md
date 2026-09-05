@@ -64,7 +64,7 @@ behavior to a later version to declare the first version complete.
 
 ## Understand the project before changing it
 
-Voyage is a Rust 2024 workspace with three members:
+Voyage is a Rust 2024 workspace with four members:
 
 - `helm/`: terminal UI and provider-neutral agent runtime; local tools, policy,
   approvals, sessions, terminals, todos, subagents, and outbound Vessel worker.
@@ -73,6 +73,8 @@ Voyage is a Rust 2024 workspace with three members:
   `vessel/src/main.rs`.
 - `crates/voyage-protocol/`: shared, versioned wire types. Contract changes require
   inspection and compatibility tests on both Helm and Vessel.
+- `crates/voyage-storage/`: native private enrollment filesystem primitives shared
+  by Helm and Vessel; native Windows security tests are required for changes.
 
 Start with `README.md`, `Cargo.toml`, and `helm/README.md`, then read affected source,
 existing tests, and relevant documentation. Useful references:
@@ -195,7 +197,8 @@ version label to avoid overwriting existing artifacts:
 Routine CI runs on Linux only to limit development costs. macOS and Windows
 workspace tests and locked release builds are not run on pushes or pull requests.
 Do not claim cross-platform validation from a Linux-only run. Tag-triggered release
-workflows still build platform archives; packaging is not platform test coverage. Preserve existing `dist/` artifacts. Keep relevant GitHub and Forgejo
+workflows still build platform archives; packaging is not platform test coverage.
+Preserve existing `dist/` artifacts. Keep relevant GitHub and Forgejo
 workflow counterparts consistent when changing CI (they are not currently identical).
 
 For documentation-only changes, validate paths, links, command accuracy, and diffs;

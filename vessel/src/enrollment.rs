@@ -9,7 +9,7 @@ use sha2::{Digest, Sha256};
 #[cfg(unix)]
 use std::fs;
 use std::path::Path;
-#[cfg(any(unix, test))]
+#[cfg(any(unix, windows, test))]
 use std::time::Duration;
 use uuid::Uuid;
 use voyage_protocol::enrollment::{Challenge, ProofOperation, SignedChallenge};
@@ -18,7 +18,7 @@ const MAX_RECORDS: i64 = 10_000;
 const MAX_CHALLENGES: i64 = 4096;
 const RECOVERY_MS: i64 = 300_000;
 const CHALLENGE_MS: i64 = 60_000;
-#[cfg(any(unix, test))]
+#[cfg(any(unix, windows, test))]
 const MAX_BYTES: i64 = 64 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -75,6 +75,8 @@ pub struct Receipt {
 
 pub struct EnrollmentStore {
     db: Connection,
+    #[cfg(windows)]
+    _private_directory: Option<voyage_storage::PrivateDirectory>,
     origin: String,
     owner: Uuid,
     challenge_key: ring::hmac::Key,
@@ -121,12 +123,52 @@ pub fn validate_origin(origin: &str, allow_loopback_http: bool) -> Result<String
 impl EnrollmentStore {
     pub fn open(directory: &Path, origin: &str, allow_loopback_http: bool) -> Result<Self> {
         let origin = validate_origin(origin, allow_loopback_http)?;
-        // Until native ACL verification exists, do not create a credential store
-        // on unsupported platforms and pretend Unix permissions protected it.
-        #[cfg(not(unix))]
+        // Never substitute inherited default permissions for native verification.
+        #[cfg(not(any(unix, windows)))]
         {
             let _ = (directory, origin);
             Err(EnrollmentError::Unsupported)
+        }
+        #[cfg(windows)]
+        {
+            let private =
+                voyage_storage::PrivateDirectory::open(directory).map_err(storage_error)?;
+            // PERSIST journaling keeps the securely precreated journal's explicit
+            // account owner, including when an elevated token defaults to a group.
+            drop(
+                private
+                    .open_file("enrollment.sqlite3", true)
+                    .map_err(storage_error)?,
+            );
+            drop(
+                private
+                    .open_file("enrollment.sqlite3-journal", true)
+                    .map_err(storage_error)?,
+            );
+            for name in ["enrollment.sqlite3-wal", "enrollment.sqlite3-shm"] {
+                match private.open_file(name, false) {
+                    Ok(file) => drop(file),
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(error) => return Err(storage_error(error)),
+                }
+            }
+            let mut store = Self::initialize(
+                Connection::open(private.path().join("enrollment.sqlite3"))?,
+                origin,
+            )?;
+            // Verify SQLite retained the owner-only files before serving requests.
+            drop(
+                private
+                    .open_file("enrollment.sqlite3", false)
+                    .map_err(storage_error)?,
+            );
+            drop(
+                private
+                    .open_file("enrollment.sqlite3-journal", false)
+                    .map_err(storage_error)?,
+            );
+            store._private_directory = Some(private);
+            Ok(store)
         }
         #[cfg(unix)]
         {
@@ -184,9 +226,11 @@ impl EnrollmentStore {
         }
     }
 
-    #[cfg(any(unix, test))]
+    #[cfg(any(unix, windows, test))]
     fn initialize(mut db: Connection, origin: String) -> Result<Self> {
         db.busy_timeout(Duration::ZERO)?;
+        #[cfg(windows)]
+        configure_private_journal(&db)?;
         db.execute_batch("PRAGMA foreign_keys=ON; PRAGMA synchronous=FULL;")?;
         let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let has_schema: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='enrollment_schema')", [], |r| r.get(0))?;
@@ -231,6 +275,7 @@ impl EnrollmentStore {
             )?;
         }
         tx.commit()?;
+        #[cfg(not(windows))]
         db.pragma_update(None, "journal_mode", "DELETE")?;
         let size: i64 = db.pragma_query_value(None, "page_size", |r| r.get(0))?;
         let pages: i64 = db.pragma_query_value(None, "page_count", |r| r.get(0))?;
@@ -243,6 +288,8 @@ impl EnrollmentStore {
         }
         Ok(Self {
             db,
+            #[cfg(windows)]
+            _private_directory: None,
             origin,
             owner,
             challenge_key: ring::hmac::Key::new(ring::hmac::HMAC_SHA256, &challenge_secret),
@@ -447,6 +494,14 @@ impl EnrollmentStore {
 
         tx.commit()?;
         Ok(receipt)
+    }
+}
+
+#[cfg(windows)]
+fn storage_error(error: std::io::Error) -> EnrollmentError {
+    match error.kind() {
+        std::io::ErrorKind::Unsupported => EnrollmentError::Unsupported,
+        _ => EnrollmentError::Storage,
     }
 }
 
@@ -720,6 +775,19 @@ fn apply(
         epoch: epoch as u64,
         revoked,
     })
+}
+
+// Also compiled in Unix tests to exercise SQLite bootstrap ordering locally.
+#[cfg(any(windows, test))]
+fn configure_private_journal(db: &Connection) -> rusqlite::Result<()> {
+    // Preparing journal_mode may read the schema and recover a hot journal before
+    // PERSIST takes effect. Temporary exclusive mode retains that journal during
+    // recovery; restore NORMAL before any authority transaction to keep independent
+    // connections usable. locking_mode itself does not read the schema.
+    db.execute_batch(
+        "PRAGMA locking_mode=EXCLUSIVE; PRAGMA journal_mode=PERSIST;
+         PRAGMA locking_mode=NORMAL; PRAGMA temp_store=MEMORY;",
+    )
 }
 
 #[cfg(test)]

@@ -16,6 +16,15 @@ use std::{
     time::Duration,
 };
 
+// Fault injection uses the live Journal's journal mode. A second connection in
+// DELETE mode cannot unlink the rollback file retained by Windows PERSIST.
+fn fixture_database(path: impl AsRef<std::path::Path>) -> rusqlite::Result<rusqlite::Connection> {
+    let db = rusqlite::Connection::open(path)?;
+    #[cfg(windows)]
+    db.pragma_update(None, "journal_mode", "PERSIST")?;
+    Ok(db)
+}
+
 struct Fixture {
     db: PathBuf,
     requests: Arc<AtomicUsize>,
@@ -26,7 +35,7 @@ impl Provider for Fixture {
     async fn complete(&self, request: ModelRequest) -> Result<ModelResponse, ProviderError> {
         assert_eq!(request.model, "fixture");
         let index = self.requests.fetch_add(1, Ordering::SeqCst);
-        let db = rusqlite::Connection::open(&self.db).unwrap();
+        let db = fixture_database(&self.db).unwrap();
         let saved: String = db
             .query_row("SELECT state FROM sessions", [], |r| r.get(0))
             .unwrap();
@@ -79,7 +88,7 @@ impl Provider for Fixture {
         if matches!(self.mode, "partial-failure" | "partial-storage-failure") {
             self.requests.fetch_add(1, Ordering::SeqCst);
             if self.mode == "partial-storage-failure" {
-                rusqlite::Connection::open(&self.db).unwrap().execute_batch("CREATE TRIGGER fail_output BEFORE UPDATE ON runs BEGIN SELECT RAISE(ABORT,'cannot persist output'); END;").unwrap();
+                fixture_database(&self.db).unwrap().execute_batch("CREATE TRIGGER fail_output BEFORE UPDATE ON runs BEGIN SELECT RAISE(ABORT,'cannot persist output'); END;").unwrap();
             }
             return Ok(Box::pin(futures_util::stream::iter(vec![
                 Ok(ProviderStreamEvent::Delta(ProviderDelta::Text(
@@ -121,7 +130,7 @@ impl Tool for Counter {
         _: serde_json::Value,
         context: &ToolContext,
     ) -> Result<String, ToolError> {
-        let db = rusqlite::Connection::open(&self.db).unwrap();
+        let db = fixture_database(&self.db).unwrap();
         let (record, state): (String, String) = db
             .query_row(
                 "SELECT record,state FROM runs JOIN sessions ON runs.session_id=sessions.id",
@@ -189,7 +198,7 @@ async fn setup(
         expires_at_ms: request.expires_at_ms,
         prompt: request.prompt.clone(),
     };
-    let Admission::New(owner) = RunOwner::admit(path, request, 1).await.unwrap() else {
+    let Admission::New(owner) = RunOwner::admit_at(path, request, 1).await.unwrap() else {
         panic!()
     };
     let requests = Arc::new(AtomicUsize::new(0));
@@ -205,6 +214,7 @@ async fn setup(
         ..Config::default()
     };
     let context = ToolContext {
+        completion: None,
         policy: Arc::new(Policy::new(&config, dir.path().to_path_buf()).unwrap()),
         approver: Arc::new(UnattendedApprover { allow: false }),
         timeout: Duration::from_secs(3),
@@ -260,7 +270,7 @@ async fn canonical_tool_loop_is_durable_once_with_usage_and_local_provider_state
     );
     drop(owner);
     let Admission::Existing(existing) =
-        RunOwner::admit(dir.path().join("attachment"), retry, 90_000)
+        RunOwner::admit_at(dir.path().join("attachment"), retry, 90_000)
             .await
             .unwrap()
     else {
@@ -290,7 +300,7 @@ async fn storage_failure_before_or_after_effect_never_replays_or_accepts_success
         assert_eq!(owner.record().await.unwrap().state, RunState::Running);
         drop(owner);
         let mut journal = Journal::open(dir.path().join("attachment")).unwrap();
-        let db = rusqlite::Connection::open(dir.path().join("attachment/journal.sqlite3")).unwrap();
+        let db = fixture_database(dir.path().join("attachment/journal.sqlite3")).unwrap();
         db.execute_batch(
             "DROP TRIGGER IF EXISTS fail_checkpoint; DROP TRIGGER IF EXISTS fail_result;",
         )
@@ -397,7 +407,7 @@ async fn corrupt_storage_and_wrong_local_model_prevent_provider_dispatch() {
         let (dir, mut owner, agent, requests, effects, _) =
             setup("success", Arc::new(SilentSink)).await;
         if corrupt {
-            rusqlite::Connection::open(dir.path().join("attachment/journal.sqlite3"))
+            fixture_database(dir.path().join("attachment/journal.sqlite3"))
                 .unwrap()
                 .execute("UPDATE sessions SET state='corrupt'", [])
                 .unwrap();
@@ -424,11 +434,19 @@ async fn corrupt_storage_and_wrong_local_model_prevent_provider_dispatch() {
 #[tokio::test]
 async fn steering_is_checkpointed_in_fifo_order_before_provider_dispatch() {
     let (dir, mut owner, agent, _, _, retry) = setup("success", Arc::new(SilentSink)).await;
-    let (sender, receiver) = crate::agent::steering_channel(2);
-    sender.try_send("first steering".into()).unwrap();
-    sender.try_send("second steering".into()).unwrap();
+    let sender = owner
+        .enable_steering_with_clock(Arc::new(steering::allow_actor), Arc::new(|| Ok(1)))
+        .unwrap();
+    sender
+        .submit(steering::request(&owner, "first steering").await)
+        .await
+        .unwrap();
+    sender
+        .submit(steering::request(&owner, "second steering").await)
+        .await
+        .unwrap();
     owner
-        .execute(&agent, CancellationToken::new(), Some(receiver))
+        .execute(&agent, CancellationToken::new(), None)
         .await
         .unwrap();
     let stored = Journal::open(dir.path().join("attachment"))
@@ -446,7 +464,12 @@ async fn steering_is_checkpointed_in_fifo_order_before_provider_dispatch() {
         inputs,
         vec!["accepted prompt", "first steering", "second steering"]
     );
-    assert!(sender.try_send("too late".into()).is_err());
+    assert!(
+        sender
+            .submit(steering::request(&owner, "too late").await)
+            .await
+            .is_err()
+    );
 }
 
 #[tokio::test]
@@ -461,7 +484,7 @@ async fn duplicate_outcomes_are_readable_while_execution_ownership_is_held() {
         expires_at_ms: retry.expires_at_ms,
         prompt: retry.prompt.clone(),
     };
-    let Admission::Existing(run) = RunOwner::admit(dir.path().join("attachment"), duplicate, 1)
+    let Admission::Existing(run) = RunOwner::admit_at(dir.path().join("attachment"), duplicate, 1)
         .await
         .unwrap()
     else {
@@ -474,7 +497,7 @@ async fn duplicate_outcomes_are_readable_while_execution_ownership_is_held() {
         .unwrap();
     retry.prompt.push_str("changed");
     assert!(
-        RunOwner::admit(dir.path().join("attachment"), retry, 1)
+        RunOwner::admit_at(dir.path().join("attachment"), retry, 1)
             .await
             .is_err()
     );
@@ -521,14 +544,17 @@ async fn checkpointed_run_uses_pinned_model_instead_of_mutable_next_turn_model()
 async fn failed_steering_checkpoint_never_announces_durable_application() {
     let sink = Arc::new(Observed::default());
     let (dir, mut owner, agent, requests, effects, _) = setup("success", sink.clone()).await;
-    let (sender, receiver) = crate::agent::steering_channel(2);
-    sender.try_send("steering-sentinel".into()).unwrap();
-    rusqlite::Connection::open(dir.path().join("attachment/journal.sqlite3")).unwrap()
+    let sender = owner
+        .enable_steering_with_clock(Arc::new(steering::allow_actor), Arc::new(|| Ok(1)))
+        .unwrap();
+    sender
+        .submit(steering::request(&owner, "steering-sentinel").await)
+        .await
+        .unwrap();
+    fixture_database(dir.path().join("attachment/journal.sqlite3")).unwrap()
         .execute_batch("CREATE TRIGGER fail_steering BEFORE UPDATE ON sessions WHEN NEW.state LIKE '%steering-sentinel%' BEGIN SELECT RAISE(ABORT,'injected steering failure'); END;").unwrap();
     assert!(matches!(
-        owner
-            .execute(&agent, CancellationToken::new(), Some(receiver))
-            .await,
+        owner.execute(&agent, CancellationToken::new(), None).await,
         Err(AgentError::Checkpoint(_))
     ));
     assert_eq!(requests.load(Ordering::SeqCst), 0);
@@ -565,4 +591,186 @@ async fn admitted_workspace_uses_canonical_identity_and_rejects_another_root() {
     assert_eq!(requests.load(Ordering::SeqCst), 0);
     assert_eq!(effects.load(Ordering::SeqCst), 0);
     assert_eq!(owner.record().await.unwrap().state, RunState::Failed);
+}
+
+struct NoChildren;
+#[async_trait]
+impl crate::subagent::SubagentExecutor for NoChildren {
+    async fn execute(
+        &self,
+        _: crate::subagent::ExecutionContext,
+    ) -> Result<crate::subagent::SubagentResult, String> {
+        Err("unexpected child execution".into())
+    }
+}
+
+#[tokio::test]
+async fn scoped_checkpoint_uses_admitted_identity_and_seals_only_accepted_work() {
+    use crate::{
+        completion::{
+            FinalOutcome,
+            runtime::{Coordinator, RunHandle},
+        },
+        subagent::{AgentTreeStore, RuntimeLimits, SubagentRuntime},
+        todo::{TodoScope, TodoStore},
+    };
+    for mode in ["success", "provider-failure"] {
+        let (dir, mut owner, agent, requests, _, _) = setup(mode, Arc::new(SilentSink)).await;
+        let coordinator =
+            Coordinator::open(dir.path().join("completion"), agent.workspace()).unwrap();
+        let todos = Arc::new(
+            TodoStore::new(
+                dir.path().join("todos/list.json"),
+                TodoScope::workspace(agent.workspace().to_owned()),
+            )
+            .with_coordinator(coordinator.clone()),
+        );
+        let agents = AgentTreeStore::new(dir.path().join("agents/tree.json"))
+            .with_coordinator(coordinator.clone());
+        let runtime = Arc::new(
+            SubagentRuntime::new(
+                Arc::new(NoChildren),
+                RuntimeLimits::default(),
+                Some(agents.clone()),
+            )
+            .unwrap(),
+        );
+        let agent = agent
+            .with_completion_coordinator(coordinator.clone())
+            .with_completion_gate(todos, agents, runtime);
+        let outcome = owner.execute(&agent, CancellationToken::new(), None).await;
+        let record = owner.record().await.unwrap();
+        let session = Journal::open(dir.path().join("attachment"))
+            .unwrap()
+            .load_session(record.session_id)
+            .unwrap()
+            .session;
+        assert_eq!(session.completion_runs.len(), 1);
+        assert_eq!(session.completion_runs[0].run_id, record.id);
+        assert_eq!(session.completion_runs[0].session_id, record.session_id);
+        assert_eq!(session.run_summaries.len(), 1);
+        assert_eq!(
+            session.run_summaries[0].phase,
+            if mode == "success" {
+                crate::agent::CompletionPhase::Completed
+            } else {
+                crate::agent::CompletionPhase::Interrupted
+            }
+        );
+        let handle = RunHandle::resume(coordinator, record.session_id, record.id)
+            .await
+            .unwrap();
+        let decision = handle.decision().await.unwrap().unwrap();
+        if mode == "success" {
+            assert_eq!(outcome.unwrap().stop_reason, StopReason::Completed);
+            assert_eq!(record.state, RunState::Completed);
+            assert!(record.final_checkpointed);
+            assert_eq!(decision.outcome, FinalOutcome::Completed);
+            assert_eq!(requests.load(Ordering::SeqCst), 2);
+        } else {
+            assert!(outcome.is_err());
+            assert_eq!(record.state, RunState::Failed);
+            assert!(!record.final_checkpointed);
+            assert_eq!(decision.outcome, FinalOutcome::Interrupted);
+            assert_eq!(requests.load(Ordering::SeqCst), 1);
+        }
+    }
+}
+
+mod owner;
+
+mod steering;
+
+#[tokio::test]
+async fn durable_cancel_after_model_acceptance_overrides_stale_success() {
+    let (dir, mut owner, agent, requests, effects, request) =
+        setup("success", Arc::new(SilentSink)).await;
+    let cancel = CancellationToken::new();
+    let run_id = owner.record().await.unwrap().id;
+    let result = owner
+        .execute_before_finish(&agent, cancel.clone(), None, || {
+            let mut journal = Journal::open(dir.path().join("attachment")).unwrap();
+            let accepted = journal.run(run_id).unwrap();
+            assert_eq!(accepted.state, RunState::Running);
+            assert!(accepted.final_checkpointed);
+            let outcome = journal
+                .request_cancel_local(&super::super::journal::LocalCancelRequest {
+                    session_id: request.session_id,
+                    run_id,
+                    installation_id: request.machine_id,
+                    principal_id: request.principal_id,
+                    expires_at_ms: SystemClock.now_ms().unwrap() + 60000,
+                })
+                .unwrap();
+            assert_eq!(
+                outcome,
+                super::super::journal::CancelRequestOutcome::Requested { duplicate: false }
+            );
+            Ok(())
+        })
+        .await;
+    assert!(
+        !cancel.is_cancelled(),
+        "durable intent must win without watcher/token help"
+    );
+    assert!(matches!(result, Err(AgentError::Cancelled)));
+    assert_eq!(owner.record().await.unwrap().state, RunState::Cancelled);
+    assert_eq!(requests.load(Ordering::SeqCst), 2);
+    assert_eq!(effects.load(Ordering::SeqCst), 1);
+    assert!(owner.execute(&agent, cancel, None).await.is_err());
+    assert_eq!(effects.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn local_reconciliation_retains_callback_fence_and_rejects_other_sessions() {
+    let (_dir, mut run, agent, requests, effects, admission) =
+        setup("success", Arc::new(SilentSink)).await;
+    let session = ManagedSessionOwner {
+        store: run.store.clone(),
+        session_id: admission.session_id,
+    };
+    run.register_local_cleanup().await.unwrap();
+    run.execute(&agent, CancellationToken::new(), None)
+        .await
+        .unwrap();
+    run.confirm_local_cleanup_observed().await.unwrap();
+    let run_id = run.record().await.unwrap().id;
+    assert!(!session.local_cancel_requested(run_id).await.unwrap());
+    assert!(
+        session
+            .local_cancel_requested(Uuid::new_v4())
+            .await
+            .is_err()
+    );
+    let request = super::super::journal::LocalReconcileRequest {
+        session_id: admission.session_id,
+        run_id,
+        installation_id: admission.machine_id,
+        principal_id: admission.principal_id,
+        expected_revision: session.snapshot().await.unwrap().revision,
+    };
+    let mut wrong = request.clone();
+    wrong.session_id = Uuid::new_v4();
+    assert!(
+        session
+            .reconcile_local_tools(wrong)
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("another session")
+    );
+    let callback = run.checkpoint();
+    drop(run);
+    let error = session
+        .reconcile_local_tools(request.clone())
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("turn still owned"), "{error}");
+    drop(callback);
+    let before = session.snapshot().await.unwrap().revision;
+    let error = session.reconcile_local_tools(request).await.unwrap_err();
+    assert!(!error.to_string().contains("turn still owned"));
+    assert_eq!(session.snapshot().await.unwrap().revision, before);
+    assert_eq!(requests.load(Ordering::SeqCst), 2);
+    assert_eq!(effects.load(Ordering::SeqCst), 1);
 }

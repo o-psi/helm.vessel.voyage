@@ -124,6 +124,7 @@ pub struct TodoStore {
     path: PathBuf,
     scope: TodoScope,
     gate: Arc<Mutex<()>>,
+    coordinator: Option<crate::completion::runtime::Coordinator>,
 }
 
 impl TodoStore {
@@ -137,19 +138,49 @@ impl TodoStore {
             gate: shared_gate(&path),
             path,
             scope,
+            coordinator: None,
         }
+    }
+    pub fn with_coordinator(
+        mut self,
+        coordinator: crate::completion::runtime::Coordinator,
+    ) -> Self {
+        self.coordinator = Some(coordinator);
+        self
+    }
+    pub fn coordinator(&self) -> Option<&crate::completion::runtime::Coordinator> {
+        self.coordinator.as_ref()
     }
     pub async fn snapshot(&self) -> Result<TodoList> {
         let _guard = self.gate.lock().await;
         self.load_raw().await
     }
     pub async fn create(&self, new: NewTodo) -> Result<TodoItem> {
-        self.mutate(|list| {
+        self.create_registered(new, None).await
+    }
+    pub async fn create_registered(
+        &self,
+        new: NewTodo,
+        run: Option<&crate::completion::runtime::RunHandle>,
+    ) -> Result<TodoItem> {
+        let id = TodoId::new();
+        anyhow::ensure!(!new.title.trim().is_empty(), "todo title cannot be empty");
+        if let Some(run) = run {
+            anyhow::ensure!(
+                self.coordinator
+                    .as_ref()
+                    .is_some_and(|c| c.same(run.coordinator())),
+                "todo run coordinator mismatch"
+            );
+            run.register(crate::completion::Obligation::Todo(id))
+                .await?;
+        }
+        self.mutate(move |list| {
             let title = new.title.trim();
             anyhow::ensure!(!title.is_empty(), "todo title cannot be empty");
             let now = Utc::now();
             let item = TodoItem {
-                id: TodoId::new(),
+                id,
                 title: title.into(),
                 description: new.description,
                 status: TodoStatus::Pending,
@@ -174,7 +205,7 @@ impl TodoStore {
         .await
     }
     pub async fn set_status(&self, id: TodoId, status: TodoStatus) -> Result<TodoItem> {
-        self.mutate(|list| {
+        self.mutate(move |list| {
             let now = Utc::now();
             let item = list.items.get(&id).context("unknown todo")?;
             anyhow::ensure!(!item.archived(), "archived todo is immutable");
@@ -196,7 +227,7 @@ impl TodoStore {
             if status == TodoStatus::Blocked {
                 anyhow::ensure!(
                     !item.blockers.is_empty(),
-                    "use set_blockers to describe why the todo is blocked"
+                    "use todo action=block with id and nonempty blockers to explain why the todo is blocked"
                 );
             }
             let item = list.items.get_mut(&id).unwrap();
@@ -222,7 +253,7 @@ impl TodoStore {
         add: BTreeSet<TodoId>,
         remove: BTreeSet<TodoId>,
     ) -> Result<TodoItem> {
-        self.mutate(|list| {
+        self.mutate(move |list| {
             anyhow::ensure!(
                 add.is_disjoint(&remove),
                 "a dependency cannot be both added and removed"
@@ -257,7 +288,7 @@ impl TodoStore {
         .await
     }
     pub async fn set_blockers(&self, id: TodoId, blockers: Vec<String>) -> Result<TodoItem> {
-        self.mutate(|list| {
+        self.mutate(move |list| {
             let item = list.items.get_mut(&id).context("unknown todo")?;
             anyhow::ensure!(!item.archived(), "archived todo is immutable");
             anyhow::ensure!(
@@ -282,7 +313,7 @@ impl TodoStore {
         .await
     }
     pub async fn assign(&self, id: TodoId, assignees: BTreeSet<String>) -> Result<TodoItem> {
-        self.mutate(|list| {
+        self.mutate(move |list| {
             anyhow::ensure!(
                 assignees.iter().all(|a| !a.trim().is_empty()),
                 "assignee cannot be empty"
@@ -302,7 +333,7 @@ impl TodoStore {
         description: Option<String>,
         priority: Option<Priority>,
     ) -> Result<TodoItem> {
-        self.mutate(|list| {
+        self.mutate(move |list| {
             let item = list.items.get_mut(&id).context("unknown todo")?;
             anyhow::ensure!(!item.archived(), "archived todo is immutable");
             if let Some(title) = title {
@@ -321,7 +352,7 @@ impl TodoStore {
         .await
     }
     pub async fn reorder(&self, id: TodoId, order: i64) -> Result<TodoItem> {
-        self.mutate(|list| {
+        self.mutate(move |list| {
             let item = list.items.get_mut(&id).context("unknown todo")?;
             anyhow::ensure!(!item.archived(), "archived todo is immutable");
             item.order = order;
@@ -337,7 +368,7 @@ impl TodoStore {
         text: String,
         author: Option<String>,
     ) -> Result<TodoItem> {
-        self.mutate(|list| {
+        self.mutate(move |list| {
             anyhow::ensure!(!text.trim().is_empty(), "entry cannot be empty");
             let item = list.items.get_mut(&id).context("unknown todo")?;
             anyhow::ensure!(!item.archived(), "archived todo is immutable");
@@ -357,7 +388,7 @@ impl TodoStore {
         .await
     }
     pub async fn archive(&self, id: TodoId) -> Result<TodoItem> {
-        self.mutate(|list| {
+        self.mutate(move |list| {
             let item = list.items.get_mut(&id).context("unknown todo")?;
             anyhow::ensure!(
                 matches!(item.status, TodoStatus::Completed | TodoStatus::Cancelled),
@@ -370,7 +401,7 @@ impl TodoStore {
         .await
     }
     pub async fn remove(&self, id: TodoId) -> Result<()> {
-        self.mutate(|list| {
+        self.mutate(move |list| {
             let item = list.items.get(&id).context("unknown todo")?;
             anyhow::ensure!(item.archived(), "todo must be archived before removal");
             anyhow::ensure!(
@@ -386,7 +417,7 @@ impl TodoStore {
         .await
     }
     pub async fn clear_completed(&self) -> Result<usize> {
-        self.mutate(|list| {
+        self.mutate(move |list| {
             let now = Utc::now();
             let mut count = 0;
             for item in list.items.values_mut() {
@@ -400,16 +431,30 @@ impl TodoStore {
         })
         .await
     }
-    async fn mutate<T>(&self, operation: impl FnOnce(&mut TodoList) -> Result<T>) -> Result<T> {
-        let _guard = self.gate.lock().await;
-        let mut list = self.load_raw().await?;
-        let result = operation(&mut list)?;
-        list.revision = list
-            .revision
-            .checked_add(1)
-            .context("todo revision overflow")?;
-        self.save_raw(&list).await?;
-        Ok(result)
+    async fn mutate<T: Send + 'static>(
+        &self,
+        operation: impl FnOnce(&mut TodoList) -> Result<T> + Send + 'static,
+    ) -> Result<T> {
+        // Cancellation of a tool waiter must not release the coordination lease
+        // while an already-started filesystem commit continues in the background.
+        let store = self.clone();
+        tokio::spawn(async move {
+            let _coordination = match &store.coordinator {
+                Some(c) => Some(c.lock().await?),
+                None => None,
+            };
+            let _guard = store.gate.lock().await;
+            let mut list = store.load_raw().await?;
+            let result = operation(&mut list)?;
+            list.revision = list
+                .revision
+                .checked_add(1)
+                .context("todo revision overflow")?;
+            store.save_raw(&list).await?;
+            Ok(result)
+        })
+        .await
+        .context("todo writer task failed")?
     }
     async fn load_raw(&self) -> Result<TodoList> {
         match tokio::fs::read(&self.path).await {
@@ -813,5 +858,48 @@ mod tests {
             & 0o777;
         assert_eq!(directory_mode, 0o700);
         assert_eq!(file_mode, 0o600);
+    }
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn cancelling_waiter_does_not_release_admitted_writer_lease() {
+        let (directory, store) = store();
+        let coordinator = crate::completion::runtime::Coordinator::open(
+            directory.path().join("completion"),
+            directory.path(),
+        )
+        .unwrap();
+        let store = store.with_coordinator(coordinator.clone());
+        let item = store.create(new("before")).await.unwrap();
+        let (entered_tx, entered_rx) = tokio::sync::oneshot::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let writer = store.clone();
+        let waiter = tokio::spawn(async move {
+            writer
+                .mutate(move |list| {
+                    let _ = entered_tx.send(());
+                    release_rx
+                        .recv_timeout(std::time::Duration::from_secs(3))
+                        .unwrap();
+                    list.items.get_mut(&item.id).unwrap().title = "committed".into();
+                    Ok(())
+                })
+                .await
+        });
+        entered_rx.await.unwrap();
+        waiter.abort();
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(50), coordinator.lock())
+                .await
+                .is_err(),
+            "aborted waiter released writer lease early"
+        );
+        release_tx.send(()).unwrap();
+        let _guard = tokio::time::timeout(std::time::Duration::from_secs(3), coordinator.lock())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            store.snapshot().await.unwrap().items[&item.id].title,
+            "committed"
+        );
     }
 }

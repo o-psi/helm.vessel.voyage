@@ -109,6 +109,7 @@ approval = "never"
                 # of the tail before expansion proves it was actually omitted.
                 resize(60, 120)
                 wait_for(b"HELM")
+                assert b"\x1b[6n" not in output, "Fullscreen startup queried cursor position"
                 os.write(master, b"exercise tool output\r")
                 wait_for(b"tool-output-flow-complete")
                 deadline = time.monotonic() + 15
@@ -116,6 +117,9 @@ approval = "never"
                               for m in saved_messages()):
                     assert time.monotonic() < deadline, "Turn was not persisted"
                     read_output()
+                # Canonical text is checkpointed before final acceptance. Wait for
+                # the finished UI event before exercising detail controls.
+                wait_for(b"Completed")
                 wait_for(b"exit 7")
                 wait_for(b"fixture fatal diagnostic")
                 wait_for(b"Failed")
@@ -142,12 +146,13 @@ approval = "never"
                 # previously raced queued resize processing in Linux CI.
                 # With 55 rows, the four-row composer begins on row 51.
                 wait_for(b"\x1b[?25h\x1b[51;1H", resize_start)
+                assert b"\x1b[6n" not in output[resize_start:], "Fullscreen resize queried cursor position"
 
                 collapse_start = len(output)
                 os.write(master, b"\x0f")
                 wait_for(b"previews", collapse_start)
                 wait_for("… more".encode(), collapse_start)
-                assert TAIL not in output[collapse_start:], "Collapsing redrew full output"
+                assert TAIL not in output[collapse_start:], ("Collapsing redrew full output", bytes(output[collapse_start:]))
 
                 assert len(Fixture.requests) == 2, Fixture.requests
                 results = [item for item in Fixture.requests[1]["input"]

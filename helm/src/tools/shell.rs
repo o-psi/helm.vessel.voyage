@@ -1,3 +1,6 @@
+mod managed;
+pub use managed::{ManagedShell, ShellShutdown};
+
 use crate::{
     model::ToolDefinition,
     policy::Decision,

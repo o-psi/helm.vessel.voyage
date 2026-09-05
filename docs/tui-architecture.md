@@ -104,3 +104,10 @@ Receipt labels survive unrelated status updates. Restart marks queued receipts u
 while an observed failed/cancelled run marks them not applied. Native-provider steering
 is covered by `tests/system/steering.py` in both Linux CI workflows; compatibility
 providers advertise unsupported delivery instead of silently discarding input.
+
+Saved workflow discovery and nonsecret form state belong to `tui/workflows.rs`.
+Request IDs discard cancelled/replaced discovery responses. The coordinator's shared
+`start_run` owns ordinary and workflow admission: current policy, completion scope,
+canonical user text and workflow metadata are saved before the same checkpointed
+Agent dispatch. Forms never implement another executor or apply advisory authority.
+See [Saved workflows](saved-workflows.md) for key bindings and trust semantics.

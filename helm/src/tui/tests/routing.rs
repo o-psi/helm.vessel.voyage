@@ -7,7 +7,7 @@ struct NoRequests;
 async fn tool_details_shortcut_expands_collapses_and_respects_approval_input() {
     let directory = tempfile::tempdir().unwrap();
     let agent = navigation_agent(&directory);
-    let store = SessionStore::new(directory.path().join("sessions"));
+    let mut store = SessionStore::new(directory.path().join("sessions"));
     let terminals = FakeTerminals::new();
     let supervisor = Arc::new(FakeSupervisor::new(vec![]));
     let todos = todo_store(&directory);
@@ -35,7 +35,7 @@ async fn tool_details_shortcut_expands_collapses_and_respects_approval_input() {
         key,
         &mut app,
         &agent,
-        &store,
+        &mut store,
         &tx,
         &terminals,
         supervisor.clone(),
@@ -52,7 +52,7 @@ async fn tool_details_shortcut_expands_collapses_and_respects_approval_input() {
         key,
         &mut app,
         &agent,
-        &store,
+        &mut store,
         &tx,
         &terminals,
         supervisor.clone(),
@@ -76,7 +76,7 @@ async fn tool_details_shortcut_expands_collapses_and_respects_approval_input() {
         response,
     });
     handle_key(
-        key, &mut app, &agent, &store, &tx, &terminals, supervisor, todos,
+        key, &mut app, &agent, &mut store, &tx, &terminals, supervisor, todos,
     )
     .await
     .unwrap();
@@ -107,6 +107,7 @@ fn navigation_agent(directory: &tempfile::TempDir) -> Arc<Agent> {
         Box::new(NoRequests),
         crate::tools::ToolRegistry::default(),
         crate::tools::ToolContext {
+            completion: None,
             policy: Arc::new(
                 crate::policy::Policy::new(
                     &crate::config::Config::default(),
@@ -135,7 +136,7 @@ fn navigation_agent(directory: &tempfile::TempDir) -> Arc<Agent> {
 async fn central_router_preserves_modal_and_panel_precedence() {
     let directory = tempfile::tempdir().unwrap();
     let agent = navigation_agent(&directory);
-    let store = SessionStore::new(directory.path().join("sessions"));
+    let mut store = SessionStore::new(directory.path().join("sessions"));
     let terminals = FakeTerminals::new();
     let supervisor = Arc::new(FakeSupervisor::new(vec![]));
     let todos = todo_store(&directory);
@@ -172,7 +173,7 @@ async fn central_router_preserves_modal_and_panel_precedence() {
         KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
         &mut app,
         &agent,
-        &store,
+        &mut store,
         &tx,
         &terminals,
         supervisor.clone(),
@@ -199,7 +200,7 @@ async fn central_router_preserves_modal_and_panel_precedence() {
         KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE),
         &mut app,
         &agent,
-        &store,
+        &mut store,
         &tx,
         &terminals,
         supervisor.clone(),
@@ -215,7 +216,7 @@ async fn central_router_preserves_modal_and_panel_precedence() {
         KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE),
         &mut app,
         &agent,
-        &store,
+        &mut store,
         &tx,
         &terminals,
         supervisor.clone(),
@@ -228,7 +229,7 @@ async fn central_router_preserves_modal_and_panel_precedence() {
         KeyEvent::new(KeyCode::Char(']'), KeyModifiers::CONTROL),
         &mut app,
         &agent,
-        &store,
+        &mut store,
         &tx,
         &terminals,
         supervisor.clone(),
@@ -242,7 +243,7 @@ async fn central_router_preserves_modal_and_panel_precedence() {
         KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE),
         &mut app,
         &agent,
-        &store,
+        &mut store,
         &tx,
         &terminals,
         supervisor.clone(),
@@ -256,7 +257,7 @@ async fn central_router_preserves_modal_and_panel_precedence() {
         KeyEvent::new(KeyCode::Char('m'), KeyModifiers::NONE),
         &mut app,
         &agent,
-        &store,
+        &mut store,
         &tx,
         &terminals,
         supervisor.clone(),
@@ -271,7 +272,7 @@ async fn central_router_preserves_modal_and_panel_precedence() {
         KeyEvent::new(KeyCode::Char('s'), KeyModifiers::NONE),
         &mut app,
         &agent,
-        &store,
+        &mut store,
         &tx,
         &terminals,
         supervisor.clone(),
@@ -286,7 +287,7 @@ async fn central_router_preserves_modal_and_panel_precedence() {
         KeyEvent::new(KeyCode::Char('t'), KeyModifiers::NONE),
         &mut app,
         &agent,
-        &store,
+        &mut store,
         &tx,
         &terminals,
         supervisor,
@@ -354,5 +355,318 @@ async fn todo_panel_can_edit_without_application_or_conversation_state() {
     assert_eq!(first.todo_input.text, "first界");
     assert!(second.todo_input.text.is_empty());
     assert!(second.todo_mode.is_none());
+    assert!(rx.try_recv().is_err());
+}
+
+#[tokio::test]
+async fn new_and_branch_shortcuts_rebind_execution_owner() {
+    let directory = tempfile::tempdir().unwrap();
+    let agent = navigation_agent(&directory);
+    let unbound = SessionStore::new(directory.path().join("sessions"));
+    let mut session = Session::new(directory.path().into(), "test".into());
+    let mut store = unbound.with_execution(session.id).await.unwrap();
+    store.save(&mut session).await.unwrap();
+    let original_id = session.id;
+    let mut app = App::new(session, vec![]);
+    let terminals = FakeTerminals::new();
+    let supervisor = Arc::new(FakeSupervisor::new(vec![]));
+    let todos = todo_store(&directory);
+    let (tx, _rx) = mpsc::unbounded_channel();
+    handle_key(
+        KeyEvent::new(KeyCode::Char('n'), KeyModifiers::CONTROL),
+        &mut app,
+        &agent,
+        &mut store,
+        &tx,
+        &terminals,
+        supervisor.clone(),
+        todos.clone(),
+    )
+    .await
+    .unwrap();
+    let next_id = app.session.id;
+    assert_ne!(next_id, original_id);
+    assert_eq!(store.owned_session_id(), Some(next_id));
+    unbound.with_execution(original_id).await.unwrap();
+    assert!(
+        tokio::time::timeout(Duration::from_millis(50), unbound.with_execution(next_id))
+            .await
+            .is_err()
+    );
+    handle_key(
+        KeyEvent::new(KeyCode::Char('b'), KeyModifiers::CONTROL),
+        &mut app,
+        &agent,
+        &mut store,
+        &tx,
+        &terminals,
+        supervisor,
+        todos,
+    )
+    .await
+    .unwrap();
+    let branch_id = app.session.id;
+    assert_eq!(app.session.parent_id, Some(next_id));
+    assert_eq!(store.owned_session_id(), Some(branch_id));
+    unbound.with_execution(next_id).await.unwrap();
+    assert!(
+        tokio::time::timeout(Duration::from_millis(50), unbound.with_execution(branch_id))
+            .await
+            .is_err()
+    );
+}
+
+#[tokio::test]
+async fn workflow_form_keeps_draft_and_yields_to_question_approval_and_pty() {
+    let directory = tempfile::tempdir().unwrap();
+    let repo = directory.path().join(".helm/workflows");
+    std::fs::create_dir_all(&repo).unwrap();
+    std::fs::write(repo.join("review.toml"), "schema_version=1\nid='review'\nversion='1'\ndescription='Review'\nprompt='Review {{topic}}'\n[parameters.topic]\ntype='string'\nrequired=true\n").unwrap();
+    let agent = navigation_agent(&directory);
+    let mut store = SessionStore::new(directory.path().join("sessions"));
+    let terminals = FakeTerminals::new();
+    let supervisor = Arc::new(FakeSupervisor::new(vec![]));
+    let todos = todo_store(&directory);
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    let mut app = App::new(Session::new(directory.path().into(), "test".into()), vec![]);
+    app.composer.insert_str("retained draft 雪");
+    handle_command(
+        "/workflow review --scope repository",
+        &mut app,
+        &mut store,
+        Some(&agent),
+        Some(&tx),
+    )
+    .await
+    .unwrap();
+    let session_id = app.session.id;
+    // Loading owns ordinary shortcuts. A late discovery cannot find a different
+    // session or a PTY/session picker opened through those same key events.
+    for key in ['t', 's', 'n', 'm'] {
+        handle_key(
+            KeyEvent::new(KeyCode::Char(key), KeyModifiers::CONTROL),
+            &mut app,
+            &agent,
+            &mut store,
+            &tx,
+            &terminals,
+            supervisor.clone(),
+            todos.clone(),
+        )
+        .await
+        .unwrap();
+    }
+    assert_eq!(app.session.id, session_id);
+    assert!(!app.terminal_panel.terminal_picker && app.terminal_panel.attached_terminal.is_none());
+    assert!(!app.show_sessions && !app.model_panel.model_picker);
+    let event = tokio::time::timeout(Duration::from_secs(6), rx.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    handle_ui_event(event, &mut app, &store, &terminals)
+        .await
+        .unwrap();
+    assert!(app.workflow_panel.is_open());
+    app.workflow_panel.paste("workflow value");
+    let (response, answer) = oneshot::channel();
+    app.question = Some(QuestionDialog {
+        request: QuestionRequest {
+            question: crate::tools::Question {
+                question: "Question?".into(),
+                options: vec!["answer".into()],
+            },
+            response,
+        },
+        selected: 0,
+        custom: Composer::default(),
+        scroll: None,
+    });
+    handle_key(
+        KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+        &mut app,
+        &agent,
+        &mut store,
+        &tx,
+        &terminals,
+        supervisor.clone(),
+        todos.clone(),
+    )
+    .await
+    .unwrap();
+    assert!(matches!(
+        answer.await.unwrap(),
+        crate::tools::QuestionAnswer::Selected { .. }
+    ));
+    let (response, answer) = oneshot::channel();
+    app.approval = Some(ApprovalRequest {
+        id: Uuid::new_v4(),
+        action: "test".into(),
+        target: "test".into(),
+        reason: "test".into(),
+        response,
+    });
+    handle_key(
+        KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE),
+        &mut app,
+        &agent,
+        &mut store,
+        &tx,
+        &terminals,
+        supervisor.clone(),
+        todos.clone(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(answer.await.unwrap(), ApprovalOutcome::Approved);
+    app.terminal_panel.attached_terminal = Some(terminals.id);
+    handle_key(
+        KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE),
+        &mut app,
+        &agent,
+        &mut store,
+        &tx,
+        &terminals,
+        supervisor.clone(),
+        todos.clone(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(*terminals.writes.lock().unwrap(), vec![b"x".to_vec()]);
+    app.terminal_panel.attached_terminal = None;
+    handle_key(
+        KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+        &mut app,
+        &agent,
+        &mut store,
+        &tx,
+        &terminals,
+        supervisor.clone(),
+        todos.clone(),
+    )
+    .await
+    .unwrap();
+    let backend = ratatui::backend::TestBackend::new(100, 30);
+    let mut terminal = Terminal::new(backend).unwrap();
+    terminal.draw(|frame| draw(frame, &app)).unwrap();
+    let rendered = terminal
+        .backend()
+        .buffer()
+        .content
+        .iter()
+        .map(|c| c.symbol())
+        .collect::<String>();
+    assert!(rendered.contains("workflow value"));
+    assert!(!rendered.contains("workflow valueyx"));
+    handle_mouse(
+        MouseEvent {
+            kind: MouseEventKind::ScrollUp,
+            column: 2,
+            row: 2,
+            modifiers: KeyModifiers::NONE,
+        },
+        &mut app,
+    );
+    assert_eq!(app.scroll, 0);
+    for _ in 0..2 {
+        handle_key(
+            KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
+            &mut app,
+            &agent,
+            &mut store,
+            &tx,
+            &terminals,
+            supervisor.clone(),
+            todos.clone(),
+        )
+        .await
+        .unwrap();
+    }
+    assert!(!app.workflow_panel.is_open());
+    assert_eq!(app.composer.text, "retained draft 雪");
+    assert!(app.session.messages.is_empty() && app.session.workflow_runs.is_empty());
+    assert!(!app.is_running());
+}
+
+#[tokio::test]
+async fn workflow_start_rejects_active_run_and_full_history_before_canonical_mutation() {
+    let directory = tempfile::tempdir().unwrap();
+    let agent = navigation_agent(&directory);
+    let mut store = SessionStore::new(directory.path().join("sessions"));
+    let (tx, _rx) = mpsc::unbounded_channel();
+    let mut app = App::new(Session::new(directory.path().into(), "test".into()), vec![]);
+    let invocation = crate::workflow::Invocation {
+        id: "review".into(),
+        version: "1".into(),
+        digest: "a".repeat(64),
+        scope: crate::workflow::Scope::User,
+        inputs: Default::default(),
+    };
+    app.session.workflow_runs = vec![invocation.clone(); 128];
+    let before = serde_json::to_value(&app.session).unwrap();
+    assert!(
+        !start_run(
+            &mut app,
+            &agent,
+            &mut store,
+            &tx,
+            "data".into(),
+            Some(invocation.clone())
+        )
+        .await
+        .unwrap()
+    );
+    assert_eq!(before, serde_json::to_value(&app.session).unwrap());
+    let (steering, _receiver) = crate::agent::steering_channel(4);
+    app.running = Some(Running {
+        task: tokio::spawn(std::future::pending()),
+        cancel: tokio_util::sync::CancellationToken::new(),
+        steering,
+    });
+    assert!(
+        !start_run(
+            &mut app,
+            &agent,
+            &mut store,
+            &tx,
+            "data".into(),
+            Some(invocation)
+        )
+        .await
+        .unwrap()
+    );
+    assert_eq!(before, serde_json::to_value(&app.session).unwrap());
+    app.running.take().unwrap().task.abort();
+}
+
+#[tokio::test]
+async fn workflow_canonical_save_failure_never_dispatches() {
+    let directory = tempfile::tempdir().unwrap();
+    let agent = navigation_agent(&directory); // panics if any provider request is made
+    let blocked = directory.path().join("blocked");
+    std::fs::write(&blocked, b"not a directory").unwrap();
+    let mut store = SessionStore::new(blocked.join("sessions"));
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    let mut app = App::new(Session::new(directory.path().into(), "test".into()), vec![]);
+    let invocation = crate::workflow::Invocation {
+        id: "review".into(),
+        version: "1".into(),
+        digest: "a".repeat(64),
+        scope: crate::workflow::Scope::User,
+        inputs: Default::default(),
+    };
+    assert!(
+        start_run(
+            &mut app,
+            &agent,
+            &mut store,
+            &tx,
+            "data".into(),
+            Some(invocation)
+        )
+        .await
+        .is_err()
+    );
+    assert!(!app.is_running());
+    assert!(app.checkpoint.is_none());
     assert!(rx.try_recv().is_err());
 }

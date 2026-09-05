@@ -1,9 +1,10 @@
+use super::CompatibleAuthentication;
 use async_trait::async_trait;
 use serde_json::{Value, json};
 
 use super::{
     ModelInfo, Provider, ProviderDelta, ProviderError, ProviderStream, ProviderStreamEvent,
-    checked_json, checked_stream_response, normalize_models,
+    checked_json, checked_stream_response,
 };
 use crate::model::{Message, ModelRequest, ModelResponse, Role, ToolCall, Usage};
 
@@ -11,50 +12,60 @@ pub struct OpenAiProvider {
     client: reqwest::Client,
     api_key: String,
     base_url: String,
+    use_max_tokens: bool,
 }
 
 impl OpenAiProvider {
     pub fn new(api_key: String, base_url: Option<String>) -> Self {
         Self {
-            client: reqwest::Client::new(),
+            client: reqwest::Client::builder()
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .expect("valid compatible HTTP client"),
             api_key,
+            use_max_tokens: false,
             base_url: base_url
                 .unwrap_or_else(|| "https://api.openai.com/v1".into())
                 .trim_end_matches('/')
                 .into(),
         }
     }
+    pub fn with_max_tokens_parameter(mut self, enabled: bool) -> Self {
+        self.use_max_tokens = enabled;
+        self
+    }
+    fn body(&self, request: ModelRequest, streaming: bool) -> Value {
+        let mut body = request_body(request, streaming);
+        if self.use_max_tokens
+            && let Some(value) = body
+                .as_object_mut()
+                .unwrap()
+                .remove("max_completion_tokens")
+        {
+            body["max_tokens"] = value;
+        }
+        body
+    }
 }
 
 #[async_trait]
 impl Provider for OpenAiProvider {
     async fn models(&self) -> Result<Vec<ModelInfo>, ProviderError> {
-        let response = self
-            .client
-            .get(format!("{}/models", self.base_url))
-            .bearer_auth(&self.api_key)
-            .send()
-            .await
-            .map_err(map_transport)?;
-        let value = checked_json(response).await?;
-        let data = value.get("data").and_then(Value::as_array).ok_or_else(|| {
-            ProviderError::InvalidResponse("OpenAI models response omitted data".into())
-        })?;
-        let mut models = data
-            .iter()
-            .filter_map(|item| item.get("id").and_then(Value::as_str))
-            .map(ModelInfo::minimal)
-            .collect();
-        normalize_models(&mut models);
-        Ok(models)
+        super::discovery::models(&self.client, &self.base_url, &self.api_key)
+            .await?
+            .ok_or_else(|| {
+                ProviderError::InvalidResponse(
+                    "model-list unavailable; use a manual model ID".into(),
+                )
+            })
     }
     async fn complete(&self, request: ModelRequest) -> Result<ModelResponse, ProviderError> {
-        let body = request_body(request, false);
+        let body = self.body(request, false);
 
         let response = self
             .client
             .post(format!("{}/chat/completions", self.base_url))
-            .bearer_auth(&self.api_key)
+            .apply_key(&self.api_key)
             .json(&body)
             .send()
             .await
@@ -67,8 +78,8 @@ impl Provider for OpenAiProvider {
         let response = self
             .client
             .post(format!("{}/chat/completions", self.base_url))
-            .bearer_auth(&self.api_key)
-            .json(&request_body(request, true))
+            .apply_key(&self.api_key)
+            .json(&self.body(request, true))
             .send()
             .await
             .map_err(map_transport)?;
@@ -79,7 +90,7 @@ impl Provider for OpenAiProvider {
 }
 
 fn request_body(request: ModelRequest, streaming: bool) -> Value {
-    let messages: Vec<Value> = request.messages.iter().map(encode_message).collect();
+    let messages = encode_messages(&request.messages);
     let tools: Vec<Value> = request.tools.iter().map(|t| json!({"type":"function","function":{"name":t.name,"description":t.description,"parameters":t.input_schema}})).collect();
     let mut body = json!({"model":request.model,"messages":messages,"stream":streaming});
     if streaming {
@@ -287,6 +298,32 @@ fn map_transport(error: reqwest::Error) -> ProviderError {
     }
 }
 
+/// Compatible templates commonly accept one initial system block. Preserve the
+/// exact ordered text at the same authority level without changing canonical
+/// messages. Stop at any other role or unusual tool metadata; never promote or
+/// silently discard a malformed/late message to make a template accept it.
+fn encode_messages(messages: &[Message]) -> Vec<Value> {
+    let leading = messages
+        .iter()
+        .take_while(|message| {
+            message.role == Role::System
+                && message.tool_call_id.is_none()
+                && message.tool_calls.is_empty()
+        })
+        .count();
+    if leading < 2 {
+        return messages.iter().map(encode_message).collect();
+    }
+    let content = messages[..leading]
+        .iter()
+        .map(|message| message.content.as_str())
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    std::iter::once(json!({"role": "system", "content": content}))
+        .chain(messages[leading..].iter().map(encode_message))
+        .collect()
+}
+
 fn encode_message(message: &Message) -> Value {
     let role = match message.role {
         Role::System => "system",
@@ -413,3 +450,6 @@ mod tests {
         assert_eq!(completed.usage.output_tokens, 3);
     }
 }
+
+#[cfg(test)]
+mod leading_system_tests;

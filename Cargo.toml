@@ -1,5 +1,5 @@
 [workspace]
-members = ["helm", "vessel", "crates/voyage-protocol"]
+members = ["helm", "vessel", "crates/voyage-protocol", "crates/voyage-storage"]
 resolver = "3"
 
 [workspace.package]
@@ -9,16 +9,21 @@ version = "0.1.0"
 
 [workspace.dependencies]
 anyhow = "1.0"
-axum = "0.8"
+# WebSocket dependencies log raw frames at Debug/Trace; cap the log facade in
+# every build. Application tracing remains independently configurable.
+log = { version = "0.4", features = ["max_level_info"] }
+axum = { version = "0.8", features = ["ws"] }
 chrono = { version = "0.4", features = ["serde"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 tokio = { version = "1.47", features = ["fs", "io-util", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
+tokio-tungstenite = { version = "0.29", default-features = false, features = ["connect", "rustls-tls-webpki-roots"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 uuid = { version = "1.18", features = ["v4", "serde"] }
 voyage-protocol = { path = "crates/voyage-protocol" }
+voyage-storage = { path = "crates/voyage-storage" }
 
 [profile.release]
 lto = "thin"

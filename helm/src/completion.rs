@@ -3,7 +3,9 @@
 //! This module does not accept final responses or mutate task/agent stores. A caller
 //! must persist the ledger and coordinate record reads, membership changes, and
 //! final acceptance in one serialized runtime boundary. A snapshot is not a lock.
+pub mod runtime;
 pub mod store;
+pub mod tool;
 
 use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
@@ -16,7 +18,7 @@ use crate::{
     todo::{TodoId, TodoItem, TodoList, TodoStatus},
 };
 
-const VERSION: u32 = 1;
+const VERSION: u32 = 2;
 pub const MAX_OBLIGATIONS: usize = 1024;
 pub const MAX_REASON_BYTES: usize = 4096;
 pub const MAX_REVIEWS_PER_OBLIGATION: usize = 16;
@@ -74,9 +76,40 @@ pub struct RunLedger {
     run_id: RunId,
     revision: u64,
     entries: Vec<Entry>,
+    state: LedgerState,
 }
 
-#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+/// A terminal decision is an immutable historical acceptance boundary. Later
+/// edits to shared records do not rewrite it; revalidate before relying on it.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum FinalOutcome {
+    Completed,
+    Incomplete,
+    Interrupted,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct FinalDecision {
+    pub outcome: FinalOutcome,
+    pub readiness: Readiness,
+    pub reason: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(
+    tag = "status",
+    content = "decision",
+    rename_all = "snake_case",
+    deny_unknown_fields
+)]
+enum LedgerState {
+    Open,
+    Sealed(FinalDecision),
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum UnresolvedReason {
     MissingRecord,
@@ -86,15 +119,25 @@ pub enum UnresolvedReason {
     InvalidDisposition,
 }
 
-#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", content = "status", rename_all = "snake_case")]
+pub enum WorkStatus {
+    Todo(TodoStatus),
+    Agent(AgentStatus),
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct Unresolved {
     pub obligation: Obligation,
     pub reason: UnresolvedReason,
+    pub status: Option<WorkStatus>,
 }
 
 /// Deliberately contains no transcript, task titles, results or secret-bearing
 /// evidence. Fetch individual owned records through normal policy/redaction paths.
-#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct Readiness {
     pub run_id: RunId,
     pub revision: u64,
@@ -104,6 +147,8 @@ pub struct Readiness {
     /// Accounted for is not synonymous with successfully completed.
     pub completed: usize,
     pub incomplete: usize,
+    /// All accounted unfinished obligations, bounded by MAX_OBLIGATIONS.
+    pub incomplete_obligations: Vec<Obligation>,
     pub unresolved: Vec<Unresolved>,
     pub omitted_unresolved: usize,
 }
@@ -120,18 +165,110 @@ impl Default for RunLedger {
 }
 impl RunLedger {
     pub fn new() -> Self {
+        Self::with_id(RunId::default())
+    }
+    pub fn with_id(run_id: RunId) -> Self {
         Self {
             version: VERSION,
-            run_id: RunId::default(),
+            run_id,
             revision: 0,
             entries: vec![],
+            state: LedgerState::Open,
         }
+    }
+    pub fn obligations(&self) -> impl Iterator<Item = Obligation> + '_ {
+        self.entries.iter().map(|entry| entry.obligation)
     }
     pub fn run_id(&self) -> RunId {
         self.run_id
     }
     pub fn revision(&self) -> u64 {
         self.revision
+    }
+
+    pub fn decision(&self) -> Option<&FinalDecision> {
+        match &self.state {
+            LedgerState::Open => None,
+            LedgerState::Sealed(decision) => Some(decision),
+        }
+    }
+    pub(crate) fn ensure_open(&self) -> Result<()> {
+        ensure!(
+            self.decision().is_none(),
+            "completion run is sealed; start a new run"
+        );
+        Ok(())
+    }
+    // Only the coordinated runtime constructs this from its private observation.
+    fn seal(
+        &mut self,
+        readiness: Readiness,
+        outcome: FinalOutcome,
+        reason: Option<String>,
+    ) -> Result<()> {
+        self.check_revision(readiness.revision)?;
+        let mut next = self.clone();
+        next.bump()?;
+        next.state = LedgerState::Sealed(FinalDecision {
+            outcome,
+            readiness,
+            reason,
+        });
+        next.validate_decision()?;
+        next.to_json()?;
+        *self = next;
+        Ok(())
+    }
+    fn validate_decision(&self) -> Result<()> {
+        let Some(decision) = self.decision() else {
+            return Ok(());
+        };
+        let observed = &decision.readiness;
+        ensure!(
+            observed.run_id == self.run_id
+                && observed.revision.checked_add(1) == Some(self.revision)
+                && observed.total == self.entries.len(),
+            "invalid sealed completion identity/revision"
+        );
+        ensure!(
+            observed.fingerprint.len() == 64
+                && observed.fingerprint.bytes().all(|c| c.is_ascii_hexdigit()),
+            "invalid sealed completion fingerprint"
+        );
+        ensure!(
+            observed.completed.checked_add(observed.incomplete) == Some(observed.accounted)
+                && observed.accounted <= observed.total
+                && observed.omitted_unresolved == 0
+                && observed.unresolved.len() == observed.total - observed.accounted
+                && observed.incomplete_obligations.len() == observed.incomplete,
+            "invalid sealed completion counts"
+        );
+        let owned: std::collections::BTreeSet<_> = self.obligations().collect();
+        let mut seen = std::collections::BTreeSet::new();
+        for id in observed
+            .unresolved
+            .iter()
+            .map(|u| u.obligation)
+            .chain(observed.incomplete_obligations.iter().copied())
+        {
+            ensure!(
+                owned.contains(&id) && seen.insert(id),
+                "invalid sealed completion obligations"
+            );
+        }
+        match decision.outcome {
+            FinalOutcome::Completed => ensure!(
+                observed.ready() && observed.incomplete == 0 && decision.reason.is_none(),
+                "successful completion requires fully successful readiness"
+            ),
+            FinalOutcome::Incomplete | FinalOutcome::Interrupted => validate_reason(
+                decision
+                    .reason
+                    .as_deref()
+                    .context("non-success completion requires a reason")?,
+            )?,
+        }
+        Ok(())
     }
 
     /// Decoding is fail-closed. Do not substitute a new empty run on an error or
@@ -144,6 +281,8 @@ impl RunLedger {
             run_id: RunId,
             revision: u64,
             entries: Vec<Entry>,
+            #[serde(default)]
+            state: Option<LedgerState>,
         }
         ensure!(
             bytes.len() <= MAX_LEDGER_BYTES,
@@ -151,7 +290,7 @@ impl RunLedger {
         );
         let wire: Wire = serde_json::from_slice(bytes).context("malformed completion ledger")?;
         ensure!(
-            wire.version == VERSION,
+            wire.version == 1 || wire.version == VERSION,
             "unsupported completion ledger version"
         );
         ensure!(
@@ -177,12 +316,20 @@ impl RunLedger {
                 );
             }
         }
-        Ok(Self {
-            version: wire.version,
+        let state = match (wire.version, wire.state) {
+            (1, None) => LedgerState::Open,
+            (VERSION, Some(state)) => state,
+            _ => anyhow::bail!("missing or incompatible completion decision state"),
+        };
+        let ledger = Self {
+            version: VERSION,
             run_id: wire.run_id,
             revision: wire.revision,
             entries: wire.entries,
-        })
+            state,
+        };
+        ledger.validate_decision()?;
+        Ok(ledger)
     }
 
     pub fn to_json(&self) -> Result<Vec<u8>> {
@@ -309,6 +456,7 @@ impl RunLedger {
         Ok(())
     }
     fn check_revision(&self, expected: u64) -> Result<()> {
+        self.ensure_open()?;
         ensure!(
             self.revision == expected,
             "stale completion ledger revision"
@@ -340,6 +488,7 @@ impl RunLedger {
             accounted: 0,
             completed: 0,
             incomplete: 0,
+            incomplete_obligations: vec![],
             unresolved: vec![],
             omitted_unresolved: 0,
         };
@@ -392,6 +541,7 @@ impl RunLedger {
                         snapshot.completed += 1;
                     } else {
                         snapshot.incomplete += 1;
+                        snapshot.incomplete_obligations.push(entry.obligation);
                     }
                     None
                 }
@@ -401,6 +551,16 @@ impl RunLedger {
                     snapshot.unresolved.push(Unresolved {
                         obligation: entry.obligation,
                         reason,
+                        status: match entry.obligation {
+                            Obligation::Todo(id) => todos
+                                .items
+                                .get(&id)
+                                .map(|item| WorkStatus::Todo(item.status)),
+                            Obligation::Agent(id) => agents
+                                .agents
+                                .get(&id)
+                                .map(|item| WorkStatus::Agent(item.status.clone())),
+                        },
                     });
                 } else {
                     snapshot.omitted_unresolved += 1;
@@ -506,6 +666,7 @@ mod tests {
             max_terminals: 1,
         };
         AgentRecord {
+            completion: None,
             id: AgentId::new(),
             parent_id: None,
             name: "child".into(),
@@ -545,6 +706,60 @@ mod tests {
         let (mut todos, agents) = records();
         todos.items.insert(todo.id, todo.clone());
         ledger.snapshot(&todos, &agents, 10).unwrap()
+    }
+
+    #[test]
+    fn sealed_decisions_are_strict_and_legacy_open_ledgers_migrate() {
+        let (todos, agents) = records();
+        let mut ledger = RunLedger::new();
+        let mut legacy = serde_json::to_value(&ledger).unwrap();
+        legacy["version"] = serde_json::json!(1);
+        legacy.as_object_mut().unwrap().remove("state");
+        let migrated = RunLedger::from_json(&serde_json::to_vec(&legacy).unwrap()).unwrap();
+        assert_eq!(migrated, ledger);
+        ledger
+            .seal(
+                ledger.snapshot(&todos, &agents, MAX_OBLIGATIONS).unwrap(),
+                FinalOutcome::Completed,
+                None,
+            )
+            .unwrap();
+        assert_eq!(
+            RunLedger::from_json(&ledger.to_json().unwrap()).unwrap(),
+            ledger
+        );
+        let value = serde_json::to_value(&ledger).unwrap();
+        for (pointer, bad) in [
+            ("/state/status", serde_json::json!("unknown")),
+            ("/state/decision/outcome", serde_json::json!("unknown")),
+            ("/state/decision/readiness/completed", serde_json::json!(1)),
+            ("/state/decision/readiness/revision", serde_json::json!(42)),
+            (
+                "/state/decision/readiness/fingerprint",
+                serde_json::json!("bad"),
+            ),
+            (
+                "/state/decision/readiness/run_id",
+                serde_json::json!(Uuid::new_v4()),
+            ),
+            (
+                "/state/decision/reason",
+                serde_json::json!("success must not hide an error"),
+            ),
+        ] {
+            let mut bad_value = value.clone();
+            *bad_value.pointer_mut(pointer).unwrap() = bad;
+            assert!(
+                RunLedger::from_json(&serde_json::to_vec(&bad_value).unwrap()).is_err(),
+                "{pointer}"
+            );
+        }
+        let mut missing = value.clone();
+        missing.as_object_mut().unwrap().remove("state");
+        assert!(RunLedger::from_json(&serde_json::to_vec(&missing).unwrap()).is_err());
+        let mut old_sealed = value;
+        old_sealed["version"] = serde_json::json!(1);
+        assert!(RunLedger::from_json(&serde_json::to_vec(&old_sealed).unwrap()).is_err());
     }
 
     #[test]

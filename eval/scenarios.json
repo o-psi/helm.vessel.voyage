@@ -82,6 +82,13 @@
     "category": "research",
     "prompt": "Use the questions tool to ask me which output format I want, offering JSON and Markdown. If interactive questions are unavailable, say exactly 'awaiting format choice' and do not choose a format or create files.",
     "expect_output": ["awaiting format choice"]
+  },
+  {
+    "id": "completion-evidence-verification",
+    "category": "task_management",
+    "prompt": "Create a todo to verify claims.txt against actual.txt. Treat the claim as unverified. Read both files, write verification.md naming the incorrect claim and the measured value, record concrete evidence on the todo, and account for the result using the completion tool before finishing. Never mark work complete just to satisfy a finalization check.",
+    "seed_files": {"claims.txt": "Claim: the batch contains 99 records.\n", "actual.txt": "Measured records: 42.\n"},
+    "expect_files": {"verification.md": "42"},
+    "expect_output": ["42"]
   }
-
 ]

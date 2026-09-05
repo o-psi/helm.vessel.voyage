@@ -1,10 +1,11 @@
+use super::CompatibleAuthentication;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use super::{
     ModelInfo, Provider, ProviderDelta, ProviderError, ProviderStream, ProviderStreamEvent,
-    checked_json, checked_stream_response, normalize_models,
+    checked_json, checked_stream_response,
 };
 use crate::model::{Message, ModelRequest, ModelResponse, Role, ToolCall, Usage};
 
@@ -19,7 +20,10 @@ pub struct OpenAiResponsesProvider {
 impl OpenAiResponsesProvider {
     pub fn new(api_key: String, base_url: Option<String>) -> Self {
         Self {
-            client: reqwest::Client::new(),
+            client: reqwest::Client::builder()
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .expect("valid compatible HTTP client"),
             api_key,
             base_url: base_url
                 .unwrap_or_else(|| "https://api.openai.com/v1".into())
@@ -32,31 +36,20 @@ impl OpenAiResponsesProvider {
 #[async_trait]
 impl Provider for OpenAiResponsesProvider {
     async fn models(&self) -> Result<Vec<ModelInfo>, ProviderError> {
-        let response = self
-            .client
-            .get(format!("{}/models", self.base_url))
-            .bearer_auth(&self.api_key)
-            .send()
-            .await
-            .map_err(map_transport)?;
-        let value = checked_json(response).await?;
-        let data = value.get("data").and_then(Value::as_array).ok_or_else(|| {
-            ProviderError::InvalidResponse("OpenAI models response omitted data".into())
-        })?;
-        let mut models = data
-            .iter()
-            .filter_map(|item| item.get("id").and_then(Value::as_str))
-            .map(ModelInfo::minimal)
-            .collect();
-        normalize_models(&mut models);
-        Ok(models)
+        super::discovery::models(&self.client, &self.base_url, &self.api_key)
+            .await?
+            .ok_or_else(|| {
+                ProviderError::InvalidResponse(
+                    "model-list unavailable; use a manual model ID".into(),
+                )
+            })
     }
 
     async fn complete(&self, request: ModelRequest) -> Result<ModelResponse, ProviderError> {
         let response = self
             .client
             .post(format!("{}/responses", self.base_url))
-            .bearer_auth(&self.api_key)
+            .apply_key(&self.api_key)
             .json(&request_body(request, false)?)
             .send()
             .await
@@ -68,7 +61,7 @@ impl Provider for OpenAiResponsesProvider {
         let response = self
             .client
             .post(format!("{}/responses", self.base_url))
-            .bearer_auth(&self.api_key)
+            .apply_key(&self.api_key)
             .json(&request_body(request, true)?)
             .send()
             .await

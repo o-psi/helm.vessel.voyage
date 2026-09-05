@@ -87,6 +87,13 @@ pub(super) fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
         }
         return;
     }
+    if app.question.is_none() && app.workflow_panel.is_open() {
+        app.workflow_panel.draw(frame, area);
+        if let Some(approval) = &app.approval {
+            draw_approval(frame, area, approval);
+        }
+        return;
+    }
     let chunks = conversation_layout(area, app);
     let title = app.session.display_name();
     frame.render_widget(

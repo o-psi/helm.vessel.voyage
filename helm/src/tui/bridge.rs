@@ -16,6 +16,7 @@ use tokio::sync::{mpsc, oneshot};
 #[doc(hidden)]
 pub enum UiEvent {
     Agent(AgentEvent),
+    Checkpoint(super::checkpoint::Request),
     Approval(ApprovalRequest),
     Question(QuestionRequest),
     Finished(Result<crate::AgentOutcome, crate::agent::AgentError>),
@@ -30,6 +31,10 @@ pub enum UiEvent {
     TodoSnapshot(Result<TodoList, String>),
     TodoAction(Result<String, String>),
     Models(Result<Vec<ModelInfo>, String>),
+    Workflows {
+        request: uuid::Uuid,
+        definitions: Result<Vec<crate::workflow::Definition>, String>,
+    },
 }
 
 #[derive(Debug)]

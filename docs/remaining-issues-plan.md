@@ -1,8 +1,35 @@
 # Remaining GitHub delivery plan
 
-User mandate: comprehensively resolve remaining issues, including epics. Latest complete open/closed inventory: 83 issues, retained in `.local-git/issues-resume-inventory.jsonl`. Root user edits are preserved. Current development gates are Linux-only; historical native results below do not impose current requirements.
+User mandate: comprehensively resolve remaining issues, including epics. Latest complete open/closed inventory: 83 issues, retained in `.local-git/issues-resume-inventory.jsonl`. Root user edits are preserved. Current development gates are Linux-only; historical native results below are not evidence for the current build; affected-platform requirements remain explicit in their tracking issues.
 
-## Active work
+## Current reconciliation status (2026-09-05)
+
+GitHub main includes PR #129 (`fd5295e`): dedicated foreground remote sessions,
+following merged local completion/session work (#88), saved workflow CLI/TUI
+(#123/#127), and named policy profiles (#128). The complete issue inventory has
+83 issues, of which 22 remain open. Delivery of those bounded scopes does not close
+their broader issues or establish successful live behavioral evaluation.
+
+The primary workspace had accumulated delivery-note commits independently of the
+implementation merges. Reconciliation preserves both histories and the operator's
+documentation/CI edits. Runtime and workflow source match published `fd5295e`;
+only this delivery plan differs. Installation will use the verified merged source.
+Tracking: [#46](https://github.com/o-psi/voyage/issues/46) and
+[#18](https://github.com/o-psi/voyage/issues/18).
+
+The operator clarified that Helm is the intended interface to Vessel for both local
+and remote machines. The current remote HTTP operations do not yet provide that
+Helm-facing management workflow. That remains product work under #77; browser
+console work is deferred. Workflow secret inputs (#67), policy defaults/TUI
+switching (#70), and semantic/live evidence (#83/#22) retain unfinished scope.
+Other development worktrees remain preserved; this reconciliation does not claim
+their unpublished work is delivered.
+
+All sections below retain historical planning and verification checkpoints. Their
+commit IDs, pending states and issue lists describe the time recorded, not current
+readiness. Consult current issue discussions for outstanding acceptance criteria.
+
+## Historical active-work checkpoints
 
 - Main is at e74f9b5a: the full local completion/managed stack (#88), saved workflow CLI (#123), and runtime administrator ceiling (#124) are delivered with passing Linux baselines and CI. Issues #81 and #66 are closed after acceptance review.
 - Onboarding correction [#125](https://github.com/o-psi/voyage/pull/125) merged asfaa31b44 after832 normal/two-CPU tests, all23systems and bothCIruns passed; #69 closed. The inherited WaitFailed fixture correction retains every failure/retention/sanitization assertion with20 two-CPU repetitions.
@@ -18,7 +45,7 @@ User mandate: comprehensively resolve remaining issues, including epics. Latest 
 - PR128 merged MAINe74f9b5a751e9072c74fa3669c9dde140413f174 at21:08:56Z; bothCI33991647502/33991646774 passed and fetched tree51953f3a exactly matches tested9f9a40b. #70 remains open for defaults/TUI switching. Defaults implementation is isolated and uses create-only config output to preserve existing bytes; no new in-place editor or repository autoload.
 - Other remaining issues retain their acceptance criteria below. Historical checkpoints are evidence of past states, not current merge blockers.
 
-## Dependencies and delivery order
+## Historical dependencies and delivery order
 
 1. Verify existing local features (#86, #80, #59), implement P0 request safety (#64).
 2. Run ownership/readiness (#81), reconciliation (#82), end-to-end verification (#83), resilient execution (#5).
@@ -65,7 +92,7 @@ Each feature needs issue discussion review/update before edits, acceptance-drive
 - [#9: Version and stream the outbound Helm task protocol](https://github.com/o-psi/voyage/issues/9) — pending
 - [#5: Build resilient agent execution semantics](https://github.com/o-psi/voyage/issues/5) — pending
 
-## Verification and blockers
+## Historical verification and blockers
 
 PR #87 head 0489b9e: [quality run 33941455410](https://github.com/o-psi/voyage/actions/runs/33941455410) passed all jobs. Linux passed formatting, strict Clippy, 375 workspace tests, locked release build, nine system fixtures, 11 evaluation definitions, unique packaging and checksums. macOS and Windows passed workspace tests and locked release builds. Both duplicate push/PR workflow runs succeeded. The PTY resize regression also passed local normal and fragmented reads.
 
