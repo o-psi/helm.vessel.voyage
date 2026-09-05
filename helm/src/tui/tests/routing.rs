@@ -439,6 +439,26 @@ async fn workflow_form_keeps_draft_and_yields_to_question_approval_and_pty() {
     )
     .await
     .unwrap();
+    let session_id = app.session.id;
+    // Loading owns ordinary shortcuts. A late discovery cannot find a different
+    // session or a PTY/session picker opened through those same key events.
+    for key in ['t', 's', 'n', 'm'] {
+        handle_key(
+            KeyEvent::new(KeyCode::Char(key), KeyModifiers::CONTROL),
+            &mut app,
+            &agent,
+            &mut store,
+            &tx,
+            &terminals,
+            supervisor.clone(),
+            todos.clone(),
+        )
+        .await
+        .unwrap();
+    }
+    assert_eq!(app.session.id, session_id);
+    assert!(!app.terminal_panel.terminal_picker && app.terminal_panel.attached_terminal.is_none());
+    assert!(!app.show_sessions && !app.model_panel.model_picker);
     let event = tokio::time::timeout(Duration::from_secs(6), rx.recv())
         .await
         .unwrap()

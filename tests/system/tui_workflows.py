@@ -16,6 +16,7 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from saved_workflows import DOCUMENT
+from policy_ceiling import rendered_screen
 
 HELM = Path(os.environ.get('HELM_BIN', 'target/release/helm')).resolve()
 LITERAL = '$(touch never-created) {{count}} 雪'
@@ -118,7 +119,7 @@ class Case:
             self.drain()
 
     def text(self, value, start=0):
-        self.wait(lambda: value.encode() in self.output[start:], value)
+        self.wait(lambda: len(self.output) > start and value in rendered_screen(bytes(self.output), 40, 140), value)
 
     def send(self, value):
         os.write(self.master, value if isinstance(value, bytes) else value.encode())
@@ -186,6 +187,7 @@ def main():
                         case.text('Secret workflow inputs are not supported')
                         case.assert_unaccepted()
                         case.send(b'\x1b')
+                        case.text('HELM')
                         case.finish()
                         print('workflow secret: rejected before input collection or dispatch')
                         continue
