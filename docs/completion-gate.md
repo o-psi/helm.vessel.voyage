@@ -46,8 +46,10 @@ as well; consumers must not infer acceptance from a no-tool message.
 Cancellation, provider failure, exhausted context, checkpoint failure, and deadline
 expiry return recoverable interrupted state, including partial assistant text.
 Abort requests cancellation only for active descendants with the exact run/session
-reference and observes their terminal state within a separate bounded shutdown
-budget (5 seconds by default). An incomplete finish also stops owned active work
+reference, including nested descendants whose parent already finished. Shutdown
+requires both finished runtime transitions and durable terminal records within a
+separate bounded budget (5 seconds by default). Failed or blocked persistence
+leaves observation inconclusive; an in-memory terminal flag alone is insufficient. An incomplete finish also stops owned active work
 before its final fresh check. Neither path closes unrelated terminals or performs
 Git/worktree cleanup. No new provider request starts after cancellation.
 

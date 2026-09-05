@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::{BTreeMap, VecDeque},
+    collections::{BTreeMap, BTreeSet, VecDeque},
     path::PathBuf,
     sync::{
         Arc,
@@ -415,6 +415,53 @@ impl SubagentRuntime {
             .collect()
     }
 
+    /// Observe one run only after terminal workers have finished their durable
+    /// transitions. In-memory terminal status precedes persistence and is not
+    /// sufficient evidence; failed or missing durable records remain pending.
+    pub(crate) async fn pending_owned_shutdown(
+        &self,
+        reference: &crate::completion::runtime::RunReference,
+    ) -> Result<Vec<AgentId>, RuntimeError> {
+        let _mutation = self.inner.mutations.lock().await;
+        let store = self.inner.store.as_ref().ok_or_else(|| {
+            RuntimeError::Invalid("owned shutdown requires persistent agent state".into())
+        })?;
+        let tree = store
+            .load()
+            .await
+            .map_err(|error| RuntimeError::Persistence(error.to_string()))?;
+        let mut pending = BTreeSet::new();
+        for record in tree.agents.values() {
+            if record.completion.as_ref() == Some(reference) && !record.status.is_terminal() {
+                pending.insert(record.id);
+            }
+        }
+        let controls: Vec<_> = self.inner.agents.read().await.values().cloned().collect();
+        for control in controls {
+            let record = control.record.read().await.clone();
+            if record.completion.as_ref() != Some(reference) {
+                continue;
+            }
+            let durable = match tree.agents.get(&record.id) {
+                Some(record) => Some(record.clone()),
+                None => store
+                    .get_archived(record.id)
+                    .await
+                    .map_err(|error| RuntimeError::Persistence(error.to_string()))?
+                    .map(|archive| archive.record),
+            };
+            if !record.status.is_terminal()
+                || control.outcome.borrow().is_none()
+                || !durable.is_some_and(|record| {
+                    record.completion.as_ref() == Some(reference) && record.status.is_terminal()
+                })
+            {
+                pending.insert(record.id);
+            }
+        }
+        Ok(pending.into_iter().collect())
+    }
+
     /// Stop accepting work and drain cancelled workers before a frontend handoff.
     /// Callers may bound this wait, but must not release or bypass the writer
     /// lease if draining fails. Tracked workers finish persistence before exit.
@@ -489,12 +536,25 @@ impl SubagentRuntime {
         self.prune_terminal_history(0, request.parent_id).await?;
         let cancellation = if let Some(parent) = request.parent_id {
             let parent = self.control(parent).await?;
-            if parent.cancel.is_cancelled() {
-                return Err(RuntimeError::Invalid(
-                    "cannot spawn from a cancelled parent".into(),
-                ));
+            let same_run = parent.completion.as_ref().map(|run| run.reference())
+                == completion.as_ref().map(|run| run.reference());
+            if same_run {
+                if parent.cancel.is_cancelled() {
+                    return Err(RuntimeError::Invalid(
+                        "cannot spawn from a cancelled parent".into(),
+                    ));
+                }
+                parent.cancel.child_token()
+            } else {
+                if !parent.record.read().await.status.is_terminal() {
+                    return Err(RuntimeError::Invalid(
+                        "cross-run followup requires a terminal adopted parent".into(),
+                    ));
+                }
+                // Explicit adoption was validated above. New-run followups of
+                // terminal work must not inherit the old run's cancellation.
+                CancellationToken::new()
             }
-            parent.cancel.child_token()
         } else {
             CancellationToken::new()
         };

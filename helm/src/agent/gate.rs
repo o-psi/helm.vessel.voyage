@@ -16,7 +16,7 @@ pub enum CompletionPhase {
 
 #[derive(Clone, Debug, Default)]
 pub struct OwnedShutdown {
-    /// Last observed active IDs; empty is inconclusive unless observation_complete.
+    /// IDs not yet confirmed durably stopped; empty is inconclusive unless observation_complete.
     pub remaining: Vec<AgentId>,
     pub observation_complete: bool,
 }
@@ -69,25 +69,30 @@ impl GateResources {
         let mut report = OwnedShutdown::default();
         let work = async {
             loop {
-                report.remaining = self
+                // Include every generation. tree(None) contains only roots and
+                // can miss active descendants of a terminal parent.
+                let records: Vec<_> = self
                     .runtime
-                    .tree(None)
+                    .list()
                     .await
                     .into_iter()
-                    .filter(|record| {
-                        record.completion.as_ref() == Some(&reference)
-                            && !record.status.is_terminal()
-                    })
-                    .map(|record| record.id)
+                    .filter(|record| record.completion.as_ref() == Some(&reference))
                     .collect();
+                report.remaining = records.iter().map(|record| record.id).collect();
+                for record in &records {
+                    // Terminal ancestors may have later followups adopted by a
+                    // different run. Do not cancel their inherited token tree.
+                    if !record.status.is_terminal() {
+                        let _ = self.runtime.cancel(record.id).await;
+                    }
+                }
+                match self.runtime.pending_owned_shutdown(&reference).await {
+                    Ok(pending) => report.remaining = pending,
+                    Err(_) => return,
+                }
                 if report.remaining.is_empty() {
                     report.observation_complete = true;
                     return;
-                }
-                for id in &report.remaining {
-                    // A cancellation request is not proof of termination. The next
-                    // iteration observes persisted runtime state before claiming it.
-                    let _ = self.runtime.cancel(*id).await;
                 }
                 tokio::time::sleep(Duration::from_millis(20)).await;
             }

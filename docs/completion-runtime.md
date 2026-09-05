@@ -55,6 +55,10 @@ Operations observe the tool timeout and cancellation token. Its actions are:
   both the revision and exact snapshot fingerprint. Concurrent evidence/result
   changes invalidate the review even when ledger membership did not change.
 
+Followups of terminal work explicitly adopted by another run use that new run's
+cancellation scope. Cancelling the original run does not cancel those followups;
+same-run descendants continue to inherit parent cancellation.
+
 Known secrets are redacted from reasons before persistence and normal tool output
 redaction applies. Read-only policy permits snapshot/read, not adoption/accounting.
 Accounting never changes todo status, removes work, cancels agents, or proves the

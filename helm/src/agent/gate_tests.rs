@@ -22,7 +22,10 @@ use std::{
 struct Executor;
 #[async_trait]
 impl SubagentExecutor for Executor {
-    async fn execute(&self, context: ExecutionContext) -> Result<SubagentResult, String> {
+    async fn execute(&self, mut context: ExecutionContext) -> Result<SubagentResult, String> {
+        if context.task == "message" {
+            context.recv().await;
+        }
         if context.task == "fail" {
             return Err("fixture child failure".into());
         }
@@ -1050,5 +1053,223 @@ async fn root_gate_preserves_partial_stream_on_provider_failure() {
     assert_eq!(
         scope.decision().await.unwrap().unwrap().outcome,
         FinalOutcome::Interrupted
+    );
+}
+
+#[tokio::test]
+async fn owned_shutdown_includes_descendants_of_terminal_parents() {
+    let fixture = Fixture::new();
+    let scope = fixture.scope().await;
+    let parent = fixture
+        .runtime
+        .spawn_for_run(spawn("message"), Some(scope.clone()))
+        .await
+        .unwrap();
+    let mut child_request = spawn("hold");
+    child_request.parent_id = Some(parent);
+    let child = fixture.runtime.spawn(child_request).await.unwrap();
+    fixture
+        .runtime
+        .send_message(parent, "finish parent only")
+        .await
+        .unwrap();
+    fixture.runtime.wait(parent).await.unwrap().unwrap();
+    assert!(
+        !fixture
+            .runtime
+            .get(child)
+            .await
+            .unwrap()
+            .status
+            .is_terminal()
+    );
+    let agent = fixture.agent(Script::new([]));
+    let report = agent
+        .completion_gate
+        .as_ref()
+        .unwrap()
+        .shutdown_owned(&scope)
+        .await;
+    assert!(report.observation_complete && report.remaining.is_empty());
+    assert!(
+        fixture
+            .runtime
+            .get(child)
+            .await
+            .unwrap()
+            .status
+            .is_terminal()
+    );
+    assert!(
+        fixture
+            .runtime
+            .pending_owned_shutdown(&scope.reference())
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}
+
+async fn running_owned_child(fixture: &Fixture, scope: &RunHandle) -> crate::subagent::AgentId {
+    let id = fixture
+        .runtime
+        .spawn_for_run(spawn("hold"), Some(scope.clone()))
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            if fixture
+                .agents
+                .get(id)
+                .await
+                .unwrap()
+                .is_some_and(|r| r.status == crate::subagent::AgentStatus::Running)
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap();
+    id
+}
+
+#[tokio::test]
+async fn owned_shutdown_does_not_claim_blocked_terminal_persistence_finished() {
+    let fixture = Fixture::new();
+    let scope = fixture.scope().await;
+    let child = running_owned_child(&fixture, &scope).await;
+    let guard = fixture.coordinator.lock().await.unwrap();
+    let agent = fixture.agent(Script::new([]));
+    let report = agent
+        .completion_gate
+        .as_ref()
+        .unwrap()
+        .shutdown_owned(&scope)
+        .await;
+    assert!(!report.observation_complete);
+    assert!(report.remaining.contains(&child));
+    assert!(
+        fixture
+            .runtime
+            .get(child)
+            .await
+            .unwrap()
+            .status
+            .is_terminal()
+    );
+    assert_eq!(
+        fixture.agents.get(child).await.unwrap().unwrap().status,
+        crate::subagent::AgentStatus::Running
+    );
+    drop(guard);
+    let report = agent
+        .completion_gate
+        .as_ref()
+        .unwrap()
+        .shutdown_owned(&scope)
+        .await;
+    assert!(report.observation_complete && report.remaining.is_empty());
+}
+
+#[tokio::test]
+async fn owned_shutdown_failed_persistence_is_inconclusive() {
+    let fixture = Fixture::new();
+    let scope = fixture.scope().await;
+    let child = running_owned_child(&fixture, &scope).await;
+    let path = fixture.directory.path().join("agents/tree.json");
+    let backup = fixture.directory.path().join("agents/tree.backup");
+    std::fs::rename(&path, &backup).unwrap();
+    std::fs::create_dir(&path).unwrap();
+    let agent = fixture.agent(Script::new([]));
+    let report = agent
+        .completion_gate
+        .as_ref()
+        .unwrap()
+        .shutdown_owned(&scope)
+        .await;
+    assert!(!report.observation_complete);
+    assert!(report.remaining.contains(&child));
+    fixture.runtime.wait(child).await.unwrap().unwrap_err();
+    std::fs::remove_dir(&path).unwrap();
+    std::fs::rename(&backup, &path).unwrap();
+    // The worker ended, but its durable record never recorded that transition.
+    let report = agent
+        .completion_gate
+        .as_ref()
+        .unwrap()
+        .shutdown_owned(&scope)
+        .await;
+    assert!(!report.observation_complete);
+    assert!(report.remaining.contains(&child));
+}
+
+#[tokio::test]
+async fn owned_shutdown_does_not_cancel_a_new_runs_adopted_followup() {
+    let fixture = Fixture::new();
+    let original = fixture.scope().await;
+    let adopter = fixture.scope().await;
+    let ancestor = fixture
+        .runtime
+        .spawn_for_run(spawn("hold"), Some(original.clone()))
+        .await
+        .unwrap();
+    let mut parent_request = spawn("message");
+    parent_request.parent_id = Some(ancestor);
+    parent_request.worktree = Some(fixture.directory.path().to_owned());
+    let parent = fixture.runtime.spawn(parent_request).await.unwrap();
+    fixture
+        .runtime
+        .send_message(parent, "finish parent")
+        .await
+        .unwrap();
+    fixture.runtime.wait(parent).await.unwrap().unwrap();
+    adopter
+        .adopt_existing(
+            &fixture.todos,
+            &fixture.agents,
+            Obligation::Agent(parent),
+            0,
+        )
+        .await
+        .unwrap();
+    let followup = fixture
+        .runtime
+        .follow_up_in_run(None, parent, "hold", Some(adopter.clone()))
+        .await
+        .unwrap();
+    let agent = fixture.agent(Script::new([]));
+    let report = agent
+        .completion_gate
+        .as_ref()
+        .unwrap()
+        .shutdown_owned(&original)
+        .await;
+    assert!(report.observation_complete);
+    assert!(
+        !fixture
+            .runtime
+            .get(followup)
+            .await
+            .unwrap()
+            .status
+            .is_terminal()
+    );
+    let report = agent
+        .completion_gate
+        .as_ref()
+        .unwrap()
+        .shutdown_owned(&adopter)
+        .await;
+    assert!(report.observation_complete);
+    assert!(
+        fixture
+            .runtime
+            .get(followup)
+            .await
+            .unwrap()
+            .status
+            .is_terminal()
     );
 }
