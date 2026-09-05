@@ -131,6 +131,7 @@ impl Journal {
             );
             ensure!(
                 request.expected_revision.checked_add(1) == Some(receipt.revision)
+                    && receipt.revision <= i64::MAX as u64
                     && !receipt.tool_call_ids.is_empty()
                     && receipt.tool_call_ids.len() <= MAX_CALLS
                     && receipt.tool_call_ids.iter().all(|id| valid_id(id))
