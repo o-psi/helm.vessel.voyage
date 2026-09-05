@@ -106,6 +106,36 @@ impl ManagedSessionOwner {
         })
         .await?
     }
+    /// Poll only this session's exact run on the already-owned connection.
+    pub async fn local_cancel_requested(&self, run_id: Uuid) -> anyhow::Result<bool> {
+        let shared = self.store.clone();
+        tokio::task::spawn_blocking(move || {
+            let store = shared
+                .lock()
+                .map_err(|_| anyhow::anyhow!("managed owner poisoned"))?;
+            store
+                .journal
+                .local_cancel_requested(store.session_id, run_id)
+        })
+        .await?
+    }
+    /// Explicit operator attestation, distinct from observed resource cleanup.
+    pub async fn attest_local_cleanup(
+        &self,
+        run_id: Uuid,
+        actor: super::local_actor::LocalActor,
+    ) -> anyhow::Result<()> {
+        let shared = self.store.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut store = shared
+                .lock()
+                .map_err(|_| anyhow::anyhow!("managed owner poisoned"))?;
+            anyhow::ensure!(store.turn.upgrade().is_none(), "managed turn still owned");
+            let Store { journal, guard, .. } = &mut *store;
+            journal.attest_local_cleanup(guard, run_id, actor.installation_id, actor.principal_id)
+        })
+        .await?
+    }
     /// New admission cannot overlap an earlier turn's callbacks or cleanup.
     /// Identical retries remain observations and never allocate another executor.
     pub async fn admit(&self, request: TurnAdmission) -> anyhow::Result<Admission> {
@@ -294,6 +324,39 @@ impl RunOwner {
         self.storage(|store| store.journal.run(store.run_id)).await
     }
 
+    /// Persist the restart-safe admission blocker before constructing effectful resources.
+    pub async fn register_local_cleanup(&self) -> Result<(), CheckpointError> {
+        self.storage(|store| {
+            store
+                .journal
+                .register_local_cleanup(&store.guard, store.run_id)
+        })
+        .await
+    }
+    /// Record actual cleanup observation only after the run is terminal.
+    pub async fn confirm_local_cleanup_observed(&self) -> Result<(), CheckpointError> {
+        self.storage(|store| {
+            store
+                .journal
+                .confirm_local_cleanup_observed(&store.guard, store.run_id)
+        })
+        .await
+    }
+    /// Finalize a construction/output failure before execution; never dispatch this owner later.
+    pub async fn fail_before_execution(&mut self) -> Result<RunRecord, CheckpointError> {
+        self.input.take().ok_or(CheckpointError)?;
+        self.steering_receiver.take();
+        self.storage(|store| {
+            store.journal.finish(
+                &store.guard,
+                store.run_id,
+                RunState::Failed,
+                Some("local runtime construction or output failed"),
+                None,
+            )
+        })
+        .await
+    }
     /// Execute at most once. Even after error this owner cannot dispatch again.
     /// The owner remains borrowed/held after return, so its guard is not released
     /// before the caller completes owned-resource cleanup.

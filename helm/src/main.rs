@@ -27,6 +27,7 @@ use std::{
     sync::{Arc, OnceLock, RwLock, Weak},
 };
 use tracing_subscriber::EnvFilter;
+mod managed;
 #[derive(Parser)]
 #[command(version, about = "A general-purpose LLM harness for terminal work")]
 struct Cli {
@@ -108,6 +109,8 @@ enum LogFormat {
 }
 #[derive(Subcommand)]
 enum Command {
+    /// Use private local sessions with an authoritative SQLite journal.
+    Managed(managed::Args),
     /// Manage dedicated Vessel enrollment; no worker is started.
     Attachment(helm::attachment::cli::AttachmentArgs),
     /// Manage Helm's native ChatGPT subscription credentials.
@@ -363,6 +366,12 @@ async fn main() -> Result<()> {
             },
         };
     }
+    if matches!(&cli.command, Some(Command::Managed(args)) if args.administrative()) {
+        let Some(Command::Managed(args)) = cli.command else {
+            unreachable!()
+        };
+        return managed::run(args, None, cli.workspace, false).await;
+    }
     let filter = if cli.verbose {
         "helm=debug"
     } else {
@@ -447,6 +456,9 @@ async fn main() -> Result<()> {
         Command::Config => {
             print_config(&config)?;
             Ok(())
+        }
+        Command::Managed(args) => {
+            managed::run(args, Some(config), cli.workspace, model_overridden).await
         }
         Command::Models { json } => list_models(&config, cli.workspace, json).await,
         Command::Doctor => doctor(&config, cli.workspace).await,
@@ -983,7 +995,22 @@ fn worktree_manager(workspace: &std::path::Path, workspace_key: &str) -> Option<
     .ok()
 }
 
+struct ManagedAgent {
+    agent: Agent,
+    subagents: Arc<SubagentRuntime>,
+    terminals: Option<helm::tools::ProcessTool>,
+}
 async fn build_agent(config: &Config, workspace: PathBuf, attended: bool) -> Result<Agent> {
+    Ok(build_agent_bundle(config, workspace, attended, None)
+        .await?
+        .agent)
+}
+async fn build_agent_bundle(
+    config: &Config,
+    workspace: PathBuf,
+    attended: bool,
+    sink: Option<Arc<dyn EventSink>>,
+) -> Result<ManagedAgent> {
     let policy = Arc::new(Policy::new(config, workspace.clone())?);
     let terminal = Arc::new(Terminal::default());
     let approver: Arc<dyn Approver> = if attended {
@@ -1020,11 +1047,13 @@ async fn build_agent(config: &Config, workspace: PathBuf, attended: bool) -> Res
         Some(subagents.completion_tool),
     )
     .await?;
-    Ok(Agent::new(
+    let terminals = tools.terminals();
+    let retained_runtime = gate_runtime.clone();
+    let agent = Agent::new(
         provider::from_config(config, context.policy.workspace().to_owned())?,
         tools,
         context,
-        terminal,
+        sink.unwrap_or(terminal),
         config.model.clone(),
         config.system_prompt.clone(),
         config.max_tokens,
@@ -1038,7 +1067,12 @@ async fn build_agent(config: &Config, workspace: PathBuf, attended: bool) -> Res
         max_attempts: config.provider_retry_attempts,
         initial_delay: std::time::Duration::from_millis(config.provider_retry_initial_ms),
         max_delay: std::time::Duration::from_millis(config.provider_retry_max_ms),
-    }))
+    });
+    Ok(ManagedAgent {
+        agent,
+        subagents: retained_runtime,
+        terminals,
+    })
 }
 
 fn tool_environment(config: &Config) -> std::collections::BTreeMap<String, String> {
