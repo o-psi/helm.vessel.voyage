@@ -1,3 +1,6 @@
+mod gate;
+pub use gate::{CompletionPhase, FinalizationFailure, OwnedShutdown};
+
 use async_trait::async_trait;
 use std::collections::VecDeque;
 use std::sync::{Arc, RwLock};
@@ -150,6 +153,11 @@ pub enum AgentEvent {
         error: String,
     },
     ContextBudget(crate::context::ContextReport),
+    CompletionState {
+        phase: CompletionPhase,
+        readiness: Option<crate::completion::Readiness>,
+        detail: Option<String>,
+    },
     SteeringApplied {
         history: Vec<Message>,
     },
@@ -168,6 +176,16 @@ pub trait RunCheckpoint: Send + Sync {
     fn run_id(&self) -> uuid::Uuid;
     async fn canonical(&self, messages: &[Message], usage: &Usage) -> Result<(), CheckpointError>;
     async fn partial(&self, text: &str) -> Result<(), CheckpointError>;
+    /// Called only after the durable run decision is sealed. A prior canonical
+    /// checkpoint is still provisional and must not imply successful completion.
+    async fn accepted(
+        &self,
+        _messages: &[Message],
+        _usage: &Usage,
+        _reason: &StopReason,
+    ) -> Result<(), CheckpointError> {
+        Ok(())
+    }
 }
 
 #[derive(Debug, Error)]
@@ -192,6 +210,10 @@ pub struct AgentOutcome {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum StopReason {
     Completed,
+    Incomplete {
+        reason: String,
+        readiness: Option<crate::completion::Readiness>,
+    },
 }
 
 /// Canonical run state retained when a locally rejected request stops execution.
@@ -222,6 +244,10 @@ pub struct ContextFailure {
 
 #[derive(Debug, Error)]
 pub enum AgentError {
+    #[error(transparent)]
+    Finalization(Box<FinalizationFailure>),
+    #[error("the fixed reconciliation deadline expired")]
+    ReconciliationExpired,
     #[error("completion ownership failed: {0}")]
     Completion(String),
     #[error(transparent)]
@@ -251,6 +277,7 @@ impl AgentError {
     pub fn recovery(&self) -> Option<&CanonicalRecovery> {
         match self {
             Self::Context(failure) => failure.recovery.as_deref(),
+            Self::Finalization(failure) => Some(&failure.recovery),
             _ => None,
         }
     }
@@ -282,6 +309,7 @@ pub struct Agent {
     max_tokens: u32,
     context_window: usize,
     completion_coordinator: Option<crate::completion::runtime::Coordinator>,
+    completion_gate: Option<gate::GateResources>,
     temperature: Option<f32>,
     retry: RetryPolicy,
 }
@@ -361,9 +389,38 @@ impl Agent {
             max_tokens,
             context_window: crate::context::DEFAULT_CONTEXT_WINDOW,
             completion_coordinator: None,
+            completion_gate: None,
             temperature,
             retry: RetryPolicy::default(),
         }
+    }
+
+    pub fn with_completion_gate(
+        mut self,
+        todos: Arc<crate::todo::TodoStore>,
+        agents: crate::subagent::AgentTreeStore,
+        runtime: Arc<crate::subagent::SubagentRuntime>,
+    ) -> Self {
+        self.completion_gate = Some(gate::GateResources {
+            todos,
+            agents,
+            runtime,
+            reconciliation_timeout: Duration::from_secs(60),
+            shutdown_timeout: Duration::from_secs(5),
+        });
+        self
+    }
+
+    pub fn with_completion_deadlines(
+        mut self,
+        reconciliation: Duration,
+        shutdown: Duration,
+    ) -> Self {
+        if let Some(gate) = &mut self.completion_gate {
+            gate.reconciliation_timeout = reconciliation;
+            gate.shutdown_timeout = shutdown;
+        }
+        self
     }
 
     pub fn with_completion_coordinator(
@@ -379,6 +436,15 @@ impl Agent {
     pub async fn prepare_run(
         &self,
         session: &crate::session::Session,
+    ) -> Result<Option<crate::completion::runtime::RunHandle>, AgentError> {
+        self.prepare_run_with_id(session, uuid::Uuid::new_v4())
+            .await
+    }
+
+    pub async fn prepare_run_with_id(
+        &self,
+        session: &crate::session::Session,
+        run_id: uuid::Uuid,
     ) -> Result<Option<crate::completion::runtime::RunHandle>, AgentError> {
         let Some(coordinator) = &self.completion_coordinator else {
             return Ok(None);
@@ -397,14 +463,10 @@ impl Agent {
             .await
             .map_err(|error| AgentError::Completion(error.to_string()))?;
         }
-        crate::completion::runtime::RunHandle::create(
-            coordinator.clone(),
-            session.id,
-            uuid::Uuid::new_v4(),
-        )
-        .await
-        .map(Some)
-        .map_err(|error| AgentError::Completion(error.to_string()))
+        crate::completion::runtime::RunHandle::create(coordinator.clone(), session.id, run_id)
+            .await
+            .map(Some)
+            .map_err(|error| AgentError::Completion(error.to_string()))
     }
 
     pub async fn run_scoped(
@@ -589,6 +651,29 @@ impl Agent {
     }
 
     #[allow(clippy::too_many_arguments)]
+    pub async fn run_checkpointed_scoped(
+        &self,
+        history: Vec<Message>,
+        prompt: String,
+        cancel: CancellationToken,
+        input: Option<SteeringReceiver>,
+        checkpoint: &dyn RunCheckpoint,
+        model: String,
+        scope: Option<crate::completion::runtime::RunHandle>,
+    ) -> Result<AgentOutcome, AgentError> {
+        self.run_inner(
+            history,
+            prompt,
+            cancel,
+            input,
+            Some(checkpoint),
+            Some(model),
+            scope,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
     async fn run_inner(
         &self,
         mut history: Vec<Message>,
@@ -599,6 +684,21 @@ impl Agent {
         selected_model: Option<String>,
         scope: Option<crate::completion::runtime::RunHandle>,
     ) -> Result<AgentOutcome, AgentError> {
+        let root_scope = scope.clone();
+        if let (Some(scope), Some(checkpoint)) = (&root_scope, checkpoint)
+            && scope.run_id() != checkpoint.run_id()
+        {
+            return Err(AgentError::Completion(
+                "checkpoint run does not match completion scope".into(),
+            ));
+        }
+        let root_gate = if root_scope.is_some() {
+            Some(self.completion_gate.as_ref().ok_or_else(|| {
+                AgentError::Completion("root completion stores are not configured".into())
+            })?)
+        } else {
+            None
+        };
         let mut context = self.context.clone();
         context.cancellation = cancel.child_token();
         if let Some(scope) = scope {
@@ -625,6 +725,19 @@ impl Agent {
         if context.execution_id.is_nil() {
             return Err(CheckpointError.into());
         }
+        history.retain(|message| message.role != crate::model::Role::System);
+        history.push(Message::new(crate::model::Role::User, prompt));
+        let mut usage = Usage::default();
+        let mut turn = 0usize;
+        let mut reconciliation: Option<String> = None;
+        let mut deadline = None;
+        let mut sealed = false;
+        let mut last_readiness = None;
+        let mut partial_output = String::new();
+        let result = async {
+        if root_gate.is_some() {
+            self.sink.emit(AgentEvent::CompletionState { phase: CompletionPhase::Provisional, readiness: None, detail: Some("Streamed output is provisional until the run is accepted".into()) }).await;
+        }
         let active_model = selected_model.unwrap_or_else(|| self.model());
         tracing::info!(execution_id = %context.execution_id, model = %active_model, "agent execution started");
         if cancel.is_cancelled() {
@@ -644,12 +757,7 @@ impl Agent {
             }
         };
         let system_prompt = self.effective_system_prompt(workspace.as_deref());
-        // Runtime context belongs only to provider requests, never conversation history.
-        // Drop all legacy system messages, including any not at the start of history.
-        history.retain(|message| message.role != crate::model::Role::System);
-        history.push(Message::new(crate::model::Role::User, prompt));
-        let mut usage = Usage::default();
-        let mut turn = 0usize;
+
         loop {
             // Diagnostic accounting only; progress never imposes an execution cutoff.
             turn = turn.saturating_add(1);
@@ -666,7 +774,7 @@ impl Agent {
                     applied += 1;
                 }
             }
-            self.checkpoint(checkpoint, &history, &usage).await?;
+            gate::guarded(self.checkpoint(checkpoint, &history, &usage), &cancel, deadline).await??;
             if applied > 0 {
                 self.sink
                     .emit(AgentEvent::SteeringApplied {
@@ -683,6 +791,9 @@ impl Agent {
                 0,
                 Message::new(crate::model::Role::System, system_prompt.clone()),
             );
+            if let Some(update) = &reconciliation {
+                messages.insert(1, Message::new(crate::model::Role::System, update.clone()));
+            }
             let request = ModelRequest {
                 model: active_model.clone(),
                 messages,
@@ -690,10 +801,9 @@ impl Agent {
                 temperature: self.temperature,
                 max_tokens: Some(self.max_tokens),
             };
-            let response = self
-                .stream_with_retry(request, &cancel, checkpoint)
-                .await
+            let response = gate::guarded(self.stream_with_retry(request, &cancel, checkpoint, &mut partial_output), &cancel, deadline).await?
                 .map_err(|error| error.with_recovery(&history, &usage))?;
+            partial_output.clear();
             usage.input_tokens = usage
                 .input_tokens
                 .checked_add(response.usage.input_tokens)
@@ -706,7 +816,7 @@ impl Agent {
             let calls = assistant.tool_calls.clone();
             let answer = assistant.content.clone();
             history.push(assistant);
-            self.checkpoint(checkpoint, &history, &usage).await?;
+            gate::guarded(self.checkpoint(checkpoint, &history, &usage), &cancel, deadline).await??;
             if cancel.is_cancelled() {
                 return Err(AgentError::Cancelled);
             }
@@ -718,7 +828,8 @@ impl Agent {
             if calls.is_empty() {
                 let mut received_input = 0;
                 if let Some(receiver) = &mut input {
-                    for mut message in receiver.drain_or_close() {
+                    let pending = if root_gate.is_some() { receiver.drain() } else { receiver.drain_or_close() };
+                    for mut message in pending {
                         if !self.supports_steering() {
                             return Err(ProviderError::Request("active steering is unavailable with this compatibility provider; send a new turn after completion".into()).into());
                         }
@@ -730,7 +841,7 @@ impl Agent {
                     }
                 }
                 if received_input > 0 {
-                    self.checkpoint(checkpoint, &history, &usage).await?;
+                    gate::guarded(self.checkpoint(checkpoint, &history, &usage), &cancel, deadline).await??;
                     self.sink
                         .emit(AgentEvent::SteeringApplied {
                             history: history.clone(),
@@ -738,12 +849,61 @@ impl Agent {
                         .await;
                     continue;
                 }
+                if let (Some(gate), Some(scope)) = (root_gate, &root_scope) {
+                    let mut lease = gate::guarded(gate.lease(scope), &cancel, deadline).await??;
+                    last_readiness = Some(lease.readiness.clone());
+                    let clean = lease.readiness.ready() && lease.readiness.incomplete == 0;
+                    if !clean && reconciliation.is_none() {
+                        reconciliation = Some(gate::reconciliation_prompt(&lease.readiness));
+                        deadline = Some(tokio::time::Instant::now() + gate.reconciliation_timeout);
+                        self.sink.emit(AgentEvent::CompletionState { phase: CompletionPhase::Reconciling, readiness: Some(lease.readiness.clone()), detail: Some("Final proposal withheld; one bounded reconciliation pass".into()) }).await;
+                        drop(lease);
+                        if !self.supports_steering() {
+                            return Err(AgentError::Completion("compatibility provider cannot safely accept request-only reconciliation guidance".into()));
+                        }
+                        continue;
+                    }
+                    if !clean {
+                        drop(lease);
+                        gate::guarded(gate.shutdown_owned(scope), &cancel, deadline).await?;
+                        lease = gate::guarded(gate.lease(scope), &cancel, deadline).await??;
+                        last_readiness = Some(lease.readiness.clone());
+                    }
+                    // Keep the channel open throughout reconciliation. Only the
+                    // final decision closes it atomically, while store writers wait.
+                    if let Some(receiver) = &mut input {
+                        let pending = receiver.drain_or_close();
+                        if !pending.is_empty() {
+                            for mut message in pending {
+                                if let Some(receipt) = &mut message.steering { receipt.status = crate::model::SteeringStatus::Applied; }
+                                history.push(message);
+                            }
+                            drop(lease);
+                            gate::guarded(self.checkpoint(checkpoint, &history, &usage), &cancel, deadline).await??;
+                            self.sink.emit(AgentEvent::SteeringApplied { history: history.clone() }).await;
+                            continue;
+                        }
+                    }
+                    gate::guarded(self.checkpoint(checkpoint, &history, &usage), &cancel, deadline).await??;
+                    let readiness = lease.readiness.clone();
+                    let clean = readiness.ready() && readiness.incomplete == 0;
+                    let reason = (!clean).then(|| gate::incomplete_reason(&readiness));
+                    let final_outcome = if clean { crate::completion::FinalOutcome::Completed } else { crate::completion::FinalOutcome::Incomplete };
+                    gate::guarded(lease.seal(final_outcome, reason.clone()), &cancel, deadline).await?
+                        .map_err(|error| AgentError::Completion(error.to_string()))?;
+                    sealed = true;
+                    let stop_reason = if clean { StopReason::Completed } else { StopReason::Incomplete { reason: reason.clone().unwrap(), readiness: Some(readiness.clone()) } };
+                    if let Some(checkpoint) = checkpoint {
+                        tokio::time::timeout(gate.shutdown_timeout, checkpoint.accepted(&history, &usage, &stop_reason)).await.map_err(|_| CheckpointError)??;
+                    }
+                    self.sink.emit(AgentEvent::CompletionState { phase: if clean { CompletionPhase::Completed } else { CompletionPhase::Incomplete }, readiness: Some(readiness), detail: reason }).await;
+                    return Ok(AgentOutcome { messages: history.clone(), answer, usage: usage.clone(), turns: turn, stop_reason });
+                }
+                if let Some(checkpoint) = checkpoint {
+                    tokio::time::timeout(context.timeout, checkpoint.accepted(&history, &usage, &StopReason::Completed)).await.map_err(|_| CheckpointError)??;
+                }
                 return Ok(AgentOutcome {
-                    messages: history,
-                    answer,
-                    usage,
-                    turns: turn,
-                    stop_reason: StopReason::Completed,
+                    messages: history.clone(), answer, usage: usage.clone(), turns: turn, stop_reason: StopReason::Completed,
                 });
             }
             for call in calls {
@@ -759,7 +919,7 @@ impl Agent {
                 let result = tokio::select! {
                     biased;
                     _ = cancel.cancelled() => { self.sink.emit(AgentEvent::Cancelled).await; return Err(AgentError::Cancelled); }
-                    value = self.tools.execute(&call.name, call.arguments, &context) => value,
+                    value = gate::guarded(self.tools.execute(&call.name, call.arguments, &context), &cancel, deadline) => value?,
                 };
                 tracing::info!(execution_id = %context.execution_id, tool = %call.name,
                     success = result.is_ok(), "tool execution finished");
@@ -768,7 +928,7 @@ impl Agent {
                     Err(error) => (error.to_string(), false),
                 };
                 history.push(Message::tool_result(&call.id, &content, success));
-                self.checkpoint(checkpoint, &history, &usage).await?;
+                gate::guarded(self.checkpoint(checkpoint, &history, &usage), &cancel, deadline).await??;
                 self.sink
                     .emit(AgentEvent::ToolFinished {
                         name: call.name,
@@ -776,6 +936,43 @@ impl Agent {
                         success,
                     })
                     .await;
+            }
+        }
+        }.await;
+        match result {
+            Ok(outcome) => Ok(outcome),
+            Err(source) => {
+                if let (Some(gate), Some(scope)) = (root_gate, &root_scope) {
+                    let mut shutdown = OwnedShutdown::default();
+                    let cleanup = async {
+                        shutdown = gate.shutdown_owned(scope).await;
+                        if !sealed && let Ok(lease) = gate.lease(scope).await {
+                            last_readiness = Some(lease.readiness.clone());
+                            let _ = lease
+                                .seal(
+                                    crate::completion::FinalOutcome::Interrupted,
+                                    Some("root run interrupted before acceptance".into()),
+                                )
+                                .await;
+                        }
+                    };
+                    let _ = tokio::time::timeout(gate.shutdown_timeout, cleanup).await;
+                    if !partial_output.is_empty() {
+                        history.push(Message::new(crate::model::Role::Assistant, partial_output));
+                    }
+                    self.sink.emit(AgentEvent::CompletionState { phase: CompletionPhase::Interrupted, readiness: last_readiness.clone(), detail: Some(format!("Run interrupted; owned child shutdown observed: {}; remaining IDs: {:?}", shutdown.observation_complete, shutdown.remaining)) }).await;
+                    Err(AgentError::Finalization(Box::new(FinalizationFailure {
+                        source: Box::new(source),
+                        recovery: CanonicalRecovery {
+                            messages: history,
+                            usage,
+                        },
+                        readiness: last_readiness,
+                        shutdown,
+                    })))
+                } else {
+                    Err(source)
+                }
             }
         }
     }
@@ -805,6 +1002,7 @@ impl Agent {
         mut request: ModelRequest,
         cancel: &CancellationToken,
         checkpoint: Option<&dyn RunCheckpoint>,
+        partial_output: &mut String,
     ) -> Result<crate::model::ModelResponse, AgentError> {
         use crate::provider::{ProviderDelta, ProviderStreamEvent};
         use futures_util::StreamExt;
@@ -842,6 +1040,7 @@ impl Agent {
                         }
                         partial = true;
                         if let ProviderDelta::Text(text) = delta {
+                            partial_output.push_str(&text);
                             if let Some(checkpoint) = checkpoint {
                                 tokio::time::timeout(
                                     self.context.timeout,
