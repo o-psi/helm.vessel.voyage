@@ -175,3 +175,7 @@ not upgrade SessionStore or the attachment journal to verified Windows ACL stora
 The explicit local [session transfer foundation](session-journal-transfer.md) provides
 crash-resumable JSON-to-journal authority transfer and a quiescent schema upgrade,
 without frontend wiring or automatic operator-state migration.
+
+The subsequent [event/replay contract](attachment-events.md) adds negotiated,
+bounded observation frames and receive-side cursor checks. It remains a partial
+#9 foundation with no authenticated socket, execution or raw snapshot exposure.
