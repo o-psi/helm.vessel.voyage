@@ -467,7 +467,7 @@ impl EventSink for Progress {
 // Keep this observation bounded independently of the foreground execution.
 async fn poll_local_cancellation<F, Fut>(
     mut read: F,
-    _stopped: &tokio_util::sync::CancellationToken,
+    stopped: &tokio_util::sync::CancellationToken,
 ) -> anyhow::Result<bool>
 where
     F: FnMut() -> Fut,
@@ -475,6 +475,9 @@ where
 {
     tokio::time::timeout(Duration::from_secs(5), async {
         loop {
+            if stopped.is_cancelled() {
+                return Ok(false);
+            }
             match read().await {
                 Err(error)
                     if error
@@ -485,7 +488,13 @@ where
                     // Independent managed commands can briefly hold the journal.
                     // Retry only this read, with the same run identity, after its
                     // transaction has returned. Other errors remain fail-closed.
-                    tokio::time::sleep(Duration::from_millis(5)).await;
+                    // No blocking read is in flight here. A finished foreground
+                    // run can stop its watcher without manufacturing a timeout.
+                    tokio::select! {
+                        biased;
+                        _ = stopped.cancelled() => return Ok(false),
+                        _ = tokio::time::sleep(Duration::from_millis(5)) => {}
+                    }
                 }
                 result => return result,
             }
