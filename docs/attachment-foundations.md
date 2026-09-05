@@ -181,3 +181,7 @@ without frontend wiring or automatic operator-state migration.
 The subsequent [event/replay contract](attachment-events.md) adds negotiated,
 bounded observation frames and receive-side cursor checks. It remains a partial
 #9 foundation with no authenticated socket, execution or raw snapshot exposure.
+
+The [enrollment lifecycle CLI](attachment-cli.md) exposes explicit enroll, status,
+resume, rotate, revoke and offline detach commands. It reuses durable client
+transactions and does not start a worker or expose remote execution.

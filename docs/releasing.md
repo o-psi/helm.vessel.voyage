@@ -3,8 +3,11 @@
 Voyage publishes `helm` and `vessel` together from one versioned commit. Tags use
 `vMAJOR.MINOR.PATCH`. A release is immutable: corrections receive a new tag.
 
-The release workflow builds and tests Linux x86-64, macOS x86-64/ARM64, and Windows
-x86-64. Archives contain both binaries, Helm and Vessel manpages, shell completions,
+Push and pull-request quality checks run on Linux only to limit development costs.
+The tag-triggered release workflow builds archives for Linux x86-64, macOS
+x86-64/ARM64, and Windows x86-64; it does not run the workspace test suite on
+macOS or Windows. Record separate platform testing before claiming validation.
+Archives contain both binaries, Helm and Vessel manpages, shell completions,
 the README, and a SHA-256 checksum. Linux builds can be reproduced locally with:
 
 ```sh

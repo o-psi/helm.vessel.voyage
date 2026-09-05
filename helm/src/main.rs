@@ -108,6 +108,8 @@ enum LogFormat {
 }
 #[derive(Subcommand)]
 enum Command {
+    /// Manage dedicated Vessel enrollment; no worker is started.
+    Attachment(helm::attachment::cli::AttachmentArgs),
     /// Manage Helm's native ChatGPT subscription credentials.
     Auth {
         #[command(subcommand)]
@@ -333,7 +335,27 @@ impl EventSink for Terminal {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let cli = Cli::parse();
+    let cli = match Cli::try_parse() {
+        Ok(cli) => cli,
+        Err(error)
+            if std::env::args_os().any(|arg| arg == "attachment")
+                && !matches!(
+                    error.kind(),
+                    clap::error::ErrorKind::DisplayHelp | clap::error::ErrorKind::DisplayVersion
+                ) =>
+        {
+            eprintln!("invalid attachment arguments; use helm attachment --help");
+            std::process::exit(2);
+        }
+        Err(error) => error.exit(),
+    };
+    // Enrollment never loads provider config or initializes runtime/session logs.
+    if let Some(Command::Attachment(args)) = cli.command {
+        return tokio::select! { biased;
+            _=tokio::signal::ctrl_c()=>{eprintln!("attachment operation interrupted; inspect status and resume pending work");std::process::exit(130)},
+            result=helm::attachment::cli::run(args)=>result.map_err(anyhow::Error::from),
+        };
+    }
     let filter = if cli.verbose {
         "helm=debug"
     } else {
@@ -422,6 +444,7 @@ async fn main() -> Result<()> {
         Command::Models { json } => list_models(&config, cli.workspace, json).await,
         Command::Doctor => doctor(&config, cli.workspace).await,
         Command::Auth { command } => auth(command, &config).await,
+        Command::Attachment(_) => unreachable!("handled before runtime initialization"),
         Command::Sessions => list_sessions().await,
         Command::Run {
             prompt,
