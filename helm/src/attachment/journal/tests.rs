@@ -763,3 +763,155 @@ fn uncertain_tool_intent_cannot_be_completed_or_dispatched_on_a_new_turn() {
     );
     assert!(journal.lookup_command(&request).unwrap().is_none());
 }
+
+fn legacy_v2(journal: &mut Journal) {
+    journal
+        .connection
+        .execute_batch("DROP TABLE imports; UPDATE attachment_schema SET version=2 WHERE id=1;")
+        .unwrap();
+    journal.opened_schema = 2;
+}
+
+#[test]
+fn explicit_upgrade_preserves_canonical_runs_replay_and_dedup_and_fences_writers() {
+    let (_dir, mut journal, session, request) = setup();
+    legacy_v2(&mut journal);
+    let guard = journal.acquire_execution(session.id).unwrap();
+    let run = journal.admit_turn(&guard, &request, 1).unwrap().run;
+    journal
+        .finish(
+            &guard,
+            run.id,
+            RunState::Failed,
+            Some("test terminal"),
+            None,
+        )
+        .unwrap();
+    let before = serde_json::to_value(journal.load_session(session.id).unwrap().session).unwrap();
+    assert!(journal.upgrade_quiescent().is_err()); // effects guard retained after terminal persistence
+    drop(guard);
+    let mut stale = Journal::open(journal.directory.clone()).unwrap();
+    assert_eq!(stale.opened_schema, 2); // open never upgrades
+    journal
+        .upgrade_with(|| {
+            assert!(
+                stale
+                    .create_session(&Session::new(session.workspace.clone(), "new".into()))
+                    .is_err()
+            );
+            assert!(stale.acquire_execution(session.id).is_err());
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(journal.opened_schema, 3);
+    assert_eq!(
+        serde_json::to_value(journal.load_session(session.id).unwrap().session).unwrap(),
+        before
+    );
+    assert_eq!(
+        journal.lookup_command(&request).unwrap().unwrap().id,
+        run.id
+    );
+    assert!(
+        matches!(journal.replay(session.id, 0).unwrap(), Replay::Events(events) if events.len() == 2)
+    );
+    assert!(
+        stale
+            .create_session(&Session::new(session.workspace.clone(), "stale".into()))
+            .is_err()
+    );
+    assert!(stale.acquire_execution(session.id).is_err());
+    assert_eq!(
+        Journal::open(journal.directory.clone())
+            .unwrap()
+            .opened_schema,
+        3
+    );
+}
+
+#[test]
+fn active_run_or_upgrade_failure_keeps_supported_v2_unchanged() {
+    let (_dir, mut journal, session, request) = setup();
+    legacy_v2(&mut journal);
+    let guard = journal.acquire_execution(session.id).unwrap();
+    journal.admit_turn(&guard, &request, 1).unwrap();
+    drop(guard);
+    assert!(journal.upgrade_quiescent().is_err());
+    let guard = journal.acquire_execution(session.id).unwrap();
+    journal.recover_interrupted(&guard).unwrap();
+    drop(guard);
+    assert!(
+        journal
+            .upgrade_with(|| anyhow::bail!("injected upgrade failure"))
+            .is_err()
+    );
+    assert_eq!(
+        journal
+            .connection
+            .query_row("SELECT version FROM attachment_schema", [], |r| r
+                .get::<_, i64>(0))
+            .unwrap(),
+        2
+    );
+    assert_eq!(
+        journal
+            .connection
+            .query_row(
+                "SELECT count(*) FROM sqlite_master WHERE name='imports'",
+                [],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+        0
+    );
+    journal.upgrade_quiescent().unwrap();
+}
+
+fn import_provenance(session: &Session, directory: &Path) -> super::super::migration::Provenance {
+    super::super::migration::Provenance {
+        transfer_id: Uuid::new_v4(),
+        session_id: session.id,
+        source_revision: session.revision,
+        source_sha256: "a".repeat(64),
+        source: directory.join("source.json"),
+        destination: directory.to_owned(),
+        backup: directory.join("backup.json"),
+        workspace: session.workspace.clone(),
+    }
+}
+
+#[test]
+fn provenance_insert_is_atomic_create_only_and_retains_source_revision() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut journal = Journal::open(dir.path().join("journal")).unwrap();
+    let mut session = Session::new(dir.path().into(), "original".into());
+    session.revision = 17;
+    session.messages.push(Message::new(Role::User, "preserve"));
+    let provenance = import_provenance(&session, &journal.directory);
+    journal.connection.execute_batch("CREATE TRIGGER fail_import BEFORE INSERT ON imports BEGIN SELECT RAISE(ABORT, 'injected disk failure'); END;").unwrap();
+    assert!(journal.import_session(&session, &provenance).is_err());
+    assert!(journal.load_session(session.id).is_err());
+    assert!(journal.preflight_import(&provenance).unwrap().is_none());
+    journal
+        .connection
+        .execute_batch("DROP TRIGGER fail_import")
+        .unwrap();
+    assert_eq!(
+        journal.import_session(&session, &provenance).unwrap(),
+        (17, false)
+    );
+    assert_eq!(
+        journal.import_session(&session, &provenance).unwrap(),
+        (17, true)
+    );
+    let mut conflict = provenance.clone();
+    conflict.source_sha256 = "b".repeat(64);
+    assert!(journal.import_session(&session, &conflict).is_err());
+    assert_eq!(journal.load_session(session.id).unwrap().revision, 17);
+    let mut collision = Session::new(dir.path().into(), "other".into());
+    collision.revision = 17;
+    conflict = provenance.clone();
+    conflict.session_id = collision.id;
+    assert!(journal.import_session(&collision, &conflict).is_err());
+    assert!(journal.load_session(collision.id).is_err());
+}

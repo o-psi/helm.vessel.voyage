@@ -21,7 +21,8 @@ use std::{
 };
 use uuid::Uuid;
 
-const SCHEMA_VERSION: i64 = 2;
+const SCHEMA_VERSION: i64 = 3;
+const IMPORT_SCHEMA: &str = "CREATE TABLE imports(session_id TEXT PRIMARY KEY REFERENCES sessions(id), transfer_id TEXT NOT NULL UNIQUE, provenance TEXT NOT NULL);";
 const MAX_DATABASE_BYTES: i64 = 256 * 1024 * 1024;
 const MAX_SESSIONS: i64 = 4096;
 const MAX_COMMANDS: i64 = 100_000;
@@ -32,6 +33,7 @@ const REPLAY_LIMIT: i64 = 1024;
 
 pub struct Journal {
     connection: Connection,
+    opened_schema: i64,
     directory: PathBuf,
 }
 
@@ -138,6 +140,19 @@ pub enum Replay {
     },
 }
 
+fn check_transaction_schema(tx: &Transaction<'_>, expected: i64) -> Result<()> {
+    let actual: i64 = tx.query_row(
+        "SELECT version FROM attachment_schema WHERE id=1",
+        [],
+        |r| r.get(0),
+    )?;
+    ensure!(
+        actual == expected,
+        "journal schema changed; reopen after quiescent upgrade"
+    );
+    Ok(())
+}
+
 impl Journal {
     /// Dedicated local store under a trusted private parent. Network filesystems
     /// and hostile same-OS-user processes are outside the OS-lock trust boundary.
@@ -177,7 +192,7 @@ impl Journal {
             .optional()?;
         if let Some(version) = version {
             ensure!(
-                version == SCHEMA_VERSION,
+                matches!(version, 2 | SCHEMA_VERSION),
                 "unsupported attachment journal schema"
             );
         } else {
@@ -188,6 +203,7 @@ impl Journal {
                 CREATE UNIQUE INDEX one_active_run ON runs(session_id) WHERE active=1;
                 CREATE TABLE commands(id TEXT PRIMARY KEY, digest BLOB NOT NULL, run_id TEXT NOT NULL UNIQUE REFERENCES runs(id));
                 CREATE TABLE events(session_id TEXT NOT NULL REFERENCES sessions(id), sequence INTEGER NOT NULL, event TEXT NOT NULL, PRIMARY KEY(session_id,sequence));")?;
+            tx.execute_batch(IMPORT_SCHEMA)?;
             tx.execute(
                 "INSERT INTO attachment_schema VALUES(1, ?1)",
                 [SCHEMA_VERSION],
@@ -212,18 +228,161 @@ impl Journal {
         }
         Ok(Self {
             connection,
+            opened_schema: version.unwrap_or(SCHEMA_VERSION),
             directory,
         })
+    }
+
+    fn check_schema(&self) -> Result<()> {
+        let current: i64 = self.connection.query_row(
+            "SELECT version FROM attachment_schema WHERE id=1",
+            [],
+            |r| r.get(0),
+        )?;
+        ensure!(
+            current == self.opened_schema,
+            "journal schema changed; reopen after quiescent upgrade"
+        );
+        Ok(())
+    }
+
+    /// Explicit process-quiescent upgrade. Legacy processes must be stopped first.
+    /// SQLite excludes concurrent admissions/creation; sidecars exclude effects.
+    pub fn upgrade_quiescent(&mut self) -> Result<()> {
+        self.upgrade_with(|| Ok(()))
+    }
+
+    fn upgrade_with(&mut self, after_fencing: impl FnOnce() -> Result<()>) -> Result<()> {
+        self.check_schema()?;
+        if self.opened_schema == SCHEMA_VERSION {
+            return Ok(());
+        }
+        let tx = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        check_transaction_schema(&tx, self.opened_schema)?;
+        let active: i64 =
+            tx.query_row("SELECT count(*) FROM runs WHERE active=1", [], |r| r.get(0))?;
+        ensure!(
+            active == 0,
+            "journal has active runs; recover or finish before upgrade"
+        );
+        let ids = tx
+            .prepare("SELECT id FROM sessions")?
+            .query_map([], |r| r.get::<_, String>(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        let mut guards = Vec::new();
+        for id in ids {
+            let session_id = Uuid::parse_str(&id)?;
+            let file =
+                open_private_file(&self.directory.join(format!("{session_id}.execution.lock")))?;
+            file.try_lock()
+                .context("session busy during journal upgrade")?;
+            guards.push(ExecutionGuard {
+                file,
+                directory: self.directory.clone(),
+                session_id,
+            });
+        }
+        after_fencing()?;
+        tx.execute_batch(IMPORT_SCHEMA)?;
+        tx.execute(
+            "UPDATE attachment_schema SET version=?1 WHERE id=1",
+            [SCHEMA_VERSION],
+        )?;
+        tx.commit()?;
+        self.opened_schema = SCHEMA_VERSION;
+        drop(guards);
+        Ok(())
+    }
+
+    pub(crate) fn preflight_import(
+        &self,
+        provenance: &super::migration::Provenance,
+    ) -> Result<Option<u64>> {
+        self.check_schema()?;
+        ensure!(
+            self.opened_schema == SCHEMA_VERSION,
+            "explicit quiescent journal upgrade required"
+        );
+        let existing: Option<String> = self
+            .connection
+            .query_row(
+                "SELECT provenance FROM imports WHERE session_id=?1 OR transfer_id=?2",
+                params![
+                    provenance.session_id.to_string(),
+                    provenance.transfer_id.to_string()
+                ],
+                |r| r.get(0),
+            )
+            .optional()?;
+        if let Some(existing) = existing {
+            let existing: super::migration::Provenance = serde_json::from_str(&existing)?;
+            ensure!(existing == *provenance, "transfer provenance conflict");
+            return Ok(Some(self.load_session(provenance.session_id)?.revision));
+        }
+        let collision: i64 = self.connection.query_row(
+            "SELECT count(*) FROM sessions WHERE id=?1",
+            [provenance.session_id.to_string()],
+            |r| r.get(0),
+        )?;
+        ensure!(
+            collision == 0,
+            "destination already owns this session without matching provenance"
+        );
+        let count: i64 = self
+            .connection
+            .query_row("SELECT count(*) FROM sessions", [], |r| r.get(0))?;
+        ensure!(count < MAX_SESSIONS, "attachment session capacity reached");
+        Ok(None)
+    }
+
+    pub(crate) fn import_session(
+        &mut self,
+        session: &Session,
+        provenance: &super::migration::Provenance,
+    ) -> Result<(u64, bool)> {
+        let encoded = snapshot(session)?;
+        ensure!(
+            session.id == provenance.session_id && session.revision == provenance.source_revision,
+            "source identity or revision mismatch"
+        );
+        if let Some(revision) = self.preflight_import(provenance)? {
+            return Ok((revision, true));
+        }
+        let tx = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        check_transaction_schema(&tx, self.opened_schema)?;
+        let count: i64 = tx.query_row("SELECT count(*) FROM sessions", [], |r| r.get(0))?;
+        ensure!(count < MAX_SESSIONS, "attachment session capacity reached");
+        let revision = i64::try_from(session.revision)?;
+        tx.execute(
+            "INSERT INTO sessions(id,revision,state) VALUES(?1,?2,?3)",
+            params![session.id.to_string(), revision, encoded],
+        )?;
+        tx.execute(
+            "INSERT INTO imports VALUES(?1,?2,?3)",
+            params![
+                session.id.to_string(),
+                provenance.transfer_id.to_string(),
+                serde_json::to_string(provenance)?
+            ],
+        )?;
+        tx.commit()?;
+        Ok((session.revision, false))
     }
 
     /// Import/create is explicit and create-only. Caller controls consent. A UUID
     /// collision never replaces another canonical session or its command history.
     pub fn create_session(&mut self, session: &Session) -> Result<()> {
+        self.check_schema()?;
         ensure!(!session.id.is_nil(), "nil session identity");
         let encoded = snapshot(session)?;
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        check_transaction_schema(&tx, self.opened_schema)?;
         let count: i64 = tx.query_row("SELECT count(*) FROM sessions", [], |r| r.get(0))?;
         ensure!(count < MAX_SESSIONS, "attachment session capacity reached");
         tx.execute(
@@ -239,6 +398,7 @@ impl Journal {
     }
 
     pub fn acquire_execution(&self, session_id: Uuid) -> Result<ExecutionGuard> {
+        self.check_schema()?;
         ensure!(!session_id.is_nil(), "nil session identity");
         self.load_session(session_id)?; // Unknown IDs must not allocate lock files.
         let file = open_private_file(&self.directory.join(format!("{session_id}.execution.lock")))?;
@@ -254,6 +414,7 @@ impl Journal {
     }
 
     fn check_guard(&self, guard: &ExecutionGuard, session: Uuid) -> Result<()> {
+        self.check_schema()?;
         ensure!(
             guard.directory == self.directory && guard.session_id == session,
             "execution guard belongs to another journal or session"
@@ -308,6 +469,7 @@ impl Journal {
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        check_transaction_schema(&tx, self.opened_schema)?;
         let existing: Option<(Vec<u8>, String)> = tx
             .query_row(
                 "SELECT digest,run_id FROM commands WHERE id=?1",
@@ -395,6 +557,7 @@ impl Journal {
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        check_transaction_schema(&tx, self.opened_schema)?;
         let mut run = read_run(&tx, run_id)?;
         ensure!(
             run.state == RunState::Accepted,
@@ -432,6 +595,7 @@ impl Journal {
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        check_transaction_schema(&tx, self.opened_schema)?;
         let mut run = read_run(&tx, run_id)?;
         ensure!(run.state == RunState::Running, "run is terminal");
         ensure!(
@@ -466,6 +630,7 @@ impl Journal {
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        check_transaction_schema(&tx, self.opened_schema)?;
         let mut run = read_run(&tx, run_id)?;
         ensure!(
             run.state == RunState::Running,
@@ -538,6 +703,7 @@ impl Journal {
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        check_transaction_schema(&tx, self.opened_schema)?;
         let run = read_run(&tx, run_id)?;
         ensure!(
             run.state == RunState::Running,
@@ -569,6 +735,7 @@ impl Journal {
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        check_transaction_schema(&tx, self.opened_schema)?;
         let mut run = read_run(&tx, run_id)?;
         ensure!(
             run.state == RunState::Running,
@@ -645,6 +812,7 @@ impl Journal {
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        check_transaction_schema(&tx, self.opened_schema)?;
         let mut run = read_run(&tx, run_id)?;
         ensure!(
             matches!(run.state, RunState::Accepted | RunState::Running),

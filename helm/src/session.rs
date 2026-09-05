@@ -357,6 +357,15 @@ impl SessionStore {
         })
     }
 
+    pub(crate) fn transfer_source_path(&self, id: Uuid) -> Result<PathBuf> {
+        let lease = self
+            .execution
+            .as_ref()
+            .context("transfer requires session execution ownership")?;
+        self.check_lease(id, lease)?;
+        Ok(lease.directory.join(format!("{id}.json")))
+    }
+
     pub fn owned_session_id(&self) -> Option<Uuid> {
         self.execution.as_ref().map(|lease| lease.id)
     }
