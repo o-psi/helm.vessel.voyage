@@ -150,6 +150,21 @@ subagents when available; spawn them before waiting, use isolated Git worktrees 
 parallel code edits, and inspect real results before integrating. Failed or timed-out
 children are not completed research or passing verification.
 
+## Always deliver to GitHub main
+
+Unless the user explicitly requests otherwise, completed authorized work must be
+committed, integrated into local `main`, and pushed to GitHub `origin/main` before
+finishing. A local commit, worktree, pushed feature branch, or open PR is not the
+final delivery destination. Branches, worktrees and PRs may support implementation
+and review, but carry the completed changes through to GitHub `main`.
+
+This is standing authorization for ordinary main publication; do not ask again
+for confirmation to push already authorized work. Preserve required validation,
+unrelated or concurrent changes, and existing history. Fetch before integration,
+use a normal non-force push, and verify that local `main` and GitHub `main` match.
+If access, branch protection, conflicts or failed required checks prevent delivery,
+report the specific blocker and actual publication state without claiming success.
+
 ## Comprehensive testing is mandatory for every feature
 
 Define tests from the issue's acceptance criteria before implementation. Every
