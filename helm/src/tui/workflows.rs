@@ -130,8 +130,8 @@ impl Form {
         if self.preview.is_some() {
             match key.code {
                 KeyCode::Esc => self.preview = None,
-                KeyCode::Char('t') => self.trust_current_digest(),
-                KeyCode::Char('r') => {
+                KeyCode::Char('t') if key.modifiers.is_empty() => self.trust_current_digest(),
+                KeyCode::Char('r') if key.modifiers.is_empty() => {
                     self.prepare()?;
                     return Ok(Action::Verify);
                 }
@@ -173,6 +173,14 @@ impl Form {
             | KeyCode::Home
             | KeyCode::End => {
                 if let Some(name) = self.selected_name() {
+                    if self.fields[&name].is_none()
+                        && matches!(
+                            key.code,
+                            KeyCode::Left | KeyCode::Right | KeyCode::Home | KeyCode::End
+                        )
+                    {
+                        return Ok(Action::None);
+                    }
                     let edit = self
                         .fields
                         .get_mut(&name)
@@ -208,7 +216,7 @@ impl Form {
 enum Mode {
     Loading(Option<(String, Option<Scope>)>),
     Picker,
-    Form(Form),
+    Form(Box<Form>),
 }
 enum Action {
     None,
@@ -322,7 +330,7 @@ impl Panel {
             self.mode = Some(Mode::Picker);
             if let Some((id, scope)) = selection {
                 let d = workflow::select(self.definitions.clone(), &id, scope)?;
-                self.mode = Some(Mode::Form(Form::new(d)?));
+                self.mode = Some(Mode::Form(Box::new(Form::new(d)?)));
             }
         }
         self.notice.clear();
@@ -374,7 +382,7 @@ impl Panel {
                     .transpose()
                     .map(|form| {
                         if let Some(form) = form {
-                            self.mode = Some(Mode::Form(form));
+                            self.mode = Some(Mode::Form(Box::new(form)));
                         }
                         Action::None
                     }),
@@ -396,6 +404,12 @@ impl Panel {
     }
 
     pub(super) fn draw(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
+        if let Some(Mode::Form(form)) = &self.mode
+            && form.preview.is_none()
+        {
+            self.draw_input(frame, area, form);
+            return;
+        }
         let mut lines = vec![
             "Saved workflows · nonsecret inputs are visible to the model and saved session"
                 .to_owned(),
@@ -436,36 +450,6 @@ impl Panel {
                     } else { "Ready for review: r runs · Esc edits · ↑/↓ scroll" }.into());
                     lines.push(preview.clone());
                     scroll = form.scroll;
-                } else {
-                    lines.push("Tab/Shift-Tab field · Enter preview · Shift-Enter newline · Ctrl-U unset · Esc cancel".into());
-                    for (i, (name, value)) in form.fields.iter().enumerate() {
-                        let p = &d.document.parameters[name];
-                        lines.push(format!(
-                            "{} {} ({:?}{}) · {}",
-                            if i == form.selected { ">" } else { " " },
-                            name,
-                            p.kind,
-                            if p.required { ", required" } else { "" },
-                            p.description
-                        ));
-                        lines.push(format!(
-                            "  choices={:?} min={:?} max={:?} max_length={:?}",
-                            p.choices, p.minimum, p.maximum, p.max_length
-                        ));
-                        lines.push(format!(
-                            "  {}",
-                            value
-                                .as_ref()
-                                .map(|v| v.text.clone())
-                                .unwrap_or_else(|| format!(
-                                    "<unset; default {}>",
-                                    p.default
-                                        .as_ref()
-                                        .map_or("null".into(), ToString::to_string)
-                                ))
-                        ));
-                    }
-                    scroll = (form.selected.saturating_mul(3)).min(u16::MAX as usize) as u16;
                 }
             }
             _ => {}
@@ -486,6 +470,85 @@ impl Panel {
             Paragraph::new(display_safe(&self.notice)).wrap(Wrap { trim: false }),
             chunks[1],
         );
+    }
+
+    fn draw_input(&self, frame: &mut ratatui::Frame<'_>, area: Rect, form: &Form) {
+        use ratatui::layout::{Constraint, Layout};
+        let chunks = Layout::vertical([
+            Constraint::Length(2),
+            Constraint::Min(3),
+            Constraint::Length(4),
+        ])
+        .split(area);
+        let selected = form.fields.iter().nth(form.selected);
+        let Some((name, field)) = selected else {
+            frame.render_widget(
+                Paragraph::new(format!(
+                    "No inputs required. Enter previews the workflow; Esc cancels.\n{}",
+                    display_safe(&self.notice)
+                ))
+                .wrap(Wrap { trim: false })
+                .block(Block::default().title(" Workflows ").borders(Borders::ALL)),
+                area,
+            );
+            return;
+        };
+        let p = &form.definition.document.parameters[name];
+        frame.render_widget(
+            Paragraph::new(display_safe(&format!(
+                "Input {}/{}: {} ({:?}{})\n{} [{:?}] · nonsecret, model-visible",
+                form.selected + 1,
+                form.fields.len(),
+                name,
+                p.kind,
+                if p.required { ", required" } else { "" },
+                form.definition.document.id,
+                form.definition.scope
+            )))
+            .wrap(Wrap { trim: false }),
+            chunks[0],
+        );
+        let (value, cursor) = if let Some(edit) = field {
+            let value = display_safe(&edit.text).replace('\t', " ");
+            let prefix = display_safe(&edit.text[..edit.cursor]).replace('\t', " ");
+            let cursor =
+                super::composer::cursor_position(&prefix, chunks[1].width.saturating_sub(2));
+            (value, cursor)
+        } else {
+            (
+                format!(
+                    "<unset; default {}>",
+                    p.default
+                        .as_ref()
+                        .map_or("null".into(), ToString::to_string)
+                ),
+                (0, 0),
+            )
+        };
+        let height = chunks[1].height.saturating_sub(2);
+        let scroll = cursor.0.saturating_sub(height.saturating_sub(1));
+        frame.render_widget(
+            Paragraph::new(value)
+                .wrap(Wrap { trim: false })
+                .scroll((scroll, 0))
+                .block(Block::default().title(" Value ").borders(Borders::ALL)),
+            chunks[1],
+        );
+        if chunks[1].width > 2 && height > 0 && self.pending.is_none() {
+            frame.set_cursor_position((
+                chunks[1].x + 1 + cursor.1,
+                chunks[1].y + 1 + cursor.0.saturating_sub(scroll),
+            ));
+        }
+        let notice = if self.notice.is_empty() {
+            format!(
+                "{} · choices={:?} min={:?} max={:?} length={:?}",
+                p.description, p.choices, p.minimum, p.maximum, p.max_length
+            )
+        } else {
+            self.notice.clone()
+        };
+        frame.render_widget(Paragraph::new(display_safe(&format!("Tab/Shift-Tab: field · Enter: preview\nCtrl-U: unset · Shift-Enter: newline · Esc: cancel\n{notice}"))).wrap(Wrap {trim:false}),chunks[2]);
     }
 }
 

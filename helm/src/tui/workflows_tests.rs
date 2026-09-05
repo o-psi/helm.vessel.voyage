@@ -134,7 +134,7 @@ fn workflow_final_recheck_rejects_changed_removed_or_failed_discovery_without_di
         form.trust_current_digest();
         let request = Uuid::new_v4();
         let mut panel = Panel {
-            mode: Some(Mode::Form(form)),
+            mode: Some(Mode::Form(Box::new(form))),
             pending: Some(request),
             ..Default::default()
         };
@@ -151,7 +151,9 @@ fn workflow_final_recheck_rejects_changed_removed_or_failed_discovery_without_di
     }
     let request = Uuid::new_v4();
     let mut panel = Panel {
-        mode: Some(Mode::Form(Form::new(definition(Scope::User)).unwrap())),
+        mode: Some(Mode::Form(Box::new(
+            Form::new(definition(Scope::User)).unwrap(),
+        ))),
         pending: Some(request),
         ..Default::default()
     };
@@ -228,7 +230,7 @@ fn workflow_render_handles_narrow_unicode_control_and_all_field_selection() {
         form.set_input("topic", "literal 雪\u{1b}[31m").unwrap();
         form.render_preview().unwrap();
         let panel = Panel {
-            mode: Some(Mode::Form(form)),
+            mode: Some(Mode::Form(Box::new(form))),
             ..Default::default()
         };
         let mut terminal = Terminal::new(TestBackend::new(size.0, size.1)).unwrap();
@@ -241,5 +243,88 @@ fn workflow_render_handles_narrow_unicode_control_and_all_field_selection() {
             assert!(!cell.symbol().contains('\u{7}'));
         }
         assert!(buffer.content.iter().any(|cell| cell.symbol() == "W"));
+    }
+}
+
+#[test]
+fn workflow_trust_and_run_require_plain_documented_keys() {
+    for modifiers in [
+        KeyModifiers::CONTROL,
+        KeyModifiers::ALT,
+        KeyModifiers::SHIFT,
+    ] {
+        let mut form = Form::new(definition(Scope::Repository)).unwrap();
+        form.set_input("topic", "review").unwrap();
+        form.render_preview().unwrap();
+        assert!(matches!(
+            form.key(KeyEvent::new(KeyCode::Char('t'), modifiers))
+                .unwrap(),
+            Action::None
+        ));
+        assert!(
+            form.prepare().is_err(),
+            "modifier shortcut must not grant repository trust"
+        );
+        form.trust_current_digest();
+        assert!(
+            matches!(
+                form.key(KeyEvent::new(KeyCode::Char('r'), modifiers))
+                    .unwrap(),
+                Action::None
+            ),
+            "modifier shortcut must not run workflow"
+        );
+    }
+}
+
+#[test]
+fn workflow_navigation_preserves_unset_defaults_and_optional_null() {
+    for name in ["count", "flag", "note"] {
+        for code in [KeyCode::Left, KeyCode::Right, KeyCode::Home, KeyCode::End] {
+            let mut form = Form::new(definition(Scope::User)).unwrap();
+            form.set_input("topic", "review").unwrap();
+            form.selected = form.fields.keys().position(|key| key == name).unwrap();
+            form.key(KeyEvent::new(code, KeyModifiers::NONE)).unwrap();
+            assert!(
+                form.fields[name].is_none(),
+                "navigation changed unset {name}"
+            );
+            form.render_preview().unwrap();
+            let inputs = form.prepare().unwrap().invocation.inputs;
+            assert_eq!(inputs["count"], 2);
+            assert_eq!(inputs["flag"], false);
+            assert!(inputs["note"].is_null());
+        }
+    }
+}
+
+#[test]
+fn workflow_selected_field_and_unicode_cursor_remain_visible_at_minimum_size() {
+    use ratatui::{Terminal, backend::TestBackend};
+    for index in 0..4 {
+        let mut form = Form::new(definition(Scope::User)).unwrap();
+        form.selected = index;
+        let name = form.selected_name().unwrap();
+        form.set_input(&name, "雪\n🦀\nvisible-end").unwrap();
+        let panel = Panel {
+            mode: Some(Mode::Form(Box::new(form))),
+            ..Default::default()
+        };
+        let mut terminal = Terminal::new(TestBackend::new(32, 10)).unwrap();
+        terminal
+            .draw(|frame| panel.draw(frame, frame.area()))
+            .unwrap();
+        let text = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|c| c.symbol())
+            .collect::<String>();
+        assert!(text.contains(&name), "selected field missing: {text}");
+        assert!(
+            text.contains("visible-end"),
+            "editing cursor scrolled out of view: {text}"
+        );
     }
 }
