@@ -47,7 +47,7 @@ Each feature needs issue discussion review/update before edits, acceptance-drive
 - [#63: Add external extension and skill packaging, installation, and discovery](https://github.com/o-psi/voyage/issues/63) — pending
 - [#62: Add OS-level sandbox adapters for Linux, macOS, and Windows](https://github.com/o-psi/voyage/issues/62) — pending
 - [#59: TUI: Keep conversation user-facing and isolate activity/log diagnostics](https://github.com/o-psi/voyage/issues/59) — delivered in #87
-- [#37: Enforce per-agent tools, approvals, budgets, and resource limits](https://github.com/o-psi/voyage/issues/37) — pending
+- [#37: Enforce per-agent tools, approvals, budgets, and resource limits](https://github.com/o-psi/voyage/issues/37) — delivered in #87; scope and CI reviewed before closure
 - [#22: Run structured dogfood and incumbent-harness cutover](https://github.com/o-psi/voyage/issues/22) — pending
 - [#21: Define attended and unattended approval semantics](https://github.com/o-psi/voyage/issues/21) — pending
 - [#19: EPIC: Make Helm ready to replace the incumbent harness](https://github.com/o-psi/voyage/issues/19) — pending
@@ -62,3 +62,15 @@ Each feature needs issue discussion review/update before edits, acceptance-drive
 PR #87 head 0489b9e: [quality run 33941455410](https://github.com/o-psi/voyage/actions/runs/33941455410) passed all jobs. Linux passed formatting, strict Clippy, 375 workspace tests, locked release build, nine system fixtures, 11 evaluation definitions, unique packaging and checksums. macOS and Windows passed workspace tests and locked release builds. Both duplicate push/PR workflow runs succeeded. The PTY resize regression also passed local normal and fragmented reads.
 
 The first-wave source is merged. New completion-gate source has separate, unfinished verification; prior passing results do not establish its readiness. Current GitHub access works. Live subscription smoke previously returned HTTP401 before tool execution, with zero reported usage; it is not a live pass. The replacement and attachment epics retain their full unfinished scope.
+
+## Delivery checkpoint: 2026-09-05
+
+- [PR #91](https://github.com/o-psi/voyage/pull/91) merged as 086f0ed: current sharing authority and capability intersection. Full Linux baseline (387 tests, nine systems, release, packaging) and native macOS/Windows CI passed. #79 and #77 remain open for their full criteria.
+- [PR #88](https://github.com/o-psi/voyage/pull/88), head 768c402: completion ownership, reconciliation and checkpointing. Full Linux baseline (447 tests, 14 systems, release/package), additional two-CPU tests and all native CI platforms pass. Draft pending live/operator acceptance; configured subscription provider returns HTTP 401 and login renewal has been requested.
+- [PR #89](https://github.com/o-psi/voyage/pull/89), head 85a2f51: strict compiled attachment codec. Full Linux baseline passed; final steering-fixture synchronization correction passes locally and Linux/macOS CI. Current Windows CI pending. Partial #9 only.
+- [PR #90](https://github.com/o-psi/voyage/pull/90), head 187a957: private native Windows enrollment storage. Linux baseline passed. Native Windows killed-writer regression exposed journal recovery failure; investigation/fix remains active. Partial #10 only.
+- [PR #92](https://github.com/o-psi/voyage/pull/92), head 29a4658: run-long session fencing, dependent on #88. Full Linux baseline (454 tests, 15 systems, release/package) and two-CPU tests pass; current native Windows CI pending. Partial #78 only.
+
+Next independent slices are explicit crash-safe session transfer with provenance and quiescent schema upgrade (#78), and negotiated attachment features with sequenced events and bounded replay (#9). Both are isolated from operator state and depend on the reviewed foundations. Neither completes the attachment epic or exposes remote execution.
+
+Durable machine-readable status and exact logs are in ignored `.local-git/active-work.json` and `.local-git/evidence/`. CI completion must be observed at the relevant head; live evaluation definition validation is not live execution.
