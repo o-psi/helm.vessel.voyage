@@ -628,6 +628,8 @@ fn print_config(config: &Config) -> Result<()> {
 
 async fn list_models(config: &Config, workspace: Option<PathBuf>, json: bool) -> Result<()> {
     let workspace = config.resolve_workspace(workspace)?;
+    let resolved = helm::runtime_policy::RuntimePolicy::resolve(config, &workspace)?;
+    let config = resolved.config();
     let provider = provider::from_config(config, workspace)?;
     let mut models = tokio::time::timeout(config.timeout(), provider.models())
         .await
@@ -839,10 +841,67 @@ fn probe_codex_compatibility(command: &str) -> CodexCompatibilityProbe {
     }
 }
 
+/// Resolve a finite retained-record snapshot without transferring lease ownership.
+fn inherited_child_workspace(
+    records: Vec<(
+        helm::subagent::AgentId,
+        Option<helm::subagent::AgentId>,
+        Option<PathBuf>,
+    )>,
+    id: helm::subagent::AgentId,
+    fallback: &std::path::Path,
+) -> Result<PathBuf> {
+    let count = records.len();
+    let records = records
+        .into_iter()
+        .map(|(id, parent, path)| (id, (parent, path)))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    anyhow::ensure!(
+        records.len() == count,
+        "duplicate subagent workspace ancestry"
+    );
+    let mut visited = std::collections::BTreeSet::new();
+    let mut cursor = Some(id);
+    let mut nearest = None;
+    while let Some(id) = cursor {
+        anyhow::ensure!(visited.insert(id), "cyclic subagent workspace ancestry");
+        let (parent, path) = records
+            .get(&id)
+            .context("subagent workspace ancestry unavailable")?;
+        if nearest.is_none() {
+            nearest = path.clone();
+        }
+        cursor = *parent;
+    }
+    // Every visited node must be a distinct member of the captured finite map.
+    Ok(nearest.unwrap_or_else(|| fallback.to_path_buf()))
+}
+fn check_requested_workspace(
+    workspace: &std::path::Path,
+    read: &[PathBuf],
+    write: &[PathBuf],
+) -> Result<()> {
+    let workspace = workspace.canonicalize()?;
+    let contains = |roots: &[PathBuf]| -> Result<bool> {
+        Ok(roots
+            .iter()
+            .map(|root| root.canonicalize())
+            .collect::<std::io::Result<Vec<_>>>()?
+            .iter()
+            .any(|root| workspace.starts_with(root)))
+    };
+    anyhow::ensure!(
+        contains(read)? && contains(write)?,
+        "child workspace exceeds requested read/write delegation before implicit roots"
+    );
+    Ok(())
+}
+
 struct CliSubagentExecutor {
     managed_resources: Option<Arc<ManagedResources>>,
     todos: TodoTool,
     config: Config,
+    parent_policy: Arc<Policy>,
     workspace: PathBuf,
     runtime: OnceLock<Weak<SubagentRuntime>>,
     worktrees: Option<WorktreeManager>,
@@ -861,18 +920,44 @@ impl SubagentExecutor for CliSubagentExecutor {
             .read()
             .expect("subagent model lock poisoned")
             .clone();
-        config.workspace = Some(
-            context
-                .worktree
-                .clone()
-                .unwrap_or_else(|| self.workspace.clone()),
-        );
+        let workspace = if let Some(worktree) = &context.worktree {
+            worktree.clone()
+        } else {
+            let runtime = self
+                .runtime
+                .get()
+                .and_then(Weak::upgrade)
+                .context("subagent runtime unavailable")
+                .map_err(|error| error.to_string())?;
+            let records = runtime
+                .list()
+                .await
+                .into_iter()
+                .map(|record| (record.id, record.parent_id, record.worktree))
+                .collect();
+            inherited_child_workspace(records, context.id, &self.workspace)
+                .map_err(|error| error.to_string())?
+        };
+        check_requested_workspace(
+            &workspace,
+            &context.policy.readable_roots,
+            &context.policy.writable_roots,
+        )
+        .map_err(|error| error.to_string())?;
+        config.workspace = Some(workspace);
         config.allow_read = context.policy.readable_roots.clone();
         config.allow_write = context.policy.writable_roots.clone();
         config.max_tokens =
             (context.budget.max_tokens.min(u32::MAX as u64) as u32).min(config.max_tokens);
         let workspace = config.resolve_workspace(None).map_err(|e| e.to_string())?;
-        let policy = Arc::new(Policy::new(&config, workspace.clone()).map_err(|e| e.to_string())?);
+        let resolved = helm::runtime_policy::RuntimePolicy::resolve_child(
+            &config,
+            &workspace,
+            &self.parent_policy,
+        )
+        .map_err(|e| e.to_string())?;
+        let config = resolved.config().clone();
+        let policy = Arc::new(resolved.policy().clone());
         let tool_context = ToolContext {
             completion: context.completion.clone(),
             policy,
@@ -885,13 +970,22 @@ impl SubagentExecutor for CliSubagentExecutor {
             interaction: InteractionMode::Unattended,
             redactor: redactor(&config),
         };
+        let child_worktrees = self.worktrees.clone().map(|manager| {
+            if resolved.ceiling_present() {
+                manager.with_environment(tool_environment(&config))
+            } else {
+                manager
+            }
+        });
         let child_budget = context.budget.clone();
         let mut child_policy = context.policy.clone();
         child_policy.budget = child_budget.clone();
+        child_policy.readable_roots = config.allow_read.clone();
+        child_policy.writable_roots = config.allow_write.clone();
         let child_tool = self.runtime.get().and_then(Weak::upgrade).map(|runtime| {
             SubagentTool::new(runtime, child_policy, child_budget)
                 .with_parent(context.id)
-                .with_worktrees(self.worktrees.clone())
+                .with_worktrees(child_worktrees)
         });
         // Worktree-isolated children still coordinate through the parent's workspace plan.
         // Keying todos by the temporary worktree would silently fork task state.
@@ -962,12 +1056,17 @@ struct SubagentBundle {
     tool: SubagentTool,
     model: Arc<RwLock<String>>,
 }
-async fn build_subagents(config: &Config, workspace: &std::path::Path) -> Result<SubagentBundle> {
-    build_subagents_managed(config, workspace, None).await
+async fn build_subagents(
+    config: &Config,
+    workspace: &std::path::Path,
+    parent_policy: Arc<Policy>,
+) -> Result<SubagentBundle> {
+    build_subagents_managed(config, workspace, parent_policy, None).await
 }
 async fn build_subagents_managed(
     config: &Config,
     workspace: &std::path::Path,
+    parent_policy: Arc<Policy>,
     managed_resources: Option<Arc<ManagedResources>>,
 ) -> Result<SubagentBundle> {
     let standard = ToolRegistry::standard();
@@ -1010,12 +1109,19 @@ async fn build_subagents_managed(
         workspace,
     )?;
     let todos = todo_tool(workspace, coordinator.clone());
-    let worktrees = worktree_manager(workspace, &workspace_key);
+    let worktrees = worktree_manager(workspace, &workspace_key).map(|manager| {
+        if parent_policy.ceiling_present() {
+            manager.with_environment(tool_environment(config))
+        } else {
+            manager
+        }
+    });
     let model = Arc::new(RwLock::new(config.model.clone()));
     let executor = Arc::new(CliSubagentExecutor {
         managed_resources,
         todos: todos.clone(),
         config: config.clone(),
+        parent_policy,
         workspace: workspace.to_path_buf(),
         runtime: OnceLock::new(),
         worktrees: worktrees.clone(),
@@ -1135,7 +1241,9 @@ async fn build_agent_bundle(
     attended: bool,
     sink: Option<Arc<dyn EventSink>>,
 ) -> Result<ManagedAgent> {
-    let policy = Arc::new(Policy::new(config, workspace.clone())?);
+    let resolved = helm::runtime_policy::RuntimePolicy::resolve(config, &workspace)?;
+    let config = resolved.config();
+    let policy = Arc::new(resolved.policy().clone());
     let terminal = Arc::new(Terminal::default());
     let approver: Arc<dyn Approver> = if attended {
         terminal.clone()
@@ -1161,7 +1269,13 @@ async fn build_agent_bundle(
         redactor: redactor(config),
     };
     let managed_resources = sink.as_ref().map(|_| Arc::new(ManagedResources::default()));
-    let subagents = build_subagents_managed(config, &workspace, managed_resources.clone()).await?;
+    let subagents = build_subagents_managed(
+        config,
+        &workspace,
+        context.policy.clone(),
+        managed_resources.clone(),
+    )
+    .await?;
     let gate_runtime = subagents.runtime.clone();
     let gate_todos = subagents.todos.store();
     let gate_agents = gate_runtime.store().expect("persistent runtime");
@@ -1262,24 +1376,28 @@ async fn tui_chat(
             "native"
         }
     );
-    let policy = Arc::new(Policy::new(&active_config, session.workspace.clone())?);
+    let resolved =
+        helm::runtime_policy::RuntimePolicy::resolve(&active_config, &session.workspace)?;
+    let runtime_config = resolved.config();
+    let policy = Arc::new(resolved.policy().clone());
     let context = ToolContext {
         completion: None,
         policy,
         approver: bridge.clone(),
-        timeout: active_config.timeout(),
-        max_output_bytes: active_config.max_output_bytes,
-        environment: tool_environment(&active_config),
+        timeout: runtime_config.timeout(),
+        max_output_bytes: runtime_config.max_output_bytes,
+        environment: tool_environment(runtime_config),
         cancellation: tokio_util::sync::CancellationToken::new(),
         execution_id: uuid::Uuid::new_v4(),
         interaction: InteractionMode::Attended,
-        redactor: redactor(&active_config),
+        redactor: redactor(runtime_config),
     };
-    let subagents = build_subagents(&active_config, &session.workspace).await?;
+    let subagents =
+        build_subagents(runtime_config, &session.workspace, context.policy.clone()).await?;
     let subagent_runtime = subagents.runtime;
     let todo = subagents.todos.clone();
     let tools = build_tools(
-        &active_config,
+        runtime_config,
         Some(subagents.tool),
         Some(todo.clone()),
         Some(subagents.completion_tool),
@@ -1289,14 +1407,14 @@ async fn tui_chat(
         Arc::new(tools.terminals().unwrap_or_default());
     let agent = Arc::new(
         Agent::new(
-            provider::from_config(&active_config, session.workspace.clone())?,
+            provider::from_config(runtime_config, session.workspace.clone())?,
             tools,
             context,
             bridge.clone(),
             session.model.clone(),
-            active_config.system_prompt.clone(),
-            active_config.max_tokens,
-            active_config.temperature,
+            runtime_config.system_prompt.clone(),
+            runtime_config.max_tokens,
+            runtime_config.temperature,
         )
         .with_completion_coordinator(subagents.coordinator)
         .with_completion_gate(
@@ -1304,14 +1422,14 @@ async fn tui_chat(
             subagent_runtime.store().expect("persistent runtime"),
             subagent_runtime.clone(),
         )
-        .with_context_window(active_config.context_window)
+        .with_context_window(runtime_config.context_window)
         .with_model_mirror(subagents.model)
         .with_retry_policy(RetryPolicy {
-            max_attempts: active_config.provider_retry_attempts,
+            max_attempts: runtime_config.provider_retry_attempts,
             initial_delay: std::time::Duration::from_millis(
-                active_config.provider_retry_initial_ms,
+                runtime_config.provider_retry_initial_ms,
             ),
-            max_delay: std::time::Duration::from_millis(active_config.provider_retry_max_ms),
+            max_delay: std::time::Duration::from_millis(runtime_config.provider_retry_max_ms),
         }),
     );
     let session_id = session.id;
@@ -1327,7 +1445,7 @@ async fn tui_chat(
         )),
         todo.store(),
         provider_label,
-        active_config.access_mode(),
+        runtime_config.access_mode(),
     )
     .await;
     // A relaunched process must acquire the same workspace writer lease. Drain
@@ -1753,7 +1871,9 @@ async fn chat(
             "Helm · {} · {} · access: {} · {}\nType /help for commands.",
             session.display_name(),
             session.model,
-            config.access_mode(),
+            helm::runtime_policy::RuntimePolicy::resolve(&config, &session.workspace)?
+                .config()
+                .access_mode(),
             session.workspace.display()
         );
     }
@@ -1778,7 +1898,12 @@ async fn chat(
                 continue;
             }
             "/access" => {
-                println!("{}", config.access_mode());
+                println!(
+                    "{}",
+                    helm::runtime_policy::RuntimePolicy::resolve(&config, &session.workspace)?
+                        .config()
+                        .access_mode()
+                );
                 continue;
             }
             "/name" => {
@@ -1860,7 +1985,13 @@ async fn chat(
         if prompt == "/models" {
             let mut active_config = config.clone();
             active_config.model = session.model.clone();
-            match provider::from_config(&active_config, session.workspace.clone()) {
+            let resolved =
+                helm::runtime_policy::RuntimePolicy::resolve(&active_config, &session.workspace);
+            let provider = resolved.and_then(|resolved| {
+                provider::from_config(resolved.config(), session.workspace.clone())
+                    .map_err(anyhow::Error::from)
+            });
+            match provider {
                 Ok(provider) => {
                     match tokio::time::timeout(active_config.timeout(), provider.models()).await {
                         Ok(Ok(mut models)) => {
@@ -1892,11 +2023,19 @@ async fn chat(
             agent =
                 Some(build_agent(&active_config, session.workspace.clone(), interactive).await?);
         }
-        let scope = agent
+        let scope = match agent
             .as_ref()
             .expect("agent initialized")
             .prepare_run(&session)
-            .await?;
+            .await
+        {
+            Ok(scope) => scope,
+            Err(helm::agent::AgentError::Policy(error)) => {
+                eprintln!("Policy changed; restart or rebuild: {error}");
+                continue;
+            }
+            Err(error) => return Err(error.into()),
+        };
         if let Some(scope) = &scope {
             session.completion_runs.push(scope.reference());
         }
@@ -2139,6 +2278,119 @@ async fn attachment_interrupt() {
 
 #[cfg(test)]
 mod cli_tests {
+    #[test]
+    fn nested_children_inherit_nearest_workspace_without_ownership_transfer() {
+        use helm::subagent::AgentId;
+        let owner = AgentId::new();
+        let child = AgentId::new();
+        let grandchild = AgentId::new();
+        let records = vec![
+            (
+                owner,
+                None,
+                Some(std::path::PathBuf::from("/isolated/owner")),
+            ),
+            (child, Some(owner), None),
+            (grandchild, Some(child), None),
+        ];
+        let before = records.clone();
+        assert_eq!(
+            super::inherited_child_workspace(
+                records.clone(),
+                grandchild,
+                std::path::Path::new("/root")
+            )
+            .unwrap(),
+            std::path::PathBuf::from("/isolated/owner")
+        );
+        assert_eq!(records, before);
+        let nearest = vec![
+            (
+                owner,
+                None,
+                Some(std::path::PathBuf::from("/isolated/owner")),
+            ),
+            (
+                child,
+                Some(owner),
+                Some(std::path::PathBuf::from("/isolated/child")),
+            ),
+            (grandchild, Some(child), None),
+        ];
+        assert_eq!(
+            super::inherited_child_workspace(nearest, grandchild, std::path::Path::new("/root"))
+                .unwrap(),
+            std::path::PathBuf::from("/isolated/child")
+        );
+        assert_eq!(
+            super::inherited_child_workspace(
+                vec![(child, None, None)],
+                child,
+                std::path::Path::new("/root")
+            )
+            .unwrap(),
+            std::path::PathBuf::from("/root")
+        );
+    }
+    #[test]
+    fn malformed_workspace_ancestry_never_falls_back_to_broader_root() {
+        use helm::subagent::AgentId;
+        let a = AgentId::new();
+        let b = AgentId::new();
+        for records in [
+            vec![],
+            vec![(a, Some(b), None)],
+            vec![(a, Some(b), None), (b, Some(a), None)],
+            vec![(a, None, None), (a, None, None)],
+        ] {
+            assert!(
+                super::inherited_child_workspace(records, a, std::path::Path::new("/root"))
+                    .is_err()
+            );
+        }
+        let mut records = Vec::new();
+        let mut parent = None;
+        for _ in 0..1024 {
+            let id = AgentId::new();
+            records.push((id, parent, None));
+            parent = Some(id);
+        }
+        assert_eq!(
+            super::inherited_child_workspace(
+                records,
+                parent.unwrap(),
+                std::path::Path::new("/root")
+            )
+            .unwrap(),
+            std::path::PathBuf::from("/root")
+        );
+    }
+    #[test]
+    fn requested_child_roots_must_contain_workspace_before_implicit_roots() {
+        let root = tempfile::tempdir().unwrap();
+        let isolated = root.path().join("isolated");
+        std::fs::create_dir(&isolated).unwrap();
+        assert!(
+            super::check_requested_workspace(
+                root.path(),
+                std::slice::from_ref(&isolated),
+                std::slice::from_ref(&isolated)
+            )
+            .is_err()
+        );
+        assert!(
+            super::check_requested_workspace(
+                &isolated,
+                std::slice::from_ref(&isolated),
+                std::slice::from_ref(&isolated)
+            )
+            .is_ok()
+        );
+        assert!(
+            super::check_requested_workspace(&isolated, std::slice::from_ref(&isolated), &[])
+                .is_err()
+        );
+    }
     #[test]
     fn legacy_connectivity_is_not_a_cli_mode() {
         for args in [

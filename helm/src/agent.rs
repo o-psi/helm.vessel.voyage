@@ -256,6 +256,8 @@ pub enum AgentError {
     Context(#[from] ContextFailure),
     #[error(transparent)]
     Provider(#[from] ProviderError),
+    #[error("cannot start run under current system policy: {0}")]
+    Policy(String),
     #[error("cannot load workspace instructions: {0}")]
     WorkspaceInstructions(String),
     #[error("agent run was cancelled")]
@@ -448,6 +450,7 @@ impl Agent {
         session: &crate::session::Session,
         run_id: uuid::Uuid,
     ) -> Result<Option<crate::completion::runtime::RunHandle>, AgentError> {
+        self.check_current_policy()?;
         let Some(coordinator) = &self.completion_coordinator else {
             return Ok(None);
         };
@@ -527,8 +530,17 @@ impl Agent {
         Ok(model.trim().to_owned())
     }
 
+    /// Frontends call before recording a new turn; the run repeats this check at dispatch.
+    pub fn check_current_policy(&self) -> Result<(), AgentError> {
+        self.context
+            .policy
+            .check_current()
+            .map_err(|error| AgentError::Policy(error.to_string()))
+    }
+
     pub async fn models(&self, refresh: bool) -> Result<Vec<ModelInfo>, AgentError> {
         let mut cache = self.model_cache.lock().await;
+        self.check_current_policy()?;
         if !refresh
             && let Some((created, models)) = cache.as_ref()
             && created.elapsed() < Duration::from_secs(300)
@@ -691,6 +703,7 @@ impl Agent {
         selected_model: Option<String>,
         scope: Option<crate::completion::runtime::RunHandle>,
     ) -> Result<AgentOutcome, AgentError> {
+        self.check_current_policy()?;
         let root_scope = scope.clone();
         if let (Some(scope), Some(checkpoint)) = (&root_scope, checkpoint)
             && scope.run_id() != checkpoint.run_id()

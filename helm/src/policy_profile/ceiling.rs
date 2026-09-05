@@ -280,3 +280,13 @@ mod tests {
         }
     }
 }
+
+#[cfg(all(test, target_os = "linux"))]
+pub(super) fn test_load(root: &std::path::Path) -> Result<Option<CeilingDocument>> {
+    linux::read(
+        std::fs::File::open(root).map_err(|_| Error::Ceiling)?,
+        &["helm", "policy-ceiling.toml"],
+        unsafe { libc::geteuid() },
+        || Ok(()),
+    )
+}
