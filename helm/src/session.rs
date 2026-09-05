@@ -357,6 +357,7 @@ impl SessionStore {
         })
     }
 
+    #[cfg_attr(not(unix), allow(dead_code))]
     pub(crate) fn transfer_source_path(&self, id: Uuid) -> Result<PathBuf> {
         let lease = self
             .execution

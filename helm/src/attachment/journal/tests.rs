@@ -915,3 +915,25 @@ fn provenance_insert_is_atomic_create_only_and_retains_source_revision() {
     assert!(journal.import_session(&collision, &conflict).is_err());
     assert!(journal.load_session(collision.id).is_err());
 }
+
+#[test]
+fn import_sqlite_full_rolls_back_snapshot_and_provenance_together() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut journal = Journal::open(dir.path().join("journal")).unwrap();
+    let mut session = Session::new(dir.path().into(), "original".into());
+    session
+        .messages
+        .push(Message::new(Role::User, "x".repeat(128 * 1024)));
+    let provenance = import_provenance(&session, &journal.directory);
+    let pages: i64 = journal
+        .connection
+        .pragma_query_value(None, "page_count", |r| r.get(0))
+        .unwrap();
+    journal
+        .connection
+        .pragma_update(None, "max_page_count", pages)
+        .unwrap();
+    assert!(journal.import_session(&session, &provenance).is_err());
+    assert!(journal.load_session(session.id).is_err());
+    assert!(journal.preflight_import(&provenance).unwrap().is_none());
+}

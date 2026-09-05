@@ -296,6 +296,7 @@ impl Journal {
         Ok(())
     }
 
+    #[cfg_attr(not(unix), allow(dead_code))]
     pub(crate) fn preflight_import(
         &self,
         provenance: &super::migration::Provenance,
@@ -337,6 +338,7 @@ impl Journal {
         Ok(None)
     }
 
+    #[cfg_attr(not(unix), allow(dead_code))]
     pub(crate) fn import_session(
         &mut self,
         session: &Session,

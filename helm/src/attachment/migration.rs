@@ -39,6 +39,7 @@ pub(crate) struct Provenance {
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+#[cfg_attr(not(unix), allow(dead_code))]
 struct Marker {
     format: String,
     version: u32,
@@ -106,6 +107,10 @@ async fn transfer_inner(
                 .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c)),
         "invalid source hash"
     );
+    anyhow::ensure!(
+        store.owned_session_id().is_none(),
+        "transfer requires a fresh unowned source store"
+    );
     let child = cancel.child_token();
     let _cancel_on_drop = child.clone().drop_guard();
     let owner = tokio::select! {
@@ -161,7 +166,11 @@ mod unix {
             .open(path)?;
         let metadata = file.metadata()?;
         ensure!(
-            metadata.is_file() && metadata.nlink() == 1 && metadata.len() <= MAX_SOURCE,
+            metadata.is_file()
+                && metadata.nlink() == 1
+                && metadata.len() <= MAX_SOURCE
+                && metadata.uid() == unsafe { libc::geteuid() }
+                && metadata.mode() & 0o077 == 0,
             "invalid transfer file or capacity exceeded"
         );
         let mut bytes = Vec::new();
@@ -176,6 +185,10 @@ mod unix {
         hex::encode(Sha256::digest(bytes))
     }
     fn boundary(fault: Boundary, here: Boundary, cancel: &CancellationToken) -> Result<()> {
+        #[cfg(test)]
+        if fault == here && std::env::var_os("HELM_TRANSFER_TEST_CRASH").is_some() {
+            std::process::exit(77);
+        }
         ensure!(fault != here, "injected transfer interruption");
         ensure!(!cancel.is_cancelled(), "transfer cancelled");
         Ok(())
@@ -224,6 +237,23 @@ mod unix {
                 .any(|m| m.role == crate::model::Role::System),
             "legacy runtime system messages require explicit canonical cleanup before transfer"
         );
+        ensure!(
+            i64::try_from(session.revision).is_ok(),
+            "source revision exceeds journal capacity"
+        );
+        let canonical = serde_json::to_value(&session)?;
+        let raw: serde_json::Value = serde_json::from_slice(&original)?;
+        ensure!(
+            raw.as_object()
+                .context("source must be an object")?
+                .keys()
+                .all(|key| canonical.get(key).is_some()),
+            "unrecognized source session fields"
+        );
+        ensure!(
+            serde_json::to_vec(&session)?.len() as u64 <= MAX_SOURCE,
+            "canonical snapshot capacity exceeded"
+        );
         let workspace = session.workspace.canonicalize()?;
         let data = source_directory.parent().context("missing data parent")?;
         let key = hash(session.workspace.as_os_str().as_encoded_bytes());
@@ -252,7 +282,44 @@ mod unix {
             Err(e) => return Err(e.into()),
         }
         private(&imports, true)?;
+        // Serialize reservations and publication across different source sessions.
+        let capacity_path = directory.join("imports.lock");
+        let capacity_guard = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .mode(0o600)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+            .open(&capacity_path)?;
+        private(&capacity_path, false)?;
+        capacity_guard
+            .try_lock()
+            .context("transfer backup capacity busy")?;
         let backup = imports.join(format!("{}.json", request.transfer_id));
+        if !backup.exists() {
+            let mut count = 0usize;
+            let mut bytes = 0u64;
+            for entry in fs::read_dir(&imports)? {
+                let entry = entry?;
+                private(&entry.path(), false)?;
+                count += 1;
+                bytes = bytes
+                    .checked_add(entry.metadata()?.len())
+                    .context("backup capacity overflow")?;
+                ensure!(
+                    count < 256 && bytes <= 256 * 1024 * 1024,
+                    "transfer backup capacity exceeded"
+                );
+            }
+            ensure!(
+                bytes
+                    .checked_add(original.len() as u64)
+                    .is_some_and(|size| size <= 256 * 1024 * 1024),
+                "transfer backup byte capacity exceeded"
+            );
+        }
+
         let provenance = Provenance {
             transfer_id: request.transfer_id,
             session_id: session.id,

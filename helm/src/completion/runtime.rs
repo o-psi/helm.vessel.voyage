@@ -95,6 +95,7 @@ impl Coordinator {
             gate,
         })
     }
+    #[cfg_attr(not(unix), allow(dead_code))]
     pub(crate) fn transfer_identity(&self) -> (&Path, &Path) {
         (&self.directory, &self.workspace)
     }

@@ -262,3 +262,381 @@ async fn retry_never_overwrites_an_advanced_journal_or_accepts_restored_json() {
         before
     );
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn transfer_crash_child() {
+    let Some(root) = std::env::var_os("HELM_TRANSFER_TEST_ROOT") else {
+        return;
+    };
+    let root = PathBuf::from(root);
+    let id = Uuid::parse_str(&std::env::var("HELM_TRANSFER_TEST_ID").unwrap()).unwrap();
+    let transfer_id =
+        Uuid::parse_str(&std::env::var("HELM_TRANSFER_TEST_TRANSFER_ID").unwrap()).unwrap();
+    let original = std::fs::read(root.join("data/sessions").join(format!("{id}.json"))).unwrap();
+    let session: Session = serde_json::from_slice(&original).unwrap();
+    let key = hex::encode(Sha256::digest(
+        session.workspace.as_os_str().as_encoded_bytes(),
+    ));
+    let coordinator =
+        Coordinator::open(root.join("data/completion").join(key), &session.workspace).unwrap();
+    let index: usize = std::env::var("HELM_TRANSFER_TEST_CRASH")
+        .unwrap()
+        .parse()
+        .unwrap();
+    let faults = [
+        Boundary::BackupPublished,
+        Boundary::BackupDurable,
+        Boundary::MarkerPublished,
+        Boundary::MarkerDurable,
+        Boundary::BeforeCommit,
+        Boundary::AfterCommit,
+    ];
+    transfer_inner(
+        SessionStore::new(root.join("data/sessions")),
+        coordinator,
+        root.join("data/journal"),
+        TransferRequest {
+            transfer_id,
+            session_id: id,
+            expected_revision: session.revision,
+            source_sha256: hex::encode(Sha256::digest(original)),
+        },
+        CancellationToken::new(),
+        faults[index],
+    )
+    .await
+    .unwrap();
+    panic!("expected process termination");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn process_death_releases_both_fences_and_resumes_every_boundary() {
+    use std::{
+        process::{Command, Stdio},
+        time::{Duration, Instant},
+    };
+    for index in 0..6 {
+        let fixture = Fixture::new().await;
+        let mut child = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "attachment::migration::tests::transfer_crash_child",
+                "--nocapture",
+            ])
+            .env("HELM_TRANSFER_TEST_ROOT", fixture._temporary.path())
+            .env(
+                "HELM_TRANSFER_TEST_ID",
+                fixture.request.session_id.to_string(),
+            )
+            .env(
+                "HELM_TRANSFER_TEST_TRANSFER_ID",
+                fixture.request.transfer_id.to_string(),
+            )
+            .env("HELM_TRANSFER_TEST_CRASH", index.to_string())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let status = loop {
+            if let Some(status) = child.try_wait().unwrap() {
+                break status;
+            }
+            if Instant::now() > deadline {
+                child.kill().unwrap();
+                panic!("transfer crash child timed out");
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        };
+        assert_eq!(status.code(), Some(77));
+        let journal = Journal::open(fixture.journal.clone()).unwrap();
+        let source_active = fixture.store.load(fixture.request.session_id).await.is_ok();
+        let journal_active = journal.load_session(fixture.request.session_id).is_ok();
+        assert!(!(source_active && journal_active));
+        assert_eq!(journal_active, index == 5);
+        let receipt = fixture.transfer().await.unwrap();
+        assert_eq!(receipt.duplicate, index == 5);
+        assert!(
+            fixture
+                .store
+                .load(fixture.request.session_id)
+                .await
+                .is_err()
+        );
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn pending_tool_intent_stays_ambiguous_and_blocks_admission() {
+    use crate::attachment::journal::TurnAdmission;
+    let mut fixture = Fixture::new().await;
+    let mut session: Session = serde_json::from_slice(&fixture.original).unwrap();
+    let mut intent = Message::new(Role::Assistant, "uncertain tool");
+    intent.tool_calls.push(crate::model::ToolCall {
+        id: "uncertain-effect".into(),
+        name: "shell".into(),
+        arguments: serde_json::json!({"command":"never execute this"}),
+    });
+    session.messages.push(intent);
+    fixture.store.save(&mut session).await.unwrap();
+    fixture.original = std::fs::read(&fixture.source).unwrap();
+    fixture.request.expected_revision = session.revision;
+    fixture.request.source_sha256 = hex::encode(Sha256::digest(&fixture.original));
+    fixture.transfer().await.unwrap();
+    let mut journal = Journal::open(fixture.journal.clone()).unwrap();
+    let guard = journal.acquire_execution(session.id).unwrap();
+    let request = TurnAdmission {
+        command_id: Uuid::new_v4(),
+        machine_id: Uuid::new_v4(),
+        principal_id: Uuid::new_v4(),
+        session_id: session.id,
+        expected_revision: session.revision,
+        expires_at_ms: 100,
+        prompt: "resume".into(),
+    };
+    assert!(journal.admit_turn(&guard, &request, 1).is_err());
+    assert!(journal.lookup_command(&request).unwrap().is_none());
+    assert_eq!(
+        serde_json::to_value(journal.load_session(session.id).unwrap().session).unwrap(),
+        serde_json::to_value(session).unwrap()
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn symlinks_hardlinks_permissions_and_corrupt_backups_fail_closed() {
+    use std::os::unix::fs::{PermissionsExt, symlink};
+    for case in ["symlink", "hardlink", "public", "backup", "marker"] {
+        let fixture = Fixture::new().await;
+        match case {
+            "symlink" => {
+                let other = fixture.source.with_extension("other");
+                std::fs::rename(&fixture.source, &other).unwrap();
+                symlink(other, &fixture.source).unwrap();
+            }
+            "hardlink" => {
+                std::fs::hard_link(&fixture.source, fixture.source.with_extension("alias")).unwrap()
+            }
+            "public" => {
+                std::fs::set_permissions(&fixture.source, std::fs::Permissions::from_mode(0o644))
+                    .unwrap()
+            }
+            "backup" | "marker" => {
+                assert!(
+                    transfer_inner(
+                        fixture.store.clone(),
+                        fixture.coordinator.clone(),
+                        fixture.journal.clone(),
+                        fixture.request.clone(),
+                        CancellationToken::new(),
+                        Boundary::BeforeCommit
+                    )
+                    .await
+                    .is_err()
+                );
+                if case == "backup" {
+                    std::fs::write(
+                        fixture
+                            .journal
+                            .join("imports")
+                            .join(format!("{}.json", fixture.request.transfer_id)),
+                        b"corrupt",
+                    )
+                    .unwrap();
+                } else {
+                    let mut marker: serde_json::Value =
+                        serde_json::from_slice(&std::fs::read(&fixture.source).unwrap()).unwrap();
+                    marker["provenance"]["source_revision"] = serde_json::json!(999);
+                    std::fs::write(&fixture.source, serde_json::to_vec(&marker).unwrap()).unwrap();
+                }
+            }
+            _ => unreachable!(),
+        }
+        assert!(fixture.transfer().await.is_err());
+        if fixture.journal.exists() {
+            assert!(
+                Journal::open(fixture.journal.clone())
+                    .unwrap()
+                    .load_session(fixture.request.session_id)
+                    .is_err()
+            );
+        }
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn backup_capacity_is_bounded_and_existing_retry_remains_possible() {
+    use std::os::unix::fs::OpenOptionsExt;
+    let fixture = Fixture::new().await;
+    assert!(
+        transfer_inner(
+            fixture.store.clone(),
+            fixture.coordinator.clone(),
+            fixture.journal.clone(),
+            fixture.request.clone(),
+            CancellationToken::new(),
+            Boundary::BackupDurable
+        )
+        .await
+        .is_err()
+    );
+    let imports = fixture.journal.join("imports");
+    for n in 0..255 {
+        std::fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .mode(0o600)
+            .open(imports.join(format!("orphan-{n}.json")))
+            .unwrap();
+    }
+    let mut another = fixture.request.clone();
+    another.transfer_id = Uuid::new_v4();
+    let error = transfer(
+        fixture.store.clone(),
+        fixture.coordinator.clone(),
+        fixture.journal.clone(),
+        another,
+        CancellationToken::new(),
+    )
+    .await
+    .unwrap_err();
+    assert!(error.to_string().contains("capacity"));
+    assert_eq!(std::fs::read(&fixture.source).unwrap(), fixture.original);
+    fixture.transfer().await.unwrap(); // own exact existing backup consumes no new capacity
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn backup_byte_limit_and_capacity_lock_reject_before_source_transition() {
+    use std::os::unix::fs::OpenOptionsExt;
+    let fixture = Fixture::new().await;
+    assert!(
+        transfer_inner(
+            fixture.store.clone(),
+            fixture.coordinator.clone(),
+            fixture.journal.clone(),
+            fixture.request.clone(),
+            CancellationToken::new(),
+            Boundary::BackupDurable
+        )
+        .await
+        .is_err()
+    );
+    let filler = std::fs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .mode(0o600)
+        .open(fixture.journal.join("imports/orphan.json"))
+        .unwrap();
+    filler.set_len(256 * 1024 * 1024).unwrap();
+    let mut request = fixture.request.clone();
+    request.transfer_id = Uuid::new_v4();
+    assert!(
+        transfer(
+            fixture.store.clone(),
+            fixture.coordinator.clone(),
+            fixture.journal.clone(),
+            request,
+            CancellationToken::new()
+        )
+        .await
+        .unwrap_err()
+        .to_string()
+        .contains("capacity")
+    );
+    let lock = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(fixture.journal.join("imports.lock"))
+        .unwrap();
+    lock.try_lock().unwrap();
+    assert!(
+        fixture
+            .transfer()
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("capacity busy")
+    );
+    assert_eq!(std::fs::read(&fixture.source).unwrap(), fixture.original);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn session_fence_cancellation_and_bound_store_rejection_preserve_source() {
+    let fixture = Fixture::new().await;
+    let owner = fixture
+        .store
+        .with_execution(fixture.request.session_id)
+        .await
+        .unwrap();
+    assert!(
+        transfer(
+            owner.clone(),
+            fixture.coordinator.clone(),
+            fixture.journal.clone(),
+            fixture.request.clone(),
+            CancellationToken::new()
+        )
+        .await
+        .unwrap_err()
+        .to_string()
+        .contains("unowned")
+    );
+    let cancel = CancellationToken::new();
+    let attempt = tokio::spawn(transfer(
+        fixture.store.clone(),
+        fixture.coordinator.clone(),
+        fixture.journal.clone(),
+        fixture.request.clone(),
+        cancel.clone(),
+    ));
+    tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+    cancel.cancel();
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_secs(1), attempt)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap_err()
+            .to_string()
+            .contains("cancelled")
+    );
+    assert_eq!(std::fs::read(&fixture.source).unwrap(), fixture.original);
+    assert!(!fixture.journal.exists());
+    drop(owner);
+    fixture.transfer().await.unwrap();
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn unsupported_source_fields_and_system_guidance_fail_before_transition() {
+    for case in ["unknown", "system", "overflow"] {
+        let mut fixture = Fixture::new().await;
+        let mut value: serde_json::Value = serde_json::from_slice(&fixture.original).unwrap();
+        match case {
+            "unknown" => {
+                value["future_field"] = serde_json::json!("preserve rather than silently omit")
+            }
+            "system" => value["messages"]
+                .as_array_mut()
+                .unwrap()
+                .push(serde_json::to_value(Message::new(Role::System, "runtime only")).unwrap()),
+            "overflow" => {
+                value["revision"] = serde_json::json!(u64::MAX);
+                fixture.request.expected_revision = u64::MAX;
+            }
+            _ => unreachable!(),
+        }
+        fixture.original = serde_json::to_vec(&value).unwrap();
+        std::fs::write(&fixture.source, &fixture.original).unwrap();
+        fixture.request.source_sha256 = hex::encode(Sha256::digest(&fixture.original));
+        assert!(fixture.transfer().await.is_err());
+        assert_eq!(std::fs::read(&fixture.source).unwrap(), fixture.original);
+        assert!(!fixture.journal.exists());
+    }
+}
