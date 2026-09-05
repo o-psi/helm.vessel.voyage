@@ -47,3 +47,13 @@ startup retains its previous Config behavior through an internal compile-time
 adapter; it does not claim administrator-ceiling enforcement. Explicit public
 profile resolution still reports unsupported enforcement there. Linux builds have
 no corresponding bypass. Native tests are not claimed.
+
+The `tests/system/policy_ceiling.py` fixture runs the real binary, local HTTP
+provider, MCP stdio process and TUI PTY in a disposable user/mount namespace and
+chroot. It uses the production fixed path and ownership checks, including unsafe
+files, workspace exclusion, environment precedence, resumed startup, and a changed
+ceiling between turns. It verifies that rejected second-turn input is absent from
+durable canonical history. Namespace creation may be prohibited on some Linux
+runners; those report an explicit skip rather than passing this system evidence.
+The ordinary deterministic runtime and loader tests still run. No host `/etc`
+state is modified and no external provider is contacted.
