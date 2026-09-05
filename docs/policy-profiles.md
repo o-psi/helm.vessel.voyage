@@ -1,10 +1,12 @@
 # Policy profile resolution contract
 
 The `policy_profile` library provides typed profile documents, preset expansion,
-effective-rule resolution and a protected Linux system-ceiling reader. Current
-CLI, TUI and execution builders do **not** consume these results yet. Creating a
-ceiling file therefore does not currently protect ordinary Helm runs. Profile
-management and runtime integration remain required work under issue #70.
+effective-rule resolution and a protected Linux system-ceiling reader. Ordinary
+Linux CLI, TUI, managed-session, saved-workflow and child execution now enforce
+the administrator ceiling through matching runtime policy and environment rules.
+See [runtime boundaries](policy-ceiling-runtime.md) for enforcement points and
+limitations. Named-profile management and selection remain unfinished under
+issue #70; runtime integration currently uses no selected profile layers.
 
 ## Typed rules and presets
 
@@ -36,8 +38,8 @@ These rules are application policy, not process containment.
 
 ## Resolution and provenance
 
-`resolve_current(workspace, base, layers)` is the only public constructor of an
-`EffectivePolicy`. It always checks `/etc/helm/policy-ceiling.toml` on Linux; there
+`resolve_current(workspace, base, layers)` is the public profile-layer resolution
+entrypoint. It always checks `/etc/helm/policy-ceiling.toml` on Linux; there
 is no public alternate path, environment override or skip flag. Effective fields
 and workspace identity are private and exposed through read-only accessors.
 They cannot be deserialized from untrusted input as a resolved policy.
@@ -80,10 +82,12 @@ narrow an extra root to an allowed descendant, never widen it.
 
 Root-owned administrators can intentionally change or remove the ceiling. This
 reader is not protection against root, hostile same-UID process manipulation,
-filesystem rollback, or stale runtime state after resolution. Every future launch
-and runtime rebuild must call the checked entrypoint again. Non-Linux resolution
-currently refuses rather than silently omitting a ceiling; schema operations remain
-portable. Native platform validation is not claimed.
+filesystem rollback, or instantaneous revocation of already-dispatched effects.
+Runtime builders resolve the current ceiling, and reused agents check it again
+before new turns. A changed ceiling requires restart or rebuild. The public
+profile-layer resolver refuses on non-Linux systems; ordinary non-Linux startup
+retains its existing Config adapter without claiming ceiling enforcement. Schema
+operations remain portable. Native platform validation is not claimed.
 
 ## Transition confirmation and integration requirements
 
@@ -97,20 +101,14 @@ an exact digest confirms only that metadata. A cached transition or successful
 `confirm` call is **not** an execution permit. The caller must freshly resolve the
 current ceiling and pinned profile revisions before committing a transition.
 
-Existing Policy, tool environment, child policy and terminal managers must all
-consume the same final rules; applying only some fields would allow bypass. Explicit
-Config environment overrides must not re-add names excluded by a future environment
-ceiling. Profile switching must stop and observe prior owned effects before rebuilding
+Current runtime builders give Policy, tool environment, child policy and terminal
+managers the same effective rules. Explicit Config and MCP environment values
+retain precedence only where the administrator environment-name ceiling permits
+them. Future profile switching must stop and observe prior owned effects before rebuilding
 and showing a new effective-policy label. A missing approver must never cause an
 unattended wait or authority promotion. Profile CRUD and switching remain unfinished; the foundation alone does not complete #70.
-The ordinary zero-layer runtime integration is described below.
 
 Tests exercise strict schemas, presets, source history, root/set intersections,
 escalation and stale confirmations, canonical aliases/recreated workspaces, and
 protected-source ownership, permissions, links, malformed data and replacement.
 Filesystem tests use private internal injection; they do not modify operator `/etc`.
-
-Ordinary runtime builders now integrate the zero-profile-layer administrator ceiling;
-see [runtime boundaries](policy-ceiling-runtime.md) for current enforcement, Config
-compatibility and the non-Linux legacy-startup distinction. Profile switching and
-its confirmation workflow remain unimplemented.
