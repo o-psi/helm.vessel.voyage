@@ -399,3 +399,80 @@ fn publication_has_no_replaceable_staging_path() {
         b"REVIEWED"
     );
 }
+
+#[cfg(target_os = "linux")]
+#[test]
+fn active_guidance_publication_preserves_effective_loader_precedence() {
+    use crate::{policy::Policy, workspace_instructions};
+    for (existing, output) in [("agents.md", "AGENTS.md"), ("AGENTS.md", "agents.md")] {
+        for preview in [false, true] {
+            let root = tempfile::tempdir().unwrap();
+            fs::write(root.path().join(existing), "existing instructions").unwrap();
+            fs::write(root.path().join("draft.md"), "new instructions").unwrap();
+            let config = Config::default();
+            let command = if preview {
+                OnboardCommand::Preview {
+                    against: None,
+                    output: Some(output.into()),
+                    confirm: true,
+                }
+            } else {
+                OnboardCommand::Accept {
+                    draft: "draft.md".into(),
+                    sha256: digest(b"new instructions"),
+                    output: output.into(),
+                }
+            };
+            assert!(run(OnboardArgs { command }, &config, Some(root.path().into())).is_err());
+            assert!(!root.path().join(output).exists());
+            let policy = Policy::new(&config, root.path().into()).unwrap();
+            assert_eq!(
+                workspace_instructions::load(&policy).unwrap().as_deref(),
+                Some("existing instructions")
+            );
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn active_guidance_accept_matches_loader_limit_and_sidecar_keeps_larger_limit() {
+    use crate::{policy::Policy, workspace_instructions};
+    for name in ["AGENTS.md", "agents.md", "sidecar.md"] {
+        for size in [65536, 65537, MAX_FILE, MAX_FILE + 1] {
+            let root = tempfile::tempdir().unwrap();
+            let bytes = vec![b'x'; size];
+            fs::write(root.path().join("draft.md"), &bytes).unwrap();
+            let config = Config::default();
+            let result = run(
+                OnboardArgs {
+                    command: OnboardCommand::Accept {
+                        draft: "draft.md".into(),
+                        sha256: digest(&bytes),
+                        output: name.into(),
+                    },
+                },
+                &config,
+                Some(root.path().into()),
+            );
+            let allowed = size
+                <= if name == "sidecar.md" {
+                    MAX_FILE
+                } else {
+                    65536
+                };
+            assert_eq!(result.is_ok(), allowed, "{name} {size}");
+            assert_eq!(root.path().join(name).exists(), allowed);
+            if allowed && name != "sidecar.md" {
+                let policy = Policy::new(&config, root.path().into()).unwrap();
+                assert_eq!(
+                    workspace_instructions::load(&policy)
+                        .unwrap()
+                        .unwrap()
+                        .len(),
+                    size
+                );
+            }
+        }
+    }
+}

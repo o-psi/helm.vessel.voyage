@@ -95,6 +95,25 @@ def main():
             (workspace / 'dangling.md').symlink_to(root / 'absent')
             run('preview', '--output', 'dangling.md', '--confirm', expected=1)
             assert not (root / 'absent').exists()
+        # Active guidance names preserve either existing spelling, even in nested dirs.
+        for existing, output in [('agents.md', 'AGENTS.md'), ('AGENTS.md', 'agents.md')]:
+            for command in ['preview', 'accept']:
+                nested=workspace/f'{existing}-{command}';nested.mkdir()
+                (nested/existing).write_text('existing active guidance')
+                draft=nested/'draft.md';draft.write_text('reviewed replacement')
+                args=(['preview','--output',str(nested/output),'--confirm'] if command=='preview' else
+                      ['accept','--draft',str(draft),'--sha256',hashlib.sha256(draft.read_bytes()).hexdigest(),'--output',str(nested/output)])
+                run(*args,expected=1)
+                assert not (nested/output).exists()
+                assert (nested/existing).read_text()=='existing active guidance'
+        for output in ['AGENTS.md','agents.md','sidecar.md']:
+            for size in [65536,65537,256*1024,256*1024+1]:
+                nested=workspace/f'limit-{output}-{size}';nested.mkdir()
+                draft=nested/'draft.md';draft.write_bytes(b'x'*size)
+                allowed=size <= (256*1024 if output=='sidecar.md' else 65536)
+                run('accept','--draft',str(draft),'--sha256',hashlib.sha256(draft.read_bytes()).hexdigest(),
+                    '--output',str(nested/output),expected=0 if allowed else 1)
+                assert (nested/output).exists()==allowed
         assert not (root / 'data').exists(), 'onboarding initialized session/provider state'
     print('repo onboarding: deterministic inspect, preview, edit, acceptance, diff and preservation passed')
 
