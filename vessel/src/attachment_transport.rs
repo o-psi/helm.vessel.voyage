@@ -96,6 +96,16 @@ impl AttachmentApi {
         supported: Features,
         limits: Limits,
     ) -> Result<(Self, mpsc::Receiver<AuthenticatedFrame>)> {
+        if !(Duration::from_millis(1000)..=Duration::from_millis(30000)).contains(&limits.lease)
+            || limits.auth.is_zero()
+            || limits.write.is_zero()
+            || limits.check.is_zero()
+            || limits.sockets == 0
+            || limits.machines == 0
+            || limits.queue == 0
+        {
+            return Err(TransportError::Invalid);
+        }
         supported.validate().map_err(|_| TransportError::Invalid)?;
         let (observations, rx) = mpsc::channel(limits.queue);
         Ok((
@@ -164,8 +174,20 @@ impl AttachmentApi {
     }
     async fn socket(&self, mut socket: WebSocket) {
         let authentication = async {
-            let Some(Ok(Message::Text(text))) = socket.recv().await else {
-                return Err(TransportError::Invalid);
+            let text = loop {
+                match socket.recv().await {
+                    Some(Ok(Message::Text(text))) => break text,
+                    Some(Ok(Message::Ping(bytes))) => {
+                        bounded_write(
+                            &CancellationToken::new(),
+                            self.limits.write,
+                            socket.send(Message::Pong(bytes)),
+                        )
+                        .await?;
+                    }
+                    Some(Ok(Message::Pong(_))) => (),
+                    _ => return Err(TransportError::Invalid),
+                }
             };
             let Frame::Authenticate {
                 proof, features, ..
@@ -251,11 +273,14 @@ impl AttachmentApi {
         frame: Frame,
     ) -> Result<()> {
         let text = frame.encode().map_err(|_| TransportError::Invalid)?;
-        tokio::select! {biased;
-            _=connection.cancel.cancelled()=>Err(TransportError::Stale),
-            result=tokio::time::timeout(self.limits.write,socket.send(Message::Text(text.into())))=>match result{Ok(Ok(()))=>Ok(()),_=>Err(TransportError::Unavailable)}
-        }
+        bounded_write(
+            &connection.cancel,
+            self.limits.write,
+            socket.send(Message::Text(text.into())),
+        )
+        .await
     }
+
     async fn connected(
         &self,
         socket: &mut WebSocket,
@@ -276,7 +301,7 @@ impl AttachmentApi {
                     machine_id: machine,
                     owner_id: connection.owner,
                     epoch: connection.epoch,
-                    lease_ms: 10000,
+                    lease_ms: self.limits.lease.as_millis() as u32,
                     features: connection.features.clone(),
                 },
             )
@@ -288,18 +313,26 @@ impl AttachmentApi {
         let mut heartbeat = tokio::time::Instant::now();
         let mut check = tokio::time::interval(self.limits.check);
         loop {
-            tokio::select! {biased;
+            tokio::select! {
                 _=connection.cancel.cancelled()=>return,
                 _=tokio::time::sleep_until(heartbeat+self.limits.lease)=>return,
                 _=check.tick()=>{if !self.is_current(machine,connection.id).await{return;}},
                 incoming=socket.recv()=>{
-                    let Some(Ok(Message::Text(text)))=incoming else{return;};
+                    let text=match incoming {
+                        Some(Ok(Message::Text(text))) => text,
+                        Some(Ok(Message::Ping(bytes))) => {
+                            if !self.is_current(machine,connection.id).await || bounded_write(&connection.cancel,self.limits.write,socket.send(Message::Pong(bytes))).await.is_err(){return;}
+                            continue;
+                        }
+                        Some(Ok(Message::Pong(_))) => continue,
+                        _=>return,
+                    };
                     let Ok(frame)=Frame::decode(text.as_bytes()) else{return;};
                     if inbound(&frame,connection.id).is_err()||frame.validate_features(&connection.features).is_err()||!self.is_current(machine,connection.id).await{return;}
                     if matches!(frame,Frame::Heartbeat{..}) {
                         heartbeat=tokio::time::Instant::now();
                         connection.heartbeat.send_replace(heartbeat);
-                        if self.write(socket,connection,Frame::Lease{connection_id:connection.id,lease_ms:10000}).await.is_err(){return;}
+                        if self.write(socket,connection,Frame::Lease{connection_id:connection.id,lease_ms:self.limits.lease.as_millis() as u32}).await.is_err(){return;}
                     } else {
                         let registry=self.registry.lock().await;
                         if registry.get(&machine).is_none_or(|c|c.id!=connection.id||c.cancel.is_cancelled()){return;}
@@ -312,6 +345,21 @@ impl AttachmentApi {
                     if self.write(socket,connection,frame).await.is_err(){return;}
                 }
             }
+        }
+    }
+}
+/// Kept generic so write-deadline and cancellation failures are deterministic
+/// without relying on a particular OS TCP send-buffer size.
+async fn bounded_write<E>(
+    cancel: &CancellationToken,
+    deadline: Duration,
+    write: impl std::future::Future<Output = std::result::Result<(), E>>,
+) -> Result<()> {
+    tokio::select! { biased;
+        _ = cancel.cancelled() => Err(TransportError::Stale),
+        result = tokio::time::timeout(deadline, write) => match result {
+            Ok(Ok(())) => Ok(()),
+            _ => Err(TransportError::Unavailable)
         }
     }
 }

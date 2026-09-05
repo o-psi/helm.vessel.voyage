@@ -90,7 +90,7 @@ impl Fixture {
             Features::default(),
             Limits {
                 auth: Duration::from_millis(150),
-                lease: Duration::from_millis(300),
+                lease: Duration::from_millis(1000),
                 check: Duration::from_millis(30),
                 write: Duration::from_millis(100),
                 sockets: 2,
@@ -172,11 +172,15 @@ impl Fixture {
             .await
             .unwrap();
         let message = socket.next().await.unwrap().unwrap();
-        let Frame::Welcome { connection_id, .. } =
-            Frame::decode(message.into_text().unwrap().as_bytes()).unwrap()
+        let Frame::Welcome {
+            connection_id,
+            lease_ms,
+            ..
+        } = Frame::decode(message.into_text().unwrap().as_bytes()).unwrap()
         else {
             panic!("welcome expected")
         };
+        assert_eq!(lease_ms, self.api.limits.lease.as_millis() as u32);
         connection_id
     }
 }
@@ -565,5 +569,202 @@ async fn genuinely_expired_server_mac_and_client_signature_are_rejected() {
         .await
         .unwrap();
     closed(&mut socket).await;
+    assert!(f.api.registry.lock().await.is_empty());
+}
+#[tokio::test]
+async fn stalled_writes_have_deadlines_and_replacement_cancels_them() {
+    let token = CancellationToken::new();
+    let start = tokio::time::Instant::now();
+    assert_eq!(
+        bounded_write(
+            &token,
+            Duration::from_millis(20),
+            std::future::pending::<std::result::Result<(), ()>>()
+        )
+        .await,
+        Err(TransportError::Unavailable)
+    );
+    assert!(start.elapsed() < Duration::from_secs(1));
+    token.cancel();
+    assert_eq!(
+        bounded_write(
+            &token,
+            Duration::from_secs(2),
+            std::future::pending::<std::result::Result<(), ()>>()
+        )
+        .await,
+        Err(TransportError::Stale)
+    );
+    assert_eq!(
+        bounded_write(&CancellationToken::new(), Duration::from_secs(1), async {
+            Err(())
+        })
+        .await,
+        Err(TransportError::Unavailable)
+    );
+}
+#[tokio::test]
+async fn outbound_queue_full_and_stale_generation_fail_closed() {
+    let f = Fixture::new().await;
+    let id = Uuid::new_v4();
+    let (sender, mut receiver) = mpsc::channel(2);
+    let connection = Connection {
+        id,
+        owner: f.store.owner_id(),
+        epoch: 1,
+        features: Features::default(),
+        cancel: CancellationToken::new(),
+        send: sender,
+        heartbeat: tokio::sync::watch::channel(tokio::time::Instant::now()).0,
+    };
+    f.api
+        .registry
+        .lock()
+        .await
+        .insert(f.machine, connection.clone());
+    let make = || Frame::Command {
+        command: voyage_protocol::attachment::Command {
+            version: 2,
+            connection_id: id,
+            machine_id: f.machine,
+            principal_id: f.store.owner_id(),
+            command_id: Uuid::new_v4(),
+            expires_at_ms: now() + 10_000,
+            operation: voyage_protocol::attachment::Operation::List {
+                after: None,
+                limit: 1,
+            },
+        },
+    };
+    f.api.send(f.machine, make()).await.unwrap();
+    f.api.send(f.machine, make()).await.unwrap();
+    assert_eq!(
+        f.api.send(f.machine, make()).await,
+        Err(TransportError::Full)
+    );
+    assert_eq!(receiver.len(), 2);
+    connection.cancel.cancel();
+    assert_eq!(
+        f.api.send(f.machine, make()).await,
+        Err(TransportError::Stale)
+    );
+    let queued = receiver.recv().await.unwrap();
+    assert!(matches!(queued, Frame::Command { .. }));
+    assert!(!f.api.is_current(f.machine, id).await);
+}
+#[tokio::test]
+async fn authenticated_machine_limit_denies_new_machine_but_allows_replacement() {
+    let mut f = Fixture::new().await;
+    let proof = f.proof();
+    let mut first = f.socket().await;
+    let first_id = f.authenticate(&mut first, proof).await;
+    let first_machine = f.machine;
+    f.machine = Uuid::new_v4();
+    f.key = SigningKey::generate().unwrap();
+    let invite = f.store.invite(60_000, now()).unwrap();
+    let operation = ProofOperation::Enroll {
+        machine_id: f.machine,
+        transaction_id: Uuid::new_v4(),
+        invitation_id: invite.id,
+        public_key: f.key.public_key(),
+    };
+    let challenge = f
+        .store
+        .challenge(operation, Some(&invite.key), now())
+        .unwrap();
+    let proof = SignedChallenge {
+        signature: f.key.sign(&challenge).unwrap(),
+        challenge,
+        new_signature: None,
+    };
+    f.store.complete(&proof, Some(&invite.key), now()).unwrap();
+    let proof = f.proof();
+    let mut second = f.socket().await;
+    second
+        .send(ClientMessage::Text(
+            Frame::Authenticate {
+                version: 2,
+                proof,
+                features: Features::default(),
+            }
+            .encode()
+            .unwrap()
+            .into(),
+        ))
+        .await
+        .unwrap();
+    closed(&mut second).await;
+    assert!(f.api.is_current(first_machine, first_id).await);
+    assert_eq!(f.api.registry.lock().await.len(), 1);
+    drop(first);
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while f.api.is_current(first_machine, first_id).await {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    let proof = f.proof();
+    let mut next = f.socket().await;
+    let id = f.authenticate(&mut next, proof).await;
+    assert!(f.api.is_current(f.machine, id).await);
+}
+#[tokio::test]
+async fn websocket_ping_is_supported_before_auth_and_does_not_renew_lease() {
+    let mut f = Fixture::new().await;
+    let proof = f.proof();
+    let mut socket = f.socket().await;
+    socket
+        .send(ClientMessage::Ping(vec![1, 2, 3].into()))
+        .await
+        .unwrap();
+    assert_eq!(
+        socket.next().await.unwrap().unwrap(),
+        ClientMessage::Pong(vec![1, 2, 3].into())
+    );
+    let id = f.authenticate(&mut socket, proof).await;
+    let granted_at = tokio::time::Instant::now();
+    tokio::time::sleep(Duration::from_millis(700)).await;
+    socket
+        .send(ClientMessage::Ping(vec![4].into()))
+        .await
+        .unwrap();
+    assert_eq!(
+        socket.next().await.unwrap().unwrap(),
+        ClientMessage::Pong(vec![4].into())
+    );
+    assert!(f.api.is_current(f.machine, id).await);
+    closed(&mut socket).await;
+    assert!(
+        granted_at.elapsed() < Duration::from_millis(1400),
+        "Ping must not extend the 1000ms grant"
+    );
+    assert!(!f.api.is_current(f.machine, id).await);
+}
+#[tokio::test]
+async fn unauthenticated_ping_does_not_extend_authentication_deadline() {
+    let f = Fixture::new().await;
+    let mut socket = f.socket().await;
+    let started = tokio::time::Instant::now();
+    let pings = async {
+        loop {
+            if socket
+                .send(ClientMessage::Ping(vec![0].into()))
+                .await
+                .is_err()
+            {
+                break;
+            }
+            match socket.next().await {
+                Some(Ok(ClientMessage::Pong(_))) => (),
+                _ => break,
+            }
+            tokio::time::sleep(Duration::from_millis(30)).await;
+        }
+    };
+    tokio::time::timeout(Duration::from_millis(500), pings)
+        .await
+        .expect("pings cannot keep an unauthenticated socket alive");
+    assert!(started.elapsed() < Duration::from_millis(500));
     assert!(f.api.registry.lock().await.is_empty());
 }
