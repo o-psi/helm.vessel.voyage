@@ -118,6 +118,7 @@ class GateCase(Case):
         super().__init__(root, helm, port)
         self.provider, self.mode = provider, mode
         self.config.write_text(self.config.read_text().replace('provider = "openai-responses"', f'provider = "{provider}"'))
+        (root / "evidence.txt").write_text("Measured records: 42\n", encoding="utf-8")
         self.requests, self.failures = [], []
         self.hold, self.release = threading.Event(), threading.Event()
         self.todo = None
@@ -149,13 +150,16 @@ class GateCase(Case):
             record = json.loads(outputs[-1])
             assert record["id"] == self.todo and record["status"] == "pending"
             if self.mode == "verified":
-                return "todo", {"action": "evidence", "id": self.todo, "text": "fixture verified exact arithmetic: 6 * 7 = 42"}
+                return "read_file", {"path": "evidence.txt"}
             if self.mode == "blocked":
                 return "todo", {"action": "block", "id": self.todo, "blockers": ["external fixture prerequisite unavailable"]}
             return "completion", {"action": "snapshot"}
         if self.mode == "verified" and step == 4:
+            assert "Measured records: 42" in outputs[-1], outputs[-1]
+            return "todo", {"action": "evidence", "id": self.todo, "text": "Read evidence.txt: measured records 42"}
+        if self.mode == "verified" and step == 5:
             return "todo", {"action": "status", "id": self.todo, "status": "completed"}
-        snapshot_step = {"verified": 5, "blocked": 4, "deferred": 3}[self.mode]
+        snapshot_step = {"verified": 6, "blocked": 4, "deferred": 3}[self.mode]
         if step == snapshot_step:
             return "completion", {"action": "snapshot"}
         if step == snapshot_step + 1:
@@ -197,7 +201,7 @@ class GateCase(Case):
         texts = [m["content"] for m in saved["messages"] if m["role"] == "assistant" and not m.get("tool_calls")]
         assert texts.count(PROPOSAL) == (0 if self.mode == "empty" else 1), texts
         assert texts.count(FINAL) == int(success), texts
-        expected = {"empty": 1, "verified": 9, "blocked": 8, "deferred": 7, "ignore": 3, "failure": 3, "cancel": 3}
+        expected = {"empty": 1, "verified": 10, "blocked": 8, "deferred": 7, "ignore": 3, "failure": 3, "cancel": 3}
         assert len(self.requests) == expected[self.mode], (self.mode, len(self.requests))
         if self.mode not in ("failure", "cancel"):
             decision = self.ledger(saved["completion_runs"][-1])["state"]["decision"]
