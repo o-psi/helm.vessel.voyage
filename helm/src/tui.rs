@@ -99,6 +99,7 @@ struct App {
     markdown_theme: MarkdownTheme,
     markdown_syntax_highlighting: bool,
     running: Option<Running>,
+    title_job: Option<TitleJob>,
     approval: Option<ApprovalRequest>,
     question: Option<QuestionDialog>,
     show_sessions: bool,
@@ -106,6 +107,44 @@ struct App {
     shortcut_help: bool,
     exit: Option<TuiExit>,
     quit: bool,
+}
+
+struct TitleJob {
+    task: tokio::task::JoinHandle<()>,
+    cancel: tokio_util::sync::CancellationToken,
+}
+
+impl Drop for TitleJob {
+    fn drop(&mut self) {
+        self.cancel.cancel();
+        self.task.abort();
+    }
+}
+
+fn start_title_job(app: &mut App, agent: &Arc<Agent>, tx: &mpsc::UnboundedSender<UiEvent>) {
+    app.title_job = None;
+    let session_id = app.session.id;
+    let completed_runs = app
+        .session
+        .title_state
+        .as_ref()
+        .expect("completed run")
+        .completed_runs;
+    let messages = app.session.messages.clone();
+    let agent = agent.clone();
+    let events = tx.clone();
+    let cancel = tokio_util::sync::CancellationToken::new();
+    let token = cancel.clone();
+    let task = tokio::spawn(async move {
+        if let Some(result) = agent.generate_title(&messages, token).await {
+            let _ = events.send(UiEvent::TitleReady {
+                session_id,
+                completed_runs,
+                result: Some(result),
+            });
+        }
+    });
+    app.title_job = Some(TitleJob { task, cancel });
 }
 
 struct Running {
@@ -166,6 +205,7 @@ impl App {
             markdown_theme: markdown_theme(),
             markdown_syntax_highlighting: std::env::var_os("NO_COLOR").is_none(),
             running: None,
+            title_job: None,
             approval: None,
             question: None,
             show_sessions: false,
@@ -300,7 +340,10 @@ pub async fn run(
             }
             event = rx.recv() => {
                 let Some(event) = event else { break };
+                let title_due = matches!(&event, UiEvent::Finished(Ok(_)))
+                    && app.session.title_due_after_turn();
                 handle_ui_event(event, &mut app, &store, terminals.as_ref()).await?;
+                if title_due { start_title_job(&mut app, &agent, &tx); }
             }
             _ = &mut termination => {
                 app.status = "Terminal closing; cancelling active work".into();
@@ -465,6 +508,7 @@ async fn handle_ui_event(
                 Ok(outcome) => {
                     app.live_messages.clear();
                     app.session.messages = outcome.messages;
+                    app.session.record_completed_turn();
                     app.session.usage.input_tokens += outcome.usage.input_tokens;
                     app.session.usage.output_tokens += outcome.usage.output_tokens;
                     app.session.terminals = terminals.list().await.unwrap_or_default();
@@ -479,6 +523,28 @@ async fn handle_ui_event(
             }
             app.streaming_response.clear();
             preserve_manual_anchor(app, before);
+        }
+        UiEvent::TitleReady {
+            session_id,
+            completed_runs,
+            result,
+        } => {
+            // Delayed metadata cannot rename another session or supersede newer work.
+            if app.session.id == session_id
+                && app
+                    .session
+                    .title_state
+                    .as_ref()
+                    .is_some_and(|state| state.completed_runs == completed_runs)
+                && !app.is_running()
+            {
+                app.title_job = None;
+                if let Some(result) = result {
+                    app.session.apply_generated_title(result);
+                    store.save(&mut app.session).await?;
+                    app.sessions = store.list().await?;
+                }
+            }
         }
         UiEvent::SupervisorTree(result) => match result {
             Ok(agents) => {
@@ -830,6 +896,7 @@ async fn handle_key(
             app.prompt_history.reset_navigation();
             reset_slash_palette(app);
             if !prompt.trim().is_empty() {
+                app.title_job = None;
                 if handle_command(&prompt, app, store, Some(agent), Some(tx)).await? {
                     return Ok(());
                 }

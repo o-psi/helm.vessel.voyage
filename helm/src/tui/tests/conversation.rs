@@ -607,3 +607,92 @@ fn renders_tiny_terminal_with_resize_guidance() {
         .collect();
     assert!(rendered.contains("Helm"));
 }
+
+#[tokio::test]
+async fn title_results_preserve_manual_names_and_reject_stale_sessions_and_turns() {
+    let directory = tempfile::tempdir().unwrap();
+    let store = SessionStore::new(directory.path().into());
+    let mut app = App::new(Session::new(directory.path().into(), "main".into()), vec![]);
+    app.session.record_completed_turn();
+    store.save(&mut app.session).await.unwrap();
+    let id = app.session.id;
+    let original = app.session.display_name();
+    for (session_id, completed_runs) in [(Uuid::new_v4(), 1), (id, 0)] {
+        handle_ui_event(
+            UiEvent::TitleReady {
+                session_id,
+                completed_runs,
+                result: Some(crate::titles::TitleResult {
+                    title: Some("Stale".into()),
+                    usage: Default::default(),
+                }),
+            },
+            &mut app,
+            &store,
+            &crate::terminal::NoInteractiveTerminals::default(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(app.session.display_name(), original);
+    }
+    handle_ui_event(
+        UiEvent::TitleReady {
+            session_id: id,
+            completed_runs: 1,
+            result: Some(crate::titles::TitleResult {
+                title: Some("Generated title".into()),
+                usage: crate::model::Usage {
+                    input_tokens: 3,
+                    output_tokens: 1,
+                },
+            }),
+        },
+        &mut app,
+        &store,
+        &crate::terminal::NoInteractiveTerminals::default(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        store.load(id).await.unwrap().display_name(),
+        "Generated title"
+    );
+    assert_eq!(app.session.model, "main");
+    assert!(app.session.messages.is_empty());
+    app.session.set_name("My name".into());
+    handle_ui_event(
+        UiEvent::TitleReady {
+            session_id: id,
+            completed_runs: 1,
+            result: Some(crate::titles::TitleResult {
+                title: Some("Late".into()),
+                usage: Default::default(),
+            }),
+        },
+        &mut app,
+        &store,
+        &crate::terminal::NoInteractiveTerminals::default(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(app.session.display_name(), "My name");
+}
+
+#[tokio::test]
+async fn unavailable_title_model_does_not_send_a_repaint_event() {
+    let directory = tempfile::tempdir().unwrap();
+    let agent = Arc::new(navigation_agent_for_conversation(&directory));
+    let mut app = App::new(Session::new(directory.path().into(), "main".into()), vec![]);
+    app.session.record_completed_turn();
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    start_title_job(&mut app, &agent, &tx);
+    tokio::time::timeout(
+        Duration::from_secs(1),
+        &mut app.title_job.as_mut().unwrap().task,
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert!(rx.try_recv().is_err());
+    assert!(!app.is_running());
+}

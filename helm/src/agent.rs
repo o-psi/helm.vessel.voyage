@@ -336,6 +336,7 @@ impl Agent {
         messages: &[Message],
         cancel: CancellationToken,
     ) -> Option<crate::titles::TitleResult> {
+        use futures_util::StreamExt;
         let work = async {
             let model = crate::titles::title_model()?;
             if !self
@@ -348,11 +349,33 @@ impl Agent {
                 return None;
             }
             let request = crate::titles::request(messages, model, &self.context.redactor)?;
-            let response = self.provider.complete(request).await.ok()?;
-            Some(crate::titles::TitleResult {
-                title: crate::titles::sanitize(&response.message, &self.context.redactor),
-                usage: response.usage,
-            })
+            let mut stream = self.provider.stream(request).await.ok()?;
+            let mut text_bytes = 0_usize;
+            while let Some(event) = stream.next().await {
+                match event.ok()? {
+                    crate::provider::ProviderStreamEvent::Completed(response) => {
+                        return Some(crate::titles::TitleResult {
+                            title: crate::titles::sanitize(
+                                &response.message,
+                                &self.context.redactor,
+                            ),
+                            usage: response.usage,
+                        });
+                    }
+                    crate::provider::ProviderStreamEvent::Delta(
+                        crate::provider::ProviderDelta::Text(text),
+                    ) => {
+                        text_bytes = text_bytes.checked_add(text.len())?;
+                        if text_bytes > 4096 {
+                            return None;
+                        }
+                    }
+                    crate::provider::ProviderStreamEvent::Delta(
+                        crate::provider::ProviderDelta::ToolCall { .. },
+                    ) => return None,
+                }
+            }
+            None
         };
         tokio::select! {
             biased;
@@ -1346,7 +1369,7 @@ mod tests {
                 return Err(ProviderError::Unavailable("offline".into()));
             }
             Ok(if self.advertised {
-                vec![ModelInfo::minimal("gpt-5.6-luna")]
+                vec![ModelInfo::minimal(crate::titles::title_model().unwrap())]
             } else {
                 vec![]
             })
@@ -1408,7 +1431,7 @@ mod tests {
             assert!(sink.events.lock().unwrap().is_empty());
             let requests = requests.lock().unwrap();
             assert_eq!(requests.len(), 1);
-            assert_eq!(requests[0].model, "gpt-5.6-luna");
+            assert_eq!(requests[0].model, crate::titles::title_model().unwrap());
             assert!(requests[0].tools.is_empty());
             assert!(!requests[0].messages[1].content.contains("private-secret"));
         }
@@ -1486,6 +1509,77 @@ mod tests {
             assert_eq!(requests.lock().unwrap().len(), if mode < 2 { 0 } else { 1 });
         }
     }
+    struct TitleStreamFixture(u8);
+    #[async_trait]
+    impl Provider for TitleStreamFixture {
+        async fn models(&self) -> Result<Vec<ModelInfo>, ProviderError> {
+            Ok(vec![ModelInfo::minimal(
+                crate::titles::title_model().unwrap(),
+            )])
+        }
+        async fn complete(&self, _: ModelRequest) -> Result<ModelResponse, ProviderError> {
+            panic!("title must use the provider streaming path");
+        }
+        async fn stream(
+            &self,
+            _: ModelRequest,
+        ) -> Result<crate::provider::ProviderStream, ProviderError> {
+            use crate::provider::{ProviderDelta, ProviderStreamEvent};
+            let events = match self.0 {
+                0 => vec![Ok(ProviderStreamEvent::Delta(ProviderDelta::Text(
+                    "unfinished".into(),
+                )))],
+                1 => vec![Ok(ProviderStreamEvent::Delta(ProviderDelta::Text(
+                    "x".repeat(4097),
+                )))],
+                2 => vec![Ok(ProviderStreamEvent::Delta(ProviderDelta::ToolCall {
+                    index: 0,
+                    id: Some("bad".into()),
+                    name: Some("shell".into()),
+                    arguments: "{}".into(),
+                }))],
+                3 => vec![Err(ProviderError::Unavailable("stream failed".into()))],
+                _ => vec![
+                    Ok(ProviderStreamEvent::Delta(ProviderDelta::Text(
+                        "Private title".into(),
+                    ))),
+                    Ok(ProviderStreamEvent::Completed(ModelResponse {
+                        message: Message::new(crate::model::Role::Assistant, "Private title"),
+                        usage: Usage {
+                            input_tokens: 1,
+                            output_tokens: 2,
+                        },
+                    })),
+                ],
+            };
+            Ok(Box::pin(futures_util::stream::iter(events)))
+        }
+    }
+
+    #[tokio::test]
+    async fn title_stream_is_private_bounded_and_requires_completion() {
+        let directory = tempfile::tempdir().unwrap();
+        for case in 0..5 {
+            let mut agent = agent(Box::new(TitleStreamFixture(case)), &directory);
+            let sink = Arc::new(Recording::default());
+            agent.sink = sink.clone();
+            let result = agent
+                .generate_title(
+                    &[Message::new(crate::model::Role::User, "question")],
+                    CancellationToken::new(),
+                )
+                .await;
+            if case == 4 {
+                let result = result.unwrap();
+                assert_eq!(result.title.as_deref(), Some("Private title"));
+                assert_eq!(result.usage.output_tokens, 2);
+            } else {
+                assert!(result.is_none());
+            }
+            assert!(sink.events.lock().unwrap().is_empty());
+        }
+    }
+
     struct HangingTitleDiscovery;
     #[async_trait]
     impl Provider for HangingTitleDiscovery {

@@ -22,3 +22,49 @@ resumed session continues with its last selection even when the configuration de
 
 Provider selection itself remains a startup concern because changing providers can change
 credentials, protocol semantics, and model compatibility.
+
+## Automatic session titles
+
+`helm/utility-models.json` selects utility models at build time. Its `title` entry
+currently names `gpt-5.6-luna`. Edit that JSON and rebuild Helm to change the title
+model. This model is independent of the conversation model: changing the main
+model does not change the title model. The request uses the existing provider and
+credentials, and runs only when its cached model discovery includes the selected
+utility model. Unsupported endpoints or failed discovery keep the existing name;
+there is no different-model or different-provider fallback and no pricing lookup.
+
+Automatic titles refresh after successful top-level runs 1, 2, 3, 5, 8, 13, 21,
+and subsequent Fibonacci checkpoints. Tool/model iterations and steering messages
+within one run do not count separately. The completed-run counter persists across
+resume and compaction. A failed title attempt consumes its checkpoint rather than
+retrying on every input. Legacy sessions start their counter at zero; existing
+custom names remain manual. `/name`, `/new TITLE`, and `/branch TITLE` disable
+automatic naming. A branch starts its own counter; `/clear` resets the counter and
+an automatic name, while preserving a manual name.
+
+Title generation uses a separate tool-free request with a short, redacted excerpt
+of recent user/assistant text. It does not include system instructions, tool
+results, or provider continuation data, and its response never enters the chat
+transcript. Requests are bounded by the provider timeout or ten seconds, whichever
+is shorter, with no retries. Providers that support output-token limits receive a 64-token
+limit; the subscription adapter omits that unsupported parameter. Title stream
+text is capped at 4 KiB and never displayed. Invalid output, errors, and cancellation retain the
+previous name. Title usage is stored separately at `title_state.usage` in the
+session JSON; existing conversation token totals do not include it. A cancelled
+or failed request may incur provider usage that was not returned to Helm.
+
+In full-screen chat, generation runs in the background after the conversation is
+saved. Starting another prompt or command cancels pending title work; late results
+cannot overwrite a newer run or a manual name. Plain chat and saved one-shot runs
+save the completed conversation first, then wait for the bounded title attempt.
+`run --no-save` and subagent runs do not request titles. The stable `session-ID`
+name remains the fallback until a valid generated title is available.
+
+Validation: `tests/system/session_titles.py` exercises the real CLI with an offline
+provider, covering independent model requests, Fibonacci scheduling across restart,
+manual/legacy names, failures, and discovery fallback. Unit tests additionally
+cover title sanitization, redaction, timeout/cancellation, branch/clear/compaction,
+and stale UI results. No shared protocol changes are involved. Live model title
+quality and macOS/Windows execution need their own validation; Linux fixtures do
+not establish those results. Rollback ignores the additional title metadata and
+retains the latest persisted name; older Helm builds will not refresh it.

@@ -51,7 +51,7 @@ pub(super) fn parse_words(argument: &str, usage: &str) -> Result<Vec<String>> {
 pub(super) fn start_new_session(app: &mut App, name: Option<&str>) {
     let mut session = Session::new(app.session.workspace.clone(), app.session.model.clone());
     if let Some(name) = name.filter(|name| !name.trim().is_empty()) {
-        session.name = Some(name.trim().to_owned());
+        session.set_name(name.trim().to_owned());
     }
     let name = session.display_name();
     app.session = session;
@@ -260,7 +260,7 @@ pub(super) async fn handle_command(
             (!argument.trim().is_empty()).then_some(argument.trim()),
         ),
         "name" if !argument.trim().is_empty() => {
-            app.session.name = Some(argument.trim().into());
+            app.session.set_name(argument.trim().into());
             store.save(&mut app.session).await?;
             app.sessions = store.list().await?;
             app.status = "Session renamed".into();
@@ -385,7 +385,7 @@ pub(super) async fn handle_command(
             request_cli(app, store, vec!["manpage".into()], true, true).await?;
         }
         "clear" if argument.trim() == "confirm" => {
-            app.session.messages.clear();
+            app.session.clear_conversation();
             store.save(&mut app.session).await?;
             app.activity.clear();
             app.live_messages.clear();

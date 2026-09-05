@@ -80,11 +80,11 @@ pub(crate) fn sanitize(message: &Message, redactor: &Redactor) -> Option<String>
         return None;
     }
     let text = redactor.redact(message.content.clone());
+    let title = text.trim();
     // Reject terminal controls, line separators, and invisible direction overrides.
-    if text.chars().any(|c| c.is_control() || matches!(c, '\u{2028}' | '\u{2029}' | '\u{200b}'..='\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2060}'..='\u{206f}' | '\u{feff}')) {
+    if title.chars().any(|c| c.is_control() || matches!(c, '\u{2028}' | '\u{2029}' | '\u{200b}'..='\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2060}'..='\u{206f}' | '\u{feff}')) {
         return None;
     }
-    let title = text.trim();
     if title.is_empty() || title.chars().count() > 80 {
         return None;
     }
@@ -97,7 +97,10 @@ mod tests {
 
     #[test]
     fn embedded_utility_model_is_valid() {
-        assert_eq!(title_model().as_deref(), Some("gpt-5.6-luna"));
+        assert!(
+            title_model().is_some(),
+            "embedded utility model must be a nonempty model ID"
+        );
     }
 
     #[test]
@@ -117,6 +120,10 @@ mod tests {
                 "{text:?}"
             );
         }
+        assert_eq!(
+            sanitize(&Message::new(Role::Assistant, "Title\n"), &redactor),
+            Some("Title".into())
+        );
         assert!(sanitize(&Message::new(Role::Assistant, "a".repeat(81)), &redactor).is_none());
         assert!(sanitize(&Message::new(Role::User, "valid"), &redactor).is_none());
         assert_eq!(

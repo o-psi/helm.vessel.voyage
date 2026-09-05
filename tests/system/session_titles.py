@@ -13,7 +13,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 
 MAIN_MODEL = "fixture-conversation"
-TITLE_MODEL = "gpt-5.6-luna"
+TITLE_MODEL = json.loads((Path(__file__).resolve().parents[2] / "helm" / "utility-models.json").read_text())["title"]
 
 
 class Fixture(BaseHTTPRequestHandler):
@@ -138,7 +138,7 @@ access = "read-only"
         for request in Fixture.requests:
             if request["model"] == TITLE_MODEL:
                 assert not request.get("tools"), request
-                assert request.get("stream") is False, request
+                assert request.get("stream") is True, request
                 assert 0 < request["max_completion_tokens"] <= 256, request
                 assert len(json.dumps(request["messages"])) < 20000, request
             else:

@@ -108,8 +108,9 @@ Helm's own diagnostics are written to the owner-only `logs/helm.log` under Helm'
 so tracing output cannot corrupt the alternate-screen UI. `Esc` cancels active work and tool
 approvals appear as keyboard-driven modals. Use `Ctrl+S` to browse
 and restore sessions, `Ctrl+N` for a new session, `Ctrl+B` to branch, `Ctrl+K` to
-compact context, and `Ctrl+E` to export Markdown. Every session receives a stable generated
-name; use `/new [TITLE]` to start a fresh session and optionally name it immediately.
+compact context, and `Ctrl+E` to export Markdown. Every session starts with a stable fallback name; automatic titles refresh at
+Fibonacci checkpoints using the independent model in `utility-models.json`
+([details](../docs/model-management.md#automatic-session-titles)); use `/new [TITLE]` to start a fresh session and optionally name it immediately.
 
 The composer remains editable while Helm is working. Press `Enter` to queue its text as steering
 for the active run; `Shift+Enter` still inserts a newline. Helm records accepted steering in the

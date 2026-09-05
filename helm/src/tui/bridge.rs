@@ -19,6 +19,11 @@ pub enum UiEvent {
     Approval(ApprovalRequest),
     Question(QuestionRequest),
     Finished(Result<crate::AgentOutcome, String>),
+    TitleReady {
+        session_id: uuid::Uuid,
+        completed_runs: u64,
+        result: Option<crate::titles::TitleResult>,
+    },
     SupervisorTree(Result<Vec<AgentView>, String>),
     SupervisorInspect(AgentId, Result<Vec<SupervisionEvent>, String>),
     SupervisorAction(Result<String, String>),
