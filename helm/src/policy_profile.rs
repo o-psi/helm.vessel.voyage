@@ -1,6 +1,6 @@
-//! Inspectable policy metadata. Existing runtime builders do not yet consume it.
-//! Only `resolve_current` constructs public effective values; it always checks the
-//! fixed system ceiling. A transition confirmation is not dispatch authority.
+//! Inspectable profile metadata and the administrator ceiling used by runtime builders.
+//! Public profile-layer resolution checks the fixed system ceiling; ordinary runtime
+//! integration currently selects no profile layers. Confirmation is not dispatch authority.
 mod ceiling;
 pub mod cli;
 pub mod selection;
