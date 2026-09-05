@@ -660,6 +660,20 @@ fn canonical_checkpoints_preserve_prefix_usage_and_rollback_and_never_duplicate_
             )
             .is_err()
     );
+    assert!(!journal.run(run.id).unwrap().final_checkpointed);
+    assert!(
+        journal
+            .finish(&guard, run.id, RunState::Completed, None, None)
+            .is_err()
+    );
+    journal
+        .accept_checkpoint(&guard, run.id, &history, &usage)
+        .unwrap();
+    assert!(
+        journal
+            .accept_checkpoint(&guard, run.id, &history, &usage)
+            .is_err()
+    );
     journal
         .finish(&guard, run.id, RunState::Completed, None, None)
         .unwrap();

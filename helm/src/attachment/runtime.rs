@@ -5,7 +5,10 @@
 //! finished. It does not reconcile the existing JSON SessionStore or enable a port.
 use super::journal::{ExecutionGuard, Journal, RunRecord, RunState, TurnAdmission};
 use crate::{
-    agent::{Agent, AgentError, AgentOutcome, CheckpointError, RunCheckpoint, SteeringReceiver},
+    agent::{
+        Agent, AgentError, AgentOutcome, CheckpointError, RunCheckpoint, SteeringReceiver,
+        StopReason,
+    },
     model::{Message, Usage},
 };
 use async_trait::async_trait;
@@ -104,18 +107,38 @@ impl RunOwner {
         } else if agent.workspace() != self.workspace || agent.model() != self.model {
             Err(CheckpointError.into())
         } else {
-            self.storage(|store| store.journal.mark_running(&store.guard, store.run_id))
-                .await?;
-            agent
-                .run_checkpointed(
-                    history,
-                    prompt,
-                    cancel.clone(),
-                    input,
-                    self,
-                    self.model.clone(),
-                )
-                .await
+            async {
+                self.storage(|store| store.journal.mark_running(&store.guard, store.run_id))
+                    .await?;
+                let session = self
+                    .storage(|store| {
+                        let run = store.journal.run(store.run_id)?;
+                        Ok(store.journal.load_session(run.session_id)?.session)
+                    })
+                    .await?;
+                let scope = agent.prepare_run_with_id(&session, self.run_id).await?;
+                if let Some(scope) = &scope {
+                    let reference = scope.reference();
+                    self.storage(move |store| {
+                        store
+                            .journal
+                            .register_run_scope(&store.guard, store.run_id, reference)
+                    })
+                    .await?;
+                }
+                agent
+                    .run_checkpointed_scoped(
+                        history,
+                        prompt,
+                        cancel.clone(),
+                        input,
+                        self,
+                        self.model.clone(),
+                        scope,
+                    )
+                    .await
+            }
+            .await
         };
         // Cancellation wins over a late provider completion. A failed terminal
         // commit returns an error, never the otherwise-successful model outcome.
@@ -125,7 +148,21 @@ impl RunOwner {
             result
         };
         let (state, reason) = match &result {
-            Ok(_) => (RunState::Completed, None),
+            Ok(outcome) => match &outcome.stop_reason {
+                StopReason::Completed => (RunState::Completed, None),
+                StopReason::Incomplete { .. } => (
+                    RunState::Incomplete,
+                    Some("completion reconciliation incomplete"),
+                ),
+            },
+            Err(AgentError::Finalization(failure))
+                if matches!(&*failure.source, AgentError::Cancelled) =>
+            {
+                (
+                    RunState::Cancelled,
+                    Some("run cancelled during completion reconciliation"),
+                )
+            }
             Err(AgentError::Cancelled) => (RunState::Cancelled, Some("run cancelled")),
             Err(AgentError::Checkpoint(_)) => (RunState::Failed, Some("durable checkpoint failed")),
             Err(_) => (RunState::Failed, Some("provider or runtime failed")),
@@ -154,6 +191,24 @@ impl RunCheckpoint for RunOwner {
                 .checkpoint_canonical(&store.guard, store.run_id, &messages, &usage)
         })
         .await
+    }
+    async fn accepted(
+        &self,
+        messages: &[Message],
+        usage: &Usage,
+        reason: &StopReason,
+    ) -> Result<(), CheckpointError> {
+        if matches!(reason, StopReason::Completed) {
+            let messages = messages.to_vec();
+            let usage = usage.clone();
+            self.storage(move |store| {
+                store
+                    .journal
+                    .accept_checkpoint(&store.guard, store.run_id, &messages, &usage)
+            })
+            .await?;
+        }
+        Ok(())
     }
     async fn partial(&self, text: &str) -> Result<(), CheckpointError> {
         let text = text.to_owned();

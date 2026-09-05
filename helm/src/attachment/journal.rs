@@ -54,6 +54,7 @@ pub enum RunState {
     Accepted,
     Running,
     Completed,
+    Incomplete,
     Cancelled,
     Failed,
     Interrupted,
@@ -507,10 +508,85 @@ impl Journal {
             .checked_add(output_delta)
             .context("session usage overflow")?;
         run.usage = usage.clone();
-        run.final_checkpointed = messages
-            .last()
-            .is_some_and(|m| m.role == Role::Assistant && m.tool_calls.is_empty());
+        // Canonical text is provisional. Only the runtime's explicit acceptance
+        // hook may classify a final response; no-tool text alone is insufficient.
+        run.final_checkpointed = false;
         update_session(&tx, &current)?;
+        tx.execute(
+            "UPDATE runs SET record=?1 WHERE id=?2",
+            params![serde_json::to_string(&run)?, run.id.to_string()],
+        )?;
+        append_event(&tx, &run, EventKind::CanonicalCheckpoint)?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Record trusted run ownership before any provider or tool dispatch.
+    pub fn register_run_scope(
+        &mut self,
+        guard: &ExecutionGuard,
+        run_id: Uuid,
+        reference: crate::completion::runtime::RunReference,
+    ) -> Result<()> {
+        let run = self.run(run_id)?;
+        self.check_guard(guard, run.session_id)?;
+        ensure!(
+            reference.session_id == run.session_id && reference.run_id == run_id,
+            "completion scope does not match admitted run"
+        );
+        let tx = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let run = read_run(&tx, run_id)?;
+        ensure!(
+            run.state == RunState::Running,
+            "scope requires running admission"
+        );
+        let mut current = read_session(&tx, run.session_id)?;
+        ensure!(
+            !current.session.completion_runs.contains(&reference),
+            "scope already registered"
+        );
+        current.session.completion_runs.push(reference);
+        update_session(&tx, &current)?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Mark an already-durable canonical proposal accepted. Scoped callers invoke
+    /// this only after sealing readiness. A failed write cannot become completion.
+    pub fn accept_checkpoint(
+        &mut self,
+        guard: &ExecutionGuard,
+        run_id: Uuid,
+        messages: &[Message],
+        usage: &Usage,
+    ) -> Result<()> {
+        let run = self.run(run_id)?;
+        self.check_guard(guard, run.session_id)?;
+        let tx = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let mut run = read_run(&tx, run_id)?;
+        ensure!(
+            run.state == RunState::Running,
+            "acceptance requires running admission"
+        );
+        let current = read_session(&tx, run.session_id)?;
+        ensure!(
+            serde_json::to_vec(messages)? == serde_json::to_vec(&current.session.messages)?
+                && serde_json::to_vec(usage)? == serde_json::to_vec(&run.usage)?,
+            "acceptance does not match canonical checkpoint"
+        );
+        ensure!(
+            messages
+                .last()
+                .is_some_and(|m| m.role == Role::Assistant && m.tool_calls.is_empty())
+                && !has_pending_tools(messages),
+            "acceptance requires a final proposal without pending tools"
+        );
+        ensure!(!run.final_checkpointed, "proposal already accepted");
+        run.final_checkpointed = true;
         tx.execute(
             "UPDATE runs SET record=?1 WHERE id=?2",
             params![serde_json::to_string(&run)?, run.id.to_string()],
@@ -572,7 +648,12 @@ impl Journal {
             "unresolved tool effects cannot be completed"
         );
         ensure!(
-            !(run.final_checkpointed && final_text.is_some()),
+            !(final_text.is_some()
+                && current
+                    .session
+                    .messages
+                    .last()
+                    .is_some_and(|m| m.role == Role::Assistant && m.tool_calls.is_empty())),
             "final answer already checkpointed"
         );
         if let Some(text) = final_text {
