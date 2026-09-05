@@ -180,8 +180,10 @@ fn accept_requires_exact_reviewed_digest_and_respects_read_only() {
             output: "AGENTS.md".into(),
         },
     };
-    let mut config = Config::default();
-    config.access = Some(AccessMode::ReadOnly);
+    let mut config = Config {
+        access: Some(AccessMode::ReadOnly),
+        ..Config::default()
+    };
     assert!(
         run(
             args(&digest(b"reviewed\n")),
@@ -272,7 +274,7 @@ fn publication_failure_and_lost_acknowledgement_preserve_truthful_files() {
 fn concurrent_accept_has_one_complete_winner() {
     let root = tempfile::tempdir().unwrap();
     let barrier = std::sync::Arc::new(std::sync::Barrier::new(3));
-    let workers: Vec<_> = [b'A', b'B']
+    let workers: Vec<_> = *b"AB"
         .into_iter()
         .map(|byte| {
             let path = root.path().to_owned();
