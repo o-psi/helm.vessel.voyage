@@ -194,10 +194,11 @@ version label to avoid overwriting existing artifacts:
 (cd dist && sha256sum -c *.sha256)
 ```
 
-CI also runs workspace tests and locked release builds on macOS and Windows.
-Do not claim cross-platform validation from a Linux-only run. Inspect portability
-checks on the PR; follow release workflows for additional architecture/archive
-checks. Preserve existing `dist/` artifacts. Keep relevant GitHub and Forgejo
+Routine CI runs on Linux only to limit development costs. macOS and Windows
+workspace tests and locked release builds are not run on pushes or pull requests.
+Do not claim cross-platform validation from a Linux-only run. Tag-triggered release
+workflows still build platform archives; packaging is not platform test coverage.
+Preserve existing `dist/` artifacts. Keep relevant GitHub and Forgejo
 workflow counterparts consistent when changing CI (they are not currently identical).
 
 For documentation-only changes, validate paths, links, command accuracy, and diffs;
