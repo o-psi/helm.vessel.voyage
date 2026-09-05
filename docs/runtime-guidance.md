@@ -26,6 +26,12 @@ objects and generate active extension context at runtime. It also accommodates C
 current constraint that dynamic tools are supplied when a thread starts: a Helm agent's registry is
 fixed for that provider thread, and a changed registry requires a new thread.
 
+The planned [voyage model](voyages.md) does not add tools to today's registry.
+Remote delegation, coordinator handoff and interface attachment must be exposed
+through implemented contracts before models may use them. Each executing Helm
+continues to construct guidance from its own registered capabilities and policy;
+a coordinating role is not permission to inherit another Helm's authority.
+
 ## Automatic project instructions
 
 Before each agent execution, Helm reads `AGENTS.md` in the active workspace root.
@@ -55,7 +61,7 @@ The optional Codex compatibility bridge starts a new thread when instructions
 change between completed turns and replays canonical conversation history.
 
 Injected system context is not returned as conversation history or written to session
-files. Resume reconstructs it from the current file, and removes legacy system
+files. Resume reconstructs it from the current file, and removes any saved system
 messages. Explicit tool reads or assistant quotations of a file remain ordinary
 conversation content; this feature does not retroactively erase those records.
 

@@ -4,6 +4,12 @@ Helm is a Rust LLM harness for general work through a terminal. It is intentiona
 not coding-specific: the runtime can inspect and transform files, run commands,
 administer scoped systems, and maintain a durable working conversation.
 
+Helm is also the intended operator interface for local and remote work through
+Vessel. In the planned [voyage model](../docs/voyages.md), the interface, coordinating
+agent and executing participants can be on different Helms. A voyage scopes the
+permitted machines without requiring a repository or fixing all work to one host.
+The unified interface and cross-Helm coordination remain planned.
+
 ## Capabilities
 
 - Provider-neutral agent loop with native incremental OpenAI-compatible and Anthropic streaming
@@ -27,10 +33,12 @@ request approval according to policy, and kill timed-out child processes.
 
 ## Build and configure
 
+Run these commands from the repository root:
+
 ```sh
 cargo install --path helm --locked
 mkdir -p ~/.config/helm
-cp config.example.toml ~/.config/helm/config.toml
+cp helm/config.example.toml ~/.config/helm/config.toml
 export OPENAI_API_KEY=...
 ```
 
@@ -156,7 +164,7 @@ enumerated arguments show their valid values. Path arguments browse from the act
 multi-stage commands continue suggesting their next flags or values, and `/set ` is generated
 from the same complete configuration schema used to validate runtime overrides.
 
-Every startup capability also has a slash-command path. `/provider`, `/workspace`, `/access`,
+The following startup settings and utilities have slash-command paths. `/provider`, `/workspace`, `/access`,
 and `/config PATH` safely save the session and relaunch with a rebuilt provider, tool registry,
 and security policy. `/set KEY VALUE` changes any validated configuration field, including
 limits, environment, allowed roots, MCP servers, retries, and redaction settings. `/verbose`,
@@ -165,6 +173,11 @@ limits, environment, allowed roots, MCP servers, retries, and redaction settings
 run the corresponding Helm operation, and offer to return to the current session. `/run` runs a
 one-shot prompt and can then return.
 `/sessions`, `/resume REF`, `/models`, `/model ID`, and `/activity` operate directly inside the TUI.
+
+Some authority configurations deliberately refuse subprocess relaunch when it could
+lose the original invocation policy. See [named profiles](../docs/policy-profiles.md)
+and [private defaults](../docs/policy-defaults.md); live in-TUI profile switching
+remains unfinished. Remote administration is not exposed by these local controls.
 
 Runtime configuration used during a safe relaunch is held in a securely created temporary file
 in Helm's data directory, with owner-only Unix permissions, and removed when the handoff ends.
@@ -201,7 +214,9 @@ Plain and `NO_COLOR` output streams sanitized assistant text token by token for 
 does not repeat it at completion. Styled line-oriented output buffers one response so Markdown can
 be rendered coherently, then writes it once.
 
-Remote session management through Vessel is planned. See the
+Dedicated remote execution is available through `helm remote-worker` and the
+[Vessel HTTP lifecycle](../docs/remote-sessions.md). Managing voyages and remote
+Helms from this TUI remains planned; see the
 [session management design](../docs/vessel-session-management.md).
 
 Helm does not impose a model-turn count limit: work continues until completion, cancellation,
@@ -231,8 +246,9 @@ The active workspace is the default read/write boundary. Add other roots explici
 privileged. `always` asks for every shell command and write. `never` suppresses asks,
 but the command deny list and filesystem roots remain enforced.
 
-Vessel cannot currently dispatch work to this Helm build. Future attachment must
-remain outbound and enforce local policy. Unattended approval-required actions are
+Vessel can dispatch to an explicitly enabled dedicated remote worker. Enrollment
+and presence alone grant no execution or private-session access. Connections remain
+outbound, and each executing Helm enforces its local policy. Unattended approval-required actions are
 denied by default rather than blocking on an invisible prompt. See the [security and
 operations guide](../docs/security-operations.md) for the retained unattended policy,
 environment isolation, redaction, structured logs, and diagnostics.
@@ -338,5 +354,5 @@ project guidance. Commands remain unverified and existing instructions are prese
 See [repository onboarding](../docs/repo-onboarding.md) for editing, explicit acceptance
 and rerun diffs.
 
-Saved nonsecret task definitions support typed parameters, preview, digest-bound repository trust,
-and ordinary CLI execution. See [Saved workflows](../docs/saved-workflows.md).
+Saved workflows support typed public inputs, preview, digest-bound repository trust,
+and explicit transient private shell bindings. See [Saved workflows](../docs/saved-workflows.md).

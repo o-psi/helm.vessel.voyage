@@ -40,8 +40,8 @@ restore parent-excluded environment names, denied commands or access modes.
 These are application-policy checks, not an OS sandbox. Already-running effects
 are not instantaneously revoked by administrator edits, and filesystem paths can
 change after a check. Providers and local trusted library callers are not granted
-new execution authority by metadata. Profile CRUD, import/export commands and
-interactive switching are separate unfinished #70 work.
+new execution authority by metadata. [Profile administration and explicit launch selection](policy-profiles.md) are
+available; interactive in-session switching remains unfinished #70 work.
 
 This slice governs agent builders/execution and provider model discovery. Attachment
 heartbeat, config/doctor, onboarding and local-provider administration are separate

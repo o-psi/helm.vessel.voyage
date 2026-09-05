@@ -1,9 +1,14 @@
 # Managed session lifetime ownership
 
-Tracking: [#78](https://github.com/o-psi/voyage/issues/78). This coordinator
-prerequisite does not yet replace CLI, plain-chat or TUI persistence, migrate
-operator data, or expose remote execution. Those frontends continue using their
-fenced JSON backend until explicit managed selection and transfer are integrated.
+Tracking: [#78](https://github.com/o-psi/voyage/issues/78). `helm managed` and
+`helm remote-worker` use this owner for their explicit Journal-backed sessions.
+Ordinary run, plain-chat and TUI sessions use fenced JSON persistence; automatic
+transfer and full managed frontend integration are not enabled.
+
+This is the local execution owner on one Helm, not the coordinating Helm role in
+a planned [voyage](voyages.md). An interface may eventually observe or steer from
+another authorized Helm while execution ownership stays with its executor. The
+current owner API does not implement cross-machine handoff or coordinator selection.
 
 `attachment::runtime::ManagedSessionOwner::open(directory, session_id)` acquires
 one existing journal session's execution guard before reading authoritative data.
@@ -60,8 +65,9 @@ those of the journal's verified native storage implementation.
 
 [Durable managed steering](durable-steering.md) now provides receipt-aware queue,
 application and rejection persistence. Its frontend projection remains dependent
-work alongside guarded metadata and branch/deletion operations, stable local actor
-identity, explicit managed selection,
-and complete run/plain/TUI integration. A managed frontend must reload committed
+work alongside guarded metadata and branch/deletion operations and complete
+run/plain/TUI integration. Stable local actor identity and explicit `helm managed`
+selection are implemented; managed TUI projection is not. A managed frontend must
+reload committed
 usage after a run rather than add its outcome usage again. No JSON/SQLite dual-write
 backend is introduced by this prerequisite.

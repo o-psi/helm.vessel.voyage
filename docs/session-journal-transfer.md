@@ -2,9 +2,11 @@
 
 Tracking: [#78](https://github.com/o-psi/voyage/issues/78). This library foundation
 is exercised against disposable test data. No CLI, TUI, network handler, automatic
-scan, or operator-state migration invokes it. JSON frontends remain the production
-authority until a later coordinator integration replaces their admission and
-checkpoint paths. This does not complete the attachment epic.
+scan, or operator-state transfer invokes it. Ordinary chat/run JSON frontends
+retain authority over their own sessions;
+[managed frontends](local-managed-sessions.md) use separate journal sessions.
+Unified frontend admission remains unfinished. This does not complete the
+attachment epic.
 
 `attachment::migration::transfer` requires an explicitly selected session UUID,
 source revision, SHA-256 of the exact original JSON bytes, fresh transfer UUID,
@@ -65,13 +67,14 @@ hostile code running as the same OS user is outside this boundary.
 
 ## Explicit journal schema upgrade
 
-New journals use schema 4, adding [durable steering receipts](durable-steering.md)
-to schema 3 provenance. Existing schema 2/3 journals open and retain their supported
+New journals use schema 7, including provenance,
+[durable steering receipts](durable-steering.md), managed catalogue, reconciliation
+and dedicated remote-session state. Existing schema 2–6 journals retain their supported
 behavior; `open` never upgrades them. Transfer requires the current schema before
-touching the source marker. `Journal::upgrade_quiescent` is an explicit operation: stop all legacy
+touching the source marker. `Journal::upgrade_quiescent` is an explicit operation: stop all other
 journal processes first, finish or recover active runs, then upgrade. It holds a
 SQLite immediate transaction and every existing session's execution sidecar while
-adding missing provenance/steering tables and changing the schema version. The transaction excludes new
+adding missing versioned tables and changing the schema version. The transaction excludes new
 sessions and admissions; sidecars exclude effects that outlive a terminal row.
 Canonical snapshots, runs, replay and deduplication records remain unchanged.
 Failures preserve the original schema. Current handles check schema under each write
@@ -92,7 +95,7 @@ rollback on provenance insertion failure. These tests exercise temporary local
 data, not operator state or live provider capacity.
 
 Remaining work includes full frontend coordinator wiring, remote admission under
-existing consent/policy checks, operator-facing transfer/recovery, non-Unix durable
-private storage, and release/platform evidence. Provider execution, TUI rendering
+existing consent/policy checks, operator-facing transfer/recovery, non-Unix transfer
+publication support, and release/platform evidence. Provider execution, TUI rendering
 and wire protocols are unchanged by this slice; imported pending effects remain
 ambiguous and admission rejects them until a later explicit recovery decision.

@@ -54,6 +54,21 @@ network reachability is presented as discovery or verification.
 - Review the effective answers, then preview actions or cancel. Completion says
   **Simulation complete**. Deferred prerequisites and checks not run remain visible.
 
+## Setup capabilities and voyage roles
+
+The preview's “controlling other Helms” choice means using this installation as
+an operator interface; it skips provider questions when no local agent is selected.
+Running a coordinating agent requires execution and provider configuration on the
+Helm doing that work, which may be another machine. Hosting Vessel supplies the
+control plane and does not make Vessel the coordinating agent.
+
+These setup choices describe capabilities, not permanent assignments. In the planned
+[voyage model](voyages.md), interface, coordinating and participant roles may overlap
+or run on different Helms, and the user selects the permitted machines per voyage.
+A preview folder or worker choice must not become a compulsory project/component
+map or pin every task to one host. The wizard does not yet configure or demonstrate
+that runtime, coordinator handoff or multi-interface reconnection.
+
 ## Small launcher and standalone assets
 
 `install.sh` contains only platform selection, bounded HTTPS download, SHA-256

@@ -50,9 +50,13 @@ durability, native subscription authentication, every terminal layout, or platfo
 behavior on systems where they did not run. The optional compatibility bridge has
 separate fake-process runtime tests; these HTTP fixtures do not exercise it. No new
 Helm/Vessel wire contract is introduced by the fixtures. Local managed Journal
-execution is covered by `local_managed.py` and attachment runtime tests; the
-[production attachment transport](attachment-transport.md) is presence-only and
-does not provide remote task dispatch. Subscription provider smoke previously
+execution is covered by `local_managed.py` and attachment runtime tests.
+[Dedicated remote sessions](remote-sessions.md), delivered in
+[PR #129](https://github.com/o-psi/voyage/pull/129), add outbound execution and
+`remote_session.py` lifecycle coverage. Ordinary attachment remains presence-only.
+The remote fixture verifies effects, retries, cancellation, public replay and
+recovery; it does not repeat the entire local false-final/reconciliation matrix
+or exercise a distributed voyage. Subscription provider smoke previously
 returned HTTP 401 and remains a separate authentication/cutover hold until
 successful authenticated execution is observed.
 
@@ -162,11 +166,46 @@ This supplies useful local failure and recovery evidence, not successful semanti
 reconciliation, subscription authentication, cutover or full #83 acceptance.
 No additional live attempt is implied by these results.
 
+## Main follow-up and remote lifecycle evidence (2026-09-05)
+
+The bounded local-model follow-up on main `995a937` (runtime `31453fa`) also failed.
+It used the same disclosed evidence scenario and API guidance, with the context
+increased to 65,536 to account for 8,399 additional serialized tool-definition bytes.
+The 12-request/300-second limit, 1,024 output-token request, four CPU threads and
+isolated local provider boundary remained explicit; this was not an identical-budget
+comparison with the earlier attempt.
+
+The run timed out after 300.007 seconds and five started requests. Four completed
+responses reported 24,430 input and 448 output tokens, matching canonical usage;
+the fifth stream was interrupted without usage. Missing usage is not zero work.
+The model read both files and wrote a 486-byte comparison with supplied values and
+correct source hashes, then supplied objects instead of strings for todo evidence.
+Strict decoding rejected it. No structured evidence, completion accounting or
+accepted final was recorded.
+
+The harness sent SIGTERM; Helm exited -15 and the model server exited 0. Both
+processes were observed reaped. Raw session state remained Provisional and the
+ledger remained Open. This is abrupt-termination evidence, not an observed graceful
+seal or proof that execution survived. Recovery must preserve that distinction.
+See [the recorded result](https://github.com/o-psi/voyage/issues/83#issuecomment-5554402413).
+No later successful semantic evaluation is established here.
+
+Separately, PR #129 delivered dedicated remote execution to main at `fd5295e`.
+Its recorded Linux evidence includes 894 workspace tests normally and with two-CPU
+affinity, all 26 system fixtures, strict quality checks, locked release, 12 evaluation
+definitions and package checksums. The actual Helm/Vessel fixture exercises three
+native adapters, effects, exact retries/reconnect, cancellation, forced-death
+recovery/attestation, revocation, redacted replay and unconfirmed-cleanup failures.
+See [the delivery evidence](https://github.com/o-psi/voyage/issues/78#issuecomment-5554950951).
+These are historical offline Linux results, not new runs for this documentation
+audit or proof of cross-machine voyage coordination.
+
 ## Remaining acceptance and merge boundaries
 
 - Verify subsequent schema/runtime changes at their final integrated Linux head.
-  PR121's Completion schema correction is included at `68f5c9a`; the separately
-  tracked Todo action-schema follow-up is not part of that commit's evidence.
+  Completion and Todo action-schema corrections reached main through
+  [PR #88](https://github.com/o-psi/voyage/pull/88). Historical results below earlier
+  commit headings remain limited to those commits.
 - Obtain an approved, bounded real-model run that actually reads source evidence,
   records structured todo evidence, reads/accounts the owned records with fresh
   revisions and reaches the intended durable outcome. Inspect the artifact and
@@ -174,9 +213,13 @@ No additional live attempt is implied by these results.
   accurate counting, semantic honesty or correct accounting. A deliberately
   incomplete run must retain truthful impact and cannot substitute for a required
   completed task.
-- Verify remote worker/Vessel outcome and provisional-output behavior when remote
-  execution is delivered under #78/#79. Presence transport and local Journal tests
-  do not establish that end-to-end execution path.
+- Extend dedicated remote worker/Vessel verification to the full reconciliation
+  matrix: withheld false finals, reviewed incomplete work, stale/late participant
+  results, cancellation and provisional-output recovery. Existing remote lifecycle
+  coverage is useful evidence, not completion of that matrix. Planned
+  [voyages](voyages.md) additionally need evidence across permitted Helms with a
+  coordinator separate from the interface. An accepted local run must not imply
+  that the open-ended voyage has ended or that another Helm's results were reviewed.
 - Retain the separate subscription-authentication and cutover hold. Local-model
   evidence cannot validate subscription credentials. No native-platform result is
   claimed; the operator removed macOS/Windows as required gates for this delivery.
@@ -188,9 +231,7 @@ has durable checkpoint/classification tests plus an actual PTY cancellation,
 handoff and resumed-turn fixture; those are stronger than rendering-only tests,
 but are not a live-model TUI semantic evaluation.
 
-These broader acceptance items keep full #83, remote execution and subscription
-cutover open. They do not block delivering the completed local ownership, cleanup,
-catalogue, completion gate or managed CLI to main after reviewed Linux verification.
-That delivery retains explicit scope limits and passing checks for the merged code;
-it does not claim successful live-model reconciliation or completion of the remote
-execution and cutover epics.
+These broader acceptance items keep full #83 and subscription cutover open.
+The delivered local runtime and dedicated remote lifecycle retain their recorded
+verification and scope limits. Neither establishes successful live-model
+reconciliation or delivery of the multi-Helm voyage product.

@@ -2,36 +2,33 @@
 
 User mandate: comprehensively resolve remaining issues, including epics. Latest complete open/closed inventory: 83 issues, retained in `.local-git/issues-resume-inventory.jsonl`. Root user edits are preserved. Current development gates are Linux-only; historical native results below are not evidence for the current build; affected-platform requirements remain explicit in their tracking issues.
 
-## Current reconciliation status (2026-09-05)
+## Current product direction (2026-09-05)
 
-GitHub main includes PR #129 (`fd5295e`): dedicated foreground remote sessions,
-following merged local completion/session work (#88), saved workflow CLI/TUI
-(#123/#127), and named policy profiles (#128). The complete issue inventory has
-83 issues, of which 22 remain open. Delivery of those bounded scopes does not close
-their broader issues or establish successful live behavioral evaluation.
+The accepted [voyage model](voyages.md) is an open-ended session across an explicitly
+user-scoped set of Helms. Helm is the operator interface to local and remote work
+through Vessel. The interface, coordinating agent and participants may run on
+different Helms; no repository, component map or permanent task-to-host assignment
+is required. Coordinator handoff and shared-context mechanics remain open design.
 
-The primary workspace had accumulated delivery-note commits independently of the
-implementation merges. Reconciliation preserves both histories and the operator's
-documentation/CI edits. Runtime and workflow source match published `fd5295e`;
-only this delivery plan differs. Installation will use the verified merged source.
-Tracking: [#46](https://github.com/o-psi/voyage/issues/46) and
-[#18](https://github.com/o-psi/voyage/issues/18).
+Published foundations include local sessions/completion (#88), dedicated remote
+worker HTTP operations (#129), workflow secrets (#130) and private policy defaults
+(#131). The [worktree cleanup](worktree-cleanup.md) records their integration and
+verification. The unified Helm management interface and multi-Helm coordination
+remain unfinished under #77/#14/#78, with protocol, identity and privacy dependencies
+#9/#10/#79. Browser console work is deferred. Remaining workflow and policy criteria
+include plain-mode missing-input prompting and TUI profile switching.
 
-The operator clarified that Helm is the intended interface to Vessel for both local
-and remote machines. The current remote HTTP operations do not yet provide that
-Helm-facing management workflow. That remains product work under #77; browser
-console work is deferred. Workflow secret inputs (#67), policy defaults/TUI
-switching (#70), and semantic/live evidence (#83/#22) retain unfinished scope.
-Other development worktrees remain preserved; this reconciliation does not claim
-their unpublished work is delivered.
+The refreshed inventory for this documentation audit contains 83 open/closed issues,
+22 open, preserved in `.local-git/evidence/product-alignment-20260905/`. The
+[scope and verification plan](https://github.com/o-psi/voyage/issues/77#issuecomment-5555415622)
+reuses the existing epic. Documentation alignment does not deliver runtime behavior
+or satisfy semantic/live evidence under #83/#22.
 
-All sections below retain historical planning and verification checkpoints. Their
-commit IDs, pending states and issue lists describe the time recorded, not current
-readiness. Consult current issue discussions for outstanding acceptance criteria.
-
-Subsequent [worktree cleanup](worktree-cleanup.md) integrates reviewed private policy
-defaults and transient workflow secret bindings. Their remaining issue criteria
-include TUI profile switching and plain-mode missing-input prompting.
+All following sections are historical planning and verification checkpoints. Their
+commit IDs, pending states, branch/worktree counts and issue lists describe the time
+recorded. They do not override the current product model, current GitHub issue
+states, Linux development policy, or actual source. Preserve their evidence without
+treating obsolete browser/phase plans as current requirements.
 
 ## Historical active-work checkpoints
 

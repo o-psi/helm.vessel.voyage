@@ -1,13 +1,13 @@
 # Helm enrollment lifecycle CLI (partial #10)
 
 `helm attachment` manages a dedicated Vessel enrollment identity. It never starts
-a worker, grants session sharing, imports legacy credentials, contacts a model or
+a worker, grants session sharing, imports other credentials, contacts a model or
 enables remote execution. Provider login remains under `helm auth`.
 
 Use `--directory PATH` to select an existing parent with a dedicated enrollment
 child. Without it, the child is `attachment` under Helm's platform data directory.
 Only new enrollment creates the default parent if necessary. Session directories
-and legacy state are never opened or migrated by these commands. Existing storage
+and unrelated state are never opened or transferred by these commands. Existing storage
 must pass the same Unix owner/mode or native Windows owner/protected-DACL checks as
 the enrollment client; unsafe storage is rejected, not silently repaired.
 
@@ -133,7 +133,10 @@ queued secret input even while the marker write is blocked. Windows
 coverage requires a separate native run; Linux PTY results do not establish it.
 
 The explicit [foreground presence command](attachment-presence.md) maintains the
-authenticated production socket without dispatching work. The local coordinator,
-operator session UI, approval dispatch and services remain required by
+authenticated production socket without dispatching work.
+[Dedicated remote execution](remote-sessions.md) is a separate opt-in command.
+Enrollment alone does not select a voyage's machine scope or make this Helm its
+coordinator. The planned Helm operator interface, voyage coordination, approval
+dispatch and services remain required by
 [the full attachment contract](attachment-production-contract.md), and #10 remains
 open beyond this lifecycle interface.

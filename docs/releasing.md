@@ -1,6 +1,7 @@
 # Release engineering
 
-Voyage publishes `helm` and `vessel` together from one versioned commit. Tags use
+Voyage has no product releases yet. The release workflow packages `helm` and
+`vessel` together from one versioned commit. Tags use
 `vMAJOR.MINOR.PATCH`. A release is immutable: corrections receive a new tag.
 
 Push and pull-request quality checks run on Linux only to limit development costs.
@@ -12,7 +13,7 @@ the README, and a SHA-256 checksum. Linux builds can be reproduced locally with:
 
 ```sh
 cargo build --workspace --release --locked
-./scripts/package-release v0.1.0
+./scripts/package-release UNIQUE_VERSION
 (cd dist && sha256sum -c *.sha256)
 ```
 
@@ -22,7 +23,7 @@ archive install. After tagging, compare artifact checksums, smoke-test both bina
 from each archive, attach evaluation/cutover evidence, and publish known limitations.
 
 The workflow uploads build artifacts but intentionally does not auto-publish or sign
-a release. Add repository-specific signing and Forgejo release credentials only after
+a release. Add repository-specific signing and GitHub release credentials only after
 the project establishes its key custody and release-approval policy.
 
 Unix builds also package a separate compressed `voyage-installer` with
@@ -32,8 +33,10 @@ published as release assets before remote download works; it does not download t
 full Voyage archive. Keep the wizard explicitly marked as mocked until real
 provisioning is implemented and verified.
 
-## Connectivity transition release note
+## Product capability claims
 
-This build intentionally removes legacy pairing/task-worker connectivity before
-`helm attach` is implemented. Include [retirement and data-preservation guidance](vessel-connectivity-retirement.md)
-in the release notes; do not advertise remote readiness from successful local tests.
+Release documentation must describe the actual [remote-session surface](remote-sessions.md)
+and the remaining [voyage design](voyages.md) separately. A working dedicated
+worker does not prove the Helm operator interface, multi-Helm coordination, service
+lifecycle or coordinator handoff. Report actual checks and unresolved acceptance
+criteria; do not advertise remote dogfood readiness from local tests alone.

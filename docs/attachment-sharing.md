@@ -4,9 +4,10 @@ Tracking: [#79](https://github.com/o-psi/voyage/issues/79#issuecomment-555264232
 under the [full attachment contract](attachment-production-contract.md).
 
 `helm::attachment::sharing::SharingRegistry` is the sole owner of current sharing
-policies in one process. It replaces self-authorizing cloned policy values.
+policies in one process. It owns authorization checks over its current in-memory values.
 `PolicySnapshot` contains local observations only; it has no authorization,
-projection or branch methods. Production transport remains disabled.
+projection or branch methods. General sharing adapters remain unwired; the current
+[dedicated remote worker](remote-sessions.md) uses a separate fixed-session binding.
 
 Each operation reads current consent from the registry and requires matching
 installation/owner/epoch, the installation's delegated capability, the authenticated
@@ -24,7 +25,7 @@ when both delegation and the principal grant contain it. Neither permits cancell
 without a known run target. Do not use request-provided ownership claims or authorize
 one run and then dispatch cancellation against a different request ID.
 
-Disclosure rules retain the previous matrix: none permits nothing; metadata permits
+Disclosure rules use this matrix: none permits nothing; metadata permits
 metadata observation only; live permits live observation and separately authorized
 mutations; transcript also permits history. Archived sessions cannot run, branch or
 approve tools. Separate local opt-ins and both capability grants are required for

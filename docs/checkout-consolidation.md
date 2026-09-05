@@ -1,5 +1,10 @@
 # September 2026 checkout consolidation
 
+Historical audit of the named consolidation below. Capability limits and checkout
+counts describe that checkpoint, not the current product or workspace. See the
+[current architecture](architecture.md), [voyage design](voyages.md) and subsequent
+[worktree audit](worktree-cleanup.md).
+
 The primary working tree had remained at `486c453` while published improvements
 were built in isolated checkouts. Rebuilding that tree reintroduced the old tool
 renderer. This consolidation merges published `origin/main` through `5c168e3`

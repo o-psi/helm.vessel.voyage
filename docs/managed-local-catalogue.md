@@ -1,7 +1,7 @@
 # Local managed catalogue and cancellation
 
-This Journal schema 5 library slice supports the local managed coordinator tracked
-in [issue 78](https://github.com/o-psi/voyage/issues/78). It exposes no remote route,
+These Journal catalogue and cancellation APIs support the local managed executor tracked
+in [issue 78](https://github.com/o-psi/voyage/issues/78). They expose no remote route,
 provider execution entrypoint, or sharing grant. Installation and principal UUIDs
 are attribution. A caller must establish local installation authority before using
 these APIs; accepting these identifiers from a remote request is insufficient.
@@ -9,7 +9,9 @@ these APIs; accepting these identifiers from a remote request is insufficient.
 `Journal::create_session` is explicit UUID, create-only storage. A collision is an
 error. The local frontend must not automatically generate another UUID and retry
 an uncertain create. The caller can inspect the bounded catalogue to recover a
-lost response. Generic remote create/cancel command receipts remain future work.
+lost response. Dedicated remote sessions have separate exact-run cancellation
+receipts; general remote session creation remains planned. These local catalogue
+entries are not a voyage-wide inventory of participant Helms.
 
 `list_session_summaries(after, limit)` returns UUID-ordered metadata pages, with
 limits 1–100 and an exclusive UUID continuation. Each page has a consistent SQLite
@@ -62,7 +64,8 @@ actor/run targeting, deadline/clock errors, immutable retries, SQLite Busy and
 failed writes, both terminal/cancel orderings, accepted-checkpoint cancellation,
 reopen recovery, quiescent schema migration, stale connections, and an independent
 process committing intent while the execution owner retains its fence. Full local
-CLI/provider cleanup integration belongs to the companion coordinator slice.
+CLI/provider cleanup integration is implemented by [private managed sessions](local-managed-sessions.md)
+and covered separately in `tests/system/local_managed.py`.
 
 ## Durable cleanup obligations
 

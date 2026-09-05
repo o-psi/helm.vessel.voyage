@@ -1,10 +1,10 @@
 # Local admission identity
 
 `attachment::local_actor::LocalActorStore` is a storage prerequisite for #78.
-It is not connected to CLI, plain chat, TUI, or outbound admission yet. It does
-not migrate sessions or alter Journal schema. Managed frontend integration must
-select the installation directory explicitly and obtain its verified identity
-before attributing each command.
+The managed CLI and dedicated remote worker select their installation directory
+explicitly and obtain its verified identity before local admission or recovery
+attribution. Ordinary JSON chat/TUI sessions do not use this identity store.
+Opening it neither transfers sessions nor alters Journal schema.
 
 One installation data root has a dedicated private `local-actor/` directory.
 Its version-1 record contains random installation and local-principal UUIDs.
@@ -18,7 +18,7 @@ implicit rotation, import, reset, or enrollment dependency.
 These IDs describe local attribution and deduplication, not authenticated
 identity or authorization. They do not identify a Vessel operator or grant
 sharing, tool, workspace, approval, or remote access. No hardware fingerprint,
-OS account name, provider credential, or enrollment key is stored. A future
+OS account name, provider credential, or enrollment key is stored. Each
 frontend must still enforce current policy and authorization at admission and
 steering dispatch. The actor store does not make raw Journal callers trusted.
 

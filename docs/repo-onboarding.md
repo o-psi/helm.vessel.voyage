@@ -4,6 +4,10 @@
 call a provider, execute setup/build/test commands, install dependencies or modify
 runtime policy. Existing project instructions take precedence.
 
+Onboarding is an optional repository workflow. A [voyage](voyages.md) is a
+general-purpose session and does not require a repository, onboarding, or a
+component-to-machine map. The workspace here is the local inspection boundary.
+
 ```sh
 helm --workspace /absolute/project onboard inspect --json
 helm --workspace /absolute/project onboard preview

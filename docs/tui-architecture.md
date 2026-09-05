@@ -5,6 +5,12 @@ The event/response types (`UiEvent`, `UiBridge`, `ApprovalRequest`, and
 `QuestionRequest`) retain their existing paths through re-exports. The modules
 under `helm/src/tui/` are private implementation details, not new public APIs.
 
+This document describes the current local TUI. Its event-loop coordinator is an
+in-process UI responsibility, distinct from the planned [voyage coordinating
+Helm](voyages.md). A future interface Helm must be able to view and steer a voyage
+whose coordinator runs elsewhere. Current panels and local response channels do
+not implement that remote interface, voyage machine scope or coordinator handoff.
+
 ## Ownership
 
 | Module | Responsibility |
@@ -71,8 +77,7 @@ production feature modules.
 
 `helm/src/tui/tests.rs` holds shared fixtures; its `tests/` children group coverage
 by commands, composer, conversation, palette, questions, supervisor, terminals,
-todos and cross-module routing. All 48 tests from the original single-file TUI
-were retained during extraction. Additional tests exercise the real central
+todos and cross-module routing. Tests exercise the real central
 keyboard router across overlapping views, completion without an application, and
 todo editing without conversation state.
 
@@ -91,8 +96,8 @@ HELM_BIN=target/release/helm python3 tests/system/native_provider_no_codex.py
 The questions fixture exercises the real TUI through a PTY with an offline native
 provider, including resize, selected/custom answers, cancellation, expiry,
 continuation and persistence. Unit/render fixtures and this Linux PTY test do not
-substitute for macOS/Windows CI or live operator acceptance. There is no wire or
-session-format migration for this module-only refactor.
+substitute for native macOS/Windows tests or live operator acceptance. These module
+boundaries do not introduce a wire or session-format contract.
 
 Tracking: [god-file audit and TUI cleanup #84](https://github.com/o-psi/voyage/issues/84).
 

@@ -3,7 +3,9 @@
 Use `helm managed` to keep a local session in a private Journal and run it from
 separate CLI invocations. Helm owns the conversation, tool execution, usage, and
 recovery state. These sessions are not shared with Vessel, and this command does
-not start a network listener or an attachment worker.
+not start a network listener or an attachment worker. The planned [voyage model](voyages.md)
+adds scoped work across Helms; this command does not select those participants or
+make its foreground executor a voyage-wide coordinator.
 
 Choose an absolute storage directory whose parent exists. It identifies a local
 Helm installation, not your project directory. Different storage roots have
@@ -105,7 +107,7 @@ scope; they are not login credentials or permission grants.
 
 The required verification platform is Linux. Other platform code remains
 available, but native macOS and Windows behavior is not claimed as verified for
-this release. Observed owned-PTY cleanup is not an OS sandbox; a process that
+this development build. Observed owned-PTY cleanup is not an OS sandbox; a process that
 escapes into a different session needs separate operating-system containment.
 
 Cleanup obligations are recorded before runtime construction. If Helm is killed,
@@ -140,7 +142,7 @@ An execution that has not reached durable terminal state is reported as
 `run_unconfirmed`, with its actual saved state; dropping a future does not mean
 its work stopped.
 
-This release supports native providers and built-in tools for managed execution.
+Managed execution currently supports native providers and built-in tools.
 `codex-compatibility` and effectful MCP server configurations are rejected before
 admission because their cleanup adapters do not yet provide the required
 observation. Read-only mode does not start MCP servers. Metadata, cancellation,

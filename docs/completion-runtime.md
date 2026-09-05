@@ -11,7 +11,9 @@ and ledger writers for a workspace. The same coordinator must be installed on
 both stores. A private stable sidecar OS lock excludes other cooperating processes;
 a shared asynchronous mutex serializes callers in one process. Local contention
 has a five-second admission bound; cross-process contention fails immediately.
-Filesystem latency is not bounded by these mechanisms.
+Filesystem latency is not bounded by these mechanisms. This local persistence
+`Coordinator` is not the coordinating Helm role in a planned [voyage](voyages.md).
+It neither selects participant machines nor moves an execution between them.
 
 `RunHandle::create` takes the trusted session and run UUIDs; `resume` requires the
 known ledger to exist and validate. A checkpoint's execution UUID should be the
@@ -31,7 +33,7 @@ Registration and record publication are separate durable commits. A publication
 failure leaves a missing obligation, which blocks readiness and survives restart.
 It does not erase obligations or pretend the requested work ran. Recovery validates
 retained owned agents' ledgers before changing their state or archiving them.
-Legacy records without a reference remain unowned.
+Records without a reference remain unowned.
 
 Admitted todo/agent writes retain their coordination lease in an owned task until
 the filesystem operation finishes, even if a tool waiter is cancelled. Blocking
@@ -96,12 +98,15 @@ reference, and save the accepted prompt (unless the user selected no-save). Resu
 validates every known ledger and fails closed on missing or corrupt ownership.
 Branching starts without the source session's run references; old unfinished work
 requires explicit adoption. Children share the parent's run ownership and stores.
-Legacy session files without references load with empty ownership. Legacy library
-callers with the default `None` coordinator retain their prior behavior.
+Session files without references load with empty ownership. Library callers with
+the default `None` coordinator do not enable the gate.
 
-Final-response interception remains #82 work: readiness data alone does not prevent
-an early final answer. The attachment checkpoint lifecycle still needs an explicit
-scoped entry point before it can participate in this gate.
+Final-response interception is implemented by the [completion gate](completion-gate.md).
+The managed attachment checkpoint calls `run_checkpointed_scoped` after registering
+the trusted run scope. Both `helm managed` and the dedicated `helm remote-worker`
+use that executor. Full managed TUI integration and distributed voyage coordination
+remain planned; their interface/coordinator handoff must preserve these local
+ownership and cleanup boundaries without replaying uncertain effects.
 
 Deterministic integration tests cover run isolation; explicit adoption; evidence
 changes; honest blocked/deferred accounting; archived/deleted records; missing

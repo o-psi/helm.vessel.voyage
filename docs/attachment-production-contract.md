@@ -4,11 +4,19 @@ Tracking: [#77](https://github.com/o-psi/voyage/issues/77#issuecomment-554805399
 [#9](https://github.com/o-psi/voyage/issues/9), [#10](https://github.com/o-psi/voyage/issues/10),
 [#78](https://github.com/o-psi/voyage/issues/78), [#79](https://github.com/o-psi/voyage/issues/79).
 
-**Status: implementation contract, not a production-readiness claim.** The operator
-explicitly requested the full system, not an MVP. Earlier foreground-only and
-post-MVP scope exclusions are superseded. Dependency ordering is an engineering
-sequence, not permission to omit service management, full session lifecycle,
-remote approvals, or notification/handoff from delivery.
+**Status: planned production contract, not a readiness claim.** The
+[voyage product model](voyages.md) defines an open-ended session across an explicitly
+user-scoped set of Helms. Helm provides the local and remote operator interface;
+Vessel provides the control plane. The interface Helm, coordinating Helm and
+executing Helms are distinct roles that may overlap. The coordinator may be remote.
+No project, repository or component map is required.
+
+Current [dedicated remote sessions](remote-sessions.md) implement a narrower
+foreground HTTP workflow. Full session lifecycle, scoped delegation, coordinator
+lifecycle, Helm interaction, services and opt-in approvals remain required work;
+browser console work is deferred. Dependency ordering does not waive acceptance.
+Exact coordinator selection/handoff, scope-change behavior and context-sharing
+mechanics still need design; this contract does not prescribe automatic failover.
 
 ## Authority and trust
 
@@ -21,7 +29,9 @@ policy, consent, revocation, audit and credential protections below remain requi
 Helm is the sole execution and canonical-session authority. Vessel authenticates
 operators and routes commands; it never receives provider credentials or opaque
 provider continuation. Every effective permission is the intersection of current
-local policy, installation delegation, principal capability and session sharing.
+local policy, installation delegation, principal capability and session sharing,
+with voyage machine scope additionally constraining planned delegation. An explicit
+Helm target or coordinator-selected participant must stay within that scope.
 Approval can satisfy an approval requirement, never override a hard denial.
 
 A Vessel-authenticated principal assertion trusts that Vessel to authenticate its
@@ -39,8 +49,8 @@ authorized by session attachment or approval delegation.
 
 ## Storage and command admission
 
-New attachment storage is separately versioned. Legacy `voyage.json` and Vessel
-`control_plane` snapshots remain inert; no automatic credential or task migration.
+Attachment storage is separately versioned. Enrollment and execution require
+explicit current identities; arbitrary stored snapshots cannot grant authority.
 
 Canonical session state, accepted command identity/digest, run state and event
 sequence must commit in one transactional boundary before acceptance is published
@@ -53,8 +63,10 @@ command executable again. Capacity exhaustion rejects new work, not old evidence
 One fenced owner may execute a session. Short storage transactions are distinct
 from run-long execution ownership. A `save()` lock alone is insufficient: two
 processes could already have executed effects from stale snapshots. All local
-CLI/TUI mutations and remote operations must use the same coordinator. Arbitrary
-local `load_reference(PATH)` is not a remotely callable session lookup.
+CLI/TUI mutations and remote operations for a given execution session must use
+the same local execution owner. This per-host fencing is distinct from a voyage
+coordinator delegating across Helms; it does not pin the operator interface or
+the whole voyage to that host. Arbitrary local `load_reference(PATH)` is not a remotely callable session lookup.
 
 On restart, abandon neither accepted turns nor partial output. Runs with uncertain
 outcomes become interrupted; reconnect replays observations, not external effects.
@@ -80,17 +92,21 @@ No success response may substitute for unknown/failed persistence or cleanup.
   revoked authority.
 - HTTPS is required except explicit loopback development. No credential-bearing
   redirects, query-string secrets, logging of keys, or silent server-origin changes.
-- Secure prompt/stdin alternatives accompany positional join keys. Service secret
+- Join secrets use secure prompt/stdin input, not command-history arguments. Service secret
   storage must have verified platform-specific ownership/ACL behavior.
 
 ## Protocol and privacy
 
-Replacement envelopes use a separate version and typed operations; legacy v1 is
-not negotiated. Reject unsupported versions, unknown fields/operations, nil IDs,
+Attachment envelopes use versioned typed operations. Version 1 is not negotiated.
+Reject unsupported versions, unknown fields/operations, nil IDs,
 oversized frames, invalid revisions and expired commands before admission.
 Workspace selection uses locally configured identities, not arbitrary remote paths.
 Distinct identities represent installation, connection, principal, session, run,
-command and event cursor. Delivery, acceptance, execution and terminal states are
+command and event cursor. Planned voyage identity, coordinator role and participant
+scope must not be inferred from any current connection or execution-session ID.
+Closing an interface is distinct from cancelling work. Losing execution authority
+or its lease still fences effects; reconnection cannot manufacture completed work.
+Delivery, acceptance, execution and terminal states are
 not interchangeable.
 
 Commands include all session lifecycle operations, not just create/submit/cancel.
@@ -112,7 +128,8 @@ and remote clients. Execution rechecks current policy, expiry, cancellation,
 revocation and resource preconditions at dispatch commitment. A changed action needs
 new approval. Crash recovery never replays an uncertain approved external effect.
 Notifications carry opaque references, not approval authority; opening a link cannot
-approve. Authenticated, CSRF-protected decision submission is required.
+approve. Authenticated decisions must be bound to their authorized interface and exact
+request; HTTP decision surfaces additionally require CSRF protection.
 
 ## Production acceptance map
 
@@ -120,13 +137,16 @@ approve. Authenticated, CSRF-protected decision submission is required.
 | --- | --- |
 | Enrollment #10 | Expiry/replay/concurrent redemption, lost responses at each commit, rotation overlap, stolen/revoked credentials, secure storage/URL/redirect tests |
 | Transport #9 | Current/unsupported-version fixtures; duplicate/conflicting commands; deadline/sequence gaps; slow clients; bounded replay; disconnect and restart at acknowledgments |
-| Coordinator #78 | Real multiprocess contention; one provider/tool dispatch per admitted run; CAS conflicts; accepted/partial output; delete/finish races; disk-full and crash injection |
+| Coordinator #78 | Independent remote coordinator/interface lifetimes; explicit in-scope targets and delegation; honest scope changes/handoff/recovery; real multiprocess contention; one provider/tool dispatch per admitted run; CAS conflicts; accepted/partial output; delete/finish races; disk-full and crash injection |
 | Sharing #79 | Principal/machine/session matrix; private branch ancestry; revoke while streaming; sensitive metadata/projection; cache expiry/deletion/backup tests |
-| UI #14 | Browser auth/CSRF/XSS, accessibility/responsive layouts, duplicate clicks/stale revisions, offline/interrupted states, full lifecycle and destructive confirmations |
+| Helm interface #14 | Authorized view/steer from a different Helm; visible coordinator and machine scope; terminal-safe narrow/resized layouts; stale revisions, offline/interrupted states, full lifecycle and destructive confirmations |
 | Approvals #21 and handoff #72 | Exact-action binding, stolen/expired/replayed decisions, local/remote races, unavailable approvers, cancellation/revoke/restart, notification delivery failure |
 | Services/operations #18 | Linux/macOS/Windows install/start/stop/reboot/upgrade/rollback/uninstall; private identities; no implicit elevation; backup and revocation-rollback drills |
-| Release | Full workspace/system tests; offline native-provider E2E; reviewed budgeted live-provider evidence; platform CI; load/failure/security evidence; packaging, SBOM/signing and operator runbooks |
+| Release | Full workspace/system tests; offline native-provider E2E; reviewed budgeted live-provider evidence; Linux quality CI with native coverage limitations disclosed; load/failure/security evidence; packaging, SBOM/signing and operator runbooks |
 
 These rows stay unfinished until implementation and actual verification exist.
-Foundational library tests are not end-to-end attachment evidence. Earlier cleanup
-checks do not establish readiness of the replacement system.
+Foundational library tests are not end-to-end attachment evidence. Dedicated-worker
+checks do not establish multi-Helm voyage readiness. Routine
+development CI is Linux-only under the operator's verification policy; supported
+platform guarantees still need actual evidence, and changes to native Windows
+private-storage primitives retain their native verification requirement.

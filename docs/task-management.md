@@ -23,8 +23,11 @@ and include evidence where verification matters. Archiving preserves history; re
 for erroneous or unwanted records.
 
 Task data is scoped to the active workspace and stored below Helm's data directory. Workspace
-paths are represented by a stable key, so opening another project cannot expose or alter this
-project's plan.
+paths are represented by a stable key, so changing the active workspace selects its own plan.
+This local storage boundary does not define the scope of a planned [voyage](voyages.md).
+A voyage may span several permitted Helms and workspaces without a required project
+or component map. Current todo assignment targets local subagents; it does not
+route work to a remote Helm or establish cross-machine completion evidence.
 
 ## Action arguments
 

@@ -1,8 +1,10 @@
 # Vessel
 
 Vessel is Voyage's management plane. It currently provides health checks and an
-authenticated status UI, with optional authenticated outbound Helm presence.
-Remote session management is planned.
+authenticated status page, authenticated outbound Helm presence, and opt-in
+[dedicated remote-session HTTP operations](../docs/remote-sessions.md). Helm is the
+planned operator interface for both local and remote work; Vessel routes control
+and observations without executing model tools.
 
 ## Run
 
@@ -36,12 +38,22 @@ Configure enrollment and run an explicit foreground Helm connection using the
 show bounded current connection metadata. Presence does not grant execution or
 share session content.
 
-## Planned session management
+## Voyages across Helms
 
-The agreed [Vessel-managed session design](../docs/vessel-session-management.md)
-specifies: `helm attach VESSEL_URL JOIN_KEY`, outbound interactive control,
-explicit sharing and phased service/approval support. Delivery is tracked in
-[#77](https://github.com/o-psi/voyage/issues/77). These are not implemented commands.
+The agreed [voyage product model](../docs/voyages.md) separates the Helm an operator
+opens from the Helm coordinating a voyage and the Helms executing delegated work.
+A voyage is an open-ended session scoped to user-selected machines; it needs no
+project, repository or component map. The coordinator may run remotely while an
+authorized Helm interface disconnects or reconnects. Each executing Helm retains
+its local policy, credentials and execution authority.
+
+That orchestration and Helm operator interface remain planned under
+[#77](https://github.com/o-psi/voyage/issues/77). Today's `helm remote-worker`
+exposes one dedicated session through authenticated HTTP; it does not coordinate
+multiple Helms. The `/ui` endpoint is a status page, and browser console work is
+deferred. See the [attachment design](../docs/vessel-session-management.md) for
+control-plane requirements and [remote sessions](../docs/remote-sessions.md) for
+implemented setup and recovery.
 
 See [security and operations](../docs/security-operations.md) for access and
 logging boundaries.

@@ -1,8 +1,8 @@
 # Attachment observations and replay (partial #9)
 
 `voyage_protocol::events` and the new `stream::Frame` variants define bounded
-observations, not a production transport. Neither Helm nor Vessel opens a socket
-or executes commands through this module. Their conformance integration tests
+observations. The codec module does not open sockets or execute commands;
+[transport adapters](attachment-transport.md) connect it to the binaries. Their conformance integration tests
 compile and exercise the same public contract.
 
 Authenticate offers optional `features`; Welcome selects an intersection with
@@ -62,8 +62,11 @@ this slice; their future transport acceptance tests remain required.
 
 ## Global cursors and filtered projections
 
-The Journal cursor is global within a session, not a sequence renumbered per
-recipient. This slice provides no valid filtered-stream representation. Before
+The generic Journal cursor is global within a session, not a sequence renumbered
+per recipient. These generic events provide no filtered-stream representation.
+The [dedicated remote worker](remote-sessions.md) has a separately negotiated,
+transactional public projection and its own contiguous cursor; it does not expose
+or filter the private journal cursor. Before
 subscribing or returning a replay range, an adapter must establish that it can
 represent and currently disclose **every** event in that range under both selected
 features and sharing policy. Otherwise it must refuse that subscription/range

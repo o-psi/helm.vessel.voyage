@@ -11,7 +11,7 @@ The provider-neutral agent loop gates final acceptance for explicitly scoped roo
 runs. The [durable ledger](completion-storage.md) and [runtime ownership
 API](completion-runtime.md) register owned work before publication and serialize
 record writers with the final decision. Inherited child ownership does not activate
-a second root gate. Legacy unscoped library calls retain their prior behavior.
+a second root gate. Unscoped library calls do not enable this gate.
 
 An embedding must configure `Agent::with_completion_gate` with the coordinated
 todo store, agent store, and runtime, then pass the trusted run handle through
@@ -20,6 +20,12 @@ exact ID. Missing gate resources fail closed. Durable frontends must supply a
 canonical checkpoint; the uncheckpointed embedding API provides in-memory history
 only and does not establish durable transcript-before-seal ordering. An explicit
 no-save run must retain that distinction.
+
+A run is one execution within a session. Its accepted final response does not close
+an open-ended [voyage](voyages.md), bind that voyage to the executing Helm, or
+prove that work on another Helm has been reviewed. Distributed voyage obligations
+and result collection remain planned; current membership covers explicitly owned
+local todos and subagents.
 
 ## Root final acceptance
 
@@ -71,7 +77,7 @@ of a Codex executable.
 - Trusted callers register created/adopted todos and agents. `adopt_child` requires
   an already-owned parent; the spawn coordinator must verify the actual relationship
   and register descendants and terminal follow-ups before publishing execution.
-  Listing, assigning, resuming, or loading legacy work does not adopt it.
+  Listing, assigning, resuming, or loading unowned work does not adopt it.
 - A completed todo needs nonblank evidence plus an explicit review. Cancellation
   needs a reason. Blocked work needs blockers and an impact review. Deferral retains
   pending/in-progress/blocked status: there is no invented `Deferred` todo status.
@@ -115,7 +121,7 @@ unrelated store revisions. Revision overflow fails without partial mutation.
 Malformed, oversized, duplicate-membership, missing-field, and future-version data
 are rejected. Existing todo/agent/session formats are unchanged. The integration
 must not treat an absent or corrupt ledger for a known run as a new empty ledger.
-Legacy sessions without a run reference must not implicitly adopt historical work.
+Sessions without a run reference must not implicitly adopt historical work.
 
 ## Implementation and acceptance status
 
@@ -147,8 +153,9 @@ have dedicated regressions.
 
 Frontend status, saved-session annotations, managed Journal outcomes and native
 HTTP reconciliation have additional integration coverage in the acceptance map;
-gate unit tests alone do not prove those surfaces. Vessel remote execution is
-still a separate dependency. Run both focused suites with:
+gate unit tests alone do not prove those surfaces. Dedicated remote execution now
+uses the managed scoped checkpoint path; its broader reconciliation acceptance
+remains separate from the local fixture matrix. Run both focused suites with:
 
 ```sh
 cargo test -p helm --lib agent::gate_tests --all-features
@@ -185,8 +192,10 @@ see [the dated evidence](completion-validation.md#managed-integration-and-bounde
 These results belong to that commit, not automatically to later changes.
 
 Full #83 acceptance remains open for successful budgeted real-model evidence and
-remote worker/Vessel execution once that execution path is implemented. The local
-live attempt retained honest failure/recovery evidence; it did not establish
+the full remote worker/Vessel reconciliation matrix. [Dedicated remote sessions](remote-sessions.md)
+are implemented, with offline lifecycle evidence; that is not proof of complete
+remote reconciliation or multi-Helm voyage behavior. The recorded local
+live attempts retained failure/recovery evidence; they did not establish
 successful evidence verification or reconciliation. Subscription authentication
 and cutover remain separate unverified requirements. Final dependency changes
 still need their own reviewed Linux checks. The operator waived required
