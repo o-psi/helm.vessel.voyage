@@ -244,6 +244,32 @@ pub struct ContextFailure {
     pub recovery: Option<Box<CanonicalRecovery>>,
 }
 
+/// Canonical run state retained when a locally rejected request stops execution.
+/// Runtime-only system messages are excluded; provider continuation stays local.
+#[derive(Clone)]
+pub struct CanonicalRecovery {
+    pub messages: Vec<Message>,
+    pub usage: Usage,
+}
+
+impl std::fmt::Debug for CanonicalRecovery {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("CanonicalRecovery")
+            .field("message_count", &self.messages.len())
+            .field("usage", &self.usage)
+            .finish_non_exhaustive()
+    }
+}
+
+#[derive(Debug, Error)]
+#[error("{source}")]
+pub struct ContextFailure {
+    #[source]
+    pub source: crate::context::ContextError,
+    pub recovery: Option<Box<CanonicalRecovery>>,
+}
+
 #[derive(Debug, Error)]
 pub enum AgentError {
     #[error(transparent)]
