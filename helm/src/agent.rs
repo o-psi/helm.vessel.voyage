@@ -330,6 +330,40 @@ impl Agent {
         Ok(models)
     }
 
+    /// Best-effort utility request using this agent's existing provider and authority.
+    pub async fn generate_title(
+        &self,
+        messages: &[Message],
+        cancel: CancellationToken,
+    ) -> Option<crate::titles::TitleResult> {
+        let work = async {
+            let model = crate::titles::title_model()?;
+            if !self
+                .models(false)
+                .await
+                .ok()?
+                .iter()
+                .any(|item| item.id == model)
+            {
+                return None;
+            }
+            let request = crate::titles::request(messages, model, &self.context.redactor)?;
+            let response = self.provider.complete(request).await.ok()?;
+            Some(crate::titles::TitleResult {
+                title: crate::titles::sanitize(&response.message, &self.context.redactor),
+                usage: response.usage,
+            })
+        };
+        tokio::select! {
+            biased;
+            _ = cancel.cancelled() => None,
+            _ = self.context.cancellation.cancelled() => None,
+            result = tokio::time::timeout(self.context.timeout.min(Duration::from_secs(10)), work) => {
+                result.ok().flatten()
+            }
+        }
+    }
+
     pub async fn run(
         &self,
         history: Vec<Message>,
@@ -1295,5 +1329,186 @@ mod tests {
             })
             .collect::<String>();
         assert_eq!(deltas, "hello");
+    }
+    struct TitleFixture {
+        requests: Arc<std::sync::Mutex<Vec<ModelRequest>>>,
+        advertised: bool,
+        discovery_error: bool,
+        fail: bool,
+        delay: Duration,
+        message: Message,
+    }
+
+    #[async_trait]
+    impl Provider for TitleFixture {
+        async fn models(&self) -> Result<Vec<ModelInfo>, ProviderError> {
+            if self.discovery_error {
+                return Err(ProviderError::Unavailable("offline".into()));
+            }
+            Ok(if self.advertised {
+                vec![ModelInfo::minimal("gpt-5.6-luna")]
+            } else {
+                vec![]
+            })
+        }
+        async fn complete(&self, request: ModelRequest) -> Result<ModelResponse, ProviderError> {
+            self.requests.lock().unwrap().push(request);
+            tokio::time::sleep(self.delay).await;
+            if self.fail {
+                return Err(ProviderError::Unavailable("offline".into()));
+            }
+            Ok(ModelResponse {
+                message: self.message.clone(),
+                usage: Usage {
+                    input_tokens: 15,
+                    output_tokens: 5,
+                },
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn title_generation_is_isolated_and_accounts_rejected_output() {
+        for title in ["Fix private-secret", "invalid\nmultiline"] {
+            let directory = tempfile::tempdir().unwrap();
+            let requests = Arc::new(std::sync::Mutex::new(Vec::new()));
+            let mut agent = agent(
+                Box::new(TitleFixture {
+                    requests: requests.clone(),
+                    advertised: true,
+                    discovery_error: false,
+                    fail: false,
+                    delay: Duration::ZERO,
+                    message: Message::new(crate::model::Role::Assistant, title),
+                }),
+                &directory,
+            );
+            let sink = Arc::new(Recording::default());
+            agent.sink = sink.clone();
+            agent.context.redactor =
+                Arc::new(crate::tools::Redactor::new(["private-secret".into()]));
+            let history = vec![Message::new(crate::model::Role::User, "Fix private-secret")];
+            let before = serde_json::to_string(&history).unwrap();
+            let result = agent
+                .generate_title(&history, CancellationToken::new())
+                .await
+                .unwrap();
+            assert_eq!(result.usage.input_tokens, 15);
+            assert_eq!(result.usage.output_tokens, 5);
+            assert_eq!(
+                result.title,
+                if title.contains('\n') {
+                    None
+                } else {
+                    Some("Fix [REDACTED]".into())
+                }
+            );
+            assert_eq!(agent.model(), "test");
+            assert_eq!(serde_json::to_string(&history).unwrap(), before);
+            assert!(sink.events.lock().unwrap().is_empty());
+            let requests = requests.lock().unwrap();
+            assert_eq!(requests.len(), 1);
+            assert_eq!(requests[0].model, "gpt-5.6-luna");
+            assert!(requests[0].tools.is_empty());
+            assert!(!requests[0].messages[1].content.contains("private-secret"));
+        }
+    }
+
+    #[tokio::test]
+    async fn title_generation_skips_unavailable_models_and_never_retries() {
+        for (advertised, discovery_error, fail, expected_calls) in [
+            (false, false, false, 0),
+            (true, true, false, 0),
+            (true, false, true, 1),
+        ] {
+            let directory = tempfile::tempdir().unwrap();
+            let requests = Arc::new(std::sync::Mutex::new(Vec::new()));
+            let agent = agent(
+                Box::new(TitleFixture {
+                    requests: requests.clone(),
+                    advertised,
+                    discovery_error,
+                    fail,
+                    delay: Duration::ZERO,
+                    message: Message::new(crate::model::Role::Assistant, "title"),
+                }),
+                &directory,
+            );
+            assert!(
+                agent
+                    .generate_title(
+                        &[Message::new(crate::model::Role::User, "question")],
+                        CancellationToken::new()
+                    )
+                    .await
+                    .is_none()
+            );
+            assert_eq!(requests.lock().unwrap().len(), expected_calls);
+        }
+    }
+
+    #[tokio::test]
+    async fn title_generation_respects_timeout_and_cancellation() {
+        for mode in [0, 1, 2, 3] {
+            let directory = tempfile::tempdir().unwrap();
+            let requests = Arc::new(std::sync::Mutex::new(Vec::new()));
+            let mut agent = agent(
+                Box::new(TitleFixture {
+                    requests: requests.clone(),
+                    advertised: true,
+                    discovery_error: false,
+                    fail: false,
+                    delay: Duration::from_secs(60),
+                    message: Message::new(crate::model::Role::Assistant, "title"),
+                }),
+                &directory,
+            );
+            agent.context.timeout = Duration::from_millis(20);
+            let cancel = CancellationToken::new();
+            if mode == 0 {
+                cancel.cancel();
+            }
+            if mode == 1 {
+                agent.context.cancellation.cancel();
+            }
+            let history = [Message::new(crate::model::Role::User, "question")];
+            let work = agent.generate_title(&history, cancel.clone());
+            let result = if mode == 3 {
+                let (result, ()) = tokio::join!(work, async {
+                    tokio::time::sleep(Duration::from_millis(2)).await;
+                    cancel.cancel();
+                });
+                result
+            } else {
+                work.await
+            };
+            assert!(result.is_none());
+            assert_eq!(requests.lock().unwrap().len(), if mode < 2 { 0 } else { 1 });
+        }
+    }
+    struct HangingTitleDiscovery;
+    #[async_trait]
+    impl Provider for HangingTitleDiscovery {
+        async fn models(&self) -> Result<Vec<ModelInfo>, ProviderError> {
+            std::future::pending().await
+        }
+        async fn complete(&self, _: ModelRequest) -> Result<ModelResponse, ProviderError> {
+            panic!("must not complete before discovery");
+        }
+    }
+
+    #[tokio::test]
+    async fn title_generation_bounds_discovery_time_too() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut agent = agent(Box::new(HangingTitleDiscovery), &directory);
+        agent.context.timeout = Duration::from_millis(5);
+        let history = [Message::new(crate::model::Role::User, "question")];
+        let result = tokio::time::timeout(
+            Duration::from_secs(1),
+            agent.generate_title(&history, CancellationToken::new()),
+        )
+        .await
+        .expect("title discovery must not hang");
+        assert!(result.is_none());
     }
 }
