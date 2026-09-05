@@ -470,3 +470,307 @@ fn recovery_without_redactor_never_flushes_private_unresolved_text() {
     );
     assert_eq!(journal.run(run.id).unwrap().partial_text, "CRASH_");
 }
+
+#[test]
+fn remote_recovery_keeps_local_attribution_and_never_invents_successful_tools() {
+    use super::super::super::local_actor::LocalActor;
+    let (_dir, mut journal, session, binding) = fixture();
+    journal.create_remote_session(&session, &binding).unwrap();
+    let guard = journal.acquire_execution(session.id).unwrap();
+    let actor = LocalActor {
+        installation_id: binding.local_installation_id,
+        principal_id: binding.local_principal_id,
+    };
+    assert_eq!(journal.remote_local_binding(&actor).unwrap().0, session.id);
+    let request = TurnAdmission {
+        command_id: Uuid::new_v4(),
+        machine_id: binding.machine_id,
+        principal_id: binding.owner_id,
+        session_id: session.id,
+        expected_revision: 0,
+        expires_at_ms: 60000,
+        prompt: "task".into(),
+    };
+    let run = journal.admit_turn(&guard, &request, 1).unwrap().run;
+    journal.register_local_cleanup(&guard, run.id).unwrap();
+    journal.mark_running(&guard, run.id).unwrap();
+    assert!(
+        journal
+            .attest_remote_cleanup(&guard, &binding, run.id, &actor)
+            .is_err()
+    );
+    let mut messages = journal.load_session(session.id).unwrap().session.messages;
+    let mut call = Message::new(Role::Assistant, "");
+    call.tool_calls.push(crate::model::ToolCall {
+        id: "unknown-call".into(),
+        name: "write_file".into(),
+        arguments: serde_json::json!({"path":"effect","content":"unknown"}),
+    });
+    messages.push(call);
+    journal
+        .checkpoint_canonical(&guard, run.id, &messages, &Usage::default())
+        .unwrap();
+    journal.recover_interrupted(&guard).unwrap();
+    let wrong = LocalActor {
+        installation_id: Uuid::new_v4(),
+        principal_id: actor.principal_id,
+    };
+    assert!(journal.remote_local_binding(&wrong).is_err());
+    assert!(
+        journal
+            .attest_remote_cleanup(&guard, &binding, run.id, &wrong)
+            .is_err()
+    );
+    journal.connection.execute_batch("CREATE TRIGGER reject_attestation BEFORE INSERT ON remote_cleanup_attestations BEGIN SELECT RAISE(ABORT,'fixture failure'); END;").unwrap();
+    assert!(
+        journal
+            .attest_remote_cleanup(&guard, &binding, run.id, &actor)
+            .is_err()
+    );
+    let confirmation: Option<String> = journal
+        .connection
+        .query_row(
+            "SELECT confirmation FROM local_cleanup_obligations WHERE run_id=?1",
+            [run.id.to_string()],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert!(confirmation.is_none());
+    journal
+        .connection
+        .execute_batch("DROP TRIGGER reject_attestation;")
+        .unwrap();
+    journal
+        .attest_remote_cleanup(&guard, &binding, run.id, &actor)
+        .unwrap();
+    journal
+        .attest_remote_cleanup(&guard, &binding, run.id, &actor)
+        .unwrap();
+    assert!(
+        journal
+            .confirm_local_cleanup_observed(&guard, run.id)
+            .is_err()
+    );
+    let expected = serde_json::to_value(
+        match journal.remote_replay(&binding, session.id, 0, 128).unwrap() {
+            RemoteReplay::Events { events, .. } => events,
+            _ => panic!("missing events"),
+        },
+    )
+    .unwrap();
+    let revision = journal.load_session(session.id).unwrap().revision;
+    let request = super::super::LocalReconcileRequest {
+        session_id: session.id,
+        run_id: run.id,
+        installation_id: actor.installation_id,
+        principal_id: actor.principal_id,
+        expected_revision: revision,
+    };
+    assert!(journal.reconcile_local_tools(&guard, &request).is_err());
+    let result = journal
+        .reconcile_remote_tools(&guard, &request, &binding)
+        .unwrap();
+    assert_eq!(result.revision, revision + 1);
+    assert_eq!(result.tool_call_ids, ["unknown-call"]);
+    assert!(
+        journal
+            .reconcile_remote_tools(&guard, &request, &binding)
+            .unwrap()
+            .duplicate
+    );
+    let saved = journal.load_session(session.id).unwrap();
+    assert_eq!(
+        serde_json::to_value(&saved.session.messages[..messages.len()]).unwrap(),
+        serde_json::to_value(&messages).unwrap()
+    );
+    let last = saved.session.messages.last().unwrap();
+    assert_eq!(last.tool_success, Some(false));
+    assert!(last.content.contains("outcome is unknown"));
+    assert_eq!(journal.run(run.id).unwrap().state, RunState::Interrupted);
+    let actual = serde_json::to_value(
+        match journal.remote_replay(&binding, session.id, 0, 128).unwrap() {
+            RemoteReplay::Events { events, .. } => events,
+            _ => panic!("missing events"),
+        },
+    )
+    .unwrap();
+    assert_eq!(actual, expected, "terminal public history stays immutable");
+    let record: String = journal
+        .connection
+        .query_row(
+            "SELECT record FROM local_tool_reconciliations WHERE run_id=?1",
+            [run.id.to_string()],
+            |r| r.get(0),
+        )
+        .unwrap();
+    let record: serde_json::Value = serde_json::from_str(&record).unwrap();
+    assert_eq!(
+        record["request"]["installation_id"],
+        actor.installation_id.to_string()
+    );
+    assert_eq!(
+        record["request"]["principal_id"],
+        actor.principal_id.to_string()
+    );
+    assert_ne!(actor.principal_id, binding.owner_id);
+}
+
+#[test]
+fn schema_six_upgrade_preserves_private_authority_receipts_and_rejects_stale_writers() {
+    let (_dir, mut journal, mut session, binding) = fixture();
+    session
+        .messages
+        .push(Message::new(Role::User, "private history"));
+    journal.create_session(&session).unwrap();
+    let guard = journal.acquire_execution(session.id).unwrap();
+    let request = TurnAdmission {
+        command_id: Uuid::new_v4(),
+        machine_id: binding.machine_id,
+        principal_id: binding.owner_id,
+        session_id: session.id,
+        expected_revision: 0,
+        expires_at_ms: 60000,
+        prompt: "task".into(),
+    };
+    let run = journal.admit_turn(&guard, &request, 1).unwrap().run;
+    journal.mark_running(&guard, run.id).unwrap();
+    journal
+        .append_text(&guard, run.id, "private partial")
+        .unwrap();
+    journal
+        .finish(&guard, run.id, RunState::Interrupted, Some("fixture"), None)
+        .unwrap();
+    let saved = serde_json::to_value(journal.load_session(session.id).unwrap().session).unwrap();
+    let record = serde_json::to_value(journal.run(run.id).unwrap()).unwrap();
+    let events: String = journal
+        .connection
+        .query_row(
+            "SELECT group_concat(event) FROM events WHERE session_id=?1",
+            [session.id.to_string()],
+            |r| r.get(0),
+        )
+        .unwrap();
+    drop(guard);
+    journal.connection.execute_batch("DROP TABLE remote_cleanup_attestations; DROP TABLE remote_text; DROP TABLE remote_tools; DROP TABLE remote_events; DROP TABLE remote_receipts; DROP TABLE remote_session; UPDATE attachment_schema SET version=6;").unwrap();
+    let path = journal.directory.clone();
+    drop(journal);
+    let mut journal = Journal::open(path.clone()).unwrap();
+    assert_eq!(journal.opened_schema, 6);
+    let mut stale = Journal::open(path).unwrap();
+    let guard = journal.acquire_execution(session.id).unwrap();
+    assert!(
+        journal.upgrade_quiescent().is_err(),
+        "live execution fence must block upgrade"
+    );
+    drop(guard);
+    journal
+        .upgrade_with(|| {
+            assert!(
+                stale
+                    .create_session(&Session::new(session.workspace.clone(), "fixture".into()))
+                    .is_err(),
+                "creation cannot escape enumerated upgrade fences"
+            );
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(journal.opened_schema, 7);
+    assert!(
+        stale
+            .create_session(&Session::new(
+                session.workspace.clone(),
+                "stale writer".into()
+            ))
+            .is_err()
+    );
+    assert_eq!(
+        serde_json::to_value(journal.load_session(session.id).unwrap().session).unwrap(),
+        saved
+    );
+    assert_eq!(
+        serde_json::to_value(journal.lookup_command(&request).unwrap().unwrap()).unwrap(),
+        record
+    );
+    let after: String = journal
+        .connection
+        .query_row(
+            "SELECT group_concat(event) FROM events WHERE session_id=?1",
+            [session.id.to_string()],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(after, events);
+    assert!(journal.remote_session(&binding).unwrap().is_none());
+    assert!(
+        journal
+            .create_remote_session(&Session::new(session.workspace, "fixture".into()), &binding)
+            .is_err(),
+        "upgrade never adopts private history"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn public_projection_commit_busy_rolls_back_private_suffix_offset_and_event_together() {
+    use std::sync::Arc;
+    let (_dir, mut journal, session, binding) = fixture();
+    journal.create_remote_session(&session, &binding).unwrap();
+    let guard = journal.acquire_execution(session.id).unwrap();
+    let request = TurnAdmission {
+        command_id: Uuid::new_v4(),
+        machine_id: binding.machine_id,
+        principal_id: binding.owner_id,
+        session_id: session.id,
+        expected_revision: 0,
+        expires_at_ms: 60000,
+        prompt: "task".into(),
+    };
+    let run = journal.admit_turn(&guard, &request, 1).unwrap().run;
+    journal
+        .configure_remote_redaction(
+            &guard,
+            run.id,
+            Arc::new(crate::tools::Redactor::new(["REMOTE_SECRET".into()])),
+        )
+        .unwrap();
+    journal.mark_running(&guard, run.id).unwrap();
+    journal.append_text(&guard, run.id, "REMOTE_").unwrap();
+    journal
+        .connection
+        .pragma_update(None, "cache_spill", false)
+        .unwrap();
+    let before: (i64,i64,i64)=journal.connection.query_row("SELECT (SELECT next_sequence FROM remote_session),(SELECT raw_offset FROM remote_text),(SELECT count(*) FROM remote_events)",[],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).unwrap();
+    let reader = Connection::open(journal.directory.join("journal.sqlite3")).unwrap();
+    reader
+        .execute_batch("BEGIN DEFERRED; SELECT count(*) FROM remote_events;")
+        .unwrap();
+    let changes = journal.connection.total_changes();
+    let error = journal.append_text(&guard, run.id, "SECRET").unwrap_err();
+    assert!(
+        matches!(error.downcast_ref::<rusqlite::Error>(),Some(rusqlite::Error::SqliteFailure(code,_)) if code.code==rusqlite::ErrorCode::DatabaseBusy)
+    );
+    assert!(
+        journal.connection.total_changes() > changes + 3,
+        "public projection ran before COMMIT failed"
+    );
+    assert!(journal.connection.is_autocommit());
+    let after:(i64,i64,i64)=journal.connection.query_row("SELECT (SELECT next_sequence FROM remote_session),(SELECT raw_offset FROM remote_text),(SELECT count(*) FROM remote_events)",[],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).unwrap();
+    assert_eq!(after, before);
+    assert_eq!(journal.run(run.id).unwrap().partial_text, "REMOTE_");
+    reader.execute_batch("ROLLBACK;").unwrap();
+    journal.append_text(&guard, run.id, "SECRET").unwrap();
+    assert_eq!(journal.run(run.id).unwrap().partial_text, "REMOTE_SECRET");
+    let RemoteReplay::Events { events, .. } =
+        journal.remote_replay(&binding, session.id, 0, 128).unwrap()
+    else {
+        panic!("missing public events")
+    };
+    let text = events
+        .iter()
+        .filter_map(|event| match &event.event {
+            RunEvent::TextDelta { text } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect::<String>();
+    assert_eq!(text, "[REDACTED]");
+}

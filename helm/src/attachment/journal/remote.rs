@@ -77,15 +77,15 @@ fn binding(db: &Connection) -> Result<Option<(Uuid, RemoteBinding)>> {
     if !exists {
         return Ok(None);
     }
-    let row: Option<(String, String)> = db
+    let row: Option<(String, Option<String>)> = db
         .query_row(
-            "SELECT session_id,binding FROM remote_session WHERE slot=1",
+            "SELECT substr(session_id,1,37),CASE WHEN length(CAST(binding AS BLOB))<=8192 THEN binding END FROM remote_session WHERE slot=1",
             [],
             |r| Ok((r.get(0)?, r.get(1)?)),
         )
         .optional()?;
     row.map(|(id, value)| {
-        ensure!(value.len() <= 8192, "invalid remote binding size");
+        let value = value.context("invalid remote binding size")?;
         let value: RemoteBinding = serde_json::from_str(&value)?;
         value.validate()?;
         let id = Uuid::parse_str(&id)?;
@@ -606,11 +606,11 @@ impl Journal {
         ensure!(next > 0, "invalid public cursor");
         let latest = next as u64 - 1;
         ensure!(after <= latest, "public cursor ahead");
-        let rows=tx.prepare("SELECT sequence,event FROM remote_events WHERE sequence>?1 ORDER BY sequence LIMIT ?2")?.query_map(params![after as i64,limit],|r|Ok((r.get::<_,i64>(0)?,r.get::<_,String>(1)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
+        let rows=tx.prepare("SELECT sequence,CASE WHEN length(CAST(event AS BLOB))<=131072 THEN event END FROM remote_events WHERE sequence>?1 ORDER BY sequence LIMIT ?2")?.query_map(params![after as i64,limit],|r|Ok((r.get::<_,i64>(0)?,r.get::<_,Option<String>>(1)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
         let mut events = Vec::new();
         let mut bytes = 0;
         for (sequence, text) in rows {
-            ensure!(text.len() <= 128 * 1024, "invalid public event size");
+            let text = text.context("invalid public event size")?;
             if sequence as u64 != after + events.len() as u64 + 1 {
                 return Ok(RemoteReplay::SnapshotRequired { latest });
             }
@@ -673,14 +673,15 @@ impl Journal {
                 && run.principal_id == expected.owner_id,
             "remote run unavailable"
         );
-        let previous: Option<(Vec<u8>, String)> = tx
+        let previous: Option<(Vec<u8>, Option<String>)> = tx
             .query_row(
-                "SELECT digest,result FROM remote_receipts WHERE id=?1",
+                "SELECT substr(digest,1,33),CASE WHEN length(CAST(result AS BLOB))<=4096 THEN result END FROM remote_receipts WHERE id=?1",
                 [command.command_id.to_string()],
                 |r| Ok((r.get(0)?, r.get(1)?)),
             )
             .optional()?;
         if let Some((old, encoded)) = previous {
+            let encoded = encoded.context("remote receipt exceeds limit")?;
             ensure!(
                 old == digest && encoded.len() <= 4096,
                 "remote receipt mismatch"

@@ -110,6 +110,16 @@ impl AttachmentApi {
             connection.cancel.cancel();
         }
     }
+    /// Internal relay retention bookkeeping only: no authorization or liveness
+    /// promise. A removed generation can never become registered again.
+    pub async fn registered_generations(&self) -> Vec<(Uuid, Uuid)> {
+        self.registry
+            .lock()
+            .await
+            .iter()
+            .map(|(machine, connection)| (*machine, connection.id))
+            .collect()
+    }
     /// Bounded metadata for an already-authenticated operator. Each record is an
     /// observation at its lease/epoch check, not a promise of future connectivity.
     pub async fn connections(&self) -> Vec<ConnectionPresence> {
@@ -185,6 +195,26 @@ impl AttachmentApi {
             .with_state(self)
     }
     /// Queued transport delivery only. No local dispatch, admission or policy grant.
+    /// Current negotiated protocol support, never execution authorization.
+    pub async fn supports_feature(
+        &self,
+        machine: Uuid,
+        connection_id: Uuid,
+        feature: voyage_protocol::events::Feature,
+    ) -> bool {
+        if !self.is_current(machine, connection_id).await {
+            return false;
+        }
+        self.registry
+            .lock()
+            .await
+            .get(&machine)
+            .is_some_and(|connection| {
+                connection.id == connection_id
+                    && self.live(connection)
+                    && connection.features.contains(feature)
+            })
+    }
     pub async fn send(&self, machine: Uuid, frame: Frame) -> Result<()> {
         let connection = self
             .registry

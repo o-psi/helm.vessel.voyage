@@ -683,3 +683,137 @@ async fn foreground_authority_rechecked_after_admission_wait_before_any_durable_
     );
     assert_eq!(owner.snapshot().await.unwrap().revision, revision);
 }
+
+#[tokio::test]
+async fn remote_cancel_clock_waits_for_owner_lock_and_duplicate_still_requires_authority() {
+    use crate::attachment::journal::RemoteBinding;
+    use std::sync::atomic::{AtomicI64, AtomicUsize};
+    use voyage_protocol::attachment::{Command, Operation, VERSION};
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("journal");
+    let mut journal = Journal::open(path.clone()).unwrap();
+    let session = Session::new(root.path().into(), "fixture".into());
+    let binding = RemoteBinding {
+        origin: "http://127.0.0.1:9480".into(),
+        machine_id: Uuid::new_v4(),
+        owner_id: Uuid::new_v4(),
+        epoch: 1,
+        local_installation_id: Uuid::new_v4(),
+        local_principal_id: Uuid::new_v4(),
+    };
+    journal.create_remote_session(&session, &binding).unwrap();
+    let owner = ManagedSessionOwner::open(path, session.id).await.unwrap();
+    let request = TurnAdmission {
+        command_id: Uuid::new_v4(),
+        machine_id: binding.machine_id,
+        principal_id: binding.owner_id,
+        session_id: session.id,
+        expected_revision: 0,
+        expires_at_ms: 60000,
+        prompt: "task".into(),
+    };
+    let Admission::New(run) = owner.admit_at(request, 1).await.unwrap() else {
+        panic!("new run required")
+    };
+    let command = Command {
+        version: VERSION,
+        connection_id: Uuid::new_v4(),
+        machine_id: binding.machine_id,
+        principal_id: binding.owner_id,
+        command_id: Uuid::new_v4(),
+        expires_at_ms: 60000,
+        operation: Operation::Cancel {
+            session_id: session.id,
+            run_id: run.run_id,
+        },
+    };
+    let authority = Arc::new(ForegroundAuthority(std::sync::atomic::AtomicBool::new(
+        true,
+    )));
+    let current = Arc::new(AtomicI64::new(1));
+    let calls = Arc::new(AtomicUsize::new(0));
+    let clock = {
+        let current = current.clone();
+        let calls = calls.clone();
+        Arc::new(move || {
+            calls.fetch_add(1, Ordering::SeqCst);
+            Ok(current.load(Ordering::SeqCst))
+        })
+    };
+    let shared = owner.store.clone();
+    let (entered, entry) = std::sync::mpsc::channel();
+    let (release, released) = std::sync::mpsc::channel();
+    let locker = tokio::task::spawn_blocking(move || {
+        let _guard = shared.lock().unwrap();
+        entered.send(()).unwrap();
+        released
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .unwrap();
+    });
+    entry
+        .recv_timeout(std::time::Duration::from_secs(10))
+        .unwrap();
+    let count = Arc::strong_count(&owner.store);
+    let task = {
+        let owner = owner.clone();
+        let binding = binding.clone();
+        let command = command.clone();
+        let authority = authority.clone();
+        let clock = clock.clone();
+        tokio::spawn(async move {
+            owner
+                .remote_cancel_clock(binding, command, authority, clock)
+                .await
+        })
+    };
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while Arc::strong_count(&owner.store) < count + 2 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        0,
+        "clock sampled before the owned storage wait"
+    );
+    current.store(60000, Ordering::SeqCst);
+    release.send(()).unwrap();
+    locker.await.unwrap();
+    assert!(task.await.unwrap().is_err());
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert!(!owner.local_cancel_requested(run.run_id).await.unwrap());
+    current.store(1, Ordering::SeqCst);
+    assert!(
+        !owner
+            .remote_cancel_clock(binding.clone(), command.clone(), authority.clone(), clock)
+            .await
+            .unwrap()
+            .duplicate
+    );
+    assert!(
+        owner
+            .remote_cancel_clock(
+                binding.clone(),
+                command.clone(),
+                authority.clone(),
+                Arc::new(|| panic!("duplicate sampled clock"))
+            )
+            .await
+            .unwrap()
+            .duplicate
+    );
+    authority.0.store(false, Ordering::SeqCst);
+    assert!(
+        owner
+            .remote_cancel_clock(
+                binding,
+                command,
+                authority,
+                Arc::new(|| panic!("unauthorized sampled clock"))
+            )
+            .await
+            .is_err()
+    );
+}

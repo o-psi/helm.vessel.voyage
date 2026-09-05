@@ -205,6 +205,16 @@ impl ManagedSessionOwner {
         command: voyage_protocol::attachment::Command,
         authority: Arc<dyn crate::policy::ExecutionAuthority>,
     ) -> anyhow::Result<super::journal::RemoteCancelReceipt> {
+        self.remote_cancel_clock(binding, command, authority, Arc::new(SystemClock))
+            .await
+    }
+    async fn remote_cancel_clock(
+        &self,
+        binding: super::journal::RemoteBinding,
+        command: voyage_protocol::attachment::Command,
+        authority: Arc<dyn crate::policy::ExecutionAuthority>,
+        clock: Arc<dyn RuntimeClock>,
+    ) -> anyhow::Result<super::journal::RemoteCancelReceipt> {
         anyhow::ensure!(
             matches!(&command.operation, voyage_protocol::attachment::Operation::Cancel {session_id,..} if *session_id == self.session_id),
             "managed owner session mismatch"
@@ -219,7 +229,7 @@ impl ManagedSessionOwner {
                 .journal
                 .remote_cancel_with_clock(&binding, &command, || {
                     authority.check()?;
-                    SystemClock.now_ms()
+                    clock.now_ms()
                 })
         })
         .await?

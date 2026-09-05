@@ -146,6 +146,9 @@ def case(root,provider):
         retry=command(operation,identity,expiry)['reply']
         assert retry['type']=='run' and retry['run_id']==run_id and retry['state']=='completed',retry
         assert len(state['requests'])==count,'duplicate effects'
+        altered=dict(operation,prompt='Changed request must not reuse a receipt.')
+        assert command(altered,identity,expiry)['reply']['type']=='denied'
+        assert len(state['requests'])==count,'altered receipt dispatched'
         events=request(base+f'/events?session_id={session}&after=0&limit=128')
         assert events['type']=='replay',events
         kinds=[event['event']['type'] for event in events['events']]
@@ -179,6 +182,57 @@ def case(root,provider):
         observed=wait(terminal,'cancelled observed cleanup')
         assert observed['run']['run_id']==cancel_run and observed['run']['state']=='cancelled',observed
         state['release'].set()
+        # Forced death leaves a durable cleanup obligation; only local explicit
+        # recovery/attestation can clear it. Invalid provider configuration is irrelevant.
+        state['started'].clear();state['release'].clear()
+        crashed=command({'type':'submit','session_id':session,'expected_revision':observed['session']['revision'],'prompt':'Hold for forced death.'})['reply']['run']['run_id']
+        assert state['started'].wait(10)
+        invalid=root/'invalid.toml';invalid.write_text('invalid [ provider configuration')
+        def recover(*extra,expected=0):
+            result=subprocess.run([str(HELM),'--config',str(invalid),'--set','provider=invalid','remote-worker','--directory',str(root/'managed'),'--recover',*extra],env=env,capture_output=True,text=True,timeout=15)
+            assert result.returncode==expected,(result.returncode,result.stdout,result.stderr)
+            return json.loads(result.stdout) if result.stdout else None
+        recover(expected=1)  # An active foreground owner cannot be recovered.
+        worker.kill();worker.wait(5)
+        recovered=recover()
+        assert recovered['run']=={'id':crashed,'state':'interrupted'} and recovered['cleanup']=='unchanged',recovered
+        recover('--acknowledge-cleanup',str(uuid.uuid4()),expected=1)
+        worker=spawn(worker_command)
+        wait(connected,'connection with unresolved cleanup')
+        after_crash=command({'type':'inspect','session_id':session})['reply']
+        assert after_crash['run']['cleanup']=='unconfirmed' and after_crash['run']['state']=='interrupted',after_crash
+        denied=command({'type':'submit','session_id':session,'expected_revision':after_crash['session']['revision'],'prompt':'Must remain blocked.'})
+        assert denied['reply']['type']=='denied',denied
+        worker.send_signal(signal.SIGINT);worker.wait(25)
+        attested=recover('--acknowledge-cleanup',crashed)
+        assert attested['cleanup']=='operator_attested'
+        assert recover('--acknowledge-cleanup',crashed)['cleanup']=='operator_attested'
+        state['release'].set();state['hold']=False
+        worker=spawn(worker_command);wait(connected,'restart after local attestation')
+        restarted=command({'type':'inspect','session_id':session})['reply']
+        assert restarted['run']['cleanup']=='operator_attested',restarted
+        resumed=command({'type':'submit','session_id':session,'expected_revision':restarted['session']['revision'],'prompt':'Finish after explicit recovery.'})
+        assert resumed['reply']['type']=='execution_snapshot',resumed
+        final_snapshot=wait(terminal,'completion after explicit local recovery')
+        assert final_snapshot['run']['state']=='completed'
+        # Revocation closes the current lease, cancels owned work, and never
+        # reauthorizes from its cached binding or from a previous command receipt.
+        state['hold']=True;state['release'].clear();state['started'].clear()
+        revoking=command({'type':'submit','session_id':session,'expected_revision':final_snapshot['session']['revision'],'prompt':'Wait until enrollment revocation.'})['reply']['run']['run_id']
+        assert state['started'].wait(10)
+        count=len(state['requests'])
+        current=request('/v1/diagnostics')['connections'][0]
+        revoked=request('/v2/enrollment/revoke',{'machine_id':machine,'expected_epoch':current['epoch'],'transaction_id':str(uuid.uuid4())})
+        assert revoked['revoked']
+        worker.wait(25)
+        assert worker.returncode!=0,'revoked worker reported available'
+        state['release'].set()
+        with sqlite3.connect(state['database']) as db:
+            record=json.loads(db.execute('SELECT record FROM runs WHERE id=?',(revoking,)).fetchone()[0])
+            cleanup=db.execute('SELECT confirmation FROM local_cleanup_obligations WHERE run_id=?',(revoking,)).fetchone()[0]
+        assert record['state']=='cancelled' and cleanup=='observed',(record['state'],cleanup)
+        assert len(state['requests'])==count,'revocation replayed provider work'
+        request(base+'/command',{'command_id':identity,'expires_at_ms':expiry,'operation':operation},expected=404)
         assert not list((root/'data').glob('helm/sessions/*.json')),'legacy private session write'
         assert server.poll() is None
     finally:
@@ -198,4 +252,4 @@ if __name__=='__main__':
     with tempfile.TemporaryDirectory(prefix='voyage-remote-') as directory:
         for provider in ('openai-chat','openai-responses','anthropic'):
             case(Path(directory)/provider,provider)
-    print('remote session: three native adapters, actual file effects, exact retry/restart, cancellation and private-scope denial passed')
+    print('remote session: three native adapters, actual file effects, exact retry/restart, cancellation, forced-death recovery/attestation, revocation and private-scope denial passed')

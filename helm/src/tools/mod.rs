@@ -187,7 +187,7 @@ impl Redactor {
                     .map(move |(start, _)| (start, start + secret.len()))
             })
             .collect::<Vec<_>>();
-        matches.sort_unstable_by(|a, b| b.0.cmp(&a.0));
+        matches.sort_unstable_by_key(|a| std::cmp::Reverse(a.0));
         for (start, finish) in matches {
             if start < end && finish > end {
                 end = start;

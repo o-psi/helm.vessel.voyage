@@ -239,7 +239,8 @@ impl Journal {
             ],
         )?;
         // Local snapshot revision changes; the terminal run/event stream remains
-        // immutable. A future remote adapter needs authorized session notification.
+        // immutable. Remote operators explicitly inspect the current snapshot revision;
+        // reconciliation never emits a successful tool result or replays an effect.
         tx.commit()?;
         Ok(LocalReconcileOutcome {
             duplicate: false,

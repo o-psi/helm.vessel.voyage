@@ -253,9 +253,9 @@ async fn diagnostics(
     };
     Ok(Json(serde_json::json!({
         "version": env!("CARGO_PKG_VERSION"),
-        "connectivity": if state.attachment.is_some() { "presence_only" } else { "unavailable" },
+        "connectivity": if state.remote.is_some() { "outbound_managed_sessions" } else if state.attachment.is_some() { "presence_only" } else { "unavailable" },
         "legacy_state": "not_loaded",
-        "attachment": if state.attachment.is_some() { "presence_only" } else { "disabled" },
+        "attachment": if state.remote.is_some() { "managed_execution" } else if state.attachment.is_some() { "presence_only" } else { "disabled" },
         "remote_execution": if state.remote.is_some() { "enabled" } else { "unavailable" },
         "connections": connections,
     })))

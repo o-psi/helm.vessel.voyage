@@ -322,7 +322,7 @@ pub(super) async fn recover(args: Args) -> Result<()> {
     let recovered = owner.recover_interrupted().await?;
     if let Some(run) = args.acknowledge_cleanup {
         owner
-            .attest_remote_cleanup(binding.clone(), run, actor.clone())
+            .attest_remote_cleanup(binding.clone(), run, actor)
             .await?;
     }
     let reconciliation = if let Some(run_id) = args.reconcile_tools {

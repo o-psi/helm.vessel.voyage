@@ -54,6 +54,8 @@ jobs:
         run: python3 tests/system/session_fencing.py
       - name: Private managed sessions across real CLI processes
         run: python3 tests/system/local_managed.py
+      - name: Dedicated remote session lifecycle
+        run: python3 tests/system/remote_session.py
       - name: Verify run ownership and readiness with an offline provider
         env:
           HELM_BIN: target/release/helm

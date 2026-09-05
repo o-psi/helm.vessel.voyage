@@ -1,6 +1,7 @@
 //! Opt-in authenticated operator relay. No provider credentials, runtime grants, or transcripts.
 use super::*;
 use axum::extract::{Path, Query};
+use sha2::{Digest, Sha256};
 use std::{collections::HashMap, time::Duration};
 use tokio::sync::oneshot;
 use vessel::attachment_transport::{AttachmentApi, AuthenticatedFrame, ConnectionPresence};
@@ -10,15 +11,110 @@ use voyage_protocol::{
     stream::Frame,
 };
 
+type PendingKey = (Uuid, Uuid, Uuid);
+type PendingReplies = Arc<Mutex<HashMap<PendingKey, Option<oneshot::Sender<Frame>>>>>;
+fn deliver(pending: &PendingReplies, key: PendingKey, frame: Frame) {
+    let sender = pending
+        .lock()
+        .ok()
+        .and_then(|mut p| p.get_mut(&key).and_then(Option::take));
+    if let Some(sender) = sender {
+        let _ = sender.send(frame);
+    }
+}
+const MUTATIONS_PER_CONNECTION: usize = 4096;
+const RETAINED_GENERATIONS: usize = 32;
+type Generation = (Uuid, Uuid);
+#[derive(Default)]
+struct MutationFingerprints(HashMap<Generation, HashMap<Uuid, [u8; 32]>>);
+impl MutationFingerprints {
+    fn admit(&mut self, key: PendingKey, digest: [u8; 32]) -> UiResult<()> {
+        let generation = (key.0, key.1);
+        if let Some(previous) = self.0.get(&generation).and_then(|ids| ids.get(&key.2)) {
+            return if *previous == digest {
+                Ok(())
+            } else {
+                Err(ui_error((
+                    StatusCode::CONFLICT,
+                    "Command ID already names a different request",
+                )))
+            };
+        }
+        if !self.0.contains_key(&generation) && self.0.len() >= RETAINED_GENERATIONS {
+            return Err(ui_error((
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Remote connection bookkeeping full; retry after retired connections close",
+            )));
+        }
+        let ids = self.0.entry(generation).or_default();
+        if ids.len() >= MUTATIONS_PER_CONNECTION {
+            return Err(ui_error((
+                StatusCode::CONFLICT,
+                "Remote command capacity reached; reconnect the foreground worker before new commands; exact retries remain available",
+            )));
+        }
+        ids.insert(key.2, digest);
+        Ok(())
+    }
+    fn prune(&mut self, candidates: &[Generation], registered: &[Generation]) {
+        // Only consider keys captured before the registry snapshot: an insertion
+        // racing that snapshot must not lose its immutable digest.
+        for candidate in candidates {
+            if !registered.contains(candidate) {
+                self.0.remove(candidate);
+            }
+        }
+    }
+}
+fn mutation_digest(frame: &Frame) -> UiResult<Option<[u8; 32]>> {
+    let Frame::Command { command } = frame else {
+        return Ok(None);
+    };
+    if !matches!(
+        command.operation,
+        Operation::Submit { .. } | Operation::Cancel { .. }
+    ) {
+        return Ok(None);
+    }
+    let bytes = command
+        .admission_bytes()
+        .map_err(|_| ui_error(StatusCode::BAD_REQUEST))?;
+    Ok(Some(Sha256::digest(bytes).into()))
+}
+fn transport_id(operation: &Operation, requested: Uuid) -> Uuid {
+    if matches!(
+        operation,
+        Operation::List { .. } | Operation::Inspect { .. }
+    ) {
+        Uuid::new_v4()
+    } else {
+        requested
+    }
+}
+fn restore_command_id(frame: Frame, requested: Uuid) -> UiResult<Frame> {
+    match frame {
+        Frame::Result {
+            connection_id,
+            reply,
+            ..
+        } => Ok(Frame::Result {
+            connection_id,
+            command_id: requested,
+            reply,
+        }),
+        _ => Err(ui_error(StatusCode::BAD_GATEWAY)),
+    }
+}
 #[derive(Clone)]
 pub(super) struct RemoteApi {
     attachment: AttachmentApi,
     origin: String,
-    pending: Arc<Mutex<HashMap<(Uuid, Uuid, Uuid), oneshot::Sender<Frame>>>>,
+    pending: PendingReplies,
+    mutations: Arc<Mutex<MutationFingerprints>>,
 }
 struct Pending {
-    key: (Uuid, Uuid, Uuid),
-    pending: Arc<Mutex<HashMap<(Uuid, Uuid, Uuid), oneshot::Sender<Frame>>>>,
+    key: PendingKey,
+    pending: PendingReplies,
 }
 impl Drop for Pending {
     fn drop(&mut self) {
@@ -42,14 +138,21 @@ impl RemoteApi {
             attachment,
             origin,
             pending: Arc::new(Mutex::new(HashMap::new())),
+            mutations: Arc::default(),
         };
         let monitor = this.clone();
         tokio::spawn(async move {
+            let mut maintenance = tokio::time::interval(Duration::from_secs(1));
             loop {
                 let received = tokio::select! {
                     value = incoming.recv() => value,
-                    _ = tokio::time::sleep(Duration::from_millis(100)) => {
+                    _ = maintenance.tick() => {
                         if monitor.attachment.is_shutdown() { break; }
+                        let candidates = monitor.mutations.lock().map(|m| m.0.keys().copied().collect::<Vec<_>>()).unwrap_or_default();
+                        let registered = monitor.attachment.registered_generations().await;
+                        if let Ok(mut mutations) = monitor.mutations.lock() {
+                            mutations.prune(&candidates, &registered);
+                        }
                         continue;
                     }
                 };
@@ -77,14 +180,11 @@ impl RemoteApi {
                     // replay pages from Helm's transactional public cursor.
                     _ => continue,
                 };
-                let sender = monitor
-                    .pending
-                    .lock()
-                    .ok()
-                    .and_then(|mut p| p.remove(&(machine_id, connection_id, request)));
-                if let Some(sender) = sender {
-                    let _ = sender.send(frame);
-                }
+                deliver(
+                    &monitor.pending,
+                    (machine_id, connection_id, request),
+                    frame,
+                );
             }
         });
         Ok(this)
@@ -93,7 +193,8 @@ impl RemoteApi {
         self.attachment.clone()
     }
     async fn connection(&self, machine: Uuid) -> UiResult<ConnectionPresence> {
-        self.attachment
+        let current = self
+            .attachment
             .connections()
             .await
             .into_iter()
@@ -103,7 +204,18 @@ impl RemoteApi {
                     StatusCode::NOT_FOUND,
                     "Current remote connection unavailable",
                 ))
-            })
+            })?;
+        if !self
+            .attachment
+            .supports_feature(machine, current.connection_id, Feature::ManagedExecution)
+            .await
+        {
+            return Err(ui_error((
+                StatusCode::NOT_FOUND,
+                "Current remote execution connection unavailable",
+            )));
+        }
+        Ok(current)
     }
     async fn exchange(
         &self,
@@ -113,6 +225,12 @@ impl RemoteApi {
     ) -> UiResult<Frame> {
         let (sender, receiver) = oneshot::channel();
         let key = (current.machine_id, current.connection_id, id);
+        if let Some(digest) = mutation_digest(&frame)? {
+            self.mutations
+                .lock()
+                .map_err(|_| ui_error(StatusCode::SERVICE_UNAVAILABLE))?
+                .admit(key, digest)?;
+        }
         {
             let mut pending = self
                 .pending
@@ -121,7 +239,7 @@ impl RemoteApi {
             if pending.len() >= 64 || pending.contains_key(&key) {
                 return Err(ui_error((StatusCode::CONFLICT, "Remote request busy")));
             }
-            pending.insert(key, sender);
+            pending.insert(key, Some(sender));
         }
         let _pending = Pending {
             key,
@@ -200,12 +318,13 @@ pub(super) async fn command(
         return Err(ui_error(StatusCode::FORBIDDEN));
     }
     let current = api.connection(machine).await?;
+    let wire_id = transport_id(&request.operation, request.command_id);
     let command = Command {
         version: VERSION,
         connection_id: current.connection_id,
         machine_id: machine,
         principal_id: current.owner_id,
-        command_id: request.command_id,
+        command_id: wire_id,
         expires_at_ms: request.expires_at_ms,
         operation: request.operation,
     };
@@ -213,12 +332,12 @@ pub(super) async fn command(
         .validate_structure()
         .map_err(|_| ui_error(StatusCode::BAD_REQUEST))?;
     let frame = api
-        .exchange(&current, request.command_id, Frame::Command { command })
+        .exchange(&current, wire_id, Frame::Command { command })
         .await?;
-    if !matches!(frame, Frame::Result { .. }) {
-        return Err(ui_error(StatusCode::BAD_GATEWAY));
-    }
-    Ok(private_response(frame))
+    Ok(private_response(restore_command_id(
+        frame,
+        request.command_id,
+    )?))
 }
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -266,4 +385,206 @@ fn private_response(frame: Frame) -> Response {
         HeaderValue::from_static("no-store"),
     );
     response
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn reply(id: Uuid) -> Frame {
+        Frame::SnapshotRequired {
+            connection_id: Uuid::new_v4(),
+            request_id: id,
+            session_id: Uuid::new_v4(),
+            after: EventCursor::new(0).unwrap(),
+            latest: EventCursor::new(0).unwrap(),
+        }
+    }
+
+    #[test]
+    fn delivered_reply_retains_slot_until_its_waiter_guard_drops() {
+        let key = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
+        let pending = PendingReplies::default();
+        let (sender, mut receiver) = oneshot::channel();
+        pending.lock().unwrap().insert(key, Some(sender));
+        let guard = Pending {
+            key,
+            pending: pending.clone(),
+        };
+        deliver(&pending, key, reply(key.2));
+        assert!(receiver.try_recv().is_ok());
+        // Delivery does not free the slot while the original HTTP future still owns it.
+        assert!(pending.lock().unwrap().contains_key(&key));
+        drop(guard);
+        assert!(!pending.lock().unwrap().contains_key(&key));
+        let (next, mut next_receiver) = oneshot::channel();
+        pending.lock().unwrap().insert(key, Some(next));
+        let next_guard = Pending {
+            key,
+            pending: pending.clone(),
+        };
+        deliver(&pending, key, reply(key.2));
+        assert!(next_receiver.try_recv().is_ok());
+        drop(next_guard);
+        assert!(pending.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn cancelled_http_waiter_releases_its_slot() {
+        let key = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
+        let pending = PendingReplies::default();
+        let (sender, receiver) = oneshot::channel();
+        pending.lock().unwrap().insert(key, Some(sender));
+        let guard = Pending {
+            key,
+            pending: pending.clone(),
+        };
+        drop(receiver);
+        drop(guard);
+        assert!(pending.lock().unwrap().is_empty());
+        deliver(&pending, key, reply(key.2));
+        assert!(pending.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn cancelled_mutation_keeps_immutable_digest_and_exact_retry_can_receive_late_reply() {
+        let key = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
+        let mut fingerprints = MutationFingerprints::default();
+        fingerprints
+            .admit(key, [1; 32])
+            .unwrap_or_else(|_| panic!("remote relay fixture failed"));
+        let pending = PendingReplies::default();
+        let (sender, receiver) = oneshot::channel();
+        pending.lock().unwrap().insert(key, Some(sender));
+        let guard = Pending {
+            key,
+            pending: pending.clone(),
+        };
+        drop(receiver);
+        drop(guard);
+        assert!(fingerprints.admit(key, [2; 32]).is_err());
+        assert!(pending.lock().unwrap().is_empty());
+        fingerprints
+            .admit(key, [1; 32])
+            .unwrap_or_else(|_| panic!("remote relay fixture failed"));
+        let (sender, mut receiver) = oneshot::channel();
+        pending.lock().unwrap().insert(key, Some(sender));
+        let guard = Pending {
+            key,
+            pending: pending.clone(),
+        };
+        // An old response is only reusable for the identical immutable request.
+        deliver(&pending, key, reply(key.2));
+        assert!(receiver.try_recv().is_ok());
+        drop(guard);
+    }
+
+    #[test]
+    fn fingerprint_capacity_preserves_exact_retries_and_prunes_only_retired_candidates() {
+        let machine = Uuid::new_v4();
+        let connection = Uuid::new_v4();
+        let mut fingerprints = MutationFingerprints::default();
+        let first = (machine, connection, Uuid::new_v4());
+        fingerprints
+            .admit(first, [1; 32])
+            .unwrap_or_else(|_| panic!("remote relay fixture failed"));
+        for _ in 1..MUTATIONS_PER_CONNECTION {
+            fingerprints
+                .admit((machine, connection, Uuid::new_v4()), [1; 32])
+                .unwrap_or_else(|_| panic!("remote relay fixture failed"));
+        }
+        assert!(
+            fingerprints
+                .admit((machine, connection, Uuid::new_v4()), [1; 32])
+                .is_err()
+        );
+        fingerprints
+            .admit(first, [1; 32])
+            .unwrap_or_else(|_| panic!("remote relay fixture failed"));
+        assert!(fingerprints.admit(first, [2; 32]).is_err());
+        let candidates = vec![(machine, connection)];
+        let replacement = (machine, Uuid::new_v4(), Uuid::new_v4());
+        fingerprints
+            .admit(replacement, [3; 32])
+            .unwrap_or_else(|_| panic!("remote relay fixture failed"));
+        fingerprints.prune(&candidates, &[(machine, connection)]);
+        assert!(fingerprints.0.contains_key(&(machine, connection)));
+        fingerprints.prune(&candidates, &[]);
+        assert!(!fingerprints.0.contains_key(&(machine, connection)));
+        assert!(fingerprints.0.contains_key(&(replacement.0, replacement.1)));
+        // Retired generations cannot disclose into a replacement's pending slot.
+        let pending = PendingReplies::default();
+        let (sender, mut receiver) = oneshot::channel();
+        pending.lock().unwrap().insert(replacement, Some(sender));
+        deliver(&pending, first, reply(first.2));
+        assert!(matches!(
+            receiver.try_recv(),
+            Err(oneshot::error::TryRecvError::Empty)
+        ));
+        for _ in 1..RETAINED_GENERATIONS {
+            fingerprints
+                .admit((Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4()), [1; 32])
+                .unwrap_or_else(|_| panic!("remote relay fixture failed"));
+        }
+        assert!(
+            fingerprints
+                .admit((Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4()), [1; 32])
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn readonly_ids_are_fresh_and_restored_without_consuming_mutation_capacity() {
+        let requested = Uuid::new_v4();
+        let operation = Operation::List {
+            after: None,
+            limit: 1,
+        };
+        let first = transport_id(&operation, requested);
+        let second = transport_id(&operation, requested);
+        assert_ne!(first, requested);
+        assert_ne!(first, second);
+        let command = Command {
+            version: VERSION,
+            connection_id: Uuid::new_v4(),
+            machine_id: Uuid::new_v4(),
+            principal_id: Uuid::new_v4(),
+            command_id: first,
+            expires_at_ms: 42,
+            operation,
+        };
+        assert!(
+            mutation_digest(&Frame::Command {
+                command: command.clone()
+            })
+            .unwrap_or_else(|_| panic!("remote relay fixture failed"))
+            .is_none()
+        );
+        let frame = Frame::Result {
+            connection_id: command.connection_id,
+            command_id: first,
+            reply: voyage_protocol::stream::Reply::Sessions { sessions: vec![] },
+        };
+        assert!(
+            matches!(restore_command_id(frame, requested).unwrap_or_else(|_| panic!("remote relay fixture failed")), Frame::Result { command_id, .. } if command_id == requested)
+        );
+        let mut mutation = command;
+        mutation.operation = Operation::Cancel {
+            session_id: Uuid::new_v4(),
+            run_id: Uuid::new_v4(),
+        };
+        assert_eq!(transport_id(&mutation.operation, requested), requested);
+        let digest = mutation_digest(&Frame::Command {
+            command: mutation.clone(),
+        })
+        .unwrap_or_else(|_| panic!("remote relay fixture failed"))
+        .unwrap();
+        mutation.expires_at_ms += 1;
+        assert_ne!(
+            mutation_digest(&Frame::Command { command: mutation })
+                .unwrap_or_else(|_| panic!("remote relay fixture failed"))
+                .unwrap(),
+            digest
+        );
+    }
 }
