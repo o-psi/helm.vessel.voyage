@@ -96,3 +96,19 @@ API-key and subscription Responses fixtures. It exercises model discovery, a too
 loop, typed reasoning replay, session persistence, and cross-process resume while a
 sentinel `codex` executable on `PATH` records and fails any invocation. CI and the
 Linux release build run this without real credentials or external network access.
+
+### Leading instructions in compatible Chat requests
+
+The native `openai-chat` serializer combines consecutive leading plain system
+messages into one system message, keeping their content in order with two newlines
+between blocks. This supports templates that accept only one initial system block,
+including runtime reconciliation guidance. It changes only the outgoing Chat
+request: saved conversation history, role authority, tool calls, context preflight
+and output limits remain unchanged. Other roles and later system messages retain
+their positions; unusual tool metadata on a system message is preserved rather
+than discarded. Responses and Anthropic serialization are unaffected.
+
+This compatibility behavior does not validate model accounting or grant completion.
+The runtime still decides whether a proposal is accepted. Offline native HTTP tests
+cover ordinary and streaming requests; successful live reconciliation remains a
+separate acceptance check under #83.
