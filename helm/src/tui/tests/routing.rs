@@ -2,6 +2,96 @@
 use super::*;
 
 struct NoRequests;
+
+#[tokio::test]
+async fn tool_details_shortcut_expands_collapses_and_respects_approval_input() {
+    let directory = tempfile::tempdir().unwrap();
+    let agent = navigation_agent(&directory);
+    let store = SessionStore::new(directory.path().join("sessions"));
+    let terminals = FakeTerminals::new();
+    let supervisor = Arc::new(FakeSupervisor::new(vec![]));
+    let todos = todo_store(&directory);
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    let mut app = App::new(Session::new(directory.path().into(), "test".into()), vec![]);
+    app.composer.insert_str("keep draft");
+    let mut message = crate::Message::new(Role::Assistant, "Inspect output");
+    message.tool_calls.push(crate::model::ToolCall {
+        id: "output".into(),
+        name: "shell".into(),
+        arguments: serde_json::json!({"command":"printf output"}),
+    });
+    app.session.messages.push(message);
+    let output = format!(
+        "exit: 0\nstdout:\n{}\nTAIL_SENTINEL\nstderr:\n",
+        "line\n".repeat(30)
+    );
+    app.session
+        .messages
+        .push(crate::Message::tool("output", output));
+    let before = serde_json::to_string(&app.session.messages).unwrap();
+    assert!(!transcript(&app, 80).to_string().contains("TAIL_SENTINEL"));
+    let key = KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL);
+    handle_key(
+        key,
+        &mut app,
+        &agent,
+        &store,
+        &tx,
+        &terminals,
+        supervisor.clone(),
+        todos.clone(),
+    )
+    .await
+    .unwrap();
+    assert!(app.tool_details);
+    assert!(transcript(&app, 80).to_string().contains("TAIL_SENTINEL"));
+    resize_conversation(&mut app, 24, 8);
+    scroll_conversation(&mut app, 8);
+    assert!(app.scroll > 0);
+    handle_key(
+        key,
+        &mut app,
+        &agent,
+        &store,
+        &tx,
+        &terminals,
+        supervisor.clone(),
+        todos.clone(),
+    )
+    .await
+    .unwrap();
+    assert!(!app.tool_details);
+    assert!(app.scroll <= max_conversation_scroll(&app));
+    assert_eq!(app.composer.text, "keep draft");
+    assert_eq!(
+        before,
+        serde_json::to_string(&app.session.messages).unwrap()
+    );
+    let (response, _answer) = oneshot::channel();
+    app.approval = Some(ApprovalRequest {
+        id: Uuid::new_v4(),
+        action: "shell".into(),
+        target: "approval".into(),
+        reason: "test".into(),
+        response,
+    });
+    handle_key(
+        key, &mut app, &agent, &store, &tx, &terminals, supervisor, todos,
+    )
+    .await
+    .unwrap();
+    assert!(!app.tool_details);
+    assert!(app.approval.is_some());
+    assert!(rx.try_recv().is_err());
+    store.save(&mut app.session).await.unwrap();
+    let mut restored = App::new(store.list().await.unwrap().remove(0), vec![]);
+    restored.tool_details = true;
+    assert!(
+        transcript(&restored, 80)
+            .to_string()
+            .contains("TAIL_SENTINEL")
+    );
+}
 #[async_trait]
 impl crate::provider::Provider for NoRequests {
     async fn complete(

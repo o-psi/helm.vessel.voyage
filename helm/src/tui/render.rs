@@ -277,7 +277,7 @@ pub(super) fn draw_shortcut_help(frame: &mut ratatui::Frame<'_>, area: Rect, app
     } else {
         (
             "Conversation",
-            "Enter: send\nShift+Enter: newline\nUp/Down: message history\nPageUp/PageDown: scroll\nEsc: cancel active work\nCtrl+D: todos\nCtrl+A: agents\nCtrl+M: models\nCtrl+T: terminals\nCtrl+L: activity\nCtrl+S: sessions\nCtrl+N: new session\nCtrl+B: branch\nCtrl+K: compact\nCtrl+E: export\nCtrl+C: cancel or quit\nCtrl+Q: quit",
+            "Enter: send\nShift+Enter: newline\nUp/Down: message history\nPageUp/PageDown: scroll\nEsc: cancel active work\nCtrl+D: todos\nCtrl+A: agents\nCtrl+M: models\nCtrl+T: terminals\nCtrl+L: activity\nCtrl+O: tool details\nCtrl+S: sessions\nCtrl+N: new session\nCtrl+B: branch\nCtrl+K: compact\nCtrl+E: export\nCtrl+C: cancel or quit\nCtrl+Q: quit",
             "^D todos · ^A agents · ^M models · ^T terminals · ^L activity · ^S sessions · ^N new · ^B branch · ^K compact · ^E export",
         )
     };

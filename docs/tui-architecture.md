@@ -19,6 +19,7 @@ under `helm/src/tui/` are private implementation details, not new public APIs.
 | `supervisor.rs` | Agent-panel state, navigation, messages/follow-ups, cancellation requests and rendering |
 | `todos.rs` | Todo-panel state, editing, store actions and rendering |
 | `terminals.rs` | Terminal-panel state, direct PTY input, screen rendering and inventory refresh |
+| `tool_output.rs` | Tool-specific headings, bounded multiline previews, full details and terminal-safe wrapping |
 | `conversation.rs` | Transcript/activity presentation, Markdown theme and viewport anchoring |
 | `render.rs` | Frame composition, overlay precedence, session picker, approvals and help |
 | `commands.rs` | Session operations and explicit session-preserving CLI handoffs |
