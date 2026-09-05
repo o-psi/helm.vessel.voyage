@@ -274,7 +274,7 @@ fn publication_failure_and_lost_acknowledgement_preserve_truthful_files() {
 fn concurrent_accept_has_one_complete_winner() {
     let root = tempfile::tempdir().unwrap();
     let barrier = std::sync::Arc::new(std::sync::Barrier::new(3));
-    let workers: Vec<_> = *b"AB"
+    let workers: Vec<_> = (*b"AB")
         .into_iter()
         .map(|byte| {
             let path = root.path().to_owned();
