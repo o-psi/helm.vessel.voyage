@@ -222,8 +222,8 @@ def main():
                         case.text('Finish or cancel the active run')
                         assert len(case.saved()['workflow_runs']) == 1
                         case.send(b'\x1b')
+                        case.wait(lambda: any(r.get('phase') == 'interrupted' for r in case.saved().get('run_summaries', [])), 'cancel persisted')
                         Provider.release.set()
-                        case.wait(lambda: any(r.get('phase') in ('interrupted', 'cancelled') for r in case.saved().get('run_summaries', [])), 'cancel persisted')
                         saved = case.saved()
                         assert len(saved['workflow_runs']) == 1
                         assert not any(m['role'] == 'assistant' and m['content'] == 'workflow-partial-before-cancel' for m in saved['messages'])

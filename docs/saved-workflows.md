@@ -53,7 +53,7 @@ Repository definitions take precedence over personal definitions with the same I
 explicitly. An untrusted repository definition never falls back silently to a
 personal definition. Built-in CLI and slash-command names are reserved.
 
-Before previewing or running a repository definition, inspect it and supply the
+Before previewing or running a repository definition from the CLI, inspect it and supply the
 exact SHA-256 digest as an explicit trust decision:
 
 ```sh
