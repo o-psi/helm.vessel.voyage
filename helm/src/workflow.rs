@@ -285,7 +285,7 @@ impl Document {
     pub fn render(&self, supplied: &[(String, String)]) -> Result<Rendered> {
         ensure!(
             !self.parameters.values().any(|p| p.secret),
-            "secret parameters are not supported for execution; use a nonsecret workflow until transient secret binding is available"
+            "secret parameters require the isolated workflow binding renderer"
         );
         self.validate()?;
         ensure!(supplied.len() <= MAX_PARAMETERS, "too many workflow inputs");
@@ -473,6 +473,11 @@ pub struct InputArgs {
     /// Nonsecret typed values only. String values are rendered as JSON strings.
     #[arg(long = "input", value_name = "NAME=VALUE")]
     pub inputs: Vec<String>,
+    /// Explicit transient secret source; pass an environment VARIABLE name, never its value.
+    /// Preview validates names without reading the environment. Only one-shot shell calls
+    /// opting into the public reference receive the value; their output is suppressed.
+    #[arg(long = "secret-env", value_name = "NAME=VARIABLE")]
+    pub secret_env: Vec<String>,
     /// Explicit trust in this exact repository workflow's SHA-256 digest.
     #[arg(long)]
     pub trust_repository: Option<String>,
@@ -480,12 +485,14 @@ pub struct InputArgs {
     pub no_save: bool,
 }
 pub struct Prepared {
+    pub secrets: secrets::SecretInputs,
     pub prompt: String,
     pub invocation: Invocation,
     pub no_save: bool,
 }
 pub fn prepare(args: WorkflowArgs, workspace: &Path) -> Result<Option<Prepared>> {
     let definitions = discover(workspace, args.user_directory.as_deref())?;
+    let is_run = matches!(&args.command, WorkflowCommand::Run(_));
     let output = match args.command {
         WorkflowCommand::List => {
             serde_json::json!({"workflows":definitions.iter().map(|d|serde_json::json!({"id":d.document.id,"version":d.document.version,"description":d.document.description,"scope":d.scope,"digest":d.digest})).collect::<Vec<_>>()})
@@ -497,33 +504,93 @@ pub fn prepare(args: WorkflowArgs, workspace: &Path) -> Result<Option<Prepared>>
         }
         WorkflowCommand::Preview(input) | WorkflowCommand::Run(input) => {
             let d = select(definitions, &input.selection.id, input.selection.scope)?;
-            ensure!(
-                !d.document.parameters.values().any(|p| p.secret),
-                "secret parameters are not supported for execution; use a nonsecret workflow until transient secret binding is available"
-            );
-            d.authorize(input.trust_repository.as_deref())?;
-            let supplied = input
-                .inputs
-                .iter()
-                .map(|value| {
-                    value
-                        .split_once('=')
-                        .map(|(a, b)| (a.to_owned(), b.to_owned()))
-                        .ok_or_else(|| anyhow::anyhow!("workflow input must be NAME=VALUE"))
+            return prepare_inputs(&d, input, is_run, |name| {
+                std::env::var(name).map_err(|_| {
+                    anyhow::anyhow!("workflow secret environment source is missing or not UTF-8")
                 })
-                .collect::<Result<Vec<_>>>()?;
-            let rendered = d.document.render(&supplied)?;
-            // Caller chooses run vs preview before passing arguments.
-            return Ok(Some(Prepared {
-                prompt: rendered.prompt,
-                invocation: d.invocation(rendered.inputs),
-                no_save: input.no_save,
-            }));
+            })
+            .map(Some);
         }
     };
     print_value(&output, args.json)?;
     Ok(None)
 }
+fn prepare_inputs(
+    definition: &Definition,
+    input: InputArgs,
+    is_run: bool,
+    mut lookup: impl FnMut(&str) -> Result<String>,
+) -> Result<Prepared> {
+    definition.authorize(input.trust_repository.as_deref())?;
+    ensure!(
+        input.inputs.len() <= MAX_PARAMETERS && input.secret_env.len() <= MAX_PARAMETERS,
+        "too many workflow inputs"
+    );
+    let supplied = input
+        .inputs
+        .iter()
+        .map(|value| {
+            value
+                .split_once('=')
+                .map(|(name, value)| (name.to_owned(), value.to_owned()))
+                .ok_or_else(|| anyhow::anyhow!("workflow input must be NAME=VALUE"))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let mut sources = BTreeMap::new();
+    for reference in input.secret_env {
+        let (name, environment) = reference
+            .split_once('=')
+            .ok_or_else(|| anyhow::anyhow!("workflow secret source must be NAME=VARIABLE"))?;
+        ensure!(
+            definition
+                .document
+                .parameters
+                .get(name)
+                .is_some_and(|p| p.secret),
+            "unknown workflow secret input"
+        );
+        ensure!(
+            !environment.is_empty()
+                && environment.len() <= 128
+                && environment
+                    .bytes()
+                    .enumerate()
+                    .all(|(i, b)| b.is_ascii_alphabetic()
+                        || b == b'_'
+                        || (i > 0 && b.is_ascii_digit())),
+            "invalid workflow secret environment source name"
+        );
+        ensure!(
+            sources
+                .insert(name.to_owned(), environment.to_owned())
+                .is_none(),
+            "duplicate workflow secret input"
+        );
+    }
+    let names = sources.keys().cloned().collect();
+    // Validate public inputs and reference completeness before touching private sources.
+    let rendered = secrets::render_public(&definition.document, &supplied, &names)?;
+    let mut values = Vec::new();
+    if is_run {
+        // Keep earlier resolved values clearing-on-drop if a later source fails.
+        let mut held = Vec::new();
+        for (name, source) in sources {
+            held.push((name, zeroize::Zeroizing::new(lookup(&source)?)));
+        }
+        values = held
+            .into_iter()
+            .map(|(name, mut value)| (name, std::mem::take(&mut *value)))
+            .collect();
+    }
+    let secrets = secrets::SecretInputs::collect(&definition.document, values)?;
+    Ok(Prepared {
+        prompt: rendered.prompt,
+        invocation: definition.invocation(rendered.inputs),
+        no_save: input.no_save,
+        secrets,
+    })
+}
+
 fn safe_text(value: &str) -> String {
     value
         .chars()

@@ -91,20 +91,36 @@ fn workflow_secret_input_is_masked_and_only_references_reach_preview_and_metadat
     let mut form = Form::new(d).unwrap();
     form.selected = 3;
     form.set_input("topic", "short-秘密🦀").unwrap();
-    let panel = Panel { mode: Some(Mode::Form(Box::new(form))), ..Default::default() };
+    let panel = Panel {
+        mode: Some(Mode::Form(Box::new(form))),
+        ..Default::default()
+    };
     let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(42, 12)).unwrap();
-    terminal.draw(|frame| panel.draw(frame, frame.area())).unwrap();
-    let screen = terminal.backend().buffer().content.iter().map(|c| c.symbol()).collect::<String>();
+    terminal
+        .draw(|frame| panel.draw(frame, frame.area()))
+        .unwrap();
+    let screen = terminal
+        .backend()
+        .buffer()
+        .content
+        .iter()
+        .map(|c| c.symbol())
+        .collect::<String>();
     assert!(!screen.contains("short"));
     assert!(!screen.contains("秘密"));
     assert!(screen.contains("[hidden]"));
-    let Some(Mode::Form(mut form)) = panel.mode else { unreachable!() };
+    let Some(Mode::Form(mut form)) = panel.mode else {
+        unreachable!()
+    };
     form.render_preview().unwrap();
     let prepared = form.prepare().unwrap();
     assert!(!prepared.prompt.contains("short-秘密🦀"));
     assert!(prepared.prompt.contains("HELM_WORKFLOW_TOPIC"));
     assert!(!prepared.invocation.inputs.contains_key("topic"));
-    assert_eq!(prepared.secrets.names().into_iter().collect::<Vec<_>>(), ["topic"]);
+    assert_eq!(
+        prepared.secrets.names().into_iter().collect::<Vec<_>>(),
+        ["topic"]
+    );
     form.unset_input("topic").unwrap();
     assert!(form.prepare().is_err());
 }
@@ -164,7 +180,7 @@ fn workflow_final_recheck_rejects_changed_removed_or_failed_discovery_without_di
             panic!("form lost");
         };
         assert!(!form.trusted);
-        assert_eq!(form.fields["topic"].as_ref().unwrap().text, "kept");
+        assert_eq!(form.fields["topic"].as_ref().unwrap().text.as_str(), "kept");
         assert!(!panel.notice.is_empty());
     }
     let request = Uuid::new_v4();
@@ -222,7 +238,7 @@ fn input_editing_is_unicode_safe_bounded_and_preview_does_not_accept_paste() {
     form.key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE))
         .unwrap();
     form.insert("界").unwrap();
-    assert_eq!(form.fields["topic"].as_ref().unwrap().text, "界🦀");
+    assert_eq!(form.fields["topic"].as_ref().unwrap().text.as_str(), "界🦀");
     form.render_preview().unwrap();
     form.insert("not appended").unwrap();
     assert_eq!(form.prepare().unwrap().invocation.inputs["topic"], "界🦀");

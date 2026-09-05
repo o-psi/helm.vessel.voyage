@@ -170,20 +170,55 @@ fn workflow_without_parameters_keeps_its_real_nonempty_prompt() {
 #[test]
 fn cli_environment_source_is_explicit_and_preview_never_reads_it() {
     use super::{Definition, InputArgs, Scope, Selection};
-    let definition = Definition { scope: Scope::User, digest: "a".repeat(64), document: parse(b"schema_version=1\nid='private-cli'\nversion='1'\ndescription='Private input'\nprompt='Use {{token}}'\n[parameters.token]\ntype='string'\nsecret=true\nrequired=true\n").unwrap() };
-    let args = || InputArgs { selection: Selection { id: "private-cli".into(), scope: None }, inputs: vec![], secret_env: vec!["token=OPERATOR_TOKEN".into()], trust_repository: None, no_save: false };
-    let preview = super::prepare_inputs(&definition, args(), false, |_| panic!("preview read operator environment")).unwrap();
+    let definition = Definition { scope: Scope::User, digest: "a".repeat(64), document: super::parse(b"schema_version=1\nid='private-cli'\nversion='1'\ndescription='Private input'\nprompt='Use {{token}}'\n[parameters.token]\ntype='string'\nsecret=true\nrequired=true\n").unwrap() };
+    let args = || InputArgs {
+        selection: Selection {
+            id: "private-cli".into(),
+            scope: None,
+        },
+        inputs: vec![],
+        secret_env: vec!["token=OPERATOR_TOKEN".into()],
+        trust_repository: None,
+        no_save: false,
+    };
+    let preview = super::prepare_inputs(&definition, args(), false, |_| {
+        panic!("preview read operator environment")
+    })
+    .unwrap();
     assert!(preview.prompt.contains("HELM_WORKFLOW_TOKEN"));
     assert!(preview.secrets.names().is_empty());
-    let run = super::prepare_inputs(&definition, args(), true, |name| { assert_eq!(name, "OPERATOR_TOKEN"); Ok("q秘密".into()) }).unwrap();
-    assert_eq!(run.secrets.names().into_iter().collect::<Vec<_>>(), ["token"]);
+    let run = super::prepare_inputs(&definition, args(), true, |name| {
+        assert_eq!(name, "OPERATOR_TOKEN");
+        Ok("q秘密".into())
+    })
+    .unwrap();
+    assert_eq!(
+        run.secrets.names().into_iter().collect::<Vec<_>>(),
+        ["token"]
+    );
     assert!(!run.prompt.contains("q秘密"));
     assert!(run.invocation.inputs.is_empty());
-    for refs in [vec!["unknown=TOKEN"], vec!["token=BAD-VALUE"], vec!["token=TOKEN", "token=OTHER"]] {
-        let mut input = args(); input.secret_env = refs.into_iter().map(String::from).collect();
-        assert!(super::prepare_inputs(&definition, input, true, |_| panic!("invalid reference read environment")).is_err());
+    for refs in [
+        vec!["unknown=TOKEN"],
+        vec!["token=BAD-VALUE"],
+        vec!["token=TOKEN", "token=OTHER"],
+    ] {
+        let mut input = args();
+        input.secret_env = refs.into_iter().map(String::from).collect();
+        assert!(
+            super::prepare_inputs(&definition, input, true, |_| panic!(
+                "invalid reference read environment"
+            ))
+            .is_err()
+        );
     }
-    let mut input = args(); input.inputs = vec!["token=DO-NOT-ECHO".into()];
-    let error = super::prepare_inputs(&definition, input, true, |_| panic!("invalid ordinary input read secret")).err().unwrap().to_string();
+    let mut input = args();
+    input.inputs = vec!["token=DO-NOT-ECHO".into()];
+    let error = super::prepare_inputs(&definition, input, true, |_| {
+        panic!("invalid ordinary input read secret")
+    })
+    .err()
+    .unwrap()
+    .to_string();
     assert!(!error.contains("DO-NOT-ECHO"));
 }

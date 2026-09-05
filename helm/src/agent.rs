@@ -482,7 +482,7 @@ impl Agent {
         input: Option<SteeringReceiver>,
         scope: Option<crate::completion::runtime::RunHandle>,
     ) -> Result<AgentOutcome, AgentError> {
-        self.run_inner(history, prompt, cancel, input, None, None, scope)
+        self.run_inner(history, prompt, cancel, input, None, None, scope, None)
             .await
     }
 
@@ -644,7 +644,7 @@ impl Agent {
         cancel: CancellationToken,
         input: Option<SteeringReceiver>,
     ) -> Result<AgentOutcome, AgentError> {
-        self.run_inner(history, prompt, cancel, input, None, None, None)
+        self.run_inner(history, prompt, cancel, input, None, None, None, None)
             .await
     }
 
@@ -665,6 +665,7 @@ impl Agent {
             Some(checkpoint),
             Some(model),
             None,
+            None,
         )
         .await
     }
@@ -680,6 +681,26 @@ impl Agent {
         model: String,
         scope: Option<crate::completion::runtime::RunHandle>,
     ) -> Result<AgentOutcome, AgentError> {
+        self.run_checkpointed_scoped_with_workflow_secrets(
+            history, prompt, cancel, input, checkpoint, model, scope, None,
+        )
+        .await
+    }
+
+    /// Transient bindings belong to this accepted checkpoint run only. They are
+    /// deliberately absent from the shared ToolContext and child-agent runtime.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn run_checkpointed_scoped_with_workflow_secrets(
+        &self,
+        history: Vec<Message>,
+        prompt: String,
+        cancel: CancellationToken,
+        input: Option<SteeringReceiver>,
+        checkpoint: &dyn RunCheckpoint,
+        model: String,
+        scope: Option<crate::completion::runtime::RunHandle>,
+        bindings: Option<crate::workflow::secrets::RunBindings>,
+    ) -> Result<AgentOutcome, AgentError> {
         self.run_inner(
             history,
             prompt,
@@ -688,6 +709,7 @@ impl Agent {
             Some(checkpoint),
             Some(model),
             scope,
+            bindings,
         )
         .await
     }
@@ -702,6 +724,7 @@ impl Agent {
         checkpoint: Option<&dyn RunCheckpoint>,
         selected_model: Option<String>,
         scope: Option<crate::completion::runtime::RunHandle>,
+        bindings: Option<crate::workflow::secrets::RunBindings>,
     ) -> Result<AgentOutcome, AgentError> {
         self.check_current_policy()?;
         let root_scope = scope.clone();
@@ -744,6 +767,14 @@ impl Agent {
         }
         if context.execution_id.is_nil() {
             return Err(CheckpointError.into());
+        }
+        if bindings
+            .as_ref()
+            .is_some_and(|bindings| !bindings.matches_run(context.execution_id))
+        {
+            return Err(AgentError::Completion(
+                "workflow secret bindings do not match this run".into(),
+            ));
         }
         history.retain(|message| message.role != crate::model::Role::System);
         history.push(Message::new(crate::model::Role::User, prompt));
@@ -938,7 +969,7 @@ impl Agent {
                 let result = tokio::select! {
                     biased;
                     _ = cancel.cancelled() => { self.sink.emit(AgentEvent::Cancelled).await; return Err(AgentError::Cancelled); }
-                    value = gate::guarded(self.tools.execute(&call.name, call.arguments, &context), &cancel, deadline) => value?,
+                    value = gate::guarded(self.tools.execute_with_workflow_secrets(&call.name, call.arguments, &context, bindings.as_ref()), &cancel, deadline) => value?,
                 };
                 tracing::info!(execution_id = %context.execution_id, tool = %call.name,
                     success = result.is_ok(), "tool execution finished");
@@ -2329,3 +2360,6 @@ mod tests {
         assert!(recovery_debug.contains("output_tokens: 5"));
     }
 }
+
+#[cfg(test)]
+mod secret_tests;

@@ -254,3 +254,64 @@ async fn private_managed_shell_cancellation_and_abandoned_future_keep_observed_c
         );
     }
 }
+
+#[tokio::test]
+async fn private_shell_preserves_approval_denial_environment_conflicts_and_sanitized_timeouts() {
+    for managed in [false, true] {
+        if managed && !cfg!(target_os = "linux") {
+            continue;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let mut ctx = context(dir.path());
+        let bound = bindings(ctx.execution_id, "sensitive-error-秘密");
+        let mut registry = ToolRegistry::default();
+        let manager = managed.then(ManagedShell::new);
+        if let Some(manager) = &manager {
+            registry.register(manager.clone());
+        } else {
+            registry.register(Shell);
+        }
+        let command =
+            serde_json::json!({"command":"touch forbidden", "workflow_secrets":["token"]});
+        ctx.environment
+            .insert("HELM_WORKFLOW_TOKEN".into(), "configured-value".into());
+        let error = registry
+            .execute_with_workflow_secrets("shell", command.clone(), &ctx, Some(&bound))
+            .await
+            .unwrap_err();
+        assert!(matches!(error, ToolError::InvalidArguments(_)));
+        assert!(!dir.path().join("forbidden").exists());
+        ctx.environment.remove("HELM_WORKFLOW_TOKEN");
+        ctx.policy = Arc::new(
+            Policy::new(
+                &Config {
+                    access: Some(AccessMode::Approval),
+                    ..Config::default()
+                },
+                dir.path().into(),
+            )
+            .unwrap(),
+        );
+        let error = registry
+            .execute_with_workflow_secrets("shell", command, &ctx, Some(&bound))
+            .await
+            .unwrap_err();
+        assert!(matches!(error, ToolError::Denied(_)));
+        assert!(!dir.path().join("forbidden").exists());
+        ctx.policy = context(dir.path()).policy;
+        ctx.timeout = Duration::from_millis(80);
+        let error = registry.execute_with_workflow_secrets("shell", serde_json::json!({"command":"printf '%s' \"$HELM_WORKFLOW_TOKEN\"; sleep 2", "workflow_secrets":["token"]}), &ctx, Some(&bound)).await.unwrap_err();
+        assert!(matches!(error, ToolError::Timeout));
+        assert!(!error.to_string().contains("sensitive-error"));
+        if let Some(manager) = manager {
+            assert!(
+                manager
+                    .shutdown(Duration::from_secs(5))
+                    .await
+                    .observation_complete
+            );
+            assert!(registry.execute_with_workflow_secrets("shell", serde_json::json!({"command":"touch forbidden", "workflow_secrets":["token"]}), &ctx, Some(&bound)).await.is_err());
+            assert!(!dir.path().join("forbidden").exists());
+        }
+    }
+}

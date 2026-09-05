@@ -184,12 +184,15 @@ def main():
                     case.text('HELM')
                     if mode == 'secret':
                         case.send('/workflow review-change\r')
-                        case.text('Secret workflow inputs are not supported')
+                        case.text('Input 1/2')
+                        case.send(b'\t\x1b[200~hidden-input-canary\x1b[201~')
+                        case.text('[hidden]')
+                        assert b'hidden-input-canary' not in case.output
                         case.assert_unaccepted()
                         case.send(b'\x1b')
                         case.text('HELM')
                         case.finish()
-                        print('workflow secret: rejected before input collection or dispatch')
+                        print('workflow secret: hidden input cancelled without invocation or dispatch')
                         continue
                     scope = 'user' if mode == 'denied' else 'repository'
                     case.open(scope)

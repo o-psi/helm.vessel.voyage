@@ -1,6 +1,7 @@
 # Saved workflows
 
-Save repeatable tasks as TOML files and invoke them with validated, nonsecret inputs.
+Save repeatable tasks as TOML files and invoke them with validated inputs. Public
+inputs become model-visible data; explicitly bound secrets remain transient.
 A workflow supplies a prompt, not permissions: Helm keeps your selected provider,
 model, workspace, access mode, approvals and resource limits.
 
@@ -89,11 +90,10 @@ remain governed by ordinary local policy.
 
 Optional `[recommended]` fields `provider`, `model`, and `access` are shown by
 inspection but never applied. Workflows cannot configure tools, environment,
-credentials or access roots. Secret declarations (`secret = true`) can be inspected
-and validated, but **preview and run reject workflows containing them** before
-resolving inputs. Secret defaults and choices are invalid. Do not put credentials
-in workflow files or ordinary `--input` values: nonsecret inputs are model-visible
-and recorded. Transient secret binding remains future work under [#67](https://github.com/o-psi/voyage/issues/67).
+credentials or access roots. Secret declarations (`secret = true`) use the isolated
+binding path described below. Secret defaults and choices are invalid. Never put
+credentials in workflow files or ordinary `--input` values: nonsecret inputs are
+model-visible and recorded.
 
 Saved sessions include default-compatible `workflow_runs` metadata: identity,
 version, source scope, definition digest and resolved nonsecret inputs. This records
@@ -134,8 +134,10 @@ Untouched fields use defaults or optional `null`; Ctrl-U resets a field to unset
 An explicitly edited empty string differs from unset. Shift-Enter inserts a newline;
 bracketed paste and Unicode editing stay within the selected field's 8 KiB limit.
 Cursor navigation alone does not change an unset field. Backspace/Delete begin an
-explicit edit. These inputs are model-visible and saved, never secret terminal input.
-Definitions declaring secret parameters cannot open an input form.
+explicit edit. Nonsecret inputs are model-visible and saved. Secret fields use an
+independent clearing buffer and display only `[hidden]`; previews show public
+references. Closing the form drops its private values. Preparation rejection keeps
+the private form values available for correction without recording them.
 
 Review the rendered prompt, identity, version, source and SHA-256 digest. Up/Down
 or PageUp/PageDown scrolls the preview. For a repository definition, press plain
@@ -166,7 +168,64 @@ summaries and checkpoints. There is no separate workflow executor or policy expa
 `tests/system/tui_workflows.py` exercises actual PTY input, native HTTP, exact digest
 changes, defaults, literal input, metadata-before-dispatch, ordinary policy denial and
 cancellation. Unit/routing tests cover malformed values, stale discovery, secret
-refusal, modifier keys, draft retention, input isolation, narrow rendering, run limits
+masking/cancellation, modifier keys, draft retention, input isolation, narrow rendering, run limits
 and canonical save failure. This is deterministic offline evidence; no new live model
-or native-platform acceptance is implied. Plain-mode missing-input prompting and
-transient secret binding remain separate #67 work.
+or native-platform acceptance is implied. Plain-mode missing-input prompting remains
+separate #67 work; unattended calls must supply required inputs explicitly.
+
+
+## Transient private shell bindings
+
+Declare a secret parameter without a default or choices. Its type and bounds still
+apply. For CLI execution, pass the **name of an existing environment variable**:
+
+```sh
+helm workflow preview private-check --secret-env token=OPERATOR_TOKEN
+helm workflow run private-check --secret-env token=OPERATOR_TOKEN
+```
+
+The preview validates input names and completeness but never reads `OPERATOR_TOKEN`.
+Execution reads that source explicitly; it does not expand template text or import
+other environment variables. Missing/non-UTF-8 sources fail with a fixed diagnostic.
+In the TUI, enter the secret in the masked field instead. Do not send secret values
+through ordinary messages, steering, Questions, `--input`, or command-line arguments.
+
+A `{{token}}` placeholder becomes the public JSON reference
+`{"workflow_secret":"token","environment":"HELM_WORKFLOW_TOKEN"}`. Optional unbound
+secrets become `null`; required secrets must be supplied. Secret names are normalized
+to uppercase with hyphens replaced by underscores after the `HELM_WORKFLOW_` prefix;
+colliding names are rejected. Only nonsecret values enter `workflow_runs.inputs`.
+References reveal the parameter's name and intended environment key, never its value.
+
+The provider may explicitly request the existing one-shot `shell` tool with
+`"workflow_secrets":["token"]` beside its normal `command`. The registry resolves only
+names bound to the exact accepted run, checks for configured-environment conflicts,
+and leaves ordinary roots, command rules, selected-profile freshness, approvals,
+cancellation and deadlines in force. Unknown/stale references and bindings requested
+by other tools fail. Plain shell calls without the field receive no workflow secret.
+Bindings are not passed to PTYs, MCP tools, subagents, later runs or resumed sessions.
+Persisted metadata cannot recreate binding authority.
+
+For a bound shell call, stdin, stdout and stderr are connected to the null device
+**before spawn**. No output is captured, truncated, decoded or redacted: even short,
+Unicode, split or encoded secret output cannot enter the tool result. The result is
+fixed typed JSON, `{"status":"exited","code":0}` (with the actual exit code) or
+`{"status":"signalled"}`; failures use fixed diagnostics. This intentionally prevents
+reading ordinary stdout from the same private call. Use a separate unbound operation
+for public output, and never write private values into files that Helm will read.
+
+This is application-level data routing, **not an OS sandbox**. Authorized commands
+can still write files, access the network, or create descendants under existing local
+policy. The feature does not promise to erase OS/environment copies or stop escaped
+processes. Normal one-shot shell lifecycle limits remain; the managed adapter retains
+its existing bounded session observation and cleanup obligations. Clearing buffers
+on drop is best effort, not a guarantee that every allocator, terminal or OS copy is
+zeroized. Cancellation and retry never silently carry bindings into another run.
+
+`tests/system/workflow_secrets.py` checks actual native HTTP, CLI and PTY flows,
+private environment use verified by a digest artifact, public-only canonical records,
+no-save, selected-profile denial and stale-profile refusal. Unit tests cover exact run
+fencing without completion scope, short/Unicode and split/encoded output, typed bounds,
+unknown/duplicate refs, environment conflicts, approval denial, timeout, cancellation,
+abandoned execution and observed managed cleanup. Linux validation is required;
+macOS/Windows native tests and new live-model evaluations are not part of this slice.

@@ -147,7 +147,7 @@ def main():
             for action in ['preview','run']:
                 result=invoke(action,'review-change','--scope','user','--input','target=NEVER_EXPOSE_SECRET',ok=False)
                 assert 'NEVER_EXPOSE_SECRET' not in result.stdout+result.stderr
-                assert 'secret parameters are not supported' in result.stderr
+                assert 'unknown workflow input' in result.stderr
             assert len(Provider.requests)==count
             assert 'NEVER_EXPOSE_SECRET' not in ''.join(p.read_text() for p in Provider.sessions.glob('*.json'))
             (user/'review-change.toml').write_text(DOCUMENT.replace('id="review-change"','id="run"'))
