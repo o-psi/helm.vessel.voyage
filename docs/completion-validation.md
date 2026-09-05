@@ -188,9 +188,9 @@ has durable checkpoint/classification tests plus an actual PTY cancellation,
 handoff and resumed-turn fixture; those are stronger than rendering-only tests,
 but are not a live-model TUI semantic evaluation.
 
-These broader acceptance items keep #83 and the main completion cutover open.
-They do not independently block scope-complete ownership, cleanup, catalogue or
-local managed-CLI changes from merging into their tested feature parents. Such
-merges must retain explicit scope limits and passing checks for the exact merged
-code; they are not claims that the entire completion or remote-execution epic is
-finished.
+These broader acceptance items keep full #83, remote execution and subscription
+cutover open. They do not block delivering the completed local ownership, cleanup,
+catalogue, completion gate or managed CLI to main after reviewed Linux verification.
+That delivery retains explicit scope limits and passing checks for the merged code;
+it does not claim successful live-model reconciliation or completion of the remote
+execution and cutover epics.
