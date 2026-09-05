@@ -340,3 +340,15 @@ fn immutable_publication_reuses_exact_candidate_but_rejects_links() {
     assert!(directory.publish_new("next.json", b"next").is_err());
     assert!(!directory.path().join("next.json").exists());
 }
+
+#[test]
+fn open_existing_never_creates_a_missing_directory() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("missing-private-directory");
+    assert!(PrivateDirectory::open_existing(&path).is_err());
+    assert!(!path.exists());
+    drop(PrivateDirectory::open(&path).unwrap());
+    let before = std::fs::read_dir(&path).unwrap().count();
+    drop(PrivateDirectory::open_existing(&path).unwrap());
+    assert_eq!(std::fs::read_dir(&path).unwrap().count(), before);
+}

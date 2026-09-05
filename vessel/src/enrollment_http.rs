@@ -60,6 +60,29 @@ impl EnrollmentApi {
             .route_layer(middleware::from_fn_with_state(self.clone(), boundary))
             .with_state(self)
     }
+    pub(crate) fn attachment_origin(&self) -> &str {
+        &self.origin
+    }
+    pub(crate) async fn attachment_connect(
+        &self,
+        proof: SignedChallenge,
+    ) -> Result<Receipt, EnrollmentError> {
+        if !matches!(proof.challenge.operation, ProofOperation::Connect { .. }) {
+            return Err(EnrollmentError::Denied);
+        }
+        self.operation(move |store, now| store.complete(&proof, None, now))
+            .await
+            .map_err(|e| e.0)
+    }
+    pub(crate) async fn attachment_current(
+        &self,
+        machine: Uuid,
+        epoch: u64,
+    ) -> Result<Receipt, EnrollmentError> {
+        self.operation(move |store, _| store.current(machine, epoch))
+            .await
+            .map_err(|e| e.0)
+    }
     async fn operation<T: Send + 'static>(
         &self,
         f: impl FnOnce(&mut EnrollmentStore, i64) -> Result<T, EnrollmentError> + Send + 'static,

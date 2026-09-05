@@ -269,7 +269,6 @@ fn corrupted_state_and_owner_switch_rejected() {
     let mut client = open(root.path());
     active(&mut client);
     pending_rotation(&mut client);
-    assert_eq!(client.detach(), Err(ClientError::Conflict));
     let receipt = Receipt {
         machine_id: client.machine_id(),
         owner_id: Uuid::new_v4(),
@@ -500,8 +499,7 @@ fn native_replacement_failure_retains_identity_and_poisons_the_client() {
         .private_directory
         .open_file("client.json", false)
         .unwrap();
-    client.state.status = Status::Detached;
-    assert_eq!(client.persist().unwrap_err(), ClientError::Storage);
+    assert_eq!(client.detach().unwrap_err(), ClientError::Storage);
     assert_eq!(client.ready().unwrap_err(), ClientError::Storage);
     assert_eq!(fs::read(root.path().join("client.json")).unwrap(), original);
     drop(held);
@@ -509,4 +507,224 @@ fn native_replacement_failure_retains_identity_and_poisons_the_client() {
     let reopened = open(root.path());
     assert_eq!(reopened.machine_id(), id);
     assert_eq!(reopened.status(), Status::Unenrolled);
+}
+
+#[test]
+fn inspect_missing_enrollment_creates_nothing() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("missing");
+    assert!(EnrollmentClient::inspect(&path).unwrap().is_none());
+    assert!(!path.exists());
+    assert!(EnrollmentClient::open_existing(&path, "https://example.com", false).is_err());
+    assert!(!path.exists());
+}
+#[test]
+fn inspect_and_open_existing_preserve_exact_state() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("private");
+    let client = EnrollmentClient::open(&path, "https://example.com", false).unwrap();
+    let id = client.machine_id();
+    drop(client);
+    let before = std::fs::read(path.join("client.json")).unwrap();
+    let info = EnrollmentClient::inspect(&path).unwrap().unwrap();
+    assert_eq!(info.machine_id, id);
+    assert_eq!(info.status, Status::Unenrolled);
+    let client = EnrollmentClient::open_existing(&path, "https://example.com", false).unwrap();
+    drop(client);
+    assert_eq!(std::fs::read(path.join("client.json")).unwrap(), before);
+}
+#[test]
+fn inspection_reports_busy_and_rejects_missing_lock_without_repair() {
+    let dir = directory();
+    let client = open(dir.path());
+    assert!(matches!(
+        EnrollmentClient::inspect(dir.path()),
+        Err(ClientError::Busy)
+    ));
+    drop(client);
+    std::fs::remove_file(dir.path().join("client.lock")).unwrap();
+    let before = std::fs::read(dir.path().join("client.json")).unwrap();
+    assert!(EnrollmentClient::inspect(dir.path()).is_err());
+    assert!(!dir.path().join("client.lock").exists());
+    assert_eq!(
+        std::fs::read(dir.path().join("client.json")).unwrap(),
+        before
+    );
+}
+#[test]
+fn detach_of_confirmed_revoked_identity_is_read_only() {
+    let dir = directory();
+    let mut client = open(dir.path());
+    active(&mut client);
+    client.state.status = Status::Revoked;
+    client.persist().unwrap();
+    let path = dir.path().join("client.json");
+    let before = std::fs::read(&path).unwrap();
+    let modified = std::fs::metadata(&path).unwrap().modified().unwrap();
+    client.detach().unwrap();
+    assert_eq!(client.status(), Status::Revoked);
+    assert_eq!(std::fs::read(&path).unwrap(), before);
+    assert_eq!(
+        std::fs::metadata(&path).unwrap().modified().unwrap(),
+        modified
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn releasing_client_unlocks_inherited_file_description() {
+    let dir = directory();
+    let client = open(dir.path());
+    // dup and fork share the same open file description and flock ownership.
+    let inherited = client._lock.0.try_clone().unwrap();
+    assert!(matches!(
+        EnrollmentClient::open_existing(dir.path(), "https://vessel.example", false),
+        Err(ClientError::Busy)
+    ));
+    drop(client);
+    let reopened = EnrollmentClient::open_existing(dir.path(), "https://vessel.example", false);
+    drop(inherited);
+    assert!(
+        reopened.is_ok(),
+        "released enrollment owner retained its lock: {:?}",
+        reopened.err()
+    );
+}
+
+#[test]
+fn pending_detach_survives_recovery_without_reactivation() {
+    for kind in ["enroll", "rotate", "revoke"] {
+        let root = directory();
+        let mut client = open(root.path());
+        if kind != "enroll" {
+            active(&mut client);
+        }
+        if kind == "rotate" {
+            pending_rotation(&mut client);
+        } else {
+            client.state.pending = Some(Pending {
+                operation: if kind == "enroll" {
+                    ProofOperation::Enroll {
+                        transaction_id: Uuid::new_v4(),
+                        invitation_id: Uuid::new_v4(),
+                        machine_id: client.machine_id(),
+                        public_key: client.key().unwrap().public_key(),
+                    }
+                } else {
+                    ProofOperation::Revoke {
+                        transaction_id: Uuid::new_v4(),
+                        machine_id: client.machine_id(),
+                        epoch: client.epoch(),
+                    }
+                },
+                new_private_key: None,
+            });
+            client.state.status = if kind == "enroll" {
+                Status::Enrolling
+            } else {
+                Status::Revoking
+            };
+            client.persist().unwrap();
+        }
+        let before: serde_json::Value =
+            serde_json::from_slice(&fs::read(root.path().join("client.json")).unwrap()).unwrap();
+        client.detach().unwrap();
+        let after: serde_json::Value =
+            serde_json::from_slice(&fs::read(root.path().join("client.json")).unwrap()).unwrap();
+        assert_eq!(before["pending"], after["pending"]);
+        assert_eq!(before["private_key"], after["private_key"]);
+        assert_eq!(after["locally_disabled"], true);
+        assert_eq!(client.active(), Err(ClientError::Conflict));
+        drop(client);
+        let mut client = open(root.path());
+        let receipt = Receipt {
+            machine_id: client.machine_id(),
+            owner_id: client.owner_id().unwrap_or_else(Uuid::new_v4),
+            epoch: if kind == "enroll" { 1 } else { 2 },
+            revoked: kind == "revoke",
+        };
+        client.accept_receipt(&receipt).unwrap();
+        assert_eq!(
+            client.status(),
+            if kind == "revoke" {
+                Status::Revoked
+            } else {
+                Status::Detached
+            }
+        );
+        assert_eq!(client.active(), Err(ClientError::Conflict));
+        assert!(client.state.pending.is_none());
+        if kind == "rotate" {
+            assert_eq!(
+                serde_json::to_value(&client.state.private_key).unwrap(),
+                before["pending"]["new_private_key"]
+            );
+        }
+        drop(client);
+        assert_eq!(open(root.path()).active(), Err(ClientError::Conflict));
+    }
+}
+
+#[test]
+fn disabled_state_compatibility_and_contradictions_fail_closed() {
+    let root = directory();
+    let mut client = open(root.path());
+    active(&mut client);
+    let mut prior = serde_json::to_value(&client.state).unwrap();
+    prior.as_object_mut().unwrap().remove("locally_disabled");
+    let legacy: State = serde_json::from_value(prior.clone()).unwrap();
+    validate_state(&legacy).unwrap();
+    assert!(!legacy.locally_disabled);
+    prior["locally_disabled"] = serde_json::json!(true);
+    assert_eq!(
+        validate_state(&serde_json::from_value(prior.clone()).unwrap()),
+        Err(ClientError::Storage)
+    );
+    prior["locally_disabled"] = serde_json::json!("false");
+    assert!(serde_json::from_value::<State>(prior).is_err());
+    client.detach().unwrap();
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    #[allow(dead_code)]
+    struct PreviousState {
+        version: u16,
+        origin: String,
+        machine_id: Uuid,
+        owner_id: Option<Uuid>,
+        epoch: u64,
+        status: Status,
+        private_key: Vec<u8>,
+        pending: Option<Pending>,
+    }
+    assert!(
+        serde_json::from_slice::<PreviousState>(
+            &fs::read(root.path().join("client.json")).unwrap()
+        )
+        .is_err()
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn pending_detach_write_failure_poison_prevents_network_and_retains_disk_recovery() {
+    let root = directory();
+    let mut client = open(root.path());
+    active(&mut client);
+    pending_rotation(&mut client);
+    let path = root.path().join("client.json");
+    let original = fs::read(&path).unwrap();
+    let backup = root.path().join("test-backup.json");
+    fs::rename(&path, &backup).unwrap();
+    fs::create_dir(&path).unwrap();
+    assert_eq!(client.detach(), Err(ClientError::Storage));
+    assert_eq!(client.active(), Err(ClientError::Storage));
+    assert_eq!(client.detach(), Err(ClientError::Storage));
+    assert_eq!(fs::read(&backup).unwrap(), original);
+    fs::remove_dir(&path).unwrap();
+    fs::rename(backup, &path).unwrap();
+    drop(client);
+    let client = open(root.path());
+    assert_eq!(client.status(), Status::Rotating);
+    assert!(!client.inspection().locally_disabled);
+    assert!(client.state.pending.is_some());
 }

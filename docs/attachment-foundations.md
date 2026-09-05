@@ -179,5 +179,14 @@ crash-resumable JSON-to-journal authority transfer and a quiescent schema upgrad
 without frontend wiring or automatic operator-state migration.
 
 The subsequent [event/replay contract](attachment-events.md) adds negotiated,
-bounded observation frames and receive-side cursor checks. It remains a partial
-#9 foundation with no authenticated socket, execution or raw snapshot exposure.
+bounded observation frames and receive-side cursor checks. Its frames alone do not
+authenticate a connection, execute work or expose a raw snapshot.
+
+The [authenticated socket libraries](attachment-transport.md) add an outbound
+Helm connection and a separately constructed Vessel attachment router. Production
+routing and operator execution remain unwired pending authoritative local dispatch
+and current sharing integration; transport observations never grant effect authority.
+
+The [enrollment lifecycle CLI](attachment-cli.md) exposes explicit enroll, status,
+resume, rotate, revoke and offline detach commands. It reuses durable client
+transactions and does not start a worker or expose remote execution.

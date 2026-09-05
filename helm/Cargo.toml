@@ -10,7 +10,9 @@ name = "helm"
 path = "src/main.rs"
 
 [dependencies]
+log.workspace = true
 voyage-protocol.workspace = true
+tokio-tungstenite.workspace = true
 rusqlite = { version = "0.37", features = ["bundled"] }
 anyhow = "1.0"
 async-trait = "0.1"
@@ -24,7 +26,7 @@ clap_mangen = "0.2"
 dirs = "6.0"
 futures-util = "0.3"
 async-stream = "0.3"
-ratatui = "0.29"
+ratatui = { version = "0.30", default-features = false, features = ["crossterm", "layout-cache", "underline-color"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -49,7 +51,10 @@ pulldown-cmark = "0.13"
 syntect = { version = "5.3", default-features = false, features = ["default-syntaxes", "default-themes", "regex-fancy"] }
 
 [dev-dependencies]
+axum.workspace = true
+vessel = { path = "../vessel" }
 tokio = { version = "1.47", features = ["test-util"] }
 
 [target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_System_Console", "Win32_System_Threading"] }
 voyage-storage.workspace = true
