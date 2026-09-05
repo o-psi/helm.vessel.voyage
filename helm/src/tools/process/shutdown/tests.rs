@@ -45,7 +45,10 @@ async fn wait_failure_retains_handle_and_reports_only_sanitized_codes_then_retri
     let mut child = OwnedChild::new(Box::new(FailedWait(failed.clone())));
     child.session_observed = true;
     tool.pending.lock().unwrap().insert(id, child);
-    let report = tool.shutdown(Duration::from_millis(10)).await;
+    // Assert the injected observer error directly; a 10 ms blocking-pool
+    // scheduling deadline can return TimedOut before any handle is inspected.
+    // Dedicated timeout tests cover that separate conservative outcome.
+    let report = tool.shutdown_step(Instant::now() + Duration::from_secs(5));
     assert!(!report.observation_complete);
     assert_eq!(report.remaining, vec![TerminalId(id)]);
     assert!(
@@ -57,9 +60,10 @@ async fn wait_failure_retains_handle_and_reports_only_sanitized_codes_then_retri
     assert!(!encoded.contains("secret"));
     assert!(!encoded.contains("hostile"));
     assert!(!encoded.contains('\x1b'));
+    assert!(tool.pending.lock().unwrap().contains_key(&id));
     failed.store(false, Ordering::SeqCst);
     assert!(
-        tool.shutdown(Duration::from_secs(1))
+        tool.shutdown(Duration::from_secs(5))
             .await
             .observation_complete
     );
