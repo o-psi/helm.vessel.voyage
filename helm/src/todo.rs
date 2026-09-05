@@ -227,7 +227,7 @@ impl TodoStore {
             if status == TodoStatus::Blocked {
                 anyhow::ensure!(
                     !item.blockers.is_empty(),
-                    "use set_blockers to describe why the todo is blocked"
+                    "use todo action=block with id and nonempty blockers to explain why the todo is blocked"
                 );
             }
             let item = list.items.get_mut(&id).unwrap();

@@ -168,8 +168,33 @@ fn todo_schema_matches_every_action_and_optional_field_contract() {
 fn todo_examples_cover_every_action_with_valid_arguments() {
     let root = tempfile::tempdir().unwrap();
     let definition = definition(root.path());
+    println!(
+        "todo definition bytes: {}",
+        serde_json::to_vec(&definition).unwrap().len()
+    );
+    let completion = crate::completion::tool::CompletionTool::new(
+        Arc::new(TodoStore::new(
+            root.path().join("completion-todos.json"),
+            crate::todo::TodoScope::workspace(root.path().into()),
+        )),
+        crate::subagent::AgentTreeStore::new(root.path().join("agents.json")),
+    )
+    .definition();
+    println!(
+        "completion definition bytes: {}",
+        serde_json::to_vec(&completion).unwrap().len()
+    );
     let schema = definition.input_schema;
+    println!(
+        "todo schema bytes: {}",
+        serde_json::to_vec(&schema).unwrap().len()
+    );
     let validator = crate::provider::schema_fixture::validator(&schema);
+    let encoded_examples = schema["examples"].to_string();
+    assert!(
+        !encoded_examples.contains("actual.txt") && !encoded_examples.contains("claims.txt"),
+        "runtime examples must not embed evaluation seed files"
+    );
     let examples = schema["examples"]
         .as_array()
         .expect("one valid example per action");

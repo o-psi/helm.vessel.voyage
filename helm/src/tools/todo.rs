@@ -100,7 +100,7 @@ enum Args {
     Archive {
         id: Uuid,
     },
-    ClearCompleted,
+    ClearCompleted {},
 }
 #[derive(Clone, Copy, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
@@ -145,7 +145,11 @@ impl From<StatusArg> for TodoStatus {
 #[async_trait]
 impl Tool for TodoTool {
     fn definition(&self) -> ToolDefinition {
-        ToolDefinition{name:"todo".into(),description:"Manage Helm's durable workspace task list: create/list/edit/status/block/dependencies/assign/note/progress/evidence/reorder/remove/archive/clear_completed. Set status to pending to reopen work.".into(),input_schema:json!({"type":"object","required":["action"],"properties":{"action":{"enum":["create","list","edit","status","block","dependencies","assign","note","progress","evidence","reorder","remove","archive","clear_completed"]},"id":{"type":"string","format":"uuid"},"title":{"type":"string"},"description":{"type":"string"},"priority":{"enum":["low","normal","high","critical"]},"status":{"enum":["pending","in_progress","blocked","completed","cancelled"]},"order":{"type":"integer"},"assignees":{"type":"array","items":{"type":"string"}},"blockers":{"type":"array","items":{"type":"string"}},"add":{"type":"array","items":{"type":"string","format":"uuid"}},"remove":{"type":"array","items":{"type":"string","format":"uuid"}},"text":{"type":"string"},"author":{"type":"string"},"include_archived":{"type":"boolean"}},"additionalProperties":false})}
+        ToolDefinition {
+            name: "todo".into(),
+            description: "Manage durable workspace tasks. Each action accepts only its branch's keys. Use block with id and blockers to explain blocked work; [] clears reasons and reopens blocked work. Record verification via evidence, not title/progress text. Status changes do not record evidence or completion accounting. Remove/archive/clear_completed never erase run-owned obligations. clear_completed archives all completed items and accepts no id. Examples show shapes; copy actual IDs and record only real evidence.".into(),
+            input_schema: schema::input_schema(),
+        }
     }
     async fn execute(&self, args: Value, context: &ToolContext) -> Result<String, ToolError> {
         let args: Args = serde_json::from_value(args).map_err(invalid)?;
@@ -264,7 +268,7 @@ impl Tool for TodoTool {
             Args::Archive { id } => {
                 serde_json::to_value(self.store.archive(TodoId(id)).await.map_err(failed)?)
             }
-            Args::ClearCompleted => {
+            Args::ClearCompleted {} => {
                 Ok(json!({"archived":self.store.clear_completed().await.map_err(failed)?}))
             }
         }
@@ -442,3 +446,5 @@ mod tests {
 
 #[cfg(test)]
 mod schema_tests;
+
+mod schema;
