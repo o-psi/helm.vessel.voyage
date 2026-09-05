@@ -50,3 +50,6 @@ syntect = { version = "5.3", default-features = false, features = ["default-synt
 
 [dev-dependencies]
 tokio = { version = "1.47", features = ["test-util"] }
+
+[target.'cfg(windows)'.dependencies]
+voyage-storage.workspace = true

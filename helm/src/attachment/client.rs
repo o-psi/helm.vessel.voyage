@@ -6,10 +6,12 @@ use reqwest::{Client, Url};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::{
     fs::{self, File},
-    io::{Read, Write},
-    path::{Path, PathBuf},
+    io::Read,
+    path::Path,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
+#[cfg(not(windows))]
+use std::{io::Write, path::PathBuf};
 use uuid::Uuid;
 use voyage_protocol::enrollment::{
     Challenge, MAX_PROOF_BYTES, ProofOperation, SignedChallenge, SigningKey,
@@ -125,7 +127,10 @@ pub fn validate_origin(origin: &str, allow_loopback_http: bool) -> Result<String
 }
 
 pub struct EnrollmentClient {
+    #[cfg(not(windows))]
     directory: PathBuf,
+    #[cfg(windows)]
+    private_directory: voyage_storage::PrivateDirectory,
     _lock: File,
     http: Client,
     state: State,
@@ -133,17 +138,30 @@ pub struct EnrollmentClient {
 }
 impl EnrollmentClient {
     /// Explicit dedicated directory (not an existing Helm/session data root).
-    /// Unix requires owned 0700 directory and owned 0600 regular files; other
-    /// platforms fail closed until equivalent native ACL checks are implemented.
+    /// Unix requires owned 0700/0600 storage. Windows requires verified owner-only
+    /// native ACLs on a local NTFS volume; other platforms fail closed.
     pub fn open(directory: &Path, origin: &str, allow_loopback_http: bool) -> Result<Self> {
         let origin = validate_origin(origin, allow_loopback_http)?;
+        #[cfg(windows)]
+        let private_directory =
+            voyage_storage::PrivateDirectory::open(directory).map_err(storage_error)?;
+        #[cfg(windows)]
+        let lock = private_directory
+            .lock("client.lock")
+            .map_err(storage_error)?;
+        #[cfg(not(windows))]
         let lock = lock_directory(directory)?;
         let path = directory.join("client.json");
         let state = match fs::symlink_metadata(&path) {
             Ok(_) => {
                 let mut bytes = Vec::new();
-                private_file(&path, false)?
-                    .take(65537)
+                #[cfg(windows)]
+                let file = private_directory
+                    .open_file("client.json", false)
+                    .map_err(storage_error)?;
+                #[cfg(not(windows))]
+                let file = private_file(&path, false)?;
+                file.take(65537)
                     .read_to_end(&mut bytes)
                     .map_err(|_| ClientError::Storage)?;
                 if bytes.len() > 65536 {
@@ -180,7 +198,10 @@ impl EnrollmentClient {
             .build()
             .map_err(|_| ClientError::Network)?;
         let mut client = Self {
+            #[cfg(not(windows))]
             directory: directory.into(),
+            #[cfg(windows)]
+            private_directory,
             _lock: lock,
             http,
             state,
@@ -223,16 +244,25 @@ impl EnrollmentClient {
         self.ready()?;
         let result = (|| {
             let bytes = serde_json::to_vec(&self.state).map_err(|_| ClientError::Storage)?;
-            let mut temp = tempfile::NamedTempFile::new_in(&self.directory)
-                .map_err(|_| ClientError::Storage)?;
-            temp.write_all(&bytes)
-                .and_then(|_| temp.as_file().sync_all())
-                .map_err(|_| ClientError::Storage)?;
-            temp.persist(self.directory.join("client.json"))
-                .map_err(|_| ClientError::Storage)?;
-            File::open(&self.directory)
-                .and_then(|f| f.sync_all())
-                .map_err(|_| ClientError::Storage)
+            #[cfg(windows)]
+            {
+                self.private_directory
+                    .publish("client.json", &bytes)
+                    .map_err(storage_error)
+            }
+            #[cfg(not(windows))]
+            {
+                let mut temp = tempfile::NamedTempFile::new_in(&self.directory)
+                    .map_err(|_| ClientError::Storage)?;
+                temp.write_all(&bytes)
+                    .and_then(|_| temp.as_file().sync_all())
+                    .map_err(|_| ClientError::Storage)?;
+                temp.persist(self.directory.join("client.json"))
+                    .map_err(|_| ClientError::Storage)?;
+                File::open(&self.directory)
+                    .and_then(|f| f.sync_all())
+                    .map_err(|_| ClientError::Storage)
+            }
         })();
         if result.is_err() {
             self.poisoned = true;
@@ -617,15 +647,24 @@ fn lock_directory(directory: &Path) -> Result<File> {
         .map_err(|_| ClientError::Storage)?;
     Ok(lock)
 }
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 fn lock_directory(_: &Path) -> Result<File> {
     Err(ClientError::Unsupported)
 }
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 fn private_file(_: &Path, _: bool) -> Result<File> {
     Err(ClientError::Unsupported)
 }
 
+#[cfg(windows)]
+fn storage_error(error: std::io::Error) -> ClientError {
+    match error.kind() {
+        std::io::ErrorKind::WouldBlock => ClientError::Busy,
+        std::io::ErrorKind::Unsupported => ClientError::Unsupported,
+        _ => ClientError::Storage,
+    }
+}
+
 #[cfg(test)]
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 mod tests;
