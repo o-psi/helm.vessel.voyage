@@ -230,7 +230,7 @@ impl EnrollmentStore {
     fn initialize(mut db: Connection, origin: String) -> Result<Self> {
         db.busy_timeout(Duration::ZERO)?;
         #[cfg(windows)]
-        db.execute_batch("PRAGMA journal_mode=PERSIST; PRAGMA temp_store=MEMORY;")?;
+        configure_private_journal(&db)?;
         db.execute_batch("PRAGMA foreign_keys=ON; PRAGMA synchronous=FULL;")?;
         let tx = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let has_schema: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='enrollment_schema')", [], |r| r.get(0))?;
@@ -775,6 +775,19 @@ fn apply(
         epoch: epoch as u64,
         revoked,
     })
+}
+
+// Also compiled in Unix tests to exercise SQLite bootstrap ordering locally.
+#[cfg(any(windows, test))]
+fn configure_private_journal(db: &Connection) -> rusqlite::Result<()> {
+    // Preparing journal_mode may read the schema and recover a hot journal before
+    // PERSIST takes effect. Temporary exclusive mode retains that journal during
+    // recovery; restore NORMAL before any authority transaction to keep independent
+    // connections usable. locking_mode itself does not read the schema.
+    db.execute_batch(
+        "PRAGMA locking_mode=EXCLUSIVE; PRAGMA journal_mode=PERSIST;
+         PRAGMA locking_mode=NORMAL; PRAGMA temp_store=MEMORY;",
+    )
 }
 
 #[cfg(test)]

@@ -121,7 +121,10 @@ lock file is unlinked to work around errors.
 
 Windows Vessel uses SQLite `synchronous=FULL`, `journal_mode=PERSIST`, and
 `temp_store=MEMORY`. The rollback journal is securely precreated and retained so its
-owner does not change to an elevated token's default group. The non-Windows
+owner does not change to an elevated token's default group. Bootstrap briefly sets
+SQLite exclusive locking before PERSIST because preparing the journal-mode pragma
+can recover a hot journal using the initial DELETE mode. It restores normal
+locking before authority transactions; independent clients remain supported. The non-Windows
 rollback-journal behavior is unchanged. Persistent rollback journals can contain
 sensitive previous pages and belong in the same private storage/backup boundary as
 the database. Do not delete a journal to resolve an enrollment error.

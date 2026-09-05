@@ -646,6 +646,29 @@ fn abrupt_hot_journal_recovers_original_private_identity() {
         &journal[..8],
         &[0xd9, 0xd5, 0x05, 0xf9, 0x20, 0xa1, 0x63, 0xd7]
     );
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let original = std::fs::metadata(path.join("enrollment.sqlite3-journal")).unwrap();
+        let db = Connection::open(path.join("enrollment.sqlite3")).unwrap();
+        configure_private_journal(&db).unwrap();
+        db.query_row("SELECT count(*) FROM machines", [], |r| r.get::<_, i64>(0))
+            .unwrap();
+        let mode: String = db
+            .pragma_query_value(None, "locking_mode", |r| r.get(0))
+            .unwrap();
+        assert_eq!(mode, "normal");
+        // The bootstrap must not leave an exclusive lifetime lock behind.
+        let second = Connection::open(path.join("enrollment.sqlite3")).unwrap();
+        second.busy_timeout(Duration::ZERO).unwrap();
+        second.execute_batch("BEGIN IMMEDIATE; ROLLBACK;").unwrap();
+        let retained = std::fs::metadata(path.join("enrollment.sqlite3-journal")).unwrap();
+        assert_eq!(
+            retained.ino(),
+            original.ino(),
+            "bootstrap replaced hot journal"
+        );
+    }
     let recovered = EnrollmentStore::open(&path, ORIGIN, false).unwrap();
     assert_eq!(recovered.owner_id(), owner);
     assert_eq!(
