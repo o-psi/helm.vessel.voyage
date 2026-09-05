@@ -1,14 +1,15 @@
 # Remaining GitHub delivery plan
 
-User mandate: comprehensively resolve remaining issues, including epics. Inventory refreshed from all GitHub pages: 82 issues; initial working tree clean.
+User mandate: comprehensively resolve remaining issues, including epics. Latest complete open/closed inventory: 83 issues, retained in `.local-git/issues-presence-followup.jsonl`. Root user edits are preserved. Current development gates are Linux-only; historical native results below do not impose current requirements.
 
 ## Active work
 
-- Delivered #64 context budgets, #86 steering, and #59 readable tool output follow-up in [PR #87](https://github.com/o-psi/voyage/pull/87), merged as 05310bf. All three issues are closed.
-- [#81](https://github.com/o-psi/voyage/issues/81): run ownership, coordinated stores and frontend references implemented; integration verification continues with #82.
-- [#82](https://github.com/o-psi/voyage/issues/82): bounded reconciliation, durable seals and CLI checkpoint acknowledgements implemented in an isolated checkout. TUI save acknowledgements and observed descendant cleanup are being completed.
-- [#83](https://github.com/o-psi/voyage/issues/83): three native-provider fixtures and adversarial evaluation scenarios under verification. Live-provider evidence remains blocked by the previously observed configured-provider HTTP401; definition validation is not live execution.
-- Recovered committed work after temporary-directory loss. Active checkouts and evidence now live under `.local-git/` on durable disk. Missing uncommitted callbacks/fixtures are being reconstructed and rechecked.
+- Local-provider setup [#116](https://github.com/o-psi/voyage/pull/116) is merged at 4884d868. Broad #66 retains its explicit direct-publication portability limitation.
+- Repository onboarding [#117](https://github.com/o-psi/voyage/pull/117), bf6ba00: final current-main baseline passes 523 tests, fourteen system fixtures, strict quality, release and packaging. CI pending; independent review blockers have red/green fixes.
+- Policy foundation [#118](https://github.com/o-psi/voyage/pull/118), b7ce016: final integration passes 522 tests, strict quality, release, affected fixtures and packaging. CI pending; independent review found no blocker. Actual runtime enforcement is the next scoped #70 slice, with no operator `/etc` mutation.
+- Completion/managed stack [#88](https://github.com/o-psi/voyage/pull/88) through [#112](https://github.com/o-psi/voyage/pull/112): integrated 707-test normal/two-CPU suites pass, but cancellation systems reproduced transient SQLite Busy in the owner watcher and fixture partial polling. Production bounded polling retry and deterministic rollback regression are in progress before final systems/live evidence.
+- Consent [#114](https://github.com/o-psi/voyage/pull/114) passes both Linux CI runs, draft for its parent dependency. Presence #113 and Chat compatibility #115 are merged.
+- Bounded local completion evidence passed clean/no-plan but failed verification accounting/template compatibility. The serializer defect is fixed; fresh evaluation remains gated by the integrated runtime checks above. Subscription credentials separately returned HTTP401; no renewal or paid evaluation is assumed.
 
 ## Dependencies and delivery order
 
@@ -21,7 +22,7 @@ User mandate: comprehensively resolve remaining issues, including epics. Invento
 
 Each feature needs issue discussion review/update before edits, acceptance-driven tests, baseline Linux gates and packaging, and honest platform/provider evidence. Epics remain open until all exit criteria are met. No issue is considered delivered by this plan.
 
-## Open inventory
+## Initial inventory and historical delivery checkpoints
 
 - [#86: Allow steering messages during an active Helm run](https://github.com/o-psi/voyage/issues/86) — delivered in #87
 - [#83: Validate and document completion-gate behavior end to end](https://github.com/o-psi/voyage/issues/83) — pending
@@ -31,10 +32,10 @@ Each feature needs issue discussion review/update before edits, acceptance-drive
 - [#79: Enforce session-sharing consent, retention and remote authorization boundaries](https://github.com/o-psi/voyage/issues/79) — pending
 - [#78: Coordinate local and Vessel-managed sessions in the Helm runtime](https://github.com/o-psi/voyage/issues/78) — pending
 - [#77: EPIC: Manage Helm sessions from Vessel through outbound attachment](https://github.com/o-psi/voyage/issues/77) — pending
-- [#76: Add team-shared prompts, policies, and workflows](https://github.com/o-psi/voyage/issues/76) — pending
+- [#76: Add team-shared prompts, policies, and workflows](https://github.com/o-psi/voyage/issues/76) — closed in the latest reviewed inventory
 - [#75: Publish a plugin SDK and stable extension API](https://github.com/o-psi/voyage/issues/75) — pending
 - [#74: Support image and screenshot attachments in multimodal turns](https://github.com/o-psi/voyage/issues/74) — pending
-- [#73: Add optional voice input to Helm](https://github.com/o-psi/voyage/issues/73) — pending
+- [#73: Add optional voice input to Helm](https://github.com/o-psi/voyage/issues/73) — closed in the latest reviewed inventory
 - [#72: Add remote/mobile notifications and secure approval handoff](https://github.com/o-psi/voyage/issues/72) — pending
 - [#71: Add resource telemetry, cost dashboards, and enforceable budgets](https://github.com/o-psi/voyage/issues/71) — pending
 - [#70: Add reusable policy profiles and trust presets](https://github.com/o-psi/voyage/issues/70) — pending
@@ -42,7 +43,7 @@ Each feature needs issue discussion review/update before edits, acceptance-drive
 - [#68: Add GitHub-native workflows for issues, pull requests, checks, and review](https://github.com/o-psi/voyage/issues/68) — pending
 - [#67: Add reusable saved workflows and parameterized commands](https://github.com/o-psi/voyage/issues/67) — pending
 - [#66: Add local-model and OpenAI-compatible provider presets with endpoint discovery](https://github.com/o-psi/voyage/issues/66) — pending
-- [#65: Add first-class MCP marketplace, installation, and lifecycle UX](https://github.com/o-psi/voyage/issues/65) — pending
+- [#65: Add first-class MCP marketplace, installation, and lifecycle UX](https://github.com/o-psi/voyage/issues/65) — closed in the latest reviewed inventory
 - [#64: Enforce context-window limits and compact automatically before every provider request](https://github.com/o-psi/voyage/issues/64) — delivered in #87
 - [#63: Add external extension and skill packaging, installation, and discovery](https://github.com/o-psi/voyage/issues/63) — pending
 - [#62: Add OS-level sandbox adapters for Linux, macOS, and Windows](https://github.com/o-psi/voyage/issues/62) — pending
