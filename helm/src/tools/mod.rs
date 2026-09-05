@@ -21,7 +21,7 @@ pub use process::{
     ProcessTool, TerminalManager, TerminalMetadata, TerminalShutdown, TerminalShutdownFailure,
 };
 pub use questions::{MAX_ANSWER_BYTES, Question, QuestionAnswer, Questions};
-pub use shell::Shell;
+pub use shell::{ManagedShell, Shell, ShellShutdown};
 pub use todo::TodoTool;
 
 #[derive(Debug, Error)]
