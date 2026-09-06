@@ -1,6 +1,30 @@
 use super::*;
 
 #[tokio::test]
+async fn config_diagnostic_handoff_preserves_session_and_uses_active_configuration() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut store = SessionStore::new(directory.path().join("sessions"));
+    let mut session = Session::new(directory.path().into(), "test-model".into());
+    session
+        .messages
+        .push(crate::Message::new(Role::User, "preserve history"));
+    let id = session.id;
+    let mut app = App::new(session, Vec::new());
+    handle_command("/config", &mut app, &mut store, None, None)
+        .await
+        .unwrap();
+    let Some(TuiExit::Launch(request)) = app.exit else {
+        panic!("expected diagnostic handoff");
+    };
+    assert_eq!(request.arguments, ["config"]);
+    assert!(request.use_active_config);
+    assert!(request.resume_after);
+    assert_eq!(app.session.id, id);
+    assert_eq!(app.session.messages.len(), 1);
+    assert_eq!(app.session.messages[0].content, "preserve history");
+}
+
+#[tokio::test]
 async fn startup_only_controls_create_explicit_session_preserving_handoffs() {
     let directory = tempfile::tempdir().unwrap();
     let mut store = SessionStore::new(directory.path().join("sessions"));

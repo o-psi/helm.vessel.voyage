@@ -88,6 +88,11 @@ permanent compatibility. Existing `helm models` and the interactive model picker
 use the resulting provider configuration and the same bounded compatible catalog parser, and manual model switching remains
 available.
 
+The `helm config` display replaces configured environment values, MCP environment
+values and `redact_values` entries with `[REDACTED]`. Its placeholders are for
+inspection and cannot restore secrets; the original file and runtime bindings
+remain unchanged. The full-screen `/config` command uses the same display.
+
 ## Explicit loopback discovery
 
 ```sh

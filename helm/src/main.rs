@@ -151,6 +151,7 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Inspect resolved configuration with secret bindings concealed.
     Config,
     /// Explicit local/compatible endpoint setup and discovery.
     LocalProvider {
@@ -490,9 +491,14 @@ async fn main() -> Result<()> {
         return Ok(());
     }
     let defaults_command = matches!(&cli.command,Some(Command::Policy(args)) if matches!(args.command,helm::policy_profile::cli::PolicyCommand::Defaults(_)));
+    let diagnostic_command = matches!(&cli.command, Some(Command::Config | Command::Doctor));
     let config_error = |error: anyhow::Error| {
         if defaults_command {
             anyhow::anyhow!("configuration input or override is invalid or unavailable")
+        } else if diagnostic_command {
+            anyhow::anyhow!(
+                "configuration input or override is invalid or unavailable; check the config file and --set arguments (input details concealed)"
+            )
         } else {
             error
         }
@@ -708,9 +714,8 @@ fn print_config(config: &Config) -> Result<()> {
         "# endpoint_diagnostics = {}",
         helm::local_provider::diagnostics(config)
     );
-    let mut displayed = config.clone();
-    displayed.access = Some(config.access_mode());
-    println!("{}", toml::to_string_pretty(&displayed)?);
+    println!("# Secret values are concealed; this display cannot restore secret bindings.");
+    println!("{}", config.diagnostic_toml()?);
     Ok(())
 }
 
@@ -1584,8 +1589,14 @@ async fn tui_chat(
 }
 
 fn write_runtime_config(config: &Config) -> Result<tempfile::NamedTempFile> {
-    let directory = helm::config::default_data_dir();
-    std::fs::create_dir_all(&directory)?;
+    write_runtime_config_in(config, &helm::config::default_data_dir())
+}
+
+fn write_runtime_config_in(
+    config: &Config,
+    directory: &std::path::Path,
+) -> Result<tempfile::NamedTempFile> {
+    std::fs::create_dir_all(directory)?;
     let contents = toml::to_string_pretty(config)?;
     let mut file = tempfile::Builder::new()
         .prefix("runtime-config-")
@@ -2578,6 +2589,51 @@ mod cli_tests {
     }
 
     use super::*;
+
+    #[test]
+    fn diagnostic_display_does_not_change_runtime_handoff_or_tool_bindings() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut config = Config::default();
+        config
+            .env
+            .insert("SERVICE_TOKEN".into(), "runtime-canary-雪".into());
+        config.redact_values.push("redactor-canary".into());
+        config.mcp_servers.insert(
+            "fixture".into(),
+            helm::config::McpServerConfig {
+                command: "unused".into(),
+                args: vec![],
+                env: std::collections::BTreeMap::from([("MCP_TOKEN".into(), "mcp-canary".into())]),
+            },
+        );
+        let original = toml::to_string(&config).unwrap();
+        let display = config.diagnostic_toml().unwrap();
+        assert!(!display.contains("canary"));
+        assert_eq!(toml::to_string(&config).unwrap(), original);
+        assert_eq!(
+            tool_environment(&config)["SERVICE_TOKEN"],
+            "runtime-canary-雪"
+        );
+        let file = write_runtime_config_in(&config, directory.path()).unwrap();
+        let path = file.path().to_owned();
+        let loaded = Config::load(Some(&path)).unwrap();
+        assert_eq!(loaded.env, config.env);
+        assert_eq!(loaded.redact_values, config.redact_values);
+        assert_eq!(
+            loaded.mcp_servers["fixture"].env,
+            config.mcp_servers["fixture"].env
+        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+        }
+        drop(file);
+        assert!(!path.exists());
+    }
 
     #[test]
     fn only_interactive_full_screen_chat_routes_logs_away_from_stderr() {

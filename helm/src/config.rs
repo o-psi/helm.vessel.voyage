@@ -443,6 +443,30 @@ mod context_tests {
 }
 
 impl Config {
+    /// A display-only snapshot. Never use this to persist or rebuild a runtime:
+    /// placeholders deliberately cannot restore the concealed bindings.
+    pub fn diagnostic_toml(&self) -> Result<String> {
+        let mut displayed = self.clone();
+        displayed.access = Some(self.access_mode());
+        for value in displayed
+            .env
+            .values_mut()
+            .chain(displayed.redact_values.iter_mut())
+            .chain(
+                displayed
+                    .mcp_servers
+                    .values_mut()
+                    .flat_map(|server| server.env.values_mut()),
+            )
+        {
+            *value = "[REDACTED]".into();
+        }
+        // Redact structurally before serialization so escaping, short values,
+        // and empty bindings cannot evade the diagnostic boundary.
+        toml::to_string_pretty(&displayed)
+            .map_err(|_| anyhow::anyhow!("could not serialize concealed configuration"))
+    }
+
     pub(crate) fn parse_loaded(text: &str) -> Result<Self> {
         let mut config: Self = toml::from_str(text)?;
         config.apply_provider_defaults();

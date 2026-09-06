@@ -52,6 +52,14 @@ rejected. Values in `[env]`, MCP environment values, provider credentials, and
 approval targets. Values shorter than four characters are not treated as secrets to
 avoid corrupting ordinary output. Do not place secrets directly in prompts.
 
+`helm config` (also `/config` in full-screen chat) conceals every `[env]` value,
+MCP environment value and `redact_values` entry as `[REDACTED]`, including empty
+and short bindings. Variable names, server commands and ordinary settings remain
+visible. This diagnostic display cannot restore secret bindings; use the original
+configuration for execution. Displaying it leaves source files and runtime
+bindings unchanged. Invalid configuration and override errors from `config` and
+`doctor` omit input text to avoid echoing secret-bearing lines.
+
 ## Attended and unattended approvals
 
 Interactive chat and local `run` are attended. An `always` or `on-risk` policy may
