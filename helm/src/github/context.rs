@@ -343,6 +343,11 @@ pub(super) async fn read(
         .as_array()
         .ok_or_else(|| anyhow::anyhow!("GitHub returned malformed collection"))?;
     ensure!(entries.len() <= 100, "GitHub collection exceeds page limit");
+    let coverage_total = if request.section == Section::Files { detail["changed_files"].as_u64() } else { total };
+    if (wrapper.is_some() || request.section == Section::Files)
+        && !collection_coverage_consistent(coverage_total, request.page, entries.len(), next.is_some()) {
+        page.incomplete.push("Reported collection totals disagree with available pages, or are missing; complete coverage is not established.".into());
+    }
     if request.section == Section::WorkflowRuns && total.is_none_or(|count| count >= 1000) {
         page.incomplete.push("GitHub filtered workflow searches expose at most 1000 runs; total coverage is incomplete or unknown.".into());
     }
@@ -503,13 +508,12 @@ async fn threads(
     let nodes = connection["nodes"]
         .as_array()
         .ok_or_else(|| anyhow::anyhow!("GitHub returned malformed thread nodes"))?;
-    ensure!(
-        nodes.len() <= 100 && connection["totalCount"].as_u64().is_some(),
-        "GitHub thread collection is malformed"
-    );
-    let has_next = connection["pageInfo"]["hasNextPage"]
-        .as_bool()
-        .ok_or_else(|| anyhow::anyhow!("GitHub thread pagination is malformed"))?;
+    let (limit, first) = match &request.section {
+        Section::Threads { after } => (20, after.is_none()),
+        Section::ThreadComments { after, .. } => (100, after.is_none()),
+        _ => unreachable!(),
+    };
+    let has_next = graphql_connection(connection, limit, first)?;
     if has_next {
         let cursor = connection["pageInfo"]["endCursor"]
             .as_str()
@@ -551,9 +555,7 @@ async fn threads(
                 .as_str()
                 .ok_or_else(|| anyhow::anyhow!("GitHub thread identity is missing"))?;
             opaque(id)?;
-            let more = thread["comments"]["pageInfo"]["hasNextPage"]
-                .as_bool()
-                .ok_or_else(|| anyhow::anyhow!("GitHub nested comment pagination is missing"))?;
+            let more = graphql_connection(&thread["comments"],20,true)?;
             if more {
                 let cursor = thread["comments"]["pageInfo"]["endCursor"]
                     .as_str()
@@ -583,6 +585,22 @@ async fn threads(
         page.incomplete.push("Pull request head or base changed during thread observation; reload before review.".into());
     }
     Ok(page)
+}
+
+fn collection_coverage_consistent(total: Option<u64>, page: u32, count: usize, next: bool) -> bool {
+    let end = u64::from(page.saturating_sub(1)) * 100 + count as u64;
+    total.is_some_and(|total| total >= end && (next || total == end))
+}
+
+fn graphql_connection(connection: &Value, limit: usize, first: bool) -> Result<bool> {
+    let nodes = connection["nodes"].as_array().ok_or_else(|| anyhow::anyhow!("GitHub connection nodes are malformed"))?;
+    let total = connection["totalCount"].as_u64().ok_or_else(|| anyhow::anyhow!("GitHub connection total is missing"))?;
+    let more = connection["pageInfo"]["hasNextPage"].as_bool().ok_or_else(|| anyhow::anyhow!("GitHub connection pagination is missing"))?;
+    ensure!(nodes.len() <= limit && total >= nodes.len() as u64
+        && (!more || !nodes.is_empty())
+        && (!first || if more { total > nodes.len() as u64 } else { total == nodes.len() as u64 }),
+        "GitHub connection count or continuation is inconsistent");
+    Ok(more)
 }
 
 fn next_page(headers: &reqwest::header::HeaderMap, current: u32, expected_path: &str, extra: &str) -> Result<Option<u32>> {
@@ -647,6 +665,23 @@ fn next_page(headers: &reqwest::header::HeaderMap, current: u32, expected_path: 
 #[cfg(test)]
 mod pagination_tests {
     use super::*;
+    #[test]
+    fn reported_totals_cannot_hide_missing_rest_pages() {
+        assert!(!collection_coverage_consistent(Some(101),1,1,false));
+        assert!(!collection_coverage_consistent(None,1,1,false));
+        assert!(!collection_coverage_consistent(Some(1),1,2,false));
+        assert!(collection_coverage_consistent(Some(101),1,100,true));
+        assert!(collection_coverage_consistent(Some(101),2,1,false));
+    }
+    #[test]
+    fn graphql_limits_and_nested_missing_continuations_are_explicit() {
+        let connection = |count:usize,total:u64,more:bool| serde_json::json!({"nodes":vec![serde_json::json!({});count],"totalCount":total,"pageInfo":{"hasNextPage":more}});
+        assert!(graphql_connection(&connection(21,21,false),20,true).is_err());
+        assert!(graphql_connection(&connection(0,25,false),20,true).is_err());
+        assert!(graphql_connection(&connection(0,25,true),20,true).is_err());
+        assert!(graphql_connection(&connection(20,25,true),20,true).unwrap());
+        assert!(!graphql_connection(&connection(5,25,false),100,false).unwrap());
+    }
     #[test]
     fn pagination_cannot_skip_pages_or_change_resource_or_query() {
         let path = "/repos/o/r/pulls/1/files";

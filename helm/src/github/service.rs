@@ -59,6 +59,13 @@ pub struct Service {
     directory: PathBuf,
 }
 impl Service {
+    pub async fn logs(&self, object: super::repository::Object, job: u64) -> Result<super::logs::Log> {
+        self.current()?;
+        let mut log = super::logs::read(&self.client,object,job,&self.context.cancellation).await?;
+        log.text = self.redact(&log.text);
+        self.current()?;
+        Ok(log)
+    }
     pub fn new(mut context: ToolContext, session: Option<Uuid>) -> Result<Self> {
         context.policy.check_current()?;
         let token = context.environment.get("HELM_GITHUB_TOKEN").cloned().ok_or_else(|| anyhow::anyhow!("GitHub capability is unavailable; explicitly delegate HELM_GITHUB_TOKEN in inherited environment"))?;

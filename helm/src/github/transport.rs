@@ -1,6 +1,5 @@
 //! Fixed-origin authenticated requests; errors never include response bodies or URLs.
 use anyhow::{Result, ensure};
-use futures_util::StreamExt;
 use reqwest::{Method, StatusCode, header};
 use serde_json::Value;
 use std::time::Duration;
@@ -31,6 +30,10 @@ impl Response {
 }
 
 impl Client {
+    pub fn check_current(&self) -> Result<()> {
+        if let Some(policy) = &self.policy { policy.check_current()?; }
+        Ok(())
+    }
     pub fn new(token: String) -> Result<Self> {
         ensure!(
             token.len() >= 4
@@ -120,14 +123,12 @@ impl Client {
             biased;
             _ = cancel.cancelled() => anyhow::bail!("GitHub operation cancelled"),
             result = tokio::time::timeout(Duration::from_secs(30), async {
-                let response = request.send().await.map_err(|_| anyhow::anyhow!("GitHub transport failed; publication may be uncertain"))?;
+                let mut response = request.send().await.map_err(|_| anyhow::anyhow!("GitHub transport failed; publication may be uncertain"))?;
                 let status = response.status();
                 let headers = response.headers().clone();
                 ensure!(response.content_length().is_none_or(|length| length <= MAX_RESPONSE_BYTES as u64), "GitHub response exceeds limit");
-                let mut stream = response.bytes_stream();
                 let mut bytes = Vec::new();
-                while let Some(chunk) = stream.next().await {
-                    let chunk = chunk.map_err(|_| anyhow::anyhow!("GitHub response was interrupted; publication may be uncertain"))?;
+                while let Some(chunk) = response.chunk().await.map_err(|_| anyhow::anyhow!("GitHub response was interrupted; publication may be uncertain"))? {
                     ensure!(bytes.len().saturating_add(chunk.len()) <= MAX_RESPONSE_BYTES, "GitHub response exceeds limit");
                     bytes.extend_from_slice(&chunk);
                 }

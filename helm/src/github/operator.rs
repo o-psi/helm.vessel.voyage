@@ -79,6 +79,8 @@ pub enum Command {
     Admin { #[command(subcommand)] command: super::admin::Command },
     /// Show the explicitly delegated GitHub account (never the token).
     Auth,
+    /// Read bounded job logs associated with the selected pull-request head SHA.
+    Logs { url: String, job: u64 },
     /// Inspect local remote candidates without choosing between forks.
     Remotes,
     View(ViewArgs),
@@ -223,6 +225,7 @@ pub async fn execute_args(mut context: crate::tools::ToolContext, session_id: Op
     let service = Service::new(context.clone(), session_id)?;
     let value = match args.command {
         Command::Auth => serde_json::json!({"host":"github.com","credential_source":"explicitly delegated HELM_GITHUB_TOKEN","actor":service.actor().await?}),
+        Command::Logs { url, job } => serde_json::to_value(service.logs(Object::parse(&url)?,job).await?)?,
         Command::View(view) => serde_json::to_value(service.read(view.read()?).await?)?,
         Command::Continue { request } => {
             ensure!(request.len() <= 16 * 1024, "GitHub continuation exceeds limit");

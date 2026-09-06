@@ -49,6 +49,20 @@ fn audit_snapshot(connection: &Connection) -> Result<AuditSnapshot> {
             "GitHub audit identity is corrupt");
         entry.owner.scope()?;
         entry.object.validate()?;
+        ensure!((entry.former_state == State::Published) == entry.receipt.is_some()
+            && (entry.former_state == State::Disposed) == entry.disposition.is_some(),
+            "GitHub audit terminal evidence is corrupt");
+        if let Some(note) = &entry.disposition {
+            ensure!(!note.trim().is_empty() && note.len() <= 1024,"GitHub audit disposition is corrupt");
+        }
+        if let Some(receipt) = &entry.receipt {
+            let prefix = entry.object.url();
+            ensure!(receipt.id > 0 && receipt.id <= i64::MAX as u64
+                && (receipt.url == format!("{prefix}#issuecomment-{}",receipt.id)
+                    || (entry.object.kind == super::repository::ObjectKind::PullRequest
+                        && receipt.url == format!("{prefix}#pullrequestreview-{}",receipt.id))),
+                "GitHub audit receipt is corrupt");
+        }
         entries.push(entry);
     }
     let digest = hex::encode(Sha256::digest(serde_json::to_vec(&entries)?));
@@ -133,6 +147,12 @@ pub struct Operation {
     /// Explicit human disposition preserves the uncertain operation and is not a retry.
     pub disposition: Option<String>,
 }
+impl Operation {
+    pub(super) fn snapshot_digest(&self) -> Result<String> {
+        use sha2::{Digest, Sha256};
+        Ok(hex::encode(Sha256::digest(serde_json::to_vec(self)?)))
+    }
+}
 
 pub struct Store {
     connection: Connection,
@@ -198,6 +218,18 @@ fn schema(connection: &Connection) -> Result<()> {
             row.get(0)
         })?;
     ensure!(version == 1, "unsupported GitHub operation schema");
+    for (table, expected) in [
+        ("github_schema", vec![("id","INTEGER",0,1),("version","INTEGER",1,0)]),
+        ("operations", vec![("id","TEXT",0,1),("digest","TEXT",1,0),("owner","TEXT",1,0),("state","TEXT",1,0),("data","TEXT",1,0)]),
+        ("audit", vec![("sequence","INTEGER",0,1),("id","TEXT",1,0),("digest","TEXT",1,0),("data","TEXT",1,0)]),
+    ] {
+        let mut statement = connection.prepare(&format!("PRAGMA table_info({table})"))?;
+        let columns = statement.query_map([],|row| Ok((row.get::<_,String>(1)?,row.get::<_,String>(2)?,row.get::<_,i64>(3)?,row.get::<_,i64>(5)?)))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        ensure!(columns.len() == expected.len() && columns.iter().zip(expected).all(|(actual,expected)|
+            actual.0 == expected.0 && actual.1 == expected.1 && actual.2 == expected.2 && actual.3 == expected.3),
+            "GitHub journal table contract is corrupt; restore its private evidence");
+    }
     Ok(())
 }
 
@@ -251,6 +283,7 @@ impl Store {
         }
         tx.execute_batch("CREATE TABLE IF NOT EXISTS operations(id TEXT PRIMARY KEY, digest TEXT NOT NULL, owner TEXT NOT NULL, state TEXT NOT NULL, data TEXT NOT NULL); CREATE INDEX IF NOT EXISTS operation_digest ON operations(digest);")?;
         tx.execute_batch("CREATE TABLE IF NOT EXISTS audit(sequence INTEGER PRIMARY KEY, id TEXT NOT NULL, digest TEXT NOT NULL, data TEXT NOT NULL);")?;
+        schema(&tx)?;
         tx.commit()?;
         #[cfg(windows)]
         crate::attachment::journal::storage::verify(&private)?;
@@ -463,12 +496,20 @@ impl Store {
         })
     }
     pub fn forget(&mut self, id: Uuid, digest: &str, owner: &Owner) -> Result<()> {
+        self.forget_checked(id,digest,owner,None)
+    }
+    pub(super) fn forget_exact(&mut self, expected: &Operation) -> Result<()> {
+        self.forget_checked(expected.id,&expected.digest,&expected.owner,Some(expected.snapshot_digest()?))
+    }
+    fn forget_checked(&mut self, id: Uuid, digest: &str, owner: &Owner, snapshot: Option<String>) -> Result<()> {
         let tx = self.connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         schema(&tx)?;
         let (indexed_digest, indexed_state, data): (String, String, String) = tx.query_row(
             "SELECT digest,state,CASE WHEN length(CAST(data AS BLOB))<=131072 THEN data ELSE NULL END FROM operations WHERE id=?1 AND owner=?2",
             params![id.to_string(),owner.scope()?], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?)))?;
         let operation = decode(&data)?;
+        ensure!(snapshot.as_ref().is_none_or(|snapshot| operation.snapshot_digest().as_ref().ok() == Some(snapshot)),
+            "GitHub operation changed after preview; confirm the current snapshot");
         ensure!(
             operation.id == id && operation.owner.scope()? == owner.scope()?
                 && indexed_digest == digest && indexed_state == state_name(&operation.state)
@@ -492,6 +533,26 @@ impl Store {
         ensure!(changed == 1, "GitHub operation changed before forgetting");
         tx.commit()?;
         Ok(())
+    }
+    pub(super) fn cancel_exact(&mut self, expected: &Operation) -> Result<Operation> {
+        let snapshot = expected.snapshot_digest()?;
+        self.transition(expected.id,&expected.digest,&expected.owner,move |operation| {
+            ensure!(operation.snapshot_digest()? == snapshot,"GitHub operation changed after preview");
+            ensure!(operation.state == State::Prepared,"only prepared GitHub operations can be cancelled");
+            operation.state = State::Cancelled;
+            Ok(())
+        })
+    }
+    pub(super) fn dispose_exact(&mut self, expected: &Operation, note: String) -> Result<Operation> {
+        ensure!(!note.trim().is_empty() && note.len() <= 1024,"GitHub disposition requires a bounded note");
+        let snapshot = expected.snapshot_digest()?;
+        self.transition(expected.id,&expected.digest,&expected.owner,move |operation| {
+            ensure!(operation.snapshot_digest()? == snapshot,"GitHub operation changed after preview");
+            ensure!(operation.state == State::Sending,"only uncertain GitHub operations need disposition");
+            operation.state = State::Disposed;
+            operation.disposition = Some(note);
+            Ok(())
+        })
     }
     fn transition(
         &mut self,
@@ -628,6 +689,48 @@ mod tests {
         store.connection.execute_batch("DROP TABLE audit").unwrap();
         drop(store);
         assert!(Store::open(temp.path().join("operations")).is_err());
+    }
+    #[test]
+    fn same_named_malformed_audit_table_cannot_admit_or_send() {
+        let (temp, mut store, owner, draft, actor) = fixture();
+        let operation = store.prepare(draft.clone(),actor.clone(),"policy".into(),None,None,owner.clone()).unwrap();
+        store.connection.execute_batch("DROP TABLE audit; CREATE TABLE audit(bogus TEXT)").unwrap();
+        assert!(store.begin_send(&operation).is_err());
+        assert!(store.prepare(draft,actor,"policy".into(),None,None,owner).is_err());
+        drop(store);
+        assert!(Store::open(temp.path().join("operations")).is_err());
+    }
+    #[test]
+    fn corrupt_audit_evidence_cannot_be_exported_or_cleared() {
+        let (_temp, mut store, owner, draft, actor) = fixture();
+        let operation = store.prepare(draft,actor,"policy".into(),None,None,owner.clone()).unwrap();
+        store.cancel(operation.id,&operation.digest,&owner).unwrap();
+        store.forget(operation.id,&operation.digest,&owner).unwrap();
+        let snapshot = store.audit().unwrap();
+        let mut corrupt = serde_json::to_value(&snapshot.entries[0]).unwrap();
+        for state in ["published","disposed"] {
+            corrupt["former_state"] = state.into();
+            store.connection.execute("UPDATE audit SET data=?1",[serde_json::to_string(&corrupt).unwrap()]).unwrap();
+            assert!(store.audit().is_err());
+            assert!(store.clear_audit(&snapshot.digest).is_err());
+            assert_eq!(store.connection.query_row("SELECT count(*) FROM audit",[],|row|row.get::<_,u64>(0)).unwrap(),1);
+        }
+    }
+    #[test]
+    fn concurrent_terminal_change_invalidates_approved_snapshot_without_audit_deletion() {
+        let (temp, mut store, owner, draft, actor) = fixture();
+        let operation = store.prepare(draft,actor,"policy".into(),None,None,owner.clone()).unwrap();
+        let snapshot = store.begin_send(&operation).unwrap();
+        let directory = temp.path().join("operations");
+        let changed = snapshot.clone();
+        std::thread::spawn(move || {
+            let mut other = Store::open(directory).unwrap();
+            other.dispose(changed.id,&changed.digest,&changed.owner,"Investigated externally; still no proof of an unsent request".into()).unwrap();
+        }).join().unwrap();
+        assert!(store.forget_exact(&snapshot).is_err());
+        assert!(store.dispose_exact(&snapshot,"stale decision".into()).is_err());
+        assert_eq!(store.inspect(snapshot.id,&owner).unwrap().state,State::Disposed);
+        assert!(store.audit().unwrap().entries.is_empty());
     }
     #[test]
     fn sending_survives_reopen_and_never_replays_or_cancels_as_unsent() {

@@ -512,7 +512,7 @@ fn allowed_in_read_only(name: &str, arguments: &Value) -> bool {
         "process" => matches!(action, Some("read" | "list")),
         "todo" => action == Some("list"),
         "completion" => matches!(action, Some("snapshot" | "read")),
-        "github" => matches!(action, Some("read" | "inspect" | "list")),
+        "github" => matches!(action, Some("read" | "logs" | "inspect" | "list")),
         "subagent" => match action {
             Some(
                 "status" | "list" | "archive" | "wait" | "wait_many" | "message" | "follow_up"
@@ -651,7 +651,7 @@ mod security_tests {
     }
     #[test]
     fn read_only_github_allows_observation_only() {
-        for action in ["read", "inspect", "list"] {
+        for action in ["read", "logs", "inspect", "list"] {
             assert!(allowed_in_read_only("github", &serde_json::json!({"action":action})));
         }
         for action in ["prepare", "publish", "cancel", "forget", "reconcile", "dispose", "unknown"] {

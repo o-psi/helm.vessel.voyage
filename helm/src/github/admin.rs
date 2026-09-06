@@ -67,14 +67,20 @@ pub(super) async fn execute(context: ToolContext, command: Command, scoped: Opti
             };
             let operation = database(&context,false,inspect(id)).await?;
             ensure!(operation.digest == digest,"GitHub operation changed; inspect the exact current record");
+            match &command {
+                Command::Cancel { .. } => ensure!(operation.state == super::store::State::Prepared,"only prepared operations can be cancelled"),
+                Command::Dispose { .. } => ensure!(operation.state == super::store::State::Sending,"only uncertain operations need disposition"),
+                Command::Forget { .. } => ensure!(matches!(operation.state,super::store::State::Published | super::store::State::Cancelled | super::store::State::Disposed),"only terminal records can be forgotten"),
+                _ => unreachable!(),
+            }
             let note = match &command { Command::Dispose { note,.. } => Some(note), _ => None };
             confirm(&context,&serde_json::json!({"operation":operation,"disposition":note,
                 "action":match command { Command::Cancel { .. } => "cancel prepared record",Command::Dispose { .. } => "record uncertain disposition",_=>"forget terminal record after atomic audit" },
                 "notice":"Local maintenance does not establish that a request was unsent and never authorizes repetition."})).await?;
             database(&context,true,move |store| match command {
-                Command::Cancel { .. } => Ok(serde_json::to_value(store.cancel(id,&digest,&operation.owner)?)?),
-                Command::Dispose { note,.. } => Ok(serde_json::to_value(store.dispose(id,&digest,&operation.owner,note)?)?),
-                Command::Forget { .. } => { store.forget(id,&digest,&operation.owner)?; Ok(serde_json::json!({"forgotten":id,"audit_recorded":true})) },
+                Command::Cancel { .. } => Ok(serde_json::to_value(store.cancel_exact(&operation)?)?),
+                Command::Dispose { note,.. } => Ok(serde_json::to_value(store.dispose_exact(&operation,note)?)?),
+                Command::Forget { .. } => { store.forget_exact(&operation)?; Ok(serde_json::json!({"forgotten":id,"audit_recorded":true})) },
                 _=>unreachable!(),
             }).await?
         }

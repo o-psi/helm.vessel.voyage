@@ -2,7 +2,10 @@
 pub mod context;
 pub mod operator;
 pub mod admin;
+pub mod logs;
 pub mod approval;
+#[cfg(test)]
+mod approval_fixture;
 pub mod tool;
 
 /// Supported diagnostic projections for the explicitly delegated credential.
