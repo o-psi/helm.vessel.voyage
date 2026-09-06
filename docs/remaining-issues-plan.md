@@ -2,6 +2,49 @@
 
 User mandate: comprehensively resolve remaining issues, including epics. Latest complete open/closed inventory: 83 issues, retained in `.local-git/issues-resume-inventory.jsonl`. Root user edits are preserved. Current development gates are Linux-only; historical native results below are not evidence for the current build; affected-platform requirements remain explicit in their tracking issues.
 
+## Local validation and hosted CI plan (2026-09-06)
+
+The operator approved full local Linux validation before publication and manual-only
+hosted quality runs to reduce Actions time and cost. Tracking:
+[#17 approved follow-up](https://github.com/o-psi/voyage/issues/17#issuecomment-5561090158),
+extending [PR #100](https://github.com/o-psi/voyage/pull/100). This current policy
+supersedes historical requirements below to wait for duplicate hosted CI results.
+The refreshed issue inventory contains 88 open/closed issues; older inventories
+below remain historical records.
+
+- [x] Record the approved execution policy in this plan and `AGENTS.md`.
+- [ ] Implement one local quality entry point shared with manual CI. Preserve
+  formatting, strict Clippy, all workspace tests, locked release builds, every
+  existing system fixture, evaluation-definition validation, and full/installer
+  packaging with checksums. Inventory both quality workflows before consolidation.
+  Use unique package labels and retain exact revision, commands, results and logs.
+- [ ] After the runner is verified, replace push/PR quality triggers with
+  `workflow_dispatch`; keep GitHub/Forgejo counterparts consistent. Preserve
+  separate tag-only platform release builds. Do not dispatch paid reruns or create
+  tags for ordinary development verification.
+- [ ] Verify full step coverage, nonzero failure propagation, workflow structure,
+  unique packaging and an actual complete local run; then publish implementation
+  to main and verify the remote workflow definitions. Report failures honestly.
+
+Coordinate with the other active agent before changing shared workflow files or
+starting a full suite. One owner should validate each integration tree; concurrent
+builds need separate target directories. Preserve ongoing work and existing logs.
+Acceptance-specific failure/security tests and approved live/platform validation
+remain required where applicable; local Linux success is not platform or live
+provider evidence. Documentation-only changes retain their documented exception.
+
+Implementation status: workflow triggers and the shared runner are still pending;
+this planning update does not disable existing or future push/PR runs. Branch
+ruleset and classic protection queries returned HTTP 403, so enforced GitHub checks
+were not verified. Report any actual publication blocker without bypassing it.
+
+Evidence: all 303 available run records were fetched, including 300 quality runs.
+[Successful run 34027937732](https://github.com/o-psi/voyage/actions/runs/34027937732)
+took about 17.5 minutes: release build 334 seconds and Rust tests 237 seconds,
+with system checks running sequentially. No total billing estimate is claimed.
+Plan-only validation checks paths, command accuracy and diffs; no runtime behavior
+is changed or runtime passing result claimed by this update.
+
 ## Current product direction (2026-09-05)
 
 The accepted [voyage model](voyages.md) names every Helm session a voyage,

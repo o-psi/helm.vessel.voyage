@@ -198,6 +198,20 @@ Separate pre-existing failures from regressions with evidence.
 
 ### Baseline quality commands
 
+Run required Linux validation locally before publication. Successful local
+evidence satisfies the project quality gate; do not require a duplicate hosted
+green check or dispatch GitHub Actions merely to repeat it. Record the tested
+revision/tree, commands, exit results and retained log locations. Coordinate with
+other active agents so one owner runs the full suite for a given integration tree;
+use separate build directories for concurrent builds. Changed code or unresolved
+failures require appropriate fresh verification, not reuse of stale results.
+
+The approved [CI execution plan](docs/remaining-issues-plan.md#local-validation-and-hosted-ci-plan-2026-09-06)
+makes hosted quality runs manual-only, with tag-only release builds separate.
+Workflow trigger changes and a shared local runner remain pending in that plan;
+until published, current push/PR triggers still run. Do not report them disabled.
+Any actual GitHub enforcement/access blocker must be reported, not bypassed.
+
 Run from the repository root with stable Rust, rustfmt, Clippy, and Python 3.
 These commands reflect the GitHub Linux quality workflow; recheck that workflow
 for changes. Build optimized binaries with Cargo's release profile before the
@@ -214,6 +228,9 @@ python3 eval/run.py validate
 ```
 
 Run targeted tests during development, then the baseline suite for feature delivery.
+Also run every system fixture and both packaging/checksum gates listed in
+`.github/workflows/ci.yml`; the short command block above is not the full suite.
+Keep any additional Forgejo checks accounted for when consolidating the runner.
 `eval/run.py validate` checks scenario definitions; it does **not** execute live
 agent evaluations. For behavioral/release validation, use `python3 eval/run.py live`
 with an approved configured provider and budget. It can consume provider capacity
