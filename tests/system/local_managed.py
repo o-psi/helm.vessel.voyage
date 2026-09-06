@@ -5,6 +5,7 @@ import os
 import re
 from pathlib import Path
 import signal
+import select
 import sqlite3
 import subprocess
 import tempfile
@@ -550,10 +551,27 @@ def child_cleanup(root):
         while case.counts.get('parent', 0) < 3 and time.monotonic() < deadline:
             time.sleep(0.01)
         assert case.counts.get('parent') == 3, case.counts
+        # Provider request admission precedes its response and durable tool intent.
+        # Wait for the third root subagent start (the wait call), which is emitted
+        # after canonical checkpoint, before testing unresolved-call cancellation.
+        prefix = bytearray()
+        deadline = time.monotonic() + 15
+        while True:
+            complete = prefix.split(b'\n')[:-1]
+            started = [json.loads(line) for line in complete if line.strip()]
+            if sum(event.get('event') == 'tool_started' and event.get('name') == 'subagent' for event in started) == 3:
+                break
+            assert time.monotonic() < deadline and process.poll() is None, 'durable parent wait was not observed'
+            if select.select([process.stdout], [], [], .05)[0]:
+                chunk = os.read(process.stdout.fileno(), 65536)
+                assert chunk, 'managed output closed before durable parent wait'
+                prefix.extend(chunk)
+                assert len(prefix) <= 1024 * 1024, 'managed readiness output exceeded cap'
         run_id = next(row['active_run']['id'] for row in case.listing()['sessions'] if row['id'] == session)
         run([*case.args, 'cancel', session, '--run', run_id], case.env)
         stdout, stderr = process.communicate(timeout=25)
         assert process.returncode != 0, stderr
+        stdout = prefix.decode('utf-8') + stdout
         final([json.loads(line) for line in stdout.splitlines()], 'cancelled')
         assert case.counts['child'] == 2, 'queued child dispatched'
         # Cleanup does not invent the missing result of the interrupted wait call.
