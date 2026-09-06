@@ -10,6 +10,7 @@ use std::{
 use uuid::Uuid;
 
 pub mod cli;
+pub mod history;
 pub mod runtime;
 
 #[cfg(test)]

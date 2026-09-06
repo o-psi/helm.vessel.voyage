@@ -26,6 +26,23 @@ async fn blocking<T: Send + 'static>(
     result.map_err(|error| Failure::from_error(&error).into())
 }
 
+/// Historical operator queries never construct a provider or admit inference.
+pub async fn read_history(
+    workspace: PathBuf,
+    session: Option<Uuid>,
+    query: history::Query,
+    cancel: tokio_util::sync::CancellationToken,
+) -> Result<history::History> {
+    let token = cancel.clone();
+    tokio::select! {biased; _=cancel.cancelled()=>Err(Failure::Unavailable.into()), result=blocking(move || {
+        ensure!(!token.is_cancelled(),Failure::Unavailable);
+        let path=Store::default_path();std::fs::create_dir_all(path.parent().context("inference store has no parent")?)?;
+        let mut store=Store::open(path)?;let project=store.project(&workspace)?;
+        let scope=if let Some(session)=session {ensure!(store.session_project(session)?==project,Failure::Invalid);Scope::Session(session)}else{Scope::Project(project)};
+        store.history(scope,query,&token)
+    })=>result}
+}
+
 #[derive(Clone)]
 pub struct Accounting {
     store: Arc<Mutex<Store>>,
@@ -165,6 +182,20 @@ impl Accounting {
                 .await?;
         }
         Ok(())
+    }
+    pub async fn history(
+        &self,
+        session: Uuid,
+        project_scope: bool,
+        query: history::Query,
+        cancel: tokio_util::sync::CancellationToken,
+    ) -> Result<history::History> {
+        let token = cancel.clone();
+        tokio::select! {biased; _=cancel.cancelled()=>Err(Failure::Unavailable.into()), result=self.database(move |store| {
+            ensure!(!token.is_cancelled(),Failure::Unavailable);
+            let project=store.session_project(session)?;
+            store.history(if project_scope {Scope::Project(project)}else{Scope::Session(session)},query,&token)
+        })=>result}
     }
     pub async fn status(&self, session: Uuid) -> Result<Vec<Status>> {
         self.database(move |store| {
