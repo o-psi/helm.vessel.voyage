@@ -10,7 +10,10 @@ participation across an explicitly user-scoped set of Helms extends those same
 voyages through Vessel; it does not create a separate kind of session. The
 interface, coordinating agent and participants may then run on different Helms.
 No repository, component map or permanent task-to-host assignment is required.
-Coordinator handoff and shared-context mechanics remain open design.
+The proposed [coordination contract and implementation map](voyage-coordination.md)
+specifies explicit quiescent handoff, scope drain/cancel, assignment idempotency and
+consent-bound context. Concrete wire/storage integration and runtime delivery remain
+unfinished; the contract is not epic completion.
 
 Published foundations include local sessions/completion (#88), dedicated remote
 worker HTTP operations (#129), workflow secrets (#130) and private policy defaults

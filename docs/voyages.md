@@ -87,7 +87,9 @@ Work can span several participants without a compulsory component-to-host map.
 Scope changes must be visible and authorized. Adding a machine cannot silently
 expand local permissions or disclose existing private history. Removing a machine
 must report the disposition of its queued and active work. The detailed rules for
-removal, reassignment and already-disclosed context still need design decisions.
+removal, reassignment and already-disclosed context are specified for review in the
+[coordination contract](voyage-coordination.md#5-scope-edits-while-work-exists);
+implementation remains planned.
 Agents and delegates cannot add machines or widen authority on their own.
 
 ## Session continuity and lifecycle
@@ -103,7 +105,9 @@ is a different event and must preserve truthful results and cleanup status.
 
 Coordinator selection and handoff must be explicit to the user and prevent two
 coordinators from issuing conflicting work. The selection UX, allowed handoff
-points and recovery protocol remain open design questions. No automatic failover,
+points and recovery protocol are proposed in the
+[quiescent handoff contract](voyage-coordination.md#7-explicit-quiescent-coordinator-handoff).
+They still require implementation and failure testing. No automatic failover,
 transparent process survival or safe replay of uncertain effects is promised.
 A new coordinator must not infer that an interrupted process is still running or
 repeat a tool effect whose outcome is unknown.
@@ -111,8 +115,9 @@ repeat a tool effect whose outcome is unknown.
 Users must be able to follow assignments and results across permitted machines,
 understand blockers, and distinguish provisional output from verified outcomes.
 Local voyages already persist through the existing session stores. Cross-Helm
-context distribution and reconciliation with participant execution records still
-need a contract. “Voyage” does not introduce a second local identity layered over
+context distribution and reconciliation with participant execution records
+follow the proposed [context and continuity contract](voyage-coordination.md#6-context-canonical-history-and-retention).
+“Voyage” does not introduce a second local identity layered over
 a session. This terminology does not rename existing IDs, change the Journal
 schema or completion ledger, or establish a distributed identifier mapping.
 
@@ -163,7 +168,8 @@ operations and its authenticated static status page remain useful current surfac
 
 ## Delivery and acceptance
 
-The [session management design](vessel-session-management.md) and
+The [session management design](vessel-session-management.md),
+[coordination contract and implementation map](voyage-coordination.md), and
 [production contract](attachment-production-contract.md) map the remaining work.
 The full agreed workflow is the completion standard; a working transport or a
 single remote task alone does not establish full multi-Helm readiness.

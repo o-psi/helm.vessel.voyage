@@ -68,7 +68,8 @@ Changing Vessel identity must not silently transfer authority.
 Enrollment is not voyage membership, session sharing or approval delegation. Planned
 Helm management must let the user select permitted Helms when starting a voyage
 or extend an existing voyage's scope, and inspect scope changes. A user can name a permitted execution target or let the coordinator
-choose within scope. Details for active-work removal and reassignment remain open;
+choose within scope. The proposed [scope-edit contract](voyage-coordination.md#5-scope-edits-while-work-exists)
+requires explicit drain/cancel disposition and separate enforcement/cleanup evidence;
 the interface must not report a removed machine's work as cancelled without evidence.
 
 Any convenience `helm attach` entry point or alias remains a CLI design question.
@@ -85,7 +86,9 @@ Helm coordinates the voyage and how that role changes without conflicting dispat
 Closing or reconnecting an interface must be distinct from stopping its coordinator
 or participants. Another authorized interface should be able to inspect and steer
 the same voyage. Coordinator selection, allowed handoff points, durable handoff
-state and recovery are unresolved design details; automatic failover is not assumed.
+state and recovery are specified for review in the
+[coordination contract](voyage-coordination.md#7-explicit-quiescent-coordinator-handoff);
+implementation remains planned and automatic failover is not assumed.
 A handoff must not replay uncertain tool effects or claim that dead processes survived.
 
 Current dedicated-worker behavior is narrower: losing an operator HTTP client does
@@ -109,7 +112,9 @@ prove an operator workflow is exposed; consult the remote guide for actual endpo
 Voyage orchestration requires additional identity/routing and authorization design:
 which voyage, coordinator and participant a request concerns; which scope and
 ownership revision authorizes it; and how results are attributed after changes.
-Do not invent wire fields before that contract is agreed and tested on both sides.
+The [coordination contract](voyage-coordination.md) supplies proposed identity,
+assignment, fencing and disclosure semantics. Its domain names are not existing
+wire fields; #9 must agree concrete encoding and test both peers before exposure.
 
 Required semantics:
 
@@ -166,7 +171,9 @@ authority to decide. Separate mobile/browser interfaces are deferred.
 | [#82](https://github.com/o-psi/voyage/issues/82), [#83](https://github.com/o-psi/voyage/issues/83) | Completion behavior and end-to-end evidence |
 
 The [production contract](attachment-production-contract.md) retains full workflow
-acceptance. Dependency order does not make unfinished required behavior optional.
+acceptance. The [dependency-ordered implementation map](voyage-coordination.md#10-dependency-ordered-implementation-and-acceptance-map)
+assigns concrete outcomes and acceptance tests to the related issues. Dependency
+order does not make unfinished required behavior optional.
 Test actual Helm/Vessel boundaries, scope/authority matrices, duplicate delivery,
 local/remote contention, multi-interface reconnect, coordinator handoff, cancellation,
 crashes, partial output, storage failure, backpressure, revocation and privacy.

@@ -59,5 +59,6 @@ docs/terminal-cleanup.md
 docs/tui-architecture.md
 docs/vessel-connectivity-retirement.md
 docs/vessel-session-management.md
+docs/voyage-coordination.md
 docs/voyages.md
 docs/worktree-cleanup.md

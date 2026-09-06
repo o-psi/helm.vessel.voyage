@@ -16,8 +16,10 @@ Current [dedicated remote sessions](remote-sessions.md) implement a narrower
 foreground HTTP workflow. Full session lifecycle, scoped delegation, coordinator
 lifecycle, Helm interaction, services and opt-in approvals remain required work;
 browser console work is deferred. Dependency ordering does not waive acceptance.
-Exact coordinator selection/handoff, scope-change behavior and context-sharing
-mechanics still need design; this contract does not prescribe automatic failover.
+The proposed [coordination contract](voyage-coordination.md) specifies coordinator
+fencing, explicit quiescent handoff, drain/cancel scope edits and authorized context
+transfer, with a dependency-ordered acceptance/test map. These require implementation;
+automatic failover is not assumed.
 
 ## Authority and trust
 
