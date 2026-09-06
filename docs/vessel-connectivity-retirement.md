@@ -18,9 +18,10 @@ that a Helm is connected or authorized to execute. Diagnostics distinguish enabl
 modes from current connections; a presence-only peer cannot receive execution
 commands. Existing local sessions are not implicitly shared.
 
-The planned [voyage model](voyages.md) adds Helm as the local and remote operator
-interface, with an independently placed coordinating Helm and a user-scoped set of
-execution participants. A voyage is open-ended and needs no project or repository.
+Every Helm session is a [voyage](voyages.md), including local chat. Planned
+multi-Helm participation extends those voyages with an independently placed
+coordinating Helm and a user-scoped set of execution participants. A voyage is
+open-ended and needs no project or repository.
 The current dedicated HTTP worker does not deliver that orchestration. Browser
 console work is deferred. Tracking remains in
 [#77](https://github.com/o-psi/voyage/issues/77), with the current attachment

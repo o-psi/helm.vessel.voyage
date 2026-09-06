@@ -12,8 +12,9 @@ both stores. A private stable sidecar OS lock excludes other cooperating process
 a shared asynchronous mutex serializes callers in one process. Local contention
 has a five-second admission bound; cross-process contention fails immediately.
 Filesystem latency is not bounded by these mechanisms. This local persistence
-`Coordinator` is not the coordinating Helm role in a planned [voyage](voyages.md).
-It neither selects participant machines nor moves an execution between them.
+`Coordinator` synchronizes stores; it does not implement [cross-Helm voyage
+coordination](voyages.md), select participant machines or move execution between
+them. A Helm can coordinate its local voyage while using this persistence API.
 
 `RunHandle::create` takes the trusted session and run UUIDs; `resume` requires the
 known ledger to exist and validate. A checkpoint's execution UUID should be the

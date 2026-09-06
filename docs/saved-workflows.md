@@ -5,8 +5,8 @@ inputs become model-visible data; explicitly bound secrets remain transient.
 A workflow supplies a prompt, not permissions: Helm keeps your selected provider,
 model, workspace, access mode, approvals and resource limits.
 
-Workflows are optional conveniences for local execution. The planned
-[voyage model](voyages.md) does not require a saved workflow, repository or fixed
+Workflows are optional conveniences for local execution. Every Helm session is a
+[voyage](voyages.md); it does not require a saved workflow, repository or fixed
 component map. A workflow definition cannot select additional participant Helms
 or widen a voyage's user-selected machine scope.
 

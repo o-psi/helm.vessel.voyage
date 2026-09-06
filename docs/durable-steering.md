@@ -5,7 +5,7 @@ managed CLI execution are implemented. Managed TUI projection, the remote steeri
 frontend, and complete guarded frontend lifecycle operations remain planned. This
 module does not itself enable network steering or automatic session transfer.
 
-A planned [voyage](voyages.md) must route steering from an authorized interface
+Planned [cross-Helm steering](voyages.md) must route messages from an authorized interface
 Helm to the relevant coordinator or participant, preserving current authorization
 and honest delivery receipts. The interface Helm need not coordinate the voyage.
 These local receipts do not establish that cross-machine route or its handoff semantics.

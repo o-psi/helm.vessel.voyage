@@ -1,9 +1,10 @@
 # Voyage delivery map
 
-Voyage is developing its first release. The intended product is the
-[open-ended voyage](voyages.md): Helm as the interface for local and remote work,
-with explicitly scoped machines and coordination that can run on another Helm.
-The complete agreed workflow and its verification define delivery.
+Voyage is developing its first release. Helm is the program; every session is an
+[open-ended voyage](voyages.md), including local chat. Planned distributed work
+extends those voyages with explicitly scoped machines and coordination that can
+run on another Helm. The complete agreed workflow and its verification define
+delivery.
 
 ## Current foundations
 
@@ -17,7 +18,7 @@ yet provide the unified Helm management interface or multi-Helm orchestration.
 
 | Area | Tracking | Outcome |
 | --- | --- | --- |
-| Voyage integration | [#77](https://github.com/o-psi/voyage/issues/77) | Scoped ongoing session across Helms; complete user workflow |
+| Multi-Helm voyage integration | [#77](https://github.com/o-psi/voyage/issues/77) | Scoped ongoing session across Helms; complete user workflow |
 | Helm operator interface | [#14](https://github.com/o-psi/voyage/issues/14) | Local/remote viewing, targeting, scope and steering; browser console deferred |
 | Runtime coordination | [#78](https://github.com/o-psi/voyage/issues/78) | Separate interface/coordinator/participant lifecycle and full managed sessions |
 | Transport and identity | [#9](https://github.com/o-psi/voyage/issues/9), [#10](https://github.com/o-psi/voyage/issues/10) | Versioned routing, enrollment and current scoped authority |

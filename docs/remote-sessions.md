@@ -4,11 +4,12 @@ A foreground Helm worker can expose one newly created managed session to its enr
 
 This is an explicit single-owner mode. Ordinary `helm attachment connect` remains presence-only. Existing private sessions are not selected, imported or shared. The remote API provides no creation, model change, filesystem-root change, approval delegation, recovery, or transcript-history operation. Local crash recovery is documented below. Consent metadata is not an execution grant.
 
-The planned [voyage model](voyages.md) allows an explicitly scoped set of Helms,
-with separate operator-interface, coordinating and executing roles. This dedicated
-worker is a current execution path, not that distributed coordinator or the planned
-Helm interface for remote work. A worker's fixed workspace/model binding does not
-require future voyages to be tied to a repository or component. Browser console
+Every Helm session is a [voyage](voyages.md), including a local chat or this
+dedicated remote session. Planned multi-Helm participation extends voyages across
+an explicitly scoped set of Helms, with separate interface, coordinating and
+executing roles. This worker does not implement that distributed coordination or
+the Helm interface for remote work. Its fixed workspace/model binding does not
+make a repository or component map part of the voyage definition. Browser console
 work is deferred.
 
 ## Start the foreground worker

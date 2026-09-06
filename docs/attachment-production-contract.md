@@ -5,9 +5,10 @@ Tracking: [#77](https://github.com/o-psi/voyage/issues/77#issuecomment-554805399
 [#78](https://github.com/o-psi/voyage/issues/78), [#79](https://github.com/o-psi/voyage/issues/79).
 
 **Status: planned production contract, not a readiness claim.** The
-[voyage product model](voyages.md) defines an open-ended session across an explicitly
-user-scoped set of Helms. Helm provides the local and remote operator interface;
-Vessel provides the control plane. The interface Helm, coordinating Helm and
+[voyage product model](voyages.md) names every Helm session a voyage, including
+local chat. This contract covers extending those voyages across an explicitly
+user-scoped set of Helms. Helm is the program and operator interface; Vessel
+provides the control plane. The interface Helm, coordinating Helm and
 executing Helms are distinct roles that may overlap. The coordinator may be remote.
 No project, repository or component map is required.
 
@@ -102,8 +103,10 @@ Reject unsupported versions, unknown fields/operations, nil IDs,
 oversized frames, invalid revisions and expired commands before admission.
 Workspace selection uses locally configured identities, not arbitrary remote paths.
 Distinct identities represent installation, connection, principal, session, run,
-command and event cursor. Planned voyage identity, coordinator role and participant
-scope must not be inferred from any current connection or execution-session ID.
+command and event cursor. A voyage is the session itself; existing session
+identifiers remain in use. Planned cross-Helm coordinating roles and participant
+scope must be explicit; current connection or session identifiers alone do not
+establish those roles or authority.
 Closing an interface is distinct from cancelling work. Losing execution authority
 or its lease still fences effects; reconnection cannot manufacture completed work.
 Delivery, acceptance, execution and terminal states are

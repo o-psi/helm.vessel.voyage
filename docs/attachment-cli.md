@@ -136,7 +136,7 @@ The explicit [foreground presence command](attachment-presence.md) maintains the
 authenticated production socket without dispatching work.
 [Dedicated remote execution](remote-sessions.md) is a separate opt-in command.
 Enrollment alone does not select a voyage's machine scope or make this Helm its
-coordinator. The planned Helm operator interface, voyage coordination, approval
+coordinator. The planned remote Helm interface, cross-Helm coordination, approval
 dispatch and services remain required by
 [the full attachment contract](attachment-production-contract.md), and #10 remains
 open beyond this lifecycle interface.

@@ -40,7 +40,7 @@ tasks have no automatic two-minute deadline. Message/follow-up delivery also
 yields a sender’s slot when a full mailbox needs its recipient to run.
 
 This view supervises children within the current Helm runtime. The planned
-[voyage interface](voyages.md) must also expose work on participating Helms and
+[remote voyage interface](voyages.md) must also expose work on participating Helms and
 identify the coordinating Helm independently of the Helm displaying the interface.
 The current agent tree does not provide that remote routing or authority.
 

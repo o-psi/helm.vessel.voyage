@@ -42,7 +42,7 @@ a claim that the full voyage product is ready.
    disconnect, cancellation and recovery using the current documented APIs.
 7. Make Helm the default for the verified scope only after seven consecutive days
    without critical fallback, data loss, policy bypass, unrecovered session or
-   orphaned process. Full voyage acceptance also requires the planned drills below.
+   orphaned process. Full multi-Helm acceptance also requires the planned drills below.
 
 Capture task category, outcome, fallback reason, latency, interruptions, approval
 surprises and manual repair. Redact secrets and sensitive prompt content.
@@ -66,7 +66,7 @@ surprises and manual repair. Redact secrets and sensitive prompt content.
 - Inject provider rate limits and confirm bounded retry and responsive cancellation.
 - Exhaust session storage and confirm truthful failure with prior evidence preserved.
 
-## Required voyage drills when implemented
+## Required multi-Helm voyage drills when implemented
 
 These are planned acceptance checks, not currently runnable product instructions:
 

@@ -36,7 +36,7 @@ provisioning is implemented and verified.
 ## Product capability claims
 
 Release documentation must describe the actual [remote-session surface](remote-sessions.md)
-and the remaining [voyage design](voyages.md) separately. A working dedicated
+and the remaining [multi-Helm voyage work](voyages.md) separately. A working dedicated
 worker does not prove the Helm operator interface, multi-Helm coordination, service
 lifecycle or coordinator handoff. Report actual checks and unresolved acceptance
 criteria; do not advertise remote dogfood readiness from local tests alone.

@@ -7,8 +7,8 @@ Refs [#9](https://github.com/o-psi/voyage/issues/9) and
 These libraries underpin [private managed sessions](local-managed-sessions.md),
 [foreground presence](attachment-presence.md) and [dedicated remote sessions](remote-sessions.md).
 The details below describe their individual boundaries, not a claim that all full
-session-lifecycle operations are exposed. The planned [voyage coordinator and Helm
-interface](voyages.md) remain separate work; existing local sessions are not
+session-lifecycle operations are exposed. Planned [cross-Helm coordination and
+remote interface support](voyages.md) remain separate work; existing local voyages are not
 implicitly exposed.
 
 ## Command domain
@@ -192,7 +192,7 @@ authenticate a connection, execute work or expose a raw snapshot.
 The [authenticated socket libraries](attachment-transport.md) add an outbound
 Helm connection and a separately constructed Vessel attachment router. Production
 routing supports [heartbeat-only presence](attachment-presence.md) and opt-in
-[dedicated remote execution](remote-sessions.md). General sharing and voyage
+[dedicated remote execution](remote-sessions.md). General sharing and cross-Helm
 coordination remain unfinished; transport observations never grant effect authority.
 
 The [enrollment lifecycle CLI](attachment-cli.md) exposes explicit enroll, status,

@@ -10,9 +10,9 @@ implemented below. [Persistent private defaults](policy-defaults.md) are availab
 in-TUI switching remains unfinished under issue #70.
 
 Policy layers named global, project and session refer to local policy resolution;
-they do not define a mandatory voyage project or a fleet-wide grant. The planned
-[voyage scope](voyages.md) selects eligible Helms, while each executing Helm resolves
-its own effective policy. A coordinator or interface cannot broaden those rules.
+they do not define a mandatory voyage project or a fleet-wide grant. Planned
+[multi-Helm scope](voyages.md) selects eligible Helms, while each executing Helm
+resolves its own effective policy. A coordinator or interface cannot broaden those rules.
 
 ## Typed rules and presets
 

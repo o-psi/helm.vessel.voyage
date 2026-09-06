@@ -24,9 +24,9 @@ the selected model. The session stores both its current model and timestamped ch
 resumed session continues with its last selection even when the configuration default differs.
 
 These controls apply to the current local Helm session and its local subagents.
-They do not remotely switch another Helm's model. In the planned
-[voyage model](voyages.md), interface, coordinator and participants can be different
-Helms; voyage scope does not imply shared model settings or credentials.
+They do not remotely switch another Helm's model. With planned
+[multi-Helm participation](voyages.md), interface, coordinator and participants
+can be different Helms; voyage scope does not imply shared model settings or credentials.
 
 Provider selection itself remains a startup concern because changing providers can change
 credentials, protocol semantics, and model compatibility.

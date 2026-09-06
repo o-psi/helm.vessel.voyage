@@ -62,9 +62,10 @@ Running a coordinating agent requires execution and provider configuration on th
 Helm doing that work, which may be another machine. Hosting Vessel supplies the
 control plane and does not make Vessel the coordinating agent.
 
-These setup choices describe capabilities, not permanent assignments. In the planned
-[voyage model](voyages.md), interface, coordinating and participant roles may overlap
-or run on different Helms, and the user selects the permitted machines per voyage.
+These setup choices describe capabilities, not permanent assignments. Every Helm
+session is a [voyage](voyages.md). With planned multi-Helm participation,
+interface, coordinating and participant roles may overlap or run on different
+Helms, and the user selects the permitted machines per voyage.
 A preview folder or worker choice must not become a compulsory project/component
 map or pin every task to one host. The wizard does not yet configure or demonstrate
 that runtime, coordinator handoff or multi-interface reconnection.

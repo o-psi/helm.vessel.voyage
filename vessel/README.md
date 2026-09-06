@@ -3,8 +3,9 @@
 Vessel is Voyage's management plane. It currently provides health checks and an
 authenticated status page, authenticated outbound Helm presence, and opt-in
 [dedicated remote-session HTTP operations](../docs/remote-sessions.md). Helm is the
-planned operator interface for both local and remote work; Vessel routes control
-and observations without executing model tools.
+program used to interact with voyages (its sessions), including local chat. Its
+unified remote operator interface remains planned; Vessel routes control and
+observations without executing model tools.
 
 ## Run
 
@@ -40,14 +41,15 @@ share session content.
 
 ## Voyages across Helms
 
-The agreed [voyage product model](../docs/voyages.md) separates the Helm an operator
-opens from the Helm coordinating a voyage and the Helms executing delegated work.
-A voyage is an open-ended session scoped to user-selected machines; it needs no
-project, repository or component map. The coordinator may run remotely while an
-authorized Helm interface disconnects or reconnects. Each executing Helm retains
-its local policy, credentials and execution authority.
+Every Helm session is a [voyage](../docs/voyages.md), including a new local chat;
+it needs no project, repository or component map. Planned multi-Helm participation
+extends those voyages across user-selected machines. That extension separates the
+Helm an operator opens from the Helm coordinating work and the Helms executing
+delegated work. The coordinator may then run remotely while an authorized Helm
+interface disconnects or reconnects. Each executing Helm retains its local policy,
+credentials and execution authority.
 
-That orchestration and Helm operator interface remain planned under
+That cross-Helm orchestration and remote operator interface remain planned under
 [#77](https://github.com/o-psi/voyage/issues/77). Today's `helm remote-worker`
 exposes one dedicated session through authenticated HTTP; it does not coordinate
 multiple Helms. The `/ui` endpoint is a status page, and browser console work is

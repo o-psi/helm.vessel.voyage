@@ -3,9 +3,10 @@
 Use `helm managed` to keep a local session in a private Journal and run it from
 separate CLI invocations. Helm owns the conversation, tool execution, usage, and
 recovery state. These sessions are not shared with Vessel, and this command does
-not start a network listener or an attachment worker. The planned [voyage model](voyages.md)
-adds scoped work across Helms; this command does not select those participants or
-make its foreground executor a voyage-wide coordinator.
+not start a network listener or an attachment worker. Each session is already a
+[voyage](voyages.md). Planned multi-Helm participation extends voyages with scoped
+work across Helms; this command does not select remote participants or provide
+cross-Helm coordination.
 
 Choose an absolute storage directory whose parent exists. It identifies a local
 Helm installation, not your project directory. Different storage roots have

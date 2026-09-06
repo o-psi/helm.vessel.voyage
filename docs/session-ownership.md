@@ -4,7 +4,7 @@ Tracking [#78](https://github.com/o-psi/voyage/issues/78). This closes a local J
 writer race; it does not expose attachment or satisfy atomic remote command
 admission. The [attachment production contract](attachment-production-contract.md)
 and explicit journal-transfer requirements still apply. Local execution ownership
-is distinct from the planned [voyage coordinator](voyages.md): this lock neither
+is distinct from the [coordinating Helm role](voyages.md): this lock neither
 selects a coordinator nor binds a voyage to the Helm providing its interface.
 
 A saved or resumed CLI/TUI session now has one execution owner, held with the

@@ -52,7 +52,7 @@ adapter needs an authorized session-change notification or snapshot contract bef
 exposing this operation remotely; the terminal replay stream alone cannot announce
 this change. The dedicated remote worker currently exposes recovery only through
 its explicit local command. Broader coordinator/sharing work in issue 78 remains
-open; a planned [voyage](voyages.md) handoff must not reinterpret reconciliation
+open; planned [cross-Helm coordinator handoff](voyages.md) must not reinterpret reconciliation
 as successful execution or automatically repeat uncertain work.
 
 The companion frontend documents its explicit recovery flags and prerequisite

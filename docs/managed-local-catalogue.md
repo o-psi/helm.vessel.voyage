@@ -11,7 +11,8 @@ error. The local frontend must not automatically generate another UUID and retry
 an uncertain create. The caller can inspect the bounded catalogue to recover a
 lost response. Dedicated remote sessions have separate exact-run cancellation
 receipts; general remote session creation remains planned. These local catalogue
-entries are not a voyage-wide inventory of participant Helms.
+entries describe voyages through session metadata, not an inventory of
+participant Helms.
 
 `list_session_summaries(after, limit)` returns UUID-ordered metadata pages, with
 limits 1–100 and an exclusive UUID continuation. Each page has a consistent SQLite

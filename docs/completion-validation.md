@@ -217,8 +217,8 @@ audit or proof of cross-machine voyage coordination.
   matrix: withheld false finals, reviewed incomplete work, stale/late participant
   results, cancellation and provisional-output recovery. Existing remote lifecycle
   coverage is useful evidence, not completion of that matrix. Planned
-  [voyages](voyages.md) additionally need evidence across permitted Helms with a
-  coordinator separate from the interface. An accepted local run must not imply
+  [multi-Helm participation](voyages.md) additionally needs evidence across permitted
+  Helms with a coordinator separate from the interface. An accepted local run must not imply
   that the open-ended voyage has ended or that another Helm's results were reviewed.
 - Retain the separate subscription-authentication and cutover hold. Local-model
   evidence cannot validate subscription credentials. No native-platform result is

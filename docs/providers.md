@@ -6,7 +6,7 @@ messages and tool definitions and returns text and structured tool calls. Creden
 never enter saved sessions. A native provider may persist only a typed, versioned,
 size-bounded continuation envelope; Helm clears that state when a model changes.
 
-For planned [multi-Helm voyages](voyages.md), this boundary applies separately to
+With planned [multi-Helm participation](voyages.md), this boundary applies separately to
 each executing Helm. Provider configuration and credentials stay on that Helm;
 Vessel relays control and events. The interface or coordinating role does not
 select a shared provider account or transfer credentials to participants.

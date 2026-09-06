@@ -5,10 +5,11 @@ when several independent tasks can proceed at once; they are not background
 terminals and do not silently inherit unlimited authority.
 
 These are local child agents, including when their owning Helm runs on a remote
-host. A child ID is not a participant Helm identity. Planned
-[voyages](voyages.md) allow coordination across explicitly scoped Helms without
-requiring a project or worktree; their delegation transport is separate from the
-current local `subagent` tool. Each executing Helm must enforce its own authority.
+host. A child ID is not a participant Helm identity. Every Helm session is a
+[voyage](voyages.md); planned cross-Helm coordination extends voyages across
+explicitly scoped machines without requiring a project or worktree. That
+delegation transport is separate from the current local `subagent` tool. Each
+executing Helm must enforce its own authority.
 
 ## Lifecycle
 

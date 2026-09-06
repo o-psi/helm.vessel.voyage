@@ -6,10 +6,12 @@ intended operator interface for both local and remote work.
 
 ## Product roles
 
-The planned [voyage model](voyages.md) is an open-ended session across user-scoped
-Helms. Interface, coordinating and participant Helms are separate roles that may
-overlap. The coordinating agent can run on a remote Helm while the user opens an
-interface on a workstation. No repository or component-to-machine map is required.
+Helm is the program; every Helm session is a [voyage](voyages.md), including a
+new local chat. A voyage is an open-ended conversation and needs no repository or
+component-to-machine map. Planned multi-Helm participation extends that same
+voyage across explicitly selected machines. Interface, coordinating and participant
+Helms are roles that may overlap; remote coordination would let the user open an
+interface on a different workstation.
 
 ```mermaid
 flowchart LR
@@ -20,16 +22,19 @@ flowchart LR
 
 This is the target role/communication model, not an implemented distributed
 coordinator. Vessel routes authorized work; each executing Helm enforces local
-authority. Voyage persistence, shared context and coordinator handoff require
-further contract design. Opening or closing an interface does not define who
+authority. Local voyages already persist through the existing session stores.
+Cross-Helm persistence and reconciliation, shared context and coordinator handoff
+require further contract design. Opening or closing an interface does not define who
 coordinates or imply an execution cancellation request.
 
 ## Current local and remote execution
 
-Local Helm supports chat, runs, sessions, terminals, todos and local subagents.
+Local Helm supports voyages through its chat and session workflows, with runs,
+terminals, todos and local subagents.
 [Private managed sessions](local-managed-sessions.md) add journal-backed ownership,
 exact command receipts and explicit recovery. A local session owner serializes
-execution on one host; it is not a voyage-level coordinating agent.
+execution on one host; it does not implement cross-Helm coordination. The same
+Helm can present and coordinate its local voyage.
 
 An enrolled Helm can maintain an authenticated outbound presence connection with
 `helm attachment --directory /absolute/identity connect`. Presence alone negotiates
@@ -77,5 +82,5 @@ supervision, distinct from planned cross-Helm participation. See
 `voyage-protocol` supplies strict shared command, feature and event contracts.
 The [attachment foundations](attachment-foundations.md) include the transactional
 command/run journal. Full lifecycle, broader sharing, operator UI, scoped approvals,
-services and voyage-aware coordination require further implementation and evidence.
+services and cross-Helm coordination require further implementation and evidence.
 See the [session management design](vessel-session-management.md).

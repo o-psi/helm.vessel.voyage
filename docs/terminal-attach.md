@@ -24,7 +24,7 @@ and restores the outer terminal on exit or signal.
 
 This attaches to a PTY owned by the current Helm. Running SSH inside that PTY
 does not attach the interface to a remote Helm or select a coordinating Helm.
-Those are separate planned [voyage interface](voyages.md) operations. Detaching
+Those are separate planned [remote voyage interface](voyages.md) operations. Detaching
 this view preserves the live local process; exiting its owning Helm cannot promise
 that the process survives.
 

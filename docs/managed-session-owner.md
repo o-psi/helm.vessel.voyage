@@ -5,10 +5,11 @@ Tracking: [#78](https://github.com/o-psi/voyage/issues/78). `helm managed` and
 Ordinary run, plain-chat and TUI sessions use fenced JSON persistence; automatic
 transfer and full managed frontend integration are not enabled.
 
-This is the local execution owner on one Helm, not the coordinating Helm role in
-a planned [voyage](voyages.md). An interface may eventually observe or steer from
+This API owns local execution on one Helm. That Helm can also coordinate its
+local [voyage](voyages.md). Planned remote interfaces may observe or steer from
 another authorized Helm while execution ownership stays with its executor. The
-current owner API does not implement cross-machine handoff or coordinator selection.
+current owner API does not implement cross-machine handoff or remote coordinator
+selection.
 
 `attachment::runtime::ManagedSessionOwner::open(directory, session_id)` acquires
 one existing journal session's execution guard before reading authoritative data.

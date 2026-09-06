@@ -6,8 +6,9 @@ The event/response types (`UiEvent`, `UiBridge`, `ApprovalRequest`, and
 under `helm/src/tui/` are private implementation details, not new public APIs.
 
 This document describes the current local TUI. Its event-loop coordinator is an
-in-process UI responsibility, distinct from the planned [voyage coordinating
-Helm](voyages.md). A future interface Helm must be able to view and steer a voyage
+in-process UI responsibility, distinct from the [coordinating Helm
+role](voyages.md). Every session shown by the TUI is a voyage. Planned remote
+interface support must let an interface Helm view and steer a voyage
 whose coordinator runs elsewhere. Current panels and local response channels do
 not implement that remote interface, voyage machine scope or coordinator handoff.
 

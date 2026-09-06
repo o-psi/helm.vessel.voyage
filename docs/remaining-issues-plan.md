@@ -4,11 +4,13 @@ User mandate: comprehensively resolve remaining issues, including epics. Latest 
 
 ## Current product direction (2026-09-05)
 
-The accepted [voyage model](voyages.md) is an open-ended session across an explicitly
-user-scoped set of Helms. Helm is the operator interface to local and remote work
-through Vessel. The interface, coordinating agent and participants may run on
-different Helms; no repository, component map or permanent task-to-host assignment
-is required. Coordinator handoff and shared-context mechanics remain open design.
+The accepted [voyage model](voyages.md) names every Helm session a voyage,
+including a new local chat. Helm is the program and operator interface. Planned
+participation across an explicitly user-scoped set of Helms extends those same
+voyages through Vessel; it does not create a separate kind of session. The
+interface, coordinating agent and participants may then run on different Helms.
+No repository, component map or permanent task-to-host assignment is required.
+Coordinator handoff and shared-context mechanics remain open design.
 
 Published foundations include local sessions/completion (#88), dedicated remote
 worker HTTP operations (#129), workflow secrets (#130) and private policy defaults

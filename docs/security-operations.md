@@ -22,8 +22,8 @@ or session-sharing authority.
 
 ## Voyage authority and operator interfaces
 
-The planned [voyage model](voyages.md) separates the interface Helm, coordinating
-Helm and executing participants. Selecting machines for a voyage limits where
+Every Helm session is a [voyage](voyages.md). Planned multi-Helm participation
+separates the interface Helm, coordinating Helm and executing participants. Selecting machines for a voyage limits where
 coordination may send work; it does not grant permissions on those machines.
 A coordinating Helm may run remotely and must remain subject to every executing
 Helm's local roots, policy, approvals and credentials. Viewing or coordinating a

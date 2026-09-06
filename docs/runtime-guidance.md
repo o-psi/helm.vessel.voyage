@@ -26,7 +26,8 @@ objects and generate active extension context at runtime. It also accommodates C
 current constraint that dynamic tools are supplied when a thread starts: a Helm agent's registry is
 fixed for that provider thread, and a changed registry requires a new thread.
 
-The planned [voyage model](voyages.md) does not add tools to today's registry.
+Calling every Helm session a [voyage](voyages.md) does not add tools to today's
+registry. Planned multi-Helm participation does not change that boundary.
 Remote delegation, coordinator handoff and interface attachment must be exposed
 through implemented contracts before models may use them. Each executing Helm
 continues to construct guidance from its own registered capabilities and policy;
