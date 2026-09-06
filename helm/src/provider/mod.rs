@@ -175,7 +175,8 @@ impl ProviderError {
 #[async_trait]
 pub trait Provider: Send + Sync {
     /// A known effective model limit, when supplied by the provider adapter.
-    /// None uses the explicit finite runtime fallback, never an unlimited budget.
+    /// Can narrow an operator-enabled local ceiling; it does not enable a gate
+    /// when the operator has left local token limits disabled.
     fn context_window(&self, _model: &str) -> Option<usize> {
         None
     }

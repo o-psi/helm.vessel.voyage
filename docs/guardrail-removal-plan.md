@@ -1,6 +1,7 @@
 # Remove implicit barriers to authorized work
 
-Planning only, 2026-09-06. Runtime changes below are not implemented by this document.
+Removal plan, 2026-09-06. Default token-cap removal is implemented; automatic
+provider-context recovery and the other changes below remain planned.
 Tracking: [execution issue #5](https://github.com/o-psi/voyage/issues/5), with
 [the operator's direction and scope](https://github.com/o-psi/voyage/issues/5#issuecomment-5561523660).
 The [explicit token-removal clarification](https://github.com/o-psi/voyage/issues/64#issuecomment-5561542020)
@@ -14,10 +15,10 @@ by the operator or installed by an administrator remain enforceable.
 
 ## 1. Remove Helm's token gates first
 
-Current [context accounting](../helm/src/context.rs) uses a 65,536-token default,
-counts each serialized byte as a token, adds framing and output reservations, and
-rejects requests locally when whole-turn omission cannot make them fit.
-[Configuration](../helm/src/config.rs) also defaults output to 8,192 tokens.
+The audited [context accounting](../helm/src/context.rs) used a 65,536-token default,
+counted each serialized byte as a token, added framing and output reservations, and
+rejected requests locally when whole-turn omission could not make them fit.
+[Configuration](../helm/src/config.rs) also defaulted output to 8,192 tokens.
 The reported failure estimated 67,272 tokens after only a few visible tool calls.
 
 - Remove the default context ceiling and local estimate-based refusal to dispatch.
@@ -189,10 +190,18 @@ cannot prove summary quality or model completion behavior. Track those outcomes 
 [#22](https://github.com/o-psi/voyage/issues/22) and #83. Never count an unrun check
 as passing or close broad issues for a partial delivery.
 
-Current status: planning complete; all runtime implementation and acceptance above
-remain outstanding. No implementation access blocker was tested. Audit source was
-`79442bc19e6c33b8f498b29fb83602658d5fb6fe`; the complete 88-issue inventory and relevant
-discussions were inspected with two independent source reviewers. This document's
-validation is limited to source references, links, command accuracy and whitespace;
-runtime, provider, platform and behavioral tests are not applicable to this
-documentation-only change and were not run.
+Current status: the operator subsequently requested the code fix and local reinstall.
+Default local token admission and output caps are removed across root, child and
+title requests; explicit operator limits remain optional. Anthropic's required
+output field uses model-advertised capacity when no explicit limit exists. The
+[current token guide](context-window.md) describes this implemented behavior.
+Automatic semantic context recovery and sections 2–4 remain outstanding; this
+focused fix does not complete #64 or the whole removal plan. Actual integrated
+validation and installation evidence belongs in the linked issue, rather than
+being inferred from this implementation status.
+
+The original audit used source `79442bc19e6c33b8f498b29fb83602658d5fb6fe`; the complete
+88-issue inventory and relevant discussions were inspected with two independent
+source reviewers. Its initial documentation-only validation covered source
+references, links, command accuracy and whitespace. Runtime delivery requires the
+separate checks specified above.

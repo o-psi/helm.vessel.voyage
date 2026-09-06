@@ -179,9 +179,9 @@ at the next safe model boundary, and continues automatically. `Esc` still cancel
 
 `/name TITLE`, `/branch [TITLE]`,
 `/compact [KEEP]`, `/export [PATH]`, and `/clear confirm` provide explicit session operations.
-Every provider request is checked against a finite context budget. Older turns
-are omitted from the request copy when needed while saved history remains intact;
-oversized indivisible input fails locally. See [context limits](../docs/context-window.md).
+Helm has no local context or output-token cap by default. Explicit positive
+`context_window` and `max_tokens` settings opt into limits; zero disables them.
+Provider capacity still applies. See [optional token limits](../docs/context-window.md).
 The conversation footer shows current status rather than permanently listing global shortcuts;
 press `F1` to open contextual keyboard help and `F1` or `Esc` to close it.
 Bracketed paste belongs to the active input surface. Help, lists and other

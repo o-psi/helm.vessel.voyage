@@ -443,6 +443,20 @@ async fn reconciled_history_continues_through_three_native_http_provider_adapter
         let endpoint = format!("http://{}", listener.local_addr().unwrap());
         let server = tokio::spawn(async move {
             tokio::time::timeout(Duration::from_secs(5),async move {
+                if kind == 1 {
+                    let (mut metadata, _) = listener.accept().await.unwrap();
+                    let mut headers = Vec::new();
+                    let mut chunk = [0u8; 4096];
+                    while !headers.windows(4).any(|window| window == b"\r\n\r\n") {
+                        let n = metadata.read(&mut chunk).await.unwrap();
+                        assert!(n > 0);
+                        headers.extend_from_slice(&chunk[..n]);
+                        assert!(headers.len() < 8192);
+                    }
+                    assert!(headers.starts_with(b"GET /models/fixture HTTP/1.1\r\n"));
+                    let capacity = r#"{"id":"fixture","max_tokens":131072}"#;
+                    metadata.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", capacity.len(), capacity).as_bytes()).await.unwrap();
+                }
                 let (mut socket,_)=listener.accept().await.unwrap();
                 let mut bytes=Vec::new();let mut chunk=[0u8;4096];
                 let (offset,length)=loop {
@@ -502,6 +516,7 @@ async fn reconciled_history_continues_through_three_native_http_provider_adapter
             assert_eq!(outputs[0]["call_id"], "call-1");
             assert!(outputs[0]["output"].as_str().unwrap().contains("unknown"));
         } else if kind == 1 {
+            assert_eq!(body["max_tokens"], 131072);
             let last = body["messages"].as_array().unwrap().last().unwrap();
             assert_eq!(last["content"][0]["type"], "tool_result");
             assert_eq!(last["content"][0]["tool_use_id"], "call-1");

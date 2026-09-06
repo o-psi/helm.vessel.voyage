@@ -71,9 +71,26 @@ pub enum ApprovalPolicy {
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AgentBudget {
+    /// Optional per-response output limit; zero means no Helm-imposed cap.
     pub max_tokens: u64,
 
     pub max_terminals: u32,
+}
+
+impl AgentBudget {
+    pub(crate) fn allows(&self, child: &Self) -> bool {
+        (self.max_tokens == 0 || (child.max_tokens > 0 && child.max_tokens <= self.max_tokens))
+            && child.max_terminals <= self.max_terminals
+    }
+
+    /// Intersect explicit limits without treating an absent limit as zero output.
+    pub fn response_limit(&self, configured: u32) -> u32 {
+        let delegated = self.max_tokens.min(u32::MAX as u64) as u32;
+        match (configured, delegated) {
+            (0, limit) | (limit, 0) => limit,
+            (configured, delegated) => configured.min(delegated),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -106,8 +123,7 @@ impl AgentPolicy {
             "child writable root exceeds parent policy"
         );
         anyhow::ensure!(
-            child.budget.max_tokens <= self.budget.max_tokens
-                && child.budget.max_terminals <= self.budget.max_terminals,
+            self.budget.allows(&child.budget),
             "child budget exceeds parent budget"
         );
         anyhow::ensure!(
@@ -184,6 +200,27 @@ mod tests {
             let child: AgentPolicy = serde_json::from_value(encoded).unwrap();
             assert!(parent.validate_child(&child).is_err(), "{field}");
         }
+    }
+
+    #[test]
+    fn optional_response_limits_preserve_explicit_parent_and_child_budgets() {
+        let mut parent = policy();
+        let mut child = parent.clone();
+        child.budget.max_tokens = 0;
+        assert!(parent.validate_child(&child).is_err());
+        parent.budget.max_tokens = 0;
+        assert!(parent.validate_child(&child).is_ok());
+        child.budget.max_tokens = 50;
+        assert!(parent.validate_child(&child).is_ok());
+        assert_eq!(parent.budget.response_limit(0), 0);
+        assert_eq!(parent.budget.response_limit(100), 100);
+        assert_eq!(child.budget.response_limit(0), 50);
+        assert_eq!(child.budget.response_limit(100), 50);
+        assert_eq!(child.budget.response_limit(25), 25);
+        let restored: AgentBudget =
+            serde_json::from_value(serde_json::to_value(&parent.budget).unwrap()).unwrap();
+        assert_eq!(restored.max_tokens, 0);
+        assert_eq!(restored.response_limit(0), 0);
     }
 
     #[test]

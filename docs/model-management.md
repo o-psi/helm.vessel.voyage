@@ -70,8 +70,9 @@ Title generation uses a separate tool-free request with a short, redacted excerp
 of recent user/assistant text. It does not include system instructions, tool
 results, or provider continuation data, and its response never enters the chat
 transcript. Requests are bounded by the provider timeout or ten seconds, whichever
-is shorter, with no retries. Providers that support output-token limits receive a 64-token
-limit; the subscription adapter omits that unsupported parameter. Title stream
+is shorter, with no retries. There is no separate title-token cap; an explicitly
+configured output limit applies where the provider supports it. The subscription
+adapter omits that unsupported parameter. Title stream
 text is capped at 4 KiB and never displayed. Invalid output, errors, and cancellation retain the
 previous name. Title usage is stored separately at `title_state.usage` in the
 session JSON; existing conversation token totals do not include it. A cancelled

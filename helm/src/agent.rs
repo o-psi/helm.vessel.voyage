@@ -853,8 +853,11 @@ impl Agent {
                 return None;
             }
             let mut request = crate::titles::request(messages, model, &self.context.redactor)?;
+            request.max_tokens = (self.max_tokens > 0).then_some(self.max_tokens);
             let limit = self.context_limit(&request.model);
-            crate::context::preflight(&mut request, limit).ok()?;
+            if limit > 0 {
+                crate::context::preflight(&mut request, limit).ok()?;
+            }
             self.check_current_policy().ok()?;
             let permit = self
                 .inference_admit(reference, &request.model, crate::inference::Purpose::Title)
@@ -1175,7 +1178,7 @@ impl Agent {
                 messages,
                 tools: self.tools.definitions(),
                 temperature: self.temperature,
-                max_tokens: Some(self.max_tokens),
+                max_tokens: (self.max_tokens > 0).then_some(self.max_tokens),
             };
             let (response, permit) = gate::guarded(self.stream_with_retry(request, &cancel, checkpoint, &mut partial_output, context.completion.as_ref().map(|run| run.reference()).as_ref()), &cancel, deadline).await?
                 .map_err(|error| error.with_recovery(&history, &usage))?;
@@ -1381,6 +1384,9 @@ impl Agent {
     }
 
     fn context_limit(&self, model: &str) -> usize {
+        if self.context_window == 0 {
+            return 0;
+        }
         self.provider
             .context_window(model)
             .map_or(self.context_window, |limit| limit.min(self.context_window))
@@ -1433,14 +1439,16 @@ impl Agent {
             crate::provider::redact_tool_definition(definition, &self.context.redactor)?;
         }
         let limit = self.context_limit(&request.model);
-        let report = crate::context::preflight(&mut request, limit)?;
-        tracing::info!(
-            estimated_tokens = report.estimated,
-            context_window = report.limit,
-            omitted_messages = report.omitted_messages,
-            "request context preflight"
-        );
-        self.sink.emit(AgentEvent::ContextBudget(report)).await;
+        if limit > 0 {
+            let report = crate::context::preflight(&mut request, limit)?;
+            tracing::info!(
+                estimated_tokens = report.estimated,
+                context_window = report.limit,
+                omitted_messages = report.omitted_messages,
+                "explicit request context preflight"
+            );
+            self.sink.emit(AgentEvent::ContextBudget(report)).await;
+        }
         let mut delay = self.retry.initial_delay;
         for attempt in 1..=self.retry.max_attempts.max(1) {
             self.context
@@ -1857,6 +1865,56 @@ mod tests {
         followup: bool,
     }
 
+    struct UncappedFixture {
+        requests: Arc<std::sync::Mutex<Vec<ModelRequest>>>,
+    }
+
+    #[async_trait]
+    impl Provider for UncappedFixture {
+        fn context_window(&self, _: &str) -> Option<usize> {
+            // Provider metadata is not permission to add an implicit local gate.
+            Some(1)
+        }
+        async fn complete(&self, request: ModelRequest) -> Result<ModelResponse, ProviderError> {
+            self.requests.lock().unwrap().push(request);
+            Ok(ModelResponse {
+                message: Message::new(Role::Assistant, "done"),
+                usage: Usage::default(),
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn default_context_does_not_gate_large_requests_or_omit_history() {
+        let directory = tempfile::tempdir().unwrap();
+        let requests = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let mut a = agent(
+            Box::new(UncappedFixture {
+                requests: requests.clone(),
+            }),
+            &directory,
+        );
+        a.max_tokens = 0;
+        let large = "evidence 雪".repeat(20_000);
+        let first = a.run(vec![], large.clone()).await.unwrap();
+        a.set_model("another-model").unwrap();
+        let second = a.run(first.messages, "continue".into()).await.unwrap();
+        assert_eq!(second.messages[0].content, large);
+        let requests = requests.lock().unwrap();
+        assert_eq!(requests.len(), 2);
+        for request in requests.iter() {
+            assert_eq!(request.max_tokens, None);
+            assert!(request.messages.iter().any(|m| m.content == large));
+            assert!(crate::context::estimate(request) > 65_536);
+            assert!(
+                !request
+                    .messages
+                    .iter()
+                    .any(|m| m.content.starts_with("[Context projection:"))
+            );
+        }
+    }
+
     #[async_trait]
     impl Provider for BudgetFixture {
         fn context_window(&self, model: &str) -> Option<usize> {
@@ -1881,7 +1939,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn context_guard_blocks_initial_followup_and_changed_model_requests() {
+    async fn explicit_context_guard_blocks_initial_followup_and_changed_model_requests() {
         let directory = tempfile::tempdir().unwrap();
         let calls = Arc::new(AtomicUsize::new(0));
         let a = agent(
@@ -1891,7 +1949,8 @@ mod tests {
                 followup: true,
             }),
             &directory,
-        );
+        )
+        .with_context_window(10_000);
         let error = a.run(vec![], "x".repeat(20_000)).await.unwrap_err();
         assert!(matches!(error, AgentError::Context(_)));
         let recovery = error.recovery().unwrap();
@@ -1942,7 +2001,8 @@ mod tests {
                 followup: false,
             }),
             &directory,
-        );
+        )
+        .with_context_window(10_000);
         let history = vec![
             Message::new(Role::User, "x".repeat(20_000)),
             Message::new(Role::Assistant, "old"),
@@ -2449,6 +2509,37 @@ mod tests {
                     output_tokens: 5,
                 },
             })
+        }
+    }
+
+    #[tokio::test]
+    async fn title_requests_only_use_an_explicit_output_limit() {
+        for limit in [0, 25, 100] {
+            let directory = tempfile::tempdir().unwrap();
+            let requests = Arc::new(std::sync::Mutex::new(Vec::new()));
+            let mut a = agent(
+                Box::new(TitleFixture {
+                    requests: requests.clone(),
+                    advertised: true,
+                    discovery_error: false,
+                    fail: false,
+                    delay: Duration::ZERO,
+                    message: Message::new(Role::Assistant, "Useful title"),
+                }),
+                &directory,
+            );
+            a.max_tokens = limit;
+            let result = a
+                .generate_title(
+                    &[Message::new(Role::User, "work")],
+                    CancellationToken::new(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(result.title.as_deref(), Some("Useful title"));
+            let requests = requests.lock().unwrap();
+            assert_eq!(requests.len(), 1);
+            assert_eq!(requests[0].max_tokens, (limit > 0).then_some(limit));
         }
     }
 

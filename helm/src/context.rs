@@ -1,8 +1,9 @@
-//! Conservative request budgeting. Reduction affects only a request projection.
+//! Optional operator-requested budgeting. Reduction affects only a request projection.
 use crate::model::{ModelRequest, Role};
 use thiserror::Error;
 
-pub const DEFAULT_CONTEXT_WINDOW: usize = 65_536;
+/// Zero disables local token admission checks. Providers enforce their own capacity.
+pub const DEFAULT_CONTEXT_WINDOW: usize = 0;
 
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 #[error(
@@ -28,7 +29,7 @@ pub fn estimate(request: &ModelRequest) -> usize {
         .saturating_add(4096)
         .saturating_add(request.messages.len().saturating_mul(256))
         .saturating_add(request.tools.len().saturating_mul(256))
-        .saturating_add(request.max_tokens.unwrap_or(8192) as usize)
+        .saturating_add(request.max_tokens.unwrap_or(0) as usize)
 }
 
 fn serialized_size(value: &impl serde::Serialize) -> usize {
@@ -53,17 +54,18 @@ fn serialized_size(value: &impl serde::Serialize) -> usize {
 
 /// Preserve system guidance and the latest root user turn, including steering and
 /// complete tool groups. Find the smallest removable prefix in one linear scan;
-/// repeatedly serializing the remaining history would be quadratic.
+/// repeatedly serializing the remaining history would be quadratic. A zero limit
+/// leaves the complete request unchanged; an estimate is not an automatic gate.
 pub fn preflight(request: &mut ModelRequest, limit: usize) -> Result<ContextReport, ContextError> {
     let estimated = estimate(request);
-    if estimated <= limit && limit > 0 {
+    if limit == 0 || estimated <= limit {
         return Ok(ContextReport {
             estimated,
             limit,
             omitted_messages: 0,
         });
     }
-    if limit == 0 || estimated == usize::MAX {
+    if estimated == usize::MAX {
         return Err(ContextError { estimated, limit });
     }
     let mut omitted = 0;
@@ -144,12 +146,28 @@ mod tests {
     }
 
     #[test]
-    fn exact_boundary_and_zero_fail_closed() {
+    fn disabled_limit_preserves_large_active_input_and_has_no_output_reserve() {
+        let mut r = request();
+        r.max_tokens = None;
+        r.messages
+            .push(Message::tool("large-result", "雪".repeat(100_000)));
+        let canonical = serde_json::to_value(&r).unwrap();
+        let report = preflight(&mut r, 0).unwrap();
+        assert_eq!(report.limit, 0);
+        assert_eq!(report.omitted_messages, 0);
+        assert_eq!(serde_json::to_value(&r).unwrap(), canonical);
+        let without_reserve = estimate(&r);
+        r.max_tokens = Some(8192);
+        assert!(estimate(&r) >= without_reserve + 8192);
+    }
+
+    #[test]
+    fn explicit_limit_enforces_exact_boundary() {
         let mut r = request();
         let size = estimate(&r);
         assert_eq!(preflight(&mut r, size).unwrap().estimated, size);
         assert_eq!(preflight(&mut r, size - 1).unwrap_err().estimated, size);
-        assert!(preflight(&mut r, 0).is_err());
+        assert_eq!(preflight(&mut r, 0).unwrap().omitted_messages, 0);
     }
 
     #[test]

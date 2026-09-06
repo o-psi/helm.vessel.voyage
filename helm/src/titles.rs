@@ -68,7 +68,7 @@ pub(crate) fn request(
         ],
         tools: Vec::new(),
         temperature: None,
-        max_tokens: Some(64),
+        max_tokens: None,
     })
 }
 
@@ -169,7 +169,7 @@ mod tests {
         )
         .unwrap();
         assert!(request.tools.is_empty());
-        assert_eq!(request.max_tokens, Some(64));
+        assert_eq!(request.max_tokens, None);
         assert_eq!(request.messages.len(), 2);
         let text = &request.messages[1].content;
         assert!(!text.contains("secret-value"));

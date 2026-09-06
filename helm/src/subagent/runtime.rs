@@ -530,8 +530,18 @@ impl SubagentRuntime {
                 "name and task cannot be empty".into(),
             ));
         }
+        if !request.policy.budget.allows(&request.budget) {
+            return Err(RuntimeError::Invalid(
+                "execution budget exceeds child policy".into(),
+            ));
+        }
         if let Some(parent) = request.parent_id {
             let parent_record = self.get_retained(parent).await?;
+            if !parent_record.budget.allows(&request.budget) {
+                return Err(RuntimeError::Invalid(
+                    "execution budget exceeds parent budget".into(),
+                ));
+            }
             parent_record
                 .policy
                 .validate_child(&request.policy)
@@ -1298,6 +1308,59 @@ mod tests {
             worktree: None,
             branch: None,
         }
+    }
+
+    #[tokio::test]
+    async fn execution_budget_cannot_disable_explicit_policy_or_parent_limit() {
+        let runtime = SubagentRuntime::new(
+            Arc::new(GateExecutor::new()),
+            RuntimeLimits::default(),
+            None,
+        )
+        .unwrap();
+        for tokens in [0, 1001] {
+            let mut invalid = request("invalid execution allowance");
+            invalid.budget.max_tokens = tokens;
+            assert!(matches!(
+                runtime.spawn(invalid).await,
+                Err(RuntimeError::Invalid(_))
+            ));
+        }
+        assert!(runtime.list().await.is_empty());
+        let mut parent = request("explicit parent allowance");
+        parent.policy.budget.max_tokens = 0;
+        parent.budget.max_tokens = 50;
+        let parent_id = runtime.spawn(parent).await.unwrap();
+        let mut child = request("wider child allowance");
+        child.parent_id = Some(parent_id);
+        child.policy.budget.max_tokens = 0;
+        for tokens in [0, 100] {
+            child.budget.max_tokens = tokens;
+            assert!(matches!(
+                runtime.spawn(child.clone()).await,
+                Err(RuntimeError::Invalid(_))
+            ));
+        }
+        child.budget.max_tokens = 25;
+        let child_id = runtime.spawn(child).await.unwrap();
+        runtime.cancel(parent_id).await.unwrap();
+        runtime.wait(parent_id).await.unwrap().unwrap_err();
+        runtime.wait(child_id).await.unwrap().unwrap_err();
+        runtime.shutdown().await;
+
+        let runtime = SubagentRuntime::new(
+            Arc::new(GateExecutor::new()),
+            RuntimeLimits::default(),
+            None,
+        )
+        .unwrap();
+        let mut unlimited = request("uncapped");
+        unlimited.policy.budget.max_tokens = 0;
+        unlimited.budget.max_tokens = 0;
+        let id = runtime.spawn(unlimited).await.unwrap();
+        runtime.cancel(id).await.unwrap();
+        runtime.wait(id).await.unwrap().unwrap_err();
+        runtime.shutdown().await;
     }
 
     #[tokio::test]

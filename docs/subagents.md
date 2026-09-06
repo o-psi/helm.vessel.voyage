@@ -40,7 +40,9 @@ slot while delivery is backpressured, then reacquires it before continuing.
 
 Subagent tasks have no elapsed-time, child-count, nesting-depth, or retained-record
 cutoff. The shell-command timeout does not set a deadline for the whole assignment.
-Provider response-token settings and local tool output, timeout, and authority
+Response-token caps are absent by default, including for children. Explicit parent
+or child response limits narrow delegated requests; zero means no optional cap,
+and cannot disable a positive parent limit. Local tool output, timeout, and authority
 controls still apply. Child permissions are no broader than the intersection of
 its requested policy and its parent policy. An unattended child cannot answer an
 approval prompt and cannot use the TUI keyboard as approval.

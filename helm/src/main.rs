@@ -1107,8 +1107,10 @@ impl SubagentExecutor for CliSubagentExecutor {
         config.workspace = Some(workspace);
         config.allow_read = context.policy.readable_roots.clone();
         config.allow_write = context.policy.writable_roots.clone();
-        config.max_tokens =
-            (context.budget.max_tokens.min(u32::MAX as u64) as u32).min(config.max_tokens);
+        config.max_tokens = context
+            .policy
+            .budget
+            .response_limit(context.budget.response_limit(config.max_tokens));
         let workspace = config.resolve_workspace(None).map_err(|e| e.to_string())?;
         let resolved = helm::runtime_policy::RuntimePolicy::resolve_child(
             &config,
