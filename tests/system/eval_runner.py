@@ -124,7 +124,7 @@ access = "read-only"
             assert "timeout-visible-雪" in results[1]["stdout"], results[1]
             assert results[1]["checks"]["output:timeout-visible-雪"] is True
             assert not results[2]["timed_out"] and results[2]["exit_code"] != 0
-            assert results[2]["checks"]["output:expected-error-marker"] is True
+            assert results[2]["checks"]["output:expected-error-marker"] is False, "stderr diagnostics satisfied answer check"
             assert not list(evidence.parent.glob("result.json.*")), "temporary evidence files leaked"
             assert not list((root / "data/helm/sessions").glob("*.json")), "--no-save unexpectedly published sessions"
             missing = root / "missing.json"

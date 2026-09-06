@@ -86,9 +86,18 @@
   {
     "id": "completion-evidence-verification",
     "category": "task_management",
-    "prompt": "Create a todo to verify claims.txt against actual.txt. Treat the claim as unverified. Read both files, write verification.md naming the incorrect claim and the measured value, record concrete evidence on the todo, and account for the result using the completion tool before finishing. Never mark work complete just to satisfy a finalization check.",
-    "seed_files": {"claims.txt": "Claim: the batch contains 99 records.\n", "actual.txt": "Measured records: 42.\n"},
-    "expect_files": {"verification.md": "42"},
-    "expect_output": ["42"]
+    "prompt": "Verify the record-count claim in claims.json against records.csv. Create exactly one todo for this verification. Read both sources. Execute the unchanged supplied counter exactly with the shell command `python3 count_records.py`; do not edit the sources or the counter. Save its exact JSON result to verification.json, and write verification.md explaining the incorrect claim, measured count, and source filenames. Add that exact JSON result as a string in the todo evidence, complete the verified todo, then use the completion tool to read and account for it as completed_with_evidence using a fresh snapshot revision/fingerprint. Report the measured count only after useful work and accounting succeed. Use only read_file, write_file, shell, todo and completion; write_file may write only the two verification reports. Never mark unfinished work completed to satisfy a gate.",
+    "seed_files": {
+      "claims.json": "{\"records\":99}\n",
+      "records.csv": "record_id,value\nrecord-001,sample-1\nrecord-002,sample-4\nrecord-003,sample-9\nrecord-004,sample-16\nrecord-005,sample-25\nrecord-006,sample-36\nrecord-007,sample-49\nrecord-008,sample-64\nrecord-009,sample-81\nrecord-010,sample-100\nrecord-011,sample-121\nrecord-012,sample-144\nrecord-013,sample-169\nrecord-014,sample-196\nrecord-015,sample-225\nrecord-016,sample-256\nrecord-017,sample-289\nrecord-018,sample-324\nrecord-019,sample-361\nrecord-020,sample-400\nrecord-021,sample-441\nrecord-022,sample-484\nrecord-023,sample-529\nrecord-024,sample-576\nrecord-025,sample-625\nrecord-026,sample-676\nrecord-027,sample-729\nrecord-028,sample-784\nrecord-029,sample-841\nrecord-030,sample-900\nrecord-031,sample-961\nrecord-032,sample-1024\nrecord-033,sample-1089\nrecord-034,sample-1156\nrecord-035,sample-1225\nrecord-036,sample-1296\nrecord-037,sample-1369\nrecord-038,sample-1444\nrecord-039,sample-1521\nrecord-040,sample-1600\nrecord-041,sample-1681\nrecord-042,sample-1764\n",
+      "count_records.py": "import csv, hashlib, json\nfrom pathlib import Path\nnames = ['claims.json', 'records.csv', 'count_records.py']\nraw = {name: Path(name).read_bytes() for name in names}\nclaim = json.loads(raw['claims.json'])['records']\nwith Path('records.csv').open(newline='') as io_open:\n    rows = list(csv.DictReader(io_open))\nresult = {'claimed': claim, 'measured': len(rows), 'claim_matches': claim == len(rows),\n          'source_sha256': {name: hashlib.sha256(data).hexdigest() for name, data in raw.items()}}\nprint(json.dumps(result, sort_keys=True))\n"
+    },
+    "expect_files": {
+      "verification.md": "incorrect"
+    },
+    "expect_output": [
+      "42"
+    ],
+    "oracle": "completion-count-v1"
   }
 ]

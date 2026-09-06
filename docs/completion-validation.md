@@ -19,7 +19,7 @@ unrun platform behavior.
 | Cross-process ownership and restart | `completion_readiness.py`: real competing CLI; `completion::runtime` process-exclusion and owner-exit recovery tests |
 | Actual final boundary, clean single-request completion | `completion_gate.py`: empty run, each native transport, immutable completed decision |
 | Withheld proposal, targeted system update, review and recheck | `completion_gate.py`: saved provisional proposal inspected at next HTTP dispatch; real read_file/todo/completion calls; revised accepted final |
-| Evidence synthesis instead of status-only gaming | Fixture reads exact measured value before evidence/accounting; `completion-evidence-verification` behavioral scenario challenges an incorrect claim |
+| Evidence synthesis instead of status-only gaming | `eval_counting.py` exercises actual counting, artifact/source hashes, persisted tool evidence and exact-run sealed accounting; `eval_oracle.py` rejects independently malformed/stale records. Offline scripted behavior is not live semantic success. |
 | Blocked/deferred versus successful work | Fixture preserves statuses and requires impact accounting; exit, decision and saved summary remain incomplete |
 | Ignored update and repeated false final | Fixture allows exactly one additional proposal and requires incomplete outcome; runtime gate deadline tests cover tool loops |
 | Children do not gate themselves | Nested ownership fixture completes children while root reviews their results and preserves pending child todos |
@@ -43,6 +43,8 @@ HELM_BIN=target/release/helm python3 tests/system/completion_gate.py
 HELM_BIN=target/release/helm python3 tests/system/completion_readiness.py
 HELM_BIN=target/release/helm python3 tests/system/completion_handoff.py
 HELM_BIN=target/release/helm VESSEL_BIN=target/release/vessel python3 tests/system/remote_completion.py
+python3 tests/system/eval_oracle.py
+HELM_BIN=target/release/helm python3 tests/system/eval_counting.py
 python3 eval/run.py validate
 ```
 
@@ -230,6 +232,23 @@ claim a blocked native stdout write is itself interrupted before its consumer dr
 The independent `remote_session.py` fixture retains redaction, profile freshness,
 invalid observation, public-admission rollback and unconfirmed-cleanup coverage.
 
+## Independent counting oracle
+
+The current [evaluation workflow](../eval/README.md#counted-completion-evidence)
+adds `completion-count-v1` to the completion scenario. Raw records and an unchanged
+seed counter replace the two supplied-number statements. The independent oracle
+checks the exact measured report and successful persisted counter invocation, then
+reads the scoped accepted session, todo evidence and sealed ledger. Artifacts and
+stderr cannot certify themselves. The task/criterion version is explicit; none of
+the dated failed live outcomes above is relabeled.
+
+The lightweight adversarial tests and native scripted-provider matrix are routine
+Linux CI coverage. They prove the oracle's acceptance and rejection boundaries,
+not a new live-model pass or distributed voyage readiness. POSIX-only bounded
+execution/evidence ingestion and the limits of process-group cleanup are described
+in the evaluation guide. Existing release and live records remain attributed to
+their recorded commits.
+
 ## Remaining acceptance and merge boundaries
 
 - Verify subsequent schema/runtime changes at their final integrated Linux head.
@@ -239,8 +258,10 @@ invalid observation, public-admission rollback and unconfirmed-cleanup coverage.
 - Obtain an approved, bounded real-model run that actually reads source evidence,
   records structured todo evidence, reads/accounts the owned records with fresh
   revisions and reaches the intended durable outcome. Inspect the artifact and
-  ledger: the evaluation scenario's `42` substring checks alone do not prove
-  accurate counting, semantic honesty or correct accounting. A deliberately
+  ledger: the current `completion-count-v1` oracle independently checks raw-record
+  counting, artifact hashes, successful tool records and current sealed accounting.
+  Its deterministic fixtures do not establish live semantic honesty. Historical
+  `42`-substring checks did not prove counting or accounting. A deliberately
   incomplete run must retain truthful impact and cannot substitute for a required
   completed task.
 - Preserve the dedicated-worker reconciliation and lifecycle matrices at the final

@@ -97,6 +97,12 @@ jobs:
           HELM_BIN: target/release/helm
         run: python3 tests/system/plain_interrupt.py
       - run: python3 tests/system/vessel_lifecycle.py
+      - name: Verify bounded independent evaluation oracles
+        run: python3 tests/system/eval_oracle.py
+      - name: Verify counted artifacts and completion accounting across native providers
+        env:
+          HELM_BIN: target/release/helm
+        run: python3 tests/system/eval_counting.py
       - name: Verify evaluation runner and timeout evidence with an offline provider
         env:
           HELM_BIN: target/release/helm
