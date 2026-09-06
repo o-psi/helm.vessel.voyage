@@ -3,7 +3,7 @@
 Helm can install UTF-8 skills and resources without rebuilding the program. A
 package is inert until you enable its exact archive digest. Enabled skill text is
 untrusted model context: it cannot grant tools, change configured roots, approve
-commands or override the selected sandbox. Executable extension entrypoints and
+commands or override local execution policy. Executable extension entrypoints and
 SDK tools remain planned under [#63](https://github.com/o-psi/voyage/issues/63) and
 [#75](https://github.com/o-psi/voyage/issues/75). Package operations run no install
 scripts, commands or MCP servers. Lifecycle commands are explicit administrative
@@ -134,8 +134,8 @@ with a diagnostic. This does not prevent normal chat startup.
 
 Private files protect against other OS users; they do not isolate code already
 running as the same OS account. Package text remains subject to ordinary model
-uncertainty and prompt injection. Local command policy, approvals and an enabled
-OS sandbox remain the execution boundary. The package system does not add a new
+uncertainty and prompt injection. Local command policy and approvals remain
+enforced; application policy is not an OS sandbox. The package system does not add a new
 execution path or imply trust in a package author.
 
 Deterministic tests include archive/path/integrity validation, lifecycle and CAS,
