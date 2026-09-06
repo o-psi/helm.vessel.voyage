@@ -73,6 +73,9 @@ same voyage; it must show actual coordination and execution state.
 
 ## One TUI, multiple live voyages (planned)
 
+See the [implementation plan](voyage-multiplexing-plan.md) for source boundaries,
+delivery dependencies and acceptance gates.
+
 One Helm TUI must multiplex multiple simultaneously running voyages. Its unified
 voyage list includes local voyages and authorized voyages reached through an
 attached Vessel. Switching the selected voyage changes the view and input target,
