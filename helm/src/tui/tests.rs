@@ -197,4 +197,5 @@ mod supervisor;
 mod terminals;
 mod todos;
 
+mod github;
 mod routing;

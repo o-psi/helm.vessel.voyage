@@ -55,6 +55,12 @@ pub(super) const SLASH_COMMANDS: &[SlashCommand] = &[
         completion: "/inference",
     },
     SlashCommand {
+        name: "github",
+        usage: "/github COMMAND [ARGUMENTS]",
+        description: "Observe GitHub, retain references, import feedback or review exact publication",
+        completion: "/github ",
+    },
+    SlashCommand {
         name: "policy",
         usage: "/policy [DIRECTORY]",
         description: "Review and switch workspace runtime policy",

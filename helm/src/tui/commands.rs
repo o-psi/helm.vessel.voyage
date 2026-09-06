@@ -47,7 +47,7 @@ pub(super) async fn request_navigation(
     reference: String,
 ) -> Result<()> {
     anyhow::ensure!(
-        !app.is_running(),
+        !app.is_running() && !app.github_panel.open,
         "finish or cancel active work before switching voyages"
     );
     app.session.draft.clone_from(&app.composer.text);
@@ -195,6 +195,65 @@ pub(super) async fn handle_command(
                 }
             } else {
                 app.status = "Workflow form requires an active TUI event channel".into();
+            }
+        }
+        "github" => {
+            if app.is_running()
+                || app.approval.is_some()
+                || app.question.is_some()
+                || app.terminal_panel.attached_terminal.is_some()
+            {
+                app.status = "Finish or cancel active work before GitHub operator actions".into();
+            } else if let (Some(agent), Some(tx)) = (agent, tx) {
+                if let Err(error) = agent.github_operator_authority(false) {
+                    app.status = super::display_safe(&error.to_string());
+                    return Ok(true);
+                }
+                match parse_words(argument, "/github COMMAND [ARGUMENTS]") {
+                    Ok(words)
+                        if words.first().is_some_and(|word| word == "references")
+                            && words.len() == 1 =>
+                    {
+                        app.github_panel.open = true;
+                        app.github_panel.display =
+                            serde_json::to_string_pretty(&app.session.github_references)?;
+                    }
+                    Ok(words)
+                        if words.first().is_some_and(|word| word == "unreference")
+                            && words.len() == 2 =>
+                    {
+                        let mut candidate = app.session.clone();
+                        let result = agent
+                            .github_operator_authority(true)
+                            .and_then(|()| crate::github::repository::Object::parse(&words[1]))
+                            .and_then(|object| candidate.forget_github(&object));
+                        match result {
+                            Ok(changed) => {
+                                candidate.draft.clone_from(&app.composer.text);
+                                match store.save(&mut candidate).await {
+                                    Ok(()) => {
+                                        app.session = candidate;
+                                        app.status = if changed {
+                                            "GitHub reference removed"
+                                        } else {
+                                            "GitHub reference was not present"
+                                        }
+                                        .into();
+                                    }
+                                    Err(_) => {
+                                        app.status =
+                                            "Reference not removed: session save failed".into()
+                                    }
+                                }
+                            }
+                            Err(error) => app.status = super::display_safe(&error.to_string()),
+                        }
+                    }
+                    Ok(words) => super::github::start(app, agent.clone(), tx.clone(), words),
+                    Err(error) => app.status = super::display_safe(&error.to_string()),
+                }
+            } else {
+                app.status = "GitHub operator actions require an active runtime".into();
             }
         }
         "help" => {

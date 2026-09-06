@@ -355,6 +355,68 @@ impl Default for RetryPolicy {
 }
 
 impl Agent {
+    pub fn github_operator_authority(&self, write: bool) -> anyhow::Result<()> {
+        self.check_current_policy()?;
+        anyhow::ensure!(
+            !write || self.context.policy.access_mode() != crate::config::AccessMode::ReadOnly,
+            "GitHub reference edits are denied in read-only mode"
+        );
+        Ok(())
+    }
+    pub async fn github_command(
+        &self,
+        session: uuid::Uuid,
+        words: Vec<String>,
+        cancel: CancellationToken,
+    ) -> anyhow::Result<crate::github::operator::CommandResult> {
+        self.github_command_with_approver(session, words, cancel, self.context.approver.clone())
+            .await
+    }
+
+    pub async fn github_command_with_approver(
+        &self,
+        session: uuid::Uuid,
+        words: Vec<String>,
+        cancel: CancellationToken,
+        approver: Arc<dyn crate::tools::Approver>,
+    ) -> anyhow::Result<crate::github::operator::CommandResult> {
+        let outcome: anyhow::Result<crate::github::operator::CommandResult> = async {
+        self.check_current_policy()?;
+        anyhow::ensure!(!cancel.is_cancelled(), "GitHub operator action cancelled");
+        let mut context = self.context.clone();
+        context.completion = None;
+        context.cancellation = cancel.clone();
+        context.approver = approver;
+        let mut result = crate::github::operator::execute(context, Some(session), words).await?;
+        self.check_current_policy()?;
+        anyhow::ensure!(
+            !cancel.is_cancelled(),
+            "GitHub operator action cancelled; inspect its receipt if publication began"
+        );
+        if let Some(feedback) = result.feedback.take() {
+            let todos = &self
+                .completion_gate
+                .as_ref()
+                .ok_or_else(|| {
+                    anyhow::anyhow!("GitHub feedback needs the current workspace task store")
+                })?
+                .todos;
+            let item = todos
+                .import_github_feedback(feedback, self.context.policy.clone(), cancel)
+                .await?;
+            result.display.push_str(&format!("\nFeedback task {} is retained with source provenance; repeated imports preserve its current edits and status.", item.id.0));
+        }
+        Ok(result)
+        }.await;
+        outcome.map_err(|error| {
+            let mut text = self.context.redactor.redact(error.to_string());
+            if let Some(token) = self.context.environment.get("HELM_GITHUB_TOKEN").filter(|token| !token.is_empty()) {
+                text = text.replace(token, "[REDACTED]");
+            }
+            anyhow::anyhow!(text)
+        })
+    }
+
     fn effective_system_prompt(&self, workspace: Option<&str>, extensions: &str) -> String {
         let mut base = self.system_prompt.clone();
         if let Some(instructions) = workspace {

@@ -158,6 +158,71 @@ impl TodoStore {
     pub async fn create(&self, new: NewTodo) -> Result<TodoItem> {
         self.create_registered(new, None).await
     }
+    /// Import selected remote feedback as ordinary open work, preserving repeat imports.
+    pub async fn import_github_feedback(
+        &self,
+        feedback: crate::github::operator::Feedback,
+        policy: std::sync::Arc<crate::policy::Policy>,
+        cancellation: tokio_util::sync::CancellationToken,
+    ) -> Result<TodoItem> {
+        feedback.validate()?;
+        anyhow::ensure!(
+            self.scope.workspace == policy.workspace(),
+            "GitHub feedback belongs to another workspace"
+        );
+        self.mutate(move |list| {
+            policy.check_current()?;
+            anyhow::ensure!(
+                policy.access_mode() != crate::config::AccessMode::ReadOnly,
+                "GitHub feedback import is denied in read-only mode"
+            );
+            anyhow::ensure!(
+                !cancellation.is_cancelled(),
+                "GitHub feedback import cancelled"
+            );
+            if let Some(item) = list.items.values().find(|item| {
+                item.notes.iter().any(|note| {
+                    note.author.as_deref() == Some("helm.github") && note.text == feedback.source
+                })
+            }) {
+                return Ok(item.clone());
+            }
+            let now = Utc::now();
+            let order = list
+                .items
+                .values()
+                .map(|item| item.order)
+                .max()
+                .unwrap_or(-1)
+                .checked_add(1)
+                .context("todo order exhausted")?;
+            let item = TodoItem {
+                id: TodoId::new(),
+                title: feedback.title,
+                description: feedback.description,
+                status: TodoStatus::Pending,
+                priority: Priority::Normal,
+                order,
+                dependencies: BTreeSet::new(),
+                blockers: Vec::new(),
+                assignees: BTreeSet::new(),
+                notes: vec![TimelineEntry {
+                    at: now,
+                    author: Some("helm.github".into()),
+                    text: feedback.source,
+                }],
+                progress: Vec::new(),
+                evidence: Vec::new(),
+                created_at: now,
+                updated_at: now,
+                completed_at: None,
+                archived_at: None,
+            };
+            list.items.insert(item.id, item.clone());
+            Ok(item)
+        })
+        .await
+    }
     pub async fn create_registered(
         &self,
         new: NewTodo,
@@ -609,6 +674,104 @@ fn sync_directory(_: &std::path::Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn github_feedback_import_is_atomic_idempotent_and_preserves_user_work() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().canonicalize().unwrap();
+        let store = TodoStore::new(root.join("todos.json"), TodoScope::workspace(root.clone()));
+        let policy = Arc::new(
+            crate::policy::Policy::new(
+                &crate::config::Config {
+                    access: Some(crate::config::AccessMode::Unrestricted),
+                    ..Default::default()
+                },
+                root,
+            )
+            .unwrap(),
+        );
+        let feedback = crate::github::operator::Feedback {
+            source: "https://github.com/o/r/issues/1#issuecomment-2".into(),
+            title: "Selected feedback".into(),
+            description: "Untrusted remote instructions remain task content".into(),
+        };
+        let a = store.import_github_feedback(
+            feedback.clone(),
+            policy.clone(),
+            tokio_util::sync::CancellationToken::new(),
+        );
+        let b = store.import_github_feedback(
+            feedback.clone(),
+            policy.clone(),
+            tokio_util::sync::CancellationToken::new(),
+        );
+        let (a, b) = tokio::join!(a, b);
+        let item = a.unwrap();
+        assert_eq!(item.id, b.unwrap().id);
+        assert_eq!(item.status, TodoStatus::Pending);
+        store
+            .edit(item.id, Some("User edited".into()), None, None)
+            .await
+            .unwrap();
+        store
+            .set_status(item.id, TodoStatus::Cancelled)
+            .await
+            .unwrap();
+        let retained = store
+            .import_github_feedback(
+                feedback.clone(),
+                policy.clone(),
+                tokio_util::sync::CancellationToken::new(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(retained.title, "User edited");
+        assert_eq!(retained.status, TodoStatus::Cancelled);
+        assert_eq!(store.snapshot().await.unwrap().items.len(), 1);
+        let reopened = TodoStore::new(store.path.clone(), store.scope.clone());
+        assert_eq!(
+            reopened
+                .import_github_feedback(
+                    feedback.clone(),
+                    policy.clone(),
+                    tokio_util::sync::CancellationToken::new()
+                )
+                .await
+                .unwrap()
+                .id,
+            item.id
+        );
+        let read_only = Arc::new(
+            crate::policy::Policy::new(
+                &crate::config::Config {
+                    access: Some(crate::config::AccessMode::ReadOnly),
+                    ..Default::default()
+                },
+                directory.path().into(),
+            )
+            .unwrap(),
+        );
+        let before = tokio::fs::read(&store.path).await.unwrap();
+        assert!(
+            store
+                .import_github_feedback(
+                    feedback.clone(),
+                    read_only,
+                    tokio_util::sync::CancellationToken::new()
+                )
+                .await
+                .is_err()
+        );
+        assert_eq!(tokio::fs::read(&store.path).await.unwrap(), before);
+        let cancel = tokio_util::sync::CancellationToken::new();
+        cancel.cancel();
+        assert!(
+            store
+                .import_github_feedback(feedback, policy, cancel)
+                .await
+                .is_err()
+        );
+        assert_eq!(store.snapshot().await.unwrap().items.len(), 1);
+    }
     fn store() -> (tempfile::TempDir, TodoStore) {
         let d = tempfile::tempdir().unwrap();
         let store = TodoStore::new(

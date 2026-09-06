@@ -83,6 +83,8 @@ pub struct Session {
     pub parent_id: Option<Uuid>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub workflow_runs: Vec<crate::workflow::Invocation>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub github_references: Vec<crate::github::operator::Reference>,
     /// Unsent local composer text, excluded from model messages and exports.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub draft: String,
@@ -111,6 +113,50 @@ pub struct ModelChange {
 }
 
 impl Session {
+    pub fn validate_github_references(&self) -> Result<()> {
+        anyhow::ensure!(
+            self.github_references.len() <= 64,
+            "GitHub reference limit exceeded"
+        );
+        let mut objects = std::collections::BTreeSet::new();
+        for reference in &self.github_references {
+            reference.validate()?;
+            anyhow::ensure!(
+                objects.insert(reference.object.url()),
+                "duplicate GitHub reference"
+            );
+        }
+        Ok(())
+    }
+
+    pub fn forget_github(&mut self, object: &crate::github::repository::Object) -> Result<bool> {
+        self.validate_github_references()?;
+        object.validate()?;
+        let old = self.github_references.len();
+        self.github_references
+            .retain(|reference| &reference.object != object);
+        Ok(old != self.github_references.len())
+    }
+
+    pub fn remember_github(&mut self, reference: crate::github::operator::Reference) -> Result<()> {
+        self.validate_github_references()?;
+        reference.validate()?;
+        if let Some(existing) = self
+            .github_references
+            .iter_mut()
+            .find(|item| item.object == reference.object)
+        {
+            *existing = reference;
+        } else {
+            anyhow::ensure!(
+                self.github_references.len() < 64,
+                "GitHub reference limit reached; remove a reference before adding another"
+            );
+            self.github_references.push(reference);
+        }
+        Ok(())
+    }
+
     /// Replace provisional frontend history with rejected-run canonical state.
     /// Inputs accepted after that snapshot remain visible and are not duplicated.
     pub fn recover_context_failure(
@@ -170,6 +216,7 @@ impl Session {
             }),
             parent_id: None,
             workflow_runs: Vec::new(),
+            github_references: Vec::new(),
             draft: String::new(),
             messages: Vec::new(),
             usage: Usage::default(),
@@ -405,6 +452,7 @@ impl SessionStore {
     /// Compare and replace under an existing execution lease. Caller state is only
     /// changed after commit. The bounded synchronous commit has no cancellation points.
     pub async fn save_with_lease(&self, session: &mut Session, lease: &SessionLease) -> Result<()> {
+        session.validate_github_references()?;
         self.check_lease(session.id, lease)?;
         let destination = lease.directory.join(format!("{}.json", session.id));
         if let Some(source) = &session.loaded_from {
@@ -622,6 +670,21 @@ impl SessionStore {
             session.workspace.display(),
             session.updated_at.to_rfc3339()
         );
+        session.validate_github_references()?;
+        if !session.github_references.is_empty() {
+            output.push_str("## GitHub references\n\n");
+            for reference in &session.github_references {
+                use std::fmt::Write as _;
+                let _ = writeln!(
+                    output,
+                    "- {} · observed {} · head {}",
+                    reference.object.url(),
+                    reference.fetched_at.to_rfc3339(),
+                    reference.head.as_deref().unwrap_or("unavailable")
+                );
+            }
+            output.push('\n');
+        }
         for (index, message) in session.messages.iter().enumerate() {
             use std::fmt::Write as _;
             let _ = writeln!(output, "## {:?}\n\n{}\n", message.role, message.content);
@@ -780,6 +843,7 @@ fn read_session(path: &Path) -> Result<Session> {
     );
     let mut session: Session = serde_json::from_slice(&data)
         .with_context(|| format!("invalid session {}", path.display()))?;
+    session.validate_github_references()?;
     let stem = path
         .file_stem()
         .and_then(|s| s.to_str())
@@ -834,6 +898,78 @@ fn generated_name(id: Uuid) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn github_references_survive_resume_branch_export_and_exact_removal() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = SessionStore::new(directory.path().join("sessions"));
+        let mut session = Session::new(directory.path().into(), "fixture".into());
+        let reference = crate::github::operator::Reference {
+            object: crate::github::repository::Object::parse("https://github.com/o/r/pull/42")
+                .unwrap(),
+            head: Some("a".repeat(40)),
+            fetched_at: Utc::now(),
+        };
+        session.remember_github(reference.clone()).unwrap();
+        session.remember_github(reference.clone()).unwrap();
+        session.draft = "private composer".into();
+        store.save(&mut session).await.unwrap();
+        let loaded = store.load(session.id).await.unwrap();
+        assert_eq!(loaded.github_references.len(), 1);
+        let mut branch = store.branch(&loaded, None).await.unwrap();
+        assert_eq!(branch.github_references[0].object, reference.object);
+        let export = directory.path().join("export.md");
+        store.export_markdown(&branch, &export).await.unwrap();
+        let text = fs::read_to_string(export).await.unwrap();
+        assert!(text.contains("https://github.com/o/r/pull/42"));
+        assert!(text.contains(&"a".repeat(40)));
+        assert!(!text.contains("private composer"));
+        assert!(branch.forget_github(&reference.object).unwrap());
+        assert!(!branch.forget_github(&reference.object).unwrap());
+        assert_eq!(
+            store
+                .load(session.id)
+                .await
+                .unwrap()
+                .github_references
+                .len(),
+            1
+        );
+        let mut malformed = reference;
+        malformed.head = Some("not-a-commit".into());
+        assert!(branch.remember_github(malformed).is_err());
+    }
+    #[tokio::test]
+    async fn github_reference_capacity_and_malformed_storage_fail_without_overwrite() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = SessionStore::new(directory.path().join("sessions"));
+        let mut session = Session::new(directory.path().into(), "fixture".into());
+        for number in 1..=64 {
+            session
+                .remember_github(crate::github::operator::Reference {
+                    object: crate::github::repository::Object::parse(&format!(
+                        "https://github.com/o/r/issues/{number}"
+                    ))
+                    .unwrap(),
+                    head: None,
+                    fetched_at: Utc::now(),
+                })
+                .unwrap();
+        }
+        store.save(&mut session).await.unwrap();
+        let before = fs::read(store.path(session.id)).await.unwrap();
+        let mut overflow = session.github_references[0].clone();
+        overflow.object.number = 65;
+        assert!(session.remember_github(overflow.clone()).is_err());
+        session.github_references.push(overflow);
+        assert!(store.save(&mut session).await.is_err());
+        assert_eq!(fs::read(store.path(session.id)).await.unwrap(), before);
+        let mut corrupt: serde_json::Value = serde_json::from_slice(&before).unwrap();
+        corrupt["github_references"][0]["head"] = serde_json::json!("unexpected issue head");
+        let bytes = serde_json::to_vec(&corrupt).unwrap();
+        fs::write(store.path(session.id), &bytes).await.unwrap();
+        assert!(store.load(session.id).await.is_err());
+        assert_eq!(fs::read(store.path(session.id)).await.unwrap(), bytes);
+    }
     fn title_result(title: Option<&str>) -> crate::titles::TitleResult {
         crate::titles::TitleResult {
             title: title.map(str::to_owned),

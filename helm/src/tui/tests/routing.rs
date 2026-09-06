@@ -102,7 +102,7 @@ impl crate::provider::Provider for NoRequests {
     }
 }
 
-fn navigation_agent(directory: &tempfile::TempDir) -> Arc<Agent> {
+pub(super) fn navigation_agent(directory: &tempfile::TempDir) -> Arc<Agent> {
     Arc::new(Agent::new(
         Box::new(NoRequests),
         crate::tools::ToolRegistry::default(),

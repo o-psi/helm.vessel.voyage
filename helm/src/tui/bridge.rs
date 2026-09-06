@@ -16,6 +16,16 @@ use tokio::sync::{mpsc, oneshot};
 #[doc(hidden)]
 pub enum UiEvent {
     Agent(AgentEvent),
+    GithubApproval {
+        session: uuid::Uuid,
+        request: uuid::Uuid,
+        approval: ApprovalRequest,
+    },
+    GithubResult {
+        session: uuid::Uuid,
+        request: uuid::Uuid,
+        result: Result<crate::github::operator::CommandResult, String>,
+    },
     InferenceStatus {
         session: uuid::Uuid,
         request: uuid::Uuid,

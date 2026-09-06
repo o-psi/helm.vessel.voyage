@@ -36,6 +36,8 @@ mod text;
 mod tool_output;
 use text::*;
 mod commands;
+mod github;
+mod publication;
 mod workflows;
 use commands::*;
 
@@ -117,6 +119,9 @@ struct App {
     inference_job: Option<TitleJob>,
     inference_request: Option<uuid::Uuid>,
     approval: Option<ApprovalRequest>,
+    approval_scroll: usize,
+    github_approval: Option<uuid::Uuid>,
+    github_panel: github::Panel,
     question: Option<QuestionDialog>,
     show_sessions: bool,
     selected_session: usize,
@@ -252,6 +257,9 @@ impl App {
             inference_job: None,
             inference_request: None,
             approval: None,
+            approval_scroll: 0,
+            github_approval: None,
+            github_panel: github::Panel::default(),
             question: None,
             show_sessions: false,
             selected_session: 0,
@@ -271,6 +279,8 @@ impl App {
     fn cancel(&mut self) {
         self.workflow_panel.close();
         self.voyage_panel.close();
+        self.github_panel.close();
+        self.github_approval = None;
         if let Some(question) = self.question.take() {
             let _ = question
                 .request
@@ -338,6 +348,10 @@ pub async fn run(
 
     while !app.quit {
         app.voyage_panel.poll();
+        if app.approval.as_ref().is_some_and(|request| publication::exact(request) && request.response.is_closed()) {
+            app.approval = None;
+            app.github_approval = None;
+        }
         if app
             .question
             .as_ref()
@@ -467,6 +481,81 @@ async fn handle_ui_event(
     terminals: &dyn InteractiveTerminals,
 ) -> Result<()> {
     match event {
+        UiEvent::GithubApproval {
+            session,
+            request,
+            approval,
+        } => {
+            if session == app.session.id
+                && app.github_panel.matches(session, request)
+                && !app.is_running()
+                && app.approval.is_none()
+                && app.question.is_none()
+            {
+                app.approval_scroll = 0;
+                app.github_approval = Some(request);
+                app.approval = Some(approval);
+            } else {
+                let _ = approval.response.send(ApprovalOutcome::Unavailable);
+            }
+        }
+        UiEvent::GithubResult {
+            session,
+            request,
+            result,
+        } => {
+            if session == app.session.id
+                && app.github_panel.matches(session, request)
+                && !app.is_running()
+            {
+                if app.github_approval == Some(request) {
+                    app.github_approval = None;
+                    if let Some(approval) = app.approval.take() {
+                        let _ = approval.response.send(ApprovalOutcome::Unavailable);
+                    }
+                }
+                let display = match result {
+                    Ok(result) => {
+                        let mut candidate = app.session.clone();
+                        candidate.draft.clone_from(&app.composer.text);
+                        if let Some(reference) = result.reference {
+                            let allowed = app
+                                .github_panel
+                                .authority
+                                .as_ref()
+                                .ok_or_else(|| {
+                                    anyhow::anyhow!("GitHub result has no current local authority")
+                                })
+                                .and_then(|agent| agent.github_operator_authority(true));
+                            match allowed.and_then(|()| candidate.remember_github(reference)) {
+                                Ok(()) => match store.save(&mut candidate).await {
+                                    Ok(()) => {
+                                        app.session = candidate;
+                                        result.display
+                                    }
+                                    Err(_) => format!(
+                                        "{}\nReference was not saved; inspect session ownership and retry reference explicitly.",
+                                        result.display
+                                    ),
+                                },
+                                Err(error) => format!(
+                                    "{}\nReference was not saved: {}",
+                                    result.display,
+                                    display_safe(&error.to_string())
+                                ),
+                            }
+                        } else {
+                            result.display
+                        }
+                    }
+                    Err(error) => format!(
+                        "GitHub operation failed: {}\nInspect a publication receipt before retrying.",
+                        display_safe(&error)
+                    ),
+                };
+                app.github_panel.finished(display);
+            }
+        }
         UiEvent::InferenceStatus {
             session,
             request,
@@ -679,6 +768,7 @@ async fn handle_ui_event(
                 app.status = "Agent approval denied while direct terminal input is attached".into();
             } else {
                 app.status = "Approval required".into();
+                app.approval_scroll = 0;
                 app.approval = Some(request);
             }
         }
@@ -893,6 +983,7 @@ fn handle_question_key(key: KeyEvent, app: &mut App) -> bool {
 enum InputOwner {
     Question,
     Approval,
+    Github,
     Attached,
     Help,
     Voyage,
@@ -911,6 +1002,8 @@ fn input_owner(app: &App) -> InputOwner {
         InputOwner::Question
     } else if app.approval.is_some() {
         InputOwner::Approval
+    } else if app.github_panel.open {
+        InputOwner::Github
     } else if app.terminal_panel.attached_terminal.is_some() {
         InputOwner::Attached
     } else if app.shortcut_help {
@@ -997,6 +1090,7 @@ async fn handle_input_event(
                 }
                 InputOwner::Policy
                 | InputOwner::Approval
+                | InputOwner::Github
                 | InputOwner::Help
                 | InputOwner::Terminals
                 | InputOwner::Sessions
@@ -1026,10 +1120,31 @@ async fn handle_key(
     }
     if let Some(approval) = app.approval.take() {
         let approved = matches!(key.code, KeyCode::Char('y') | KeyCode::Char('Y'));
+        if publication::exact(&approval) {
+            if approved && !(key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT) {
+                app.approval = Some(approval);
+                return Ok(());
+            }
+            publication::navigate(
+                key,
+                &mut app.approval_scroll,
+                publication::limit(&approval, app.display_area),
+                app.display_area.height.saturating_sub(4) as usize,
+            );
+            if approved
+                && !publication::approve_enabled(&approval, app.approval_scroll, app.display_area)
+            {
+                app.status = "Read the complete preview to its end before approving".into();
+                app.approval = Some(approval);
+                return Ok(());
+            }
+        }
         if matches!(
             key.code,
             KeyCode::Char('y' | 'Y' | 'n' | 'N') | KeyCode::Esc
-        ) {
+        ) || (key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL))
+        {
+            app.github_approval = None;
             let _ = approval.response.send(if approved {
                 ApprovalOutcome::Approved
             } else {
@@ -1039,6 +1154,10 @@ async fn handle_key(
         } else {
             app.approval = Some(approval);
         }
+        return Ok(());
+    }
+    if owner == InputOwner::Github {
+        app.github_panel.key(key, app.display_area);
         return Ok(());
     }
     if let Some(id) = app.terminal_panel.attached_terminal {
@@ -1458,6 +1577,27 @@ fn complete_selected_slash_command(app: &mut App) {
 }
 
 fn handle_mouse(mouse: MouseEvent, app: &mut App) {
+    if app.github_panel.open || app.approval.as_ref().is_some_and(publication::exact) {
+        let code = match mouse.kind {
+            MouseEventKind::ScrollUp => Some(KeyCode::Up),
+            MouseEventKind::ScrollDown => Some(KeyCode::Down),
+            _ => None,
+        };
+        if let Some(code) = code {
+            let key = KeyEvent::new(code, KeyModifiers::NONE);
+            if let Some(approval) = &app.approval {
+                publication::navigate(
+                    key,
+                    &mut app.approval_scroll,
+                    publication::limit(approval, app.display_area),
+                    3,
+                );
+            } else {
+                app.github_panel.key(key, app.display_area);
+            }
+        }
+        return;
+    }
     if recent::mouse(mouse, app) {
         return;
     }
@@ -1508,6 +1648,10 @@ async fn start_run_with_secrets(
     invocation: Option<crate::workflow::Invocation>,
     secrets: Option<crate::workflow::secrets::SecretInputs>,
 ) -> Result<bool> {
+    if app.github_panel.open {
+        app.status = "Close or cancel the GitHub operator action before starting model work".into();
+        return Ok(false);
+    }
     if app.is_running() {
         app.status = "A run is already active; workflow inputs were retained".into();
         return Ok(false);

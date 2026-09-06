@@ -53,6 +53,18 @@ pub(super) fn conversation_layout(area: Rect, app: &App) -> std::rc::Rc<[Rect]> 
 
 pub(super) fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
     let area = frame.area();
+    if let Some(approval) = app
+        .approval
+        .as_ref()
+        .filter(|request| app.question.is_none() && super::publication::exact(request))
+    {
+        super::publication::draw(frame, area, approval, app.approval_scroll);
+        return;
+    }
+    if app.github_panel.open && app.approval.is_none() && app.question.is_none() {
+        app.github_panel.draw(frame, area);
+        return;
+    }
     if app.terminal_panel.attached_terminal.is_some() {
         draw_attached_terminal(frame, area, &app.terminal_panel);
         return;
