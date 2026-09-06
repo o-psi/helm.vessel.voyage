@@ -769,7 +769,11 @@ async fn handle_ui_event(
             }
             Err(error) => app.status = format!("Supervisor refresh failed: {error}"),
         },
-        UiEvent::SupervisorInspect(_id, result) => {
+        UiEvent::SupervisorInspect(id, result) => {
+            if !matches!(app.supervisor_panel.supervisor_mode, Some(SupervisorMode::Inspect(selected) | SupervisorMode::Message { target: selected, .. }) if selected == id)
+            {
+                return Ok(());
+            }
             app.supervisor_panel.replay_pending = false;
             match result {
                 Ok(inspection) => app.supervisor_panel.apply_inspection(inspection),

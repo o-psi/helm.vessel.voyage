@@ -190,6 +190,10 @@ pub(super) async fn handle_supervisor_key(
         }
         KeyCode::Enter if mode == SupervisorMode::Tree => {
             if let Some(id) = selected {
+                panel.inspected_agent = None;
+                panel.inspected_events.clear();
+                panel.history_status = None;
+                panel.replay_pending = true;
                 panel.supervisor_mode = Some(SupervisorMode::Inspect(id));
                 panel.supervisor_scroll = 0;
                 request_supervisor_inspect(tx, supervisor, id, None);
@@ -614,14 +618,20 @@ pub(super) fn draw_agent_inspection(
     for notice in history_messages(panel) {
         lines.push(Line::raw(notice));
     }
-    lines.extend(panel.inspected_events.iter().map(|event| {
-        Line::raw(format!(
-            "{} #{} {}",
-            event.timestamp.format("%H:%M:%S"),
-            event.sequence,
-            supervision_event_label(&event.kind)
-        ))
-    }));
+    lines.extend(
+        panel
+            .inspected_events
+            .iter()
+            .filter(|event| event.agent_id == id)
+            .map(|event| {
+                Line::raw(format!(
+                    "{} #{} {}",
+                    event.timestamp.format("%H:%M:%S"),
+                    event.sequence,
+                    supervision_event_label(&event.kind)
+                ))
+            }),
+    );
     if let Some(result) = &agent.result {
         lines.push(Line::raw(""));
         lines.push(Line::styled(

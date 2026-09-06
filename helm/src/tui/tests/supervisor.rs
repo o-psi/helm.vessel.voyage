@@ -357,3 +357,82 @@ fn initial_history_replay_preserves_newer_live_events() {
     panel.apply_inspection(inspection);
     assert_eq!(panel.inspected_events.last().unwrap().sequence, 12);
 }
+
+#[tokio::test]
+async fn selecting_another_agent_clears_prior_events_before_replay() {
+    let first = AgentId(Uuid::new_v4());
+    let second = AgentId(Uuid::new_v4());
+    let old = agent(first, None, "first task");
+    let new = agent(second, None, "second task");
+    let supervisor = Arc::new(FakeSupervisor::new(vec![old.clone(), new.clone()]));
+    let mut panel = SupervisorPanel {
+        agents: vec![old.clone(), new],
+        selected_agent: 1,
+        supervisor_mode: Some(SupervisorMode::Tree),
+        inspected_agent: Some(old),
+        live_skipped: 7,
+        ..Default::default()
+    };
+    panel.append_event(SupervisionEvent {
+        sequence: 12,
+        timestamp: Utc::now(),
+        agent_id: first,
+        kind: SupervisionEventKind::Cancelled,
+    });
+    let (tx, _rx) = mpsc::unbounded_channel();
+    handle_supervisor_key(
+        KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+        &mut panel,
+        &mut String::new(),
+        &tx,
+        supervisor,
+    )
+    .await;
+    assert_eq!(panel.supervisor_mode, Some(SupervisorMode::Inspect(second)));
+    assert!(panel.inspected_events.is_empty());
+    assert!(panel.inspected_agent.is_none());
+    assert!(panel.history_status.is_none());
+    assert!(panel.replay_pending);
+    assert_eq!(panel.live_skipped, 7);
+    panel.apply_inspection(crate::supervision::AgentInspection {
+        agent: agent(first, None, "late first task"),
+        events: vec![],
+        history: None,
+        transport_skipped: 0,
+    });
+    assert!(panel.inspected_agent.is_none());
+}
+
+#[tokio::test]
+async fn late_other_agent_error_does_not_replace_current_inspection_state() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = SessionStore::new(dir.path().join("sessions"));
+    let terminals = FakeTerminals::new();
+    let mut app = App::new(Session::new(dir.path().into(), "test".into()), vec![]);
+    let selected = AgentId(Uuid::new_v4());
+    app.supervisor_panel.supervisor_mode = Some(SupervisorMode::Inspect(selected));
+    app.supervisor_panel.replay_pending = true;
+    app.status = "current inspection".into();
+    handle_ui_event(
+        UiEvent::SupervisorInspect(AgentId(Uuid::new_v4()), Err("old failure".into())),
+        &mut app,
+        &store,
+        &terminals,
+    )
+    .await
+    .unwrap();
+    assert!(app.supervisor_panel.replay_pending);
+    assert!(app.supervisor_panel.history_notices.is_empty());
+    assert_eq!(app.status, "current inspection");
+    handle_ui_event(
+        UiEvent::SupervisorInspect(selected, Err("current failure".into())),
+        &mut app,
+        &store,
+        &terminals,
+    )
+    .await
+    .unwrap();
+    assert!(!app.supervisor_panel.replay_pending);
+    assert!(!app.supervisor_panel.history_notices.is_empty());
+    assert!(app.status.contains("current failure"));
+}
