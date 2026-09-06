@@ -30,6 +30,68 @@ The worker holds the managed execution fence while idle, running and cleaning up
 
 Native providers and built-in tools use ordinary configured local policy, including the administrator ceiling and explicit unattended approval setting. A required human approval fails explicitly. Effectful MCP configurations and the compatibility bridge are rejected before admission because their resource cleanup is not yet observable through this coordinator. Linux has the owned-process cleanup implementation; other platforms retain conservative unsupported/unconfirmed behavior and were not natively tested for this delivery. Application policy is not an OS sandbox.
 
+## Withdraw a dedicated grant locally
+
+`helm remote-consent` operates locally without loading provider configuration or
+contacting Vessel. It requires an existing absolute dedicated installation. Inspect
+its exact session ID and grant revision, then preview a permanent withdrawal:
+
+```sh
+helm remote-consent --directory /absolute/remote-installation inspect
+helm remote-consent --directory /absolute/remote-installation preview \
+  --session-id SESSION_UUID --operation-id OPERATION_UUID --expected-revision 0
+helm remote-consent --directory /absolute/remote-installation withdraw \
+  --session-id SESSION_UUID --operation-id OPERATION_UUID --expected-revision 0 \
+  --confirm CONFIRMATION_DIGEST
+```
+
+Choose a fresh operation UUID and preserve the exact request and preview digest.
+Review the destination origin, machine, owner, enrollment epoch and local session
+before confirming. Grant revision zero means the fixed grant has not been withdrawn;
+it is separate from the canonical session revision that changes during work. The
+digest binds this exact request and destination; it is not a credential. A wrong or
+stale confirmation makes no change. After an uncertain acknowledgement, repeat the
+identical withdrawal command to recover its immutable receipt, or inspect locally.
+Another operation cannot replace that receipt.
+
+The committed withdrawal permanently retires this exact grant. It atomically fences
+later remote admission (including receipt observation), metadata/replay reads and new
+public event publication, and requests cancellation of any active run. The worker
+checks current durable authority before dispatch, disconnects and performs bounded
+owned cleanup after authority loss. It exits nonzero to report that the requested
+remote operation no longer has authority. The immutable receipt records the last
+public cursor committed before retirement; no later public event can be committed. Cancellation requested is not proof that
+effects stopped: inspect `pending_cleanup_run` and the local run state/cleanup projection, and use the existing local recovery,
+cleanup attestation and unknown-tool reconciliation workflow when needed. Canonical
+failure/cancellation and cleanup evidence can still persist after withdrawal.
+
+Withdrawal cannot recall bytes already read or queued for delivery before its commit,
+Vessel's bounded in-flight delivery buffers, or external copies. It suppresses subsequent
+public outbox commits, including late provider output and terminal/cleanup events;
+remote observers therefore must not infer a final outcome from a stalled stream.
+Canonical history, prior local public events and command receipts remain on Helm.
+No transcript deletion, backup expiry or historical retention guarantee is implied.
+The retained Journal enforces retirement; deliberately restoring an older complete
+backup or modifying storage as its owner is outside this local trust boundary.
+
+Restarting the worker cannot restore this grant. Deliberately authorizing future
+remote work requires a different explicit dedicated installation directory and a new
+empty session; this does not copy or disclose the retired history. General positive
+sharing/import, recipient-specific consent and coordination-role activation remain
+unimplemented. The general consent declaration library remains inert metadata.
+
+Stop older workers before explicitly upgrading an existing journal:
+
+```sh
+helm managed --directory /absolute/remote-installation upgrade
+```
+
+Upgrade requires no active run and all execution fences; recover interrupted work
+first if needed. It preserves history, bindings and receipts. Older writers are
+refused after the schema changes. A failed withdrawal transaction leaves its previous
+grant unchanged and does not leave a partial cancellation intent; preserve the request
+and resolve the reported storage/lock problem before an explicit identical retry.
+
 ## Authenticated operator requests
 
 Use the existing Vessel operator credential. Every endpoint checks it; POST requests also require `x-voyage-request: 2`, and supplied browser origin/site headers must match the configured origin. Do not put credentials in URLs. Successful session-content responses use `Cache-Control: no-store`.
@@ -114,9 +176,31 @@ This requires the latest terminal run and completed cleanup. It preserves existi
 
 ## Storage and validation boundaries
 
-Fresh dedicated journals use schema 7. Existing local schema 6 remains supported; upgrading is explicit and requires process quiescence, no active run and all execution fences. Upgrading never transfers private history into remote authority. Old writers fail after the schema changes. There is no automatic operator-state migration or supported schema downgrade; preserve the original private stores when rolling back a binary.
+Fresh dedicated journals use schema 8, including permanent local grant withdrawal. Existing local schemas 6 and 7 remain readable for local recovery; the current remote worker requires schema 8 before connecting. Upgrading is explicit and requires process quiescence, no active run and all execution fences. Upgrading never transfers private history into remote authority. Old writers fail after the schema changes. There is no automatic operator-state migration or supported schema downgrade; preserve the original private stores when rolling back a binary.
+
+The worker's durable grant observer and its Journal commits share a short process-local
+mutex so ordinary authority polling cannot interrupt the same owner's valid transaction.
+Only that owner connection defers dirty-page spill until commit; SQLite can otherwise
+acquire its exclusive lock earlier during a large write ([SQLite cache-spill behavior](https://www.sqlite.org/pragma.html#pragma_cache_spill)).
+Dirty-page memory can exceed the usual cache target until the bounded transaction ends;
+existing snapshot, output and database capacity limits remain in force. This is not a
+process memory sandbox. Provider/tool/network work holds no observer/commit mutex.
+Independent-process contention still returns a typed Busy error; no mutation is
+silently retried and no cached positive consent replaces the current durable check.
+After cleanup and disconnection, the worker retries only Busy/Locked authority reads
+with a cancellable delay; it reconnects only after a fresh successful observation.
+Permanent withdrawal or malformed authority evidence ends the worker instead.
 
 Tracking: [#9](https://github.com/o-psi/voyage/issues/9), [#77](https://github.com/o-psi/voyage/issues/77), [#78](https://github.com/o-psi/voyage/issues/78), [#79](https://github.com/o-psi/voyage/issues/79). These broader issues remain open for their excluded session lifecycle, approval, sharing and product surfaces.
 
 `tests/system/remote_session.py` runs real Helm and Vessel binaries against isolated native OpenAI Chat, Responses and Anthropic HTTP fixtures. It checks file effects, pre-effect durable cleanup registration, exact retries, restart observation, cancellation, split-secret/Unicode replay, forced-death recovery and local attestation, revocation, selected-profile denial/freshness, failed-publication rollback, private-scope denial, rejected replay during active work, and nonzero worker exit after unconfirmed cleanup both during Ctrl-C and ordinary task completion. Journal/runtime tests cover transactional projection rollback, schema compatibility, receipt fencing, tool invocation identities and local recovery attribution. Offline fixtures do not establish live provider or deployment compatibility; final Linux baseline evidence is reported with the PR. These fixtures use no paid/live provider calls. Routine quality gates are Linux-only;
 native-platform behavior requires separate evidence.
+
+`tests/system/remote_withdrawal.py` exercises local confirmation, durable retirement,
+late provider output, cancellation, owned effects, crash/attestation/reconciliation,
+lost output acknowledgements and deliberate fresh empty grants across native providers.
+An external RESERVED writer also forces an explicit Busy withdrawal; authenticated
+transport loss then settles the run before the identical retry, which must retain
+an immutable receipt without claiming a cancellation target.
+Journal tests cover transaction ordering, immutable receipts, malformed bounded metadata,
+quiescent schema upgrades and owner/observer contention during small and large writes.

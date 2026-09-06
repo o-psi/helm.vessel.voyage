@@ -241,7 +241,7 @@ impl Journal {
         // Local snapshot revision changes; the terminal run/event stream remains
         // immutable. Remote operators explicitly inspect the current snapshot revision;
         // reconciliation never emits a successful tool result or replays an effect.
-        tx.commit()?;
+        commit(tx, &self.commit_fence)?;
         Ok(LocalReconcileOutcome {
             duplicate: false,
             revision,

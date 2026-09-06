@@ -92,6 +92,26 @@ impl ManagedSessionOwner {
         })
         .await?
     }
+    /// Build a current-grant observer before starting remote execution. Its reads
+    /// cooperate with this owner's commits without weakening cross-process fences.
+    pub async fn remote_grant_observer(
+        &self,
+        binding: super::journal::RemoteBinding,
+    ) -> anyhow::Result<super::journal::RemoteGrantObserver> {
+        let shared = self.store.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut store = shared
+                .lock()
+                .map_err(|_| anyhow::anyhow!("managed owner poisoned"))?;
+            anyhow::ensure!(
+                store.turn.upgrade().is_none(),
+                "grant observer requires idle owner"
+            );
+            let session = store.session_id;
+            store.journal.remote_grant_observer(binding, session)
+        })
+        .await?
+    }
     pub fn session_id(&self) -> Uuid {
         self.session_id
     }

@@ -7,7 +7,9 @@ under the [full attachment contract](attachment-production-contract.md).
 policies in one process. It owns authorization checks over its current in-memory values.
 `PolicySnapshot` contains local observations only; it has no authorization,
 projection or branch methods. General sharing adapters remain unwired; the current
-[dedicated remote worker](remote-sessions.md) uses a separate fixed-session binding.
+[dedicated remote worker](remote-sessions.md) uses a separate fixed-session binding with durable local withdrawal. Its Journal
+transaction fences admission and public projection after withdrawal; this does not
+activate general sharing policies or confer positive authority from snapshots.
 
 Each operation reads current consent from the registry and requires matching
 installation/owner/epoch, the installation's delegated capability, the authenticated

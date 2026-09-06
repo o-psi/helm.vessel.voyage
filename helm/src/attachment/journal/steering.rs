@@ -292,7 +292,7 @@ impl Journal {
         )?;
         update_session(&tx, &current)?;
         append_event(&tx, &run, EventKind::SteeringQueued(request.receipt_id))?;
-        tx.commit()?;
+        commit(tx, &self.commit_fence)?;
         Ok(SteeringOutcome {
             duplicate: false,
             record,
@@ -377,7 +377,7 @@ impl Journal {
         write(&tx, &record)?;
         update_session(&tx, &current)?;
         append_event(&tx, &run, EventKind::SteeringRejected { id, reason })?;
-        tx.commit()?;
+        commit(tx, &self.commit_fence)?;
         Ok(record)
     }
     pub(crate) fn steering_actors(&self, run_id: Uuid) -> Result<Vec<SteeringActor>> {

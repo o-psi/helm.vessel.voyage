@@ -70,7 +70,7 @@ pub enum RemoteReplay {
     },
 }
 
-fn binding(db: &Connection) -> Result<Option<(Uuid, RemoteBinding)>> {
+pub(super) fn binding(db: &Connection) -> Result<Option<(Uuid, RemoteBinding)>> {
     let exists: bool = db.query_row(
         "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='remote_session')",
         [],
@@ -123,6 +123,7 @@ pub(super) fn validate_admission(db: &Connection, request: &TurnAdmission) -> Re
     if let Some((id, binding)) = binding(db)?
         && id == request.session_id
     {
+        withdrawal::require_active(db)?;
         ensure!(
             request.machine_id == binding.machine_id && request.principal_id == binding.owner_id,
             "remote run attribution mismatch"
@@ -131,6 +132,9 @@ pub(super) fn validate_admission(db: &Connection, request: &TurnAdmission) -> Re
     Ok(())
 }
 fn publish(tx: &Transaction<'_>, run: Uuid, event: RunEvent) -> Result<()> {
+    if withdrawal::read(tx)?.is_some() {
+        return Ok(());
+    }
     let sequence: i64 = tx.query_row(
         "SELECT next_sequence FROM remote_session WHERE slot=1",
         [],
@@ -180,7 +184,8 @@ pub(super) fn observe(
     kind: &EventKind,
     redactor: Option<&crate::tools::Redactor>,
 ) -> Result<()> {
-    if !binding(tx)?.is_some_and(|(id, _)| id == run.session_id) {
+    if !binding(tx)?.is_some_and(|(id, _)| id == run.session_id) || withdrawal::read(tx)?.is_some()
+    {
         return Ok(());
     }
     let revision = || -> Result<u64> {
@@ -276,7 +281,8 @@ fn project_text(
 }
 pub(super) fn cleanup(tx: &Transaction<'_>, run_id: Uuid, confirmation: &str) -> Result<()> {
     let run = read_run(tx, run_id)?;
-    if !binding(tx)?.is_some_and(|(id, _)| id == run.session_id) {
+    if !binding(tx)?.is_some_and(|(id, _)| id == run.session_id) || withdrawal::read(tx)?.is_some()
+    {
         return Ok(());
     }
     let state = match confirmation {
@@ -292,7 +298,8 @@ pub(super) fn canonical(
     new: &[Message],
     redactor: Option<&crate::tools::Redactor>,
 ) -> Result<()> {
-    if !binding(tx)?.is_some_and(|(id, _)| id == run.session_id) {
+    if !binding(tx)?.is_some_and(|(id, _)| id == run.session_id) || withdrawal::read(tx)?.is_some()
+    {
         return Ok(());
     }
     for message in new {
@@ -430,7 +437,7 @@ impl Journal {
         )?;
         tx.execute("UPDATE local_cleanup_obligations SET confirmation='operator_attested' WHERE run_id=?1 AND confirmation IS NULL",[run_id.to_string()])?;
         cleanup(&tx, run_id, "operator_attested")?;
-        tx.commit()?;
+        commit(tx, &self.commit_fence)?;
         Ok(())
     }
     pub fn configure_remote_redaction(
@@ -458,7 +465,7 @@ impl Journal {
         expected: &RemoteBinding,
     ) -> Result<()> {
         ensure!(
-            self.opened_schema >= 7,
+            self.opened_schema >= 8,
             "explicit quiescent journal upgrade required"
         );
         expected.validate()?;
@@ -488,7 +495,7 @@ impl Journal {
             "INSERT INTO remote_session(slot,session_id,binding) VALUES(1,?1,?2)",
             params![session.id.to_string(), serde_json::to_string(expected)?],
         )?;
-        tx.commit()?;
+        commit(tx, &self.commit_fence)?;
         Ok(())
     }
     pub fn remote_session(&self, expected: &RemoteBinding) -> Result<Option<Uuid>> {
@@ -513,6 +520,7 @@ impl Journal {
         let tx = self.connection.unchecked_transaction()?;
         check_transaction_schema(&tx, self.opened_schema)?;
         require(&tx, expected, session)?;
+        withdrawal::require_active(&tx)?;
         let saved = read_session(&tx, session)?;
         let latest: i64 = tx.query_row(
             "SELECT next_sequence-1 FROM remote_session WHERE slot=1",
@@ -583,7 +591,7 @@ impl Journal {
             run,
             latest: EventCursor::new(latest.try_into()?).map_err(anyhow::Error::msg)?,
         };
-        tx.commit()?;
+        commit(tx, &self.commit_fence)?;
         Ok(reply)
     }
     pub fn remote_replay(
@@ -600,6 +608,7 @@ impl Journal {
         let tx = self.connection.unchecked_transaction()?;
         check_transaction_schema(&tx, self.opened_schema)?;
         require(&tx, expected, session)?;
+        withdrawal::require_active(&tx)?;
         let next: i64 = tx.query_row(
             "SELECT next_sequence FROM remote_session WHERE slot=1",
             [],
@@ -634,7 +643,7 @@ impl Journal {
         if events.is_empty() && after != latest {
             return Ok(RemoteReplay::SnapshotRequired { latest });
         }
-        tx.commit()?;
+        commit(tx, &self.commit_fence)?;
         Ok(RemoteReplay::Events { events, latest })
     }
     pub fn remote_cancel(
@@ -666,6 +675,7 @@ impl Journal {
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         check_transaction_schema(&tx, self.opened_schema)?;
         require(&tx, expected, session_id)?;
+        withdrawal::require_active(&tx)?;
         ensure!(
             command.machine_id == expected.machine_id && command.principal_id == expected.owner_id,
             "remote actor mismatch"
@@ -742,7 +752,7 @@ impl Journal {
                 serde_json::to_string(&receipt)?
             ],
         )?;
-        tx.commit()?;
+        commit(tx, &self.commit_fence)?;
         Ok(receipt)
     }
 }

@@ -189,7 +189,7 @@ impl Journal {
             });
         }
         let next_after = more.then(|| sessions.last().expect("nonempty bounded page").id);
-        tx.commit()?;
+        commit(tx, &self.commit_fence)?;
         Ok(SessionPage {
             sessions,
             next_after,
@@ -260,7 +260,7 @@ impl Journal {
                 request.expires_at_ms
             ],
         )?;
-        tx.commit()?;
+        commit(tx, &self.commit_fence)?;
         Ok(CancelRequestOutcome::Requested { duplicate: false })
     }
     /// Observation only. The owning coordinator must cancel and await cleanup;
@@ -273,7 +273,7 @@ impl Journal {
         let tx = self.connection.unchecked_transaction()?;
         check_transaction_schema(&tx, self.opened_schema)?;
         let result = pending(&tx, session_id, run_id)?;
-        tx.commit()?;
+        commit(tx, &self.commit_fence)?;
         Ok(result)
     }
 }
@@ -307,9 +307,9 @@ fn cleanup_confirmation(
     .transpose()
 }
 pub(super) fn pending_cleanup(db: &Connection, session_id: Uuid) -> Result<Option<Uuid>> {
-    let id: Option<String> = db.query_row("SELECT run_id FROM local_cleanup_obligations WHERE session_id=?1 AND confirmation IS NULL", [session_id.to_string()], |r| r.get(0)).optional()?;
+    let id: Option<Option<String>> = db.query_row("SELECT CASE WHEN length(CAST(run_id AS BLOB))=36 THEN run_id END FROM local_cleanup_obligations WHERE session_id=?1 AND confirmation IS NULL", [session_id.to_string()], |r| r.get(0)).optional()?;
     id.map(|id| {
-        let id = Uuid::parse_str(&id)?;
+        let id = Uuid::parse_str(&id.context("invalid pending cleanup identity size")?)?;
         let target = target(db, id)?;
         ensure!(
             target.session_id == session_id && cleanup_confirmation(db, id, &target)? == Some(None),
@@ -355,7 +355,7 @@ impl Journal {
                 target.principal_id.to_string()
             ],
         )?;
-        tx.commit()?;
+        commit(tx, &self.commit_fence)?;
         Ok(())
     }
     /// Call only after observing complete provider/tool/child/PTY cleanup. Storage
@@ -418,7 +418,7 @@ impl Journal {
         }
         tx.execute("UPDATE local_cleanup_obligations SET confirmation=?1 WHERE run_id=?2 AND confirmation IS NULL", params![expected, run_id.to_string()])?;
         super::remote::cleanup(&tx, run_id, expected)?;
-        tx.commit()?;
+        commit(tx, &self.commit_fence)?;
         Ok(())
     }
 }

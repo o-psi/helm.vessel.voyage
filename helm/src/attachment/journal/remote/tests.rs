@@ -651,7 +651,7 @@ fn schema_six_upgrade_preserves_private_authority_receipts_and_rejects_stale_wri
         )
         .unwrap();
     drop(guard);
-    journal.connection.execute_batch("DROP TABLE remote_cleanup_attestations; DROP TABLE remote_text; DROP TABLE remote_tools; DROP TABLE remote_events; DROP TABLE remote_receipts; DROP TABLE remote_session; UPDATE attachment_schema SET version=6;").unwrap();
+    journal.connection.execute_batch("DROP TABLE remote_withdrawal; DROP TABLE remote_cleanup_attestations; DROP TABLE remote_text; DROP TABLE remote_tools; DROP TABLE remote_events; DROP TABLE remote_receipts; DROP TABLE remote_session; UPDATE attachment_schema SET version=6;").unwrap();
     let path = journal.directory.clone();
     drop(journal);
     let mut journal = Journal::open(path.clone()).unwrap();
@@ -674,7 +674,7 @@ fn schema_six_upgrade_preserves_private_authority_receipts_and_rejects_stale_wri
             Ok(())
         })
         .unwrap();
-    assert_eq!(journal.opened_schema, 7);
+    assert_eq!(journal.opened_schema, 8);
     assert!(
         stale
             .create_session(&Session::new(

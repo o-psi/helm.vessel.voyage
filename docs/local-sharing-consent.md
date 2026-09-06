@@ -4,7 +4,10 @@
 choices in a dedicated private directory. It is an administrative library:
 opening a store, enrollment, and reading a snapshot do not authorize disclosure,
 execution, approval, or restoration of a cached `SharingRegistry`. No frontend or
-remote authorization adapter is connected to this store.
+remote authorization adapter is connected to this store. The separate
+[dedicated grant withdrawal command](remote-sessions.md#withdraw-a-dedicated-grant-locally)
+retires an already explicit worker grant directly in its authoritative Journal; it
+does not activate declarations from this library.
 
 A trusted local caller obtains its installation/principal from `LocalActorStore`
 and derives destination origin, machine, owner and epoch from verified enrollment.

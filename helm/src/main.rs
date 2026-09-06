@@ -28,6 +28,7 @@ use std::{
 };
 use tracing_subscriber::EnvFilter;
 mod managed;
+mod remote_consent;
 mod remote_worker;
 mod tui_runtime;
 #[derive(Parser)]
@@ -123,6 +124,8 @@ enum Command {
     Managed(managed::Args),
     /// Run one explicitly exported dedicated managed session in the foreground.
     RemoteWorker(remote_worker::Args),
+    /// Inspect and permanently withdraw a dedicated remote grant locally.
+    RemoteConsent(remote_consent::Args),
     /// Manage dedicated Vessel enrollment; no worker is started.
     Attachment(helm::attachment::cli::AttachmentArgs),
     /// Manage Helm's native ChatGPT subscription credentials.
@@ -401,6 +404,14 @@ async fn main() -> Result<()> {
             },
         };
     }
+    if matches!(&cli.command, Some(Command::RemoteConsent(_))) {
+        let Some(Command::RemoteConsent(args)) = cli.command else {
+            unreachable!()
+        };
+        return remote_consent::run(args)
+            .await
+            .map_err(remote_consent::safe_error);
+    }
     if matches!(&cli.command,Some(Command::RemoteWorker(args)) if args.recover) {
         let Some(Command::RemoteWorker(args)) = cli.command else {
             unreachable!()
@@ -616,6 +627,9 @@ async fn main() -> Result<()> {
         Command::Managed(args) => managed::run(args, Some(config), cli.workspace, model_overridden)
             .await
             .map_err(managed::safe_error),
+        Command::RemoteConsent(_) => {
+            unreachable!("administrative command handled before provider setup")
+        }
         Command::RemoteWorker(args) => remote_worker::run(args, config, cli.workspace)
             .await
             .map_err(|_| {

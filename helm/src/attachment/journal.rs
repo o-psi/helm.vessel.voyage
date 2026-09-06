@@ -29,7 +29,12 @@ mod storage;
 #[cfg(windows)]
 use std::sync::Arc;
 
-const SCHEMA_VERSION: i64 = 7;
+const SCHEMA_VERSION: i64 = 8;
+mod withdrawal;
+pub use withdrawal::{
+    RemoteConsentRun, RemoteConsentStatus, RemoteGrantObserver, WithdrawalPreview,
+    WithdrawalReceipt, WithdrawalRequest,
+};
 mod remote;
 pub use remote::{RemoteBinding, RemoteCancelReceipt, RemoteReplay};
 mod reconciliation;
@@ -53,7 +58,25 @@ const MAX_PROMPT: usize = 64 * 1024;
 const MAX_PARTIAL: usize = 1024 * 1024;
 const REPLAY_LIMIT: i64 = 1024;
 
+type CommitFence = Option<std::sync::Arc<std::sync::Mutex<()>>>;
+
+// Only a dedicated owner with a grant observer supplies this process-local fence.
+// External writers still use the existing SQLite transaction/Busy boundary.
+fn commit(tx: Transaction<'_>, fence: &CommitFence) -> Result<()> {
+    let _guard = fence
+        .as_ref()
+        .map(|fence| {
+            fence
+                .lock()
+                .map_err(|_| anyhow::anyhow!("journal observer fence poisoned"))
+        })
+        .transpose()?;
+    tx.commit()?;
+    Ok(())
+}
+
 pub struct Journal {
+    commit_fence: CommitFence,
     remote_redactor: Option<std::sync::Arc<crate::tools::Redactor>>,
     connection: Connection,
     opened_schema: i64,
@@ -211,7 +234,7 @@ impl Journal {
             .optional()?;
         if let Some(version) = version {
             ensure!(
-                matches!(version, 2 | 3 | 4 | 5 | 6 | SCHEMA_VERSION),
+                matches!(version, 2 | 3 | 4 | 5 | 6 | 7 | SCHEMA_VERSION),
                 "unsupported attachment journal schema"
             );
         } else {
@@ -227,6 +250,7 @@ impl Journal {
             tx.execute_batch(catalogue::SCHEMA)?;
             tx.execute_batch(reconciliation::SCHEMA)?;
             tx.execute_batch(remote::SCHEMA)?;
+            tx.execute_batch(withdrawal::SCHEMA)?;
             tx.execute(
                 "INSERT INTO attachment_schema VALUES(1, ?1)",
                 [SCHEMA_VERSION],
@@ -253,6 +277,7 @@ impl Journal {
         #[cfg(windows)]
         storage::verify(&private_directory)?;
         Ok(Self {
+            commit_fence: None,
             remote_redactor: None,
             connection,
             opened_schema: version.unwrap_or(SCHEMA_VERSION),
@@ -329,12 +354,15 @@ impl Journal {
         if self.opened_schema < 6 {
             tx.execute_batch(reconciliation::SCHEMA)?;
         }
-        tx.execute_batch(remote::SCHEMA)?;
+        if self.opened_schema < 7 {
+            tx.execute_batch(remote::SCHEMA)?;
+        }
+        tx.execute_batch(withdrawal::SCHEMA)?;
         tx.execute(
             "UPDATE attachment_schema SET version=?1 WHERE id=1",
             [SCHEMA_VERSION],
         )?;
-        tx.commit()?;
+        commit(tx, &self.commit_fence)?;
         self.opened_schema = SCHEMA_VERSION;
         drop(guards);
         Ok(())
@@ -418,7 +446,7 @@ impl Journal {
                 serde_json::to_string(provenance)?
             ],
         )?;
-        tx.commit()?;
+        commit(tx, &self.commit_fence)?;
         Ok((session.revision, false))
     }
 
@@ -441,7 +469,7 @@ impl Journal {
             "INSERT INTO sessions(id,revision,state) VALUES(?1,0,?2)",
             params![session.id.to_string(), encoded],
         )?;
-        tx.commit()?;
+        commit(tx, &self.commit_fence)?;
         Ok(())
     }
 
@@ -627,7 +655,7 @@ impl Journal {
             params![request.command_id.to_string(), digest, run.id.to_string()],
         )?;
         append_event(&tx, &run, EventKind::Accepted)?;
-        tx.commit()?;
+        commit(tx, &self.commit_fence)?;
         Ok(Admission {
             duplicate: false,
             run,
@@ -660,7 +688,7 @@ impl Journal {
             params![serde_json::to_string(&run)?, run.id.to_string()],
         )?;
         append_event(&tx, &run, EventKind::Started)?;
-        tx.commit()?;
+        commit(tx, &self.commit_fence)?;
         Ok(())
     }
 
@@ -707,7 +735,7 @@ impl Journal {
             EventKind::TextDelta(delta.to_owned()),
             self.remote_redactor.as_deref(),
         )?;
-        tx.commit()?;
+        commit(tx, &self.commit_fence)?;
         Ok(sequence)
     }
 
@@ -831,7 +859,7 @@ impl Journal {
             params![serde_json::to_string(&run)?, run.id.to_string()],
         )?;
         append_event(&tx, &run, EventKind::CanonicalCheckpoint)?;
-        tx.commit()?;
+        commit(tx, &self.commit_fence)?;
         Ok(())
     }
 
@@ -865,7 +893,7 @@ impl Journal {
         current.session.begin_run_summary(reference.run_id);
         current.session.completion_runs.push(reference);
         update_session(&tx, &current)?;
-        tx.commit()?;
+        commit(tx, &self.commit_fence)?;
         Ok(())
     }
 
@@ -918,7 +946,7 @@ impl Journal {
             params![serde_json::to_string(&run)?, run.id.to_string()],
         )?;
         append_event(&tx, &run, EventKind::CanonicalCheckpoint)?;
-        tx.commit()?;
+        commit(tx, &self.commit_fence)?;
         Ok(())
     }
 
@@ -1070,7 +1098,7 @@ impl Journal {
             EventKind::Terminal(state),
             self.remote_redactor.as_deref(),
         )?;
-        tx.commit()?;
+        commit(tx, &self.commit_fence)?;
         Ok(run)
     }
 

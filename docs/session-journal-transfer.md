@@ -67,9 +67,10 @@ hostile code running as the same OS user is outside this boundary.
 
 ## Explicit journal schema upgrade
 
-New journals use schema 7, including provenance,
+New journals use schema 8, including provenance,
 [durable steering receipts](durable-steering.md), managed catalogue, reconciliation
-and dedicated remote-session state. Existing schema 2–6 journals retain their supported
+and dedicated remote-session state with permanent local grant withdrawal. Existing
+schema 2–7 journals retain their supported
 behavior; `open` never upgrades them. Transfer requires the current schema before
 touching the source marker. `Journal::upgrade_quiescent` is an explicit operation: stop all other
 journal processes first, finish or recover active runs, then upgrade. It holds a

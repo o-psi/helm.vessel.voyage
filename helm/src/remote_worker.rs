@@ -3,7 +3,7 @@ use super::*;
 use anyhow::ensure;
 use helm::attachment::{
     client::EnrollmentClient,
-    journal::{Journal, RemoteBinding, RemoteReplay, TurnAdmission},
+    journal::{Journal, RemoteBinding, RemoteGrantObserver, RemoteReplay, TurnAdmission},
     local_actor::LocalActorStore,
     runtime::{Admission, ManagedSessionOwner, RuntimeClock, SystemClock},
     transport::{self, ConnectionLease},
@@ -42,6 +42,7 @@ pub(super) struct Args {
 #[derive(Debug)]
 struct Authority {
     lease: ConnectionLease,
+    consent: Arc<RemoteGrantObserver>,
 }
 impl helm::policy::ExecutionAuthority for Authority {
     fn check(&self) -> Result<()> {
@@ -49,12 +50,13 @@ impl helm::policy::ExecutionAuthority for Authority {
             self.lease.is_active(),
             "foreground connection authority unavailable"
         );
-        Ok(())
+        self.consent.check()
     }
 }
 /// Dispatch combines the still-live remote grant with the locally selected
-/// policy snapshot. Observation/cancellation use the lease alone so a changed
-/// local profile cannot obstruct cleanup or truthful inspection.
+/// policy snapshot. Remote observation/cancellation require the current lease and
+/// durable grant; a changed local profile does not obstruct them. Local cleanup
+/// and recovery remain available independently after withdrawal.
 #[derive(Debug)]
 struct DispatchAuthority {
     lease: Arc<Authority>,
@@ -145,6 +147,8 @@ pub(super) async fn run(args: Args, mut config: Config, workspace: Option<PathBu
     };
     drop(journal);
     let owner = ManagedSessionOwner::open(directory, session).await?;
+    let grant = Arc::new(owner.remote_grant_observer(binding.clone()).await?);
+    grant.check()?;
     let saved = owner.snapshot().await?;
     ensure!(
         saved.session.workspace.canonicalize()? == workspace,
@@ -163,6 +167,15 @@ pub(super) async fn run(args: Args, mut config: Config, workspace: Option<PathBu
     let interrupt = attachment_interrupt();
     tokio::pin!(interrupt);
     loop {
+        if let Err(error) = grant.check() {
+            if !authority_store_busy(&error) {
+                return Err(error);
+            }
+            // Stay disconnected until a fresh durable observation succeeds. This
+            // retries only an authority read, never admission or a tool effect.
+            tokio::select! {_ = &mut interrupt=>return Ok(()),_ = tokio::time::sleep(Duration::from_secs(1))=>{}}
+            continue;
+        }
         let client = match first.take() {
             Some(client) => client,
             None => EnrollmentClient::open_existing(
@@ -187,6 +200,7 @@ pub(super) async fn run(args: Args, mut config: Config, workspace: Option<PathBu
         );
         let authority = Arc::new(Authority {
             lease: connection.lease(),
+            consent: grant.clone(),
         });
         let dispatch_authority = Arc::new(DispatchAuthority {
             lease: authority.clone(),
@@ -305,7 +319,17 @@ pub(super) async fn run(args: Args, mut config: Config, workspace: Option<PathBu
     }
 }
 
-async fn write_notice(notice: String) -> Result<()> {
+fn authority_store_busy(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| {
+        matches!(
+            cause.downcast_ref::<rusqlite::Error>(),
+            Some(rusqlite::Error::SqliteFailure(code, _))
+                if matches!(code.code, rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked)
+        )
+    })
+}
+
+pub(super) async fn write_notice(notice: String) -> Result<()> {
     let (sender, receiver) = tokio::sync::oneshot::channel();
     std::thread::Builder::new()
         .name("remote-notice".into())
@@ -382,4 +406,28 @@ pub(super) async fn recover(args: Args) -> Result<()> {
         None
     };
     write_notice(serde_json::json!({"event":"remote_session_recovered","session_id":session,"run":recovered.map(|run|serde_json::json!({"id":run.id,"state":run.state})),"cleanup":if args.acknowledge_cleanup.is_some(){"operator_attested"}else{"unchanged"},"reconciliation":reconciliation}).to_string()).await
+}
+
+#[cfg(test)]
+mod authority_tests {
+    use super::*;
+
+    #[test]
+    fn disconnected_retry_accepts_only_typed_sqlite_contention() {
+        for code in [rusqlite::ffi::SQLITE_BUSY, rusqlite::ffi::SQLITE_LOCKED] {
+            let error = anyhow::Error::new(rusqlite::Error::SqliteFailure(
+                rusqlite::ffi::Error::new(code),
+                None,
+            ))
+            .context("grant observation failed");
+            assert!(authority_store_busy(&error));
+        }
+        for code in [rusqlite::ffi::SQLITE_CORRUPT, rusqlite::ffi::SQLITE_FULL] {
+            assert!(!authority_store_busy(&anyhow::Error::new(
+                rusqlite::Error::SqliteFailure(rusqlite::ffi::Error::new(code), None)
+            )));
+        }
+        assert!(!authority_store_busy(&anyhow::anyhow!("database is busy")));
+        assert!(!authority_store_busy(&anyhow::anyhow!("grant withdrawn")));
+    }
 }

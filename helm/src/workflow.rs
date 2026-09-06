@@ -68,6 +68,7 @@ pub const RESERVED: &[&str] = &[
     "version",
     "managed",
     "remote-worker",
+    "remote-consent",
 ];
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
