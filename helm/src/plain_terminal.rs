@@ -85,10 +85,30 @@ impl PendingInput {
         Ok(Some(text))
     }
     fn backspace(&mut self) {
-        self.bytes.pop();
-        while !self.bytes.is_empty() && std::str::from_utf8(&self.bytes).is_err() {
-            self.bytes.pop();
+        let start = previous_scalar_start(&self.bytes, self.bytes.len());
+        self.bytes.truncate(start);
+    }
+}
+
+// Inspect at most one UTF-8 scalar. Earlier malformed bytes remain editable.
+fn previous_scalar_start(bytes: &[u8], end: usize) -> usize {
+    if end == 0 {
+        return 0;
+    }
+    let mut start = end - 1;
+    for _ in 0..3 {
+        if start == 0 || (bytes[start] & 0xc0) != 0x80 {
+            break;
         }
+        start -= 1;
+    }
+    if std::str::from_utf8(&bytes[start..end])
+        .ok()
+        .is_some_and(|text| text.chars().count() == 1)
+    {
+        start
+    } else {
+        end - 1
     }
 }
 
@@ -208,10 +228,7 @@ pub async fn pending_prompt(
                         cursor = pending.bytes.len();
                     } else if cursor > 0 {
                         let end = cursor;
-                        cursor -= 1;
-                        while cursor > 0 && (pending.bytes[cursor] & 0xc0) == 0x80 {
-                            cursor -= 1;
-                        }
+                        cursor = previous_scalar_start(&pending.bytes, end);
                         pending.bytes.drain(cursor..end);
                     }
                     blocked = false;
@@ -660,21 +677,36 @@ mod tests {
         assert_eq!(pending.bytes, b"prefix");
     }
     #[test]
-    fn backspace_removes_only_the_final_scalar_or_invalid_byte(){
-        for (bytes,expected) in [
-            ([vec![0xff],b"keep".to_vec()].concat(),[vec![0xff],b"kee".to_vec()].concat()),
-            ("前🧭".as_bytes().to_vec(),"前".as_bytes().to_vec()),
-            (vec![b'x',0xff],vec![b'x']),
-            (vec![b'x',0xf0,0x9f,0xa7],vec![b'x',0xf0,0x9f]),
-            (vec![b'x',0x80,0x80,0x80,0x80,0x80],vec![b'x',0x80,0x80,0x80,0x80]),
-        ]{
-            let mut pending=PendingInput{bytes};pending.backspace();assert_eq!(pending.bytes,expected);
+    fn backspace_removes_only_the_final_scalar_or_invalid_byte() {
+        for (bytes, expected) in [
+            (
+                [vec![0xff], b"keep".to_vec()].concat(),
+                [vec![0xff], b"kee".to_vec()].concat(),
+            ),
+            ("前🧭".as_bytes().to_vec(), "前".as_bytes().to_vec()),
+            (vec![b'x', 0xff], vec![b'x']),
+            (vec![b'x', 0xf0, 0x9f, 0xa7], vec![b'x', 0xf0, 0x9f]),
+            (
+                vec![b'x', 0x80, 0x80, 0x80, 0x80, 0x80],
+                vec![b'x', 0x80, 0x80, 0x80, 0x80],
+            ),
+        ] {
+            let mut pending = PendingInput { bytes };
+            pending.backspace();
+            assert_eq!(pending.bytes, expected);
         }
-        let mut bytes=vec![b'x';MAX_PENDING/2];bytes.push(0xff);bytes.extend(vec![b'y';MAX_PENDING/2-1]);
-        let mut pending=PendingInput{bytes:bytes.clone()};pending.backspace();bytes.pop();assert_eq!(pending.bytes,bytes);
+        let mut bytes = vec![b'x'; MAX_PENDING / 2];
+        bytes.push(0xff);
+        bytes.extend(vec![b'y'; MAX_PENDING / 2 - 1]);
+        let mut pending = PendingInput {
+            bytes: bytes.clone(),
+        };
+        pending.backspace();
+        bytes.pop();
+        assert_eq!(pending.bytes, bytes);
     }
     #[test]
-    fn prompt_view_bounds_columns_and_keeps_control_text_inert(){
+    fn prompt_view_bounds_columns_and_keeps_control_text_inert() {
         for columns in 2..80 {
             let bytes = "前🧭next\x1b]52;c;secret\x07suffix".as_bytes();
             for cursor in [0, 3, 7, bytes.len()] {
