@@ -145,7 +145,14 @@ pub fn draw(frame: &mut Frame<'_>, app: &App) {
                         run.run_id,
                         safe(&run.state)
                     )));
-                    if !run.partial_text.is_empty() {
+                    // Completed turns are already present in canonical messages.
+                    // Retain provisional output for active/interrupted work only.
+                    if run.state != "completed" && !run.partial_text.is_empty() {
+                        if run.partial_text_truncated {
+                            text.lines.push(Line::from(
+                                "[Partial run output; connect request with run_output retrieves the full text]",
+                            ));
+                        }
                         text.lines.extend(
                             markdown::render_markdown(
                                 &run.partial_text,

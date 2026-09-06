@@ -22,6 +22,8 @@ pub struct Run {
     pub state: String,
     #[serde(default)]
     pub partial_text: String,
+    #[serde(default)]
+    pub partial_text_truncated: bool,
 }
 
 impl Run {

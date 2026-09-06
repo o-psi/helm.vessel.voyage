@@ -98,10 +98,13 @@ start a remote supervisor:
 helm connect --ssh USER@HOST --remote-directory /absolute/private-vessel
 helm connect --ssh USER@HOST --remote-directory /absolute/private-vessel --include-local
 helm connect --ssh USER@HOST --remote-directory /absolute/private-vessel list
+helm connect --ssh USER@HOST_A --remote-directory /absolute/vessel-a --ssh USER@HOST_B --remote-directory /absolute/vessel-b --include-local
 ```
 
-Plain commands select one Vessel, so do not combine `--include-local` with a CLI
-subcommand. Remote `/new` needs an explicit absolute path on the remote machine.
+Pair each repeated `--ssh` with one `--remote-directory` in the same order, up to
+16 remote Vessels. Plain commands select one Vessel, so do not combine multiple
+routes or `--include-local` with a CLI subcommand. Remote `/new` needs an explicit
+absolute path on the remote machine.
 SSH-account authority is broad local-account authority; this is not enrolled
 per-session grant delegation or participant-Vessel execution. The provider and its
 credentials remain on the remote executing machine. Snapshot polling/reconnect does

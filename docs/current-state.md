@@ -38,9 +38,9 @@ history and full message/run-output chunks are available through typed requests.
 This is not a cursor-based event subscription implementation. Actions capture
 session, incarnation and run identity, and uncertain submissions retain their
 pending identity for receipt inspection. Reconnect observes without automatically
-resubmitting input. The current frontend accepts one explicit SSH destination,
-optionally alongside local voyages; arbitrary multiple remote configurations and
-full legacy panel parity remain unfinished.
+resubmitting input. The frontend accepts up to 16 paired `--ssh` and
+`--remote-directory` destinations, optionally alongside local voyages. Full legacy
+panel parity remains unfinished.
 
 The independent runtime reuses managed journal admission, streaming checkpoints,
 execution fences, steering and cleanup obligations. Its resource stores are scoped
