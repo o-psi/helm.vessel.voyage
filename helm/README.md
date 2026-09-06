@@ -153,8 +153,11 @@ the current conversation. Finish or cancel an active run before switching.
 
 Unsent composer drafts are saved locally when switching conversations, creating a
 new voyage, or leaving normally, and restored when reopening that voyage. Composer
-drafts are not sent as model messages or included in Markdown exports. Conversation
-switching rebuilds the session's existing workspace and execution configuration.
+drafts are not sent as model messages or included in Markdown exports. Switching
+acquires the destination session's execution ownership and retains each workspace's
+runtime and terminals in the same Helm process. A workspace runtime is built on
+its first visit; returning to it reuses that runtime under its existing policy
+freshness checks. Failed navigation keeps the current voyage and terminals available.
 
 The composer remains editable while Helm is working. Press `Enter` to queue its text as steering
 for the active run; `Shift+Enter` still inserts a newline. Helm records accepted steering in the

@@ -14,8 +14,10 @@ tall as they are wide. Below 64 columns, recent conversations use a drawer.
 
 Press **Ctrl+S** to focus recent conversations, use the arrow keys and Enter to
 open one, or click a row. Esc returns to the composer. Portrait displays expose
-the same list as a drawer. Switching saves your unsent composer text and rebuilds
-the runtime for the destination session's workspace. Finish or cancel active work
+the same list as a drawer. Switching saves your unsent composer text and acquires
+the destination session's execution ownership. Helm retains workspace runtimes and
+their terminals across navigation, building a runtime on its first visit. Failed
+navigation keeps the current voyage available. Finish or cancel active work
 before switching. Opening an existing session resumes the same voyage; **Ctrl+N**
 starts a new one. **Ctrl+B** branches into a new voyage. **F1** shows shortcuts.
 
