@@ -1,69 +1,35 @@
 # Vessel
 
-Vessel is Voyage's management plane. It currently provides health checks and an
-authenticated status page, authenticated outbound Helm presence, and opt-in
-[dedicated remote-session HTTP operations](../docs/remote-sessions.md). Helm is the
-program used to interact with voyages (its sessions), including local chat. Its
-unified remote operator interface remains planned; Vessel routes control and
-observations without executing model tools.
+The target Vessel supervises and exposes local Voyage runtime processes to Helm
+interfaces. Helm connects only to local or remote Vessels; each Voyage runtime owns
+**one session per independent process**. See the
+[architecture](../docs/architecture.md).
 
-## Run
+**Current Vessel is a management plane and optional relay.** It serves health and
+status, enrollment, authenticated outbound Helm presence and opt-in dedicated
+remote-session HTTP operations. It does not yet launch or supervise Voyage
+processes. Execution currently remains in Helm, and no `voyage` executable exists.
+See the [current implementation](../docs/current-state.md).
+
+From the repository root:
 
 ```sh
+cargo run -p vessel -- --help
 cargo run -p vessel -- --bind 127.0.0.1:9480 --database vessel.db
 ```
 
-Set `VESSEL_OPERATOR_TOKEN` securely in the environment to enable the status page
-and diagnostics. They accept a Bearer token or the token as the password in HTTP
-Basic authentication. Prefer the environment over `--operator-token` to avoid
-command-history/process-list disclosure. Terminate TLS before non-loopback access.
+Set `VESSEL_OPERATOR_TOKEN` securely in the environment to enable authenticated
+status and diagnostics. Prefer it over a token in command arguments. Use the
+[operations guide](../docs/operations.md) for enrollment, TLS, presence and the
+explicit `--remote-execution` relay. `--coordination-control` enables control
+metadata and nomination leases, not task execution.
 
-Status endpoints:
+The `/health` and `/ready` endpoints report process/database state; `/metrics`
+reports limited service metadata. `/ui` and `/v1/diagnostics` require operator
+authentication when configured. The web page is a status view, not an execution
+console. Enrollment and presence do not share private sessions or grant tool
+execution, and providers and credentials stay on the current executing Helm.
 
-| Endpoint | Behavior |
-| --- | --- |
-| `/health` | Process liveness |
-| `/ready` | Database connection check |
-| `/metrics` | Whether attachment presence is configured |
-| `/v1/diagnostics` | Authenticated service status |
-| `/ui` | Authenticated status page |
-
-UI/diagnostics return 503 without a configured operator token and 401 for missing or
-invalid authentication when enabled. Request correlation and `--log-format json`
-are supported, as are `completions` and `manpage`.
-
-## Enrollment administration
-
-[Inspect enrolled devices and enrollment audit events](../docs/enrollment-administration.md),
-including offline devices, then use exact-epoch operator revocation when needed.
-These read-only observations do not grant worker or voyage authority.
-
-## Attachment presence
-
-Configure enrollment and run an explicit foreground Helm connection using the
-[attachment presence guide](../docs/attachment-presence.md). Operator diagnostics
-show bounded current connection metadata. Presence does not grant execution or
-share session content. Explicit [coordination control](../docs/coordination-control.md)
-adds authenticated configuration, immutable receipts and control-only leases; it
-does not activate coordinators or admit distributed tasks.
-
-## Voyages across Helms
-
-Every Helm session is a [voyage](../docs/voyages.md), including a new local chat;
-it needs no project, repository or component map. Planned multi-Helm participation
-extends those voyages across user-selected machines. That extension separates the
-Helm an operator opens from the Helm coordinating work and the Helms executing
-delegated work. The coordinator may then run remotely while an authorized Helm
-interface disconnects or reconnects. Each executing Helm retains its local policy,
-credentials and execution authority.
-
-That cross-Helm orchestration and remote operator interface remain planned under
-[#77](https://github.com/o-psi/voyage/issues/77). Today's `helm remote-worker`
-exposes one dedicated session through authenticated HTTP; it does not coordinate
-multiple Helms. The `/ui` endpoint is a status page, and browser console work is
-deferred. See the [attachment design](../docs/vessel-session-management.md) for
-control-plane requirements and [remote sessions](../docs/remote-sessions.md) for
-implemented setup and recovery.
-
-See [security and operations](../docs/security-operations.md) for access and
-logging boundaries.
+See [configuration](../docs/configuration.md), [security](../docs/security.md) and
+[development](../docs/development.md). Automated tests and evaluations were removed
+in #140; endpoint availability does not establish deployment or release readiness.

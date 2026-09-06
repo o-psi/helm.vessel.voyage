@@ -1,99 +1,117 @@
-# Voyage architecture
+# Architecture
 
-Helm owns agent execution, local canonical state, provider credentials, policy,
-approvals and tools. Vessel supplies the authenticated control plane. Helm is the
-intended operator interface for both local and remote work.
+Status: target design. The current code has not completed these process boundaries;
+see [current state](current-state.md). This is the canonical component model.
 
-## Product roles
+## Three programs
 
-Helm is the program; every Helm session is a [voyage](voyages.md), including a
-new local chat. A voyage is an open-ended conversation and needs no repository or
-component-to-machine map. Planned multi-Helm participation extends that same
-voyage across explicitly selected machines. Interface, coordinating and participant
-Helms are roles that may overlap; remote coordination would let the user open an
-interface on a different workstation.
+**Helm is the TUI.** It owns presentation, per-voyage drafts, navigation and client
+connections. Helm connects to Vessels, whether local or remote. It does not own an
+agent loop, execute tools, acknowledge canonical checkpoints or directly supervise
+voyage processes.
 
-```mermaid
-flowchart LR
-    I[Interface Helm] <-->|Authorized viewing and steering| V[Vessel control plane]
-    C[Coordinating Helm] <-->|Outbound connection| V
-    P[Participant Helms] <-->|Outbound connections| V
+**Vessel is the supervisor and access service.** It authenticates clients,
+discovers and starts voyage processes, exposes their authorized state, routes
+commands and observations, and reports process health and resource capacity.
+A local Vessel and a remote Vessel have the same role. Local versus remote is
+relative to the Helm connection, not a different product or session type.
+
+**Voyage is the execution runtime. One session has one independent `voyage`
+process.** That process owns the conversation, agent loop, provider transport,
+tool registry, decisions, run admission, canonical persistence and cleanup. It
+is separate from Helm, Vessel and every other session's runtime process. Vessel
+must not implement sessions as agent tasks inside its own process.
+
+```text
+                         one session per execution process
+Helm ── local Vessel ──── voyage A
+                  └───── voyage B
+     └─ remote Vessel ─── voyage C
+                  └───── voyage D
 ```
 
-This is the target role/communication model, not an implemented distributed
-coordinator. Vessel routes authorized work; each executing Helm enforces local
-authority. Local voyages already persist through the existing session stores.
-Cross-Helm persistence and reconciliation, shared context and coordinator handoff
-require further contract design. Opening or closing an interface does not define who
-coordinates or imply an execution cancellation request.
+The lines are authenticated control and observation connections. They do not
+represent shared transcript ownership or permission to transfer provider secrets.
+Vessel owns supervision metadata; the voyage owns authoritative session state.
+A shared storage engine is possible only if it preserves these ownership fences.
 
-## Planned live-voyage interface
+## Terminology and identities
 
-One Helm TUI must multiplex multiple simultaneously running voyages, mixing local
-voyages and authorized voyages reached through an attached Vessel. Each voyage's
-execution runtime is process-isolated from the TUI and other voyages. Local
-execution uses local IPC and interface-independent supervision; remote connections
-route through Vessel to executing Helms. Vessel is never the agent executor.
-Switching views does not pause work; interface exit is detach, not cancellation.
-This is distinct from multi-Helm coordination inside one voyage. The
-[canonical multiplexing requirements](voyages.md#one-tui-multiple-live-voyages-planned)
-define ownership, action routing, status, reconnection and acceptance. The current
-in-process frontend does not yet implement this boundary.
+| Term | Meaning |
+| --- | --- |
+| Voyage / session | The same ongoing unit of work. A new session or branch creates a new voyage. |
+| Conversation | The voyage's canonical interaction history. |
+| Run | One execution within a voyage; ending a run does not end the voyage. |
+| Voyage process | The live runtime for one session; its process incarnation changes after restart. |
+| Vessel | A service supervising voyage processes and participating through explicit local grants. |
+| Machine | The operating-system host. It is not a session, runtime or permission grant. |
+| Participant | A Vessel accepted into a voyage's scope; membership alone cannot dispatch work. |
+| Subagent | Work delegated within a voyage, not another independently created user-facing session. |
+| Configuration draft | Saved proposed settings without execution ownership. |
 
-## Current local and remote execution
+A voyage keeps its session UUID across resume and runtime restart. Every runtime
+start has a fresh incarnation identity. A process ID alone cannot establish
+identity or liveness. Run IDs, command IDs, session revisions, event cursors,
+connection generations and membership revisions have different meanings and must
+not be interchangeable.
 
-Local Helm supports voyages through its chat and session workflows, with runs,
-terminals, todos and local subagents.
-[Private managed sessions](local-managed-sessions.md) add journal-backed ownership,
-exact command receipts and explicit recovery. A local session owner serializes
-execution on one host; it does not implement cross-Helm coordination. The same
-Helm can present and coordinate its local voyage.
+A voyage needs no repository, project map or mandatory named purpose. A workspace
+is a local resource binding, not the identity of the voyage. Several voyages may
+refer to the same workspace, subject to explicit writer arbitration.
 
-An enrolled Helm can maintain an authenticated outbound presence connection with
-`helm attachment --directory /absolute/identity connect`. Presence alone negotiates
-no application capabilities and cannot dispatch work or expose sessions. See
-[enrollment](attachment-cli.md) and [presence](attachment-presence.md).
+## Local use
 
-An explicit `helm remote-worker` creates one new dedicated managed session and
-connects outbound to Vessel. With Vessel `--remote-execution`, authenticated HTTP
-clients can list/inspect it, submit turns, replay permitted events and cancel an
-exact run. See [remote sessions](remote-sessions.md) for the complete current setup
-and failure behavior. The unified Helm management interface and multi-Helm voyage
-coordination remain planned under [#77](https://github.com/o-psi/voyage/issues/77).
+The target local path is `Helm → local Vessel → voyage`. Local operation requires
+a local Vessel, but no remote account, remote enrollment or machine-selection
+wizard. Normal startup should discover the user's local Vessel and start it when
+necessary, visibly reporting its independent background lifetime and failures.
+Service installation and automatic startup at login are explicit operations.
 
-## Trust boundaries
+Helm presents one ordinary new-voyage action and one list containing permitted
+local and remote voyages. Choosing another Vessel changes where a new runtime is
+hosted. Selecting a voyage connects to its existing owner rather than launching a
+second session executor. Concurrent create/open requests must converge on the same
+selected identity or return an explicit conflict.
 
-1. Provider credentials and opaque provider continuation remain on their Helm.
-2. Every execution enforces its host's roots, command policy, approvals, cancellation
-   and resource limits. Application policy is not an OS sandbox.
-3. Enrollment, voyage scope, session sharing and approval authority are distinct.
-   Neither a coordinator nor a delegate can silently widen them.
-4. Helm initiates connections; no inbound Helm task/session port is required.
-5. Interface disconnection, worker transport loss and process exit are distinct
-   lifecycle events. Current worker transport loss cancels active work; it does not
-   implement the target persistent coordinator/handoff experience.
+## Vessels participating in a voyage
 
-## Local parallel agents
+Vessels may join a voyage under user-controlled scope and locally accepted grants.
+The Vessel supervising its voyage process provides the route to its canonical
+owner. Additional membership must not spawn a competing voyage runtime or copy
+its canonical conversation into an independently writable session.
 
-Helm supervises a tree of local children with explicit tasks, tool policy,
-cancellation and durable records. Coding children can use isolated Git worktrees;
-other children can use ordinary policy-scoped directories. This remains local
-supervision, distinct from planned cross-Helm participation. See
-[Parallel subagents](subagents.md) for scheduling and safety limits.
+Multiplexing many voyages across Vessels and delegating work across several
+Vessels inside one voyage are different capabilities. The former needs one runtime
+process per session; the latter additionally needs durable assignment, disclosure
+and cancellation contracts. Any participant-side worker is subordinate to its
+assignment and cannot become a second canonical session owner.
 
-## Current management-plane surface
+The initial implementation must establish the single-owner process boundary and
+mixed local/remote management. Participant execution and moving a voyage to another
+Vessel require additional explicit contracts and evidence. Exact inter-Vessel
+routing, discovery and transport negotiation are implementation decisions; the
+current outbound Helm attachment protocol does not implement this target topology.
+Do not silently invent a central mandatory Vessel or automatic owner failover.
 
-- `GET /health`: process liveness.
-- `GET /ready`: database connection check, not remote-execution readiness.
-- `GET /metrics`: whether attachment presence is configured.
-- `GET /v1/diagnostics`: authenticated status and bounded current presence metadata.
-- `GET /ui`: authenticated static status page; a browser console is deferred.
-- Explicitly configured enrollment administration and `/v2/attachment` transport.
-- With `--remote-execution`, the authenticated dedicated-session endpoints in the
-  [remote-session guide](remote-sessions.md).
+## Lifecycle and failure isolation
 
-`voyage-protocol` supplies strict shared command, feature and event contracts.
-The [attachment foundations](attachment-foundations.md) include the transactional
-command/run journal. Full lifecycle, broader sharing, operator UI, scoped approvals,
-services and cross-Helm coordination require further implementation and evidence.
-See the [session management design](vessel-session-management.md).
+Switching the selected voyage only changes the view and input target. Voyages
+continue concurrently under per-voyage and machine-wide limits. Helm disconnect or
+crash detaches the interface; it does not cancel accepted work. A completed run
+leaves the voyage available for another turn.
+
+Vessel shutdown is an explicit service-lifecycle operation. It must enumerate owned
+voyage processes and apply a visible drain or stop policy. A Vessel crash creates
+uncertainty that must be reconciled with live runtime owners; it is not evidence
+that processes stopped, survived or completed cleanup. Runtime or machine failure
+can interrupt execution. Restart restores durable history and records a new
+incarnation; it never claims old tools or PTYs survived without observation.
+
+Each voyage serializes mutating runs and owns its subordinate work. Crashing one
+voyage must not terminate another voyage or Helm. Resource limits and shared-file
+arbitration are still required: a process boundary is not an OS sandbox.
+
+See the [runtime contract](runtime-contract.md) for required state transitions,
+[security](security.md) for authority and [implementation](implementation.md) for
+delivery order. No new `voyage` or Vessel-supervision CLI syntax is established by
+this design document.

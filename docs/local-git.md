@@ -1,41 +1,35 @@
-# Git and GitHub workflow
+# Git and GitHub
 
-Voyage's repository, issues and pull requests are on
-[GitHub](https://github.com/o-psi/voyage). Use normal Git in ordinary clones:
+The repository is [o-psi/voyage](https://github.com/o-psi/voyage). Use ordinary Git
+in normal clones and linked worktrees.
 
-```sh
-git clone https://github.com/o-psi/voyage.git
-cd voyage
-git status --short
-git remote -v
-```
-
-This special local workspace reserves `.git`. Its working-copy metadata lives in
-ignored `.local-git/worktree.git`; use the existing wrapper without initializing
-another repository:
+This particular workspace reserves `.git`; its metadata is under
+`.local-git/worktree.git`. Use the existing wrapper instead of initializing another
+repository:
 
 ```sh
-./scripts/local-git status --short
-./scripts/local-git remote -v
+./scripts/local-git status --short --branch
+./scripts/local-git diff
 ./scripts/local-git fetch origin
 ./scripts/local-git diff --check
 ./scripts/local-git add path/to/your/change
 ./scripts/local-git commit -m "Describe the change"
 ```
 
-Inspect status and diffs first. Stage only your changes and preserve concurrent
-work. In linked worktrees, normal Git works. Review changes in a focused branch
-and GitHub PR; do not reset, clean, force-push or overwrite user changes implicitly.
+Inspect status/diffs before editing and stage only the authorized change. Do not
+reset, clean, force-push or overwrite concurrent work. Preserve unfinished branches,
+worktrees, release artifacts and evidence. A documentation rewrite does not authorize
+removing private runtime data or repository metadata.
 
-Use an explicit GitHub repository when the wrapper layout prevents autodetection:
+Use the explicit repository with GitHub CLI when autodetection is inappropriate:
 
 ```sh
+gh issue list --repo o-psi/voyage --state all
 gh issue view 77 --repo o-psi/voyage
-gh pr list --repo o-psi/voyage
 ```
 
-Follow [the project instructions](../AGENTS.md) for complete paginated issue review,
-tracking and verification before substantive work. A local Forgejo server or Git
-daemon is not required for this workflow. Local evidence and preserved branch
-archives are documented in [the worktree audit](worktree-cleanup.md); they are not
-an alternative issue tracker or source of current feature readiness.
+Follow [project instructions](../AGENTS.md) for scope tracking, validation and
+publication. Unless directed otherwise, deliver completed work to local `main`,
+push normally to `origin/main`, and verify local/remote commit equality. If access,
+conflicts, ongoing checks or branch protection block delivery, report the actual
+state rather than bypassing the blocker. A local Forgejo service is not required.

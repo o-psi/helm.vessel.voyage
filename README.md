@@ -1,93 +1,63 @@
 # Voyage
 
-Voyage is a system for general-purpose LLM work across local and remote machines.
-**Helm is the program; each session is a voyage.** Starting a new local chat starts
-a new voyage. Vessel connects Helms for authorized remote work; it is not required
-for a local voyage.
+Voyage is a system for ongoing AI-assisted work, operated through a terminal
+interface across local and remote machines.
 
-Voyage is in development toward its first release, with a focus on complete,
-reliable workflows that deliver tested value.
+The target architecture has three programs:
 
-- **Helm** is the Rust TUI and agent runtime. It is the intended operator interface
-  for local and remote work through Vessel; the unified remote interface is planned.
-- **Vessel** is the management plane for remote session management. It currently
-  provides health checks, an authenticated status UI, outbound Helm presence, and
-  explicitly enabled dedicated remote-session HTTP operations.
-- **voyage-protocol** holds shared management-plane and attachment protocol types.
+| Program | Responsibility |
+| --- | --- |
+| **Helm** (`helm`) | The TUI. Connects to local and remote Vessels to view and manage voyages. |
+| **Vessel** (`vessel`) | Supervises and exposes voyage processes on its machine. |
+| **Voyage** (`voyage`) | The execution runtime. Each session has its own independent process, conversation, agent and tools. |
 
-- **voyage-storage** supplies native private enrollment storage on Windows, shared
-  by Helm and Vessel without adding filesystem concerns to the wire protocol.
-
-## Run locally
-
-From an extracted full archive, run `./bin/helm chat` (Windows:
-`.\bin\helm.exe chat`). The [Helm setup guide](helm/README.md) explains provider
-credentials and configuration; [the example configuration](helm/config.example.toml)
-is included. Keep the archive's `docs`, `helm`, `vessel` and `eval` directories
-together to browse the guides offline. Source-build commands below require a
-repository checkout.
-
-Try the interactive [setup preview](docs/installer-preview.md) to explore local,
-remote and Vessel setup choices. All setup actions in that wizard are mocked.
-
-```sh
-cargo build --workspace
-cargo run -p helm -- chat
-cargo run -p vessel -- --bind 127.0.0.1:9480
+```text
+Helm TUI
+  ├── local Vessel
+  │     ├── voyage process A — session A
+  │     └── voyage process B — session B
+  └── remote Vessel
+        └── voyage process C — session C
 ```
 
-Helm runs locally. [Authenticated attachment presence](docs/attachment-presence.md)
-connects enrolled Helm machines to Vessel. [Dedicated remote sessions](docs/remote-sessions.md)
-add opt-in foreground execution with authenticated list, submit, watch and cancel APIs.
+Switching views changes the input target, not which voyages execute. Closing Helm
+must leave voyage processes running. A Vessel supervises those processes; it does
+not run their agent loops inside its own service process. A voyage can admit
+participating Vessels without creating another canonical owner of the session.
+The [architecture](docs/architecture.md) defines these boundaries.
 
-See [Helm's README](helm/README.md) for provider, policy, session, and CLI details.
-[Private managed sessions](docs/local-managed-sessions.md) support local CLI turns,
-exact retries, cancellation, and explicit recovery without enabling remote sharing.
-Helm's native providers do not require Codex; see [provider architecture](docs/providers.md) for transport choices and subscription-versus-API
-billing boundaries.
+## Current implementation
 
-For structured GitHub context and attended comment/review publication, see
-[GitHub workflows](docs/github-workflows.md). For this workspace’s Git wrapper,
-see [the Git guide](docs/local-git.md).
-The first-version work breakdown is tracked in [the delivery map](docs/roadmap.md).
+This is a first-release development project. The three-process design above is
+**the target, not the behavior of the current binaries**. Today `helm` contains
+both the TUI and agent runtime, and `vessel` provides management and opt-in relay
+operations. There is no standalone `voyage` executable yet. See the
+[current-state guide](docs/current-state.md) for capabilities and limitations.
 
-See the [evaluation status](eval/README.md) and the
-[release procedure](docs/releasing.md) for build and verification requirements.
+From a source checkout:
 
-Helm also supports bounded parallel child agents with explicit permissions,
-supervision, result collection, persistence, and optional Git worktree isolation.
-The lifecycle and safety contract is documented in [Parallel subagents](docs/subagents.md).
+```sh
+cargo build --workspace --release --locked
+./target/release/helm --help
+./target/release/helm chat
+```
 
-Helm also provides durable, dependency-aware task tracking shared by the model and operator.
-See [Task management](docs/task-management.md) for the todo tool contract and workflow.
+Configure a provider before starting chat; see [configuration](docs/configuration.md).
+From an extracted full archive, use `./bin/helm` or `.\bin\helm.exe`. Keep its guide
+and configuration directories together. The setup-preview executable currently
+mocks provisioning actions.
 
-Available models are discovered from the configured account and can be switched without losing
-the active session. See [Model discovery and switching](docs/model-management.md).
+## Documentation
 
-Helm derives its model-facing capability contract from the live registry and never persists runtime
-instructions as conversation history. See [Runtime guidance](docs/runtime-guidance.md).
+Start with the [documentation index](docs/README.md). The main paths are:
 
-Assistant responses use safe, streaming-aware Markdown presentation without changing the canonical
-session text. See [Markdown rendering](docs/markdown-rendering.md) for syntax, fallback, and terminal
-safety behavior.
+- [Architecture](docs/architecture.md) and [runtime contract](docs/runtime-contract.md).
+- [Current behavior](docs/current-state.md), [configuration](docs/configuration.md)
+  and [operations](docs/operations.md).
+- [Security boundaries](docs/security.md) and [implementation sequence](docs/implementation.md).
+- [Development](docs/development.md), [validation](docs/quality.md)
+  and [release procedure](docs/releasing.md).
 
-## Every session is a voyage
-
-The agreed [voyage model](docs/voyages.md) covers local and remote sessions alike.
-A voyage can stay on one Helm or, with planned multi-Helm coordination, involve a
-user-selected set of Helms. Starting locally needs no machine-selection step.
-The interface Helm and coordinating Helm are separate roles: coordination can run
-remotely while the user connects from a workstation.
-Work can move among permitted participants without a required repository, component
-map or permanent assignment to one machine.
-
-The [Helm voyage UI guide](docs/helm-voyage-ui.md) explains starting and resuming
-voyages through current chat/session controls and the responsive recent-conversation
-sidebar. The separate machine/coordinator picker currently saves only optional
-configuration drafts; saving one does not create or run a session.
-
-The [session management design](docs/vessel-session-management.md) describes the
-supporting lifecycle, authority and sharing boundaries. Multi-Helm coordination,
-coordinator handoff and the Helm management interface remain planned. Current
-`helm remote-worker` provides one dedicated foreground session with HTTP operations.
-Delivery is tracked in [#77](https://github.com/o-psi/voyage/issues/77).
+Automated tests and evaluation scenarios are currently absent. Build, static
+analysis and packaging checks do not establish regression coverage. Documentation
+of a capability is not a claim that it has passed behavioral or platform validation.

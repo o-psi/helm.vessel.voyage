@@ -2,8 +2,8 @@
 //!
 //! Feature panels own their state and take explicit dependencies; this module
 //! retains the event loop, cancellation and auditable input/modal precedence.
-//! See `docs/tui-architecture.md` for retained-runtime ownership
-//! boundaries and regression checks.
+//! See `docs/current-state.md` for retained-runtime ownership
+//! boundaries and implementation limits.
 
 mod bridge;
 pub use bridge::{ApprovalRequest, QuestionRequest, UiBridge, UiEvent, bridge};

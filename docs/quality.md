@@ -1,61 +1,63 @@
-# Linux quality validation
+# Validation
 
-Run the complete suite from a clean, committed source checkout before publishing:
+The automated tests and evaluation scenarios have been removed at the operator's
+request and will be recreated later. **There is currently no automated regression
+coverage.** Historical passing runs do not establish coverage for today's source.
+
+## Available checks
+
+`scripts/quality-gates.json` defines seven non-test gates:
+
+1. Rust formatting.
+2. Strict workspace Clippy across targets and features.
+3. Locked optimized workspace build.
+4. Full archive packaging.
+5. Full archive checksum verification.
+6. Standalone installer packaging.
+7. Installer checksum verification.
+
+Run them from a clean committed checkout:
 
 ```sh
 ./scripts/check-quality --plan
 ./scripts/check-quality
 ```
 
-Install stable Rust with rustfmt and Clippy, Python 3.11 or newer, Git, and the native build,
-packaging utilities used by the repository scripts. The runner selects the
-stable toolchain and defaults to one Cargo build job. `--jobs N` changes compiler
-parallelism; coordinate this with other work on the machine. Gates execute in
-sequence.
+The Linux runner needs stable Rust, rustfmt, Clippy, Python 3.11+, Git, native build
+utilities, archive tools and checksum utilities. It defaults to one compiler job;
+`--jobs N` selects another bound. Do not run competing builds against the same
+output directory.
 
-The current automated tests and evaluation scenarios have been removed at the
-operator's request and will be recreated later. There is currently no automated
-regression coverage. Historical test results do not establish coverage for this
-source tree.
+A passing run establishes only these build, analysis and packaging results.
+Runtime behavior, security boundaries, native macOS/Windows operation, deployed
+services and live model quality need separate evidence. Live provider work requires
+an approved provider and budget. No skipped or unavailable check is a pass.
 
-`scripts/quality-gates.json` retains seven non-test gates: formatting, strict
-Clippy, a locked optimized workspace build, and full plus installer packaging
-with checksum verification. A passing run establishes only those checks.
-Native platform and behavioral validation remain separate requirements.
+## Isolation and evidence
 
-The runner uses this checkout's `target` directory and absolute optimized Helm,
-Vessel and installer paths. Custom `CARGO_TARGET_DIR`, `CARGO_BUILD_TARGET` and
-`TARGET` selections are rejected when they conflict with native packaging.
-Cargo `build.target` settings in checkout, ancestor or Cargo home configuration
-are also rejected. Use native Cargo configuration for this suite.
+The runner locks the repository's common Git directory, including linked worktrees.
+It records the exact commit and tree, rejects dirty source, and rechecks source
+identity between gates. Keep the checkout unchanged until the run finishes.
+Manual Cargo commands do not acquire this repository-wide lock.
 
-Only one full suite may own a repository, including its linked worktrees. A lock
-in Git's common directory rejects a second runner before it starts gates. Coordinate
-manual Cargo commands too: they do not acquire this lock. Use isolated worktrees
-and separate target directories for independent targeted builds. Keep the tested
-checkout unchanged until validation finishes; dirty or changed source invalidates
-the run. The runner checks committed revision and tree before each gate and after
-the last gate.
+Output lives under `.quality-runs/quality-REVISION-UUID/`: `results.json` records
+each gate's command, directory, timestamps, exit status and log path. Package labels
+are unique. Preserve existing evidence and release artifacts. A failed gate stops
+later gates; an unfinished `running` record is not passing evidence.
 
-Every attempt writes `.quality-runs/quality-REVISION-UUID/results.json` and one log
-per executed gate. The record includes exact revision/tree, commands, directories,
-start/end times, exit results and log paths. Existing evidence and packages remain
-intact. Package labels are unique per attempt. A failure stops later gates; their
-absence is not success. Default per-gate timeout is 3,600 seconds, configurable via
-`--timeout-seconds` up to 86,400. Output is bounded to 64 MiB per running gate.
-Interrupt, termination, hangup and timeout stop the command's process group, with
-signal escalation when needed. A command leaving live group members fails the
-gate. This is process-group cleanup, not an OS sandbox; a process that deliberately
-creates another session is outside that group. Forced runner death can leave an
-unfinished record: a `running` result is never passing evidence.
+The runner uses native `target/release` binaries and rejects conflicting target or
+Cargo output overrides. Per-gate timeouts default to 3,600 seconds and output is
+bounded to 64 MiB. Cancellation/timeout stops the process group and checks for live
+members. This process-group cleanup is not an OS sandbox.
 
-Both GitHub and Forgejo quality workflows are manual `workflow_dispatch` entry
-points for the same runner. They retain results and logs as workflow artifacts,
-including on failure. Local successful evidence satisfies the quality gate; do not
-dispatch duplicate hosted runs merely to obtain another green result. Record the
-local evidence with the issue or delivery record, reviewing logs before sharing.
-Only published workflow definitions change remote triggers. Report actual branch
-protection or access blockers without bypassing them.
+## Publication
 
-Tag-only platform release workflows remain separate. Ordinary validation creates
-no release tags and does not establish native macOS or Windows test coverage.
+GitHub and Forgejo quality workflows are manual entrypoints to the same runner.
+Keep validation local; do not dispatch hosted jobs merely to duplicate passing
+local checks. Tag-driven archive builds are separate from quality validation and
+do not establish native behavioral coverage.
+
+For documentation-only edits, verify claims against source/help, relative links and
+anchors, manifest membership, command examples and diffs. Verify archive layout when
+packaged guide paths change. Follow [release procedures](releasing.md) and report
+which checks actually ran, with their limits.

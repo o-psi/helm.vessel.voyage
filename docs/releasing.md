@@ -1,61 +1,62 @@
-# Release engineering
+# Packaging and releases
 
-Voyage has no product releases yet. The release workflow packages `helm` and
-`vessel` together from one versioned commit. Tags use
-`vMAJOR.MINOR.PATCH`. A release is immutable: corrections receive a new tag.
+Voyage is developing its first release. The current packagers distribute `helm`,
+`vessel` and the `voyage-installer` setup preview. They do not include a standalone
+`voyage` runtime executable because it does not yet exist in this source tree.
+Adding it is part of the [implementation work](implementation.md).
 
-Run `./scripts/check-quality` locally before publication and retain its exact
-revision and results; see [quality validation](quality.md). Hosted quality is
-manual-only and uses the same Linux suite. Duplicate hosted green checks are not
-required after successful local validation.
-The tag-triggered release workflow builds archives for Linux x86-64, macOS
-x86-64/ARM64, and Windows x86-64; it does not run the workspace test suite on
-macOS or Windows. Record separate platform testing before claiming validation.
-Archives contain Helm, Vessel and the mock setup-preview executable, Helm and Vessel manpages, shell completions,
-the README, linked guides, the example Helm configuration, and a SHA-256 checksum.
-Both full-archive packagers use `scripts/release-documents.txt` to include the same
-documentation paths without collecting unlisted local notes. Add newly linked
-documents and any distributable license files to that manifest. Unlisted files,
-including files named `LICENSE*`, are not collected. Developer build/test commands
-in the guides require the source checkout; extracted binaries can run directly from `bin`.
-Linux builds can be reproduced locally with:
+## Build and package
+
+Use a unique label for each packaging attempt:
 
 ```sh
 cargo build --workspace --release --locked
 ./scripts/package-release UNIQUE_VERSION
+./scripts/package-installer UNIQUE_VERSION
 (cd dist && sha256sum -c *.sha256)
 ```
 
-Choose a new version label for every packaging attempt. Existing archives and
-checksums are never replaced. Handled packaging failures remove their private staging
-directory and leave existing artifacts intact. Automated archive regression fixtures have been removed with the test suite.
-Inspect extracted guide links, generated CLI documentation and executable behavior
-manually until replacement tests are available. Native platform execution and
-clean-install checks remain separate evidence.
+The Unix full packager uses `target/release`, or `target/TARGET/release` when the
+`TARGET` environment variable explicitly selects a platform build. The Windows
+packager is `scripts/package-release.ps1`; inspect its declared parameters before
+running it for a platform build. Do not infer native Windows execution from an
+archive assembled on Linux.
 
-If a packaging process is forcibly killed, its `.package-*` directory or
-`.voyage-*.lock` may remain in `dist`. Confirm that attempt has stopped before
-removing its staging directory and lock; preserve published archives and checksums.
+Full archives contain binaries, generated Helm/Vessel manpages and shell
+completions, the example configuration, runtime prompt, agent instructions and the
+maintained guides. `scripts/release-documents.txt` is the explicit document allowlist
+for both full packagers. All listed paths must exist; reject unsafe/symlinked paths
+and keep relative links within the extracted archive valid. Unlisted local notes
+and credentials must never enter the archive.
 
-Before tagging, update versions and changelog, run `./scripts/check-quality`, inspect generated manpages/completions, and test a clean
-archive install. After tagging, compare artifact checksums, smoke-test both binaries
-from each archive, attach evaluation/cutover evidence, and publish known limitations.
+The standalone installer package contains the setup-preview program. `install.sh`
+requires its assets to be published before download works. The wizard's provisioning
+actions are mocked; publishing an archive does not make it a working service installer.
 
-The workflow uploads build artifacts but intentionally does not auto-publish or sign
-a release. Add repository-specific signing and GitHub release credentials only after
-the project establishes its key custody and release-approval policy.
+## Artifact integrity
 
-Unix builds also package a separate compressed `voyage-installer` with
-`scripts/package-installer`. See [setup preview](installer-preview.md) for asset
-names and local usage. The small `install.sh` launcher requires these files to be
-published as release assets before remote download works; it does not download the
-full Voyage archive. Keep the wizard explicitly marked as mocked until real
-provisioning is implemented and verified.
+Archive publication uses unique labels and must not overwrite existing archives
+or checksums. Retain historical artifacts. Handled failures remove their temporary
+staging data; forced termination may leave a `.package-*` directory or publication
+lock. Verify the originating process stopped before handling those leftovers.
 
-## Product capability claims
+The [quality runner](quality.md) performs packaging and checksum checks. Automated
+archive regression fixtures are absent. For documentation changes, inspect archive
+membership, guide links, configuration and generated CLI documents explicitly.
+Do not claim native runtime or clean-install validation from checksum success.
 
-Release documentation must describe the actual [remote-session surface](remote-sessions.md)
-and the remaining [multi-Helm voyage work](voyages.md) separately. A working dedicated
-worker does not prove the Helm operator interface, multi-Helm coordination, service
-lifecycle or coordinator handoff. Report actual checks and unresolved acceptance
-criteria; do not advertise remote dogfood readiness from local tests alone.
+## Release workflow
+
+Run the applicable clean-checkout quality gates and retain exact evidence before
+publication. The tag-driven GitHub and Forgejo workflows build Linux x86-64, macOS
+x86-64/ARM64 and Windows x86-64 archives. They upload artifacts; they do not
+implicitly sign or publish a product release. Normal quality runs create no tags.
+
+Product release tags use `vMAJOR.MINOR.PATCH` and are immutable. Before a release,
+check versioned code, executable help, archive installation behavior and platform
+support claims. Record actual runtime/deployment evidence and unresolved limitations.
+Do not advertise the target Helm–Vessel–voyage separation, remote multiplexing or
+participant execution until the relevant workflows are implemented and verified.
+
+Signing keys, SBOM publication and service deployment remain explicit delivery work;
+credentials for them must not be placed in repository configuration or archives.

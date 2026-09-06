@@ -1,10 +1,10 @@
-# Helm evaluations
+# Evaluation status
 
-The automated evaluation scenarios and runner have been removed at the operator's
-request. They will be recreated later alongside the automated tests. Retained
-historical evidence is not validation of the current source tree.
+The previous automated tests, evaluation scenarios and evaluation runner have been
+removed at the operator's request. They will be recreated later. Retained historical
+evidence does not validate the current source tree or target architecture.
 
-See [quality validation](../docs/quality.md) for the remaining build, static-analysis
-and packaging checks, and the [operator runbook](../docs/cutover.md) for design and
-manual acceptance context. Commands in historical evaluation records describe the
-removed suite.
+The [quality guide](../docs/quality.md) lists the remaining non-test checks.
+The [implementation sequence](../docs/implementation.md) identifies behavior that
+needs evidence as the new runtime boundaries are delivered. Live provider work
+requires a separately approved provider and budget.
