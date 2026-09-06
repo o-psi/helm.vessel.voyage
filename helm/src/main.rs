@@ -730,8 +730,10 @@ async fn list_models(config: &Config, workspace: Option<PathBuf>, json: bool) ->
         .context("model discovery timed out")??;
     if !models.iter().any(|model| model.id == config.model) {
         models.push(helm::provider::ModelInfo::minimal(config.model.clone()));
-        helm::provider::normalize_models(&mut models);
     }
+    let secrets = redactor(config);
+    helm::provider::validate_models_for_display(&models, |value| secrets.contains_secret(value))?;
+    helm::provider::normalize_models(&mut models);
     if json {
         println!("{}", serde_json::to_string_pretty(&models)?);
     } else {
@@ -2061,13 +2063,23 @@ async fn chat(
             let resolved =
                 helm::runtime_policy::RuntimePolicy::resolve(&active_config, &session.workspace);
             let provider = resolved.and_then(|resolved| {
+                let secrets = redactor(resolved.config());
                 provider::from_config(resolved.config(), session.workspace.clone())
+                    .map(|provider| (provider, secrets))
                     .map_err(anyhow::Error::from)
             });
             match provider {
-                Ok(provider) => {
+                Ok((provider, secrets)) => {
                     match tokio::time::timeout(active_config.timeout(), provider.models()).await {
                         Ok(Ok(mut models)) => {
+                            if let Err(error) =
+                                helm::provider::validate_models_for_display(&models, |value| {
+                                    secrets.contains_secret(value)
+                                })
+                            {
+                                eprintln!("model discovery failed: {error}");
+                                continue;
+                            }
                             helm::provider::normalize_models(&mut models);
                             for model in models {
                                 println!(

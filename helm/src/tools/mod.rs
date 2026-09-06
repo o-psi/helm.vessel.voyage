@@ -137,6 +137,11 @@ impl Redactor {
         }
     }
 
+    /// Test confidentiality without relying on the replacement text differing.
+    pub fn contains_secret(&self, text: &str) -> bool {
+        self.secrets.iter().any(|secret| text.contains(secret))
+    }
+
     /// Return the raw prefix safe to commit to a public stream. Any suffix that
     /// may complete a configured secret remains private until a later chunk.
     pub(crate) fn stable_prefix(&self, text: &str, flush: bool) -> usize {

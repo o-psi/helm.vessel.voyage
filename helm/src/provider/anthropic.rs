@@ -31,6 +31,8 @@ impl Provider for AnthropicProvider {
     async fn models(&self) -> Result<Vec<ModelInfo>, ProviderError> {
         let mut models = Vec::new();
         let mut after_id: Option<String> = None;
+        let mut remaining = super::catalog::MAX_BYTES;
+        let mut cursors = std::collections::BTreeSet::new();
         loop {
             let mut request = self
                 .client
@@ -41,39 +43,53 @@ impl Provider for AnthropicProvider {
             if let Some(cursor) = &after_id {
                 request = request.query(&[("after_id", cursor)]);
             }
-            let value = checked_json(request.send().await.map_err(map_transport)?).await?;
+            let value = super::catalog::json(
+                request.send().await.map_err(super::catalog::transport)?,
+                &mut remaining,
+            )
+            .await?;
             let data = value.get("data").and_then(Value::as_array).ok_or_else(|| {
                 ProviderError::InvalidResponse("Anthropic models response omitted data".into())
             })?;
+            if models.len().saturating_add(data.len()) > super::catalog::MAX_MODELS {
+                return Err(ProviderError::InvalidResponse(
+                    "model list exceeds 1024 entries".into(),
+                ));
+            }
             for item in data {
                 let id = item.get("id").and_then(Value::as_str).ok_or_else(|| {
                     ProviderError::InvalidResponse("Anthropic model omitted id".into())
                 })?;
                 let mut model = ModelInfo::minimal(id);
-                model.display_name = item
-                    .get("display_name")
-                    .and_then(Value::as_str)
-                    .unwrap_or(id)
-                    .to_owned();
+                model.display_name =
+                    super::catalog::optional_text(item, "display_name", id)?.to_owned();
+                super::validate_model(&model, &[&self.api_key])?;
                 models.push(model);
             }
-            if !value
-                .get("has_more")
-                .and_then(Value::as_bool)
-                .unwrap_or(false)
-            {
-                break;
+            match value.get("has_more") {
+                None | Some(Value::Bool(false)) => break,
+                Some(Value::Bool(true)) => {}
+                _ => {
+                    return Err(ProviderError::InvalidResponse(
+                        "invalid model pagination flag".into(),
+                    ));
+                }
             }
-            after_id = value
+            let cursor = value
                 .get("last_id")
                 .and_then(Value::as_str)
-                .map(str::to_owned);
-            if after_id.is_none() {
+                .ok_or_else(|| {
+                    ProviderError::InvalidResponse("model pagination omitted cursor".into())
+                })?;
+            super::catalog::validate_text(cursor, 512, true, &[&self.api_key])?;
+            if !cursors.insert(cursor.to_owned()) || cursors.len() >= super::catalog::MAX_PAGES {
                 return Err(ProviderError::InvalidResponse(
-                    "Anthropic models response has_more without last_id".into(),
+                    "model pagination repeated or exceeded 16 pages".into(),
                 ));
             }
+            after_id = Some(cursor.to_owned());
         }
+        super::validate_models(&models, &[&self.api_key])?;
         normalize_models(&mut models);
         Ok(models)
     }

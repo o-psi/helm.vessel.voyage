@@ -554,6 +554,9 @@ impl Agent {
         if !models.iter().any(|model| model.id == current) {
             models.push(ModelInfo::minimal(current));
         }
+        crate::provider::validate_models_for_display(&models, |value| {
+            self.context.redactor.contains_secret(value)
+        })?;
         normalize_models(&mut models);
         *cache = Some((std::time::Instant::now(), models.clone()));
         Ok(models)
@@ -2370,3 +2373,6 @@ mod tests {
 
 #[cfg(test)]
 mod secret_tests;
+
+#[cfg(test)]
+mod catalog_tests;

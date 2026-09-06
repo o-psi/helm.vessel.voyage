@@ -49,13 +49,14 @@ impl Provider for ChatGptOAuth {
             // OpenAI's own catalog-refresh workflow uses this sentinel so new
             // models are not hidden behind an unrelated client release number.
             .query(&[("client_version", "99.99.99")])
-            .bearer_auth(tokens.access_token)
-            .header("ChatGPT-Account-Id", tokens.account_id)
+            .bearer_auth(&tokens.access_token)
+            .header("ChatGPT-Account-Id", &tokens.account_id)
             .header("User-Agent", format!("helm/{}", env!("CARGO_PKG_VERSION")))
             .send()
             .await
-            .map_err(map_request)?;
-        let value = checked_json(response).await?;
+            .map_err(super::catalog::transport)?;
+        let mut remaining = super::catalog::MAX_BYTES;
+        let value = super::catalog::json(response, &mut remaining).await?;
         let entries = value
             .get("models")
             .or_else(|| value.get("data"))
@@ -63,47 +64,47 @@ impl Provider for ChatGptOAuth {
             .ok_or_else(|| {
                 ProviderError::InvalidResponse("ChatGPT models response omitted models".into())
             })?;
+        if entries.len() > super::catalog::MAX_MODELS {
+            return Err(ProviderError::InvalidResponse(
+                "model list exceeds 1024 entries".into(),
+            ));
+        }
         let mut models = entries
             .iter()
             .filter(|entry| {
                 entry.get("supported_in_api").and_then(Value::as_bool) != Some(false)
                     && entry.get("visibility").and_then(Value::as_str) != Some("hide")
             })
-            .filter_map(|entry| {
+            .map(|entry| {
                 let id = entry
                     .get("slug")
                     .or_else(|| entry.get("id"))
-                    .and_then(Value::as_str)?
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| ProviderError::InvalidResponse("model entry omitted ID".into()))?
                     .to_owned();
-                let reasoning_efforts = entry
-                    .get("supported_reasoning_levels")
-                    .and_then(Value::as_array)
-                    .into_iter()
-                    .flatten()
-                    .filter_map(|level| level.get("effort").and_then(Value::as_str))
-                    .map(str::to_owned)
-                    .collect();
-                Some(ModelInfo {
-                    display_name: entry
-                        .get("display_name")
-                        .and_then(Value::as_str)
-                        .unwrap_or(&id)
+                let reasoning_efforts =
+                    super::catalog::strings(entry, "supported_reasoning_levels", Some("effort"))?;
+                Ok(ModelInfo {
+                    display_name: super::catalog::optional_text(entry, "display_name", &id)?
                         .to_owned(),
-                    description: entry
-                        .get("description")
-                        .and_then(Value::as_str)
-                        .unwrap_or_default()
+                    description: super::catalog::optional_text(entry, "description", "")?
                         .to_owned(),
-                    is_default: entry
-                        .get("is_default")
-                        .and_then(Value::as_bool)
-                        .unwrap_or(false),
+                    is_default: super::catalog::optional_bool(entry, "is_default", false)?,
                     reasoning_efforts,
                     input_modalities: vec!["text".into()],
                     id,
                 })
             })
-            .collect();
+            .collect::<Result<Vec<_>, ProviderError>>()?;
+        super::validate_models(
+            &models,
+            &[
+                &tokens.access_token,
+                &tokens.refresh_token,
+                tokens.id_token.as_deref().unwrap_or(""),
+                &tokens.account_id,
+            ],
+        )?;
         normalize_models(&mut models);
         Ok(models)
     }

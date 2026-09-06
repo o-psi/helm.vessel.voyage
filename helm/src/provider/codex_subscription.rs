@@ -112,6 +112,7 @@ impl Provider for CodexSubscriptionProvider {
         let client = state.client.as_ref().expect("client initialized").clone();
         let mut cursor: Option<String> = None;
         let mut models = Vec::new();
+        let mut cursors = std::collections::BTreeSet::new();
         loop {
             let response = client
                 .request(
@@ -128,6 +129,11 @@ impl Provider for CodexSubscriptionProvider {
                 .ok_or_else(|| {
                     ProviderError::InvalidResponse("model/list omitted result.data".into())
                 })?;
+            if models.len().saturating_add(data.len()) > super::catalog::MAX_MODELS {
+                return Err(ProviderError::InvalidResponse(
+                    "model list exceeds 1024 entries".into(),
+                ));
+            }
             for value in data {
                 if value
                     .get("hidden")
@@ -143,38 +149,19 @@ impl Provider for CodexSubscriptionProvider {
                     .ok_or_else(|| {
                         ProviderError::InvalidResponse("model/list entry omitted model".into())
                     })?;
-                let reasoning_efforts = value
-                    .get("supportedReasoningEfforts")
-                    .and_then(Value::as_array)
-                    .into_iter()
-                    .flatten()
-                    .filter_map(|entry| entry.get("reasoningEffort").and_then(Value::as_str))
-                    .map(str::to_owned)
-                    .collect();
-                let input_modalities = value
-                    .get("inputModalities")
-                    .and_then(Value::as_array)
-                    .into_iter()
-                    .flatten()
-                    .filter_map(Value::as_str)
-                    .map(str::to_owned)
-                    .collect();
+                let reasoning_efforts = super::catalog::strings(
+                    value,
+                    "supportedReasoningEfforts",
+                    Some("reasoningEffort"),
+                )?;
+                let input_modalities = super::catalog::strings(value, "inputModalities", None)?;
                 models.push(ModelInfo {
                     id: id.to_owned(),
-                    display_name: value
-                        .get("displayName")
-                        .and_then(Value::as_str)
-                        .unwrap_or(id)
+                    display_name: super::catalog::optional_text(value, "displayName", id)?
                         .to_owned(),
-                    description: value
-                        .get("description")
-                        .and_then(Value::as_str)
-                        .unwrap_or_default()
+                    description: super::catalog::optional_text(value, "description", "")?
                         .to_owned(),
-                    is_default: value
-                        .get("isDefault")
-                        .and_then(Value::as_bool)
-                        .unwrap_or(false),
+                    is_default: super::catalog::optional_bool(value, "isDefault", false)?,
                     reasoning_efforts,
                     input_modalities,
                 });
@@ -183,10 +170,18 @@ impl Provider for CodexSubscriptionProvider {
                 .get("nextCursor")
                 .and_then(Value::as_str)
                 .map(str::to_owned);
-            if cursor.is_none() {
+            if let Some(cursor) = &cursor {
+                super::catalog::validate_text(cursor, 512, true, &[])?;
+                if !cursors.insert(cursor.clone()) || cursors.len() >= super::catalog::MAX_PAGES {
+                    return Err(ProviderError::InvalidResponse(
+                        "model pagination repeated or exceeded 16 pages".into(),
+                    ));
+                }
+            } else {
                 break;
             }
         }
+        super::validate_models(&models, &[])?;
         normalize_models(&mut models);
         Ok(models)
     }

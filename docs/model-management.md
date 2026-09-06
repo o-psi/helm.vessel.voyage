@@ -6,8 +6,24 @@ stable structured descriptors. OpenAI uses `GET /models` relative to its configu
 base, Anthropic uses its paginated models endpoint, and native ChatGPT OAuth uses direct
 subscription model discovery. The optional Codex compatibility bridge uses app-server `model/list`.
 For local services, use the [explicit preset and endpoint setup workflow](local-providers.md).
-Compatible discovery shares the setup bounds: 1 MiB response, 1,024 model entries, 512-byte IDs,
-no credential-bearing redirects, and fixed errors that exclude server response bodies.
+Native HTTP discovery accepts at most 1 MiB of response data across all pages and
+1,024 model entries before deduplication. Anthropic pagination permits at most 16 pages
+and rejects missing, repeated, oversized or unsafe cursors. Native requests do not
+follow redirects, and discovery errors exclude server response bodies and destinations.
+
+Catalog IDs and display names are limited to 512 UTF-8 bytes, descriptions to 4,096
+bytes, and each capability list to 16 strings of at most 128 bytes. Aggregate metadata
+is limited to 1 MiB. Invalid types, control characters (including ANSI/OSC and C0/C1),
+bidirectional formatting controls, and known provider credential echoes cause a safe
+error before catalog output or caching. Valid Unicode names and IDs retain their exact
+text; rejected identifiers are never rewritten into a different model. These metadata
+checks also protect the compatibility bridge and interactive agent catalog boundary.
+A failed refresh preserves the selected model and prior successful catalog. Manual
+entry remains available; a valid configured model is included as a fallback within
+these same catalog bounds. An over-limit combined catalog fails without replacing
+the previous cache or selected model. CLI, plain chat and the interactive agent also
+reject metadata matching effective configuration secrets (environment/MCP values and
+explicit redaction values), following the configured redactor's minimum secret length.
 
 The configured model remains a valid manual fallback when discovery is unavailable or when an
 OpenAI-compatible endpoint accepts a model that it does not advertise. Discovery is bounded by the

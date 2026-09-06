@@ -1,4 +1,6 @@
 mod anthropic;
+mod catalog;
+pub use catalog::{validate_model, validate_models, validate_models_for_display};
 mod chatgpt_oauth;
 mod codex_subscription;
 pub(crate) mod discovery;
@@ -315,3 +317,6 @@ pub(crate) mod schema_fixture;
 
 #[cfg(test)]
 mod redirect_tests;
+
+#[cfg(test)]
+mod catalog_tests;

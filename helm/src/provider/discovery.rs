@@ -7,7 +7,7 @@ pub(crate) async fn models(
     endpoint: &str,
     key: &str,
 ) -> Result<Option<Vec<ModelInfo>>, ProviderError> {
-    let mut response = client
+    let response = client
         .get(format!("{endpoint}/models"))
         .apply_key(key)
         .send()
@@ -19,55 +19,11 @@ pub(crate) async fn models(
                 ProviderError::Request("connection failure: model endpoint unavailable".into())
             }
         })?;
-    let code = response.status().as_u16();
-    let retry_after = response
-        .headers()
-        .get(reqwest::header::RETRY_AFTER)
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.parse::<u64>().ok())
-        .map(std::time::Duration::from_secs);
-    match code {
-        404 | 405 | 501 => return Ok(None),
-        401 | 403 => {
-            return Err(ProviderError::Authentication(
-                "authentication failure: endpoint rejected credentials".into(),
-            ));
-        }
-        429 => {
-            return Err(ProviderError::RateLimit {
-                message: "model endpoint rate limited".into(),
-                retry_after,
-            });
-        }
-        408 | 409 | 500..=599 => {
-            return Err(ProviderError::Unavailable(format!(
-                "model endpoint HTTP {code}"
-            )));
-        }
-        200..=299 => {}
-        _ => {
-            return Err(ProviderError::Request(format!(
-                "protocol failure: model endpoint HTTP {code}"
-            )));
-        }
+    if matches!(response.status().as_u16(), 404 | 405 | 501) {
+        return Ok(None);
     }
-    // Never include a provider body, URL, model ID or parser diagnostic in errors.
-    let mut bytes = Vec::new();
-    while let Some(chunk) = response
-        .chunk()
-        .await
-        .map_err(|_| ProviderError::Request("connection failure while reading model list".into()))?
-    {
-        if bytes.len().saturating_add(chunk.len()) > 1024 * 1024 {
-            return Err(ProviderError::InvalidResponse(
-                "protocol failure: model list exceeds 1 MiB".into(),
-            ));
-        }
-        bytes.extend_from_slice(&chunk);
-    }
-    let value: Value = serde_json::from_slice(&bytes).map_err(|_| {
-        ProviderError::InvalidResponse("protocol failure: invalid model-list JSON".into())
-    })?;
+    let mut remaining = super::catalog::MAX_BYTES;
+    let value = super::catalog::json(response, &mut remaining).await?;
     let data = value.get("data").and_then(Value::as_array).ok_or_else(|| {
         ProviderError::InvalidResponse("model-list failure: missing data array".into())
     })?;
@@ -92,6 +48,7 @@ pub(crate) async fn models(
         }
         models.push(ModelInfo::minimal(id));
     }
+    super::validate_models(&models, &[key])?;
     normalize_models(&mut models);
     Ok(Some(models))
 }

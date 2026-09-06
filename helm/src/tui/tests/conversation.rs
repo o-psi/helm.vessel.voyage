@@ -279,8 +279,15 @@ impl crate::provider::Provider for ConversationNoRequests {
 }
 
 fn navigation_agent_for_conversation(directory: &tempfile::TempDir) -> Agent {
+    navigation_agent_with_provider(directory, Box::new(ConversationNoRequests))
+}
+
+fn navigation_agent_with_provider(
+    directory: &tempfile::TempDir,
+    provider: Box<dyn crate::provider::Provider>,
+) -> Agent {
     Agent::new(
-        Box::new(ConversationNoRequests),
+        provider,
         crate::tools::ToolRegistry::default(),
         crate::tools::ToolContext {
             completion: None,
@@ -1373,4 +1380,95 @@ fn access_mode_stays_visible_with_sidebar_and_long_session_metadata() {
             "{width}x{height}: {first_row}"
         );
     }
+}
+
+struct MutableCatalog(Arc<Mutex<Vec<ModelInfo>>>);
+#[async_trait]
+impl crate::provider::Provider for MutableCatalog {
+    async fn models(&self) -> Result<Vec<ModelInfo>, crate::provider::ProviderError> {
+        Ok(self.0.lock().unwrap().clone())
+    }
+    async fn complete(
+        &self,
+        _: crate::model::ModelRequest,
+    ) -> Result<crate::model::ModelResponse, crate::provider::ProviderError> {
+        panic!("catalog selection must not execute inference")
+    }
+}
+
+#[tokio::test]
+async fn unsafe_catalog_refresh_preserves_picker_cache_and_manual_selection() {
+    let directory = tempfile::tempdir().unwrap();
+    let catalog = Arc::new(Mutex::new(vec![ModelInfo::minimal("模型-🚢")]));
+    let agent = Arc::new(navigation_agent_with_provider(
+        &directory,
+        Box::new(MutableCatalog(catalog.clone())),
+    ));
+    let original = agent.models(false).await.unwrap();
+    let mut app = App::new(Session::new(directory.path().into(), "test".into()), vec![]);
+    app.model_panel.models = original.clone();
+    app.model_panel.model_picker = true;
+    app.model_panel.selected_model = 1;
+    let store = SessionStore::new(directory.path().join("sessions"));
+    let terminals = FakeTerminals::new();
+    for bad in ["bad\x1b]52;x\x07", "bad\u{202e}", "x".repeat(513).as_str()] {
+        *catalog.lock().unwrap() = vec![ModelInfo::minimal(bad)];
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        request_models(&tx, agent.clone(), true);
+        let event = tokio::time::timeout(Duration::from_secs(3), rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        handle_ui_event(event, &mut app, &store, &terminals)
+            .await
+            .unwrap();
+        assert_eq!(app.model_panel.models, original);
+        assert_eq!(app.model_panel.selected_model, 1);
+        assert_eq!(app.session.model, "test");
+        assert_eq!(agent.model(), "test");
+        assert_eq!(agent.models(false).await.unwrap(), original);
+        assert!(app.status.contains("Tab enters an ID manually"));
+        for width in [40, 80] {
+            let mut terminal =
+                Terminal::new(ratatui::backend::TestBackend::new(width, 18)).unwrap();
+            terminal.draw(|frame| draw(frame, &app)).unwrap();
+            let rendered: String = terminal
+                .backend()
+                .buffer()
+                .content()
+                .iter()
+                .map(|cell| cell.symbol())
+                .collect();
+            assert!(!rendered.contains(bad));
+            // Wide glyphs occupy separate buffer cells, including padding cells.
+            assert!(rendered.contains("模") && rendered.contains("型"));
+        }
+    }
+    let (tx, _) = mpsc::unbounded_channel();
+    handle_model_key(
+        KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE),
+        &mut app.model_panel,
+        &mut app.session,
+        &mut app.status,
+        &agent,
+        &store,
+        &tx,
+    )
+    .await
+    .unwrap();
+    app.model_panel.model_filter.insert_str("manual-valid");
+    handle_model_key(
+        KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+        &mut app.model_panel,
+        &mut app.session,
+        &mut app.status,
+        &agent,
+        &store,
+        &tx,
+    )
+    .await
+    .unwrap();
+    assert_eq!(app.session.model, "manual-valid");
+    assert_eq!(agent.model(), "manual-valid");
+    assert!(app.session.messages.is_empty());
 }
