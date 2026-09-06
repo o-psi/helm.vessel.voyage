@@ -7,6 +7,8 @@ pub mod approval;
 mod approval_fixture;
 #[cfg(test)]
 mod authorization_fixture;
+#[cfg(test)]
+mod cli_journal_fixture;
 pub mod context;
 #[cfg(test)]
 mod context_fixture;
@@ -14,6 +16,10 @@ pub mod logs;
 pub mod operator;
 #[cfg(test)]
 mod recovery_fixture;
+#[cfg(test)]
+mod review_publication_fixture;
+#[cfg(test)]
+mod send_boundary_fixture;
 pub mod tool;
 
 /// Supported diagnostic projections for the explicitly delegated credential.
@@ -172,5 +178,3 @@ mod credential_tests {
         assert!(super::credential_redactions(&undelegated).is_empty());
     }
 }
-#[cfg(test)]
-mod review_publication_fixture;

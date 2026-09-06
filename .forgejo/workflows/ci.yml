@@ -18,6 +18,14 @@ jobs:
       - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
       - run: cargo test --workspace --all-features
       - run: cargo build --workspace --release --locked
+      - name: Verify configured GitHub capability and credential isolation
+        env:
+          HELM_BIN: target/release/helm
+        run: python3 tests/system/github_configured.py
+      - name: Verify offline GitHub journal recovery through the real CLI
+        env:
+          HELM_BIN: target/release/helm
+        run: python3 tests/system/github_journal.py
       - name: Verify full archive guides and publication failures
         run: python3 tests/system/release_documentation.py
       - name: Verify bounded model catalog discovery and safe display

@@ -91,18 +91,35 @@ def attended(command, env, root, confirm=None, success=True):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--test-binary", required=True)
-    parser.add_argument("--helm-bin", required=True)
+    parser.add_argument("--test-binary")
+    parser.add_argument("--helm-bin", default=os.environ.get("HELM_BIN", "target/release/helm"))
     args = parser.parse_args()
+    if args.test_binary is None:
+        # Select Cargo's actual library test artifact, never a stale glob match.
+        build = subprocess.run(
+            ["cargo", "test", "-p", "helm", "--lib", "--all-features", "--no-run", "--message-format=json"],
+            text=True, capture_output=True, timeout=600, check=True,
+        )
+        artifacts = [json.loads(line) for line in build.stdout.splitlines() if line.startswith("{")]
+        binaries = [item["executable"] for item in artifacts
+                    if item.get("reason") == "compiler-artifact"
+                    and item.get("target", {}).get("name") == "helm"
+                    and "lib" in item.get("target", {}).get("kind", [])
+                    and item.get("profile", {}).get("test") and item.get("executable")]
+        assert len(binaries) == 1, "expected exactly one current Helm library test artifact"
+        args.test_binary = binaries[0]
     test_binary, helm = str(Path(args.test_binary).resolve()), str(Path(args.helm_bin).resolve())
     with tempfile.TemporaryDirectory(prefix="helm-github-journal-") as directory:
         root = Path(directory)
         env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "TERM": "xterm-256color",
                "HOME": directory, "XDG_CONFIG_HOME": str(root / "config"),
                "XDG_DATA_HOME": str(root / "data"), "RUST_BACKTRACE": "0"}
+        # The seeder bypasses normal Helm startup, which creates this parent.
+        (root / "data" / "helm").mkdir(parents=True, mode=0o700)
         seed = subprocess.run([test_binary, "--exact", "github::cli_journal_fixture::seed_orphan_journal", "--nocapture"],
                               env=dict(env, HELM_GITHUB_JOURNAL_SEED=directory), cwd=root,
-                              text=True, capture_output=True, timeout=10, check=True)
+                              text=True, capture_output=True, timeout=10)
+        assert seed.returncode == 0, (seed.stdout + seed.stderr)[-6000:]
         records = json.loads(next(line.removeprefix("SEED_JSON=") for line in seed.stdout.splitlines() if line.startswith("SEED_JSON=")))
         assert not (root / "deleted-workspace").exists()
         config = root / "config.toml"
