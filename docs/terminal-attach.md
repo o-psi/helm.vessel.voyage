@@ -40,7 +40,12 @@ inner process; Ctrl+T or Ctrl+] returns to Helm without terminating it. Bytes af
 the detach chord belong to the next Helm prompt, including a partial UTF-8 prompt
 that you finish typing after detach. No private input before the chord enters that
 prompt. Pending input is bounded to 64 KiB and never submitted on overflow or invalid
-UTF-8. An inner process exit or unavailable viewport also returns to Helm.
+UTF-8. Ctrl+U clears an unsubmitted draft; Backspace and left/right navigation edit
+it. An inner process exit or unavailable viewport also returns to Helm. Unread
+input is discarded on an unexpected attachment exit because it still belongs to
+the private PTY. Only an explicit detach chord transfers queued input to Helm.
+If a private write fails after that chord was received, Helm retains the suffix
+and reports that preceding private input delivery may be incomplete.
 
 The plain frontend uses the current workspace manager. `/new` creates another
 voyage in that same workspace and preserves its terminals. It does not recover

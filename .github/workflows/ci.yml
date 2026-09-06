@@ -18,6 +18,10 @@ jobs:
       - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
       - run: cargo test --workspace --all-features
       - run: cargo build --workspace --release --locked
+      - name: Verify plain terminal privacy, byte handoff and process ownership
+        env:
+          HELM_BIN: target/release/helm
+        run: python3 tests/system/plain_terminal_chat.py
       - name: Verify configured GitHub capability and credential isolation
         env:
           HELM_BIN: target/release/helm

@@ -3,8 +3,10 @@
 mod fixture;
 use crate::{policy::Policy,terminal::{InteractiveTerminals,PlainDetachFilter,TerminalId,TerminalSnapshot,TerminalState,TerminalSummary}};
 use anyhow::{Result,ensure};
-use std::{io::{self,IsTerminal,Write},sync::{Arc,atomic::{AtomicBool,Ordering}},time::Duration};
+use std::{io::{self,IsTerminal},sync::{Arc,atomic::{AtomicBool,Ordering}},time::Duration};
 use tokio_util::sync::CancellationToken;
+#[cfg(not(unix))]
+use std::io::Write;
 
 const MAX_PENDING:usize=64*1024;
 static ATTACHED:AtomicBool=AtomicBool::new(false);
@@ -65,30 +67,66 @@ impl InputEncoding {
 /// Resume editing a partial byte suffix without a competing buffered stdin reader.
 /// Complete lines are returned first; later lines remain queued for later prompts.
 pub async fn pending_prompt(pending:&mut PendingInput,cancel:CancellationToken)->Result<Option<String>> {
-    if let Some(line)=pending.take_line()? {return Ok(Some(line));}
+    if let Ok(Some(line))=pending.take_line() {return Ok(Some(line));}
     ensure!(io::stdin().is_terminal()&&io::stdout().is_terminal(),"pending terminal input needs a local TTY");
     let mut input=crate::terminal_input::Terminal::enter_preserving_input()?;
+    let mut output=Output::new()?;
     let result=async {
         let mut displayed=String::new();
         let mut encoding=InputEncoding::default();
+        let mut escape=Vec::new();
+        let mut cursor=pending.bytes.len();
+        let mut blocked=false;
         loop {
             if cancel.is_cancelled(){return Ok(None);}
-            let visible=visible(&String::from_utf8_lossy(&pending.bytes));
-            if visible!=displayed {print!("\r\x1b[2Khelm> {visible}");io::stdout().flush()?;displayed=visible;}
+            let prefix=if blocked { "Input limit reached; Ctrl+U clears the unsubmitted draft. " } else if std::str::from_utf8(&pending.bytes).is_err() { "Incomplete UTF-8; continue typing or Ctrl+U to clear. " } else { "" };
+            let display=format!("{prefix}helm> {}",visible(&String::from_utf8_lossy(&pending.bytes)));
+            if display!=displayed {
+                output.write(format!("\r\x1b[2K{display}").as_bytes())?;displayed=display;
+            }
             match input.read()? {
                 Some((3,_))=>return Ok(None),
                 Some((4,_)) if pending.is_empty()=>return Ok(None),
-                Some((21,_))=>pending.bytes.clear(),
-                Some((8|127,_))=>pending.backspace(),
-                Some((byte,repeat))=>{
-                    let mut bytes=Vec::new();encoding.push(byte,repeat,&mut bytes)?;pending.append(&bytes)?;
-                    if let Some(line)=pending.take_line()?{return Ok(Some(line));}
+                Some((21,_))=>{pending.bytes.clear();cursor=0;escape.clear();blocked=false;},
+                Some((8|127,_))=>{
+                    if cursor==pending.bytes.len(){pending.backspace();cursor=pending.bytes.len();}
+                    else if cursor>0 {let end=cursor;cursor-=1;while cursor>0&&(pending.bytes[cursor]&0xc0)==0x80{cursor-=1;}pending.bytes.drain(cursor..end);}
+                    blocked=false;
+                },
+                Some((unit,repeat))=>{
+                    let mut bytes=Vec::new();encoding.push(unit,repeat,&mut bytes)?;
+                    for byte in bytes {
+                        if byte==27&&escape.is_empty(){escape.push(byte);continue;}
+                        if !escape.is_empty(){
+                            escape.push(byte);
+                            if escape.len()==2&&byte==b'[' {continue;}
+                            if escape.len()>2 && (byte.is_ascii_digit()||byte==b';'){if escape.len()>16{escape.clear();}continue;}
+                            match escape.as_slice(){
+                                b"\x1b[D"=>{if cursor>0{cursor-=1;while cursor>0&&(pending.bytes[cursor]&0xc0)==0x80{cursor-=1;}}},
+                                b"\x1b[C"=>{if cursor<pending.bytes.len(){cursor+=1;while cursor<pending.bytes.len()&&(pending.bytes[cursor]&0xc0)==0x80{cursor+=1;}}},
+                                b"\x1b[H"|b"\x1b[1~"=>cursor=0,
+                                b"\x1b[F"|b"\x1b[4~"=>cursor=pending.bytes.len(),
+                                b"\x1b[3~"=>{if cursor<pending.bytes.len(){let mut end=cursor+1;while end<pending.bytes.len()&&(pending.bytes[end]&0xc0)==0x80{end+=1;}pending.bytes.drain(cursor..end);}},
+                                _=>(),
+                            }
+                            escape.clear();continue;
+                        }
+                        if blocked {continue;}
+                        if matches!(byte,b'\n'|b'\r') {
+                            if pending.append(&[byte]).is_err(){blocked=true;continue;}
+                            if let Ok(Some(line))=pending.take_line(){return Ok(Some(line));}
+                            cursor=pending.bytes.len();continue;
+                        }
+                        if byte<32&&byte!=b'\t' {continue;}
+                        if pending.bytes.len()==MAX_PENDING {blocked=true;continue;}
+                        pending.bytes.insert(cursor,byte);cursor+=1;
+                    }
                 },
                 None=>tokio::time::sleep(Duration::from_millis(10)).await,
             }
         }
     }.await;
-    input.restore()?;println!();result
+    let _=output.write(b"\r\n");input.restore()?;drop(output);result
 }
 
 fn visible(text:&str)->String {
@@ -96,7 +134,7 @@ fn visible(text:&str)->String {
 }
 
 /// Only bytes following a locally consumed detach chord may become Helm input.
-pub struct Detached {pub pending:Vec<u8>,pub exited:bool}
+pub struct Detached {pub pending:Vec<u8>,pub exited:bool,pub delivery_failed:bool}
 struct Screen {output:Output}
 impl Screen {
     fn enter()->Result<Self>{let mut screen=Self{output:Output::new()?};screen.output.write(b"\x1b[?1049h\x1b[?25l")?;Ok(screen)}
@@ -165,15 +203,36 @@ fn frame(snapshot:&TerminalSnapshot,columns:u16,rows:u16)->Vec<u8>{
     text.into_bytes()
 }
 
+// Before an explicit detach, every unread byte is still private PTY input.
+struct AttachmentInput { inner:crate::terminal_input::Terminal, preserve:bool, finished:bool }
+impl AttachmentInput {
+    fn new()->Result<Self>{Ok(Self{inner:crate::terminal_input::Terminal::enter_preserving_input()?,preserve:false,finished:false})}
+    fn finish(&mut self)->Result<()> {
+        if !self.finished {
+            if !self.preserve {let _=self.inner.discard();}
+            self.inner.restore()?;self.finished=true;
+        }
+        Ok(())
+    }
+}
+impl Drop for AttachmentInput {fn drop(&mut self){let _=self.finish();}}
+
+async fn terminal_operation<T>(future:impl std::future::Future<Output=std::result::Result<T,crate::terminal::TerminalError>>,cancel:&CancellationToken)->Result<T> {
+    tokio::select!{biased;
+        _=cancel.cancelled()=>anyhow::bail!("plain attachment interrupted"),
+        result=tokio::time::timeout(Duration::from_secs(1),future)=>Ok(result.map_err(|_|anyhow::anyhow!("terminal operation timed out; detached"))??),
+    }
+}
+
 pub async fn attach(manager:Arc<dyn InteractiveTerminals>,id:TerminalId,policy:Arc<Policy>,cancel:CancellationToken)->Result<Detached>{
     ensure!(io::stdin().is_terminal()&&io::stdout().is_terminal(),"plain terminal attachment requires local TTY input and output");
     policy.check_current()?;
     ensure!(policy.access_mode()!=crate::config::AccessMode::ReadOnly,"direct terminal input is denied in read-only mode");
     let _ownership=Ownership::acquire()?;
-    let mut input=crate::terminal_input::Terminal::enter_preserving_input()?;
+    let mut input=AttachmentInput::new()?;
     let mut screen=Screen::enter()?;
     let mut events=manager.subscribe();
-    let mut snapshot=manager.attach(id).await?;
+    let mut snapshot=terminal_operation(manager.attach(id),&cancel).await?;
     let mut dimensions=(0,0);let mut revision=None;let mut filter=PlainDetachFilter::default();let mut encoding=InputEncoding::default();
     let result=async {
         loop {
@@ -182,31 +241,35 @@ pub async fn attach(manager:Arc<dyn InteractiveTerminals>,id:TerminalId,policy:A
             let (columns,rows)=crossterm::terminal::size()?;
             ensure!(columns>=4&&rows>=3,"terminal viewport is too small; detached");
             let size=(columns.min(240),rows.min(120));
-            if dimensions!=size {manager.resize(id,size.0,size.1-1).await?;dimensions=size;revision=None;snapshot=manager.snapshot(id).await?;}
+            if dimensions!=size {terminal_operation(manager.resize(id,size.0,size.1-1),&cancel).await?;dimensions=size;revision=None;snapshot=terminal_operation(manager.snapshot(id),&cancel).await?;}
             if revision!=Some(snapshot.revision){screen.output.write(&frame(&snapshot,size.0,size.1))?;revision=Some(snapshot.revision);}
-            if snapshot.state!=TerminalState::Running{return Ok(Detached{pending:vec![],exited:true});}
+            if snapshot.state!=TerminalState::Running{return Ok(Detached{pending:vec![],exited:true,delivery_failed:false});}
             let mut bytes=Vec::new();
             for _ in 0..4096 {
-                match input.read()? {Some((byte,repeat))=>{
+                match input.inner.read()? {Some((byte,repeat))=>{
                     encoding.push(byte,repeat,&mut bytes)?;
                 },None=>break}
                 if bytes.len()>=4096{break;}
             }
             if !bytes.is_empty(){
                 let separated=filter.push(&bytes);
-                if !separated.terminal_input.is_empty(){manager.write(id,separated.terminal_input.to_vec()).await?;}
-                if separated.detached{return Ok(Detached{pending:separated.helm_input.to_vec(),exited:false});}
+                let delivered=if separated.terminal_input.is_empty(){Ok(())}else{terminal_operation(manager.write(id,separated.terminal_input.to_vec()),&cancel).await};
+                if separated.detached {
+                    input.preserve=true;
+                    return Ok(Detached{pending:separated.helm_input.to_vec(),exited:false,delivery_failed:delivered.is_err()});
+                }
+                delivered?;
             }
             tokio::select!{
                 biased;
                 _=cancel.cancelled()=>anyhow::bail!("plain attachment interrupted"),
-                event=events.recv()=>{match event{Ok(_)|Err(tokio::sync::broadcast::error::RecvError::Lagged(_))=>snapshot=manager.snapshot(id).await?,Err(_)=>anyhow::bail!("terminal events closed")}},
-                _=tokio::time::sleep(Duration::from_millis(20))=>snapshot=manager.snapshot(id).await?,
+                event=events.recv()=>{match event{Ok(_)|Err(tokio::sync::broadcast::error::RecvError::Lagged(_))=>snapshot=terminal_operation(manager.snapshot(id),&cancel).await?,Err(_)=>anyhow::bail!("terminal events closed")}},
+                _=tokio::time::sleep(Duration::from_millis(20))=>snapshot=terminal_operation(manager.snapshot(id),&cancel).await?,
             }
         }
     }.await;
     // Preserve bytes still in the OS queue as well as the explicit returned suffix.
-    input.restore()?;drop(screen);result
+    input.finish()?;drop(screen);result
 }
 
 #[cfg(test)]

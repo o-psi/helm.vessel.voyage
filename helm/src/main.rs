@@ -2442,6 +2442,7 @@ async fn chat(
                     result = &mut operation => result?,
                 };
                 pending.append(&detached.pending)?;
+                if detached.delivery_failed { eprintln!("Private input delivery failed; its preceding bytes may be incomplete. Post-detach Helm input was retained."); }
                 println!("{}", if detached.exited { "Terminal exited; returned to Helm." } else { "Detached; terminal remains private and running." });
                 Ok(false)
             }.await;
@@ -3331,3 +3332,6 @@ mod resource_handoff_tests {
         assert!(resources.register(&mut ToolRegistry::standard()).is_err());
     }
 }
+
+#[cfg(all(test, unix))]
+mod plain_terminal_frontend_tests;
