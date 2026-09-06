@@ -96,6 +96,216 @@ async fn setup(
     (temp, agent, calls, project, session, ready)
 }
 use uuid::Uuid;
+
+struct ResumableTitleWarning {
+    ready: Arc<tokio::sync::Notify>,
+    release: Arc<tokio::sync::Notify>,
+}
+#[async_trait]
+impl EventSink for ResumableTitleWarning {
+    async fn emit(&self, event: AgentEvent) {
+        if matches!(event, AgentEvent::InferenceWarning(_)) {
+            self.ready.notify_one();
+            self.release.notified().await;
+        }
+    }
+}
+
+async fn title_profile_boundary(after_permit: bool) {
+    use crate::policy_profile::{
+        Builtin, Overrides,
+        selection::{Selection, SelectionRequest},
+        store::{Action, ProfileChange, ProfileStore},
+    };
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let (temp, mut agent, _, project, session_id, _) = setup(1, false, false).await;
+    let directory = temp.path().join("profiles");
+    let profiles = ProfileStore::open(&directory).unwrap();
+    let snapshot = profiles
+        .change(&ProfileChange {
+            operation_id: Uuid::new_v4(),
+            name: "title-fixture".into(),
+            expected_revision: 0,
+            action: Action::Create {
+                rules: Builtin::Restricted.document().rules,
+            },
+        })
+        .unwrap()
+        .snapshot;
+    let mut config = crate::config::Config {
+        access: Some(crate::config::AccessMode::Unrestricted),
+        ..Default::default()
+    };
+    let selection = SelectionRequest {
+        directory,
+        name: snapshot.name.clone(),
+        revision: snapshot.revision,
+        digest: snapshot.digest().unwrap(),
+        explicit: Overrides::default(),
+    };
+    config.policy_profile = Some(Selection::bind(&config, temp.path(), selection, None).unwrap());
+    agent.context.policy =
+        Arc::new(crate::policy::Policy::new(&config, temp.path().into()).unwrap());
+    agent.check_current_policy().unwrap();
+
+    let ready = Arc::new(tokio::sync::Notify::new());
+    let release = Arc::new(tokio::sync::Notify::new());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    agent.provider = Box::new(crate::provider::OpenAiProvider::new(
+        "offline-title-fixture".into(),
+        Some(format!("http://{}/v1", listener.local_addr().unwrap())),
+    ));
+    let posts = Arc::new(AtomicUsize::new(0));
+    let server_posts = posts.clone();
+    let server_ready = ready.clone();
+    let server_release = release.clone();
+    let server = tokio::spawn(async move {
+        loop {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut bytes = Vec::new();
+            let (end, length) = loop {
+                let mut buffer = [0; 4096];
+                let count = socket.read(&mut buffer).await.unwrap();
+                assert!(count > 0);
+                bytes.extend_from_slice(&buffer[..count]);
+                assert!(bytes.len() < 128 * 1024);
+                if let Some(end) = bytes.windows(4).position(|part| part == b"\r\n\r\n") {
+                    let headers = String::from_utf8_lossy(&bytes[..end]).to_lowercase();
+                    assert!(headers.contains("authorization: bearer offline-title-fixture"));
+                    let length = headers
+                        .lines()
+                        .find_map(|line| line.strip_prefix("content-length: "))
+                        .map(|text| text.parse::<usize>().unwrap())
+                        .unwrap_or(0);
+                    break (end + 4, length);
+                }
+            };
+            while bytes.len() < end + length {
+                let mut buffer = [0; 4096];
+                let count = socket.read(&mut buffer).await.unwrap();
+                assert!(count > 0);
+                bytes.extend_from_slice(&buffer[..count]);
+            }
+            let first = String::from_utf8_lossy(&bytes[..end])
+                .lines()
+                .next()
+                .unwrap()
+                .to_owned();
+            let body = if first.starts_with("GET /v1/models ") {
+                if !after_permit {
+                    server_ready.notify_one();
+                    server_release.notified().await;
+                }
+                serde_json::to_string(
+                    &serde_json::json!({"data":[{"id":crate::titles::title_model().unwrap()}]}),
+                )
+                .unwrap()
+            } else {
+                assert!(first.starts_with("POST /v1/chat/completions "), "{first}");
+                server_posts.fetch_add(1, Ordering::SeqCst);
+                let request: serde_json::Value =
+                    serde_json::from_slice(&bytes[end..end + length]).unwrap();
+                assert_eq!(request["model"], crate::titles::title_model().unwrap());
+                format!(
+                    "data: {}\n\ndata: [DONE]\n\n",
+                    serde_json::json!({"choices":[{"delta":{"content":"Useful fixture title"}}],"usage":{"prompt_tokens":1,"completion_tokens":1}})
+                )
+            };
+            socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",if first.starts_with("GET ") {"application/json"} else {"text/event-stream"},body.len(),body).as_bytes()).await.unwrap();
+        }
+    });
+    if after_permit {
+        let mut ledger = Store::open(temp.path().join("inference")).unwrap();
+        ledger
+            .configure(&Change {
+                operation: Uuid::new_v4(),
+                scope: Scope::Project(project),
+                expected_revision: 1,
+                limit: Some(1),
+                warning: Some(1),
+                reason: "Observe committed title admission".into(),
+            })
+            .unwrap();
+        agent.sink = Arc::new(ResumableTitleWarning {
+            ready: ready.clone(),
+            release: release.clone(),
+        });
+    }
+    let mut session = crate::session::Session::new(temp.path().into(), "fixture".into());
+    session.id = session_id;
+    session.messages.push(Message::new(
+        crate::model::Role::User,
+        "Explain a useful fixture",
+    ));
+    session
+        .completion_runs
+        .push(agent.context.completion.as_ref().unwrap().reference());
+    let work = agent.generate_title_for_session(&session, CancellationToken::new());
+    tokio::pin!(work);
+    tokio::select! {result=&mut work=>panic!("title completed before boundary: {result:?}"), _=ready.notified()=>{}}
+    let action = if after_permit {
+        let mut rules = Builtin::Restricted.document().rules;
+        rules.deny_commands.push("fixture-title-command".into());
+        Action::Replace { rules }
+    } else {
+        Action::Delete {}
+    };
+    profiles
+        .change(&ProfileChange {
+            operation_id: Uuid::new_v4(),
+            name: "title-fixture".into(),
+            expected_revision: 1,
+            action,
+        })
+        .unwrap();
+    assert!(
+        agent.check_current_policy().is_err(),
+        "real selected profile must now be stale"
+    );
+    assert!(
+        agent.context.policy.check_execution_authority().is_ok(),
+        "foreground guard alone does not validate profiles"
+    );
+    release.notify_one();
+    let result = tokio::time::timeout(Duration::from_secs(5), &mut work)
+        .await
+        .unwrap();
+    let posts = posts.load(Ordering::SeqCst);
+    server.abort();
+    let _ = server.await;
+    let ledger = Store::open(temp.path().join("inference")).unwrap();
+    let state = ledger.inspect(Scope::Project(project)).unwrap();
+    let attempts = ledger.attempts(Scope::Project(project), 0, 100).unwrap();
+    assert_eq!(
+        posts, 0,
+        "stale policy dispatched native title inference; consumed={}, attempts={attempts:?}",
+        state.consumed
+    );
+    assert!(result.is_none());
+    assert_eq!(state.consumed, u64::from(after_permit));
+    assert_eq!(attempts.len(), usize::from(after_permit));
+    if after_permit {
+        assert_eq!(
+            attempts[0].outcome,
+            crate::inference::AttemptOutcome::Unknown
+        );
+        assert_eq!(
+            attempts[0].attribution.purpose,
+            crate::inference::Purpose::Title
+        );
+        assert_eq!(attempts[0].attribution.session, session_id);
+        assert!(attempts[0].input_tokens.is_none() && attempts[0].output_tokens.is_none());
+    }
+}
+
+#[tokio::test]
+async fn title_profile_changed_during_model_discovery_prevents_admission() {
+    title_profile_boundary(false).await;
+}
+#[tokio::test]
+async fn title_profile_changed_after_admission_keeps_unknown_permit_without_dispatch() {
+    title_profile_boundary(true).await;
+}
 #[tokio::test]
 async fn each_retry_needs_a_new_permit_and_exhaustion_never_dispatches() {
     let (temp, agent, calls, project, _, _) = setup(2, true, false).await;

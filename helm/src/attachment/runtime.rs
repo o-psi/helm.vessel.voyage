@@ -387,6 +387,8 @@ impl ManagedSessionOwner {
                 input: Some((session.messages, request.prompt)),
                 steering_sender,
                 steering_receiver: Some(steering_receiver),
+                #[cfg(test)]
+                terminal_retry_hook: None,
             }))
         })
         .await?
@@ -416,6 +418,8 @@ pub enum Admission {
 }
 
 pub struct RunOwner {
+    #[cfg(test)]
+    terminal_retry_hook: Option<Arc<dyn Fn() + Send + Sync>>,
     store: Arc<Mutex<Store>>,
     token: Arc<TurnToken>,
     run_id: Uuid,
@@ -470,6 +474,8 @@ impl RunOwner {
     ) -> Result<RunRecord, CheckpointError> {
         let shared = self.store.clone();
         let token = self.token.clone();
+        #[cfg(test)]
+        let mut retry_hook = self.terminal_retry_hook.clone();
         tokio::task::spawn_blocking(move || {
             let mut store = shared.lock().map_err(|_| CheckpointError)?;
             let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
@@ -499,6 +505,12 @@ impl RunOwner {
                     Err(error) => {
                         if !store.journal.terminal_retry_safe(&error) {
                             return Err(CheckpointError);
+                        }
+                        // A per-owner fixture barrier observes a real rolled-back BUSY.
+                        // It cannot affect production commit/cancellation ordering.
+                        #[cfg(test)]
+                        if let Some(hook) = retry_hook.take() {
+                            hook();
                         }
                         let remaining =
                             deadline.saturating_duration_since(std::time::Instant::now());

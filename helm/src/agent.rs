@@ -784,12 +784,12 @@ impl Agent {
             let mut request = crate::titles::request(messages, model, &self.context.redactor)?;
             let limit = self.context_limit(&request.model);
             crate::context::preflight(&mut request, limit).ok()?;
-            self.context.policy.check_execution_authority().ok()?;
+            self.check_current_policy().ok()?;
             let permit = self
                 .inference_admit(reference, &request.model, crate::inference::Purpose::Title)
                 .await
                 .ok()?;
-            self.context.policy.check_execution_authority().ok()?;
+            self.check_current_policy().ok()?;
             if cancel.is_cancelled() {
                 return None;
             }

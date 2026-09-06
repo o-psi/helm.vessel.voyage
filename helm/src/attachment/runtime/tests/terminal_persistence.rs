@@ -32,6 +32,20 @@ async fn terminal_contention(lock_sql: &str, token_only: bool) {
     let (release_tx, release_rx) = std::sync::mpsc::channel();
     let path = dir.path().join("attachment/journal.sqlite3");
     let mut reader = None;
+    let retry_ready = Arc::new(tokio::sync::Notify::new());
+    let (retry_release_tx, retry_release_rx) = std::sync::mpsc::channel();
+    if token_only {
+        let ready = retry_ready.clone();
+        let release = std::sync::Mutex::new(retry_release_rx);
+        owner.terminal_retry_hook = Some(Arc::new(move || {
+            ready.notify_one();
+            release
+                .lock()
+                .unwrap()
+                .recv_timeout(Duration::from_secs(5))
+                .unwrap();
+        }));
+    }
     let mut execution = Box::pin(
         owner.execute_before_finish(&agent, cancel.clone(), None, || {
             let mut journal = Journal::open(dir.path().join("attachment")).unwrap();
@@ -56,19 +70,31 @@ async fn terminal_contention(lock_sql: &str, token_only: bool) {
             Ok(())
         }),
     );
-    let early = tokio::select! {
-        biased;
-        ready = ready_rx => {
-            ready.unwrap();
-            tokio::time::timeout(Duration::from_millis(150), &mut execution).await.ok()
-        },
-        result = &mut execution => Some(result),
+    let early = if token_only {
+        tokio::select! {
+            biased;
+            _ = retry_ready.notified() => None,
+            result = &mut execution => Some(result),
+        }
+    } else {
+        tokio::select! {
+            biased;
+            ready = ready_rx => {
+                ready.unwrap();
+                tokio::time::timeout(Duration::from_millis(150), &mut execution).await.ok()
+            },
+            result = &mut execution => Some(result),
+        }
     };
-    // Even the old early failure releases the real reader and reports durable state.
+    // Token cancellation happens after a confirmed rolled-back BUSY, while the
+    // retry worker is paused. Releasing only after cancellation guarantees the
+    // next attempt samples it; a timeout cannot establish that ordering.
+    // An early failure still releases the real reader and reports durable state.
     if token_only {
         cancel.cancel();
     }
     let _ = release_tx.send(());
+    let _ = retry_release_tx.send(());
     let result = match early {
         Some(result) => result,
         None => execution.as_mut().await,

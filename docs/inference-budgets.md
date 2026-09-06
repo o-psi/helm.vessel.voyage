@@ -104,7 +104,9 @@ not the bridge's internal model requests.
 
 Admission is transactional. A concurrent edit takes effect for attempts admitted
 after its commit; it cannot recall an already admitted request. Cancellation is
-checked before dispatch and authority is checked again after admission. A crash
+checked before dispatch and authority is checked again after admission. Automatic
+title inference also rechecks current policy after model discovery and after
+admission, including changes to selected profiles. A crash
 or cancellation after permit commit but before sending can consume a permit
 without sending anything. This conservative unknown-send record is not refunded.
 A provider timeout, disconnect or error does not establish zero cost or server-side
