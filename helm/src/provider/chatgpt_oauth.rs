@@ -417,7 +417,9 @@ impl ChatGptOAuth {
                 })?,
         };
         let port = listener.local_addr().map_err(auth_io)?.port();
-        let flow = self.begin_pkce(format!("http://127.0.0.1:{port}/auth/callback"));
+        // OAuth redirect matching distinguishes localhost from its loopback IP.
+        // Advertise the upstream callback hostname while binding only loopback.
+        let flow = self.begin_pkce(format!("http://localhost:{port}/auth/callback"));
         present(&flow.url);
         let (mut stream, _) = tokio::time::timeout(timeout, listener.accept())
             .await
@@ -891,7 +893,7 @@ mod tests {
         )
         .await
         .unwrap();
-        let flow = auth.begin_pkce("http://127.0.0.1:1455/auth/callback");
+        let flow = auth.begin_pkce("http://localhost:1455/auth/callback");
         assert!(flow.url.contains("code_challenge_method=S256"));
         assert!(
             flow.url
@@ -952,13 +954,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn browser_callback_validates_state_and_exchanges_without_exposing_code() {
+    async fn browser_callback_uses_localhost_and_exchanges_without_exposing_code() {
         let requests = Arc::new(StdMutex::new(Vec::new()));
         let access =
             jwt(serde_json::json!({"chatgpt_account_id":"acct-browser","exp":9999999999_u64}));
         let endpoint = fixture(
             serde_json::json!({"access_token":access,"refresh_token":"refresh","expires_in":3600}),
-            requests,
+            requests.clone(),
         )
         .await;
         let directory = tempfile::tempdir().unwrap();
@@ -975,19 +977,47 @@ mod tests {
         )
         .await
         .unwrap();
+        let mut browser = None;
+        let mut expected_exchange = None;
         let tokens = auth.login_browser(Duration::from_secs(3), |url| {
-            let state = url.split('&').find_map(|part| part.strip_prefix("state=")).unwrap().to_owned();
-            tokio::spawn(async move {
-                let mut stream = match tokio::net::TcpStream::connect(("127.0.0.1", 1455)).await {
-                    Ok(stream) => stream,
-                    Err(_) => tokio::net::TcpStream::connect(("127.0.0.1", 1457)).await.unwrap(),
-                };
+            let url = reqwest::Url::parse(url).unwrap();
+            let params: std::collections::HashMap<_, _> = url.query_pairs().into_owned().collect();
+            let redirect = reqwest::Url::parse(&params["redirect_uri"]).unwrap();
+            assert_eq!(redirect.scheme(), "http");
+            assert_eq!(redirect.host_str(), Some("localhost"));
+            assert_eq!(redirect.path(), "/auth/callback");
+            let port = redirect.port().unwrap();
+            assert!([1455, 1457].contains(&port));
+            assert_eq!(params["client_id"], CLIENT_ID);
+            assert_eq!(params["response_type"], "code");
+            assert_eq!(params["code_challenge_method"], "S256");
+            assert_eq!(params["originator"], "helm");
+            expected_exchange = Some((params["redirect_uri"].clone(), params["code_challenge"].clone()));
+            let state = params["state"].clone();
+            let host = redirect.host_str().unwrap().to_owned();
+            browser = Some(tokio::spawn(async move {
+                let mut stream = tokio::net::TcpStream::connect((host.as_str(), port)).await.unwrap();
                 stream.write_all(format!("GET /auth/callback?code=private-code&state={state} HTTP/1.1\r\nhost: localhost\r\n\r\n").as_bytes()).await.unwrap();
                 let mut response = Vec::new(); stream.read_to_end(&mut response).await.unwrap();
                 let response = String::from_utf8(response).unwrap();
                 assert!(response.contains("200 OK")); assert!(!response.contains("private-code"));
-            });
+            }));
         }).await.unwrap();
+        browser.unwrap().await.unwrap();
+        let sent = requests.lock().unwrap();
+        assert_eq!(sent.len(), 1);
+        let body = sent[0].split_once("\r\n\r\n").unwrap().1;
+        let form = reqwest::Url::parse(&format!("http://fixture/?{body}")).unwrap();
+        let params: std::collections::HashMap<_, _> = form.query_pairs().into_owned().collect();
+        let (redirect, challenge) = expected_exchange.unwrap();
+        assert_eq!(params["redirect_uri"], redirect);
+        assert_eq!(params["grant_type"], "authorization_code");
+        assert_eq!(params["code"], "private-code");
+        assert_eq!(params["client_id"], CLIENT_ID);
+        assert_eq!(
+            URL_SAFE_NO_PAD.encode(Sha256::digest(params["code_verifier"].as_bytes())),
+            challenge
+        );
         assert_eq!(tokens.account_id, "acct-browser");
     }
 }

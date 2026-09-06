@@ -94,6 +94,14 @@ To select the optional bridge, set `provider = "codex-compatibility"`, install a
 compatible Codex CLI, authenticate it, and run `helm doctor`. A transport change
 never expands filesystem, command, approval, or tool authority.
 
+Browser login returns to `http://localhost:1455/auth/callback` (port 1457 if
+1455 is busy). Helm listens only on IPv4 loopback. Keep Helm running and complete
+sign-in in a browser on the same machine; use `helm auth login --device` for a
+headless host. If authorization is rejected, cancel the attempt and generate a
+fresh link after updating Helm. Do not edit the callback URL: the authorization
+request and token exchange must use the same redirect URI. Check completion with
+`helm auth status`.
+
 ## Independence release gate
 
 `tests/system/native_provider_no_codex.py` runs the real Helm binary against offline
