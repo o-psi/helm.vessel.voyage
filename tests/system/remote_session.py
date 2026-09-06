@@ -153,21 +153,27 @@ def case(root,provider,profile=False,shutdown_failure=False,defaults=False):
         for hostile in ['https://hostile.invalid',origin+'/',origin+'/path','null',origin+', '+origin,origin.replace('http://','http://user:password@')]:
             command({'type':'list','after':None,'limit':20},extra={'Origin':hostile},expected=403)
             request(base+f'/events?session_id={session}&after=0',extra={'Origin':hostile},expected=403)
-        for origins in [(origin,origin),(origin,'https://hostile.invalid')]:
+        header_cases=[('Origin',values,403) for values in [(origin,origin),(origin,'https://hostile.invalid')]]
+        header_cases += [('Authorization',values,401) for values in [
+            ('Bearer '+TOKEN,'Bearer '+TOKEN),
+            ('Bearer '+TOKEN,'Bearer wrong'),
+            ('Bearer wrong','Bearer '+TOKEN),
+        ]]
+        for header,values,expected in header_cases:
             for endpoint in ('/command',f'/events?session_id={session}&after=0'):
                 body=None if endpoint.startswith('/events') else json.dumps({'command_id':str(uuid.uuid4()),'expires_at_ms':int(time.time()*1000)+120000,'operation':{'type':'list','after':None,'limit':20}}).encode()
                 client=HTTPConnection('127.0.0.1',int(origin.rsplit(':',1)[1]),timeout=8)
                 try:
                     client.putrequest('GET' if body is None else 'POST',base+endpoint)
-                    client.putheader('Authorization','Bearer '+TOKEN)
+                    if header != 'Authorization':client.putheader('Authorization','Bearer '+TOKEN)
                     client.putheader('x-voyage-request','2')
-                    for supplied in origins:client.putheader('Origin',supplied)
+                    for supplied in values:client.putheader(header,supplied)
                     if body is not None:
                         client.putheader('Content-Type','application/json')
                         client.putheader('Content-Length',str(len(body)))
                     client.endheaders(body)
                     result=client.getresponse();payload=result.read().decode()
-                    assert result.status==403,(endpoint,result.status,payload)
+                    assert result.status==expected,(header,endpoint,result.status,payload)
                     assert KEY not in payload and TOKEN not in payload
                 finally:client.close()
         unknown=command({'type':'inspect','session_id':str(uuid.uuid4())})

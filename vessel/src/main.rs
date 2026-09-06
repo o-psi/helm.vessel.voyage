@@ -300,6 +300,14 @@ fn operator_auth(state: &AppState, headers: &HeaderMap) -> UiResult<()> {
             "Operator UI is disabled. Set VESSEL_OPERATOR_TOKEN.",
         )));
     };
+    if headers
+        .get_all(axum::http::header::AUTHORIZATION)
+        .iter()
+        .count()
+        > 1
+    {
+        return Err(ui_error(StatusCode::UNAUTHORIZED));
+    }
     let supplied = bearer(headers).map(str::to_owned).or_else(|| {
         let encoded = headers
             .get(axum::http::header::AUTHORIZATION)?
@@ -488,6 +496,14 @@ mod tests {
         ] {
             headers.insert("authorization", HeaderValue::from_str(&value).unwrap());
             assert!(operator_auth(&state, &headers).is_ok());
+            for other in [&value, "Bearer wrong"] {
+                headers.append("authorization", HeaderValue::from_str(other).unwrap());
+                assert!(operator_auth(&state, &headers).is_err());
+                headers.insert("authorization", HeaderValue::from_str(&value).unwrap());
+            }
+            headers.insert("authorization", HeaderValue::from_static("Bearer wrong"));
+            headers.append("authorization", HeaderValue::from_str(&value).unwrap());
+            assert!(operator_auth(&state, &headers).is_err());
         }
     }
 
