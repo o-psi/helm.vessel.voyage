@@ -1,4 +1,5 @@
 mod flow;
+mod service;
 
 use anyhow::{Result, bail};
 use crossterm::{
@@ -257,17 +258,27 @@ fn paste(w: &mut Wizard, text: &str) {
 
 fn run() -> Result<bool> {
     let args: Vec<_> = std::env::args().skip(1).collect();
+    if let Some(command @ ("service-status" | "service-stop" | "service-uninstall")) =
+        args.first().map(String::as_str)
+    {
+        service::manage(command, &args[1..])?;
+        return Ok(false);
+    }
+    if args
+        .first()
+        .is_some_and(|arg| arg == "install-user-service")
+    {
+        service::install(&args[1..])?;
+        return Ok(false);
+    }
     if args == ["--help"] || args == ["-h"] {
         println!(
-            "voyage-installer — interactive setup preview\n\nAll setup actions are mocked. No credentials are collected or configuration saved.\nRun in a terminal with no arguments. Esc goes back; Ctrl+C cancels.\n\nOptions: --help, --version"
+            "voyage-installer — setup and service installation\n\nWith no arguments: interactive setup preview (all wizard actions mocked).\n\nLinux systemd user service (real installation):\n  voyage-installer install-user-service --bin-dir /absolute/release/bin [--start] [--dry-run]\n\nInstalls private versioned binaries and a Vessel user unit. Existing units are never replaced.\n--start enables and starts the service; otherwise activation is manual.\n--dry-run checks inputs and prints the unit without writing or running systemctl.\nProvider credentials remain in the executing user's existing configuration.\nNo elevated privileges or automatic lingering configuration.\n\nService operations: service-status, service-stop, service-uninstall\nStopping/uninstalling preserves voyage processes and data; drain voyages separately.\n\nOptions: --help, --version"
         );
         return Ok(false);
     }
     if args == ["--version"] {
-        println!(
-            "voyage-installer {} (mock setup)",
-            env!("CARGO_PKG_VERSION")
-        );
+        println!("voyage-installer {}", env!("CARGO_PKG_VERSION"));
         return Ok(false);
     }
     if !args.is_empty() {

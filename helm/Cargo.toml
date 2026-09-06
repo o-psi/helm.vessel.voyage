@@ -10,6 +10,7 @@ name = "helm"
 path = "src/main.rs"
 
 [dependencies]
+voyage-runtime = { package = "voyage", path = "../voyage" }
 log.workspace = true
 voyage-protocol.workspace = true
 tokio-tungstenite.workspace = true

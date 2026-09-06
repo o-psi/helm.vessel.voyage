@@ -1,0 +1,202 @@
+use crate::{
+    Agent, AgentEvent, Config, EventSink,
+    agent::RetryPolicy,
+    config::{AccessMode, UnattendedApprovalMode},
+    policy::Policy,
+    provider,
+    subagent::{
+        AgentBudget, AgentPolicy, ApprovalPolicy, ExecutionContext, RuntimeLimits,
+        SubagentExecutor, SubagentResult, SubagentRuntime, SubagentTool, WorktreeManager,
+    },
+    todo::{TodoScope, TodoStore},
+    tools::{
+        Approver, InteractionMode, Redactor, TodoTool, ToolContext, ToolRegistry,
+        UnattendedApprover,
+    },
+};
+use anyhow::{Context, Result};
+use async_trait::async_trait;
+use sha2::{Digest, Sha256};
+use std::{
+    path::PathBuf,
+    sync::{Arc, OnceLock, RwLock, Weak},
+};
+mod resources;
+mod subagents;
+pub use resources::{ManagedResourceState, ManagedResources};
+pub use subagents::{SubagentBundle, build_subagents_managed};
+pub struct ManagedAgent {
+    pub agent: Agent,
+    pub subagents: Arc<SubagentRuntime>,
+    pub resources: Option<Arc<ManagedResources>>,
+}
+pub async fn build_authorized_agent_bundle(
+    config: &Config,
+    workspace: PathBuf,
+    attended: bool,
+    sink: Option<Arc<dyn EventSink>>,
+    authority: Option<Arc<dyn crate::policy::ExecutionAuthority>>,
+    decision_approver: Option<Arc<dyn Approver>>,
+) -> Result<ManagedAgent> {
+    build_agent_bundle_with_output(
+        config,
+        workspace,
+        attended,
+        sink,
+        authority,
+        decision_approver,
+        Arc::new(SilentEvents),
+    )
+    .await
+}
+pub async fn build_agent_bundle_with_output(
+    config: &Config,
+    workspace: PathBuf,
+    attended: bool,
+    sink: Option<Arc<dyn EventSink>>,
+    authority: Option<Arc<dyn crate::policy::ExecutionAuthority>>,
+    decision_approver: Option<Arc<dyn Approver>>,
+    fallback_sink: Arc<dyn EventSink>,
+) -> Result<ManagedAgent> {
+    if let Some(authority) = &authority {
+        authority.check()?;
+    }
+    let resolved = crate::runtime_policy::RuntimePolicy::resolve(config, &workspace)?;
+    let config = resolved.config();
+    let mut policy = resolved.policy().clone();
+    if let Some(authority) = authority {
+        policy = policy.with_execution_authority(authority);
+    }
+    policy.check_execution_authority()?;
+    let policy = Arc::new(policy);
+
+    let interactive = decision_approver.is_some();
+    let approver: Arc<dyn Approver> = if let Some(approver) = decision_approver {
+        approver
+    } else if attended {
+        Arc::new(UnattendedApprover { allow: false })
+    } else {
+        Arc::new(UnattendedApprover {
+            allow: config.unattended_approval == UnattendedApprovalMode::Allow,
+        })
+    };
+    let context = ToolContext {
+        github: crate::github::Credential::from_config(config),
+        completion: None,
+        policy,
+        approver,
+        timeout: config.timeout(),
+        max_output_bytes: config.max_output_bytes,
+        environment: tool_environment(config),
+        cancellation: tokio_util::sync::CancellationToken::new(),
+        execution_id: uuid::Uuid::new_v4(),
+        interaction: if attended || interactive {
+            InteractionMode::Attended
+        } else {
+            InteractionMode::Unattended
+        },
+        redactor: redactor(config),
+    };
+    let accounting =
+        crate::inference::runtime::Accounting::root(&workspace, &config.provider_profile()).await?;
+    let managed_resources = sink.as_ref().map(|_| Arc::new(ManagedResources::default()));
+    let subagents = build_subagents_managed(
+        config,
+        &workspace,
+        context.policy.clone(),
+        managed_resources.clone(),
+    )
+    .await?;
+    let gate_runtime = subagents.runtime.clone();
+    let gate_todos = subagents.todos.store();
+    let gate_agents = gate_runtime.store().expect("persistent runtime");
+    context.policy.check_execution_authority()?;
+    let mut tools = build_tools(
+        config,
+        Some(subagents.tool),
+        Some(subagents.todos),
+        Some(subagents.completion_tool),
+        managed_resources.as_deref(),
+        &context.policy,
+    )
+    .await?;
+    if let Some(resources) = &managed_resources {
+        resources.register(&mut tools)?;
+    }
+    let retained_runtime = gate_runtime.clone();
+    context.policy.check_execution_authority()?;
+    let agent = Agent::new(
+        provider::from_config(config, context.policy.workspace().to_owned())?,
+        tools,
+        context,
+        sink.unwrap_or(fallback_sink),
+        config.model.clone(),
+        config.system_prompt.clone(),
+        config.max_tokens,
+        config.temperature,
+    )
+    .with_inference_accounting(accounting)
+    .with_completion_coordinator(subagents.coordinator)
+    .with_completion_gate(gate_todos, gate_agents, gate_runtime)
+    .with_context_window(config.context_window)
+    .with_model_mirror(subagents.model)
+    .with_retry_policy(RetryPolicy {
+        max_attempts: config.provider_retry_attempts,
+        initial_delay: std::time::Duration::from_millis(config.provider_retry_initial_ms),
+        max_delay: std::time::Duration::from_millis(config.provider_retry_max_ms),
+    });
+    Ok(ManagedAgent {
+        agent,
+        subagents: retained_runtime,
+        resources: managed_resources,
+    })
+}
+
+pub fn tool_environment(config: &Config) -> std::collections::BTreeMap<String, String> {
+    let mut environment = config
+        .inherit_env
+        .iter()
+        .filter_map(|name| std::env::var(name).ok().map(|value| (name.clone(), value)))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    environment.extend(config.env.clone());
+    environment
+}
+
+pub fn redactor(config: &Config) -> Arc<Redactor> {
+    let secrets = config
+        .redact_values
+        .iter()
+        .cloned()
+        .chain(config.env.values().cloned())
+        .chain(
+            config
+                .mcp_servers
+                .values()
+                .flat_map(|server| server.env.values().cloned()),
+        )
+        .chain(config.api_key_for_redaction())
+        .chain(crate::github::credential_redactions(config));
+    Arc::new(Redactor::new(secrets))
+}
+
+mod tools;
+pub use tools::{build_tools, todo_tool};
+
+struct SilentEvents;
+#[async_trait]
+impl EventSink for SilentEvents {
+    async fn emit(&self, _: AgentEvent) {}
+}
+
+static RESOURCE_ROOT: OnceLock<PathBuf> = OnceLock::new();
+pub(crate) fn set_resource_root(path: PathBuf) -> Result<()> {
+    RESOURCE_ROOT
+        .set(path)
+        .map_err(|_| anyhow::anyhow!("runtime resource scope already set"))
+}
+fn resource_root() -> PathBuf {
+    RESOURCE_ROOT
+        .get()
+        .cloned()
+        .unwrap_or_else(crate::config::default_data_dir)
+}

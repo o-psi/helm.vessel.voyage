@@ -6,29 +6,35 @@ Voyage is a Rust 2024 workspace in first-release development. Read the
 
 ## Source map
 
-These paths describe the existing checkout, not a completed separation into three
-runtime programs. Paths in backticks require the source checkout.
+The runtime implementation has moved to `voyage/`; this source move does not mean
+legacy Helm execution entrypoints have been retired. Paths in backticks require
+the source checkout.
 
 | Path | Current responsibility |
 | --- | --- |
-| `helm/src/main.rs` | Helm CLI, provider/tool construction and plain execution |
-| `helm/src/tui_runtime.rs`, `helm/src/tui/` | In-process workspace runtimes, full-screen UI, input and checkpoints |
-| `helm/src/agent/`, `helm/src/agent.rs` | Provider-neutral loop, cancellation, context and completion integration |
-| `helm/src/provider/`, `helm/src/tools/` | Model transports and locally authorized tools |
-| `helm/src/session/`, `helm/src/session.rs` | Ordinary JSON sessions, stable fences and checkpoint persistence |
-| `helm/src/attachment/journal/`, `helm/src/attachment/runtime.rs` | Managed journal, exact admission, steering and cleanup obligations |
-| `helm/src/managed.rs`, `helm/src/remote_worker.rs` | Foreground managed execution and dedicated remote worker |
-| `helm/src/attachment/` | Enrollment, presence, sharing, explicit transfer and protocol adapters |
-| `helm/src/terminal.rs`, `helm/src/subagent/`, `helm/src/todo.rs`, `helm/src/completion/` | Owned resources, task state and completion ledger |
-| `helm/src/policy_profile/`, `helm/src/runtime_policy.rs` | Policy resolution, administrator ceiling and profile transitions |
-| `helm/src/github/`, `helm/src/workflow/`, `helm/src/extensions/`, `helm/src/inference/` | Supporting operator workflows and accounting |
-| `vessel/src/main.rs` and sibling HTTP/transport modules | Management service, authenticated API and relay |
-| `crates/voyage-protocol/src/` | Shared wire types, validation and feature contracts |
-| `crates/voyage-storage/src/` | Native private-storage primitives, including Windows security |
-| `installer/src/` | Setup preview; provisioning is mocked |
+| `helm/src/main.rs`, `helm/src/tui_runtime.rs` | Legacy CLI/full-screen execution adapters still instantiate shared runtime code |
+| `helm/src/process_client/` | Connected CLI, local/SSH Vessel transport and independent-process multiplexer |
+| `helm/src/tui/`, `helm/src/markdown.rs`, `helm/src/onboarding/` | Legacy UI, rendering and onboarding |
+| `voyage/src/main.rs`, `voyage/src/server/` | Independent runtime entrypoint, private transport and session command dispatch |
+| `voyage/src/agent.rs`, `voyage/src/agent/`, `voyage/src/context.rs` | Provider-neutral loop, cancellation, context and completion integration |
+| `voyage/src/provider/`, `voyage/src/tools/`, `voyage/src/config.rs` | Provider transports, local tools and execution configuration |
+| `voyage/src/session/`, `voyage/src/session.rs` | Legacy JSON sessions, identity fences and checkpoints |
+| `voyage/src/attachment/journal/`, `voyage/src/attachment/runtime.rs` | Canonical managed journals, exact admission, steering and cleanup |
+| `voyage/src/build/`, `voyage/src/execution.rs` | Runtime construction and admitted execution, per-process resource root |
+| `voyage/src/terminal.rs`, `voyage/src/subagent/`, `voyage/src/todo.rs`, `voyage/src/completion/` | Resources, task state and completion accounting |
+| `voyage/src/policy_profile/`, `voyage/src/runtime_policy.rs` | Local policy, administrator ceilings and profile transitions |
+| `voyage/src/github/`, `voyage/src/workflow/`, `voyage/src/extensions/`, `voyage/src/inference/` | Execution services and shared legacy operator workflows |
+| `helm/src/managed.rs`, `helm/src/remote_worker.rs` | Retained legacy foreground managed/worker adapters |
+| `vessel/src/process/` | Linux launch, private registry, routing and conservative stop/restart |
+| `vessel/src/main.rs` and HTTP/transport modules | Legacy management, enrollment and authenticated relay |
+| `crates/voyage-protocol/src/process/` | Versioned bounded Helm–Vessel–voyage messages |
+| `crates/voyage-storage/src/` | Native private-storage primitives |
+| `installer/src/service/` | Linux private installation and explicit service lifecycle |
+| `installer/src/flow.rs` | Simulated interactive setup wizard |
 
-There is currently no standalone `voyage` package. Follow the
-[implementation sequence](implementation.md) when extracting that runtime.
+`helm/src/lib.rs` still re-exports execution types from the voyage library for legacy
+paths. Final cutover requires replacing those clients without losing supported
+behavior; the [implementation ledger](implementation.md) records that remaining work.
 
 ## Build and inspect
 
@@ -41,6 +47,7 @@ cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 cargo check --workspace --all-targets --all-features --locked
 ./target/debug/helm --help
 ./target/debug/vessel --help
+./target/debug/voyage --help
 ```
 
 Model calls require separately configured credentials and authorization. Help,
@@ -73,7 +80,7 @@ Keep design and current behavior explicit rather than scattering progress report
 through feature-specific documents. Git history and GitHub issues retain prior
 implementation decisions and evidence.
 
-`helm/prompts/system.md` is embedded runtime input, not a product design guide.
+`voyage/prompts/system.md` is embedded runtime input, not a product design guide.
 `helm/config.example.toml` is an executable configuration example. Change either
 only when its runtime semantics are intended to change; a docs reorganization must
 not inject planned capabilities into model instructions.

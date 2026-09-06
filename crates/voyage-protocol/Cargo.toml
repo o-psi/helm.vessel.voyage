@@ -12,3 +12,4 @@ uuid.workspace = true
 
 ring = "0.17"
 zeroize = "1.9"
+tokio.workspace = true

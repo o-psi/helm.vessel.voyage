@@ -1,10 +1,26 @@
 # Configuring the current implementation
 
-This guide describes the **current implementation**, where `helm` still owns
-provider configuration and embedded execution. It does not describe a deployed
-standalone voyage service. The intended separation of Helm, Vessel and voyage is
-specified in [Architecture](architecture.md); available workflows are in
-[Operations](operations.md).
+Configuration loading and execution policy now live in the shared `voyage/` runtime.
+Legacy Helm commands still call that runtime in-process. Connected voyages load
+configuration on the executing host; Helm's connection does not forward provider
+credentials or execution overrides. The target separation is specified in
+[Architecture](architecture.md); current workflows are in [Operations](operations.md).
+
+## Connected runtime configuration
+
+Supervisor-launched voyages currently use the existing default `helm/config.toml`
+location described below. The supervisor does not yet expose a configuration-file
+selection flag; the low-level runtime serve option is not a client configuration
+API. Provider environment credentials must be available to the supervisor on that host before it starts the child. The Linux
+installer service uses that user's default configuration; see its
+[service guide](../installer/README.md) for lifecycle and paths. Native OAuth tokens
+also stay with the executing account. SSH access does not forward provider keys.
+
+A created process is bound to one workspace and session identity. Connected
+`/model NAME` requests a revision-bound model change; execution policy and provider
+credentials are not edited through the connected UI. Existing legacy CLI profile
+and configuration commands remain available, but their invocation flags do not
+implicitly configure an already-running independent voyage.
 
 ## Configuration sources
 

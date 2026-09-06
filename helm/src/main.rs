@@ -5,18 +5,14 @@ use clap_complete::Shell;
 use helm::{
     Agent, AgentEvent, Config, EventSink,
     agent::RetryPolicy,
-    config::{AccessMode, ApprovalMode, UnattendedApprovalMode},
+    config::{AccessMode, ApprovalMode},
     policy::Policy,
     provider,
     session::{Session, SessionStore},
-    subagent::{
-        AgentBudget, AgentPolicy, ApprovalPolicy, ExecutionContext, RuntimeLimits,
-        SubagentExecutor, SubagentResult, SubagentRuntime, SubagentTool, WorktreeManager,
-    },
-    todo::{TodoScope, TodoStore},
+    subagent::SubagentRuntime,
     tools::{
-        ApprovalOutcome, ApprovalRequest, Approver, InteractionMode, Redactor, TodoTool,
-        ToolContext, ToolRegistry, UnattendedApprover,
+        ApprovalOutcome, ApprovalRequest, Approver, InteractionMode, Redactor, ToolContext,
+        UnattendedApprover,
     },
 };
 use sha2::{Digest, Sha256};
@@ -24,9 +20,13 @@ use std::{
     fs::{File, OpenOptions},
     io::{self, IsTerminal, Write},
     path::PathBuf,
-    sync::{Arc, OnceLock, RwLock, Weak},
+    sync::Arc,
 };
 use tracing_subscriber::EnvFilter;
+use voyage_runtime::build::{
+    ManagedAgent, ManagedResources, build_subagents_managed, build_tools, redactor, todo_tool,
+    tool_environment,
+};
 mod managed;
 mod remote_consent;
 mod remote_worker;
@@ -114,6 +114,8 @@ enum LogFormat {
 }
 #[derive(Subcommand)]
 enum Command {
+    /// Connect to independent voyage processes through local or SSH-accessed Vessels.
+    Connect(helm::process_client::cli::ConnectArgs),
     /// Inspect GitHub context and publish only after exact attended review.
     Github(GithubArgs),
     /// Install, inspect and explicitly enable declarative packages.
@@ -400,6 +402,25 @@ async fn main() -> Result<()> {
         }
         Err(error) => error.exit(),
     };
+    if matches!(&cli.command, Some(Command::Connect(_))) {
+        let creating = matches!(&cli.command, Some(Command::Connect(args))
+            if matches!(&args.command, Some(helm::process_client::cli::ConnectedCommand::New { .. })));
+        anyhow::ensure!(
+            cli.config.is_none()
+                && cli.set.is_empty()
+                && cli.model.is_none()
+                && cli.provider.is_none()
+                && (cli.workspace.is_none() || creating)
+                && cli.access.is_none()
+                && cli.approval.is_none()
+                && cli.policy.policy_profile.is_none(),
+            "connected voyages resolve execution configuration on their host; use connect command options"
+        );
+        if let Some(Command::Connect(args)) = cli.command {
+            return helm::process_client::cli::run(args).await;
+        }
+        unreachable!();
+    }
     let is_chat = matches!(&cli.command, None | Some(Command::Chat { .. }));
     let remembered = if is_chat && cli.config.is_none() {
         helm::chat_preferences::load()?
@@ -704,6 +725,9 @@ async fn main() -> Result<()> {
         resume: None,
         plain: false,
     }) {
+        Command::Connect(_) => {
+            unreachable!("connected client handled before execution configuration")
+        }
         Command::Github(args) => github_cli(&config, cli.workspace, args).await,
         Command::Extension(_) => {
             unreachable!("extension command handled before provider configuration")
@@ -1098,484 +1122,6 @@ fn probe_codex_compatibility(command: &str) -> CodexCompatibilityProbe {
 }
 
 /// Resolve a finite retained-record snapshot without transferring lease ownership.
-fn inherited_child_workspace(
-    records: Vec<(
-        helm::subagent::AgentId,
-        Option<helm::subagent::AgentId>,
-        Option<PathBuf>,
-    )>,
-    id: helm::subagent::AgentId,
-    fallback: &std::path::Path,
-) -> Result<PathBuf> {
-    let count = records.len();
-    let records = records
-        .into_iter()
-        .map(|(id, parent, path)| (id, (parent, path)))
-        .collect::<std::collections::BTreeMap<_, _>>();
-    anyhow::ensure!(
-        records.len() == count,
-        "duplicate subagent workspace ancestry"
-    );
-    let mut visited = std::collections::BTreeSet::new();
-    let mut cursor = Some(id);
-    let mut nearest = None;
-    while let Some(id) = cursor {
-        anyhow::ensure!(visited.insert(id), "cyclic subagent workspace ancestry");
-        let (parent, path) = records
-            .get(&id)
-            .context("subagent workspace ancestry unavailable")?;
-        if nearest.is_none() {
-            nearest = path.clone();
-        }
-        cursor = *parent;
-    }
-    // Every visited node must be a distinct member of the captured finite map.
-    Ok(nearest.unwrap_or_else(|| fallback.to_path_buf()))
-}
-fn check_requested_workspace(
-    workspace: &std::path::Path,
-    read: &[PathBuf],
-    write: &[PathBuf],
-) -> Result<()> {
-    let workspace = workspace.canonicalize()?;
-    let contains = |roots: &[PathBuf]| -> Result<bool> {
-        Ok(roots
-            .iter()
-            .map(|root| root.canonicalize())
-            .collect::<std::io::Result<Vec<_>>>()?
-            .iter()
-            .any(|root| workspace.starts_with(root)))
-    };
-    anyhow::ensure!(
-        contains(read)? && contains(write)?,
-        "child workspace exceeds requested read/write delegation before implicit roots"
-    );
-    Ok(())
-}
-
-struct CliSubagentExecutor {
-    managed_resources: Option<Arc<ManagedResources>>,
-    todos: TodoTool,
-    config: Config,
-    parent_policy: Arc<Policy>,
-    workspace: PathBuf,
-    runtime: OnceLock<Weak<SubagentRuntime>>,
-    worktrees: Option<WorktreeManager>,
-    model: Arc<RwLock<String>>,
-}
-#[async_trait]
-impl SubagentExecutor for CliSubagentExecutor {
-    async fn execute(
-        &self,
-        mut context: ExecutionContext,
-    ) -> std::result::Result<SubagentResult, String> {
-        context.progress("initializing provider and tools").await;
-        let mut config = self.config.clone();
-        config.model = self
-            .model
-            .read()
-            .expect("subagent model lock poisoned")
-            .clone();
-        let workspace = if let Some(worktree) = &context.worktree {
-            worktree.clone()
-        } else {
-            let runtime = self
-                .runtime
-                .get()
-                .and_then(Weak::upgrade)
-                .context("subagent runtime unavailable")
-                .map_err(|error| error.to_string())?;
-            let records = runtime
-                .list()
-                .await
-                .into_iter()
-                .map(|record| (record.id, record.parent_id, record.worktree))
-                .collect();
-            inherited_child_workspace(records, context.id, &self.workspace)
-                .map_err(|error| error.to_string())?
-        };
-        check_requested_workspace(
-            &workspace,
-            &context.policy.readable_roots,
-            &context.policy.writable_roots,
-        )
-        .map_err(|error| error.to_string())?;
-        config.workspace = Some(workspace);
-        config.allow_read = context.policy.readable_roots.clone();
-        config.allow_write = context.policy.writable_roots.clone();
-        config.max_tokens = context
-            .policy
-            .budget
-            .response_limit(context.budget.response_limit(config.max_tokens));
-        let workspace = config.resolve_workspace(None).map_err(|e| e.to_string())?;
-        let resolved = helm::runtime_policy::RuntimePolicy::resolve_child(
-            &config,
-            &workspace,
-            &self.parent_policy,
-        )
-        .map_err(|e| e.to_string())?;
-        let config = resolved.config().clone();
-        let policy = Arc::new(resolved.policy().clone());
-        let tool_context = ToolContext {
-            github: helm::github::Credential::from_config(&config),
-            completion: context.completion.clone(),
-            policy,
-            approver: Arc::new(UnattendedApprover { allow: false }),
-            timeout: config.timeout(),
-            max_output_bytes: config.max_output_bytes,
-            environment: tool_environment(&config),
-            cancellation: context.cancellation.clone(),
-            execution_id: uuid::Uuid::new_v4(),
-            interaction: InteractionMode::Unattended,
-            redactor: redactor(&config),
-        };
-        let child_worktrees = self.worktrees.clone().map(|manager| {
-            if resolved.ceiling_present() {
-                manager.with_environment(tool_environment(&config))
-            } else {
-                manager
-            }
-        });
-        let child_budget = context.budget.clone();
-        let mut child_policy = context.policy.clone();
-        child_policy.budget = child_budget.clone();
-        child_policy.readable_roots = config.allow_read.clone();
-        child_policy.writable_roots = config.allow_write.clone();
-        let child_tool = self.runtime.get().and_then(Weak::upgrade).map(|runtime| {
-            SubagentTool::new(runtime, child_policy, child_budget)
-                .with_parent(context.id)
-                .with_worktrees(child_worktrees)
-        });
-        // Worktree-isolated children still coordinate through the parent's workspace plan.
-        // Keying todos by the temporary worktree would silently fork task state.
-        let completion_tool = self
-            .runtime
-            .get()
-            .and_then(Weak::upgrade)
-            .and_then(|runtime| runtime.store())
-            .map(|store| helm::completion::tool::CompletionTool::new(self.todos.store(), store));
-        tool_context
-            .policy
-            .check_execution_authority()
-            .map_err(|error| error.to_string())?;
-        let accounting =
-            helm::inference::runtime::Accounting::child(&config.provider_profile(), context.id.0)
-                .await
-                .map_err(|error| error.to_string())?;
-        let mut tools = build_tools(
-            &config,
-            child_tool,
-            Some(self.todos.clone()),
-            completion_tool,
-            self.managed_resources.as_deref(),
-            &tool_context.policy,
-        )
-        .await
-        .map_err(|e| e.to_string())?;
-        tools.retain_allowed(&context.policy.allowed_tools);
-        if let Some(resources) = &self.managed_resources {
-            resources
-                .register(&mut tools)
-                .map_err(|error| error.to_string())?;
-        }
-        tool_context
-            .policy
-            .check_execution_authority()
-            .map_err(|error| error.to_string())?;
-        let agent = Agent::new(
-            provider::from_config(&config, workspace).map_err(|e| e.to_string())?,
-            tools,
-            tool_context,
-            context.inference_warning_sink(),
-            config.model.clone(),
-            config.system_prompt.clone(),
-            config.max_tokens,
-            config.temperature,
-        )
-        .with_inference_accounting(accounting)
-        .with_context_window(config.context_window)
-        .with_retry_policy(RetryPolicy {
-            max_attempts: config.provider_retry_attempts,
-            initial_delay: std::time::Duration::from_millis(config.provider_retry_initial_ms),
-            max_delay: std::time::Duration::from_millis(config.provider_retry_max_ms),
-        });
-        let mut inbox = context.take_inbox();
-        let (input_tx, input_rx) = helm::agent::steering_channel(64);
-        let input_cancel = context.cancellation.clone();
-        tokio::spawn(async move {
-            loop {
-                tokio::select! {_=input_cancel.cancelled()=>break,message=inbox.recv()=>match message{Some(helm::subagent::InboxMessage::Message(text))=>{if input_tx.send(format!("Message from supervisor: {text}")).await.is_err(){break}},Some(helm::subagent::InboxMessage::FollowUp(text))=>{if input_tx.send(format!("Follow-up instruction: {text}")).await.is_err(){break}},None=>break}}
-            }
-        });
-        let outcome = agent
-            .run_with_cancel_and_input(
-                Vec::new(),
-                context.task,
-                context.cancellation,
-                Some(input_rx),
-            )
-            .await
-            .map_err(|e| e.to_string())?;
-        Ok(SubagentResult {
-            summary: outcome.answer,
-        })
-    }
-}
-
-struct SubagentBundle {
-    coordinator: helm::completion::runtime::Coordinator,
-    todos: TodoTool,
-    completion_tool: helm::completion::tool::CompletionTool,
-    runtime: Arc<SubagentRuntime>,
-    tool: SubagentTool,
-    model: Arc<RwLock<String>>,
-}
-async fn build_subagents_managed(
-    config: &Config,
-    workspace: &std::path::Path,
-    parent_policy: Arc<Policy>,
-    managed_resources: Option<Arc<ManagedResources>>,
-) -> Result<SubagentBundle> {
-    parent_policy.check_execution_authority()?;
-    let standard = ToolRegistry::standard();
-    let mut allowed_tools: std::collections::BTreeSet<String> = standard
-        .definitions()
-        .into_iter()
-        .map(|definition| definition.name)
-        .collect();
-    allowed_tools.insert("subagent".to_string());
-    allowed_tools.insert("todo".to_string());
-    allowed_tools.insert("completion".to_string());
-    if config.github_enabled && parent_policy.effective().rules().github_enabled {
-        allowed_tools.insert("github".into());
-    }
-    let budget = AgentBudget {
-        max_tokens: config.max_tokens as u64,
-
-        max_terminals: config.terminal_max_count.min(u32::MAX as usize) as u32,
-    };
-    let policy = AgentPolicy {
-        readable_roots: std::iter::once(workspace.to_path_buf())
-            .chain(config.allow_read.clone())
-            .collect(),
-        writable_roots: std::iter::once(workspace.to_path_buf())
-            .chain(config.allow_write.clone())
-            .collect(),
-        allowed_tools,
-        approval: ApprovalPolicy::Deny,
-        budget: budget.clone(),
-    };
-    let workspace_key = hex::encode(Sha256::digest(workspace.as_os_str().as_encoded_bytes()));
-    let completion_root = helm::config::default_data_dir().join("completion");
-    let mut directories = std::fs::DirBuilder::new();
-    directories.recursive(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::DirBuilderExt;
-        directories.mode(0o700);
-    }
-    directories.create(&completion_root)?;
-    let coordinator = helm::completion::runtime::Coordinator::open(
-        completion_root.join(&workspace_key),
-        workspace,
-    )?;
-    let todos = todo_tool(workspace, coordinator.clone());
-    let worktrees = worktree_manager(workspace, &workspace_key).map(|manager| {
-        if parent_policy.ceiling_present() {
-            manager.with_environment(tool_environment(config))
-        } else {
-            manager
-        }
-    });
-    let model = Arc::new(RwLock::new(config.model.clone()));
-    let executor = Arc::new(CliSubagentExecutor {
-        managed_resources,
-        todos: todos.clone(),
-        config: config.clone(),
-        parent_policy,
-        workspace: workspace.to_path_buf(),
-        runtime: OnceLock::new(),
-        worktrees: worktrees.clone(),
-        model: model.clone(),
-    });
-    let store = helm::subagent::AgentTreeStore::new(
-        helm::config::default_data_dir()
-            .join("subagents")
-            .join(format!("{workspace_key}.json")),
-    )
-    .with_coordinator(coordinator.clone());
-    let runtime = Arc::new(
-        SubagentRuntime::new_persistent(
-            executor.clone(),
-            RuntimeLimits {
-                max_concurrency: config.subagent_max_concurrency,
-                event_history: config.subagent_event_history,
-            },
-            store,
-        )
-        .await
-        .map_err(anyhow::Error::msg)?,
-    );
-    executor
-        .runtime
-        .set(Arc::downgrade(&runtime))
-        .map_err(|_| anyhow::anyhow!("subagent runtime already initialized"))?;
-    let tool = SubagentTool::new(runtime.clone(), policy, budget).with_worktrees(worktrees);
-    let completion_tool = helm::completion::tool::CompletionTool::new(
-        todos.store(),
-        runtime.store().expect("persistent runtime"),
-    );
-    Ok(SubagentBundle {
-        coordinator,
-        todos,
-        completion_tool,
-        runtime,
-        tool,
-        model,
-    })
-}
-
-fn worktree_manager(workspace: &std::path::Path, workspace_key: &str) -> Option<WorktreeManager> {
-    let repository = if workspace.join(".git").exists() {
-        workspace.to_path_buf()
-    } else if workspace.join(".local-git/worktree.git/HEAD").is_file() {
-        workspace.join(".local-git/worktree.git")
-    } else {
-        return None;
-    };
-    WorktreeManager::new(
-        repository,
-        helm::config::default_data_dir()
-            .join("worktrees")
-            .join(workspace_key),
-    )
-    .ok()
-}
-
-#[derive(Default)]
-struct ManagedResourceState {
-    closed: bool,
-    terminals: Vec<helm::tools::ProcessTool>,
-    shells: Vec<helm::tools::ManagedShell>,
-    mcp: Vec<Arc<helm::tools::mcp::McpServer>>,
-}
-struct ManagedResources(std::sync::Mutex<ManagedResourceState>, bool);
-impl Default for ManagedResources {
-    fn default() -> Self {
-        Self(std::sync::Mutex::new(ManagedResourceState::default()), true)
-    }
-}
-impl ManagedResources {
-    fn local() -> Self {
-        Self(
-            std::sync::Mutex::new(ManagedResourceState::default()),
-            cfg!(target_os = "linux"),
-        )
-    }
-    fn register(&self, tools: &mut ToolRegistry) -> Result<()> {
-        let mut state = self
-            .0
-            .lock()
-            .map_err(|_| anyhow::anyhow!("managed resources poisoned"))?;
-        anyhow::ensure!(!state.closed, "managed resource admission closed");
-        state.terminals.retain(|resource| !resource.can_retire());
-        state.shells.retain(|resource| !resource.can_retire());
-        state.mcp.retain(|server| !server.can_retire());
-        anyhow::ensure!(
-            state.terminals.len() < 1024,
-            "managed resource limit reached"
-        );
-        for server in tools.mcp_servers() {
-            if !state.mcp.iter().any(|other| Arc::ptr_eq(other, &server)) {
-                state.mcp.push(server);
-            }
-        }
-        if let Some(terminals) = tools.terminals() {
-            state.terminals.push(terminals);
-        }
-        // Replace only an already-authorized shell; never reintroduce a filtered tool.
-        if self.1 && tools.definitions().iter().any(|tool| tool.name == "shell") {
-            let shell = helm::tools::ManagedShell::new();
-            tools.register(shell.clone());
-            state.shells.push(shell);
-        }
-        Ok(())
-    }
-    fn start_mcp(
-        &self,
-        start: impl FnOnce() -> Result<Arc<helm::tools::mcp::McpServer>>,
-    ) -> Result<Arc<helm::tools::mcp::McpServer>> {
-        let mut state = self
-            .0
-            .lock()
-            .map_err(|_| anyhow::anyhow!("managed resources poisoned"))?;
-        anyhow::ensure!(!state.closed, "managed resource admission closed");
-        let server = start()?;
-        state.mcp.push(server.clone());
-        Ok(server)
-    }
-    fn has_owned_work(&self) -> Result<bool> {
-        let state = self
-            .0
-            .lock()
-            .map_err(|_| anyhow::anyhow!("managed resources poisoned"))?;
-        Ok(state.terminals.iter().any(|item| item.has_owned_work())
-            || state.shells.iter().any(|item| item.has_owned_work()))
-    }
-    async fn shutdown_observed(&self, require_session_observation: bool) -> Result<()> {
-        let retained = self.close()?;
-        let observed = tokio::time::timeout(std::time::Duration::from_secs(15), async {
-            let terminals = futures_util::future::join_all(
-                retained
-                    .terminals
-                    .iter()
-                    .map(|item| item.shutdown(std::time::Duration::from_secs(5))),
-            )
-            .await;
-            let shells = futures_util::future::join_all(
-                retained
-                    .shells
-                    .iter()
-                    .map(|item| item.shutdown(std::time::Duration::from_secs(5))),
-            )
-            .await;
-            let mcp =
-                futures_util::future::join_all(retained.mcp.iter().map(|item| item.shutdown()))
-                    .await;
-            terminals.iter().all(|item| item.observation_complete)
-                && shells.iter().all(|item| item.observation_complete)
-                && mcp.iter().all(Result::is_ok)
-                && (!require_session_observation
-                    || retained.mcp.iter().all(|server| server.observed()))
-        })
-        .await
-        .unwrap_or(false);
-        anyhow::ensure!(
-            observed,
-            "runtime cleanup unconfirmed; execution remains blocked"
-        );
-        Ok(())
-    }
-    fn close(&self) -> Result<ManagedResourceState> {
-        let mut state = self
-            .0
-            .lock()
-            .map_err(|_| anyhow::anyhow!("managed resources poisoned"))?;
-        state.closed = true;
-        Ok(ManagedResourceState {
-            closed: true,
-            terminals: state.terminals.clone(),
-            shells: state.shells.clone(),
-            mcp: state.mcp.clone(),
-        })
-    }
-}
-
-struct ManagedAgent {
-    agent: Agent,
-    subagents: Arc<SubagentRuntime>,
-    resources: Option<Arc<ManagedResources>>,
-}
 async fn build_agent(config: &Config, workspace: PathBuf, attended: bool) -> Result<Agent> {
     Ok(build_agent_bundle(config, workspace, attended, None)
         .await?
@@ -1596,122 +1142,13 @@ async fn build_authorized_agent_bundle(
     sink: Option<Arc<dyn EventSink>>,
     authority: Option<Arc<dyn helm::policy::ExecutionAuthority>>,
 ) -> Result<ManagedAgent> {
-    if let Some(authority) = &authority {
-        authority.check()?;
-    }
-    let resolved = helm::runtime_policy::RuntimePolicy::resolve(config, &workspace)?;
-    let config = resolved.config();
-    let mut policy = resolved.policy().clone();
-    if let Some(authority) = authority {
-        policy = policy.with_execution_authority(authority);
-    }
-    policy.check_execution_authority()?;
-    let policy = Arc::new(policy);
     let terminal = Arc::new(Terminal::default());
-    let approver: Arc<dyn Approver> = if attended {
-        terminal.clone()
-    } else {
-        Arc::new(UnattendedApprover {
-            allow: config.unattended_approval == UnattendedApprovalMode::Allow,
-        })
-    };
-    let context = ToolContext {
-        github: helm::github::Credential::from_config(config),
-        completion: None,
-        policy,
-        approver,
-        timeout: config.timeout(),
-        max_output_bytes: config.max_output_bytes,
-        environment: tool_environment(config),
-        cancellation: tokio_util::sync::CancellationToken::new(),
-        execution_id: uuid::Uuid::new_v4(),
-        interaction: if attended {
-            InteractionMode::Attended
-        } else {
-            InteractionMode::Unattended
-        },
-        redactor: redactor(config),
-    };
-    let accounting =
-        helm::inference::runtime::Accounting::root(&workspace, &config.provider_profile()).await?;
-    let managed_resources = sink.as_ref().map(|_| Arc::new(ManagedResources::default()));
-    let subagents = build_subagents_managed(
-        config,
-        &workspace,
-        context.policy.clone(),
-        managed_resources.clone(),
+    let approver: Option<Arc<dyn Approver>> =
+        attended.then(|| terminal.clone() as Arc<dyn Approver>);
+    voyage_runtime::build::build_agent_bundle_with_output(
+        config, workspace, attended, sink, authority, approver, terminal,
     )
-    .await?;
-    let gate_runtime = subagents.runtime.clone();
-    let gate_todos = subagents.todos.store();
-    let gate_agents = gate_runtime.store().expect("persistent runtime");
-    context.policy.check_execution_authority()?;
-    let mut tools = build_tools(
-        config,
-        Some(subagents.tool),
-        Some(subagents.todos),
-        Some(subagents.completion_tool),
-        managed_resources.as_deref(),
-        &context.policy,
-    )
-    .await?;
-    if let Some(resources) = &managed_resources {
-        resources.register(&mut tools)?;
-    }
-    let retained_runtime = gate_runtime.clone();
-    context.policy.check_execution_authority()?;
-    let agent = Agent::new(
-        provider::from_config(config, context.policy.workspace().to_owned())?,
-        tools,
-        context,
-        sink.unwrap_or(terminal),
-        config.model.clone(),
-        config.system_prompt.clone(),
-        config.max_tokens,
-        config.temperature,
-    )
-    .with_inference_accounting(accounting)
-    .with_completion_coordinator(subagents.coordinator)
-    .with_completion_gate(gate_todos, gate_agents, gate_runtime)
-    .with_context_window(config.context_window)
-    .with_model_mirror(subagents.model)
-    .with_retry_policy(RetryPolicy {
-        max_attempts: config.provider_retry_attempts,
-        initial_delay: std::time::Duration::from_millis(config.provider_retry_initial_ms),
-        max_delay: std::time::Duration::from_millis(config.provider_retry_max_ms),
-    });
-    Ok(ManagedAgent {
-        agent,
-        subagents: retained_runtime,
-        resources: managed_resources,
-    })
-}
-
-fn tool_environment(config: &Config) -> std::collections::BTreeMap<String, String> {
-    let mut environment = config
-        .inherit_env
-        .iter()
-        .filter_map(|name| std::env::var(name).ok().map(|value| (name.clone(), value)))
-        .collect::<std::collections::BTreeMap<_, _>>();
-    environment.extend(config.env.clone());
-    environment
-}
-
-fn redactor(config: &Config) -> Arc<Redactor> {
-    let secrets = config
-        .redact_values
-        .iter()
-        .cloned()
-        .chain(config.env.values().cloned())
-        .chain(
-            config
-                .mcp_servers
-                .values()
-                .flat_map(|server| server.env.values().cloned()),
-        )
-        .chain(config.api_key_for_redaction())
-        .chain(helm::github::credential_redactions(config));
-    Arc::new(Redactor::new(secrets))
+    .await
 }
 
 fn github_context(config: &Config, workspace: &std::path::Path) -> Result<ToolContext> {
@@ -2041,118 +1478,6 @@ async fn launch_from_tui(
         return Ok(());
     }
     result
-}
-
-fn todo_tool(
-    workspace: &std::path::Path,
-    coordinator: helm::completion::runtime::Coordinator,
-) -> TodoTool {
-    let workspace = workspace
-        .canonicalize()
-        .unwrap_or_else(|_| workspace.to_path_buf());
-    let key = hex::encode(Sha256::digest(workspace.as_os_str().as_encoded_bytes()));
-    TodoTool::new(Arc::new(
-        TodoStore::new(
-            helm::config::default_data_dir()
-                .join("todos")
-                .join(format!("{key}.json")),
-            TodoScope::workspace(workspace),
-        )
-        .with_coordinator(coordinator),
-    ))
-}
-
-async fn build_tools(
-    config: &Config,
-    subagents: Option<SubagentTool>,
-    todos: Option<TodoTool>,
-    completion: Option<helm::completion::tool::CompletionTool>,
-    resources: Option<&ManagedResources>,
-    policy: &Policy,
-) -> Result<ToolRegistry> {
-    policy.check_current()?;
-    let mut tools = ToolRegistry::standard_with_terminal_limits(
-        config.terminal_max_count,
-        config.terminal_max_unread_bytes,
-    );
-    if let Some(tool) = subagents {
-        tools.register_subagents(tool)?;
-    }
-    if let Some(tool) = todos {
-        tools.register_todos(tool)?;
-    }
-    if let Some(tool) = completion {
-        tools.register_arc(Arc::new(tool))?;
-    }
-    if config.github_enabled && helm::github::Credential::from_config(config).is_some() {
-        tools.register(helm::github::tool::GithubTool);
-    }
-    if config.access_mode() == AccessMode::ReadOnly {
-        // Do not even start external MCP servers in read-only mode: their
-        // initialization and tool contracts are outside Helm's authority model.
-        tools.retain_read_only();
-        return Ok(tools);
-    }
-    // Keep transport ownership until assembly succeeds so a later discovery or
-    // registration failure can reap every server already started by this build.
-    let mut servers = Vec::new();
-    let assembly: Result<()> = async {
-        for (name, server) in &config.mcp_servers {
-            let mut environment = tool_environment(config);
-            environment.extend(server.env.clone());
-            let start = || {
-                policy.check_current()?;
-                helm::tools::mcp::McpServer::start(
-                    name,
-                    &server.command,
-                    &server.args,
-                    &environment,
-                )
-                .map(Arc::new)
-                .with_context(|| format!("failed to start MCP server `{name}`"))
-            };
-            // Admission and observer registration are atomic with spawn. A
-            // cancelled child initialization cannot hide a server from cleanup.
-            let mcp = match resources {
-                Some(resources) => resources.start_mcp(start)?,
-                None => start()?,
-            };
-            tools.own_mcp(mcp.clone());
-            servers.push(mcp);
-            let mcp = servers.last().expect("new MCP server");
-            tokio::time::timeout(config.timeout(), mcp.initialize())
-                .await
-                .with_context(|| format!("MCP server `{name}` initialization timed out"))?
-                .with_context(|| format!("failed to initialize MCP server `{name}`"))?;
-            let discovered = tokio::time::timeout(config.timeout(), mcp.discover())
-                .await
-                .with_context(|| format!("MCP server `{name}` discovery timed out"))?
-                .with_context(|| format!("failed to discover tools from MCP server `{name}`"))?;
-            for tool in discovered {
-                tools
-                    .register_arc(tool)
-                    .with_context(|| format!("MCP server `{name}` exposed a duplicate tool"))?;
-            }
-        }
-        policy.check_current()?;
-        Ok(())
-    }
-    .await;
-    if let Err(error) = assembly {
-        let mut cleanup_failed = false;
-        for server in &servers {
-            cleanup_failed |= !matches!(
-                tokio::time::timeout(std::time::Duration::from_secs(5), server.shutdown()).await,
-                Ok(Ok(()))
-            );
-        }
-        return Err(if cleanup_failed {
-            error.context("failed runtime MCP cleanup unconfirmed")
-        } else {
-            error
-        });
-    }
-    Ok(tools)
 }
 
 /// Once work starts, Ctrl-C requests cooperative cancellation instead of allowing

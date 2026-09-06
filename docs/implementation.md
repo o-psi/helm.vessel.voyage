@@ -1,6 +1,6 @@
 # Implementation sequence
 
-Status: planned work for the [architecture](architecture.md). The current source
+Status: implementation in progress for the [architecture](architecture.md). The current source
 map is in [development](development.md); available behavior is in
 [current state](current-state.md). Tracking spans
 [#77](https://github.com/o-psi/voyage/issues/77),
@@ -12,6 +12,28 @@ by Helm through a local or remote Vessel. A local runtime socket directly expose
 to Helm, a TUI task per session, or agent loops inside Vessel do not satisfy it.
 Uncommitted experiments and historical issue closure are not implementation evidence.
 
+## Implementation status ledger
+
+The entries below describe source delivered in this migration, not completed
+roadmap acceptance. Commit identity and exact final checks belong in the linked
+issue delivery records. Do not infer live-provider, native deployment or end-to-end
+coverage from static/build checks. The full requested implementation remains open.
+
+| Step | Implemented source | Remaining acceptance |
+| --- | --- | --- |
+| 1. Contracts | `crates/voyage-protocol/src/process/` defines versioned bounded private requests, session/incarnation identities, receipts and exact-run commands. Both runtime and Vessel authenticate local account peers; Helm has local and SSH clients. | Cursor-based subscriptions/replay gaps, enrolled session/responder grants, complete lifecycle capabilities and reviewed cross-component failure evidence. |
+| 2. Independent owner | `voyage/` contains runtime modules and a real executable. Its server holds one managed session owner, checkpoints streamed output, scopes resources per process, handles steering and durable decisions, and retains cleanup obligations. | Retire legacy embedded Helm execution after feature parity; integrate explicit ordinary-session migration; complete resource/budget audit and interruption evidence. File movement does not complete this step. |
+| 3. Supervision | `vessel/src/process/` starts independent processes, authenticates registrations, enforces capacity, inspects health, stops exact incarnations and permits restart only with positive clean-stop evidence. Linux installer service CLI packages a separate service lifetime. | Full active-work crash/outage/reboot/cleanup acceptance, secure native macOS/Windows service paths and broader deployment validation. Unavailable owners remain fenced, not automatically resurrected. |
+| 4. Multiplexing Helm | `helm/src/process_client/` implements connected local/SSH CLI and a TUI with per-voyage drafts, captured command identities, snapshots, unread state, switching, steering and exact cancellation. | Final replacement of chat/run/managed/worker adapters; full workflow/task/subagent/PTY and modal parity; complete background decision and narrow/Unicode/flood acceptance evidence. |
+| 5. Remote lifecycle | One explicit SSH account route can be combined with local voyages. Runtime snapshot/history, rename/model, decisions and exact receipt/cancel commands are present. SSH credentials are not provider credentials. | Multiple remote configurations, enrolled per-session authority and revocation, branch/archive/confirmed delete, transport capability/replay coverage and remote decision authority evidence. SSH account access is not the intended fine-grained grant model. |
+| 6. Participants and owner moves | Existing coordination/grant primitives remain available as foundations. No new participant execution or owner movement is enabled by the process route. | Define and implement accepted execution bindings, disclosure, assignment admission, subordinate cleanup, ambiguous-result handling, membership drain/removal and positively fenced owner transfer; exercise all listed failure scenarios. |
+
+The interactive installer wizard and legacy enrollment/relay topology remain
+explicitly separate from the connected process route. Live model calls require an
+approved provider and budget. Missing platform or behavioral evidence remains
+missing even when all existing quality gates pass. Broader issues stay open until
+their acceptance is actually met.
+
 ## Code disposition and runtime ownership
 
 **Keep means preserve useful behavior and reuse its implementation; it does not
@@ -19,11 +41,13 @@ mean keep execution code in Helm.** The existing agent loop belongs in the voyag
 runtime. Extraction must move its dependencies and authority with it, not leave
 Helm constructing an agent behind a new connection abstraction.
 
-The destinations below are planned source boundaries. Add a `voyage/` workspace
-package for the executable and its runtime modules; it does not exist today.
-Runtime libraries may be factored out as needed, but only the voyage process
-instantiates the session executor. Shared code does not imply shared session
-ownership. Helm and Vessel must not depend on an execution library to run agents.
+The table records the pre-extraction source paths and required final destinations;
+its Helm execution paths are historical baseline references, not the current source
+map. Runtime modules have now moved to the `voyage/` workspace package. The
+[current development map](development.md) lists their actual locations. Helm still
+links the voyage library for legacy execution, so final process ownership remains
+unfinished. In the completed architecture only the voyage process instantiates the
+session executor; shared code must not become competing session ownership.
 
 | Component and current source | Disposition and target source home | Target process responsibility |
 | --- | --- | --- |
@@ -38,7 +62,7 @@ ownership. Helm and Vessel must not depend on an execution library to run agents
 | `helm/src/managed.rs`, `helm/src/remote_worker.rs`, execution entrypoints in `helm/src/main.rs`; relay paths in `vessel/src/attachment_transport.rs` | **Reuse internals, replace entrypoints and topology** with the voyage executable and Vessel routing. Retire the dedicated Helm worker and direct in-process chat execution once equivalent supported workflows are connected. | All session execution runs in voyage processes; Helm clients reach them through Vessel. |
 | `vessel/src/` management, enrollment and transport code | **Keep and adapt** applicable authentication, grants and transport machinery; **build** process launch, discovery, incarnation tracking, health, stop and recovery in `vessel/`. | Vessel supervises and exposes independent voyage processes without hosting their agent loops or canonical transcripts. |
 | `crates/voyage-protocol/`, `crates/voyage-storage/` | **Keep shared primitives** and evolve contracts at both ends. Share wire types and private-storage mechanisms, not live executors or competing session writers. | Each process uses primitives within its authority; canonical checkpoint writes remain voyage-owned. |
-| Workspace manifests, `installer/` and release scripts | **Extend** build, packaging and service setup for the voyage binary and Vessel supervision. Existing installer provisioning is mocked and needs real implementation before deployment claims. | Provision distinct executables and supported service lifetimes; starting Helm must not become the voyage lifetime boundary. |
+| Workspace manifests, `installer/` and release scripts | **Extend** build, packaging and service setup for the voyage binary and Vessel supervision. The wizard remains mocked; explicit Linux service CLI provisioning now exists, with deployment evidence still required. | Provision distinct executables and supported service lifetimes; starting Helm must not become the voyage lifetime boundary. |
 
 This is an ownership migration, not a blanket directory rename or a second copy of
 the executor. Mixed modules must be split along these boundaries. Retire replaced

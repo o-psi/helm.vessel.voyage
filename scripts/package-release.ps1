@@ -13,8 +13,8 @@ try {
   if ((Test-Path -LiteralPath $destination) -or (Test-Path -LiteralPath "$destination.sha256")) { throw 'release label already exists' }
   $content = Join-Path $stage $archive
   New-Item "$content/bin", "$content/share/man/man1", "$content/share/completions" -ItemType Directory -Force | Out-Null
-  Copy-Item "target/$Target/release/helm.exe", "target/$Target/release/vessel.exe", "target/$Target/release/voyage-installer.exe" "$content/bin"
-  foreach ($binary in @('helm', 'vessel')) {
+  Copy-Item "target/$Target/release/helm.exe", "target/$Target/release/vessel.exe", "target/$Target/release/voyage.exe", "target/$Target/release/voyage-installer.exe" "$content/bin"
+  foreach ($binary in @('helm', 'vessel', 'voyage')) {
     & "target/$Target/release/$binary.exe" manpage | Out-File -Encoding utf8 "$content/share/man/man1/$binary.1"
     if ($LASTEXITCODE -ne 0) { throw "$binary manpage failed" }
     foreach ($shell in @('bash', 'zsh', 'fish', 'powershell', 'elvish')) {

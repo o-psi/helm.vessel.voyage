@@ -1,0 +1,58 @@
+[package]
+name = "voyage"
+version = "0.1.0"
+edition = "2024"
+description = "A provider-neutral LLM harness for general terminal work"
+license = "MIT OR Apache-2.0"
+
+[[bin]]
+name = "voyage"
+path = "src/main.rs"
+
+[dependencies]
+log.workspace = true
+voyage-protocol.workspace = true
+tokio-tungstenite.workspace = true
+rusqlite = { version = "0.37", features = ["bundled"] }
+anyhow = "1.0"
+cap-std = "4.0.2"
+cap-fs-ext = "4.0.3"
+async-trait = "0.1"
+bytes = "1"
+base64 = "0.22"
+chrono = { version = "0.4", features = ["serde"] }
+clap = { version = "4.5", features = ["derive", "env"] }
+# Level-triggered Unix polling keeps input readable when a resize is returned first.
+crossterm = { version = "0.29", features = ["event-stream", "use-dev-tty"] }
+clap_complete = "4.5"
+clap_mangen = "0.2"
+dirs = "6.0"
+futures-util = "0.3"
+async-stream = "0.3"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+shell-words = "1.1"
+thiserror = "2.0"
+tokio = { version = "1.47", features = ["fs", "io-util", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+portable-pty = "0.9"
+diffy = "0.4"
+sha2 = "0.10"
+hex = "0.4"
+libc = "0.2"
+tempfile = "3.21"
+toml = "0.9"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
+uuid = { version = "1.18", features = ["v4", "serde"] }
+vt100 = "0.15"
+
+zeroize = "1.9"
+unicode-width = "0.2"
+unicode-segmentation = "1.12"
+
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_System_Console", "Win32_System_Threading"] }
+voyage-storage.workspace = true

@@ -11,7 +11,7 @@ are not presented as usable commands.
 | [Implementation](implementation.md) | Work needed to deliver the target, in dependency order |
 | [Current state](current-state.md) | What the existing code implements and what remains unfinished |
 | [Configuration](configuration.md) | Current provider, policy and storage configuration |
-| [Operations](operations.md) | Current chat, managed-session and remote-worker procedures |
+| [Operations](operations.md) | Connected local/SSH voyages and legacy chat/managed/worker procedures |
 | [Security](security.md) | Authority, credentials, disclosure and terminal safety |
 | [Development](development.md) | Source layout, build commands and contribution workflow |
 | [Quality](quality.md) | The remaining non-test checks and limits of their evidence |
@@ -19,6 +19,7 @@ are not presented as usable commands.
 | [Local Git](local-git.md) | GitHub and this workspace's Git wrapper |
 
 The component entrypoints are [Helm](../helm/README.md) and
-[Vessel](../vessel/README.md). [Evaluation status](../eval/README.md) records the
+[Vessel](../vessel/README.md), [voyage runtime](../voyage/README.md) and
+[installer](../installer/README.md). [Evaluation status](../eval/README.md) records the
 absence of the previous automated suite. Source code is authoritative for current
 behavior; the architecture contract governs future component boundaries.

@@ -9,25 +9,72 @@ current verification boundary.
 
 ## Process boundary
 
-Today, `helm` contains both the terminal interface and agent execution. `helm chat`
-starts local work without Vessel; `helm run` and plain chat also execute in that
-process. The TUI retains workspace runtimes and terminals in the Helm process and
-requires active work to finish or be cancelled before switching sessions. It does
-not multiplex independent running session processes. Exiting the interface is not
-a supported detach from a surviving execution runtime.
+The workspace now includes a standalone `voyage` executable and shared runtime
+library. `helm connect` uses the new **Helm → Vessel → voyage process** path.
+A Linux Vessel launches one independent process per session and authenticates its
+private runtime connection. The connected interface can list, create, observe,
+submit, steer, rename, change model and cancel exact runs through Vessel. Closing
+that interface does not request cancellation. This is an implemented path, not a
+claim that the architecture migration or its acceptance scenarios are complete.
 
-`vessel` currently serves health/status, enrollment, authenticated presence and
-opt-in relay to foreground dedicated Helm workers. It does not supervise session
-processes. There is no `voyage` executable in the workspace.
+Legacy `helm chat`, `run`, `managed` and `remote-worker` still instantiate runtime
+code in the Helm process through the shared voyage library. Their full-screen UI
+retains its old workspace runtime lifetime and switching restrictions. They have
+not been replaced with the connected multiplexer. No ordinary JSON-to-process
+journal migration is automatically performed.
 
-The [target architecture](architecture.md) is **Helm TUI → local or remote Vessel
-→ Voyage processes**. Helm connects only to Vessels. Vessel supervises and exposes
-Voyage processes; each Voyage runtime owns **one session per independent process**.
-These boundaries are requirements for implementation, not descriptions of the
-current executables. A session's conversation is its interaction history; a run is
-one execution within it. Configuration drafts are not sessions.
+## Connected voyages
 
-## Local execution and providers
+`helm connect` discovers an owned private local Vessel directory and can start an
+absent supervisor using companion binaries. Linux local access is authorized by
+OS account ownership and Unix peer credentials. `--ssh ACCOUNT --remote-directory
+ABSOLUTE_PATH` uses that SSH account's local Vessel authority, without forwarding
+provider credentials. `--include-local` adds the local catalogue to that remote
+connection. The SSH route is separate from enrolled machine/session grants.
+
+The TUI keeps per-voyage drafts, pending command identities, scroll and observation
+state, marks unread activity and shows connection errors. Snapshots are polled and explicitly mark bounded/truncated projections; paginated
+history and full message/run-output chunks are available through typed requests.
+This is not a cursor-based event subscription implementation. Actions capture
+session, incarnation and run identity, and uncertain submissions retain their
+pending identity for receipt inspection. Reconnect observes without automatically
+resubmitting input. The current frontend accepts one explicit SSH destination,
+optionally alongside local voyages; arbitrary multiple remote configurations and
+full legacy panel parity remain unfinished.
+
+The independent runtime reuses managed journal admission, streaming checkpoints,
+execution fences, steering and cleanup obligations. Its resource stores are scoped
+to the session process directory while existing workspace coordination remains.
+It refuses compatibility-bridge execution and effectful MCP configurations whose
+cleanup is not supported by the managed execution adapter. Provider selection and
+policy are loaded locally on the executing host. Canonical history is written only
+by that runtime owner for the new process route.
+
+Runtime approvals and model questions have durable pending requests. Responses bind
+an exact run, incarnation, decision and revision; receipts support exact retry and
+single-response semantics. Waiting is bounded by the smaller of configured timeout
+and 120 seconds. Expiry, cancellation and disconnect do not silently authorize an
+action. These runtime decisions do not establish remote enrolled responder grants.
+
+Vessel stores supervision registrations, not canonical transcripts. It serializes
+starts, checks capacity, verifies live session/incarnation responses and refuses
+stale endpoints. An unavailable runtime is not silently replaced. Explicit restart
+requires matching clean-stop evidence; a dead or unreachable process does not
+establish successful cleanup. Runtime stop requests cancellation and records clean
+stop only after observed cleanup. Supervisor stop leaves independent runtimes alone.
+The Linux installer provides explicit service installation, activation, inspection,
+stop and uninstall; its wizard remains simulated. See [installer operations](../installer/README.md).
+
+Branch/archive/delete, direct private PTY attachment, full workflow/task/subagent
+controls, enrolled per-session grants for this new route, participant-Vessel
+execution and owner migration remain incomplete. The roadmap's full exit evidence,
+including native service deployment and approved live-provider validation, is not
+established by the code inventory here.
+
+The remaining sections inventory shared execution behavior and retained legacy
+frontends. A feature in those sections is not automatically exposed by `helm connect`.
+
+## Shared execution and providers
 
 - Native OpenAI Chat, OpenAI Responses and Anthropic transports support streamed
   model output and repeated model/tool turns. Native API providers do not need
@@ -135,9 +182,11 @@ Enrollment supports status, rotation, revocation and local detach. Ordinary
 `helm attachment connect` provides presence; discovery in the voyage setup UI is
 read-only and saves configuration drafts. Sharing consent, actor identity,
 coordination metadata, nomination leases and immutable control receipts do not
-start coordinators, grant tool execution or implement distributed work. There is
-no mixed local/remote multiplexer, coordinator handoff or unified remote operator
-interface. The Vessel web page is a status page, not an execution console.
+start coordinators, grant tool execution or implement distributed work. These
+legacy enrollment surfaces do not supply the new local/SSH multiplexer with
+per-session grants. Coordinator handoff and a unified enrolled remote operator
+interface remain incomplete. The Vessel web page is a status page, not an execution
+console.
 
 ## Other product surfaces
 
@@ -146,8 +195,8 @@ selection. Repository onboarding produces reviewable guidance. Saved workflows
 provide typed public inputs, preview, digest-bound trust and explicit transient
 private shell bindings. GitHub tooling separates inspection from attended review
 of publication. These features remain subject to local authority and provider/tool
-availability. The installer is a setup preview with mocked provisioning, not an
-operational service installer.
+availability. The installer wizard is a setup preview; its separate CLI implements
+explicit Linux service installation and lifecycle operations.
 
 See [operations](operations.md) for existing commands and recovery, and
 [implementation](implementation.md) for the work required to establish the target

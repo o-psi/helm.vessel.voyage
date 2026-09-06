@@ -1,9 +1,9 @@
 # Packaging and releases
 
 Voyage is developing its first release. The current packagers distribute `helm`,
-`vessel` and the `voyage-installer` setup preview. They do not include a standalone
-`voyage` runtime executable because it does not yet exist in this source tree.
-Adding it is part of the [implementation work](implementation.md).
+`vessel`, the independent `voyage` runtime, and `voyage-installer`. Architecture
+cutover and platform deployment remain incomplete; see the
+[implementation ledger](implementation.md).
 
 ## Build and package
 
@@ -22,16 +22,19 @@ packager is `scripts/package-release.ps1`; inspect its declared parameters befor
 running it for a platform build. Do not infer native Windows execution from an
 archive assembled on Linux.
 
-Full archives contain binaries, generated Helm/Vessel manpages and shell
+Full archives contain binaries, generated Helm/Vessel/voyage manpages and shell
 completions, the example configuration, runtime prompt, agent instructions and the
 maintained guides. `scripts/release-documents.txt` is the explicit document allowlist
 for both full packagers. All listed paths must exist; reject unsafe/symlinked paths
 and keep relative links within the extracted archive valid. Unlisted local notes
 and credentials must never enter the archive.
 
-The standalone installer package contains the setup-preview program. `install.sh`
-requires its assets to be published before download works. The wizard's provisioning
-actions are mocked; publishing an archive does not make it a working service installer.
+The standalone installer package contains the installer program, without the three
+runtime binaries. `install.sh` requires its assets to be published before download
+works and opens the simulated wizard. Explicit Linux service installation requires
+local full-release binaries and the `install-user-service` command; see
+[installer operations](../installer/README.md). Native service activation, reboot
+and logout persistence still require actual deployment evidence.
 
 ## Artifact integrity
 

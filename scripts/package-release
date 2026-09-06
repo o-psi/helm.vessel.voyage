@@ -18,8 +18,8 @@ stage="$(mktemp -d dist/.package-XXXXXXXX)"
 mkdir -p "$stage/$archive/bin" "$stage/$archive/share/man/man1" \
   "$stage/$archive/share/bash-completion/completions" "$stage/$archive/share/zsh/site-functions" \
   "$stage/$archive/share/fish/vendor_completions.d"
-install -m 755 "$target_dir/helm" "$target_dir/vessel" "$target_dir/voyage-installer" "$stage/$archive/bin/"
-for binary in helm vessel; do
+install -m 755 "$target_dir/helm" "$target_dir/vessel" "$target_dir/voyage" "$target_dir/voyage-installer" "$stage/$archive/bin/"
+for binary in helm vessel voyage; do
   "$target_dir/$binary" manpage > "$stage/$archive/share/man/man1/$binary.1"
   "$target_dir/$binary" completions bash > "$stage/$archive/share/bash-completion/completions/$binary"
   "$target_dir/$binary" completions zsh > "$stage/$archive/share/zsh/site-functions/_$binary"

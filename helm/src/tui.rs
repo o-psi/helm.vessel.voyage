@@ -6,9 +6,9 @@
 //! boundaries and implementation limits.
 
 mod bridge;
+use crate::composer;
+use crate::composer::*;
 pub use bridge::{ApprovalRequest, QuestionRequest, UiBridge, UiEvent, bridge};
-mod composer;
-use composer::*;
 mod questions;
 use questions::*;
 mod lifecycle;

@@ -51,10 +51,27 @@ local ordering point. Already delivered bytes and already dispatched effects
 cannot be recalled. Expose pending remote enforcement and cleanup honestly. Do not
 claim retention guarantees for backups or external copies that are not enforced.
 
+## Connected account authority
+
+The Linux process route authenticates local OS-user peers and private endpoint
+ownership. Vessel forwards with a session/incarnation-bound runtime secret; it does
+not keep the canonical transcript. SSH invokes the remote account's local Vessel
+adapter with noninteractive authentication and agent forwarding disabled. This
+provides the remote account's local authority, not enrolled per-session grants.
+Do not expose its private socket as an unauthenticated network service.
+
+Pending runtime decisions have exact targeting, durable receipts, single-response
+semantics and bounded expiry. Local policy remains the execution ceiling. Those
+controls do not establish the target multi-principal responder/grant model. Shared
+OS accounts and arbitrary code running as that user remain within the cooperating
+process trust boundary.
+
 ## Current controls
 
-Today those execution checks live in Helm. Native providers do not require the
-Codex executable. API-key and subscription credentials use distinct configured
+Execution checks now live in the shared voyage runtime library. Independent
+connected voyages execute them in their voyage process; legacy Helm frontends
+still instantiate the same runtime in-process. Native providers do not require
+the Codex executable. API-key and subscription credentials use distinct configured
 transports; selecting a model transport does not grant tool authority.
 
 The current access modes are read-only, approval and unrestricted. Unrestricted

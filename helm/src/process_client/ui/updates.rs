@@ -1,0 +1,146 @@
+use super::*;
+
+impl App {
+    pub(super) fn update(&mut self, update: Update) {
+        match update {
+            Update::Catalogue { route, processes } => {
+                for process in processes.into_iter().take(256) {
+                    let target = Target {
+                        route,
+                        session: process.session_id,
+                    };
+                    if let Some(view) = self.views.get_mut(&target) {
+                        if view.process.incarnation != process.incarnation {
+                            view.snapshot = None;
+                            view.rendered.take();
+                            view.observed = None;
+                            view.error = Some(
+                                "Runtime incarnation changed; pending effects are not replayed"
+                                    .into(),
+                            );
+                        }
+                        view.process = process;
+                    } else {
+                        let mut view = View::new(process);
+                        if let Err(error) = drafts::load(&self.clients[route], &mut view) {
+                            view.error = Some(format!("Draft recovery: {error}"));
+                        }
+                        self.views.insert(target, view);
+                    }
+                    if self.selected.is_none() {
+                        self.selected = Some(target);
+                    }
+                }
+            }
+            Update::Snapshot {
+                target,
+                incarnation,
+                result,
+            } => {
+                let Some(view) = self
+                    .views
+                    .get_mut(&target)
+                    .filter(|v| v.process.incarnation == incarnation)
+                else {
+                    return;
+                };
+                match result {
+                    Ok(snapshot) if snapshot.session_id == target.session => {
+                        if view
+                            .snapshot
+                            .as_ref()
+                            .is_some_and(|old| old.revision > snapshot.revision)
+                        {
+                            return;
+                        }
+                        let changed = view
+                            .snapshot
+                            .as_ref()
+                            .is_none_or(|old| old.revision != snapshot.revision);
+                        view.unread |= changed && self.selected != Some(target);
+                        if view.snapshot.as_ref() != Some(&snapshot) {
+                            view.rendered.take();
+                        }
+                        view.snapshot = Some(snapshot);
+                        view.observed = Some(Instant::now());
+                        view.error = None;
+                    }
+                    Ok(_) => view.error = Some("Snapshot identity mismatch".into()),
+                    Err(error) => view.error = Some(error),
+                }
+            }
+            Update::RouteError { route, error } => {
+                self.status = format!("{} unavailable: {}", self.route_label(route), safe(&error));
+                for (target, view) in &mut self.views {
+                    if target.route == route {
+                        view.error =
+                            Some("Connection unavailable; runtime state is unknown".into());
+                    }
+                }
+            }
+            Update::Created { route, result } => match result {
+                Ok(process) => {
+                    let target = Target {
+                        route,
+                        session: process.session_id,
+                    };
+                    self.views
+                        .entry(target)
+                        .or_insert_with(|| View::new(process));
+                    self.selected = Some(target);
+                    self.status = format!(
+                        "Voyage {} started on {}",
+                        target.session,
+                        self.route_label(route)
+                    );
+                }
+                Err(error) => self.status = safe(&error),
+            },
+            Update::Command {
+                target,
+                command_id,
+                result,
+            } => {
+                let Some(view) = self.views.get_mut(&target) else {
+                    return;
+                };
+                let Some(pending) = view.pending.as_ref().filter(|p| p.command_id == command_id)
+                else {
+                    return;
+                };
+                match result {
+                    Ok(value) => {
+                        if value.get("status").and_then(|status| status.as_str()) == Some("unknown")
+                        {
+                            self.status = format!(
+                                "Command {command_id} outcome is unknown; draft retained, no automatic retry"
+                            );
+                            return;
+                        }
+                        if value
+                            .get("command_id")
+                            .and_then(|id| id.as_str())
+                            .is_some_and(|id| id != command_id.to_string())
+                        {
+                            self.status = "Receipt identity mismatch; draft retained".into();
+                            return;
+                        }
+                        if view.draft.text == pending.draft {
+                            view.draft.take();
+                        }
+                        view.pending = None;
+                        self.status = format!("Command {command_id}: {}", safe(&value.to_string()));
+                    }
+                    Err(error) => {
+                        self.status = format!("{} · draft retained", safe(&error));
+                        // A runtime/Vessel error can follow durable admission. Only
+                        // a positive receipt resolves this command's identity.
+                    }
+                }
+                if let Err(error) = drafts::save(&self.clients[target.route], view) {
+                    self.status = format!("Draft persistence failed: {error}");
+                }
+            }
+        }
+    }
+}

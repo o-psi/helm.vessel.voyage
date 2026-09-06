@@ -4,16 +4,19 @@ The target Helm is a TUI that connects only to local or remote Vessels. Each Ves
 supervises and exposes Voyage runtime processes, with **one session per independent
 Voyage process**. See the [architecture](../docs/architecture.md).
 
-**Current code still embeds execution in Helm.** `helm chat`, plain chat and
-one-shot runs execute locally without Vessel. The TUI cannot yet multiplex
-independent running voyages, and there is no `voyage` executable. See the
-[current implementation](../docs/current-state.md) for capabilities and limitations.
+`helm connect` is the connected multiplexer for independent voyage processes through
+local or SSH-accessed Vessels. The legacy `helm chat`, plain chat and one-shot
+entrypoints still execute locally through the shared voyage library. Connected
+mode does not yet replace all legacy workflow, task, terminal and lifecycle controls.
+See the [current implementation](../docs/current-state.md).
 
 From the repository root:
 
 ```sh
-cargo install --path helm --locked
+cargo build --workspace --release --locked
+export PATH="$PWD/target/release:$PATH"
 helm --help
+helm connect
 helm config
 helm doctor
 helm chat
@@ -29,8 +32,8 @@ endpoints, credentials, policy and remembered chat preferences are covered in
 [example configuration](config.example.toml).
 
 [Operations](../docs/operations.md) covers session controls, managed sessions,
-foreground remote workers, diagnostics and recovery. These are current commands,
-not the future Vessel/Voyage process interface. See
+connected local/SSH voyages, foreground legacy remote workers, diagnostics and
+recovery. `helm connect` needs the companion `vessel` and `voyage` executables. See
 [security](../docs/security.md) for execution and privacy boundaries and
 [development](../docs/development.md) for repository work. Automated tests and
 evaluations were removed in #140; no current coverage is implied by this inventory.

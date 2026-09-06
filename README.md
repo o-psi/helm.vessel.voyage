@@ -28,24 +28,27 @@ The [architecture](docs/architecture.md) defines these boundaries.
 
 ## Current implementation
 
-This is a first-release development project. The three-process design above is
-**the target, not the behavior of the current binaries**. Today `helm` contains
-both the TUI and agent runtime, and `vessel` provides management and opt-in relay
-operations. There is no standalone `voyage` executable yet. See the
-[current-state guide](docs/current-state.md) for capabilities and limitations.
+This is a first-release development project with an incomplete architecture migration.
+`helm connect` now reaches separate `voyage` processes through a local Vessel or an
+explicit SSH account on a remote host. The runtime code lives in `voyage/`; legacy
+`helm chat`, `run`, managed and remote-worker entrypoints still execute in Helm
+through that shared library. They have not been retired because connected feature
+parity is incomplete. See the [current-state guide](docs/current-state.md).
 
 From a source checkout:
 
 ```sh
 cargo build --workspace --release --locked
 ./target/release/helm --help
-./target/release/helm chat
+./target/release/helm connect
 ```
 
 Configure a provider before starting chat; see [configuration](docs/configuration.md).
 From an extracted full archive, use `./bin/helm` or `.\bin\helm.exe`. Keep its guide
-and configuration directories together. The setup-preview executable currently
-mocks provisioning actions.
+and configuration directories together. Linux connected mode needs `vessel` and
+`voyage` beside `helm`; it can start an absent local Vessel. The
+[installer](installer/README.md) also provides explicit Linux user-service setup;
+its interactive wizard remains a simulation.
 
 ## Documentation
 

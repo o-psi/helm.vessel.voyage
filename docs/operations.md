@@ -1,19 +1,113 @@
 # Operating the current implementation
 
-This guide describes the **current implementation**. The current `helm` binary
-contains the TUI and execution runtime; `vessel` can relay requests to an explicitly
-started dedicated worker. Ordinary local chat does not require Vessel. There is no
-separate `voyage` executable or background voyage supervisor on current main.
-The intended process boundaries are specified in [Architecture](architecture.md).
-See [Current state](current-state.md) for the implementation inventory.
+This guide covers both the new connected process route and retained legacy
+entrypoints. `helm connect` reaches independent voyage processes through Vessel;
+`helm chat`, `run`, `managed` and `remote-worker` still execute through embedded
+shared runtime code. Their lifetime and capability differences matter. See
+[Current state](current-state.md) and the [Architecture](architecture.md).
 
-Examples use installed `helm` and `vessel` commands. From a source checkout, use
-`target/release/helm` and `target/release/vessel` after building them. Replace
-uppercase UUID, revision, deadline and digest placeholders with actual output;
-replace absolute example paths with your own existing directories. Provider
-configuration is covered in [Configuration](configuration.md).
+Examples use installed executables. In a checkout, use `target/release/helm`,
+`target/release/vessel` and `target/release/voyage` after building the workspace.
+Replace UUID, revision, deadline and digest placeholders with actual observations;
+workspace paths refer to the executing host. Configure that host's provider before
+submitting work; see [Configuration](configuration.md).
 
-## Ordinary local work
+## Independent local voyages
+
+Keep all three executables beside one another. On Linux, connected mode can start
+an absent local Vessel in the default private state directory and leave it running
+when the interface closes:
+
+```sh
+helm connect
+helm connect list
+helm connect new --workspace /absolute/project
+helm connect inspect SESSION_UUID
+```
+
+`--directory /absolute/private-vessel` selects another local installation;
+`--no-start` requires an existing supervisor. For deliberate service activation,
+use the [installer instructions](../installer/README.md). A foreground supervisor
+can also be started explicitly:
+
+```sh
+vessel local-serve --directory /absolute/private-vessel \
+  --voyage-binary /absolute/bin/voyage --capacity 16
+helm connect --directory /absolute/private-vessel
+```
+
+The connected TUI uses Ctrl+N to create, Tab/Shift+Tab to switch, and Ctrl+C/Ctrl+Q
+to detach. `/new /absolute/workspace`, `/use SESSION_UUID`, `/rename NAME`,
+`/model MODEL`, `/cancel`, `/receipt`, `/help` and `/quit` address the selected
+voyage. Ordinary text submits a turn when idle and steers the exact observed run
+when active. A refused or uncertain command retains its draft; inspect `/receipt`
+before sending again. Switching views does not cancel or redirect outstanding work.
+Pending decisions show their request in the selected view and a `!` in the
+background voyage list. `/approve DECISION_UUID` and `/deny DECISION_UUID` answer
+an exact approval; `/answer DECISION_UUID text` answers a model question. There is
+no approve-all operation. Responses are tied to the observed decision, run,
+incarnation and revision, and an expired request cannot authorize an action.
+Decision waits are bounded; leaving an unanswered prompt is not approval.
+Legacy slash commands and terminal/workflow panels are not all available here.
+
+For plain automation, capture identity before mutation and preserve exact commands
+when delivery is uncertain:
+
+```sh
+helm connect new --id SESSION_UUID --command-id CREATE_UUID --workspace /absolute/project
+helm connect submit SESSION_UUID --expected-revision REVISION \
+  --command-id COMMAND_UUID --expires-at-ms DEADLINE_MS "Describe the workspace"
+helm connect receipt SESSION_UUID COMMAND_UUID
+helm connect inspect SESSION_UUID
+helm connect cancel SESSION_UUID --run RUN_UUID --expected-revision REVISION \
+  --command-id CANCEL_UUID --expires-at-ms DEADLINE_MS
+helm connect stop SESSION_UUID --incarnation INCARNATION_UUID
+helm connect restart SESSION_UUID --incarnation INCARNATION_UUID --command-id RESTART_UUID
+```
+
+Deadlines are Unix milliseconds, not durations. Revisions and run/incarnation IDs
+come from current inspection. A receipt records admission, not successful execution
+or observed cleanup. An unknown receipt does not authorize a different resubmission.
+A stop response can precede observed cleanup; inspect again. Never infer survival
+from a stored PID or force restart by removing registration/cleanup records.
+
+Snapshots bound message and partial-output size and mark truncation. Use the typed
+request command for paginated history or full message/output chunks rather than
+assuming the screen contains the full transcript:
+
+```sh
+helm connect request SESSION_UUID '{"op":"history","offset":0,"limit":32,"expected_revision":null}'
+helm connect request SESSION_UUID '{"op":"decisions"}'
+```
+
+History replies include revision, message offsets and continuation fields. Pass the
+observed revision on later pages when consistency is required. `message_chunk`
+requires `index`, UTF-8 byte `offset`, `limit` (1–65536) and `expected_revision`;
+its data chunks form a public message JSON projection. `run_output` requires an
+exact `run_id`, byte `offset` and `limit`. Follow returned `next_offset` values;
+never split a UTF-8 character or treat partial assistant output as accepted history.
+
+## SSH-account remote voyages
+
+Start a Linux Vessel on the remote machine and put `vessel` on that account's PATH.
+Configure SSH authentication and known-host verification independently. The SSH
+helper is noninteractive, does not forward the agent, and does not provision or
+start a remote supervisor:
+
+```sh
+helm connect --ssh USER@HOST --remote-directory /absolute/private-vessel
+helm connect --ssh USER@HOST --remote-directory /absolute/private-vessel --include-local
+helm connect --ssh USER@HOST --remote-directory /absolute/private-vessel list
+```
+
+Plain commands select one Vessel, so do not combine `--include-local` with a CLI
+subcommand. Remote `/new` needs an explicit absolute path on the remote machine.
+SSH-account authority is broad local-account authority; this is not enrolled
+per-session grant delegation or participant-Vessel execution. The provider and its
+credentials remain on the remote executing machine. Snapshot polling/reconnect does
+not replay work, and SSH loss does not request runtime cancellation.
+
+## Legacy ordinary local work
 
 ```sh
 helm --workspace /absolute/project chat
@@ -37,7 +131,7 @@ requires idle execution. Current TUI navigation does not establish independent
 background process lifetimes: do not assume closing it detaches a surviving run.
 Do not open the same saved session through competing writable copies.
 
-## Private managed sessions
+## Legacy private managed sessions
 
 A managed directory identifies a local installation, not a workspace. Choose an
 absolute directory whose parent exists and retain it for later commands.
@@ -121,10 +215,10 @@ currently 8. Stop owners and resolve interrupted work before explicitly running
 `helm managed --directory "$STORE" upgrade`. Keep private backups; never remove
 cleanup or ownership records to force admission.
 
-## Dedicated remote work
+## Legacy dedicated remote work
 
 Current remote execution exposes one dedicated session per foreground Helm worker.
-It is separate from the planned Vessel-supervised voyage architecture. Enrollment
+It is separate from the new Vessel-supervised process route. Enrollment
 and presence alone grant no execution or access to existing private sessions.
 Configure a private Vessel authority directory, operator token and canonical HTTPS
 origin behind a TLS proxy on the Vessel host. Supply the token through the

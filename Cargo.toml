@@ -1,5 +1,5 @@
 [workspace]
-members = ["helm", "vessel", "installer", "crates/voyage-protocol", "crates/voyage-storage"]
+members = ["helm", "voyage", "vessel", "installer", "crates/voyage-protocol", "crates/voyage-storage"]
 resolver = "3"
 
 [workspace.package]

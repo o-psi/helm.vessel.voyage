@@ -18,9 +18,11 @@ Helm disconnect does not cancel a voyage. Session is the technical name for a
 voyage, conversation is its history, and a run is one execution within it.
 Configuration drafts are not sessions. A repository or project map is optional.
 
-This is first-release development. Current `helm` still embeds execution, current
-`vessel` provides management/relay operations, and no standalone `voyage` executable
-exists. Describe current behavior using [docs/current-state.md](docs/current-state.md)
+This is first-release development. `helm connect` uses Vessel-supervised independent
+`voyage` processes; legacy Helm chat/run/managed/worker entrypoints still embed the
+shared voyage runtime until connected feature parity is complete. Vessel's legacy
+management/relay surface remains separate from its Linux process supervisor.
+Describe current behavior using [docs/current-state.md](docs/current-state.md)
 and code; label target capabilities explicitly. Do not inject planned capabilities
 into current runtime instructions. Browser console work remains deferred.
 
@@ -51,8 +53,8 @@ into current runtime instructions. Browser console work remains deferred.
   atomic checkpoints and canonical text. Never claim a dead process survived restart
   or replay uncertain external effects automatically.
 - The target voyage process enforces local execution policy; Vessel routing and Helm
-  presentation cannot broaden it. Until extraction, preserve the current Helm
-  runtime's authority checks and outbound-worker contract.
+  presentation cannot broaden it. Preserve the shared runtime authority checks and
+  retained legacy outbound-worker contract until those paths are replaced.
 - Keep provider credentials on the executing machine. Native providers must remain
   independent of Codex; the optional compatibility bridge is distinct. Preserve
   credential/billing distinctions. Do not centralize credentials across Vessels.
@@ -72,11 +74,12 @@ into current runtime instructions. Browser console work remains deferred.
 
 ## Repository workflow
 
-The Rust workspace currently contains `helm/`, `vessel/`, `installer/`,
+The Rust workspace currently contains `helm/`, `vessel/`, `voyage/`, `installer/`,
 `crates/voyage-protocol/` and `crates/voyage-storage/`. See
 [docs/development.md](docs/development.md) for code boundaries and
 [docs/implementation.md](docs/implementation.md) for target delivery order.
-Check both ends when changing wire contracts. Installer provisioning is mocked.
+Check both ends when changing wire contracts. Installer CLI supports explicit Linux
+user-service provisioning; its interactive wizard is still mocked.
 Native private-storage changes require platform-specific security verification.
 
 Use normal Git in ordinary clones. In this workspace `.git` is reserved; use

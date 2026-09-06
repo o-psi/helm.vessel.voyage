@@ -2,8 +2,10 @@ README.md
 AGENTS.md
 helm/README.md
 helm/config.example.toml
-helm/prompts/system.md
+voyage/prompts/system.md
 vessel/README.md
+voyage/README.md
+installer/README.md
 eval/README.md
 docs/README.md
 docs/architecture.md

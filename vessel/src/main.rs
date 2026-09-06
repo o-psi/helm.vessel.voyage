@@ -58,6 +58,20 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Relay one framed request over stdio to this account's local Vessel.
+    LocalRequest {
+        #[arg(long)]
+        directory: PathBuf,
+    },
+    /// Serve a private local catalogue and supervise independent voyage processes.
+    LocalServe {
+        #[arg(long)]
+        directory: PathBuf,
+        #[arg(long)]
+        voyage_binary: Option<PathBuf>,
+        #[arg(long, default_value_t = 16)]
+        capacity: usize,
+    },
     /// Generate a shell completion script on stdout.
     Completions {
         #[arg(value_enum)]
@@ -90,13 +104,40 @@ async fn main() -> Result<()> {
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| "vessel=info".into());
     match cli.log_format {
-        LogFormat::Text => tracing_subscriber::fmt().with_env_filter(filter).init(),
+        LogFormat::Text => tracing_subscriber::fmt()
+            .with_env_filter(filter)
+            .with_writer(std::io::stderr)
+            .init(),
         LogFormat::Json => tracing_subscriber::fmt()
+            .with_writer(std::io::stderr)
             .json()
             .with_env_filter(filter)
             .init(),
     }
     match &cli.command {
+        Some(Command::LocalRequest { directory }) => {
+            #[cfg(target_os = "linux")]
+            return vessel::process::request(directory.clone()).await;
+            #[cfg(not(target_os = "linux"))]
+            anyhow::bail!("local process routing currently requires Linux");
+        }
+        Some(Command::LocalServe {
+            directory,
+            voyage_binary,
+            capacity,
+        }) => {
+            #[cfg(target_os = "linux")]
+            {
+                let binary = voyage_binary
+                    .clone()
+                    .unwrap_or(std::env::current_exe()?.with_file_name("voyage"));
+                return vessel::process::serve(directory.clone(), binary, *capacity).await;
+            }
+            #[cfg(not(target_os = "linux"))]
+            anyhow::bail!(
+                "local process supervision currently requires Linux private Unix sockets"
+            );
+        }
         Some(Command::Completions { shell }) => {
             clap_complete::generate(
                 *shell,

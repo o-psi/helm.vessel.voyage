@@ -5,17 +5,23 @@ interfaces. Helm connects only to local or remote Vessels; each Voyage runtime o
 **one session per independent process**. See the
 [architecture](../docs/architecture.md).
 
-**Current Vessel is a management plane and optional relay.** It serves health and
-status, enrollment, authenticated outbound Helm presence and opt-in dedicated
-remote-session HTTP operations. It does not yet launch or supervise Voyage
-processes. Execution currently remains in Helm, and no `voyage` executable exists.
-See the [current implementation](../docs/current-state.md).
+Vessel now has a Linux process supervisor: `local-serve` launches and exposes
+independent voyage executables through an owned private Unix socket. It verifies
+runtime identity, serializes competing starts, enforces capacity and supports
+explicit stop/restart. `local-request` is its framed stdin/stdout adapter for SSH.
+These account-authorized operations are separate from the existing HTTP management,
+enrollment, presence and opt-in legacy Helm-worker relay. Enrolled per-session
+grants are not yet connected to the new process surface. See
+[current implementation](../docs/current-state.md).
 
 From the repository root:
 
 ```sh
-cargo run -p vessel -- --help
-cargo run -p vessel -- --bind 127.0.0.1:9480 --database vessel.db
+cargo build --workspace --locked
+./target/debug/vessel local-serve --directory /absolute/private-vessel \
+  --voyage-binary "$PWD/target/debug/voyage" --capacity 16
+# Separate legacy HTTP management service:
+./target/debug/vessel --bind 127.0.0.1:9480 --database vessel.db
 ```
 
 Set `VESSEL_OPERATOR_TOKEN` securely in the environment to enable authenticated
@@ -28,7 +34,10 @@ The `/health` and `/ready` endpoints report process/database state; `/metrics`
 reports limited service metadata. `/ui` and `/v1/diagnostics` require operator
 authentication when configured. The web page is a status view, not an execution
 console. Enrollment and presence do not share private sessions or grant tool
-execution, and providers and credentials stay on the current executing Helm.
+execution, and providers and credentials stay on the executing host. For the process supervisor,
+Helm detaches without cancelling voyages. Supervisor stop does not intentionally
+kill independent runtimes; machine reboot still ends processes. Linux service
+installation is documented in the [installer guide](../installer/README.md).
 
 See [configuration](../docs/configuration.md), [security](../docs/security.md) and
 [development](../docs/development.md). Automated tests and evaluations were removed
