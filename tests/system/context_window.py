@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Offline context preflight, tool followup and non-destructive resume regression."""
+"""Offline unlimited defaults, explicit context budgets and canonical resume regression."""
 from __future__ import annotations
 
 import hashlib
@@ -60,6 +60,17 @@ class Fixture(BaseHTTPRequestHandler):
     def log_message(self, *_args: object) -> None:
         pass
 
+    def do_GET(self) -> None:
+        if self.path != "/v1/models/offline-context-model":
+            self.send_error(404)
+            return
+        payload = json.dumps({"id": "offline-context-model", "max_tokens": 131072}).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
     def do_POST(self) -> None:
         expected = {"openai-responses": "/v1/responses", "openai-chat": "/v1/chat/completions",
                     "anthropic": "/v1/messages"}[self.provider]
@@ -86,15 +97,14 @@ def exercise(helm: Path, server: ThreadingHTTPServer, provider: str) -> None:
         (root / "evidence.txt").write_text(LARGE, encoding="utf-8")
         (root / "AGENTS.md").write_text("always-preserved-guidance-雪", encoding="utf-8")
         config = root / "config.toml"
-        config.write_text(f'''provider = "{provider}"
+        base_config = f'''provider = "{provider}"
 model = "offline-context-model"
 api_key_env = "HELM_CONTEXT_KEY"
 base_url = "http://127.0.0.1:{server.server_port}/v1"
 provider_retry_attempts = 1
-context_window = 65536
-max_tokens = 1024
 approval = "never"
-''', encoding="utf-8")
+'''
+        config.write_text(base_config, encoding="utf-8")
         env = os.environ.copy()
         env.update(HELM_CONTEXT_KEY="offline-fixture-key", HOME=str(root / "home"),
                    XDG_CONFIG_HOME=str(root / "config"), XDG_DATA_HOME=str(root / "data"))
@@ -116,6 +126,66 @@ approval = "never"
             assert "context_window" in result.stderr, result.stderr
             assert len(Fixture.requests) == count, "Rejected request reached provider"
 
+        # Default configuration must send the entire oversized initial prompt.
+        # No optional provider output cap may be injected by Helm.
+        initial = run("run", LARGE)
+        assert initial.returncode == 0 and RESULT in initial.stdout, (initial.returncode, initial.stderr)
+        assert len(Fixture.requests) == 1, Fixture.requests
+        assert LARGE in json.dumps(Fixture.requests[0], ensure_ascii=False)
+        initial_path, initial_saved = saved_session(initial)
+        assert initial_saved["messages"][0]["content"] == LARGE
+        resumed_initial = run("run", "--resume", initial_saved["id"], "Keep all prior evidence.")
+        assert resumed_initial.returncode == 0, resumed_initial
+        assert LARGE in json.dumps(Fixture.requests[-1], ensure_ascii=False)
+        initial_after = json.loads(initial_path.read_text(encoding="utf-8"))
+        assert initial_after["messages"][:2] == initial_saved["messages"]
+
+        # Tool output crosses the previous 65,536 estimate in the same turn.
+        Fixture.next_tool = True
+        followed = run("run", "Read evidence.txt with read_file.")
+        assert followed.returncode == 0 and RESULT in followed.stdout, followed
+        assert len(Fixture.requests) == 4, Fixture.requests
+        assert LARGE in json.dumps(Fixture.requests[-1], ensure_ascii=False)
+        followed_path, followed_saved = saved_session(followed)
+        expected_tool_result = f"sha256: {hashlib.sha256(LARGE.encode('utf-8')).hexdigest()}\n{LARGE}"
+        assert [m["role"] for m in followed_saved["messages"]] == ["user", "assistant", "tool", "assistant"]
+        assert followed_saved["messages"][2]["content"] == expected_tool_result
+        resumed_tool = run("run", "--resume", followed_saved["id"], "Keep the complete tool evidence.")
+        assert resumed_tool.returncode == 0, resumed_tool
+        assert len(Fixture.requests) == 5, Fixture.requests
+        wire = json.dumps(Fixture.requests[-1], ensure_ascii=False)
+        assert LARGE in wire and CALL_ID in wire and "older messages omitted" not in wire
+        followed_after = json.loads(followed_path.read_text(encoding="utf-8"))
+        assert followed_after["messages"][:4] == followed_saved["messages"]
+        assert len(followed_after["messages"]) == 6
+        assert sum(m["role"] == "tool" for m in followed_after["messages"]) == 1
+        for request in Fixture.requests:
+            if provider == "anthropic":
+                assert request["max_tokens"] == 131072, request["max_tokens"]
+            else:
+                assert not ({"max_tokens", "max_completion_tokens", "max_output_tokens"} & request.keys())
+
+        # Zero also explicitly disables both local limits, rather than being an
+        # invalid override. Positive output reserves remain opt-in.
+        uncapped = run("--set", "context_window=0", "--set", "max_tokens=0", "run", "--no-save", LARGE)
+        assert uncapped.returncode == 0, uncapped
+        assert LARGE in json.dumps(Fixture.requests[-1], ensure_ascii=False)
+        output_only = run("--set", "max_tokens=1234", "run", "--no-save", LARGE)
+        assert output_only.returncode == 0, (output_only.returncode, output_only.stderr)
+        request = Fixture.requests[-1]
+        assert request.get("max_tokens", request.get("max_completion_tokens", request.get("max_output_tokens"))) == 1234
+        assert LARGE in json.dumps(request, ensure_ascii=False)
+        default_plain = subprocess.run([str(helm), "--config", str(config), "--workspace", str(root),
+                                        "chat", "--plain"], input=LARGE + "\n/exit\n", cwd=root,
+                                       env=env, capture_output=True, text=True, timeout=30, check=False)
+        assert default_plain.returncode == 0 and RESULT in default_plain.stdout, default_plain.stderr
+        _, default_plain_saved = saved_session(default_plain)
+        assert default_plain_saved["messages"][0]["content"] == LARGE
+        assert default_plain_saved["messages"][-1]["content"] == RESULT
+        assert LARGE in json.dumps(Fixture.requests[-1], ensure_ascii=False)
+        Fixture.requests = []
+        config.write_text(base_config + "context_window = 65536\nmax_tokens = 1024\n", encoding="utf-8")
+
         # The newest prompt must be rejected before any HTTP dispatch. This is
         # below the per-argument OS limit; UTF-8 is still present in the fixture.
         rejected(run("run", "--no-save", LARGE), 0)
@@ -124,7 +194,7 @@ approval = "never"
         _, saved_oversized = saved_session(oversized)
         assert [m["content"] for m in saved_oversized["messages"]] == [LARGE]
         assert saved_oversized["title_state"]["completed_runs"] == 0
-        for override in ("context_window=0", "max_tokens=65536", "max_tokens=0"):
+        for override in ("context_window=-1", "max_tokens=65536", "max_tokens=-1"):
             result = run("--set", override, "run", "--no-save", "small prompt")
             assert result.returncode != 0, (override, result)
             assert len(Fixture.requests) == 0, override
@@ -191,7 +261,7 @@ approval = "never"
         assert saved_after[:len(saved_before)] == saved_before, "Resume mutated canonical history"
         assert len(saved_after) == len(saved_before) + 2, saved_after
         assert "Context projection:" not in json.dumps(saved_after), saved_after
-        print(f"context window: {provider}: rejection, configuration, tool followup, resume passed")
+        print(f"context window: {provider}: unlimited defaults, optional output caps, explicit rejection, tool followup, resume passed")
 
 
 def main() -> None:

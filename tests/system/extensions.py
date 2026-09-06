@@ -61,6 +61,14 @@ def main():
             def log_message(self, *args):
                 pass
             def do_GET(self):
+                if self.path.startswith('/v1/models/'):
+                    payload = json.dumps({'id': self.path.rsplit('/', 1)[-1], 'max_tokens': 131072}).encode()
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'application/json')
+                    self.send_header('Content-Length', str(len(payload)))
+                    self.end_headers()
+                    self.wfile.write(payload)
+                    return
                 data = json.dumps({"data": [{"id": "fixture"}]}).encode()
                 self.send_response(200)
                 self.end_headers()
