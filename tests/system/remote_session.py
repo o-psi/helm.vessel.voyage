@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Actual opt-in Vessel/Helm execution with isolated native HTTP and private storage."""
 import json
+from http.client import HTTPConnection
 import os
 from pathlib import Path
 import signal
@@ -90,7 +91,7 @@ def case(root,provider,profile=False,shutdown_failure=False,defaults=False):
         process=subprocess.Popen(command,env=env,stdin=subprocess.DEVNULL,stdout=log,stderr=log)
         children.append(process);return process
     def request(path,body=None,authenticated=True,expected=200,extra=None):
-        headers={'x-voyage-request':'2',**(extra or {})}
+        headers={'x-voyage-request':'2','Origin':origin,**(extra or {})}
         if authenticated:headers['Authorization']='Bearer '+TOKEN
         if body is not None:headers['Content-Type']='application/json'
         req=urllib.request.Request(origin+path,headers=headers,data=None if body is None else json.dumps(body).encode())
@@ -107,7 +108,7 @@ def case(root,provider,profile=False,shutdown_failure=False,defaults=False):
         try:return request('/ready',authenticated=False)
         except (OSError,urllib.error.URLError):return None
     try:
-        server_command=[str(VESSEL),'--bind',origin.removeprefix('http://'),'--database',str(root/'vessel.db'),'--attachment-directory',str(root/'authority'),'--public-origin',origin,'--allow-insecure-loopback','--remote-execution']
+        server_command=[str(VESSEL),'--bind',origin.removeprefix('http://'),'--database',str(root/'vessel.db'),'--attachment-directory',str(root/'authority'),'--public-origin',origin.replace('http://','HTTP://')+'/','--allow-insecure-loopback','--remote-execution']
         server=spawn(server_command)
         wait(ready,'server startup')
         invitation=request('/v2/enrollment/invitations',{'ttl_ms':60000})
@@ -147,6 +148,28 @@ def case(root,provider,profile=False,shutdown_failure=False,defaults=False):
         listed=command({'type':'list','after':None,'limit':20})['reply']['sessions']
         assert len(listed)==1 and listed[0]['revision']==0,listed
         session=listed[0]['id']
+        # Equivalent configured spelling must authorize the canonical Origin
+        # through enrollment, connection, list, inspect and every watch (#135).
+        for hostile in ['https://hostile.invalid',origin+'/',origin+'/path','null',origin+', '+origin,origin.replace('http://','http://user:password@')]:
+            command({'type':'list','after':None,'limit':20},extra={'Origin':hostile},expected=403)
+            request(base+f'/events?session_id={session}&after=0',extra={'Origin':hostile},expected=403)
+        for origins in [(origin,origin),(origin,'https://hostile.invalid')]:
+            for endpoint in ('/command',f'/events?session_id={session}&after=0'):
+                body=None if endpoint.startswith('/events') else json.dumps({'command_id':str(uuid.uuid4()),'expires_at_ms':int(time.time()*1000)+120000,'operation':{'type':'list','after':None,'limit':20}}).encode()
+                client=HTTPConnection('127.0.0.1',int(origin.rsplit(':',1)[1]),timeout=8)
+                try:
+                    client.putrequest('GET' if body is None else 'POST',base+endpoint)
+                    client.putheader('Authorization','Bearer '+TOKEN)
+                    client.putheader('x-voyage-request','2')
+                    for supplied in origins:client.putheader('Origin',supplied)
+                    if body is not None:
+                        client.putheader('Content-Type','application/json')
+                        client.putheader('Content-Length',str(len(body)))
+                    client.endheaders(body)
+                    result=client.getresponse();payload=result.read().decode()
+                    assert result.status==403,(endpoint,result.status,payload)
+                    assert KEY not in payload and TOKEN not in payload
+                finally:client.close()
         unknown=command({'type':'inspect','session_id':str(uuid.uuid4())})
         assert unknown['reply']=={'type':'denied','code':'unauthorized'},unknown
         command({'type':'create','workspace_id':str(uuid.uuid4()),'name':'not allowed'},expected=403)
