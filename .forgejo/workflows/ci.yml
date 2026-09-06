@@ -20,6 +20,8 @@ jobs:
       - run: cargo build --workspace --release --locked
       - name: Verify full archive guides and publication failures
         run: python3 tests/system/release_documentation.py
+      - name: Verify bounded model catalog discovery and safe display
+        run: python3 tests/system/model_catalog.py
       - name: Verify mock installer through a real terminal and piped launcher
         run: python3 tests/system/installer_tui.py
       - name: Verify automatic session titles with an offline provider
