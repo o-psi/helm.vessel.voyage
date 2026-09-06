@@ -27,13 +27,27 @@ Helm process, not across restarts. The header always displays the detach chord w
 If an agent requests approval while a terminal is attached, Helm returns
 `unavailable` immediately; terminal keystrokes can never approve an agent action.
 
-The full-screen TUI currently provides the attach workflow. A raw/plain attach
-frontend is **not implemented**. `PlainDetachFilter` is a library helper for that
-planned frontend: it reserves both Ctrl+T and Ctrl+], returns the PTY-bound prefix
-as `PlainDetachChunk.terminal_input`, and returns every byte after the first detach
-chord as `helm_input`. Once detached, later chunks belong entirely to Helm. A
-frontend must retain that remainder and implement terminal restoration; the helper
-alone does not provide a usable plain-mode attach command.
+## Plain chat workflow
+
+In plain chat, use `/terminals` to list this workspace's live terminals, then
+`/terminal ID_OR_EXACT_NAME` to attach. An ambiguous name requires the listed ID.
+Listing an empty workspace does not construct a provider or launch a shell. Saved
+terminal metadata cannot reattach a process after Helm restarts.
+
+Attachment requires local TTY input and output and current writable local policy.
+The private screen reserves its first row for the detach hint. Ctrl+C goes to the
+inner process; Ctrl+T or Ctrl+] returns to Helm without terminating it. Bytes after
+the detach chord belong to the next Helm prompt, including a partial UTF-8 prompt
+that you finish typing after detach. No private input before the chord enters that
+prompt. Pending input is bounded to 64 KiB and never submitted on overflow or invalid
+UTF-8. An inner process exit or unavailable viewport also returns to Helm.
+
+The plain frontend uses the current workspace manager. `/new` creates another
+voyage in that same workspace and preserves its terminals. It does not recover
+another workspace's processes or turn serialized IDs into live attachment authority.
+Quitting Helm requests bounded terminal cleanup; an unobserved cleanup is reported
+explicitly. During attachment, plain approval requests return unavailable and
+asynchronous frontend notifications do not write over the private screen.
 
 This attaches to a PTY owned by the current Helm. Running SSH inside that PTY
 does not attach the interface to a remote Helm or select a coordinating Helm.

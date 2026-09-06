@@ -444,6 +444,18 @@ impl Agent {
     pub fn tool_inventory(&self) -> Vec<ToolDefinition> {
         self.tools.definitions()
     }
+    /// Current process manager only; persisted terminal metadata is never attachable.
+    pub fn plain_terminals(&self) -> Result<(std::sync::Arc<dyn crate::terminal::InteractiveTerminals>, std::sync::Arc<crate::policy::Policy>), AgentError> {
+        self.check_current_policy()?;
+        let manager: std::sync::Arc<dyn crate::terminal::InteractiveTerminals> = match self.tools.terminals() {
+            Some(manager) => std::sync::Arc::new(manager),
+            None => std::sync::Arc::new(crate::terminal::NoInteractiveTerminals::default()),
+        };
+        Ok((manager, self.context.policy.clone()))
+    }
+    pub async fn shutdown_plain_terminals(&self) -> crate::tools::TerminalShutdown {
+        self.tools.shutdown_terminals(Duration::from_secs(3)).await
+    }
     pub fn terminal_metadata(&self) -> Vec<crate::terminal::TerminalSummary> {
         self.tools
             .terminals()

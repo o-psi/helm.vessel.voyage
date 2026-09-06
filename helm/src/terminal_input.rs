@@ -16,6 +16,12 @@ pub(crate) struct Terminal {
 }
 impl Terminal {
     pub(crate) fn enter() -> io::Result<Self> {
+        Self::enter_with_preservation(false)
+    }
+    pub(crate) fn enter_preserving_input() -> io::Result<Self> {
+        Self::enter_with_preservation(true)
+    }
+    fn enter_with_preservation(preserve: bool) -> io::Result<Self> {
         OWNED
             .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
             .map_err(|_| {
@@ -23,7 +29,7 @@ impl Terminal {
             })?;
         let owner = Ownership;
         Ok(Self {
-            inner: native::Terminal::enter()?,
+            inner: native::Terminal::enter(preserve)?,
             _owner: owner,
         })
     }
@@ -47,9 +53,10 @@ mod native {
     pub struct Terminal {
         saved: libc::termios,
         active: bool,
+        preserve: bool,
     }
     impl Terminal {
-        pub fn enter() -> io::Result<Self> {
+        pub fn enter(preserve: bool) -> io::Result<Self> {
             let mut saved = unsafe { std::mem::zeroed() };
             if unsafe { libc::tcgetattr(0, &mut saved) } != 0 {
                 return Err(io::Error::last_os_error());
@@ -57,6 +64,7 @@ mod native {
             let mut terminal = Self {
                 saved,
                 active: false,
+                preserve,
             };
             let mut raw = terminal.saved;
             unsafe { libc::cfmakeraw(&mut raw) };
@@ -64,7 +72,7 @@ mod native {
                 return Err(io::Error::last_os_error());
             }
             terminal.active = true;
-            if unsafe { libc::tcflush(0, libc::TCIFLUSH) } != 0 {
+            if !preserve && unsafe { libc::tcflush(0, libc::TCIFLUSH) } != 0 {
                 return Err(io::Error::last_os_error());
             }
             Ok(terminal)
@@ -119,7 +127,7 @@ mod native {
             if self.active {
                 // Do not wait for output to drain: a stopped/full terminal must
                 // not prevent cancellation from restoring the saved input mode.
-                let _ = unsafe { libc::tcflush(0, libc::TCIFLUSH) };
+                if !self.preserve { let _ = unsafe { libc::tcflush(0, libc::TCIFLUSH) }; }
                 if unsafe { libc::tcsetattr(0, libc::TCSANOW, &self.saved) } != 0 {
                     return Err(io::Error::last_os_error());
                 }
@@ -148,12 +156,14 @@ mod native {
         handle: isize,
         saved: u32,
         active: bool,
+        preserve: bool,
+        queued: std::collections::VecDeque<u16>,
     }
     impl Terminal {
         fn handle(&self) -> HANDLE {
             self.handle as HANDLE
         }
-        pub fn enter() -> io::Result<Self> {
+        pub fn enter(preserve: bool) -> io::Result<Self> {
             let handle = unsafe { GetStdHandle(STD_INPUT_HANDLE) };
             let mut saved = 0;
             if handle.is_null()
@@ -166,6 +176,8 @@ mod native {
                 handle: handle as isize,
                 saved,
                 active: false,
+                preserve,
+                queued: Default::default(),
             };
             if unsafe {
                 SetConsoleMode(
@@ -181,7 +193,7 @@ mod native {
                 return Err(io::Error::last_os_error());
             }
             terminal.active = true;
-            terminal.flush()?;
+            if !terminal.preserve { terminal.flush()?; }
             Ok(terminal)
         }
         fn flush(&self) -> io::Result<()> {
@@ -192,6 +204,7 @@ mod native {
             }
         }
         pub fn read(&mut self) -> io::Result<Option<(u16, u16)>> {
+            if let Some(value) = self.queued.pop_front() { return Ok(Some((value, 1))); }
             match unsafe { WaitForSingleObject(self.handle(), 0) } {
                 WAIT_TIMEOUT => return Ok(None),
                 WAIT_OBJECT_0 => (),
@@ -210,9 +223,29 @@ mod native {
                 return Ok(None);
             }
             let value = unsafe { key.uChar.UnicodeChar };
-            if value == 0 {
-                return Ok(None);
+            if self.preserve {
+                // Encode native navigation keys for the selected PTY, without
+                // using a second buffered console reader.
+                let sequence = match key.wVirtualKeyCode {
+                    33 => Some("\x1b[5~"), 34 => Some("\x1b[6~"),
+                    35 => Some("\x1b[F"), 36 => Some("\x1b[H"),
+                    37 => Some("\x1b[D"), 38 => Some("\x1b[A"),
+                    39 => Some("\x1b[C"), 40 => Some("\x1b[B"),
+                    45 => Some("\x1b[2~"), 46 => Some("\x1b[3~"),
+                    112 => Some("\x1bOP"), 113 => Some("\x1bOQ"),
+                    114 => Some("\x1bOR"), 115 => Some("\x1bOS"),
+                    116 => Some("\x1b[15~"), 117 => Some("\x1b[17~"),
+                    118 => Some("\x1b[18~"), 119 => Some("\x1b[19~"),
+                    120 => Some("\x1b[20~"), 121 => Some("\x1b[21~"),
+                    122 => Some("\x1b[23~"), 123 => Some("\x1b[24~"),
+                    _ => None,
+                };
+                if let Some(sequence) = sequence {
+                    for _ in 0..key.wRepeatCount.clamp(1,64) { self.queued.extend(sequence.encode_utf16()); }
+                    return Ok(self.queued.pop_front().map(|value| (value, 1)));
+                }
             }
+            if value == 0 { return Ok(None); }
             Ok(Some((value, key.wRepeatCount.max(1))))
         }
         pub fn discard(&mut self) -> io::Result<()> {
@@ -248,7 +281,7 @@ mod native {
     use std::io;
     pub struct Terminal;
     impl Terminal {
-        pub fn enter() -> io::Result<Self> {
+        pub fn enter(_preserve: bool) -> io::Result<Self> {
             Err(io::ErrorKind::Unsupported.into())
         }
         pub fn read(&mut self) -> io::Result<Option<(u16, u16)>> {

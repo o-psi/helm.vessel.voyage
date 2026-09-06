@@ -11,6 +11,7 @@ pub mod local_provider;
 pub mod markdown;
 pub mod model;
 pub mod onboarding;
+pub mod plain_terminal;
 pub mod policy;
 pub mod policy_profile;
 pub mod provider;

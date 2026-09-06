@@ -284,6 +284,7 @@ impl Terminal {
 #[async_trait]
 impl Approver for Terminal {
     async fn approve(&self, request: &ApprovalRequest) -> ApprovalOutcome {
+        if helm::plain_terminal::owns_terminal() { return ApprovalOutcome::Unavailable; }
         if request.action.starts_with("github.") {
             return helm::github::approval::approve_terminal(request).await;
         }
@@ -313,6 +314,7 @@ impl Approver for Terminal {
 #[async_trait]
 impl EventSink for Terminal {
     async fn emit(&self, event: AgentEvent) {
+        if helm::plain_terminal::owns_terminal() { return; }
         match event {
             AgentEvent::CompletionState {
                 phase,
@@ -2323,6 +2325,7 @@ async fn chat(
         store.save(&mut session).await?;
     }
     let mut agent: Option<Agent> = None;
+    let mut pending = helm::plain_terminal::PendingInput::default();
     if interactive {
         eprintln!(
             "Helm · {} · {} · access: {} · {}\nType /help for commands.",
@@ -2334,12 +2337,23 @@ async fn chat(
             session.workspace.display()
         );
     }
+    let interrupt = attachment_interrupt();
+    tokio::pin!(interrupt);
     loop {
         if interactive {
             print!("\nhelm> ");
             io::stdout().flush()?;
         }
-        let Some(prompt) = read_plain_prompt().await? else {
+        let next_prompt = if io::stdin().is_terminal() && io::stdout().is_terminal() {
+            let cancel = tokio_util::sync::CancellationToken::new();
+            let operation = helm::plain_terminal::pending_prompt(&mut pending, cancel.clone());
+            tokio::pin!(operation);
+            tokio::select! { biased;
+                _ = &mut interrupt => { cancel.cancel(); let _ = (&mut operation).await; None }
+                result = &mut operation => result?,
+            }
+        } else { read_plain_prompt().await? };
+        let Some(prompt) = next_prompt else {
             break;
         };
         let prompt = prompt.trim();
@@ -2350,7 +2364,7 @@ async fn chat(
             "/quit" | "/exit" => break,
             "/help" => {
                 println!(
-                    "/help  /session  /inference  /new [TITLE]  /name TITLE  /access  /tools  /github COMMAND  /model [MODEL]  /models  /clear  /exit"
+                    "/help  /session  /inference  /new [TITLE]  /name TITLE  /access  /tools  /terminals  /terminal ID_OR_EXACT_NAME  /github COMMAND  /model [MODEL]  /models  /clear  /exit"
                 );
                 continue;
             }
@@ -2407,6 +2421,32 @@ async fn chat(
                 continue;
             }
             _ => {}
+        }
+        if prompt == "/terminals" || prompt == "/terminal" || prompt.starts_with("/terminal ") {
+            if prompt == "/terminal" { eprintln!("usage: /terminal ID_OR_EXACT_NAME (see /terminals)"); continue; }
+            let Some(current) = agent.as_ref() else { eprintln!("No live terminals in this voyage. Saved terminal metadata cannot reattach a process."); continue; };
+            let result: Result<bool> = async {
+                let (manager, policy) = current.plain_terminals()?;
+                let items = manager.list().await?;
+                if prompt == "/terminals" {
+                    if items.is_empty() { println!("No live terminals in this voyage."); }
+                    for item in items { println!("{}  {:?}  {}", item.id, item.state, safe_diagnostic(&item.title)); }
+                    return Ok(false);
+                }
+                let id = helm::plain_terminal::select(&items, prompt.strip_prefix("/terminal ").unwrap_or_default())?;
+                let cancel = tokio_util::sync::CancellationToken::new();
+                let operation = helm::plain_terminal::attach(manager, id, policy, cancel.clone());
+                tokio::pin!(operation);
+                let detached = tokio::select! { biased;
+                    _ = &mut interrupt => { cancel.cancel(); let _ = (&mut operation).await; return Ok(true); }
+                    result = &mut operation => result?,
+                };
+                pending.append(&detached.pending)?;
+                println!("{}", if detached.exited { "Terminal exited; returned to Helm." } else { "Detached; terminal remains private and running." });
+                Ok(false)
+            }.await;
+            match result { Ok(true) => break, Ok(false) => (), Err(error) => eprintln!("{}", safe_diagnostic(&current.redact_diagnostic(error.to_string()))) }
+            continue;
         }
         if prompt == "/github" || prompt.starts_with("/github ") {
             if let Err(error) = github_plain(
@@ -2620,6 +2660,12 @@ async fn chat(
                 eprintln!("error: {error:#}");
             }
         }
+    }
+    if let Some(current) = agent.take() {
+        let cleanup = current.shutdown_plain_terminals().await;
+        session.terminals = current.terminal_metadata();
+        store.save(&mut session).await?;
+        if !cleanup.observation_complete { eprintln!("Terminal cleanup remains unobserved."); }
     }
     if interactive && !session.messages.is_empty() {
         eprintln!("Session {} saved as {}", session.display_name(), session.id);
