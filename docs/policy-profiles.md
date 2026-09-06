@@ -24,7 +24,8 @@ unattended automatic approval. Read-only access still disables mutations; a list
 write root does not override that mode.
 
 Rules support access, unattended approval, read/write directories, denied command
-basenames and inherited environment **names**. Roots are absolute existing directory
+basenames, inherited environment **names**, and the default-off
+[`github_enabled` capability](github-workflows.md#profiles-defaults-and-the-administrator-ceiling). Roots are absolute existing directory
 paths or the literal `$workspace`; they are canonicalized before comparison.
 Relative paths and parent traversal are rejected. The resolver preserves current
 Policy's implicit workspace roots and records when that supplies an omitted root.
@@ -38,7 +39,7 @@ API keys, MCP credentials, provider configuration or redaction values are read o
 copied. This is not a generic secret detector for text an operator deliberately
 puts in a path/name field.
 
-There is no network policy, OS sandbox, new top-level tool grant, secret store or
+There is no general network policy, OS sandbox, arbitrary tool-grant scheme, secret store or
 restored subagent lifetime/child/history cap. Unsupported declarations are rejected.
 These rules are application policy, not process containment.
 

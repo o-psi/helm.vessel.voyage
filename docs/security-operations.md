@@ -10,7 +10,9 @@ Set `access = "approval"` in configuration or pass
   worktree changes, and unknown external MCP tools.
 - `approval` allows ordinary inspection without prompts, asks before every file write and before
   commands classified as consequential, and keeps explicit denials in force.
-- `unrestricted` does not ask for tool approval. Workspace read/write roots and `deny_commands`
+- `unrestricted` does not ask for ordinary tool approval. Exact attended
+  [GitHub publication and recovery approvals](github-workflows.md) remain required.
+  Workspace read/write roots and `deny_commands`
   remain enforced; this mode is not an OS sandbox bypass.
 
 Subagents inherit the same Helm configuration and therefore cannot use commands or writes when

@@ -287,6 +287,10 @@ a library. Credentials and arbitrary provider responses do not leak into saved
 sessions. Native Responses continuity stores only a validated, bounded replay
 envelope and clears it when switching models.
 
+For structured issue/PR context, feedback imports and exact attended publication,
+see [GitHub workflows](../docs/github-workflows.md). Standalone `helm github` and
+idle-chat `/github` commands share the local policy and private operation journal.
+
 ## Security model
 
 The active workspace is the default read/write boundary. Add other roots explicitly.

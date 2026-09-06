@@ -46,7 +46,9 @@ exact retries, cancellation, and explicit recovery without enabling remote shari
 Helm's native providers do not require Codex; see [provider architecture](docs/providers.md) for transport choices and subscription-versus-API
 billing boundaries.
 
-For GitHub collaboration and this workspace’s Git wrapper, see [the Git guide](docs/local-git.md).
+For structured GitHub context and attended comment/review publication, see
+[GitHub workflows](docs/github-workflows.md). For this workspace’s Git wrapper,
+see [the Git guide](docs/local-git.md).
 The first-version work breakdown is tracked in [the delivery map](docs/roadmap.md).
 
 See the [evaluation suite](eval/README.md) for representative task checks and the
