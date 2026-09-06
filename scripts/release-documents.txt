@@ -65,3 +65,4 @@ docs/voyage-coordination.md
 docs/voyages.md
 docs/worktree-cleanup.md
 docs/extensions.md
+docs/inference-budgets.md
