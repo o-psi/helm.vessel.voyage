@@ -42,8 +42,10 @@ class Handler(BaseHTTPRequestHandler):
         if self.mode == 'postredirect': return self.reply(307, {}, Location=f'http://127.0.0.1:{self.server.server_port}/stolen')
         if self.mode == 'badprotocol': return self.reply(200, {'unrelated':'response'})
         if body.get('stream'):
-            if self.path.endswith('/chat/completions') and self.mode!='modern' and ('max_completion_tokens' in body or 'max_tokens' not in body):
-                return self.reply(400, {'error':'unsupported max_completion_tokens; max_tokens required'})
+            if self.path.endswith('/chat/completions'):
+                unsupported = 'max_tokens' if self.mode == 'modern' else 'max_completion_tokens'
+                if unsupported in body:
+                    return self.reply(400, {'error':f'unsupported {unsupported}'})
             if self.path.endswith('/responses'):
                 data={'type':'response.completed','response':{'id':'r','output':[{'type':'message','role':'assistant','content':[{'type':'output_text','text':'fixture OK'}]}],'usage':{'input_tokens':1,'output_tokens':1}}}
             else:
@@ -95,6 +97,10 @@ def main():
                     run('--config',str(cfg),'models','--json')
                     result=run('--config',str(cfg),'--workspace',str(root),'run','--no-save','Reply OK')
                     assert 'fixture OK' in result.stdout
+                    assert not {'max_tokens','max_output_tokens','max_completion_tokens'} & Handler.requests[-1][2].keys()
+                    run('--config',str(cfg),'--workspace',str(root),'--set','max_tokens=123','run','--no-save','Reply OK')
+                    field = 'max_output_tokens' if transport == 'responses' else 'max_tokens'
+                    assert Handler.requests[-1][2][field] == 123
             assert all(auth is None for _,auth,_ in Handler.requests)
             run('local-provider','probe','custom','--endpoint',base,'--api-key-env','FIXTURE_KEY')
             assert Handler.requests[-1][1]=='Bearer '+CANARY
@@ -111,7 +117,9 @@ def main():
             run('local-provider','setup','custom','--endpoint',base,'--chat-max-completion-tokens','--output',str(modern))
             assert Handler.requests[-1][2]['max_completion_tokens']==16
             run('--config',str(modern),'--workspace',str(root),'run','--no-save','Reply OK')
-            assert 'max_completion_tokens' in Handler.requests[-1][2]
+            assert not {'max_tokens','max_output_tokens','max_completion_tokens'} & Handler.requests[-1][2].keys()
+            run('--config',str(modern),'--workspace',str(root),'--set','max_tokens=123','run','--no-save','Reply OK')
+            assert Handler.requests[-1][2]['max_completion_tokens'] == 123
             Handler.mode='ok'
             for provider in ['openai-responses','anthropic']:
                 p=run('--config',str(root/'ollama-chat.toml'),'--set','provider='+provider,'config')
