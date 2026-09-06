@@ -20,10 +20,7 @@ pub struct OpenAiResponsesProvider {
 impl OpenAiResponsesProvider {
     pub fn new(api_key: String, base_url: Option<String>) -> Self {
         Self {
-            client: reqwest::Client::builder()
-                .redirect(reqwest::redirect::Policy::none())
-                .build()
-                .expect("valid compatible HTTP client"),
+            client: super::native_http_client(),
             api_key,
             base_url: base_url
                 .unwrap_or_else(|| "https://api.openai.com/v1".into())

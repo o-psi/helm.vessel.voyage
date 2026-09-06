@@ -346,7 +346,7 @@ pub type ChatGptOauthProvider = ChatGptOAuth;
 impl ChatGptOAuth {
     pub fn from_store(store: TokenStore, endpoints: OAuthEndpoints) -> Self {
         Self {
-            client: reqwest::Client::new(),
+            client: super::native_http_client(),
             endpoints,
             store,
             tokens: Arc::new(Mutex::new(None)),
@@ -356,7 +356,7 @@ impl ChatGptOAuth {
     pub async fn new(store: TokenStore, endpoints: OAuthEndpoints) -> Result<Self, ProviderError> {
         let tokens = store.load().await?;
         Ok(Self {
-            client: reqwest::Client::new(),
+            client: super::native_http_client(),
             endpoints,
             store,
             tokens: Arc::new(Mutex::new(tokens)),
@@ -484,6 +484,7 @@ impl ChatGptOAuth {
             .send()
             .await
             .map_err(map_request)?;
+        super::reject_redirect(&response)?;
         if !response.status().is_success() {
             return Err(ProviderError::Authentication(format!(
                 "device authorization failed with HTTP {}",
@@ -503,6 +504,7 @@ impl ChatGptOAuth {
         device: &DeviceAuthorization,
     ) -> Result<OAuthTokens, ProviderError> {
         let response = self.client.post(&self.endpoints.device_token).json(&serde_json::json!({"device_auth_id":device.device_auth_id,"user_code":device.user_code})).send().await.map_err(map_request)?;
+        super::reject_redirect(&response)?;
         if !response.status().is_success() {
             return match response.status().as_u16() {
                 403 | 404 => Err(ProviderError::Unavailable(
@@ -608,6 +610,7 @@ impl ChatGptOAuth {
             .send()
             .await
             .map_err(|error| ProviderError::Request(error.to_string()))?;
+        super::reject_redirect(&response)?;
         if !response.status().is_success() {
             return Err(ProviderError::Authentication(format!(
                 "ChatGPT OAuth exchange failed with HTTP {}",

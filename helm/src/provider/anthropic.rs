@@ -8,7 +8,7 @@ use super::{
 use crate::model::{Message, ModelRequest, ModelResponse, Role, ToolCall, Usage};
 
 pub struct AnthropicProvider {
-    client: reqwest::Client,
+    pub(super) client: reqwest::Client,
     api_key: String,
     base_url: String,
 }
@@ -16,7 +16,7 @@ pub struct AnthropicProvider {
 impl AnthropicProvider {
     pub fn new(api_key: String, base_url: Option<String>) -> Self {
         Self {
-            client: reqwest::Client::new(),
+            client: super::native_http_client(),
             api_key,
             base_url: base_url
                 .unwrap_or_else(|| "https://api.anthropic.com/v1".into())

@@ -202,9 +202,32 @@ pub fn from_config(
     }
 }
 
+/// Credentials and request bodies belong only to the explicitly configured endpoint.
+/// Even same-origin redirects are rejected so no redirect can replay a POST.
+pub(crate) fn native_http_client() -> reqwest::Client {
+    native_http_client_builder()
+        .build()
+        .expect("native provider HTTP client")
+}
+
+fn native_http_client_builder() -> reqwest::ClientBuilder {
+    reqwest::Client::builder().redirect(reqwest::redirect::Policy::none())
+}
+
+pub(crate) fn reject_redirect(response: &reqwest::Response) -> Result<(), ProviderError> {
+    if response.status().is_redirection() {
+        return Err(ProviderError::Request(format!(
+            "HTTP {} redirect refused; configure the provider's final endpoint explicitly",
+            response.status().as_u16()
+        )));
+    }
+    Ok(())
+}
+
 pub(crate) async fn checked_json(
     response: reqwest::Response,
 ) -> Result<serde_json::Value, ProviderError> {
+    reject_redirect(&response)?;
     let status = response.status();
     let retry_after = response
         .headers()
@@ -289,3 +312,6 @@ mod model_tests {
 
 #[cfg(test)]
 pub(crate) mod schema_fixture;
+
+#[cfg(test)]
+mod redirect_tests;

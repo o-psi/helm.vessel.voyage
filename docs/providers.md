@@ -117,3 +117,13 @@ This compatibility behavior does not validate model accounting or grant completi
 The runtime still decides whether a proposal is accepted. Offline native HTTP tests
 cover ordinary and streaming requests; successful live reconciliation remains a
 separate acceptance check under #83.
+
+## HTTP redirect boundary
+
+Native Anthropic, OpenAI-compatible, and ChatGPT OAuth requests do not follow HTTP
+redirects, including same-origin redirects. This applies to model discovery,
+completion, streaming, and OAuth token/device exchanges. A redirect returns a
+request error without displaying its body or destination. Configure the intended
+final endpoint explicitly after checking its authority; Helm does not forward
+credentials or replay request bodies at a redirect destination. Browser navigation
+during interactive OAuth authorization remains part of the browser login flow.

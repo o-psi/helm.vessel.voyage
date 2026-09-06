@@ -18,10 +18,7 @@ pub struct OpenAiProvider {
 impl OpenAiProvider {
     pub fn new(api_key: String, base_url: Option<String>) -> Self {
         Self {
-            client: reqwest::Client::builder()
-                .redirect(reqwest::redirect::Policy::none())
-                .build()
-                .expect("valid compatible HTTP client"),
+            client: super::native_http_client(),
             api_key,
             use_max_tokens: false,
             base_url: base_url
