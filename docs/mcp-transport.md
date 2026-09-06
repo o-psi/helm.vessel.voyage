@@ -19,6 +19,13 @@ capability contribute no tools. Server requests cannot invoke Helm tools: ping i
 answered, and unsupported methods receive a protocol error. Server stderr is
 discarded so it cannot corrupt the terminal.
 
+Known configured secrets are redacted from outgoing tool descriptions before a
+model request is admitted. If a secret appears in a tool name or schema, Helm
+refuses that request without changing the executable definition. This includes
+schema property names, defaults and enum values. Registry definitions stay
+unchanged; an offending tool is not silently omitted. These checks cover known
+values, not arbitrary secret transformations.
+
 Each encoded outgoing request and incoming JSON frame is limited to **1,048,576
 UTF-8 bytes**, excluding its newline delimiter. The incoming limit applies while
 reading, including when a peer never sends a newline. A request can consume at
@@ -35,8 +42,8 @@ Helm never automatically resends a tool call or restarts a retired server.
 
 For a fully written ordinary request, Helm attempts `notifications/cancelled`
 with the exact request ID, allowing at most 100 ms for that write. It sends no
-cancellation notification for initialization, or after an incomplete request
-write. Cleanup closes stdin, allows 100 ms for cooperative exit, then uses the
+cancellation notification for initialization, or after any incomplete outbound
+frame, including a reply to a server request. Cleanup closes stdin, allows 100 ms for cooperative exit, then uses the
 existing bounded process observer. The cleanup task has a five-second bound;
 Linux session observation has a four-second bound. Retained resource owners can
 retry unconfirmed cleanup. On other platforms, direct-child retirement does not

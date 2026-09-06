@@ -5,6 +5,8 @@ mod provider_redaction_tests;
 #[cfg(test)]
 mod replay_argument_tests;
 mod retry;
+#[cfg(test)]
+mod tool_metadata_tests;
 mod tool_replay;
 pub use retry::RetryJitter;
 mod gate;
@@ -445,12 +447,21 @@ impl Agent {
         self.tools.definitions()
     }
     /// Current process manager only; persisted terminal metadata is never attachable.
-    pub fn plain_terminals(&self) -> Result<(std::sync::Arc<dyn crate::terminal::InteractiveTerminals>, std::sync::Arc<crate::policy::Policy>), AgentError> {
+    pub fn plain_terminals(
+        &self,
+    ) -> Result<
+        (
+            std::sync::Arc<dyn crate::terminal::InteractiveTerminals>,
+            std::sync::Arc<crate::policy::Policy>,
+        ),
+        AgentError,
+    > {
         self.check_current_policy()?;
-        let manager: std::sync::Arc<dyn crate::terminal::InteractiveTerminals> = match self.tools.terminals() {
-            Some(manager) => std::sync::Arc::new(manager),
-            None => std::sync::Arc::new(crate::terminal::NoInteractiveTerminals::default()),
-        };
+        let manager: std::sync::Arc<dyn crate::terminal::InteractiveTerminals> =
+            match self.tools.terminals() {
+                Some(manager) => std::sync::Arc::new(manager),
+                None => std::sync::Arc::new(crate::terminal::NoInteractiveTerminals::default()),
+            };
         Ok((manager, self.context.policy.clone()))
     }
     pub async fn shutdown_plain_terminals(&self) -> crate::tools::TerminalShutdown {

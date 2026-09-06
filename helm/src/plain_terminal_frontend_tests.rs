@@ -1,5 +1,8 @@
 use super::*;
-use helm::terminal::{InteractiveTerminals,TerminalId,TerminalSummary,TerminalSnapshot,TerminalError,TerminalEvent};
+use helm::terminal::{
+    InteractiveTerminals, TerminalError, TerminalEvent, TerminalId, TerminalSnapshot,
+    TerminalSummary,
+};
 struct Held {
     ready: tokio::sync::Notify,
     events: tokio::sync::broadcast::Sender<TerminalEvent>,
@@ -7,20 +10,32 @@ struct Held {
 }
 #[async_trait]
 impl InteractiveTerminals for Held {
-    async fn list(&self)->Result<Vec<TerminalSummary>,TerminalError>{Ok(vec![])}
-    async fn attach(&self,_:TerminalId)->Result<TerminalSnapshot,TerminalError>{
+    async fn list(&self) -> Result<Vec<TerminalSummary>, TerminalError> {
+        Ok(vec![])
+    }
+    async fn attach(&self, _: TerminalId) -> Result<TerminalSnapshot, TerminalError> {
         self.ready.notify_one();
-        assert!(!self.panic,"synthetic attachment panic");
+        assert!(!self.panic, "synthetic attachment panic");
         std::future::pending().await
     }
-    async fn snapshot(&self,_:TerminalId)->Result<TerminalSnapshot,TerminalError>{std::future::pending().await}
-    async fn write(&self,_:TerminalId,_:Vec<u8>)->Result<(),TerminalError>{panic!("no key may be forwarded")}
-    async fn resize(&self,_:TerminalId,_:u16,_:u16)->Result<(),TerminalError>{Ok(())}
-    fn subscribe(&self)->tokio::sync::broadcast::Receiver<TerminalEvent>{self.events.subscribe()}
+    async fn snapshot(&self, _: TerminalId) -> Result<TerminalSnapshot, TerminalError> {
+        std::future::pending().await
+    }
+    async fn write(&self, _: TerminalId, _: Vec<u8>) -> Result<(), TerminalError> {
+        panic!("no key may be forwarded")
+    }
+    async fn resize(&self, _: TerminalId, _: u16, _: u16) -> Result<(), TerminalError> {
+        Ok(())
+    }
+    fn subscribe(&self) -> tokio::sync::broadcast::Receiver<TerminalEvent> {
+        self.events.subscribe()
+    }
 }
 #[test]
 fn frontend_driver() {
-    let Ok(mode)=std::env::var("HELM_PLAIN_FRONTEND_DRIVER") else{return};
+    let Ok(mode) = std::env::var("HELM_PLAIN_FRONTEND_DRIVER") else {
+        return;
+    };
     tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
         use futures_util::FutureExt;
         let directory=tempfile::tempdir().unwrap();
@@ -48,7 +63,17 @@ fn frontend_driver() {
     });
 }
 #[test]
-fn frontend_pty_contract(){
-    let status=std::process::Command::new("python3").arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../tests/system/plain_terminal_frontend.py")).arg(std::env::current_exe().unwrap()).status().unwrap();
-    assert!(status.success(),"actual plain frontend ownership fixture failed");
+fn frontend_pty_contract() {
+    let status = std::process::Command::new("python3")
+        .arg(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../tests/system/plain_terminal_frontend.py"),
+        )
+        .arg(std::env::current_exe().unwrap())
+        .status()
+        .unwrap();
+    assert!(
+        status.success(),
+        "actual plain frontend ownership fixture failed"
+    );
 }

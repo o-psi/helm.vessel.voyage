@@ -1,25 +1,58 @@
 //! Explicit synthetic native driver; default return is not behavioral evidence.
 use super::*;
-use crate::tools::{Approver, ApprovalRequest, ApprovalOutcome, Tool, ToolContext, ProcessTool};
+use crate::tools::{ApprovalOutcome, ApprovalRequest, Approver, ProcessTool, Tool, ToolContext};
 use serde_json::json;
 struct No;
 #[async_trait::async_trait]
 impl Approver for No {
-    async fn approve(&self,_:&ApprovalRequest)->ApprovalOutcome {ApprovalOutcome::Unavailable}
+    async fn approve(&self, _: &ApprovalRequest) -> ApprovalOutcome {
+        ApprovalOutcome::Unavailable
+    }
 }
 struct FailingWrite(Arc<ProcessTool>);
 #[async_trait::async_trait]
 impl InteractiveTerminals for FailingWrite {
-    async fn list(&self)->std::result::Result<Vec<TerminalSummary>,crate::terminal::TerminalError>{self.0.list().await}
-    async fn attach(&self,id:TerminalId)->std::result::Result<TerminalSnapshot,crate::terminal::TerminalError>{self.0.attach(id).await}
-    async fn snapshot(&self,id:TerminalId)->std::result::Result<TerminalSnapshot,crate::terminal::TerminalError>{self.0.snapshot(id).await}
-    async fn resize(&self,id:TerminalId,columns:u16,rows:u16)->std::result::Result<(),crate::terminal::TerminalError>{self.0.resize(id,columns,rows).await}
-    async fn write(&self,_:TerminalId,_:Vec<u8>)->std::result::Result<(),crate::terminal::TerminalError>{Err(crate::terminal::TerminalError::Closed)}
-    fn subscribe(&self)->tokio::sync::broadcast::Receiver<crate::terminal::TerminalEvent>{self.0.subscribe()}
+    async fn list(
+        &self,
+    ) -> std::result::Result<Vec<TerminalSummary>, crate::terminal::TerminalError> {
+        self.0.list().await
+    }
+    async fn attach(
+        &self,
+        id: TerminalId,
+    ) -> std::result::Result<TerminalSnapshot, crate::terminal::TerminalError> {
+        self.0.attach(id).await
+    }
+    async fn snapshot(
+        &self,
+        id: TerminalId,
+    ) -> std::result::Result<TerminalSnapshot, crate::terminal::TerminalError> {
+        self.0.snapshot(id).await
+    }
+    async fn resize(
+        &self,
+        id: TerminalId,
+        columns: u16,
+        rows: u16,
+    ) -> std::result::Result<(), crate::terminal::TerminalError> {
+        self.0.resize(id, columns, rows).await
+    }
+    async fn write(
+        &self,
+        _: TerminalId,
+        _: Vec<u8>,
+    ) -> std::result::Result<(), crate::terminal::TerminalError> {
+        Err(crate::terminal::TerminalError::Closed)
+    }
+    fn subscribe(&self) -> tokio::sync::broadcast::Receiver<crate::terminal::TerminalEvent> {
+        self.0.subscribe()
+    }
 }
 #[test]
 fn native_driver() {
-    let Ok(mode)=std::env::var("HELM_PLAIN_TERMINAL_DRIVER") else{return};
+    let Ok(mode) = std::env::var("HELM_PLAIN_TERMINAL_DRIVER") else {
+        return;
+    };
     tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
         let directory=tempfile::tempdir().unwrap();
         use crate::policy_profile::{Builtin,Overrides,selection::{Selection,SelectionRequest},store::{Action,ProfileChange,ProfileStore}};
@@ -89,6 +122,14 @@ fn native_driver() {
 }
 #[test]
 fn native_pty_contract() {
-    let status=std::process::Command::new("python3").arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../tests/system/plain_terminal.py")).arg("--test-binary").arg(std::env::current_exe().unwrap()).status().unwrap();
-    assert!(status.success(),"plain terminal native fixture failed");
+    let status = std::process::Command::new("python3")
+        .arg(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../tests/system/plain_terminal.py"),
+        )
+        .arg("--test-binary")
+        .arg(std::env::current_exe().unwrap())
+        .status()
+        .unwrap();
+    assert!(status.success(), "plain terminal native fixture failed");
 }

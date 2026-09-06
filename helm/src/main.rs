@@ -284,7 +284,9 @@ impl Terminal {
 #[async_trait]
 impl Approver for Terminal {
     async fn approve(&self, request: &ApprovalRequest) -> ApprovalOutcome {
-        if helm::plain_terminal::owns_terminal() { return ApprovalOutcome::Unavailable; }
+        if helm::plain_terminal::owns_terminal() {
+            return ApprovalOutcome::Unavailable;
+        }
         if request.action.starts_with("github.") {
             return helm::github::approval::approve_terminal(request).await;
         }
@@ -314,7 +316,9 @@ impl Approver for Terminal {
 #[async_trait]
 impl EventSink for Terminal {
     async fn emit(&self, event: AgentEvent) {
-        if helm::plain_terminal::owns_terminal() { return; }
+        if helm::plain_terminal::owns_terminal() {
+            return;
+        }
         match event {
             AgentEvent::CompletionState {
                 phase,
@@ -2352,7 +2356,9 @@ async fn chat(
                 _ = &mut interrupt => { cancel.cancel(); let _ = (&mut operation).await; None }
                 result = &mut operation => result?,
             }
-        } else { read_plain_prompt().await? };
+        } else {
+            read_plain_prompt().await?
+        };
         let Some(prompt) = next_prompt else {
             break;
         };
@@ -2423,8 +2429,16 @@ async fn chat(
             _ => {}
         }
         if prompt == "/terminals" || prompt == "/terminal" || prompt.starts_with("/terminal ") {
-            if prompt == "/terminal" { eprintln!("usage: /terminal ID_OR_EXACT_NAME (see /terminals)"); continue; }
-            let Some(current) = agent.as_ref() else { eprintln!("No live terminals in this voyage. Saved terminal metadata cannot reattach a process."); continue; };
+            if prompt == "/terminal" {
+                eprintln!("usage: /terminal ID_OR_EXACT_NAME (see /terminals)");
+                continue;
+            }
+            let Some(current) = agent.as_ref() else {
+                eprintln!(
+                    "No live terminals in this voyage. Saved terminal metadata cannot reattach a process."
+                );
+                continue;
+            };
             let result: Result<bool> = async {
                 let (manager, policy) = current.plain_terminals()?;
                 let items = manager.list().await?;
@@ -2446,7 +2460,14 @@ async fn chat(
                 println!("{}", if detached.exited { "Terminal exited; returned to Helm." } else { "Detached; terminal remains private and running." });
                 Ok(false)
             }.await;
-            match result { Ok(true) => break, Ok(false) => (), Err(error) => eprintln!("{}", safe_diagnostic(&current.redact_diagnostic(error.to_string()))) }
+            match result {
+                Ok(true) => break,
+                Ok(false) => (),
+                Err(error) => eprintln!(
+                    "{}",
+                    safe_diagnostic(&current.redact_diagnostic(error.to_string()))
+                ),
+            }
             continue;
         }
         if prompt == "/github" || prompt.starts_with("/github ") {
@@ -2666,7 +2687,9 @@ async fn chat(
         let cleanup = current.shutdown_plain_terminals().await;
         session.terminals = current.terminal_metadata();
         store.save(&mut session).await?;
-        if !cleanup.observation_complete { eprintln!("Terminal cleanup remains unobserved."); }
+        if !cleanup.observation_complete {
+            eprintln!("Terminal cleanup remains unobserved.");
+        }
     }
     if interactive && !session.messages.is_empty() {
         eprintln!("Session {} saved as {}", session.display_name(), session.id);

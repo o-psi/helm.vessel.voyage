@@ -127,7 +127,9 @@ mod native {
             if self.active {
                 // Do not wait for output to drain: a stopped/full terminal must
                 // not prevent cancellation from restoring the saved input mode.
-                if !self.preserve { let _ = unsafe { libc::tcflush(0, libc::TCIFLUSH) }; }
+                if !self.preserve {
+                    let _ = unsafe { libc::tcflush(0, libc::TCIFLUSH) };
+                }
                 if unsafe { libc::tcsetattr(0, libc::TCSANOW, &self.saved) } != 0 {
                     return Err(io::Error::last_os_error());
                 }
@@ -193,7 +195,9 @@ mod native {
                 return Err(io::Error::last_os_error());
             }
             terminal.active = true;
-            if !terminal.preserve { terminal.flush()?; }
+            if !terminal.preserve {
+                terminal.flush()?;
+            }
             Ok(terminal)
         }
         fn flush(&self) -> io::Result<()> {
@@ -204,7 +208,9 @@ mod native {
             }
         }
         pub fn read(&mut self) -> io::Result<Option<(u16, u16)>> {
-            if let Some(value) = self.queued.pop_front() { return Ok(Some((value, 1))); }
+            if let Some(value) = self.queued.pop_front() {
+                return Ok(Some((value, 1)));
+            }
             match unsafe { WaitForSingleObject(self.handle(), 0) } {
                 WAIT_TIMEOUT => return Ok(None),
                 WAIT_OBJECT_0 => (),
@@ -227,25 +233,40 @@ mod native {
                 // Encode native navigation keys for the selected PTY, without
                 // using a second buffered console reader.
                 let sequence = match key.wVirtualKeyCode {
-                    33 => Some("\x1b[5~"), 34 => Some("\x1b[6~"),
-                    35 => Some("\x1b[F"), 36 => Some("\x1b[H"),
-                    37 => Some("\x1b[D"), 38 => Some("\x1b[A"),
-                    39 => Some("\x1b[C"), 40 => Some("\x1b[B"),
-                    45 => Some("\x1b[2~"), 46 => Some("\x1b[3~"),
-                    112 => Some("\x1bOP"), 113 => Some("\x1bOQ"),
-                    114 => Some("\x1bOR"), 115 => Some("\x1bOS"),
-                    116 => Some("\x1b[15~"), 117 => Some("\x1b[17~"),
-                    118 => Some("\x1b[18~"), 119 => Some("\x1b[19~"),
-                    120 => Some("\x1b[20~"), 121 => Some("\x1b[21~"),
-                    122 => Some("\x1b[23~"), 123 => Some("\x1b[24~"),
+                    33 => Some("\x1b[5~"),
+                    34 => Some("\x1b[6~"),
+                    35 => Some("\x1b[F"),
+                    36 => Some("\x1b[H"),
+                    37 => Some("\x1b[D"),
+                    38 => Some("\x1b[A"),
+                    39 => Some("\x1b[C"),
+                    40 => Some("\x1b[B"),
+                    45 => Some("\x1b[2~"),
+                    46 => Some("\x1b[3~"),
+                    112 => Some("\x1bOP"),
+                    113 => Some("\x1bOQ"),
+                    114 => Some("\x1bOR"),
+                    115 => Some("\x1bOS"),
+                    116 => Some("\x1b[15~"),
+                    117 => Some("\x1b[17~"),
+                    118 => Some("\x1b[18~"),
+                    119 => Some("\x1b[19~"),
+                    120 => Some("\x1b[20~"),
+                    121 => Some("\x1b[21~"),
+                    122 => Some("\x1b[23~"),
+                    123 => Some("\x1b[24~"),
                     _ => None,
                 };
                 if let Some(sequence) = sequence {
-                    for _ in 0..key.wRepeatCount.clamp(1,64) { self.queued.extend(sequence.encode_utf16()); }
+                    for _ in 0..key.wRepeatCount.clamp(1, 64) {
+                        self.queued.extend(sequence.encode_utf16());
+                    }
                     return Ok(self.queued.pop_front().map(|value| (value, 1)));
                 }
             }
-            if value == 0 { return Ok(None); }
+            if value == 0 {
+                return Ok(None);
+            }
             Ok(Some((value, key.wRepeatCount.max(1))))
         }
         pub fn discard(&mut self) -> io::Result<()> {
