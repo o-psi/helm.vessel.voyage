@@ -114,6 +114,8 @@ enum LogFormat {
 }
 #[derive(Subcommand)]
 enum Command {
+    /// Install, inspect and explicitly enable declarative packages.
+    Extension(helm::extensions::cli::ExtensionArgs),
     /// Manage named policy profiles and preview explicit launch selection.
     Policy(helm::policy_profile::cli::PolicyArgs),
     /// Discover, inspect and run saved nonsecret workflows.
@@ -443,6 +445,9 @@ async fn main() -> Result<()> {
             cli.config.as_deref(),
         );
     }
+    if let Some(Command::Extension(args)) = cli.command {
+        return helm::extensions::cli::run(args, cli.workspace).await;
+    }
     let filter = if cli.verbose {
         "helm=debug"
     } else {
@@ -573,6 +578,9 @@ async fn main() -> Result<()> {
         resume: None,
         plain: false,
     }) {
+        Command::Extension(_) => {
+            unreachable!("extension command handled before provider configuration")
+        }
         Command::Policy(args) => {
             let workspace = config.resolve_workspace(cli.workspace)?;
             helm::policy_profile::cli::run(

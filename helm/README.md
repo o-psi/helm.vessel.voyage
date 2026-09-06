@@ -32,6 +32,7 @@ execute sessions.
 - Atomic JSON session persistence under the platform data directory
 - Explicit private managed sessions with SQLite history, exact command retries, and cross-process cancellation
 - Explicit foreground [dedicated remote sessions](../docs/remote-sessions.md) with local execution authority and authenticated Vessel observation
+- Explicitly activated [declarative skill/resource packages](../docs/extensions.md), with local and pinned HTTPS index acquisition
 - Library interfaces for custom providers, event sinks, approvers, and tools
 
 Helm treats safety as a runtime boundary, not a prompt convention. Filesystem tools

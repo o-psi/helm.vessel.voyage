@@ -147,6 +147,10 @@ jobs:
         run: python3 tests/system/workflow_secrets.py
       - name: Verify attended workflow collection and terminal recovery
         run: python3 tests/system/workflow_prompting.py
+      - name: Declarative extension lifecycle
+        run: python3 tests/system/extensions.py
+      - name: Extension HTTPS indexes
+        run: python3 tests/system/extension_index.py
       - run: python3 eval/run.py validate
       - run: ./scripts/package-release "ci-${{ github.sha }}"
       - run: cd dist && sha256sum -c *.sha256

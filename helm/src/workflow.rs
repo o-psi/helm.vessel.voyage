@@ -42,6 +42,7 @@ pub const RESERVED: &[&str] = &[
     "auth",
     "attachment",
     "onboard",
+    "extension",
     "local-provider",
     "workflow",
     "voyages",
