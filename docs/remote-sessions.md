@@ -34,6 +34,12 @@ Native providers and built-in tools use ordinary configured local policy, includ
 
 Use the existing Vessel operator credential. Every endpoint checks it; POST requests also require `x-voyage-request: 2`, and supplied browser origin/site headers must match the configured origin. Do not put credentials in URLs. Successful session-content responses use `Cache-Control: no-store`.
 
+Vessel normalizes `--public-origin` once for enrollment, attachment and remote
+authorization. For example, `HTTPS://VESSEL.EXAMPLE:443/` becomes
+`https://vessel.example`. A supplied `Origin` header must contain that exact
+canonical origin, without a trailing slash. Foreign, duplicate and malformed
+origins remain forbidden; forwarded host headers do not select the trusted origin.
+
 `GET /v1/diagnostics` reports enabled connectivity separately from current connections. The following routes require a current connection that negotiated managed execution, not a presence-only connection:
 
 - `POST /v1/remote/MACHINE_UUID/command`

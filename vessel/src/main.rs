@@ -136,9 +136,6 @@ async fn main() -> Result<()> {
             enrollment
                 .clone()
                 .ok_or_else(|| anyhow::anyhow!("enrollment required"))?,
-            cli.public_origin
-                .clone()
-                .ok_or_else(|| anyhow::anyhow!("origin required"))?,
         )?)
     } else {
         None

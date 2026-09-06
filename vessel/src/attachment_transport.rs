@@ -498,7 +498,7 @@ async fn upgrade(
     };
     if uri.query().is_some()
         || uri.authority().is_some()
-        || !exact("origin", api.enrollment.attachment_origin())
+        || !exact("origin", api.enrollment.origin())
         || !exact("x-voyage-request", "2")
         || !exact("sec-websocket-protocol", PROTOCOL)
     {

@@ -124,7 +124,8 @@ impl Drop for Pending {
     }
 }
 impl RemoteApi {
-    pub fn new(enrollment: vessel::enrollment_http::EnrollmentApi, origin: String) -> Result<Self> {
+    pub fn new(enrollment: vessel::enrollment_http::EnrollmentApi) -> Result<Self> {
+        let origin = enrollment.origin().to_owned();
         let features = Features::new(vec![
             Feature::SequencedEvents,
             Feature::Replay,
@@ -390,6 +391,81 @@ fn private_response(frame: Frame) -> Response {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn remote_authorization_uses_validated_enrollment_origin() {
+        const TOKEN: &str = "synthetic-origin-test-operator-token";
+        for configured in [
+            "https://vessel.example",
+            "https://vessel.example/",
+            "HTTPS://VESSEL.EXAMPLE:443/",
+            "https://Vessel.Example:443",
+        ] {
+            let directory = tempfile::tempdir().unwrap();
+            let store = vessel::enrollment::EnrollmentStore::open(
+                &directory.path().join("enrollment"),
+                configured,
+                false,
+            )
+            .unwrap();
+            let enrollment = vessel::enrollment_http::EnrollmentApi::new(store, TOKEN).unwrap();
+            let remote = RemoteApi::new(enrollment).unwrap();
+            let state = AppState {
+                database: Arc::new(Mutex::new(Connection::open_in_memory().unwrap())),
+                operator_token_hash: Some(token_hash(TOKEN)),
+                attachment: None,
+                remote: Some(remote.clone()),
+            };
+            let mut headers = HeaderMap::new();
+            headers.insert("authorization", format!("Bearer {TOKEN}").parse().unwrap());
+            assert!(authorize(&state, &headers).is_ok());
+            headers.insert("origin", HeaderValue::from_static("https://vessel.example"));
+            headers.insert("sec-fetch-site", HeaderValue::from_static("same-origin"));
+            assert!(authorize(&state, &headers).is_ok(), "{configured}");
+            for denied in [
+                "https://foreign.example",
+                "null",
+                "https://vessel.example/",
+                "https://user:secret@vessel.example",
+                "https://vessel.example?query",
+                "https://vessel.example https://foreign.example",
+            ] {
+                headers.insert("origin", denied.parse().unwrap());
+                assert_eq!(
+                    authorize(&state, &headers)
+                        .err()
+                        .unwrap()
+                        .into_response()
+                        .status(),
+                    StatusCode::FORBIDDEN
+                );
+            }
+            headers.insert("origin", HeaderValue::from_static("https://vessel.example"));
+            headers.append("origin", HeaderValue::from_static("https://vessel.example"));
+            assert_eq!(
+                authorize(&state, &headers)
+                    .err()
+                    .unwrap()
+                    .into_response()
+                    .status(),
+                StatusCode::FORBIDDEN
+            );
+            headers.remove("origin");
+            headers.insert("sec-fetch-site", HeaderValue::from_static("cross-site"));
+            assert_eq!(
+                authorize(&state, &headers)
+                    .err()
+                    .unwrap()
+                    .into_response()
+                    .status(),
+                StatusCode::FORBIDDEN
+            );
+            headers.remove("sec-fetch-site");
+            headers.remove("authorization");
+            assert!(authorize(&state, &headers).is_err());
+            remote.attachment.shutdown().await;
+        }
+    }
 
     fn reply(id: Uuid) -> Frame {
         Frame::SnapshotRequired {

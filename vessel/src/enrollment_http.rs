@@ -60,7 +60,9 @@ impl EnrollmentApi {
             .route_layer(middleware::from_fn_with_state(self.clone(), boundary))
             .with_state(self)
     }
-    pub(crate) fn attachment_origin(&self) -> &str {
+    /// Canonical public origin validated by the enrollment store. All transports
+    /// use this value rather than independently interpreting configuration.
+    pub fn origin(&self) -> &str {
         &self.origin
     }
     pub(crate) async fn attachment_connect(
