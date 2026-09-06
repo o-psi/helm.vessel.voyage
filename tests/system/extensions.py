@@ -26,6 +26,11 @@ def main():
         work.mkdir()
         env = dict(os.environ, HOME=str(root / "home"), XDG_DATA_HOME=str(root / "data"),
                    XDG_CONFIG_HOME=str(root / "config"))
+        # Native adapter switches may restore API-key-required defaults. Use an
+        # explicit synthetic fixture credential, never ambient provider secrets.
+        for name in ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_ORG_ID", "OPENAI_PROJECT_ID"]:
+            env.pop(name, None)
+        env["HELM_EXTENSION_FIXTURE_KEY"] = "offline-extension-fixture-key"
         config = root / "helm.toml"
         def run(*args, success=True):
             result = subprocess.run([str(helm), "--workspace", str(work), "--config", str(config), *args],
@@ -102,7 +107,7 @@ def main():
         server = ThreadingHTTPServer(("127.0.0.1", 0), Provider)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
-        config.write_text(f'provider = "openai-responses"\nmodel = "fixture"\napi_key_required = false\nbase_url = "http://127.0.0.1:{server.server_port}/v1"\nprovider_retry_attempts = 1\nredact_values = ["private-canary"]\n')
+        config.write_text(f'provider = "openai-responses"\nmodel = "fixture"\napi_key_required = false\napi_key_env = "HELM_EXTENSION_FIXTURE_KEY"\nbase_url = "http://127.0.0.1:{server.server_port}/v1"\nprovider_retry_attempts = 1\nredact_values = ["private-canary"]\n')
         try:
             run("run", "Exercise package snapshot")
             assert len(requests) == 2
@@ -143,7 +148,7 @@ def main():
             for provider in ["openai-chat", "anthropic"]:
                 run("--provider", provider, "run", "Adapter guidance")
                 assert "PACKAGE_SECOND_CANARY" in json.dumps(requests[-1])
-                assert not any(tool.get("name") == "imaginary_tool" for tool in requests[-1]["tools"])
+                assert not any((tool.get("name") or tool.get("function", {}).get("name")) == "imaginary_tool" for tool in requests[-1]["tools"])
             before_cancel = len(requests)
             process = subprocess.Popen([str(helm), "--workspace", str(work), "--config", str(config), "run", "--resume", session_id, "Cancel fixture"],
                                        env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
