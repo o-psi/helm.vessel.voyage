@@ -779,3 +779,5 @@ async fn local_reconciliation_retains_callback_fence_and_rejects_other_sessions(
     assert_eq!(requests.load(Ordering::SeqCst), 2);
     assert_eq!(effects.load(Ordering::SeqCst), 1);
 }
+
+mod terminal_persistence;

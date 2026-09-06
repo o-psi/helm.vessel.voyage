@@ -667,6 +667,66 @@ mod tests {
         assert!(journal.remote_replay(&binding, session.id, 0, 4).is_err());
     }
     #[test]
+    fn terminal_busy_retry_after_withdrawal_keeps_public_cursor_frozen() {
+        let (dir, mut journal, actor, session, binding, request) = fixture();
+        let other = Journal::open(dir.path().join("journal")).unwrap();
+        let guard = journal.acquire_execution(session.id).unwrap();
+        let run = journal
+            .admit_turn(&guard, &admission(&session, &binding), 1)
+            .unwrap()
+            .run;
+        journal.mark_running(&guard, run.id).unwrap();
+        let preview = journal.preview_remote_withdrawal(&actor, &request).unwrap();
+        let receipt = journal
+            .withdraw_remote(&actor, &request, &preview.confirmation_digest)
+            .unwrap();
+        let before: i64 = journal
+            .connection
+            .query_row("SELECT next_sequence FROM remote_session", [], |r| r.get(0))
+            .unwrap();
+        other
+            .connection
+            .execute_batch("BEGIN; SELECT * FROM runs")
+            .unwrap();
+        let error = journal
+            .finish_classified(
+                &guard,
+                run.id,
+                RunState::Failed,
+                Some("provider failed"),
+                None,
+                None,
+            )
+            .unwrap_err();
+        assert!(journal.terminal_retry_safe(&error));
+        assert_eq!(journal.run(run.id).unwrap().state, RunState::Running);
+        other.connection.execute_batch("ROLLBACK").unwrap();
+        let actual = journal
+            .finish_classified(
+                &guard,
+                run.id,
+                RunState::Failed,
+                Some("provider failed"),
+                None,
+                None,
+            )
+            .unwrap();
+        assert_eq!(actual.state, RunState::Cancelled);
+        let after: i64 = journal
+            .connection
+            .query_row("SELECT next_sequence FROM remote_session", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(before, after);
+        assert_eq!(
+            journal
+                .withdraw_remote(&actor, &request, &preview.confirmation_digest)
+                .unwrap(),
+            receipt
+        );
+        assert!(journal.remote_replay(&binding, session.id, 0, 4).is_err());
+    }
+
+    #[test]
     fn commit_busy_rolls_back_then_original_confirmation_recovers_once() {
         let (dir, mut journal, actor, session, binding, request) = fixture();
         let other = Journal::open(dir.path().join("journal")).unwrap();

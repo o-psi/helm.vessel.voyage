@@ -768,7 +768,10 @@ pub(super) async fn execute_admitted(
         && mcp_reports
             .as_ref()
             .is_ok_and(|reports| reports.iter().all(Result::is_ok));
-    let observed = mcp_observed
+    let actual = run.record().await?;
+    let terminal_persisted = !matches!(actual.state, RunState::Accepted | RunState::Running);
+    let observed = terminal_persisted
+        && mcp_observed
         && children_observed
         && terminals_observed
         && shells_observed
@@ -778,7 +781,6 @@ pub(super) async fn execute_admitted(
     if observed {
         run.confirm_local_cleanup_observed().await?;
     }
-    let actual = run.record().await?;
     Ok(ManagedExecution {
         actual,
         cleanup_observed: observed,

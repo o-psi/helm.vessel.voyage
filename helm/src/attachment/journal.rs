@@ -963,6 +963,18 @@ impl Journal {
         self.finish_classified(guard, run_id, state, reason, final_text, None)
     }
 
+    /// A failed terminal attempt is retryable only when SQLite reports BUSY
+    /// and no transaction remains open. Failed COMMIT must have rolled back;
+    /// ambiguous failures and failed rollback never qualify.
+    pub(super) fn terminal_retry_safe(&self, error: &anyhow::Error) -> bool {
+        self.connection.is_autocommit()
+            && matches!(
+                error.downcast_ref::<rusqlite::Error>(),
+                Some(rusqlite::Error::SqliteFailure(code, _))
+                    if code.code == rusqlite::ErrorCode::DatabaseBusy
+            )
+    }
+
     /// Commit terminal status and local transcript classification together.
     #[allow(clippy::too_many_arguments)]
     pub fn finish_classified(

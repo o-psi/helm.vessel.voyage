@@ -1191,3 +1191,70 @@ fn append_commit_busy_rolls_back_every_row_before_an_exact_once_retry() {
     assert!(matches!(event.kind, EventKind::TextDelta(ref text) if text == "retained-delta"));
     assert_eq!(snapshot(&reader), after);
 }
+
+#[test]
+fn terminal_retry_requires_typed_busy_and_confirmed_autocommit() {
+    let (_dir, journal, _, _) = setup();
+    let busy = anyhow::Error::from(rusqlite::Error::SqliteFailure(
+        rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_BUSY),
+        None,
+    ));
+    assert!(journal.terminal_retry_safe(&busy));
+    assert!(!journal.terminal_retry_safe(&anyhow::anyhow!("database is locked")));
+    let locked = anyhow::Error::from(rusqlite::Error::SqliteFailure(
+        rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_LOCKED),
+        None,
+    ));
+    assert!(!journal.terminal_retry_safe(&locked));
+    let permanent = journal
+        .connection
+        .execute_batch("SELECT absent FROM absent")
+        .unwrap_err();
+    assert!(!journal.terminal_retry_safe(&permanent.into()));
+    journal.connection.execute_batch("BEGIN IMMEDIATE").unwrap();
+    assert!(!journal.terminal_retry_safe(&busy));
+    journal.connection.execute_batch("ROLLBACK").unwrap();
+    assert!(journal.terminal_retry_safe(&busy));
+}
+
+#[test]
+fn terminal_busy_commit_rolls_back_exact_record_before_retry() {
+    let (dir, mut journal, session, request) = setup();
+    let guard = journal.acquire_execution(session.id).unwrap();
+    let run = journal.admit_turn(&guard, &request, 1).unwrap().run;
+    journal.mark_running(&guard, run.id).unwrap();
+    let before = journal.run(run.id).unwrap();
+    let db = Connection::open(dir.path().join("attachment/journal.sqlite3")).unwrap();
+    db.execute_batch("BEGIN; SELECT * FROM runs").unwrap();
+    let error = journal
+        .finish_classified(
+            &guard,
+            run.id,
+            RunState::Cancelled,
+            Some("run cancelled"),
+            None,
+            None,
+        )
+        .unwrap_err();
+    assert!(journal.terminal_retry_safe(&error));
+    let after = journal.run(run.id).unwrap();
+    assert_eq!(
+        serde_json::to_value(before).unwrap(),
+        serde_json::to_value(after).unwrap()
+    );
+    db.execute_batch("ROLLBACK").unwrap();
+    assert_eq!(
+        journal
+            .finish_classified(
+                &guard,
+                run.id,
+                RunState::Cancelled,
+                Some("run cancelled"),
+                None,
+                None
+            )
+            .unwrap()
+            .state,
+        RunState::Cancelled
+    );
+}

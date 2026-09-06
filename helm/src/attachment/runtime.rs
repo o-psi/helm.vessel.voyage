@@ -457,6 +457,66 @@ impl ManagedRunCheckpoint {
     }
 }
 impl RunOwner {
+    /// Only terminal persistence may retry. Each attempt owns the same guarded
+    /// run; no agent, provider, admission, or tool operation is repeated.
+    /// The two-second contention budget begins after acquiring the store mutex;
+    /// it bounds SQLite retries, not unrelated work already holding that mutex.
+    async fn persist_terminal(
+        &self,
+        state: RunState,
+        reason: Option<&'static str>,
+        classification: Option<StopReason>,
+        cancel: CancellationToken,
+    ) -> Result<RunRecord, CheckpointError> {
+        let shared = self.store.clone();
+        let token = self.token.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut store = shared.lock().map_err(|_| CheckpointError)?;
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+            loop {
+                let attempt = (|| -> anyhow::Result<RunRecord> {
+                    anyhow::ensure!(store.run_id == token.run_id, "run identity changed");
+                    let record = store.journal.run(token.run_id)?;
+                    anyhow::ensure!(
+                        record.session_id == store.session_id,
+                        "session identity changed"
+                    );
+                    let (state, reason, classification) = if cancel.is_cancelled() {
+                        (RunState::Cancelled, Some("run cancelled"), None)
+                    } else {
+                        (state.clone(), reason, classification.as_ref())
+                    };
+                    let Store {
+                        journal,
+                        guard,
+                        run_id,
+                        ..
+                    } = &mut *store;
+                    journal.finish_classified(guard, *run_id, state, reason, None, classification)
+                })();
+                match attempt {
+                    Ok(record) => return Ok(record),
+                    Err(error) => {
+                        if !store.journal.terminal_retry_safe(&error) {
+                            return Err(CheckpointError);
+                        }
+                        let remaining =
+                            deadline.saturating_duration_since(std::time::Instant::now());
+                        if remaining.is_zero() {
+                            return Err(CheckpointError);
+                        }
+                        // This worker is blocking; never sleep on the async reactor.
+                        std::thread::sleep(remaining.min(std::time::Duration::from_millis(10)));
+                        if std::time::Instant::now() >= deadline {
+                            return Err(CheckpointError);
+                        }
+                    }
+                }
+            }
+        })
+        .await
+        .map_err(|_| CheckpointError)?
+    }
     pub async fn configure_remote_redaction(
         &self,
         redactor: Arc<crate::tools::Redactor>,
@@ -658,16 +718,7 @@ impl RunOwner {
             .map(|outcome| outcome.stop_reason.clone());
         before_finish()?;
         let durable = self
-            .storage(move |store| {
-                store.journal.finish_classified(
-                    &store.guard,
-                    store.run_id,
-                    state,
-                    reason,
-                    None,
-                    classification.as_ref(),
-                )
-            })
+            .persist_terminal(state, reason, classification, cancel)
             .await?;
         if durable.state == RunState::Cancelled {
             Err(AgentError::Cancelled)
