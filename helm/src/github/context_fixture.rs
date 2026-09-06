@@ -50,6 +50,16 @@ fn request(section: Section) -> Read {
 /// Runs every read through reqwest and actual HTTP framing. Consuming all
 /// scripted replies and rejecting any extra request catches retry/redirect bugs.
 async fn observe(request: Read, replies: Vec<Reply>) -> anyhow::Result<context::Page> {
+    observe_operation(request, replies, false)
+        .await
+        .map(Option::unwrap)
+}
+
+async fn observe_operation(
+    request: Read,
+    replies: Vec<Reply>,
+    logs: bool,
+) -> anyhow::Result<Option<context::Page>> {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let stop = CancellationToken::new();
@@ -136,14 +146,134 @@ async fn observe(request: Read, replies: Vec<Reply>) -> anyhow::Result<context::
     });
     let client =
         Client::fixture(TOKEN.into(), format!("http://{address}/").parse().unwrap()).unwrap();
-    let result = tokio::time::timeout(
-        std::time::Duration::from_secs(10),
-        context::read(&client, request, &CancellationToken::new()),
-    )
+    let result = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        if logs {
+            super::logs::read(&client, request.object, 7, &CancellationToken::new())
+                .await
+                .map(|_| None)
+        } else {
+            context::read(&client, request, &CancellationToken::new())
+                .await
+                .map(Some)
+        }
+    })
     .await;
     stop.cancel();
     server.await.unwrap();
     result.expect("context fixture exceeded deadline")
+}
+
+fn job_metadata() -> Value {
+    // These remote-controlled URLs are deliberately unrelated and must never
+    // become destinations. Job ID 7 is not its check ID 999.
+    json!({"id":7,"run_id":9,"head_sha":HEAD,"run_attempt":2,"status":"completed","conclusion":"failure",
+        "run_url":"http://127.0.0.1:1/not-the-run","check_run_url":"https://other.invalid/check-runs/999","html_url":"https://other.invalid/job"})
+}
+fn run_metadata() -> Value {
+    json!({"id":9,"head_sha":HEAD})
+}
+fn log_provenance() -> Vec<Reply> {
+    vec![
+        Reply::json(DETAIL, detail()),
+        Reply::json("/repos/o/r/actions/jobs/7", job_metadata()),
+        Reply::json("/repos/o/r/actions/runs/9", run_metadata()),
+        Reply::json(DETAIL, detail()),
+    ]
+}
+
+#[tokio::test]
+async fn job_log_identity_failures_stop_before_download_route() {
+    for field in ["id", "head_sha", "run_id"] {
+        let mut job = job_metadata();
+        job[field] = if field == "head_sha" {
+            json!(BASE)
+        } else if field == "run_id" {
+            json!(0)
+        } else {
+            json!(8)
+        };
+        let replies = vec![
+            Reply::json(DETAIL, detail()),
+            Reply::json("/repos/o/r/actions/jobs/7", job),
+        ];
+        assert!(
+            observe_operation(request(Section::Details), replies, true)
+                .await
+                .is_err(),
+            "job {field}"
+        );
+    }
+    for field in ["id", "head_sha"] {
+        let mut run = run_metadata();
+        run[field] = if field == "head_sha" {
+            json!(BASE)
+        } else {
+            json!(8)
+        };
+        let replies = vec![
+            Reply::json(DETAIL, detail()),
+            Reply::json("/repos/o/r/actions/jobs/7", job_metadata()),
+            Reply::json("/repos/o/r/actions/runs/9", run),
+        ];
+        assert!(
+            observe_operation(request(Section::Details), replies, true)
+                .await
+                .is_err(),
+            "run {field}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn job_log_stale_head_or_base_stops_before_download_route() {
+    for field in ["head", "base_sha", "base_ref", "base_repo"] {
+        let mut changed = detail();
+        match field {
+            "head" => changed["head"]["sha"] = json!(BASE),
+            "base_sha" => changed["base"]["sha"] = json!(HEAD),
+            "base_ref" => changed["base"]["ref"] = json!("retargeted"),
+            _ => changed["base"]["repo"]["id"] = json!(2),
+        }
+        let mut replies = log_provenance();
+        *replies.last_mut().unwrap() = Reply::json(DETAIL, changed);
+        let error = observe_operation(request(Section::Details), replies, true)
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("changed before log download"));
+    }
+}
+
+#[tokio::test]
+async fn job_log_status_and_location_failures_never_fetch_secondary() {
+    for (status, headers) in [
+        (200, ""),
+        (301, "Location: /forbidden\r\n"),
+        (307, "Location: /forbidden\r\n"),
+        (401, ""),
+        (403, ""),
+        (429, "Retry-After: 30\r\n"),
+        (302, ""),
+        (
+            302,
+            "Location: https://example.invalid/a\r\nLocation: https://example.invalid/b\r\n",
+        ),
+        (302, "Location: http://127.0.0.1:1/forbidden\r\n"),
+        (302, "Location: https://user@example.invalid/forbidden\r\n"),
+    ] {
+        let mut replies = log_provenance();
+        replies.push(Reply {
+            path: "/repos/o/r/actions/jobs/7/logs".into(),
+            status,
+            body: vec![],
+            headers: headers.into(),
+        });
+        assert!(
+            observe_operation(request(Section::Details), replies, true)
+                .await
+                .is_err(),
+            "{status} {headers}"
+        );
+    }
 }
 
 fn connection(nodes: Vec<Value>, total: usize, more: bool) -> Value {
