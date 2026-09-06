@@ -37,6 +37,30 @@ pub(super) async fn read(
     job: u64,
     cancel: &CancellationToken,
 ) -> Result<Log> {
+    read_inner(
+        client,
+        object,
+        job,
+        cancel,
+        #[cfg(test)]
+        None,
+    )
+    .await
+}
+
+#[cfg(test)]
+struct DownloadFixture {
+    port: u16,
+    certificate: reqwest::Certificate,
+}
+
+async fn read_inner(
+    client: &Client,
+    object: Object,
+    job: u64,
+    cancel: &CancellationToken,
+    #[cfg(test)] fixture: Option<DownloadFixture>,
+) -> Result<Log> {
     object.validate()?;
     ensure!(
         object.kind == ObjectKind::PullRequest && job > 0 && job <= i64::MAX as u64,
@@ -93,7 +117,28 @@ pub(super) async fn read(
         .and_then(|value| value.to_str().ok())
         .ok_or_else(|| anyhow::anyhow!("GitHub job log location is missing"))?;
     client.check_current()?;
-    let (text, truncated) = download(client, location, cancel).await?;
+    #[cfg(test)]
+    let received = if let Some(fixture) = fixture {
+        let mut url = download_url(location)?;
+        ensure!(
+            url.host_str() == Some("logs.fixture.test"),
+            "unexpected fixture log host"
+        );
+        url.set_port(Some(fixture.port))
+            .map_err(|_| anyhow::anyhow!("invalid fixture port"))?;
+        let http = download_client(
+            "logs.fixture.test",
+            &[SocketAddr::from(([127, 0, 0, 1], fixture.port))],
+        )
+        .add_root_certificate(fixture.certificate)
+        .build()?;
+        receive(client, http, url, cancel).await?
+    } else {
+        download(client, location, cancel).await?
+    };
+    #[cfg(not(test))]
+    let received = download(client, location, cancel).await?;
+    let (text, truncated) = received;
     client.check_current()?;
     let fresh = context::details(client, &object, cancel).await?;
     let mut incomplete = Vec::new();
@@ -292,6 +337,31 @@ mod tls_fixture {
                 &std::fs::read(std::env::var("HELM_GITHUB_LOG_CERT").unwrap()).unwrap(),
             )
             .unwrap();
+            if mode == "pipeline" {
+                let origin = reqwest::Url::parse(&format!(
+                    "http://127.0.0.1:{}/",
+                    std::env::var("HELM_GITHUB_LOG_API_PORT").unwrap()
+                ))
+                .unwrap();
+                let authority =
+                    Client::fixture("fixture-authenticated-api-token".into(), origin).unwrap();
+                let log = read_inner(
+                    &authority,
+                    Object::parse("https://github.com/fixture/repository/pull/1").unwrap(),
+                    7,
+                    &CancellationToken::new(),
+                    Some(DownloadFixture { port, certificate }),
+                )
+                .await
+                .unwrap();
+                assert_eq!(log.text, "workflow log: succeeded\n");
+                assert_eq!(log.run, 11);
+                assert_eq!(log.run_attempt, Some(2));
+                assert!(log.incomplete.is_empty());
+                assert!(!log.truncated);
+                println!("TLS_DRIVER_PASS");
+                return;
+            }
             let authority = Client::new("fixture-authenticated-api-token".into()).unwrap();
             // Only the test supplies a local root certificate and loopback DNS
             // resolution; production download() validates public DNS first.

@@ -68,6 +68,59 @@ pub struct CommandResult {
     pub feedback: Option<Feedback>,
 }
 
+fn attributed_feedback(
+    object: &Object,
+    entry: &serde_json::Value,
+    fetched_at: DateTime<Utc>,
+    id: Option<u64>,
+) -> Result<Feedback> {
+    let source = entry["html_url"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("feedback source URL is missing"))?;
+    let mut parsed = reqwest::Url::parse(source)
+        .map_err(|_| anyhow::anyhow!("feedback source URL is malformed"))?;
+    let fragment = parsed.fragment().map(str::to_owned);
+    parsed.set_fragment(None);
+    ensure!(
+        Object::parse(parsed.as_str())? == *object,
+        "feedback source belongs to another object"
+    );
+    let source = format!(
+        "{}{}",
+        object.url(),
+        fragment
+            .map(|fragment| format!("#{fragment}"))
+            .unwrap_or_default()
+    );
+    let body = entry["body"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("feedback body is unavailable"))?;
+    let author = match (
+        entry["user"]["login"].as_str(),
+        entry["user"]["id"].as_u64(),
+    ) {
+        (Some(login), Some(id)) if !login.is_empty() && login.len() <= 100 && id > 0 => {
+            format!("{login} (GitHub user {id})")
+        }
+        _ => "Unavailable in the GitHub response".into(),
+    };
+    let feedback = Feedback {
+        source,
+        title: format!(
+            "GitHub {}#{} feedback{}",
+            object.repository.slug(),
+            object.number,
+            id.map(|id| format!(" {id}")).unwrap_or_default()
+        ),
+        description: format!(
+            "GitHub author: {author}\nObserved: {}\n\n{body}",
+            fetched_at.to_rfc3339()
+        ),
+    };
+    feedback.validate()?;
+    Ok(feedback)
+}
+
 #[derive(Clone, Debug, clap::Args)]
 pub struct Args {
     #[command(subcommand)]
@@ -342,9 +395,8 @@ pub async fn execute_args(
             }
         }).await?;
         context.policy.check_current()?;
-        result.display = context
-            .redactor
-            .redact(serde_json::to_string_pretty(&value)?);
+        result.display =
+            serde_json::to_string_pretty(&super::redact_value(&value, &context.redactor))?;
         return Ok(result);
     }
     if matches!(args.command, Command::Remotes) {
@@ -425,28 +477,13 @@ pub async fn execute_args(
                         )
                     })?
             };
-            let source = entry["html_url"]
-                .as_str()
-                .ok_or_else(|| anyhow::anyhow!("feedback source URL is missing"))?
-                .to_owned();
+            let mut feedback = attributed_feedback(&page.object, entry, page.fetched_at, id)?;
             ensure!(
-                source == page.object.url()
-                    || source.starts_with(&format!("{}#", page.object.url())),
-                "feedback source belongs to another object"
+                service.redact(&feedback.source) == feedback.source,
+                "GitHub feedback source contains a configured secret"
             );
-            let body = entry["body"]
-                .as_str()
-                .ok_or_else(|| anyhow::anyhow!("feedback body is unavailable"))?;
-            let feedback = Feedback {
-                source,
-                title: format!(
-                    "GitHub {}#{} feedback{}",
-                    page.object.repository.slug(),
-                    page.object.number,
-                    id.map(|id| format!(" {id}")).unwrap_or_default()
-                ),
-                description: service.redact(body),
-            };
+            feedback.title = service.redact(&feedback.title);
+            feedback.description = service.redact(&feedback.description);
             feedback.validate()?;
             result.reference = Some(Reference {
                 object: page.object,
@@ -559,4 +596,34 @@ async fn read_input(
     })
     .await
     .map_err(|_| anyhow::anyhow!("GitHub input reader failed"))?
+}
+
+#[cfg(test)]
+mod feedback_tests {
+    use super::*;
+    #[test]
+    fn feedback_preserves_body_and_attribution_with_canonical_case() {
+        let object = Object::parse("https://github.com/owner/repo/pull/1").unwrap();
+        let entry = serde_json::json!({"html_url":"https://github.com/Owner/Repo/pull/1#discussion_r7","body":"Keep this exact\nreview body","user":{"login":"reviewer","id":19}});
+        let feedback = attributed_feedback(&object, &entry, Utc::now(), Some(7)).unwrap();
+        assert_eq!(
+            feedback.source,
+            "https://github.com/owner/repo/pull/1#discussion_r7"
+        );
+        assert!(feedback.description.contains("reviewer (GitHub user 19)"));
+        assert!(
+            feedback
+                .description
+                .ends_with("Keep this exact\nreview body")
+        );
+        let mut other = entry.clone();
+        other["html_url"] = "https://github.com/owner/other/pull/1#discussion_r7".into();
+        assert!(attributed_feedback(&object, &other, Utc::now(), Some(7)).is_err());
+        other = entry;
+        other["body"] = "x".repeat(16 * 1024).into();
+        assert!(
+            attributed_feedback(&object, &other, Utc::now(), Some(7)).is_err(),
+            "metadata never silently truncates body"
+        );
+    }
 }

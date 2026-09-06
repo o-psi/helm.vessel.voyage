@@ -205,7 +205,7 @@ fn decode(text: &str) -> Result<Operation> {
         "GitHub operation binding is corrupt"
     );
     ensure!(
-        operation.expires_at > operation.created_at,
+        operation.created_at.checked_add_signed(chrono::Duration::minutes(15)) == Some(operation.expires_at),
         "GitHub operation expiry is corrupt"
     );
     ensure!(
@@ -1067,7 +1067,7 @@ mod tests {
             .prepare(draft, actor, "policy".into(), None, None, owner.clone())
             .unwrap();
         operation.created_at = Utc::now() - chrono::Duration::minutes(30);
-        operation.expires_at = Utc::now() - chrono::Duration::minutes(15);
+        operation.expires_at = operation.created_at + chrono::Duration::minutes(15);
         store
             .connection
             .execute(
@@ -1086,6 +1086,16 @@ mod tests {
                 .state,
             State::Cancelled
         );
+    }
+    #[test]
+    fn stored_preparation_cannot_extend_its_declared_lifetime() {
+        let (_temp, mut store, owner, draft, actor)=fixture();
+        let mut operation=store.prepare(draft,actor,"policy".into(),None,None,owner.clone()).unwrap();
+        operation.expires_at=operation.created_at+chrono::Duration::minutes(16);
+        store.connection.execute("UPDATE operations SET data=?1 WHERE id=?2",params![serde_json::to_string(&operation).unwrap(),operation.id.to_string()]).unwrap();
+        assert!(store.inspect(operation.id,&owner).is_err());
+        assert!(store.begin_send(&operation).is_err());
+        assert_eq!(store.connection.query_row("SELECT count(*) FROM operations",[],|row|row.get::<_,u64>(0)).unwrap(),1);
     }
     #[test]
     fn future_or_missing_schema_does_not_reset_unknown_delivery() {

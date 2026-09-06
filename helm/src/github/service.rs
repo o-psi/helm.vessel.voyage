@@ -147,6 +147,14 @@ impl Service {
         );
         Ok(())
     }
+    fn write_allowed(&self) -> Result<()> {
+        self.current()?;
+        ensure!(
+            self.context.policy.access_mode() != crate::config::AccessMode::ReadOnly,
+            "GitHub journal mutation is denied in read-only mode"
+        );
+        Ok(())
+    }
     async fn database<T: Send + 'static>(
         &self,
         work: impl FnOnce(&mut Store) -> Result<T> + Send + 'static,
@@ -233,25 +241,10 @@ impl Service {
         )
     }
     fn redact_value(&self, value: &Value) -> Value {
-        match value {
-            Value::String(value) => Value::String(self.redact(value)),
-            Value::Array(values) => Value::Array(
-                values
-                    .iter()
-                    .map(|value| self.redact_value(value))
-                    .collect(),
-            ),
-            Value::Object(values) => Value::Object(
-                values
-                    .iter()
-                    .map(|(key, value)| (self.redact(key), self.redact_value(value)))
-                    .collect(),
-            ),
-            _ => value.clone(),
-        }
+        super::redact_value(value, &self.context.redactor)
     }
     pub async fn prepare(&self, draft: Draft) -> Result<Operation> {
-        self.context.policy.check_current()?;
+        self.write_allowed()?;
         draft.validate()?;
         self.secret_free(&draft)?;
         let actor = self.actor().await?;
@@ -270,17 +263,19 @@ impl Service {
         self.database(move |store| store.list(&owner, offset)).await
     }
     pub async fn cancel(&self, id: Uuid, digest: String) -> Result<Operation> {
+        self.write_allowed()?;
         let owner = self.owner.clone();
         self.database(move |store| store.cancel(id, &digest, &owner))
             .await
     }
     pub async fn forget(&self, id: Uuid, digest: String) -> Result<()> {
+        self.write_allowed()?;
         let owner = self.owner.clone();
         self.database(move |store| store.forget(id, &digest, &owner))
             .await
     }
     pub async fn reconcile(&self, id: Uuid, digest: &str, remote_id: u64) -> Result<Operation> {
-        self.current()?;
+        self.write_allowed()?;
         ensure!(
             self.context.interaction == InteractionMode::Attended,
             "GitHub uncertain receipt reconciliation requires an attended operator"
@@ -316,9 +311,13 @@ impl Service {
             .await?
             .json()?;
         let mut receipt = validate_receipt(&operation, &data)?;
+        ensure!(
+            !super::value_has_secret(&serde_json::to_value(&receipt)?, &self.context.redactor),
+            "GitHub exact receipt preview contains a configured secret"
+        );
         let preview = format!(
             "{}\n\nCandidate: {}\nMatching actor and content alone do NOT prove this was the uncertain request. Explicitly adopt this candidate as an operator-confirmed receipt? No request will be resent.",
-            exact_preview(&operation)?,
+            exact_preview(&operation, &self.context.redactor)?,
             receipt.url
         );
         self.confirm("github.reconcile", &operation, preview)
@@ -329,7 +328,7 @@ impl Service {
             .await
     }
     pub async fn dispose(&self, id: Uuid, digest: &str, note: String) -> Result<Operation> {
-        self.current()?;
+        self.write_allowed()?;
         ensure!(
             !note.trim().is_empty() && note.len() <= 1024,
             "GitHub disposition requires a bounded note"
@@ -340,9 +339,13 @@ impl Service {
             operation.state == State::Sending && operation.digest == digest,
             "GitHub operation is not the exact uncertain record"
         );
+        ensure!(
+            !self.context.redactor.contains_secret(&note),
+            "GitHub exact disposition preview contains a configured secret"
+        );
         let preview = format!(
             "{}\n\nClose this uncertain record with the following explicit operator disposition? This does not prove whether GitHub accepted it and never resends it.\n{}",
-            exact_preview(&operation)?,
+            exact_preview(&operation, &self.context.redactor)?,
             serde_json::to_string(&note)?
         );
         self.confirm("github.dispose", &operation, preview).await?;
@@ -352,7 +355,7 @@ impl Service {
             .await
     }
     async fn confirm(&self, action: &str, operation: &Operation, preview: String) -> Result<()> {
-        self.current()?;
+        self.write_allowed()?;
         ensure!(
             self.context.interaction == InteractionMode::Attended,
             "GitHub decision requires an attended operator"
@@ -512,7 +515,7 @@ impl Service {
             ) == self.validate_draft(&operation.draft).await?,
             "GitHub object head changed since preparation"
         );
-        let preview = exact_preview(&operation)?;
+        let preview = exact_preview(&operation, &self.context.redactor)?;
         ensure!(
             !self.context.redactor.contains_secret(&preview)
                 && !preview.contains(
@@ -618,7 +621,11 @@ fn bounded_projection(text: String, maximum: usize) -> Result<String> {
     }
 }
 
-fn exact_preview(operation: &Operation) -> Result<String> {
+fn exact_preview(operation: &Operation, redactor: &crate::tools::Redactor) -> Result<String> {
+    ensure!(
+        !super::value_has_secret(&serde_json::to_value(operation)?, redactor),
+        "GitHub exact preview contains a configured secret"
+    );
     json_preview(
         &serde_json::json!({"host":"github.com","actor":operation.actor,"object":operation.draft.object.url(),"head":operation.observed_head,"base":operation.observed_base,"request":operation.draft.body(),"digest":operation.digest,"expires_at":operation.expires_at,"notice":"Publishing sends this exact content to GitHub and may notify repository participants. Client revalidation cannot provide a server-side atomic head/base precondition."}),
     )

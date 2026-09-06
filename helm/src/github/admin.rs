@@ -168,9 +168,7 @@ pub(super) async fn execute(
     };
     current(&context, false)?;
     Ok(CommandResult {
-        display: context
-            .redactor
-            .redact(serde_json::to_string_pretty(&value)?),
+        display: serde_json::to_string_pretty(&super::redact_value(&value, &context.redactor))?,
         reference: None,
         feedback: None,
     })
@@ -178,6 +176,10 @@ pub(super) async fn execute(
 
 async fn confirm(context: &ToolContext, value: &Value) -> Result<()> {
     current(context, true)?;
+    ensure!(
+        !super::value_has_secret(value, &context.redactor),
+        "GitHub exact administration preview contains a configured secret"
+    );
     let preview = super::service::json_preview(value)?;
     ensure!(
         !context.redactor.contains_secret(&preview),

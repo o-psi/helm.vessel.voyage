@@ -2,6 +2,7 @@
 """Actual credential-free TLS receiver using only a test-binary transport seam."""
 import argparse
 import http.server
+import json
 import os
 from pathlib import Path
 import ssl
@@ -75,12 +76,41 @@ def main():
         server.socket = context.wrap_socket(server.socket, server_side=True)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
+        api_requests = []
+        class API(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *unused):
+                pass
+            def do_GET(self):
+                api_requests.append((self.path, {key.lower():value for key,value in self.headers.items()}))
+                self.send_response(302 if self.path.endswith("/logs") else 200)
+                if self.path.endswith("/logs"):
+                    self.send_header("Location", "https://logs.fixture.test/pipeline?signed=fixture-private-query")
+                    body = b""
+                else:
+                    if self.path.endswith("/pulls/1"):
+                        value = {"number":1,"html_url":"https://github.com/fixture/repository/pull/1",
+                                 "head":{"sha":"a"*40},"base":{"sha":"b"*40,"repo":{"id":42},"ref":"main"}}
+                    elif self.path.endswith("/jobs/7"):
+                        value = {"id":7,"head_sha":"a"*40,"run_id":11,"run_attempt":2,"status":"completed","conclusion":"success",
+                                 "check_run_url":"https://not-followed.invalid/check-runs/999"}
+                    elif self.path.endswith("/runs/11"):
+                        value = {"id":11,"head_sha":"a"*40}
+                    else:
+                        value = {"unexpected":self.path}
+                    body = json.dumps(value).encode()
+                    self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+        api = http.server.ThreadingHTTPServer(("127.0.0.1", 0), API)
+        api_thread = threading.Thread(target=api.serve_forever, daemon=True)
+        api_thread.start()
         try:
-            for mode in ("success", "bounded", "exact", "redirect", "expired", "partial", "cancel"):
+            for mode in ("success", "bounded", "exact", "redirect", "expired", "partial", "cancel", "pipeline"):
                 before = len(requests)
                 environment = os.environ.copy()
                 environment.update(HELM_GITHUB_LOG_DRIVER=mode, HELM_GITHUB_LOG_PORT=str(server.server_port),
-                                   HELM_GITHUB_LOG_CERT=str(ca), HELM_GITHUB_LOG_READY=str(root / f"{mode}.ready"))
+                                   HELM_GITHUB_LOG_API_PORT=str(api.server_port), HELM_GITHUB_LOG_CERT=str(ca), HELM_GITHUB_LOG_READY=str(root / f"{mode}.ready"))
                 result = subprocess.run([args.test_binary, "--exact", "github::logs::tls_fixture::tls_driver", "--nocapture"],
                                         env=environment, text=True, capture_output=True, timeout=10)
                 assert result.returncode == 0 and "TLS_DRIVER_PASS" in result.stdout, (mode, result.stdout, result.stderr)
@@ -92,12 +122,24 @@ def main():
                 for forbidden in ("authorization", "cookie", "referer", "x-github-api-version", "proxy-authorization"):
                     assert forbidden not in headers, (mode, forbidden)
                 assert "fixture-authenticated-api-token" not in str(headers)
+                if mode == "pipeline":
+                    prefix = "/repos/fixture/repository/"
+                    assert [path for path, _ in api_requests] == [prefix+suffix for suffix in
+                        ("pulls/1", "actions/jobs/7", "actions/runs/11", "pulls/1", "actions/jobs/7/logs", "pulls/1")]
+                    for _, api_headers in api_requests:
+                        assert api_headers["authorization"] == "Bearer fixture-authenticated-api-token"
+                        assert api_headers["x-github-api-version"] == "2026-03-10"
+                else:
+                    assert not api_requests
                 print(f"PASS signed-log TLS {mode}")
         finally:
+            api.shutdown()
+            api.server_close()
+            api_thread.join(timeout=2)
             server.shutdown()
             server.server_close()
             thread.join(timeout=2)
-    print("PASS 7 actual secondary HTTPS transport cases; public DNS rejection is separately unit-tested")
+    print("PASS 8 actual secondary HTTPS transport cases including authenticated API pipeline; public DNS rejection is separately unit-tested")
 
 
 if __name__ == "__main__":
