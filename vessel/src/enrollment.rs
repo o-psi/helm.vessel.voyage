@@ -794,3 +794,4 @@ fn configure_private_journal(db: &Connection) -> rusqlite::Result<()> {
 mod tests;
 
 pub(crate) mod control;
+pub(crate) mod inspection;

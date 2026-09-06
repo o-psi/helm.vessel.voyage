@@ -448,6 +448,7 @@ mod tests {
                 attachment: None,
                 remote: Some(remote.clone()),
                 control: None,
+                enrollment: None,
             };
             let mut headers = HeaderMap::new();
             headers.insert("authorization", format!("Bearer {TOKEN}").parse().unwrap());

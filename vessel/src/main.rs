@@ -1,4 +1,5 @@
 mod coordination_http;
+mod enrollment_inspection_http;
 mod remote_http;
 use anyhow::Result;
 use axum::{
@@ -79,6 +80,7 @@ struct AppState {
     attachment: Option<vessel::attachment_transport::AttachmentApi>,
     remote: Option<remote_http::RemoteApi>,
     control: Option<vessel::enrollment_http::EnrollmentApi>,
+    enrollment: Option<vessel::enrollment_http::EnrollmentApi>,
 }
 type ApiResult<T> = Result<Json<T>, (StatusCode, Json<ApiError>)>;
 
@@ -163,8 +165,27 @@ async fn main() -> Result<()> {
         attachment: attachment.clone(),
         remote,
         control: enrollment.clone().filter(|api| api.control_enabled()),
+        enrollment: enrollment.clone(),
     };
     let app = Router::new()
+        .route(
+            "/v2/enrollment/machines",
+            axum::routing::post(enrollment_inspection_http::machines)
+                .layer(axum::extract::DefaultBodyLimit::max(4096))
+                .layer(middleware::from_fn_with_state(
+                    state.clone(),
+                    enrollment_inspection_http::private_response,
+                )),
+        )
+        .route(
+            "/v2/enrollment/audit",
+            axum::routing::post(enrollment_inspection_http::audit)
+                .layer(axum::extract::DefaultBodyLimit::max(4096))
+                .layer(middleware::from_fn_with_state(
+                    state.clone(),
+                    enrollment_inspection_http::private_response,
+                )),
+        )
         .route("/health", get(health))
         .route("/ready", get(readiness))
         .route("/metrics", get(metrics))
@@ -496,6 +517,7 @@ mod tests {
             attachment: None,
             remote: None,
             control: None,
+            enrollment: None,
         };
         let mut headers = HeaderMap::new();
         assert!(operator_auth(&state, &headers).is_err());
@@ -542,6 +564,7 @@ mod tests {
             attachment: None,
             remote: None,
             control: None,
+            enrollment: None,
         }))
         .await;
         assert_eq!(result.unwrap_err().0, StatusCode::INTERNAL_SERVER_ERROR);

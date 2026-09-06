@@ -12,6 +12,7 @@ docs/attachment-events.md
 docs/attachment-foundations.md
 docs/attachment-presence.md
 docs/coordination-control.md
+docs/enrollment-administration.md
 docs/attachment-production-contract.md
 docs/attachment-sharing.md
 docs/attachment-transport.md

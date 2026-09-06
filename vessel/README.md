@@ -32,6 +32,12 @@ UI/diagnostics return 503 without a configured operator token and 401 for missin
 invalid authentication when enabled. Request correlation and `--log-format json`
 are supported, as are `completions` and `manpage`.
 
+## Enrollment administration
+
+[Inspect enrolled devices and enrollment audit events](../docs/enrollment-administration.md),
+including offline devices, then use exact-epoch operator revocation when needed.
+These read-only observations do not grant worker or voyage authority.
+
 ## Attachment presence
 
 Configure enrollment and run an explicit foreground Helm connection using the

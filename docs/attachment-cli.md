@@ -112,6 +112,10 @@ remove this field or restore an active backup to work around that rejection.
 Re-enrollment of a detached directory is intentionally not automatic; use an
 explicit separate identity directory and operator-issued invitation when needed.
 
+Operators can [inspect offline enrolled devices and the audit trail](enrollment-administration.md)
+before using exact-epoch revocation. Inspection does not repair expired pending
+transactions or grant worker authority.
+
 ## Verification and remaining scope
 
 The deterministic `tests/system/attachment_enrollment.py` fixture starts the real
