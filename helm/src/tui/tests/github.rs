@@ -255,8 +255,8 @@ async fn github_panel_blocks_model_dispatch_and_session_navigation_until_closed(
     app.composer.insert_str("preserved draft");
     app.github_panel.open = true;
     let (tx, _rx) = mpsc::unbounded_channel();
-    assert!(!start_run(&mut app, &agent, &mut store, &tx, "must not dispatch".into()).await.unwrap());
-    assert!(commands::request_navigation(&mut app, &store, "other".into()).await.is_err());
+    assert!(!start_run(&mut app, &agent, &mut store, &tx, "must not dispatch".into(), None).await.unwrap());
+    assert!(crate::tui::commands::request_navigation(&mut app, &store, "other".into()).await.is_err());
     assert!(!app.is_running());
     assert!(app.session.messages.is_empty());
     assert_eq!(app.composer.text, "preserved draft");
