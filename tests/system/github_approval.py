@@ -149,15 +149,41 @@ def run_case(binary, env, case):
         ui.close()
 
 
+def cli_discovery(binary, env):
+    # These commands stop in Clap, before configuration, credentials or HTTP.
+    cases = [
+        (["--help"], 0, b"github"),
+        (["github", "--help"], 0, b"publish"),
+        (["github", "prepare", "--help"], 0, b"--draft-file"),
+        (["github", "publish", "--help"], 0, b"<DIGEST>"),
+        (["github", "reconcile", "--help"], 0, b"<REMOTE_ID>"),
+        (["github", "publish"], 2, b"required"),
+        (["github", "publish", "not-a-uuid", "digest"], 2, b"invalid value"),
+        (["github", "view", "URL", "--section", "invented"], 2, b"invalid value"),
+        (["github", "prepare", "URL", "--event", "MERGE"], 2, b"invalid value"),
+        (["github", "prepare", "URL", "--body", "text", "--draft-file", "missing"], 2, b"cannot be used"),
+        (["github", "publish", "--yes"], 2, b"unexpected argument"),
+    ]
+    for arguments, code, expected in cases:
+        result = subprocess.run([binary, *arguments], env=env, stdin=subprocess.DEVNULL,
+                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=10)
+        assert len(result.stdout) < CAP
+        assert result.returncode == code and expected in result.stdout, (arguments, result.returncode, result.stdout)
+        print("PASS GitHub CLI parser " + " ".join(arguments), flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--test-binary", required=True)
+    parser.add_argument("--helm-bin", help="also check actual production CLI discovery/parser without executing operations")
     args = parser.parse_args()
     binary = str(Path(args.test_binary).resolve())
     with tempfile.TemporaryDirectory(prefix="helm-github-approval-") as directory:
         env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "TERM": "xterm-256color",
                "HOME": directory, "XDG_CONFIG_HOME": directory + "/config",
                "XDG_DATA_HOME": directory + "/data", "RUST_BACKTRACE": "0"}
+        if args.helm_bin:
+            cli_discovery(str(Path(args.helm_bin).resolve()), env)
         for case in ("confirm", "deny", "escape", "ctrl-c", "paste", "split-paste",
                      "resize", "resize-unusable", "cancel", "narrow", "short", "unattended"):
             run_case(binary, env, case)
