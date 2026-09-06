@@ -2,6 +2,17 @@
 
 User mandate: comprehensively resolve remaining issues, including epics. Latest complete open/closed inventory: 83 issues, retained in `.local-git/issues-resume-inventory.jsonl`. Root user edits are preserved. Current development gates are Linux-only; historical native results below are not evidence for the current build; affected-platform requirements remain explicit in their tracking issues.
 
+## Remove implicit execution barriers (2026-09-06)
+
+The operator requested a [guardrail removal plan](guardrail-removal-plan.md),
+including removal of Helm-imposed token gates. Track it under
+[#5](https://github.com/o-psi/voyage/issues/5#issuecomment-5561523660) with the related
+context, completion, authority and resource issues. The plan removes arbitrary
+stopping defaults and repeated approvals while retaining explicitly chosen
+restrictions and data/ownership protections. It is planning only; runtime changes
+and their acceptance tests remain outstanding. Its token direction supersedes
+earlier proposals to replace the fixed fallback with a smarter local token gate.
+
 ## Local validation and hosted CI plan (2026-09-06)
 
 The operator approved full local Linux validation before publication and manual-only
