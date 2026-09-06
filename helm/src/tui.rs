@@ -1041,7 +1041,7 @@ async fn handle_key(
                     .get(app.terminal_panel.selected_terminal)
                 {
                     let id = summary.id;
-                    match terminals.snapshot(id).await {
+                    match terminals.attach(id).await {
                         Ok(snapshot) => {
                             app.terminal_panel.attached_terminal = Some(id);
                             app.terminal_panel.terminal_snapshot = Some(snapshot);

@@ -44,6 +44,15 @@ pub struct TerminalSnapshot {
     pub cursor: Option<(u16, u16)>,
     /// Total transcript bytes evicted from the bounded agent-read buffer.
     pub dropped_unread_bytes: u64,
+    /// Human-only capture state; never serialize screen contents into model records.
+    pub privacy: Option<TerminalPrivacy>,
+}
+
+/// Privacy omissions are distinct from eviction of the bounded model buffer.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct TerminalPrivacy {
+    pub discarded_unread_bytes: u64,
+    pub suppressed_output_bytes: u64,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -86,6 +95,9 @@ pub enum TerminalError {
 #[async_trait]
 pub trait InteractiveTerminals: Send + Sync {
     async fn list(&self) -> Result<Vec<TerminalSummary>, TerminalError>;
+    /// Permanently disable model capture before returning a human-visible screen.
+    /// Detachment must not reopen capture; already disclosed output is unchanged.
+    async fn attach(&self, id: TerminalId) -> Result<TerminalSnapshot, TerminalError>;
     async fn snapshot(&self, id: TerminalId) -> Result<TerminalSnapshot, TerminalError>;
     async fn write(&self, id: TerminalId, bytes: Vec<u8>) -> Result<(), TerminalError>;
     async fn resize(&self, id: TerminalId, columns: u16, rows: u16) -> Result<(), TerminalError>;
@@ -110,6 +122,10 @@ impl InteractiveTerminals for NoInteractiveTerminals {
         Ok(Vec::new())
     }
 
+    async fn attach(&self, id: TerminalId) -> Result<TerminalSnapshot, TerminalError> {
+        Err(TerminalError::NotFound(id))
+    }
+
     async fn snapshot(&self, id: TerminalId) -> Result<TerminalSnapshot, TerminalError> {
         Err(TerminalError::NotFound(id))
     }
@@ -127,23 +143,42 @@ impl InteractiveTerminals for NoInteractiveTerminals {
     }
 }
 
-/// Input splitter for a plain/raw stdio adapter. Bytes before the first Ctrl+]
-/// belong to the PTY; the chord itself and following bytes remain with Helm.
+/// Input splitter for a future plain/raw stdio frontend. Both detach chords
+/// remain local; the caller must retain `helm_input` for subsequent Helm input.
 #[derive(Default)]
 pub struct PlainDetachFilter {
     detached: bool,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub struct PlainDetachChunk<'a> {
+    pub terminal_input: &'a [u8],
+    pub helm_input: &'a [u8],
+    pub detached: bool,
+}
+
 impl PlainDetachFilter {
-    pub fn push<'a>(&mut self, input: &'a [u8]) -> (&'a [u8], bool) {
+    pub fn push<'a>(&mut self, input: &'a [u8]) -> PlainDetachChunk<'a> {
         if self.detached {
-            return (&input[..0], true);
+            return PlainDetachChunk {
+                terminal_input: &input[..0],
+                helm_input: input,
+                detached: true,
+            };
         }
-        if let Some(index) = input.iter().position(|byte| *byte == 0x1d) {
+        if let Some(index) = input.iter().position(|byte| matches!(*byte, 0x14 | 0x1d)) {
             self.detached = true;
-            (&input[..index], true)
+            PlainDetachChunk {
+                terminal_input: &input[..index],
+                helm_input: &input[index + 1..],
+                detached: true,
+            }
         } else {
-            (input, false)
+            PlainDetachChunk {
+                terminal_input: input,
+                helm_input: &input[..0],
+                detached: false,
+            }
         }
     }
 }
@@ -153,10 +188,50 @@ mod tests {
     use super::*;
 
     #[test]
-    fn plain_detach_filter_never_forwards_detach_chord() {
+    fn both_plain_detach_chords_preserve_all_trailing_bytes_across_every_chunk_boundary() {
+        for chord in [0x14, 0x1d] {
+            let input = [
+                b"before\xc3\xa9".as_slice(),
+                &[chord],
+                b"after\x14\x1d".as_slice(),
+            ]
+            .concat();
+            for split in 0..=input.len() {
+                let mut filter = PlainDetachFilter::default();
+                let first = filter.push(&input[..split]);
+                let second = filter.push(&input[split..]);
+                assert_eq!(
+                    [first.terminal_input, second.terminal_input].concat(),
+                    b"before\xc3\xa9"
+                );
+                assert_eq!(
+                    [first.helm_input, second.helm_input].concat(),
+                    b"after\x14\x1d"
+                );
+                assert!(second.detached);
+                assert_eq!(
+                    filter.push(b"next"),
+                    PlainDetachChunk {
+                        terminal_input: b"",
+                        helm_input: b"next",
+                        detached: true
+                    }
+                );
+                assert!(filter.push(b"").detached);
+            }
+        }
+    }
+
+    #[test]
+    fn plain_filter_forwards_every_other_byte_without_transformation() {
+        let input: Vec<_> = (0..=255)
+            .filter(|byte| !matches!(*byte, 0x14 | 0x1d))
+            .collect();
         let mut filter = PlainDetachFilter::default();
-        assert_eq!(filter.push(b"echo hi\r"), (&b"echo hi\r"[..], false));
-        assert_eq!(filter.push(b"before\x1dafter"), (&b"before"[..], true));
-        assert_eq!(filter.push(b"ignored"), (&b""[..], true));
+        let output = filter.push(&input);
+        assert_eq!(output.terminal_input, input);
+        assert!(output.helm_input.is_empty());
+        assert!(!output.detached);
+        assert!(!filter.push(b"").detached);
     }
 }

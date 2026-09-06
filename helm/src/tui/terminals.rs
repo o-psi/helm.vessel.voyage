@@ -32,7 +32,7 @@ pub(super) async fn handle_attached_key(
     if is_terminal_detach_key(key) {
         panel.attached_terminal = None;
         panel.terminal_snapshot = None;
-        *status = "Detached; terminal is still running".into();
+        *status = "Detached; terminal keeps running with model capture private".into();
     } else if let Some(bytes) = encode_terminal_key(key)
         && let Err(error) = terminals.write(id, bytes).await
     {
@@ -41,8 +41,11 @@ pub(super) async fn handle_attached_key(
 }
 
 pub(super) fn is_terminal_detach_key(key: KeyEvent) -> bool {
-    (key.modifiers.contains(KeyModifiers::CONTROL) && matches!(key.code, KeyCode::Char('t' | ']')))
-        || key.code == KeyCode::Char('\u{1d}')
+    // Legacy byte 0x1d is decoded as Ctrl+5 by crossterm; enhanced
+    // keyboard protocols may report Ctrl+] or the raw control character.
+    (key.modifiers.contains(KeyModifiers::CONTROL)
+        && matches!(key.code, KeyCode::Char('t' | ']' | '5')))
+        || matches!(key.code, KeyCode::Char('\u{14}' | '\u{1d}'))
 }
 
 pub(super) fn draw_attached_terminal(
@@ -56,9 +59,11 @@ pub(super) fn draw_attached_terminal(
         .as_ref()
         .map(|snapshot| (snapshot.title.as_str(), format!("{:?}", snapshot.state)))
         .unwrap_or(("loading", "unknown".into()));
-    frame.render_widget(
-        Paragraph::new(format!(
-            " HELM TERMINAL · {title} · {state}{} · Ctrl+T detach (process keeps running)",
+    let heading = if area.width < 60 {
+        "Ctrl+T · private".to_string()
+    } else {
+        format!(
+            " HELM TERMINAL · Ctrl+T/Ctrl+] detach · model capture private · {title} · {state}{}",
             panel
                 .terminal_snapshot
                 .as_ref()
@@ -68,8 +73,10 @@ pub(super) fn draw_attached_terminal(
                     snapshot.dropped_unread_bytes
                 ))
                 .unwrap_or_default()
-        ))
-        .style(Style::default().fg(Color::Black).bg(Color::Cyan)),
+        )
+    };
+    frame.render_widget(
+        Paragraph::new(heading).style(Style::default().fg(Color::Black).bg(Color::Cyan)),
         chunks[0],
     );
     if let Some(snapshot) = &panel.terminal_snapshot {

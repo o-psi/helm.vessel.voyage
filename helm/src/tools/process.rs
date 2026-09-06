@@ -71,6 +71,7 @@ struct Managed {
 }
 
 struct Capture {
+    privacy: Option<crate::terminal::TerminalPrivacy>,
     bytes: Vec<u8>,
     base: usize,
     dropped: u64,
@@ -79,10 +80,38 @@ struct Capture {
 impl Capture {
     fn new(rows: u16, cols: u16) -> Self {
         Self {
+            privacy: None,
             bytes: Vec::new(),
             base: 0,
             dropped: 0,
             parser: vt100::Parser::new(rows, cols, 0),
+        }
+    }
+    fn make_private(&mut self, cursor: usize) {
+        if self.privacy.is_none() {
+            let offset = cursor.saturating_sub(self.base).min(self.bytes.len());
+            self.privacy = Some(crate::terminal::TerminalPrivacy {
+                discarded_unread_bytes: (self.bytes.len() - offset) as u64,
+                suppressed_output_bytes: 0,
+            });
+            self.base += self.bytes.len();
+            self.bytes.clear();
+        }
+    }
+    fn capture_output(&mut self, bytes: &[u8], max_unread_bytes: usize) {
+        if let Some(privacy) = &mut self.privacy {
+            privacy.suppressed_output_bytes = privacy
+                .suppressed_output_bytes
+                .saturating_add(bytes.len() as u64);
+            self.base = self.base.saturating_add(bytes.len());
+        } else {
+            self.bytes.extend_from_slice(bytes);
+            if self.bytes.len() > max_unread_bytes {
+                let remove = self.bytes.len() - max_unread_bytes;
+                self.bytes.drain(..remove);
+                self.base += remove;
+                self.dropped += remove as u64;
+            }
         }
     }
 }
@@ -148,7 +177,7 @@ impl Tool for ProcessTool {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
         name: "process".into(),
-        description: "Manage multiple persistent PTY-backed terminals with stable IDs and optional names, cwd, and environment. Start, read, write, resize, interrupt, rename, list, or terminate. Use shell for isolated one-shot commands.".into(),
+        description: "Manage multiple persistent PTY-backed terminals with stable IDs and optional names, cwd, and environment. Start, read, write, resize, interrupt, rename, list, or terminate. Human attachment permanently disables model capture and input for that terminal; reads report a privacy gap. Start a new terminal for model-observed work. Use shell for isolated one-shot commands.".into(),
         input_schema: json!({"type":"object","properties":{"action":{"enum":["start","read","write","resize","interrupt","rename","select","terminate","list"]},"command":{"type":"string"},"id":{"type":["string","null"]},"name":{"type":["string","null"]},"current_name":{"type":["string","null"]},"cwd":{"type":"string"},"env":{"type":"object"},"data":{"type":"string"},"rows":{"type":"integer","minimum":1},"cols":{"type":"integer","minimum":1}},"required":["action"]}),
     }
     }
@@ -195,7 +224,7 @@ impl Tool for ProcessTool {
                 let count = data.len();
                 tokio::select! { biased;
                     _ = ctx.cancellation.cancelled() => Err(ToolError::Failed("terminal input cancelled; delivery may be partial".into())),
-                    result = writer.write(data.into_bytes()) => result.map(|()|format!("wrote {count} bytes")).map_err(failed),
+                    result = writer.write_model(data.into_bytes()) => result.map(|()|format!("wrote {count} bytes")).map_err(failed),
                 }
             }
             Args::Resize {
@@ -413,13 +442,7 @@ impl ProcessTool {
                                     let (row, column) = capture.parser.screen().cursor_position();
                                     format!("\x1b[{};{}R", row + 1, column + 1)
                                 });
-                            capture.bytes.extend_from_slice(&buffer[..n]);
-                            if capture.bytes.len() > max_unread_bytes {
-                                let remove = capture.bytes.len() - max_unread_bytes;
-                                capture.bytes.drain(..remove);
-                                capture.base += remove;
-                                capture.dropped += remove as u64;
-                            }
+                            capture.capture_output(&buffer[..n], max_unread_bytes);
                             if !reader_pending.swap(true, Ordering::AcqRel) {
                                 let _ = events.send(TerminalEvent::Changed(TerminalId(id)));
                             }
@@ -478,6 +501,24 @@ impl ProcessTool {
             .get(&id)
             .map(|process| process.writer.clone())
             .ok_or_else(|| ToolError::Failed(format!("unknown process {id}")))
+    }
+    fn human_input(&self, id: TerminalId) -> Result<input::Input, TerminalError> {
+        let map = self
+            .processes
+            .lock()
+            .map_err(|_| TerminalError::Failed("terminal manager unavailable".into()))?;
+        let process = map.get(&id.0).ok_or(TerminalError::NotFound(id))?;
+        let mut capture = process
+            .output
+            .lock()
+            .map_err(|_| TerminalError::Failed("terminal capture unavailable".into()))?;
+        process.writer.make_private();
+        let newly_private = capture.privacy.is_none();
+        capture.make_private(process.cursor);
+        if newly_private && !process.notification_pending.swap(true, Ordering::AcqRel) {
+            let _ = self.events.send(TerminalEvent::Changed(id));
+        }
+        Ok(process.writer.clone())
     }
     fn resize(&self, id: Uuid, rows: u16, cols: u16) -> Result<String, ToolError> {
         let mut map = self.processes.lock().map_err(failed)?;
@@ -577,6 +618,10 @@ impl InteractiveTerminals for ProcessTool {
                 .collect()
         })
     }
+    async fn attach(&self, id: TerminalId) -> Result<TerminalSnapshot, TerminalError> {
+        self.human_input(id)?;
+        self.snapshot(id).await
+    }
     async fn snapshot(&self, id: TerminalId) -> Result<TerminalSnapshot, TerminalError> {
         let mut map = self
             .processes
@@ -625,6 +670,7 @@ impl InteractiveTerminals for ProcessTool {
                 (column, row)
             }),
             dropped_unread_bytes: capture.dropped,
+            privacy: capture.privacy.clone(),
         })
     }
     async fn write(&self, id: TerminalId, bytes: Vec<u8>) -> Result<(), TerminalError> {
@@ -633,16 +679,7 @@ impl InteractiveTerminals for ProcessTool {
                 "terminal manager is shutting down".into(),
             ));
         }
-        let writer = {
-            let map = self
-                .processes
-                .lock()
-                .map_err(|_| TerminalError::Failed("terminal manager unavailable".into()))?;
-            map.get(&id.0)
-                .ok_or(TerminalError::NotFound(id))?
-                .writer
-                .clone()
-        };
+        let writer = self.human_input(id)?;
         writer
             .write(bytes)
             .await
@@ -692,6 +729,9 @@ fn platform_command(command: &str) -> CommandBuilder {
     builder
 }
 fn unread_chunk(capture: &Capture, cursor: usize, max: usize) -> (String, usize) {
+    if capture.privacy.is_some() {
+        return ("[model capture unavailable: human attachment made this terminal private; output remains withheld after detach. Start a new terminal for model-observed work.]".into(), capture.base);
+    }
     let offset = cursor.saturating_sub(capture.base).min(capture.bytes.len());
     let end = offset.saturating_add(max).min(capture.bytes.len());
     let remaining = capture.bytes.len() - end;
@@ -730,6 +770,8 @@ fn terminate_process_group(_: Option<u32>) {}
 #[cfg(test)]
 mod tests {
     mod backpressure;
+    #[cfg(unix)]
+    mod privacy;
     mod shutdown;
     use super::*;
     use crate::{
@@ -916,6 +958,7 @@ mod tests {
     #[test]
     fn truncated_reads_preserve_the_unread_tail() {
         let capture = Capture {
+            privacy: None,
             bytes: b"abcdefgh".to_vec(),
             base: 10,
             dropped: 10,

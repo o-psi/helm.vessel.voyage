@@ -31,6 +31,14 @@ fn detach_accepts_both_crossterm_control_encodings() {
         KeyModifiers::CONTROL
     )));
     assert!(is_terminal_detach_key(KeyEvent::new(
+        KeyCode::Char('5'),
+        KeyModifiers::CONTROL
+    )));
+    assert!(is_terminal_detach_key(KeyEvent::new(
+        KeyCode::Char('\u{14}'),
+        KeyModifiers::NONE
+    )));
+    assert!(is_terminal_detach_key(KeyEvent::new(
         KeyCode::Char('\u{1d}'),
         KeyModifiers::NONE
     )));
@@ -103,4 +111,34 @@ async fn attached_keystrokes_can_never_answer_agent_approvals() {
     .unwrap();
     assert_eq!(receive.await.unwrap(), ApprovalOutcome::Unavailable);
     assert!(app.approval.is_none());
+}
+
+#[tokio::test]
+async fn attached_privacy_and_detach_hint_remain_visible_in_narrow_and_resized_views() {
+    let terminals = FakeTerminals::new();
+    let panel = super::super::terminals::TerminalPanel {
+        attached_terminal: Some(terminals.id),
+        terminal_snapshot: Some(terminals.attach(terminals.id).await.unwrap()),
+        ..Default::default()
+    };
+    for width in [20, 40, 80, 160] {
+        let backend = ratatui::backend::TestBackend::new(width, 8);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| {
+                super::super::terminals::draw_attached_terminal(frame, frame.area(), &panel)
+            })
+            .unwrap();
+        let screen = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(
+            screen.contains("Ctrl+T") && screen.contains("private"),
+            "{screen}"
+        );
+    }
 }

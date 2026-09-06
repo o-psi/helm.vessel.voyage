@@ -148,6 +148,9 @@ impl InteractiveTerminals for FakeTerminals {
             state: TerminalState::Running,
         }])
     }
+    async fn attach(&self, id: TerminalId) -> Result<TerminalSnapshot, TerminalError> {
+        self.snapshot(id).await
+    }
     async fn snapshot(&self, id: TerminalId) -> Result<TerminalSnapshot, TerminalError> {
         if id != self.id {
             return Err(TerminalError::NotFound(id));
@@ -163,6 +166,7 @@ impl InteractiveTerminals for FakeTerminals {
             }]],
             cursor: Some((2, 0)),
             dropped_unread_bytes: 0,
+            privacy: Some(crate::terminal::TerminalPrivacy::default()),
         })
     }
     async fn write(&self, id: TerminalId, bytes: Vec<u8>) -> Result<(), TerminalError> {

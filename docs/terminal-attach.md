@@ -27,10 +27,13 @@ Helm process, not across restarts. The header always displays the detach chord w
 If an agent requests approval while a terminal is attached, Helm returns
 `unavailable` immediately; terminal keystrokes can never approve an agent action.
 
-For screen readers or terminals which cannot run Helm's full-screen UI, the runtime
-adapter should expose a raw/plain attach command using `PlainDetachFilter`. It copies
-PTY bytes directly between stdio and the selected terminal, reserves Ctrl+T and Ctrl+] locally,
-and restores the outer terminal on exit or signal.
+The full-screen TUI currently provides the attach workflow. A raw/plain attach
+frontend is **not implemented**. `PlainDetachFilter` is a library helper for that
+planned frontend: it reserves both Ctrl+T and Ctrl+], returns the PTY-bound prefix
+as `PlainDetachChunk.terminal_input`, and returns every byte after the first detach
+chord as `helm_input`. Once detached, later chunks belong entirely to Helm. A
+frontend must retain that remainder and implement terminal restoration; the helper
+alone does not provide a usable plain-mode attach command.
 
 This attaches to a PTY owned by the current Helm. Running SSH inside that PTY
 does not attach the interface to a remote Helm or select a coordinating Helm.
@@ -38,13 +41,38 @@ Those are separate planned [remote voyage interface](voyages.md) operations. Det
 this view preserves the live local process; exiting its owning Helm cannot promise
 that the process survives.
 
+## Privacy after human attachment
+
+Attaching makes that terminal private for the remainder of its lifetime, before
+the first human keystroke. Helm discards its unread model capture and suppresses
+all later captured output, including terminal echo, application repeats and output
+arriving after detach. The human screen keeps updating. Detach, reattach and voyage
+navigation do not resume model capture. Direct human writes through the runtime
+adapter establish the same boundary even without a prior attach call.
+
+Model reads report that capture is unavailable; model writes to the private terminal
+are denied. Pending model input stops its remaining suffix when privacy is activated;
+bytes already accepted by the PTY cannot be recalled. Model cancellation, termination
+and cleanup operations retain their existing authority. Unattached terminals keep
+normal model input/output. Start a new terminal when the model needs to observe and
+interact with terminal output again.
+
+Output already disclosed before attachment cannot be retracted, and Helm does not
+rewrite earlier session history. This is a capture boundary inside Helm, not an OS
+sandbox or a restriction on unrelated filesystem tools. Human screen snapshots must
+never be copied into model messages, sessions or diagnostics.
+
 ## Runtime integration contract
 
 The built-in runtime uses `vt100` to expose an emulated cell grid, SGR attributes,
 cursor position, wrapping, erase operations, and alternate-screen behavior instead
 of raw escape sequences. Agent unread transcript retention is bounded separately;
 when history is evicted, `TerminalSnapshot.dropped_unread_bytes` increases and the
-TUI displays the gap. Emulated screen state remains intact.
+TUI displays the gap. Privacy omissions are recorded separately in
+`TerminalSnapshot.privacy`: unread bytes discarded at attachment and subsequent
+output bytes suppressed. The attached header and model-read result identify private
+capture instead of presenting withheld output as an empty, complete transcript.
+Emulated human screen state and its revision continue updating.
 
 The UI consumes the `InteractiveTerminals` trait in `helm::terminal`; it never owns a
 singleton process. One manager can expose any number of local, SSH, container, or
@@ -67,6 +95,8 @@ Runtime implementations must:
   title, state, and monotonically increasing revision;
 - parse ANSI/VT output before publishing snapshots so cursor movement, erasure,
   colors, alternate screens, and full-screen apps render correctly;
+- establish the permanent privacy boundary through `InteractiveTerminals::attach`
+  before exposing the human screen or accepting direct human input;
 - accept input as opaque bytes without UTF-8 assumptions or instrumentation;
 - accept dimensions as columns then rows and signal the underlying PTY promptly;
 - publish coalescible added/changed/removed events without blocking PTY readers;

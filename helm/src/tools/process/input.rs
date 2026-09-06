@@ -21,8 +21,10 @@ const POLL: Duration = Duration::from_millis(5);
 pub(super) struct Input {
     queue: mpsc::SyncSender<Request>,
     stop: Arc<AtomicBool>,
+    private: Arc<AtomicBool>,
 }
 struct Request {
+    model: bool,
     bytes: Vec<u8>,
     cancelled: Arc<AtomicBool>,
     deadline: Instant,
@@ -34,6 +36,7 @@ pub(super) enum InputError {
     Busy,
     Closed,
     Unconfirmed,
+    Private,
 }
 impl std::fmt::Display for InputError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -41,6 +44,7 @@ impl std::fmt::Display for InputError {
             Self::TooLarge => "terminal input exceeds 64 KiB; nothing queued",
             Self::Busy => "terminal input queue full; nothing queued",
             Self::Closed => "terminal input is closed; nothing queued",
+            Self::Private => "model input unavailable: terminal is private after human attach; prior input may be partial",
             Self::Unconfirmed => {
                 "terminal input delivery incomplete or unconfirmed; do not retry automatically"
             }
@@ -70,6 +74,8 @@ impl Input {
     ) -> io::Result<Self> {
         let (queue, requests) = mpsc::sync_channel::<Request>(QUEUED_WRITES);
         let worker_stop = stop.clone();
+        let private = Arc::new(AtomicBool::new(false));
+        let worker_private = private.clone();
         done.store(false, Ordering::Release);
         let finished = Finished(done);
         std::thread::Builder::new()
@@ -82,16 +88,24 @@ impl Input {
                         Err(mpsc::RecvTimeoutError::Timeout) => continue,
                         Err(mpsc::RecvTimeoutError::Disconnected) => break,
                     };
-                    let result = deliver(&mut *writer, &request, &worker_stop);
+                    let result = deliver(&mut *writer, &request, &worker_stop, &worker_private);
                     let _ = request.reply.send(result);
                 }
             })?;
-        Ok(Self { queue, stop })
+        Ok(Self {
+            queue,
+            stop,
+            private,
+        })
     }
     fn enqueue(
         &self,
         bytes: Vec<u8>,
+        model: bool,
     ) -> Result<(oneshot::Receiver<Result<(), InputError>>, CancelOnDrop), InputError> {
+        if model && self.private.load(Ordering::Acquire) {
+            return Err(InputError::Private);
+        }
         if bytes.len() > MAX_INPUT_BYTES {
             return Err(InputError::TooLarge);
         }
@@ -102,6 +116,7 @@ impl Input {
         let guard = CancelOnDrop(Some(cancelled.clone()));
         let (reply, result) = oneshot::channel();
         let request = Request {
+            model,
             bytes,
             cancelled,
             deadline: Instant::now() + WRITE_DEADLINE,
@@ -114,7 +129,16 @@ impl Input {
         Ok((result, guard))
     }
     pub(super) async fn write(&self, bytes: Vec<u8>) -> Result<(), InputError> {
-        let (result, _cancel) = self.enqueue(bytes)?;
+        self.write_input(bytes, false).await
+    }
+    pub(super) async fn write_model(&self, bytes: Vec<u8>) -> Result<(), InputError> {
+        self.write_input(bytes, true).await
+    }
+    pub(super) fn make_private(&self) {
+        self.private.store(true, Ordering::Release);
+    }
+    async fn write_input(&self, bytes: Vec<u8>, model: bool) -> Result<(), InputError> {
+        let (result, _cancel) = self.enqueue(bytes, model)?;
         tokio::time::timeout(WRITE_DEADLINE, result)
             .await
             .map_err(|_| InputError::Unconfirmed)?
@@ -122,7 +146,7 @@ impl Input {
     }
     /// Reader-generated terminal protocol replies must never block output capture.
     pub(super) fn report(&self, bytes: Vec<u8>) {
-        if let Ok((result, mut guard)) = self.enqueue(bytes) {
+        if let Ok((result, mut guard)) = self.enqueue(bytes, false) {
             // This bounded protocol reply has no caller awaiting it. Its deadline
             // and manager stop flag still apply; dropping a receiver is harmless.
             drop(result);
@@ -130,9 +154,17 @@ impl Input {
         }
     }
 }
-fn deliver(writer: &mut dyn Write, request: &Request, stop: &AtomicBool) -> Result<(), InputError> {
+fn deliver(
+    writer: &mut dyn Write,
+    request: &Request,
+    stop: &AtomicBool,
+    private: &AtomicBool,
+) -> Result<(), InputError> {
     let mut offset = 0;
     loop {
+        if request.model && private.load(Ordering::Acquire) {
+            return Err(InputError::Private);
+        }
         if stop.load(Ordering::Acquire)
             || request.cancelled.load(Ordering::Acquire)
             || Instant::now() >= request.deadline
@@ -173,12 +205,13 @@ pub(super) fn make_nonblocking(master: &dyn portable_pty::MasterPty) -> io::Resu
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex;
+    use std::sync::{Mutex, atomic::AtomicUsize};
     #[derive(Default)]
     struct State {
         blocked: AtomicBool,
         bytes: Mutex<Vec<u8>>,
         fail: AtomicBool,
+        pause_after: AtomicUsize,
     }
     struct Fake(Arc<State>);
     impl Write for Fake {
@@ -196,6 +229,10 @@ mod tests {
                 .lock()
                 .unwrap()
                 .extend_from_slice(&bytes[..count]);
+            let pause = self.0.pause_after.load(Ordering::Acquire);
+            if pause > 0 && self.0.bytes.lock().unwrap().len() >= pause {
+                self.0.blocked.store(true, Ordering::Release);
+            }
             Ok(count)
         }
         fn flush(&mut self) -> io::Result<()> {
@@ -232,7 +269,7 @@ mod tests {
         state.blocked.store(true, Ordering::Release);
         let mut queued = Vec::new();
         loop {
-            match input.enqueue(b"must-not-deliver".to_vec()) {
+            match input.enqueue(b"must-not-deliver".to_vec(), false) {
                 Ok(request) => {
                     queued.push(request);
                     assert!(queued.len() <= QUEUED_WRITES + 1);
@@ -279,6 +316,27 @@ mod tests {
         assert_eq!(error, InputError::Unconfirmed);
         assert!(!error.to_string().contains("canary"));
         assert!(!error.to_string().contains("secret"));
+        stop.store(true, Ordering::Release);
+        wait_for(|| done.load(Ordering::Acquire)).await;
+    }
+    #[tokio::test]
+    async fn human_takeover_stops_pending_model_suffix_and_denies_new_model_input() {
+        let (input, state, stop, done) = fixture();
+        state.pause_after.store(3, Ordering::Release);
+        let writer = input.clone();
+        let pending =
+            tokio::spawn(async move { writer.write_model(b"pre-never-deliver".to_vec()).await });
+        wait_for(|| state.bytes.lock().unwrap().len() == 3).await;
+        input.make_private();
+        state.pause_after.store(0, Ordering::Release);
+        state.blocked.store(false, Ordering::Release);
+        assert_eq!(pending.await.unwrap(), Err(InputError::Private));
+        assert_eq!(
+            input.write_model(b"denied".to_vec()).await,
+            Err(InputError::Private)
+        );
+        input.write(b"human".to_vec()).await.unwrap();
+        assert_eq!(&*state.bytes.lock().unwrap(), b"prehuman");
         stop.store(true, Ordering::Release);
         wait_for(|| done.load(Ordering::Acquire)).await;
     }

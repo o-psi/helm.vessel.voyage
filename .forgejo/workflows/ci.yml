@@ -121,6 +121,10 @@ jobs:
         env:
           HELM_BIN: target/release/helm
         run: python3 tests/system/terminal_navigation.py
+      - name: Verify private native terminal attachment and canonical persistence
+        env:
+          HELM_BIN: target/release/helm
+        run: python3 tests/system/terminal_privacy.py
       - name: Verify transient workflow secrets without public capture
         env:
           HELM_BIN: target/release/helm

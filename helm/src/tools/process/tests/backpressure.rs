@@ -45,8 +45,10 @@ fn native_backpressure_never_blocks_other_terminals_or_shutdown() {
                 let writing = manager.clone();
                 let context = ctx.clone();
                 let cancellation = context.cancellation.clone();
-                let model = tokio::spawn(async move { writing.execute(json!({"action":"write","id":id.0,"data":"x".repeat(65536)}), &context).await });
+                let model_id = ids[1];
+                let model = tokio::spawn(async move { writing.execute(json!({"action":"write","id":model_id,"data":"x".repeat(65536)}), &context).await });
                 tokio::time::sleep(Duration::from_millis(10)).await;
+                assert!(!model.is_finished(), "model backpressure must remain active until cancellation");
                 cancellation.cancel();
                 assert!(tokio::time::timeout(Duration::from_millis(100), model).await.unwrap().unwrap().is_err());
                 let report = manager.shutdown(Duration::from_secs(5)).await;
