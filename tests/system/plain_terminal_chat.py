@@ -70,8 +70,12 @@ def main():
             try:
                 plain.wait('helm>');plain.command('/name PLAIN-A','session renamed')
                 plain.command('/terminals','No live terminals');assert not state['requests']
+                offset=len(plain.output);plain.send('/terminal missing\n'+CANARY+'\n')
+                plain.wait('No queued prompt was submitted',offset);assert not state['requests']
                 plain.turn('start');pid=int((workspace/'terminal.pid').read_text());assert Path(f'/proc/{pid}').exists()
-                count=len(state['requests']);plain.command('/terminal '+str(uuid.uuid4()),'missing or ambiguous');assert len(state['requests'])==count
+                count=len(state['requests']);offset=len(plain.output)
+                plain.send('/terminal '+str(uuid.uuid4())+'\n'+CANARY+'\n')
+                plain.wait('No queued prompt was submitted',offset);assert len(state['requests'])==count
                 plain.command('/terminal live','Ctrl+T/Ctrl+] detach')
                 plain.command(f"printf '%s' '{CANARY}' > human.txt; printf SCREEN_READY",'SCREEN_READY')
                 offset=len(plain.output);plain.send('\x14inspect🧭\n');plain.wait('inspect🧭-done',offset)
