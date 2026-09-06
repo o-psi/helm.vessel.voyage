@@ -31,6 +31,23 @@ retry automatically; if storage reports an uncertain result or failed rollback,
 inspect the recent voyages before retrying. Branches receive a new identity;
 resuming either voyage retains its existing identity.
 
+## Planned live-voyage multiplexing
+
+The [agreed target](voyages.md#one-tui-multiple-live-voyages-planned) is one TUI
+showing local and authorized Vessel-routed voyages while all admitted voyages
+continue running. Each voyage's execution runtime is a separate process from the
+TUI; remote work runs on Helms reached through Vessel, not on Vessel itself.
+Switching views must not require finishing or cancelling work, and closing the
+interface must detach rather than stop execution. The list must show background
+activity, pending decisions, execution location and connection state separately
+from run state, with every action bound to its intended voyage.
+
+This is not implemented by the current recent-conversation list or configuration
+picker. The finish/cancel-before-switching rule above describes today's behavior,
+not the intended multiplexed workflow. See the
+[TUI architecture](tui-architecture.md#planned-process-and-connection-boundary) for
+the required runtime separation.
+
 ## Optional Helm configuration drafts
 
 Press **Ctrl+V**, or use **`/voyages`**, to open voyage setup. This feature saves

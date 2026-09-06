@@ -78,6 +78,15 @@ allow overlapping roles, and make service installation explicit.
 
 ## Runtime ownership and continuity
 
+The [multiplexed interface design](voyages.md#one-tui-multiple-live-voyages-planned)
+requires one TUI to observe and control multiple live local and Vessel-routed
+voyages concurrently. Each voyage's runtime process is separate from the TUI;
+local supervision outlives interface exit, while remote execution remains on its
+Helms. A shared voyage-connection abstraction must preserve host-specific authority,
+explicit action identities and reconnect semantics without assuming a local child
+process. This requirement is planned; retained in-process workspace runtimes and
+the dedicated foreground worker do not fulfill it.
+
 A local managed-session owner already serializes execution and journal mutation on
 its host. That local owner is not the planned coordinating agent across machines.
 The distributed design must preserve local execution fencing while defining which

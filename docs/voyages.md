@@ -71,6 +71,60 @@ laptop need not participate in execution. Closing that interface is a separate
 action from cancelling the work. Another authorized interface can reconnect to the
 same voyage; it must show actual coordination and execution state.
 
+## One TUI, multiple live voyages (planned)
+
+One Helm TUI must multiplex multiple simultaneously running voyages. Its unified
+voyage list includes local voyages and authorized voyages reached through an
+attached Vessel. Switching the selected voyage changes the view and input target,
+not execution: background voyages continue without requiring the user to finish
+or cancel their work. Separate terminal tabs and local subagents are not a
+substitute for this workflow. Multiplexing independent voyages is distinct from
+coordinating several participant Helms within a single voyage.
+
+Each executing voyage must have its own runtime process, separate from the TUI
+process and other voyages' execution runtimes. A local voyage runs on the local
+Helm host without requiring Vessel. A Vessel-routed voyage executes on its
+coordinating and participant Helms, not inside Vessel or a proxy agent in the
+interface process. Multiple roles can share a Helm installation without sharing
+the TUI's process lifetime. Participant execution remains subject to its own host's
+authority; this does not require every participant to live in one process.
+
+The interface must use a common voyage-connection abstraction over local IPC and
+Vessel-routed connections, rather than treating every voyage as a local child
+process or embedding interactive terminals. It must support authorized observation,
+input, approval responses and exact-run cancellation with explicit capability and
+availability reporting. Wire encoding and supervisor/service mechanics remain
+implementation work under #9, #14, #18 and #78; no new command is implied here.
+
+Required boundaries:
+
+- Execution ownership, canonical persistence and checkpoint acknowledgement belong
+  to the executing runtime, not the selected TUI view. One active mutating run per
+  voyage remains the rule; concurrency across voyages is bounded and independent.
+- Local supervision must outlive TUI detach/exit. Closing or crashing the interface
+  does not cancel voyages. Explicit stop/cancel is separate and reports observed
+  cleanup. A runtime or host crash can interrupt work; reconnection must not claim
+  process survival or replay uncertain tool effects.
+- Show voyage identity, local/Vessel origin, coordinator and participant locations,
+  run state, connection freshness, unread activity and pending decisions. A voyage
+  may span hosts; one location label must not imply a permanent single-host scope.
+  Disconnection means execution state may be unknown, not necessarily stopped.
+- Bind drafts, input, steering, approvals, questions and cancellation to explicit
+  voyage/run/request identities. A view switch must never redirect a pending
+  action. Viewing a voyage grants no additional execution or approval authority.
+- Reauthorize on reconnect and recover persisted, sequenced events with bounded
+  replay and explicit gaps. Retry commands only under their original identity and
+  receipt semantics; do not blindly resubmit actions after losing a response.
+- Bound queues and resource use per voyage so a slow view, disconnected Vessel or
+  failed runtime does not block unrelated voyages. Process separation does not
+  isolate shared files: host policy, workspace conflicts and resource limits still
+  need enforcement. Listing voyages must not implicitly share private sessions.
+
+This is the target architecture, not current TUI behavior. Today navigation is
+blocked during active work, workspace runtimes live in the frontend process and
+actual frontend exit shuts them down. Current dedicated-worker transport-loss and
+exit semantics below also remain narrower than this target.
+
 ## Machine scope and routing
 
 A new local voyage uses the local Helm; choosing local chat establishes that scope
@@ -154,6 +208,7 @@ Application policy is not an OS sandbox.
 | One new dedicated foreground remote session | Available through `helm remote-worker` and opt-in authenticated Vessel HTTP operations; see [remote sessions](remote-sessions.md). |
 | Helm voyage setup and machine/coordinator selection | Available as [saved configuration drafts](helm-voyage-ui.md); no runtime execution or sharing. |
 | Start, resume and work in local voyages through Helm | Available through current chat/session controls. |
+| One TUI multiplexing process-isolated local and Vessel-routed voyages | Planned; current navigation blocks during active work and frontend runtimes are in-process. |
 | Unified voyage creation/scope UI and remote voyage management in Helm | Planned integration; current configuration drafts are separate from sessions. |
 | Remote voyage coordinator, cross-Helm delegation and coordinator handoff | Planned. Local subagent supervision and managed-session ownership are foundations, not these features. |
 | Full remote lifecycle, broader sharing, services and delegated approvals | Still require delivery and verification under the attachment issues. |
@@ -179,6 +234,16 @@ Acceptance must first demonstrate that an ordinary local chat creates a voyage
 without Vessel or a configuration wizard, and that resume preserves its identity
 while new/branch creates another. Optional scope configuration must not create a
 second conversation category or silently share its history.
+
+Multiplexing acceptance must demonstrate two local voyages running concurrently
+without Vessel, then local and Vessel-routed voyages in the same TUI. Verify
+separate runtime process identities, switching while both make progress, retained
+per-voyage drafts, background decision notifications, exact-target responses and
+cancellation, TUI exit/crash and authorized reconnect without stopping live work.
+Kill one runtime and disconnect one Vessel connection: unrelated voyages must
+remain usable, and unavailable state or interrupted work must be reported honestly.
+Cover duplicate/stale commands, event gaps, slow-consumer backpressure, bounded
+concurrency, shared-workspace conflicts and private-session/approval isolation.
 
 Multi-Helm acceptance must demonstrate an interface on one Helm, coordination on
 another and work on additional permitted Helms, as well as overlapping roles and local-only

@@ -11,6 +11,26 @@ voyage whose coordinator runs elsewhere. Local panels, response channels and
 configuration drafts do not implement distributed voyage coordination, remote
 interface reconnection or coordinator handoff.
 
+## Planned process and connection boundary
+
+The [live-voyage target](voyages.md#one-tui-multiple-live-voyages-planned) requires
+one TUI to multiplex concurrently executing local and Vessel-routed voyages.
+Every executing voyage has a runtime process separate from the TUI and other
+voyage runtimes; the frontend is a client of local IPC or an authorized
+Vessel-routed connection. Vessel routes to executing Helms, not a Vessel-hosted
+agent runtime. Local supervision must not be tied to TUI lifetime.
+
+The ownership table below describes the **current in-process implementation**,
+not this target. In particular, retained per-workspace runtimes, guarded navigation
+and UI-thread checkpoint persistence do not provide per-voyage process isolation
+or background voyage execution. Delivery must move authoritative checkpoint
+persistence/admission to the execution owner, keep per-voyage view and draft state
+in the client, route events and decisions by explicit identities, and provide
+bounded replay/backpressure and detach/reconnect without cancelling execution.
+Current channel types are not yet an IPC or remote-interface contract. Runtime
+failure, interface disconnection and explicit cancellation need separate states
+and tests. See the canonical model's [acceptance criteria](voyages.md#delivery-and-acceptance).
+
 ## Ownership
 
 Paths below are relative to `helm/src/`. Source and test links open the development

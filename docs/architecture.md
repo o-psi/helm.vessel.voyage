@@ -27,6 +27,19 @@ Cross-Helm persistence and reconciliation, shared context and coordinator handof
 require further contract design. Opening or closing an interface does not define who
 coordinates or imply an execution cancellation request.
 
+## Planned live-voyage interface
+
+One Helm TUI must multiplex multiple simultaneously running voyages, mixing local
+voyages and authorized voyages reached through an attached Vessel. Each voyage's
+execution runtime is process-isolated from the TUI and other voyages. Local
+execution uses local IPC and interface-independent supervision; remote connections
+route through Vessel to executing Helms. Vessel is never the agent executor.
+Switching views does not pause work; interface exit is detach, not cancellation.
+This is distinct from multi-Helm coordination inside one voyage. The
+[canonical multiplexing requirements](voyages.md#one-tui-multiple-live-voyages-planned)
+define ownership, action routing, status, reconnection and acceptance. The current
+in-process frontend does not yet implement this boundary.
+
 ## Current local and remote execution
 
 Local Helm supports voyages through its chat and session workflows, with runs,
