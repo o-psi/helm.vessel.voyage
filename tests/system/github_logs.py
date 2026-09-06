@@ -18,10 +18,26 @@ def main():
     with tempfile.TemporaryDirectory(prefix="helm-github-logs-") as directory:
         root = Path(directory)
         certificate, key = root / "certificate.pem", root / "key.pem"
-        subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes",
-                        "-keyout", str(key), "-out", str(certificate), "-days", "1",
-                        "-subj", "/CN=logs.fixture.test", "-addext", "subjectAltName=DNS:logs.fixture.test"],
-                       check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=20)
+        ca, ca_key, request = root / "ca.pem", root / "ca-key.pem", root / "server.csr"
+        extensions = root / "server.ext"
+        extensions.write_text("basicConstraints=critical,CA:FALSE\n"
+                              "keyUsage=critical,digitalSignature,keyEncipherment\n"
+                              "extendedKeyUsage=serverAuth\n"
+                              "subjectAltName=DNS:logs.fixture.test\n")
+        commands = [
+            ["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes",
+             "-keyout", str(ca_key), "-out", str(ca), "-days", "1",
+             "-subj", "/CN=GitHub log fixture CA", "-addext", "basicConstraints=critical,CA:TRUE",
+             "-addext", "keyUsage=critical,keyCertSign,cRLSign"],
+            ["openssl", "req", "-new", "-newkey", "rsa:2048", "-nodes",
+             "-keyout", str(key), "-out", str(request), "-subj", "/CN=logs.fixture.test"],
+            ["openssl", "x509", "-req", "-in", str(request), "-CA", str(ca),
+             "-CAkey", str(ca_key), "-CAcreateserial", "-out", str(certificate),
+             "-days", "1", "-extfile", str(extensions)],
+        ]
+        for command in commands:
+            subprocess.run(command, check=True, stdout=subprocess.DEVNULL,
+                           stderr=subprocess.DEVNULL, timeout=20)
         requests = []
         class Handler(http.server.BaseHTTPRequestHandler):
             def log_message(self, *unused):
@@ -64,7 +80,7 @@ def main():
                 before = len(requests)
                 environment = os.environ.copy()
                 environment.update(HELM_GITHUB_LOG_DRIVER=mode, HELM_GITHUB_LOG_PORT=str(server.server_port),
-                                   HELM_GITHUB_LOG_CERT=str(certificate), HELM_GITHUB_LOG_READY=str(root / f"{mode}.ready"))
+                                   HELM_GITHUB_LOG_CERT=str(ca), HELM_GITHUB_LOG_READY=str(root / f"{mode}.ready"))
                 result = subprocess.run([args.test_binary, "--exact", "github::logs::tls_fixture::tls_driver", "--nocapture"],
                                         env=environment, text=True, capture_output=True, timeout=10)
                 assert result.returncode == 0 and "TLS_DRIVER_PASS" in result.stdout, (mode, result.stdout, result.stderr)

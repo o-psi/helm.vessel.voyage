@@ -1,5 +1,7 @@
 #[cfg(test)]
 mod projection_tests;
+#[cfg(test)]
+mod provider_redaction_tests;
 mod retry;
 mod tool_replay;
 pub use retry::RetryJitter;
@@ -1311,6 +1313,25 @@ impl Agent {
             .map_or(self.context_window, |limit| limit.min(self.context_window))
     }
 
+    async fn project_provider_text(
+        &self,
+        text: String,
+        checkpoint: Option<&dyn RunCheckpoint>,
+        partial_output: &mut String,
+    ) -> Result<(), AgentError> {
+        if text.is_empty() {
+            return Ok(());
+        }
+        partial_output.push_str(&text);
+        if let Some(checkpoint) = checkpoint {
+            tokio::time::timeout(self.context.timeout, checkpoint.partial(&text))
+                .await
+                .map_err(|_| CheckpointError)??;
+        }
+        self.sink.emit(AgentEvent::AssistantTextDelta(text)).await;
+        Ok(())
+    }
+
     async fn stream_with_retry(
         &self,
         mut request: ModelRequest,
@@ -1329,6 +1350,11 @@ impl Agent {
         use futures_util::StreamExt;
         if cancel.is_cancelled() {
             return Err(AgentError::Cancelled);
+        }
+        // Project outgoing copies; previously stored canonical history is not
+        // rewritten when the operator configures a new secret.
+        for message in &mut request.messages {
+            crate::provider::redact_message(message, &self.context.redactor)?;
         }
         let limit = self.context_limit(&request.model);
         let report = crate::context::preflight(&mut request, limit)?;
@@ -1378,6 +1404,7 @@ impl Agent {
                 }
             };
             let mut partial = false;
+            let mut pending_text = String::new();
             loop {
                 let event = tokio::select! {_ = cancel.cancelled()=>{self.sink.emit(AgentEvent::Cancelled).await;return Err(AgentError::Cancelled);}, value=stream.next()=>value};
                 match event {
@@ -1390,19 +1417,34 @@ impl Agent {
                         }
                         partial = true;
                         if let ProviderDelta::Text(text) = delta {
-                            partial_output.push_str(&text);
-                            if let Some(checkpoint) = checkpoint {
-                                tokio::time::timeout(
-                                    self.context.timeout,
-                                    checkpoint.partial(&text),
-                                )
-                                .await
-                                .map_err(|_| CheckpointError)??;
-                            }
-                            self.sink.emit(AgentEvent::AssistantTextDelta(text)).await;
+                            pending_text.push_str(&text);
+                            let end = self.context.redactor.stable_prefix(&pending_text, false);
+                            let safe = self
+                                .context
+                                .redactor
+                                .redact_public_prefix(&pending_text[..end]);
+                            pending_text.drain(..end);
+                            self.project_provider_text(safe, checkpoint, partial_output)
+                                .await?;
                         }
                     }
-                    Some(Ok(ProviderStreamEvent::Completed(response))) => {
+                    Some(Ok(ProviderStreamEvent::Completed(mut response))) => {
+                        if let Err(error) = crate::provider::redact_message(
+                            &mut response.message,
+                            &self.context.redactor,
+                        ) {
+                            self.inference_finish(
+                                permit.as_ref(),
+                                crate::inference::AttemptOutcome::Failed,
+                            )
+                            .await?;
+                            return Err(error.into());
+                        }
+                        // Only a completed response flushes the withheld suffix.
+                        // Failure/cancellation cannot disclose a partial secret.
+                        let safe = self.context.redactor.redact_public_prefix(&pending_text);
+                        self.project_provider_text(safe, checkpoint, partial_output)
+                            .await?;
                         return Ok((response, permit));
                     }
                     Some(Err(error)) if !partial && self.retry_allowed(&error, attempt) => {

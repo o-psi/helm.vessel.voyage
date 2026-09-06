@@ -195,12 +195,21 @@ async fn download(
 }
 
 fn download_client(host: &str, addresses: &[SocketAddr]) -> reqwest::ClientBuilder {
-    reqwest::Client::builder().no_proxy().redirect(reqwest::redirect::Policy::none())
-        .retry(reqwest::retry::never()).connect_timeout(Duration::from_secs(10)).timeout(Duration::from_secs(30))
-        .resolve_to_addrs(host,addresses)
+    reqwest::Client::builder()
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .retry(reqwest::retry::never())
+        .connect_timeout(Duration::from_secs(10))
+        .timeout(Duration::from_secs(30))
+        .resolve_to_addrs(host, addresses)
 }
 
-async fn receive(authority: &Client, client: reqwest::Client, url: reqwest::Url, cancel: &CancellationToken) -> Result<(String,bool)> {
+async fn receive(
+    authority: &Client,
+    client: reqwest::Client,
+    url: reqwest::Url,
+    cancel: &CancellationToken,
+) -> Result<(String, bool)> {
     tokio::select! {
         biased;
         _ = cancel.cancelled() => anyhow::bail!("GitHub log download cancelled"),
@@ -267,35 +276,75 @@ mod tls_fixture {
     use super::*;
     #[test]
     fn tls_driver() {
-        let Ok(mode) = std::env::var("HELM_GITHUB_LOG_DRIVER") else { return };
-        let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let Ok(mode) = std::env::var("HELM_GITHUB_LOG_DRIVER") else {
+            return;
+        };
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
         runtime.block_on(async {
-            let port:u16 = std::env::var("HELM_GITHUB_LOG_PORT").unwrap().parse().unwrap();
-            let certificate = reqwest::Certificate::from_pem(&std::fs::read(std::env::var("HELM_GITHUB_LOG_CERT").unwrap()).unwrap()).unwrap();
+            let port: u16 = std::env::var("HELM_GITHUB_LOG_PORT")
+                .unwrap()
+                .parse()
+                .unwrap();
+            let certificate = reqwest::Certificate::from_pem(
+                &std::fs::read(std::env::var("HELM_GITHUB_LOG_CERT").unwrap()).unwrap(),
+            )
+            .unwrap();
             let authority = Client::new("fixture-authenticated-api-token".into()).unwrap();
             // Only the test supplies a local root certificate and loopback DNS
             // resolution; production download() validates public DNS first.
-            let client = download_client("logs.fixture.test",&[SocketAddr::from(([127,0,0,1],port))])
-                .add_root_certificate(certificate).build().unwrap();
-            let url = reqwest::Url::parse(&format!("https://logs.fixture.test:{port}/{mode}?signed=fixture-private-query")).unwrap();
+            let client = download_client(
+                "logs.fixture.test",
+                &[SocketAddr::from(([127, 0, 0, 1], port))],
+            )
+            .add_root_certificate(certificate)
+            .build()
+            .unwrap();
+            let url = reqwest::Url::parse(&format!(
+                "https://logs.fixture.test:{port}/{mode}?signed=fixture-private-query"
+            ))
+            .unwrap();
             let cancel = CancellationToken::new();
             if mode == "cancel" {
-                let token=cancel.clone();
-                let ready=std::path::PathBuf::from(std::env::var("HELM_GITHUB_LOG_READY").unwrap());
+                let token = cancel.clone();
+                let ready =
+                    std::path::PathBuf::from(std::env::var("HELM_GITHUB_LOG_READY").unwrap());
                 tokio::spawn(async move {
-                    tokio::time::timeout(Duration::from_secs(3),async {
-                        while !ready.exists() { tokio::time::sleep(Duration::from_millis(5)).await; }
-                    }).await.unwrap();
+                    tokio::time::timeout(Duration::from_secs(3), async {
+                        while !ready.exists() {
+                            tokio::time::sleep(Duration::from_millis(5)).await;
+                        }
+                    })
+                    .await
+                    .unwrap();
                     token.cancel();
                 });
             }
-            let result = receive(&authority,client,url,&cancel).await;
+            let result = receive(&authority, client, url, &cancel).await;
             match mode.as_str() {
-                "success" => { let (text,truncated)=result.unwrap();assert_eq!(text,"workflow log: succeeded\n");assert!(!truncated); },
-                "bounded" => { let (text,truncated)=result.unwrap();assert_eq!(text.len(),MAX_LOG_BYTES);assert!(truncated); },
-                "exact" => { let (text,truncated)=result.unwrap();assert_eq!(text.len(),MAX_LOG_BYTES);assert!(!truncated); },
-                "cancel" | "redirect" | "expired" | "partial" => { let text=result.unwrap_err().to_string();assert!(!text.contains("fixture-private-query"));assert!(!text.contains("fixture-authenticated-api-token")); },
-                _=>panic!("unknown fixture mode"),
+                "success" => {
+                    let (text, truncated) = result.unwrap();
+                    assert_eq!(text, "workflow log: succeeded\n");
+                    assert!(!truncated);
+                }
+                "bounded" => {
+                    let (text, truncated) = result.unwrap();
+                    assert_eq!(text.len(), MAX_LOG_BYTES);
+                    assert!(truncated);
+                }
+                "exact" => {
+                    let (text, truncated) = result.unwrap();
+                    assert_eq!(text.len(), MAX_LOG_BYTES);
+                    assert!(!truncated);
+                }
+                "cancel" | "redirect" | "expired" | "partial" => {
+                    let text = result.unwrap_err().to_string();
+                    assert!(!text.contains("fixture-private-query"));
+                    assert!(!text.contains("fixture-authenticated-api-token"));
+                }
+                _ => panic!("unknown fixture mode"),
             }
             println!("TLS_DRIVER_PASS");
         });
@@ -303,8 +352,17 @@ mod tls_fixture {
     #[test]
     fn secondary_https_transport_contract() {
         let status = std::process::Command::new("python3")
-            .arg(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../tests/system/github_logs.py"))
-            .arg("--test-binary").arg(std::env::current_exe().unwrap()).status().unwrap();
-        assert!(status.success(),"actual signed HTTPS log transport fixture failed");
+            .arg(
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("../tests/system/github_logs.py"),
+            )
+            .arg("--test-binary")
+            .arg(std::env::current_exe().unwrap())
+            .status()
+            .unwrap();
+        assert!(
+            status.success(),
+            "actual signed HTTPS log transport fixture failed"
+        );
     }
 }

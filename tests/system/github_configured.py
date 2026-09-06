@@ -86,7 +86,16 @@ def main():
                     assert length <= 2 * 1024 * 1024
                     body = json.loads(self.rfile.read(length))
                     raw = json.dumps(body)
-                    assert not any(secret in raw for secret in FORMS), "credential leaked into provider request"
+                    def secret_paths(value, path="request"):
+                        if isinstance(value, str):
+                            return [path] if any(secret in value for secret in FORMS) else []
+                        if isinstance(value, list):
+                            return [found for index, item in enumerate(value) for found in secret_paths(item, f"{path}[{index}]")]
+                        if isinstance(value, dict):
+                            return [found for key, item in value.items() for found in secret_paths(item, f"{path}.{key}")]
+                        return []
+                    leaked = secret_paths(body)
+                    assert not any(secret in raw for secret in FORMS), "credential leaked into provider request at " + repr(leaked)
                     names = [tool.get("name") or tool.get("function", {}).get("name") for tool in body.get("tools", [])]
                     assert ("github" in names) == mode["enabled"], "configured registry mismatch"
                     requests.append(body)
@@ -123,7 +132,11 @@ def main():
         def run(*args, success=True, environ=None):
             result = subprocess.run([str(helm), "--workspace", str(work), "--config", str(config), *args],
                                     env=environ or env, cwd=work, capture_output=True, text=True, timeout=30)
-            assert (result.returncode == 0) == success, "unexpected configured fixture exit status"
+            if (result.returncode == 0) != success:
+                diagnostic = result.stdout + "\n" + result.stderr + "\nprovider fixture errors: " + repr(failures)
+                for secret in FORMS:
+                    diagnostic = diagnostic.replace(secret, "[REDACTED]")
+                raise AssertionError(f"unexpected configured fixture exit {result.returncode}: {diagnostic[-6000:]}")
             assert not any(secret in result.stdout + result.stderr for secret in FORMS), "credential leaked into diagnostics"
             assert not failures, failures
             return result
