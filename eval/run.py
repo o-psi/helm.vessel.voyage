@@ -116,7 +116,7 @@ def run_live(scenarios: list[dict], helm: str, evidence: pathlib.Path, timeout: 
                     try:
                         result["oracle_evidence"] = count_acceptance(case, workspace, data)
                         checks[oracle] = True
-                    except (OSError, ValueError, KeyError, TypeError, IndexError, RecursionError):
+                    except (OSError, ValueError, KeyError, TypeError, IndexError, AttributeError, RecursionError):
                         checks[oracle] = False
                         result["oracle_error"] = "persisted counting/evidence/accounting acceptance failed"
                 result["passed"] = (result["exit_code"] == 0 and result["error"] is None

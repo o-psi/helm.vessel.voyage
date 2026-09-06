@@ -31,7 +31,7 @@ def digest(value):
 class StoredEvidence:
     def __init__(self, root):
         self.workspace, self.data = root/'workspace', root/'data'
-        self.workspace.mkdir(); self.data.mkdir()
+        self.workspace.mkdir(exist_ok=True); self.data.mkdir(exist_ok=True)
         for name, content in CASE['seed_files'].items():
             (self.workspace/name).write_text(content)
         self.report = {'claimed': 99, 'measured': 42, 'claim_matches': False,
@@ -244,6 +244,28 @@ class ProcessTests(unittest.TestCase):
             result = subprocess.run(command+arguments, capture_output=True, text=True, timeout=2)
             self.assertEqual(result.returncode, 2)
             self.assertIn('distinct known', result.stderr)
+
+    def test_malformed_nested_record_fails_and_next_scenario_runs(self):
+        from unittest.mock import patch
+        calls = []
+        def fixture_execution(command, workspace, env, timeout):
+            calls.append(command)
+            if len(calls) == 1:
+                stored = StoredEvidence(workspace.parent)
+                stored.ledger['entries'][0]['dispositions'][-1]['reason'] = 7
+                stored.save()
+            return {'stdout': '42', 'stderr': '', 'exit_code': 0,
+                    'timed_out': False, 'output_limited': False,
+                    'cleanup_error': None, 'direct_process_reaped': True}
+        with tempfile.TemporaryDirectory() as raw, patch.object(runner, 'execute', fixture_execution):
+            evidence = Path(raw)/'evidence.json'
+            following = {'id': 'after-malformed', 'category': 'data',
+                         'prompt': 'following case', 'expect_output': ['42']}
+            self.assertEqual(runner.run_live([CASE, following], '/fixture/helm', evidence, 2), 1)
+            results = json.loads(evidence.read_text())['results']
+            self.assertEqual(len(calls), 2)
+            self.assertEqual([result['passed'] for result in results], [False, True])
+            self.assertFalse(results[0]['checks']['completion-count-v1'])
 
     def test_small_output_and_nonzero(self):
         result = execute([sys.executable, '-c', 'import sys; print("42"); sys.exit(2)'], ROOT, os.environ.copy(), 2)
