@@ -3,7 +3,7 @@
 use crate::{
     AgentEvent, EventSink,
     provider::ModelInfo,
-    supervision::{AgentEvent as SupervisionEvent, AgentId, AgentView},
+    supervision::{AgentId, AgentInspection, AgentView},
     todo::TodoList,
     tools::{ApprovalOutcome, ApprovalRequest as ToolApprovalRequest, Approver},
 };
@@ -26,7 +26,7 @@ pub enum UiEvent {
         result: Option<crate::titles::TitleResult>,
     },
     SupervisorTree(Result<Vec<AgentView>, String>),
-    SupervisorInspect(AgentId, Result<Vec<SupervisionEvent>, String>),
+    SupervisorInspect(AgentId, Result<AgentInspection, String>),
     SupervisorAction(Result<String, String>),
     TodoSnapshot(Result<TodoList, String>),
     TodoAction(Result<String, String>),

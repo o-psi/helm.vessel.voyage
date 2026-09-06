@@ -315,6 +315,8 @@ pub async fn run(
         app.conversation_width = size.width.max(1) as usize;
         app.conversation_height = size.height.saturating_sub(9).max(1) as usize;
     }
+    let mut supervisor_refresh = tokio::time::interval(Duration::from_millis(250));
+    supervisor_refresh.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut animation = tokio::time::interval(Duration::from_millis(100));
     animation.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut input = EventStream::new();
@@ -408,17 +410,30 @@ pub async fn run(
             event = async { supervisor_events.as_mut().expect("guarded supervisor receiver").recv().await }, if supervisor_events.is_some() => {
                 match event {
                     Ok(event) => {
+                        if let crate::supervision::AgentEventKind::HistoryGap { skipped } = &event.kind {
+                            app.supervisor_panel.adapter_skipped = app.supervisor_panel.adapter_skipped.max(*skipped);
+                        }
                         if matches!(app.supervisor_panel.supervisor_mode, Some(SupervisorMode::Inspect(id)) if id == event.agent_id) {
-                            app.supervisor_panel.inspected_events.push(event);
-                            if app.supervisor_panel.inspected_events.len() > 500 { app.supervisor_panel.inspected_events.drain(..100); }
+                            app.supervisor_panel.append_event(event);
                         }
                         request_supervisor_tree(&tx, supervisor.clone());
                     }
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => request_supervisor_tree(&tx, supervisor.clone()),
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(count)) => {
+                        app.supervisor_panel.record_lag(count);
+                        request_supervisor_tree(&tx, supervisor.clone());
+                        if let Some(SupervisorMode::Inspect(id)) = app.supervisor_panel.supervisor_mode { request_supervisor_inspect(&tx, supervisor.clone(), id, None); }
+                    },
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => {
                         supervisor_events = None;
+                        app.supervisor_panel.history_notices.insert("Agent supervisor disconnected; history may be incomplete".into());
                         app.status = "Agent supervisor disconnected".into();
                     }
+                }
+            }
+            _ = supervisor_refresh.tick(), if matches!(app.supervisor_panel.supervisor_mode, Some(SupervisorMode::Inspect(_))) && !app.supervisor_panel.replay_pending => {
+                if let Some(SupervisorMode::Inspect(id)) = app.supervisor_panel.supervisor_mode {
+                    app.supervisor_panel.replay_pending = true;
+                    request_supervisor_inspect(&tx, supervisor.clone(), id, None);
                 }
             }
             _ = animation.tick(), if app.is_running() || app.voyage_panel.is_open() => {}
@@ -754,13 +769,18 @@ async fn handle_ui_event(
             }
             Err(error) => app.status = format!("Supervisor refresh failed: {error}"),
         },
-        UiEvent::SupervisorInspect(id, result) => match result {
-            Ok(events) => {
-                app.supervisor_panel.inspected_events = events;
-                app.supervisor_panel.supervisor_mode = Some(SupervisorMode::Inspect(id));
+        UiEvent::SupervisorInspect(_id, result) => {
+            app.supervisor_panel.replay_pending = false;
+            match result {
+                Ok(inspection) => app.supervisor_panel.apply_inspection(inspection),
+                Err(error) => {
+                    app.supervisor_panel
+                        .history_notices
+                        .insert("Agent inspection failed; retained display may be stale".into());
+                    app.status = format!("Agent inspection failed: {error}");
+                }
             }
-            Err(error) => app.status = format!("Agent inspection failed: {error}"),
-        },
+        }
         UiEvent::SupervisorAction(result) => {
             app.status =
                 result.unwrap_or_else(|error| format!("Supervisor action failed: {error}"));

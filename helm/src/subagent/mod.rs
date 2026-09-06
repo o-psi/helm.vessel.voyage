@@ -1,5 +1,8 @@
 //! Durable coordination primitives for isolated child agents.
 mod archive;
+mod history;
+mod history_storage;
+pub use history::{HistoryCursor, HistoryNotice, HistoryReplay, HistoryStatus};
 mod persistence;
 mod runtime;
 mod tool;

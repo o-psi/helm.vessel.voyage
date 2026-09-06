@@ -148,3 +148,177 @@ fn agent_view_renders_at_minimum_supported_size_and_keeps_selection_visible() {
     assert!(rendered.contains(&selected_id));
     assert!(rendered.contains("Esc return"));
 }
+
+#[tokio::test]
+async fn history_warnings_survive_refresh_ring_eviction_and_narrow_resized_render() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = SessionStore::new(dir.path().join("sessions"));
+    let terminals = FakeTerminals::new();
+    let mut app = App::new(Session::new(dir.path().into(), "test".into()), vec![]);
+    let id = AgentId(Uuid::new_v4());
+    let mut view = agent(id, None, "安全 🦀 é \u{202e}\u{1b}[31m task");
+    view.status = AgentStatus::Cancelled;
+    view.error = Some("cancelled".into());
+    app.supervisor_panel.supervisor_mode = Some(SupervisorMode::Inspect(id));
+    let events = (1..=600)
+        .map(|sequence| SupervisionEvent {
+            sequence,
+            timestamp: Utc::now(),
+            agent_id: id,
+            kind: SupervisionEventKind::Progress {
+                text: "進捗 🦀 \u{1b}]52;synthetic\u{7}".into(),
+            },
+        })
+        .collect::<Vec<_>>();
+    for event in &events {
+        app.supervisor_panel.append_event(event.clone());
+    }
+    assert_eq!(app.supervisor_panel.inspected_events.len(), 500);
+    app.supervisor_panel.record_lag(11);
+    let inspection = crate::supervision::AgentInspection {
+        agent: view.clone(),
+        events,
+        history: Some(crate::subagent::HistoryStatus {
+            cursor: crate::subagent::HistoryCursor {
+                epoch: Uuid::new_v4(),
+                sequence: 600,
+            },
+            first_sequence: Some(1),
+            evicted_through: 12,
+            durable: false,
+            cursor_gap: true,
+            notices: [
+                crate::subagent::HistoryNotice::Corrupt,
+                crate::subagent::HistoryNotice::Restarted,
+                crate::subagent::HistoryNotice::WriteFailed,
+            ]
+            .into_iter()
+            .collect(),
+        }),
+        transport_skipped: 20,
+    };
+    for _ in 0..3 {
+        handle_ui_event(
+            UiEvent::SupervisorInspect(id, Ok(inspection.clone())),
+            &mut app,
+            &store,
+            &terminals,
+        )
+        .await
+        .unwrap();
+        handle_ui_event(
+            UiEvent::SupervisorTree(Ok(vec![])),
+            &mut app,
+            &store,
+            &terminals,
+        )
+        .await
+        .unwrap();
+    }
+    assert_eq!(app.supervisor_panel.adapter_skipped, 20);
+    assert_eq!(app.supervisor_panel.live_skipped, 11);
+    assert_eq!(app.supervisor_panel.inspected_events.len(), 500);
+    assert_eq!(
+        app.supervisor_panel
+            .inspected_agent
+            .as_ref()
+            .unwrap()
+            .status,
+        AgentStatus::Cancelled
+    );
+    for (width, height) in [(32, 10), (50, 14), (100, 30), (32, 10)] {
+        let mut terminal =
+            Terminal::new(ratatui::backend::TestBackend::new(width, height)).unwrap();
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let rendered = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|c| c.symbol())
+            .collect::<String>();
+        assert!(
+            rendered.contains("History warning"),
+            "{width}x{height}: {rendered}"
+        );
+        assert!(!rendered.contains('\u{1b}') && !rendered.contains('\u{202e}'));
+    }
+    app.supervisor_panel.supervisor_scroll = usize::MAX;
+    let mut terminal = Terminal::new(ratatui::backend::TestBackend::new(100, 30)).unwrap();
+    terminal.draw(|frame| draw(frame, &app)).unwrap();
+    let rendered = terminal
+        .backend()
+        .buffer()
+        .content()
+        .iter()
+        .map(|c| c.symbol())
+        .collect::<String>();
+    for expected in [
+        "安",
+        "全",
+        "cancelled",
+        "corrupt",
+        "Restart boundary",
+        "write failed",
+        "skipped 11",
+        "skipped 20",
+    ] {
+        assert!(
+            rendered.contains(expected),
+            "missing {expected}: {rendered}"
+        );
+    }
+}
+
+#[test]
+fn stale_history_replies_do_not_change_selected_agent_or_rewind_cursor() {
+    let first = AgentId(Uuid::new_v4());
+    let second = AgentId(Uuid::new_v4());
+    let mut panel = SupervisorPanel {
+        supervisor_mode: Some(SupervisorMode::Inspect(second)),
+        ..Default::default()
+    };
+    panel.apply_inspection(crate::supervision::AgentInspection {
+        agent: agent(first, None, "wrong"),
+        events: vec![],
+        history: None,
+        transport_skipped: 0,
+    });
+    assert!(panel.inspected_agent.is_none());
+}
+
+#[test]
+fn history_replay_cannot_replace_a_newer_live_event_with_an_older_snapshot() {
+    let id = AgentId(Uuid::new_v4());
+    let epoch = Uuid::new_v4();
+    let mut panel = SupervisorPanel {
+        supervisor_mode: Some(SupervisorMode::Inspect(id)),
+        ..Default::default()
+    };
+    let mut inspection = crate::supervision::AgentInspection {
+        agent: agent(id, None, "task"),
+        events: vec![],
+        transport_skipped: 0,
+        history: Some(crate::subagent::HistoryStatus {
+            cursor: crate::subagent::HistoryCursor {
+                epoch,
+                sequence: 10,
+            },
+            first_sequence: None,
+            evicted_through: 0,
+            notices: Default::default(),
+            durable: true,
+            cursor_gap: false,
+        }),
+    };
+    panel.apply_inspection(inspection.clone());
+    panel.append_event(SupervisionEvent {
+        sequence: 12,
+        timestamp: Utc::now(),
+        agent_id: id,
+        kind: SupervisionEventKind::Cancelled,
+    });
+    inspection.history.as_mut().unwrap().cursor.sequence = 11;
+    panel.apply_inspection(inspection);
+    assert_eq!(panel.inspected_events.last().unwrap().sequence, 12);
+}

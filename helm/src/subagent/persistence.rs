@@ -494,6 +494,17 @@ pub struct AgentTreeStore {
     execution_lease: Option<std::sync::Arc<crate::completion::runtime::AgentWriterLease>>,
 }
 impl AgentTreeStore {
+    pub(crate) fn has_history_evidence(&self) -> bool {
+        self.path.try_exists().unwrap_or(true)
+            || self
+                .path
+                .with_extension("archive")
+                .try_exists()
+                .unwrap_or(true)
+    }
+    pub(crate) fn history_path(&self) -> PathBuf {
+        self.path.with_extension("events.json")
+    }
     pub fn new(path: PathBuf) -> Self {
         Self {
             path,

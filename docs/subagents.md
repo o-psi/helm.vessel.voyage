@@ -112,7 +112,8 @@ Finished subagents archive automatically after completion, failure, cancellation
 and restart recovery. Historical timeout outcomes are preserved. Original
 IDs, parent links, tasks, statuses, results/errors, recent progress, budgets and
 worktree references remain available. Archival is a storage state, not a successful
-outcome. Full transcripts and the runtime's rolling event stream are not included.
+outcome. Full transcripts are not included. The bounded event stream is stored separately;
+see [durable supervisor inspection](agent-supervision.md#durable-event-inspection).
 
 Finished non-worktree leaves archive even while their parent is active, preserving
 the original parent link. Active agents and ancestors required by retained children
@@ -156,7 +157,8 @@ IDs in memory. Storage is local to the workspace, with no automatic expiry or
 archive deletion. Disk use grows with retained history. Library runtimes created
 without a store retain the same archive in memory only.
 
-Back up both the workspace tree and its sibling archive directory. Older binaries
+Back up the workspace tree, its sibling archive directory, and the separate
+`.events.json` supervisor history file. Older binaries
 ignore the new archive directory and cannot discover its records; preserve it when
 rolling back. Records deleted by older pruning cannot be reconstructed. As with the
 existing working-tree store, use one writing Helm runtime per workspace; the store's

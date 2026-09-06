@@ -64,16 +64,42 @@ pub struct AgentEvent {
 
 #[derive(Clone, Debug)]
 pub enum AgentEventKind {
+    /// Cumulative runtime delivery loss, not a lifecycle event or replay cursor.
+    HistoryGap {
+        skipped: u64,
+    },
     Queued,
     Started,
-    Progress { text: String },
+    Progress {
+        text: String,
+    },
     MessageQueued,
-    FollowUpQueued { child: Option<AgentId> },
-    Completed { result: String },
-    Failed { error: String },
-    TimedOut { error: String },
-    Interrupted { reason: String },
+    FollowUpQueued {
+        child: Option<AgentId>,
+    },
+    Completed {
+        result: String,
+    },
+    Failed {
+        error: String,
+    },
+    TimedOut {
+        error: String,
+    },
+    Interrupted {
+        reason: String,
+    },
     Cancelled,
+}
+
+/// A bounded replay and its independent final-record snapshot. A missing history
+/// contract is explicit for third-party adapters implementing only `inspect`.
+#[derive(Clone, Debug)]
+pub struct AgentInspection {
+    pub agent: AgentView,
+    pub events: Vec<AgentEvent>,
+    pub history: Option<crate::subagent::HistoryStatus>,
+    pub transport_skipped: u64,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -94,6 +120,24 @@ pub trait AgentSupervisor: Send + Sync {
         id: AgentId,
         after_sequence: Option<u64>,
     ) -> Result<Vec<AgentEvent>, SupervisionError>;
+    async fn replay(
+        &self,
+        id: AgentId,
+        after: Option<crate::subagent::HistoryCursor>,
+    ) -> Result<AgentInspection, SupervisionError> {
+        let agent = self
+            .tree()
+            .await?
+            .into_iter()
+            .find(|a| a.id == id)
+            .ok_or(SupervisionError::NotFound(id))?;
+        Ok(AgentInspection {
+            agent,
+            events: self.inspect(id, after.map(|c| c.sequence)).await?,
+            history: None,
+            transport_skipped: 0,
+        })
+    }
     async fn send_message(&self, id: AgentId, text: String) -> Result<(), SupervisionError>;
     async fn follow_up(&self, id: AgentId, text: String) -> Result<AgentId, SupervisionError>;
     async fn cancel(&self, id: AgentId) -> Result<(), SupervisionError>;
@@ -104,25 +148,56 @@ pub trait AgentSupervisor: Send + Sync {
 pub struct RuntimeAgentSupervisor {
     runtime: Arc<crate::subagent::SubagentRuntime>,
     events: broadcast::Sender<AgentEvent>,
+    skipped: Arc<std::sync::atomic::AtomicU64>,
 }
 
 impl RuntimeAgentSupervisor {
     pub fn new(runtime: Arc<crate::subagent::SubagentRuntime>) -> Self {
         let (events, _) = broadcast::channel(256);
-        let mut source = runtime.subscribe();
-        let sink = events.clone();
-        tokio::spawn(async move {
-            loop {
-                match source.recv().await {
-                    Ok(event) => {
-                        let _ = sink.send(convert_event(event));
-                    }
-                    Err(broadcast::error::RecvError::Lagged(_)) => continue,
-                    Err(broadcast::error::RecvError::Closed) => break,
+        let skipped = Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let lag = skipped.clone();
+        let source = runtime.subscribe();
+        tokio::spawn(forward_events(source, events.clone(), lag));
+        Self {
+            runtime,
+            events,
+            skipped,
+        }
+    }
+}
+
+async fn forward_events(
+    mut source: broadcast::Receiver<crate::subagent::SubagentEvent>,
+    sink: broadcast::Sender<AgentEvent>,
+    lag: Arc<std::sync::atomic::AtomicU64>,
+) {
+    let mut pending = 0u64;
+    loop {
+        match source.recv().await {
+            Ok(event) => {
+                if pending > 0 {
+                    let _ = sink.send(AgentEvent {
+                        sequence: event.sequence.saturating_sub(1),
+                        timestamp: event.timestamp,
+                        agent_id: AgentId(Uuid::nil()),
+                        kind: AgentEventKind::HistoryGap {
+                            skipped: lag.load(std::sync::atomic::Ordering::Relaxed),
+                        },
+                    });
+                    pending = 0;
                 }
+                let _ = sink.send(convert_event(event));
             }
-        });
-        Self { runtime, events }
+            Err(broadcast::error::RecvError::Lagged(count)) => {
+                pending = pending.saturating_add(count);
+                let _ = lag.fetch_update(
+                    std::sync::atomic::Ordering::Relaxed,
+                    std::sync::atomic::Ordering::Relaxed,
+                    |old| Some(old.saturating_add(count)),
+                );
+            }
+            Err(broadcast::error::RecvError::Closed) => break,
+        }
     }
 }
 
@@ -155,6 +230,30 @@ impl AgentSupervisor for RuntimeAgentSupervisor {
             .filter(|event| event.agent_id.0 == id.0)
             .map(convert_event)
             .collect())
+    }
+
+    async fn replay(
+        &self,
+        id: AgentId,
+        after: Option<crate::subagent::HistoryCursor>,
+    ) -> Result<AgentInspection, SupervisionError> {
+        let record = self
+            .runtime
+            .get(crate::subagent::AgentId(id.0))
+            .await
+            .map_err(runtime_error)?;
+        let replay = self.runtime.replay_history(after).await;
+        Ok(AgentInspection {
+            agent: convert_record(record),
+            events: replay
+                .events
+                .into_iter()
+                .filter(|e| e.agent_id.0 == id.0)
+                .map(convert_event)
+                .collect(),
+            history: Some(replay.status),
+            transport_skipped: self.skipped.load(std::sync::atomic::Ordering::Relaxed),
+        })
     }
 
     async fn send_message(&self, id: AgentId, text: String) -> Result<(), SupervisionError> {
@@ -289,5 +388,61 @@ impl AgentSupervisor for NoAgentSupervisor {
 
     fn subscribe(&self) -> broadcast::Receiver<AgentEvent> {
         self.events.subscribe()
+    }
+}
+
+#[cfg(test)]
+mod history_tests {
+    use super::*;
+    #[tokio::test]
+    async fn runtime_delivery_gap_is_sent_even_when_ui_itself_does_not_lag() {
+        let (source, receiver) = broadcast::channel(16);
+        let (sink, mut ui) = broadcast::channel(64);
+        let lag = Arc::new(std::sync::atomic::AtomicU64::new(0));
+        for sequence in 1..=40 {
+            source
+                .send(crate::subagent::SubagentEvent {
+                    sequence,
+                    timestamp: Utc::now(),
+                    agent_id: crate::subagent::AgentId::new(),
+                    kind: crate::subagent::SubagentEventKind::Queued,
+                })
+                .unwrap();
+        }
+        drop(source);
+        forward_events(receiver, sink, lag).await;
+        let notice = ui.recv().await.unwrap();
+        assert!(matches!(
+            notice.kind,
+            AgentEventKind::HistoryGap { skipped: 24 }
+        ));
+        assert!(notice.agent_id.0.is_nil());
+        assert_eq!(ui.recv().await.unwrap().sequence, 25);
+    }
+
+    #[tokio::test]
+    async fn runtime_adapter_and_ui_channel_overflow_are_observable() {
+        let (source, receiver) = broadcast::channel(16);
+        let (sink, mut ui) = broadcast::channel(4);
+        let lag = Arc::new(std::sync::atomic::AtomicU64::new(0));
+        for sequence in 1..=40 {
+            source
+                .send(crate::subagent::SubagentEvent {
+                    sequence,
+                    timestamp: Utc::now(),
+                    agent_id: crate::subagent::AgentId::new(),
+                    kind: crate::subagent::SubagentEventKind::Queued,
+                })
+                .unwrap();
+        }
+        drop(source);
+        forward_events(receiver, sink, lag.clone()).await;
+        assert_eq!(lag.load(std::sync::atomic::Ordering::Relaxed), 24);
+        assert!(matches!(
+            ui.recv().await,
+            Err(broadcast::error::RecvError::Lagged(13))
+        ));
+        assert_eq!(ui.recv().await.unwrap().sequence, 37);
+        assert_eq!(lag.load(std::sync::atomic::Ordering::Relaxed), 24);
     }
 }

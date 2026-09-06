@@ -52,7 +52,7 @@ snapshot includes parent, task, state, elapsed duration, optional worktree, prog
 and terminal result/error.
 
 The concrete `helm::subagent::SubagentRuntime` exposes corresponding `tree`,
-`events_after`, `send_message`, `follow_up`, `cancel`, and `subscribe` operations;
+`replay_history`, `events_after`, `send_message`, `follow_up`, `cancel`, and `subscribe` operations;
 the UI preserves distinct `TimedOut`, `Interrupted`, and `Cancelled` terminal states
 and events. The application installs `RuntimeAgentSupervisor`, which maps the
 durable runtime into this UI contract and forwards bounded live events without
@@ -61,3 +61,64 @@ exposing task handles.
 Supervisor composer text is sent only to the selected agent. It is not copied into
 the main model prompt or session transcript. Adapters should apply the runtime's
 redaction and audit policy to control-plane messages.
+
+## Durable event inspection
+
+Local supervisor events are saved separately from final agent records. Each
+workspace has a `subagents/<workspace-key>.events.json` version-1 envelope with a
+random history epoch, monotonically increasing sequence, retained events and
+recovery notices. The default window retains the latest 2,048 events across all
+agents; library callers may choose 1–4,096. Event text uses the existing 4 KiB
+preview boundary. The serialized history is limited to 32 MiB. Older events are
+evicted as necessary; this does not remove an agent's complete result or error
+from its retained or archived record.
+
+The supervisor adapter's `replay(id, cursor)` returns the selected agent's record,
+retained events and continuity status. Cursors pair an epoch with a sequence.
+A cursor before the retained window, after the current tail, or from another
+epoch reports a gap and returns the available window. Consumers advance using
+the response cursor even when no events for the selected agent occur in that
+window. The older `inspect(id, sequence)` convenience method returns only events;
+consumers needing completeness information must use `replay`.
+
+A valid restart keeps the epoch and continues the sequence. A fresh workspace
+starts without a loss warning. Missing prior evidence, corrupt,
+oversized or unsafe history starts a new epoch with a recovery notice. Corrupt or
+unreadable files are preserved unchanged: the new epoch remains in memory until
+an operator saves the damaged evidence elsewhere and restarts with that file
+removed. Helm does not silently overwrite damaged history.
+The restart notice explains that an event in flight at process termination may
+be absent: terminal records remain authoritative, and recovered work is marked
+interrupted rather than represented as a surviving process. History cannot
+reconstruct discarded events. Restart notices survive subsequent refreshes and
+writes; corrupt-history warnings
+remain until the damaged file is explicitly repaired or moved aside.
+
+The inspector keeps the newest 500 events for the selected agent and reports
+when it omits earlier events. Its pinned **History warning** remains visible
+through tree refresh and resizing; PageUp exposes the detailed retention,
+epoch, skipped-delivery and recovery messages. Periodic replay runs at most four times
+per second while inspecting, with one periodic request in flight. Live delivery
+loss is reported at both runtime-to-adapter and adapter-to-UI boundaries. Opening
+another panel or refreshing does not dismiss recorded delivery warnings. An
+already selected record remains inspectable when automatic archival removes it
+from the working tree. Archive discovery remains available through the subagent
+`archive` action; the tree lists retained records.
+
+History writes use a synced private temporary file followed by atomic replacement.
+On Unix, directory-relative descriptors reject symlink traversal and special files;
+new directories/files use 0700/0600. Windows inherits the trusted data directory's
+native ACL, as the completion ledger does. A write failure leaves the prior
+published snapshot intact when replacement has not happened, keeps the current
+in-memory window, and reports that it is not durable. A later successful write
+preserves the failure notice. If storage remains unwritable through process exit,
+no file can record that failure; the next restart still reports its restart
+boundary and the last readable snapshot. Repair storage before relying on new
+events surviving another restart. History initialization and publication retain
+the workspace runtime's writer lease.
+
+Back up the event file together with the workspace tree and its archive directory.
+Keep these files private: previews can contain the same task/result information
+as agent records. A library runtime without a store explicitly reports in-memory
+history rather than durable replay. Adapters that only implement the older
+inspection interface report that durable history status is unavailable.

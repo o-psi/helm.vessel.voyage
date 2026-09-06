@@ -3,12 +3,9 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::{BTreeMap, BTreeSet, VecDeque},
+    collections::{BTreeMap, BTreeSet},
     path::PathBuf,
-    sync::{
-        Arc,
-        atomic::{AtomicU64, Ordering},
-    },
+    sync::Arc,
 };
 use thiserror::Error;
 use tokio::sync::{Mutex, OwnedSemaphorePermit, RwLock, Semaphore, broadcast, mpsc, watch};
@@ -129,8 +126,9 @@ struct Inner {
     limits: RuntimeLimits,
     permits: Arc<Semaphore>,
     agents: RwLock<BTreeMap<AgentId, Arc<Control>>>,
-    history: Mutex<VecDeque<SubagentEvent>>,
-    sequence: AtomicU64,
+    history: Mutex<super::history::EventHistory>,
+    #[cfg(test)]
+    fail_history_write: std::sync::atomic::AtomicBool,
     events: broadcast::Sender<SubagentEvent>,
     store: Option<AgentTreeStore>,
     mutations: Mutex<()>,
@@ -191,9 +189,10 @@ impl SubagentRuntime {
         if limits.max_concurrency == 0
             || limits.max_concurrency > Semaphore::MAX_PERMITS
             || limits.event_history == 0
+            || limits.event_history > super::history::MAX_EVENTS
         {
             return Err(RuntimeError::Invalid(
-                "runtime limits must be greater than zero".into(),
+                "runtime concurrency must be positive and event history must be 1–4096".into(),
             ));
         }
         if let Some(store) = &mut store {
@@ -201,6 +200,11 @@ impl SubagentRuntime {
                 .acquire_runtime_owner()
                 .map_err(|e| RuntimeError::Persistence(e.to_string()))?;
         }
+        let history = super::history::EventHistory::open(
+            store.as_ref().map(|s| s.history_path()).as_deref(),
+            limits.event_history,
+            store.as_ref().is_some_and(|s| s.has_history_evidence()),
+        );
         let (events, _) = broadcast::channel(limits.event_history.clamp(16, 4096));
         Ok(Self {
             inner: Arc::new(Inner {
@@ -209,8 +213,9 @@ impl SubagentRuntime {
                 permits: Arc::new(Semaphore::new(limits.max_concurrency)),
                 limits,
                 agents: RwLock::new(BTreeMap::new()),
-                history: Mutex::new(VecDeque::new()),
-                sequence: AtomicU64::new(0),
+                history: Mutex::new(history),
+                #[cfg(test)]
+                fail_history_write: std::sync::atomic::AtomicBool::new(false),
                 events,
                 store,
                 mutations: Mutex::new(()),
@@ -276,7 +281,11 @@ impl SubagentRuntime {
             .list()
             .await
             .map_err(|error| RuntimeError::Persistence(error.to_string()))?;
-        let runtime = Self::new(executor, limits, Some(store))?;
+        let runtime = tokio::task::spawn_blocking(move || Self::new(executor, limits, Some(store)))
+            .await
+            .map_err(|_| {
+                RuntimeError::Persistence("history initialization task failed".into())
+            })??;
         let mut agents = runtime.inner.agents.write().await;
         for record in records {
             let completion = match (
@@ -325,11 +334,19 @@ impl SubagentRuntime {
     pub fn subscribe(&self) -> broadcast::Receiver<SubagentEvent> {
         self.inner.events.subscribe()
     }
+    pub async fn replay_history(
+        &self,
+        after: Option<super::HistoryCursor>,
+    ) -> super::HistoryReplay {
+        self.inner.history.lock().await.replay(after)
+    }
+
     pub async fn events_after(&self, sequence: u64) -> Vec<SubagentEvent> {
         self.inner
             .history
             .lock()
             .await
+            .events
             .iter()
             .filter(|e| e.sequence > sequence)
             .cloned()
@@ -1142,19 +1159,45 @@ impl SubagentRuntime {
             SubagentEventKind::Failed { error } => *error = preview(error),
             _ => {}
         }
-        let event = SubagentEvent {
-            sequence: self.inner.sequence.fetch_add(1, Ordering::Relaxed) + 1,
-            timestamp: Utc::now(),
-            agent_id: id,
-            kind,
-        };
-        let mut history = self.inner.history.lock().await;
-        history.push_back(event.clone());
-        while history.len() > self.inner.limits.event_history {
-            history.pop_front();
-        }
-        drop(history);
-        let _ = self.inner.events.send(event);
+        // The owned task retains the writer lease and finishes publication even if
+        // a caller is cancelled while the filesystem write is in flight.
+        let runtime = self.clone();
+        let _ = tokio::spawn(async move {
+            let mut history = runtime.inner.history.lock().await;
+            let event = history.push(
+                SubagentEvent {
+                    sequence: 0,
+                    timestamp: Utc::now(),
+                    agent_id: id,
+                    kind,
+                },
+                runtime.inner.limits.event_history,
+            );
+            if let Some(store) = &runtime.inner.store {
+                let path = store.history_path();
+                let mut snapshot = history.clone();
+                #[cfg(test)]
+                let fail_write = runtime
+                    .inner
+                    .fail_history_write
+                    .swap(false, std::sync::atomic::Ordering::SeqCst);
+                match tokio::task::spawn_blocking(move || {
+                    #[cfg(test)]
+                    if fail_write {
+                        panic!("synthetic history writer failure");
+                    }
+                    snapshot.persist(&path);
+                    snapshot
+                })
+                .await
+                {
+                    Ok(saved) => *history = saved,
+                    Err(_) => history.write_failed(),
+                }
+            }
+            let _ = runtime.inner.events.send(event);
+        })
+        .await;
     }
 }
 
@@ -1236,6 +1279,283 @@ mod tests {
             worktree: None,
             branch: None,
         }
+    }
+
+    #[tokio::test]
+    async fn history_initialization_distinguishes_fresh_missing_and_writer_task_failure() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = AgentTreeStore::new(dir.path().join("agents.json"));
+        let runtime = SubagentRuntime::new_persistent(
+            Arc::new(GateExecutor::new()),
+            RuntimeLimits::default(),
+            store.clone(),
+        )
+        .await
+        .unwrap();
+        assert!(runtime.replay_history(None).await.status.notices.is_empty());
+        assert!(runtime.replay_history(None).await.status.durable);
+        runtime
+            .inner
+            .fail_history_write
+            .store(true, Ordering::SeqCst);
+        runtime
+            .emit(AgentId::new(), SubagentEventKind::MessageQueued)
+            .await;
+        let status = runtime.replay_history(None).await.status;
+        assert!(
+            status
+                .notices
+                .contains(&super::super::HistoryNotice::WriteFailed)
+        );
+        assert!(!status.durable);
+        let id = runtime
+            .spawn(request("synthetic writer failure"))
+            .await
+            .unwrap();
+        runtime.cancel(id).await.unwrap();
+        runtime.wait(id).await.unwrap().unwrap_err();
+        drop(runtime);
+        tokio::fs::remove_file(store.history_path()).await.unwrap();
+        let reopened = SubagentRuntime::new_persistent(
+            Arc::new(GateExecutor::new()),
+            RuntimeLimits::default(),
+            store,
+        )
+        .await
+        .unwrap();
+        assert!(
+            reopened
+                .replay_history(None)
+                .await
+                .status
+                .notices
+                .contains(&super::super::HistoryNotice::Missing)
+        );
+        assert_eq!(
+            reopened.get(id).await.unwrap().status,
+            AgentStatus::Cancelled
+        );
+    }
+
+    #[tokio::test]
+    async fn supervisor_history_process_worker() {
+        let Some(directory) = std::env::var_os("HELM_HISTORY_TEST_DIRECTORY") else {
+            return;
+        };
+        let directory = PathBuf::from(directory);
+        let runtime = SubagentRuntime::new_persistent(
+            Arc::new(GateExecutor::new()),
+            RuntimeLimits::default(),
+            AgentTreeStore::new(directory.join("agents.json")),
+        )
+        .await
+        .unwrap();
+        let stage = std::env::var("HELM_HISTORY_TEST_STAGE").unwrap();
+        if stage.ends_with("write") {
+            let id = runtime.spawn(request("restart evidence")).await.unwrap();
+            if stage == "write" {
+                runtime.cancel(id).await.unwrap();
+                assert!(runtime.wait(id).await.unwrap().is_err());
+            }
+            let cursor = runtime.replay_history(None).await.status.cursor;
+            tokio::fs::write(
+                directory.join("expected.json"),
+                serde_json::to_vec(&(id, cursor)).unwrap(),
+            )
+            .await
+            .unwrap();
+            if stage == "crash-write" {
+                std::process::exit(0);
+            }
+        } else {
+            let (id, cursor): (AgentId, super::super::HistoryCursor) = serde_json::from_slice(
+                &tokio::fs::read(directory.join("expected.json"))
+                    .await
+                    .unwrap(),
+            )
+            .unwrap();
+            use crate::supervision::AgentSupervisor;
+            let adapter =
+                crate::supervision::RuntimeAgentSupervisor::new(Arc::new(runtime.clone()));
+            let inspected = adapter
+                .replay(crate::supervision::AgentId(id.0), None)
+                .await
+                .unwrap();
+            assert_eq!(inspected.agent.id.0, id.0);
+            assert!(
+                inspected
+                    .history
+                    .as_ref()
+                    .unwrap()
+                    .notices
+                    .contains(&super::super::HistoryNotice::Restarted)
+            );
+            let record = runtime.get(id).await.unwrap();
+            assert_eq!(record.id, id);
+            assert_eq!(
+                record.status,
+                if stage == "crash-read" {
+                    AgentStatus::Interrupted
+                } else {
+                    AgentStatus::Cancelled
+                }
+            );
+            let replay = runtime.replay_history(None).await;
+            assert_eq!(replay.status.cursor.epoch, cursor.epoch);
+            assert!(replay.status.cursor.sequence >= cursor.sequence);
+            assert!(
+                replay
+                    .status
+                    .notices
+                    .contains(&super::super::HistoryNotice::Restarted)
+            );
+            if stage == "read" {
+                assert!(replay.events.iter().any(|e| e.agent_id == id && matches!(e.kind, SubagentEventKind::Cancelled)));
+            }
+            let cursor = replay.status.cursor;
+            runtime.emit(id, SubagentEventKind::MessageQueued).await;
+            assert_eq!(
+                runtime.replay_history(Some(cursor)).await.events[0].sequence,
+                cursor.sequence + 1
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn supervisor_history_independent_process_restart_preserves_archived_identity() {
+        let directory = tempfile::tempdir().unwrap();
+        for stage in ["write", "read", "crash-write", "crash-read"] {
+            let output = tokio::time::timeout(
+                std::time::Duration::from_secs(30),
+                tokio::process::Command::new(std::env::current_exe().unwrap())
+                    .args([
+                        "--exact",
+                        "subagent::runtime::tests::supervisor_history_process_worker",
+                        "--nocapture",
+                    ])
+                    .env("HELM_HISTORY_TEST_DIRECTORY", directory.path())
+                    .env("HELM_HISTORY_TEST_STAGE", stage)
+                    .kill_on_drop(true)
+                    .output(),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stdout)
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn supervisor_history_publication_finishes_after_caller_cancellation() {
+        let runtime = SubagentRuntime::new(
+            Arc::new(GateExecutor::new()),
+            RuntimeLimits::default(),
+            None,
+        )
+        .unwrap();
+        let held = runtime.inner.history.lock().await;
+        let started = Arc::new(AtomicUsize::new(0));
+        let signal = started.clone();
+        let child = runtime.clone();
+        let caller = tokio::spawn(async move {
+            signal.store(1, Ordering::SeqCst);
+            child
+                .emit(AgentId::new(), SubagentEventKind::Cancelled)
+                .await;
+        });
+        while started.load(Ordering::SeqCst) == 0 {
+            tokio::task::yield_now().await;
+        }
+        caller.abort();
+        let _ = caller.await;
+        drop(held);
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            while runtime.events_after(0).await.is_empty() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            runtime.events_after(0).await[0].kind,
+            SubagentEventKind::Cancelled
+        );
+    }
+
+    #[tokio::test]
+    async fn supervisor_history_concurrent_emission_is_ordered_and_cancellation_safe() {
+        let runtime = SubagentRuntime::new(
+            Arc::new(GateExecutor::new()),
+            RuntimeLimits {
+                max_concurrency: 1,
+                event_history: 64,
+            },
+            None,
+        )
+        .unwrap();
+        let mut tasks = tokio::task::JoinSet::new();
+        for _ in 0..100 {
+            let runtime = runtime.clone();
+            tasks.spawn(async move {
+                runtime
+                    .emit(AgentId::new(), SubagentEventKind::Queued)
+                    .await;
+            });
+        }
+        while let Some(result) = tasks.join_next().await {
+            result.unwrap();
+        }
+        let replay = runtime.replay_history(None).await;
+        assert_eq!(replay.events.len(), 64);
+        assert_eq!(replay.status.evicted_through, 36);
+        assert!(
+            replay
+                .events
+                .windows(2)
+                .all(|p| p[1].sequence == p[0].sequence + 1)
+        );
+    }
+
+    #[tokio::test]
+    async fn supervisor_history_survives_restart_and_continues_sequences() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = AgentTreeStore::new(dir.path().join("agents.json"));
+        let limits = RuntimeLimits {
+            max_concurrency: 1,
+            event_history: 3,
+        };
+        let runtime = SubagentRuntime::new_persistent(
+            Arc::new(GateExecutor::new()),
+            limits.clone(),
+            store.clone(),
+        )
+        .await
+        .unwrap();
+        let id = AgentId::new();
+        for n in 0..5 {
+            runtime
+                .emit(
+                    id,
+                    SubagentEventKind::Progress {
+                        text: format!("進捗 {n}"),
+                    },
+                )
+                .await;
+        }
+        let before = runtime.events_after(0).await;
+        assert_eq!(before.len(), 3);
+        drop(runtime);
+        let reopened =
+            SubagentRuntime::new_persistent(Arc::new(GateExecutor::new()), limits, store)
+                .await
+                .unwrap();
+        assert_eq!(reopened.events_after(0).await, before);
+        reopened.emit(id, SubagentEventKind::Cancelled).await;
+        assert_eq!(reopened.events_after(5).await[0].sequence, 6);
     }
 
     #[tokio::test]
