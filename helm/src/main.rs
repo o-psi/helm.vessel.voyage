@@ -2434,11 +2434,9 @@ async fn chat(
         store.save(&mut session).await?;
     }
     helm::chat_preferences::restore_profile(&mut config, &session.workspace)?;
-    helm::runtime_policy::RuntimePolicy::resolve(&config, &session.workspace)?;
     let mut agent: Option<Agent> = None;
     let mut pending = helm::plain_terminal::PendingInput::default();
     if interactive {
-        helm::chat_preferences::remember(&config, &session.model, None)?;
         eprintln!(
             "Helm · {} · {} · access: {} · {}\nType /help for commands.",
             session.display_name(),
@@ -2448,6 +2446,9 @@ async fn chat(
                 .access_mode(),
             session.workspace.display()
         );
+    }
+    if interactive {
+        helm::chat_preferences::remember(&config, &session.model, None)?;
     }
     let interrupt = attachment_interrupt();
     tokio::pin!(interrupt);
