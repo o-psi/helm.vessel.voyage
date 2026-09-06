@@ -53,7 +53,7 @@ struct Cli {
     /// Agent authority: inspect only, ask on consequential actions, or proceed without prompts.
     #[arg(long, global = true, value_enum, conflicts_with = "approval")]
     access: Option<AccessArg>,
-    #[arg(short, long, global = true)]
+    #[arg(short, long, global = true, action = clap::ArgAction::Set, num_args = 0..=1, default_missing_value = "true", default_value = "false", require_equals = true)]
     verbose: bool,
     #[arg(long, global = true, value_enum, default_value = "text")]
     log_format: LogFormat,
@@ -151,7 +151,7 @@ enum Command {
         #[arg(long)]
         resume: Option<String>,
         /// Use the line-oriented interface, even when attached to a terminal.
-        #[arg(long)]
+        #[arg(long, action = clap::ArgAction::Set, num_args = 0..=1, default_missing_value = "true", default_value = "false", require_equals = true)]
         plain: bool,
     },
     Sessions,
@@ -386,7 +386,7 @@ impl EventSink for Terminal {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let cli = match Cli::try_parse() {
+    let mut cli = match Cli::try_parse() {
         Ok(cli) => cli,
         Err(error)
             if std::env::args_os().any(|arg| arg == "attachment")
@@ -400,6 +400,53 @@ async fn main() -> Result<()> {
         }
         Err(error) => error.exit(),
     };
+    let is_chat = matches!(&cli.command, None | Some(Command::Chat { .. }));
+    let remembered = if is_chat && cli.config.is_none() {
+        helm::chat_preferences::load()?
+    } else {
+        None
+    };
+    if let Some(state) = remembered
+        .as_ref()
+        .and_then(|config| config.chat_preferences.as_ref())
+    {
+        let arguments: Vec<String> = std::env::args_os()
+            .filter_map(|arg| arg.into_string().ok())
+            .collect();
+        if !arguments.iter().any(|arg| {
+            arg == "--verbose"
+                || arg == "-v"
+                || arg.starts_with("--verbose=")
+                || arg.starts_with("-v=")
+        }) {
+            cli.verbose = state.presentation.verbose;
+        }
+        if !arguments
+            .iter()
+            .any(|arg| arg == "--log-format" || arg.starts_with("--log-format="))
+        {
+            cli.log_format = if state.presentation.log_format == "json" {
+                LogFormat::Json
+            } else {
+                LogFormat::Text
+            };
+        }
+        if !arguments
+            .iter()
+            .any(|arg| arg == "--plain" || arg.starts_with("--plain="))
+        {
+            match &mut cli.command {
+                Some(Command::Chat { plain, .. }) => *plain = state.presentation.plain,
+                None => {
+                    cli.command = Some(Command::Chat {
+                        resume: None,
+                        plain: state.presentation.plain,
+                    })
+                }
+                _ => {}
+            }
+        }
+    }
     if cli.policy.policy_profile.is_some() {
         anyhow::ensure!(
             matches!(
@@ -550,7 +597,9 @@ async fn main() -> Result<()> {
             error
         }
     };
-    let mut config = if defaults_command {
+    let mut config = if let Some(config) = remembered {
+        Ok(config)
+    } else if defaults_command {
         helm::policy_profile::defaults::cli::load_config(cli.config.as_deref())
     } else {
         Config::load(cli.config.as_deref())
@@ -592,17 +641,64 @@ async fn main() -> Result<()> {
     }
     let policy_explicit = if config.policy_defaults.is_some()
         || cli.policy.policy_profile.is_some()
+        || config
+            .chat_preferences
+            .as_ref()
+            .is_some_and(|state| state.profile.is_some())
         || matches!(&cli.command, Some(Command::Policy(_)))
     {
         helm::policy_profile::cli::explicit(&config, &cli.set, explicit_access)?
     } else {
         Default::default()
     };
+    // A new invocation changes only the explicitly supplied fields; remembered
+    // policy overrides remain active when unrelated settings change.
+    let policy_explicit = if config.chat_preferences.is_some() {
+        let previous = &config.policy_explicit;
+        helm::policy_profile::Overrides {
+            access: policy_explicit.access.or(previous.access),
+            unattended: policy_explicit
+                .unattended
+                .or_else(|| previous.unattended.clone()),
+            read_roots: policy_explicit
+                .read_roots
+                .or_else(|| previous.read_roots.clone()),
+            write_roots: policy_explicit
+                .write_roots
+                .or_else(|| previous.write_roots.clone()),
+            deny_commands: policy_explicit
+                .deny_commands
+                .or_else(|| previous.deny_commands.clone()),
+            inherit_env: policy_explicit
+                .inherit_env
+                .or_else(|| previous.inherit_env.clone()),
+            github_enabled: policy_explicit.github_enabled.or(previous.github_enabled),
+        }
+    } else {
+        policy_explicit
+    };
     config.policy_explicit = policy_explicit.clone();
     if cli.policy.policy_profile.is_some() {
         let workspace = config.resolve_workspace(cli.workspace.clone())?;
         cli.policy
             .apply(&mut config, &workspace, policy_explicit.clone())?;
+    }
+    if is_chat {
+        let mut state = config.chat_preferences.take().unwrap_or_default();
+        state.presentation.verbose = cli.verbose;
+        state.presentation.log_format = match cli.log_format {
+            LogFormat::Text => "text",
+            LogFormat::Json => "json",
+        }
+        .into();
+        state.presentation.plain = matches!(&cli.command, Some(Command::Chat { plain: true, .. }));
+        if cli.policy.policy_profile.is_some() {
+            state.profile = None;
+        }
+        config.chat_preferences = Some(state);
+        if let Some(workspace) = &cli.workspace {
+            config.workspace = Some(workspace.canonicalize()?);
+        }
     }
     match cli.command.unwrap_or(Command::Chat {
         resume: None,
@@ -1848,7 +1944,14 @@ fn write_runtime_config_in(
     directory: &std::path::Path,
 ) -> Result<tempfile::NamedTempFile> {
     std::fs::create_dir_all(directory)?;
-    let contents = toml::to_string_pretty(config)?;
+    let mut document = toml::Value::try_from(config)?;
+    if let Some(state) = &config.chat_preferences {
+        document
+            .as_table_mut()
+            .context("configuration must be a table")?
+            .insert("_chat_preferences".into(), toml::Value::try_from(state)?);
+    }
+    let contents = toml::to_string_pretty(&document)?;
     let mut file = tempfile::Builder::new()
         .prefix("runtime-config-")
         .suffix(".toml")
@@ -2311,7 +2414,7 @@ async fn execute_workflow(
 }
 
 async fn chat(
-    config: Config,
+    mut config: Config,
     workspace_arg: Option<PathBuf>,
     resume: Option<String>,
     interactive: bool,
@@ -2330,9 +2433,12 @@ async fn chat(
     if model_overridden && session.switch_model(config.model.clone())? {
         store.save(&mut session).await?;
     }
+    helm::chat_preferences::restore_profile(&mut config, &session.workspace)?;
+    helm::runtime_policy::RuntimePolicy::resolve(&config, &session.workspace)?;
     let mut agent: Option<Agent> = None;
     let mut pending = helm::plain_terminal::PendingInput::default();
     if interactive {
+        helm::chat_preferences::remember(&config, &session.model, None)?;
         eprintln!(
             "Helm · {} · {} · access: {} · {}\nType /help for commands.",
             session.display_name(),
@@ -2365,6 +2471,7 @@ async fn chat(
             break;
         };
         let prompt = prompt.trim();
+        helm::chat_preferences::remember(&config, &session.model, None)?;
         if prompt.is_empty() {
             continue;
         }
@@ -2566,6 +2673,7 @@ async fn chat(
                 agent.set_model(model)?;
             }
             store.save(&mut session).await?;
+            helm::chat_preferences::remember(&config, &session.model, None)?;
             println!("model switched to {model}");
             continue;
         }

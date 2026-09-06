@@ -5,9 +5,9 @@ use crate::{
     runtime_policy::{Source, config_rules},
 };
 use anyhow::{Result, ensure};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SelectionRequest {
     pub directory: PathBuf,
     pub name: String,
@@ -74,6 +74,9 @@ impl SelectionRequest {
     }
 }
 impl Selection {
+    pub fn confirmation(&self) -> &str {
+        &self.transition_digest
+    }
     pub fn request(&self) -> &SelectionRequest {
         &self.request
     }

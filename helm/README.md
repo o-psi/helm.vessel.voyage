@@ -89,6 +89,32 @@ Discover models from the configured provider/account with `helm models` or
 chat, use `/model`, `/models`, or `/model MODEL`. The selected model persists with the session and
 applies to its next turn.
 
+## Remembered chat settings
+
+New chats remember the last-used provider, model, access mode, configuration values,
+explicit workspace, plain/full-screen choice, logging options, and activity/tool-detail
+visibility across launches. Settings are saved separately from conversations in
+`chat-preferences.json` under Helm's data directory (owner-only on Unix). Environment
+values explicitly placed in Config remain in this private file; credentials read from
+provider environment variables or OAuth stores are not copied. Fresh chat history stays empty.
+
+For chat launches, precedence is explicit CLI flags/`--set`, then remembered settings,
+then the ordinary config file on first use. An explicit `--config PATH` starts from that
+file and replaces remembered settings when the chat opens or accepts plain input.
+Use `--verbose=false` or `chat --plain=false` to turn off a remembered mode. Automatic
+plain fallback for redirected input does not change the selected frontend preference.
+`run`, managed sessions, remote workers, and config/doctor utilities retain their own
+configuration behavior. A resumed session retains its model unless explicitly overridden.
+Concurrent chat windows use the last successful settings write.
+
+Named policy selections remember their exact source and confirmation binding, then
+revalidate the profile, actual workspace and administrator ceiling on restart. Changed
+sources or stale confirmations refuse execution; explicitly reselect using `--config`
+and the policy selection flags. Private policy-default sources still resolve afresh.
+These preferences never restore an effective policy snapshot from session history.
+Missing preferences use normal configuration; corrupt or unavailable preferences report
+an error. Start with `--config PATH` to replace them after checking the intended settings.
+
 ## Use
 
 ```sh
@@ -233,7 +259,7 @@ the full-screen header.
 
 `Ctrl+P` opens private policy profiles and current effective rules/provenance.
 Review a selection with Enter; any authority increase needs explicit Y confirmation.
-Switching is runtime-only and refuses outstanding work. See
+Switching refuses outstanding work and remembers the selected source for new chats. See
 [policy switching](../docs/policy-profiles.md#switch-policy-in-the-tui) for cleanup,
 freshness, recovery and platform limits.
 

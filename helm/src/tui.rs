@@ -316,6 +316,7 @@ pub async fn run(
     access_mode: AccessMode,
     policy: Option<crate::policy_profile::switching::SwitchContext>,
     notice: Option<String>,
+    presentation: &mut crate::chat_preferences::Presentation,
 ) -> Result<TuiExit> {
     anyhow::ensure!(
         store.owned_session_id() == Some(session.id),
@@ -324,6 +325,9 @@ pub async fn run(
     let sessions = store.list().await?;
     let mut app = App::new(session, sessions);
     app.diagnostic_agent = Some(agent.clone());
+    let preference_config = policy.as_ref().map(|context| context.config().clone());
+    app.show_activity = presentation.activity;
+    app.tool_details = presentation.tool_details;
     app.policy_panel.configure(policy);
     app.provider_label = provider_label;
     app.access_mode = access_mode;
@@ -350,7 +354,27 @@ pub async fn run(
     let termination = termination_signal();
     tokio::pin!(termination);
 
+    let mut remembered_choices = None;
     while !app.quit {
+        let choices = (
+            app.session.model.clone(),
+            app.show_activity,
+            app.tool_details,
+        );
+        if remembered_choices.as_ref() != Some(&choices) {
+            if let Some(config) = &preference_config
+                && config.chat_preferences.is_some()
+            {
+                presentation.activity = app.show_activity;
+                presentation.tool_details = app.tool_details;
+                crate::chat_preferences::remember(
+                    config,
+                    &app.session.model,
+                    Some(presentation.clone()),
+                )?;
+            }
+            remembered_choices = Some(choices);
+        }
         app.voyage_panel.poll();
         if app
             .approval

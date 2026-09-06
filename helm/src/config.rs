@@ -85,6 +85,9 @@ impl ProviderKind {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
+    /// Chat-only preference recording; never carried to workers or runtime config files.
+    #[serde(default, rename = "_chat_preferences", skip_serializing)]
+    pub chat_preferences: Option<crate::chat_preferences::State>,
     /// Explicit operator-private defaults source, freshly resolved at root startup.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub policy_defaults: Option<crate::policy_profile::defaults::DefaultsSource>,
@@ -387,6 +390,7 @@ pub enum UnattendedApprovalMode {
 impl Default for Config {
     fn default() -> Self {
         Self {
+            chat_preferences: None,
             github_enabled: false,
             provider: ProviderKind::OpenaiResponses,
             model: "gpt-5".into(),
@@ -630,6 +634,7 @@ impl Config {
         let mut updated: Self = document.try_into()?;
         // Serialization deliberately drops launch authority; in-process edits must
         // retain it so the next rebuild checks the same profile and transition.
+        updated.chat_preferences = self.chat_preferences.clone();
         updated.policy_profile = self.policy_profile.clone();
         updated.policy_explicit = self.policy_explicit.clone();
         if updated.provider != self.provider {

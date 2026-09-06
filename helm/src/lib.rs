@@ -1,5 +1,6 @@
 pub mod agent;
 pub mod attachment;
+pub mod chat_preferences;
 pub mod completion;
 pub mod config;
 pub mod context;

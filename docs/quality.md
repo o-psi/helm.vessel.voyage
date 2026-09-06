@@ -14,10 +14,10 @@ parallelism; coordinate this with other work on the machine. Gates execute in
 sequence, including fixtures that invoke Cargo themselves.
 
 `scripts/quality-gates.json` lists the complete suite: runner regression tests,
-formatting, strict Clippy, all workspace tests, a locked optimized build, all 56
+formatting, strict Clippy, all workspace tests, a locked optimized build, all 57
 existing system fixtures, evaluation-definition validation, and full plus installer
 packaging with checksum verification. The fixture baseline preserves all 65 gates
-from the original GitHub/Forgejo workflow union. The shared suite has 66 gates.
+from the original GitHub/Forgejo workflow union. The shared suite has 67 gates.
 Definition validation does not execute live provider evaluations. Platform and
 approved live-provider acceptance evidence remain separate requirements.
 

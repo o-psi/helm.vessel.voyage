@@ -56,6 +56,13 @@
     ]
   },
   {
+    "id": "chat_preferences",
+    "argv": [
+      "python3",
+      "tests/system/chat_preferences.py"
+    ]
+  },
+  {
     "id": "plain_terminal_chat",
     "argv": [
       "python3",

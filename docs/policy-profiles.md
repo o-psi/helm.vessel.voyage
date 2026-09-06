@@ -285,6 +285,7 @@ retained. If constructing the replacement fails, Helm restores only the exact
 previous effective policy after fresh validation. If that policy cannot be restored,
 Helm exits with the voyage and draft saved; reopen under a freshly resolved policy.
 A successful switch applies to the current workspace runtime, including its child
-policies. Other cached workspaces keep their existing authority. Selection is not
-written as session or Config authority and does not change persistent defaults;
-ordinary restart resolves the configured launch policy afresh.
+policies. Other cached workspaces keep their existing authority. The selected source and exact confirmation binding are remembered in private chat
+preferences, separate from session history and the policy-default store. Restart
+rebinds that source against the actual workspace and current ceiling; changed sources
+or confirmations refuse execution. Other commands retain their explicit policy selection.

@@ -55,6 +55,9 @@ impl SwitchContext {
     pub fn new(config: Config, previous: EffectivePolicy) -> Self {
         Self { config, previous }
     }
+    pub fn config(&self) -> &Config {
+        &self.config
+    }
     pub fn current(&self) -> &EffectivePolicy {
         &self.previous
     }

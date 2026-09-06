@@ -256,13 +256,18 @@ impl WorkspaceRuntime {
 }
 
 pub(super) async fn chat(
-    config: Config,
+    mut config: Config,
     workspace_arg: Option<PathBuf>,
     resume: Option<String>,
     model_overridden: bool,
     verbose: bool,
     log_format: LogFormat,
 ) -> Result<()> {
+    let mut presentation = config
+        .chat_preferences
+        .as_ref()
+        .map(|state| state.presentation.clone())
+        .unwrap_or_default();
     let mut runtimes = BTreeMap::<PathBuf, WorkspaceRuntime>::new();
     let store = SessionStore::default();
     let (mut store, mut session) = if let Some(reference) = resume {
@@ -277,6 +282,7 @@ pub(super) async fn chat(
     if model_overridden && session.switch_model(config.model.clone())? {
         store.save(&mut session).await?;
     }
+    helm::chat_preferences::restore_profile(&mut config, &session.workspace)?;
     let outcome: Result<Option<(Config, uuid::Uuid, helm::tui::CliRequest)>> = async {
         let mut workspace = session.workspace.canonicalize()?;
         runtimes.insert(workspace.clone(), WorkspaceRuntime::build(&config, &session).await?);
@@ -291,7 +297,7 @@ pub(super) async fn chat(
             let exit = helm::tui::run(runtime.agent.clone(), &mut store, session,
                 &mut runtime.receiver, runtime.bridge.sender(), Arc::new(runtime.terminals.clone()),
                 runtime.supervisor.clone(),
-                runtime.todos.clone(), runtime.provider_label.clone(), runtime.access, Some(runtime.policy.clone()), notice.take()).await?;
+                runtime.todos.clone(), runtime.provider_label.clone(), runtime.access, Some(runtime.policy.clone()), notice.take(), &mut presentation).await?;
             let current_id = store.owned_session_id().context("active session ownership missing")?;
             session = store.load(current_id).await?;
             match exit {
@@ -299,6 +305,8 @@ pub(super) async fn chat(
                 helm::tui::TuiExit::Launch(request) => {
                     let mut launch_config = runtime.config.clone();
                     launch_config.model = session.model.clone();
+                    if let Some(state) = &mut launch_config.chat_preferences { state.presentation = presentation.clone(); }
+
                     return Ok(Some((launch_config, current_id, request)));
                 }
                 helm::tui::TuiExit::SwitchPolicy(request) => {
@@ -329,7 +337,7 @@ pub(super) async fn chat(
                     match WorkspaceRuntime::build_checked(&candidate, &session, Some(&digest)).await {
                         Ok(next) => {
                             runtimes.insert(workspace.clone(), next);
-                            notice = Some("Policy applied to this workspace runtime. Launch defaults are unchanged.".into());
+                            notice = Some("Policy applied to this workspace runtime and remembered for new chats.".into());
                         }
                         Err(error) => {
                             if error.downcast_ref::<UnconfirmedRuntimeCleanup>().is_some() {
