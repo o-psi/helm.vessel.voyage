@@ -91,6 +91,9 @@ def execute(argv, cwd, env, log_path, timeout):
                     return 125, 'output_limit'
                 time.sleep(.05)
             code = process.returncode
+            if log.tell() > 64 * 1024 * 1024:
+                stop(process)
+                return 125, 'output_limit'
             if group_active(process.pid):
                 stop(process)
                 return 125, 'descendants_remaining'

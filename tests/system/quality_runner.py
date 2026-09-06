@@ -125,10 +125,11 @@ def ownership_and_timeout(root):
     result = p.run('--timeout-seconds', '.1')
     assert result.returncode == 124, result.stderr
     assert any(x['gates'][0]['status'] == 'timeout' for x in p.reports())
-    loud = Project(root / 'output-limit', [{'id': 'loud', 'argv': command(
-        'import os,time; block=b"x"*1048576; [os.write(1,block) for _ in range(65)]; time.sleep(30)')}])
-    assert loud.run().returncode == 125
-    assert loud.reports()[0]['gates'][0]['status'] == 'output_limit'
+    for name, delay in [('output-limit', 30), ('output-exit', 0)]:
+        loud = Project(root / name, [{'id': 'loud', 'argv': command(
+            'import os,time; block=b"x"*1048576; [os.write(1,block) for _ in range(65)]; time.sleep(' + str(delay) + ')')}])
+        assert loud.run().returncode == 125
+        assert loud.reports()[0]['gates'][0]['status'] == 'output_limit'
     env = dict(p.env, CARGO_TARGET_DIR=str(root / 'different-target'))
     assert p.run(env=env).returncode != 0
     env = dict(p.env, TARGET='other-target')
