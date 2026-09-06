@@ -41,6 +41,22 @@ pub(super) async fn request_cli(
     Ok(())
 }
 
+pub(super) async fn request_navigation(
+    app: &mut App,
+    store: &SessionStore,
+    reference: String,
+) -> Result<()> {
+    anyhow::ensure!(
+        !app.is_running(),
+        "finish or cancel active work before switching voyages"
+    );
+    app.session.draft.clone_from(&app.composer.text);
+    store.save(&mut app.session).await?;
+    app.exit = Some(TuiExit::Navigate(reference));
+    app.quit = true;
+    Ok(())
+}
+
 pub(super) fn resume_chat_arguments(app: &App) -> Vec<String> {
     vec!["chat".into(), "--resume".into(), app.session.id.to_string()]
 }
@@ -282,14 +298,7 @@ pub(super) async fn handle_command(
         "resume" if !argument.trim().is_empty() => {
             match store.load_reference(argument.trim()).await {
                 Ok(session) => {
-                    request_cli(
-                        app,
-                        store,
-                        vec!["chat".into(), "--resume".into(), session.id.to_string()],
-                        true,
-                        false,
-                    )
-                    .await?;
+                    request_navigation(app, store, session.id.to_string()).await?;
                 }
                 Err(error) => app.status = format!("Cannot resume session: {error}"),
             }

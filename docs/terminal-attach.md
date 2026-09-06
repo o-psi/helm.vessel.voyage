@@ -13,7 +13,17 @@ interactive shells, SSH, `sudo`, REPLs, pagers, and alternate-screen programs.
 
 Detach with **Ctrl+T** (or **Ctrl+]**). Detaching, opening another view, or switching sessions never
 terminates the terminal or its child process. Termination is a separate, explicit
-runtime operation. The header always displays the detach chord while attached.
+runtime operation. Saved-voyage navigation stays in the same Helm process. Voyages
+in the same canonical workspace share its terminal manager; another workspace has
+its own manager and cannot list or write the first workspace's terminals. Returning
+to a workspace restores its live processes and shell state. Helm acquires the target
+voyage's execution lock and builds its authorized runtime before switching; a busy
+or invalid target leaves the current voyage and terminals available. Policy freshness
+is checked again before dispatching a run from a retained runtime.
+
+Quitting Helm or handing off to a configuration command drains every retained
+workspace, including inactive terminals. This retention applies only within a live
+Helm process, not across restarts. The header always displays the detach chord while attached.
 If an agent requests approval while a terminal is attached, Helm returns
 `unavailable` immediately; terminal keystrokes can never approve an agent action.
 
@@ -39,6 +49,16 @@ TUI displays the gap. Emulated screen state remains intact.
 The UI consumes the `InteractiveTerminals` trait in `helm::terminal`; it never owns a
 singleton process. One manager can expose any number of local, SSH, container, or
 privilege-elevated terminals.
+
+The built-in PTY writer uses one dedicated worker per terminal. Input requests are
+limited to 64 KiB, with at most eight queued requests per terminal and a 250 ms
+delivery deadline. A full queue or oversized request is rejected without enqueueing
+bytes. Cancellation or a delivery timeout stops the remaining suffix; bytes already
+accepted by the PTY cannot be rolled back. An incomplete or unconfirmed result must
+not be retried automatically. Cursor-report replies use the same bounded queue and
+never block the output reader. The process map is released before awaiting input,
+so a non-reading child cannot block another terminal's list, resize, or shutdown.
+Cleanup observes the input worker as well as the child and output reader.
 
 Runtime implementations must:
 

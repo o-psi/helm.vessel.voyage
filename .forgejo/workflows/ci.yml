@@ -115,6 +115,10 @@ jobs:
         env:
           HELM_BIN: target/release/helm
         run: python3 tests/system/tui_workflows.py
+      - name: Verify terminal retention across native TUI voyage navigation
+        env:
+          HELM_BIN: target/release/helm
+        run: python3 tests/system/terminal_navigation.py
       - name: Verify transient workflow secrets without public capture
         env:
           HELM_BIN: target/release/helm

@@ -29,6 +29,7 @@ use std::{
 use tracing_subscriber::EnvFilter;
 mod managed;
 mod remote_worker;
+mod tui_runtime;
 #[derive(Parser)]
 #[command(version, about = "A general-purpose LLM harness for terminal work")]
 struct Cli {
@@ -1471,121 +1472,15 @@ async fn tui_chat(
     verbose: bool,
     log_format: LogFormat,
 ) -> Result<()> {
-    let store = SessionStore::default();
-    let (mut store, mut session) = if let Some(reference) = resume {
-        store.load_owned(&reference).await?
-    } else {
-        let session = Session::new(
-            config.resolve_workspace(workspace_arg)?,
-            config.model.clone(),
-        );
-        (store.with_execution(session.id).await?, session)
-    };
-    if model_overridden && session.switch_model(config.model.clone())? {
-        store.save(&mut session).await?;
-    }
-    let (bridge, receiver) = helm::tui::bridge();
-    let mut active_config = config.clone();
-    active_config.model = session.model.clone();
-    let profile = active_config.provider_profile();
-    let provider_label = format!(
-        "{} ({})",
-        profile.id,
-        if profile.compatibility_bridge {
-            "external bridge"
-        } else {
-            "native"
-        }
-    );
-    let resolved =
-        helm::runtime_policy::RuntimePolicy::resolve(&active_config, &session.workspace)?;
-    let runtime_config = resolved.config();
-    let policy = Arc::new(resolved.policy().clone());
-    let context = ToolContext {
-        completion: None,
-        policy,
-        approver: bridge.clone(),
-        timeout: runtime_config.timeout(),
-        max_output_bytes: runtime_config.max_output_bytes,
-        environment: tool_environment(runtime_config),
-        cancellation: tokio_util::sync::CancellationToken::new(),
-        execution_id: uuid::Uuid::new_v4(),
-        interaction: InteractionMode::Attended,
-        redactor: redactor(runtime_config),
-    };
-    let subagents =
-        build_subagents(runtime_config, &session.workspace, context.policy.clone()).await?;
-    let subagent_runtime = subagents.runtime;
-    let todo = subagents.todos.clone();
-    let tools = build_tools(
-        runtime_config,
-        Some(subagents.tool),
-        Some(todo.clone()),
-        Some(subagents.completion_tool),
-    )
-    .await?;
-    let terminals: Arc<dyn helm::terminal::InteractiveTerminals> =
-        Arc::new(tools.terminals().unwrap_or_default());
-    let agent = Arc::new(
-        Agent::new(
-            provider::from_config(runtime_config, session.workspace.clone())?,
-            tools,
-            context,
-            bridge.clone(),
-            session.model.clone(),
-            runtime_config.system_prompt.clone(),
-            runtime_config.max_tokens,
-            runtime_config.temperature,
-        )
-        .with_completion_coordinator(subagents.coordinator)
-        .with_completion_gate(
-            todo.store(),
-            subagent_runtime.store().expect("persistent runtime"),
-            subagent_runtime.clone(),
-        )
-        .with_context_window(runtime_config.context_window)
-        .with_model_mirror(subagents.model)
-        .with_retry_policy(RetryPolicy {
-            max_attempts: runtime_config.provider_retry_attempts,
-            initial_delay: std::time::Duration::from_millis(
-                runtime_config.provider_retry_initial_ms,
-            ),
-            max_delay: std::time::Duration::from_millis(runtime_config.provider_retry_max_ms),
-        }),
-    );
-    let session_id = session.id;
-    let exit = helm::tui::run(
-        agent,
-        &mut store,
-        session,
-        receiver,
-        bridge.sender(),
-        terminals,
-        Arc::new(helm::supervision::RuntimeAgentSupervisor::new(
-            subagent_runtime.clone(),
-        )),
-        todo.store(),
-        provider_label,
-        runtime_config.access_mode(),
-    )
-    .await;
-    // A relaunched process must acquire the same workspace writer lease. Drain
-    // workers before dropping the last runtime owner, including on UI errors.
-    tokio::time::timeout(
-        std::time::Duration::from_secs(10),
-        subagent_runtime.shutdown(),
+    tui_runtime::chat(
+        config,
+        workspace_arg,
+        resume,
+        model_overridden,
+        verbose,
+        log_format,
     )
     .await
-    .context("subagent shutdown timed out; refusing frontend handoff")?;
-    drop(subagent_runtime);
-    let session_id = store.owned_session_id().unwrap_or(session_id);
-    drop(store); // Release the active session before a same-session child starts.
-    match exit? {
-        helm::tui::TuiExit::Quit => Ok(()),
-        helm::tui::TuiExit::Launch(request) => {
-            launch_from_tui(&active_config, session_id, request, verbose, log_format).await
-        }
-    }
 }
 
 fn write_runtime_config(config: &Config) -> Result<tempfile::NamedTempFile> {
@@ -1733,25 +1628,52 @@ async fn build_tools(
         tools.retain_read_only();
         return Ok(tools);
     }
-    for (name, server) in &config.mcp_servers {
-        let mut environment = tool_environment(config);
-        environment.extend(server.env.clone());
-        let mcp = tokio::time::timeout(
-            config.timeout(),
-            helm::tools::mcp::McpServer::connect(name, &server.command, &server.args, &environment),
-        )
-        .await
-        .with_context(|| format!("MCP server `{name}` initialization timed out"))?
-        .with_context(|| format!("failed to initialize MCP server `{name}`"))?;
-        let discovered = tokio::time::timeout(config.timeout(), mcp.discover())
-            .await
-            .with_context(|| format!("MCP server `{name}` discovery timed out"))?
-            .with_context(|| format!("failed to discover tools from MCP server `{name}`"))?;
-        for tool in discovered {
-            tools
-                .register_arc(tool)
-                .with_context(|| format!("MCP server `{name}` exposed a duplicate tool"))?;
+    // Keep transport ownership until assembly succeeds so a later discovery or
+    // registration failure can reap every server already started by this build.
+    let mut servers = Vec::new();
+    let assembly: Result<()> = async {
+        for (name, server) in &config.mcp_servers {
+            let mut environment = tool_environment(config);
+            environment.extend(server.env.clone());
+            let mcp = helm::tools::mcp::McpServer::start(
+                name,
+                &server.command,
+                &server.args,
+                &environment,
+            )
+            .with_context(|| format!("failed to start MCP server `{name}`"))?;
+            servers.push(mcp);
+            let mcp = servers.last().expect("new MCP server");
+            tokio::time::timeout(config.timeout(), mcp.initialize())
+                .await
+                .with_context(|| format!("MCP server `{name}` initialization timed out"))?
+                .with_context(|| format!("failed to initialize MCP server `{name}`"))?;
+            let discovered = tokio::time::timeout(config.timeout(), mcp.discover())
+                .await
+                .with_context(|| format!("MCP server `{name}` discovery timed out"))?
+                .with_context(|| format!("failed to discover tools from MCP server `{name}`"))?;
+            for tool in discovered {
+                tools
+                    .register_arc(tool)
+                    .with_context(|| format!("MCP server `{name}` exposed a duplicate tool"))?;
+            }
         }
+        Ok(())
+    }
+    .await;
+    if let Err(error) = assembly {
+        let mut cleanup_failed = false;
+        for server in &servers {
+            cleanup_failed |= !matches!(
+                tokio::time::timeout(std::time::Duration::from_secs(5), server.shutdown()).await,
+                Ok(Ok(()))
+            );
+        }
+        return Err(if cleanup_failed {
+            error.context("failed runtime MCP cleanup unconfirmed")
+        } else {
+            error
+        });
     }
     Ok(tools)
 }

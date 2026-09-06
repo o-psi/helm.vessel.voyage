@@ -1,5 +1,5 @@
 //! Responsive recent-conversation navigation with exclusive modal input ownership.
-use super::{App, commands::request_cli, text::display_safe};
+use super::{App, commands::request_navigation, text::display_safe};
 use crate::session::SessionStore;
 use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 use ratatui::{
@@ -97,8 +97,8 @@ pub(super) async fn open_selected(app: &mut App, store: &SessionStore) -> anyhow
             app.show_sessions = false;
             return Ok(());
         }
-        let arguments = vec!["chat".into(), "--resume".into(), session.id.to_string()];
-        if let Err(error) = request_cli(app, store, arguments, true, false).await {
+        let reference = session.id.to_string();
+        if let Err(error) = request_navigation(app, store, reference).await {
             app.status = format!(
                 "Cannot switch conversations; draft retained: {}",
                 display_safe(&error.to_string())
@@ -228,7 +228,7 @@ mod tests {
         assert!(!mouse(click, &mut app));
     }
     #[tokio::test]
-    async fn switching_saves_draft_and_relaunches_with_existing_authority_path() {
+    async fn switching_saves_draft_and_requests_owned_in_process_navigation() {
         let directory = tempfile::tempdir().unwrap();
         let store = SessionStore::new(directory.path().join("sessions"));
         let mut app = app();
@@ -249,11 +249,10 @@ mod tests {
         assert_eq!(saved.draft, "unsent\n日本語");
         assert!(saved.messages.is_empty());
         assert_eq!(App::new(saved, vec![]).composer.text, "unsent\n日本語");
-        let Some(super::super::TuiExit::Launch(request)) = app.exit else {
-            panic!("missing safe handoff")
-        };
-        assert_eq!(request.arguments, ["chat", "--resume", &target.to_string()]);
-        assert!(request.use_active_config);
+        assert_eq!(
+            app.exit,
+            Some(super::super::TuiExit::Navigate(target.to_string()))
+        );
     }
     #[tokio::test]
     async fn selecting_current_session_keeps_draft_without_exit() {

@@ -2,7 +2,7 @@
 //!
 //! Feature panels own their state and take explicit dependencies; this module
 //! retains the event loop, cancellation and auditable input/modal precedence.
-//! Public entrypoints are unchanged. See `docs/tui-architecture.md` for ownership
+//! See `docs/tui-architecture.md` for retained-runtime ownership
 //! boundaries and regression checks.
 
 mod bridge;
@@ -77,6 +77,8 @@ pub enum TuiExit {
     #[default]
     Quit,
     Launch(CliRequest),
+    /// Navigate within this Helm while retaining workspace runtimes.
+    Navigate(String),
 }
 
 struct App {
@@ -280,13 +282,14 @@ pub async fn run(
     agent: Arc<Agent>,
     store: &mut SessionStore,
     session: Session,
-    mut rx: mpsc::UnboundedReceiver<UiEvent>,
+    rx: &mut mpsc::UnboundedReceiver<UiEvent>,
     tx: mpsc::UnboundedSender<UiEvent>,
     terminals: Arc<dyn InteractiveTerminals>,
     supervisor: Arc<dyn AgentSupervisor>,
     todos: Arc<TodoStore>,
     provider_label: String,
     access_mode: AccessMode,
+    notice: Option<String>,
 ) -> Result<TuiExit> {
     anyhow::ensure!(
         store.owned_session_id() == Some(session.id),
@@ -297,6 +300,9 @@ pub async fn run(
     app.diagnostic_agent = Some(agent.clone());
     app.provider_label = provider_label;
     app.access_mode = access_mode;
+    if let Some(notice) = notice {
+        app.status = text::display_safe(&notice);
+    }
     refresh_terminals(&mut app.terminal_panel, &mut app.status, terminals.as_ref()).await;
     let mut terminal_events = Some(terminals.subscribe());
     let mut supervisor_events = Some(supervisor.subscribe());

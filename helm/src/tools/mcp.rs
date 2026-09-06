@@ -39,6 +39,22 @@ impl McpServer {
         args: &[String],
         environment: &BTreeMap<String, String>,
     ) -> Result<Self, ToolError> {
+        let server = Self::start(name, program, args, environment)?;
+        if let Err(error) = server.initialize().await {
+            server.shutdown().await?;
+            return Err(error);
+        }
+        Ok(server)
+    }
+
+    /// Acquire the child before awaiting initialization, so callers can retain
+    /// and explicitly reap it when an initialization deadline expires.
+    pub fn start(
+        name: impl Into<String>,
+        program: &str,
+        args: &[String],
+        environment: &BTreeMap<String, String>,
+    ) -> Result<Self, ToolError> {
         let name = sanitize(&name.into());
         let mut command = Command::new(program);
         command
@@ -70,12 +86,15 @@ impl McpServer {
                 next_id: AtomicU64::new(1),
             }),
         };
-        server.transport.request("initialize", json!({"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"helm","version":env!("CARGO_PKG_VERSION")}})).await?;
-        server
-            .transport
+        Ok(server)
+    }
+
+    pub async fn initialize(&self) -> Result<(), ToolError> {
+        self.transport.request("initialize", json!({"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"helm","version":env!("CARGO_PKG_VERSION")}})).await?;
+        self.transport
             .notify("notifications/initialized", json!({}))
             .await?;
-        Ok(server)
+        Ok(())
     }
 
     pub async fn discover(&self) -> Result<Vec<Arc<dyn Tool>>, ToolError> {
