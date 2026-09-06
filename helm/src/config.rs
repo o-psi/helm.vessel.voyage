@@ -224,13 +224,13 @@ pub const CONFIG_OVERRIDE_SPECS: &[ConfigOverrideSpec] = &[
     },
     ConfigOverrideSpec {
         key: "context_window",
-        description: "Effective model context limit (conservative fallback)",
-        kind: ConfigValueKind::PositiveInteger,
+        description: "Optional context limit (0 disables local token gating)",
+        kind: ConfigValueKind::NonNegativeInteger,
     },
     ConfigOverrideSpec {
         key: "max_tokens",
-        description: "Maximum response tokens",
-        kind: ConfigValueKind::PositiveInteger,
+        description: "Optional response token limit (0 uses provider defaults)",
+        kind: ConfigValueKind::NonNegativeInteger,
     },
     ConfigOverrideSpec {
         key: "temperature",
@@ -396,8 +396,8 @@ impl Default for Config {
             base_url: None,
             chatgpt_base_url: None,
             system_prompt: include_str!("../prompts/system.md").trim().into(),
-            max_tokens: 8192,
-            context_window: crate::context::DEFAULT_CONTEXT_WINDOW,
+            max_tokens: 0,
+            context_window: 0,
             temperature: None,
             provider_retry_attempts: 4,
             provider_retry_initial_ms: 500,
@@ -434,19 +434,26 @@ mod context_tests {
     #[test]
     fn context_override_roundtrips_and_invalid_reserves_are_rejected() {
         let mut config = Config::default();
+        assert_eq!(config.context_window, 0);
+        assert_eq!(config.max_tokens, 0);
         config.apply_override("context_window", "16384").unwrap();
+        config.apply_override("max_tokens", "8192").unwrap();
         let restored: Config = toml::from_str(&toml::to_string(&config).unwrap()).unwrap();
         assert_eq!(restored.context_window, 16384);
-        for value in ["0", "8192", "-1"] {
+        assert_eq!(restored.max_tokens, 8192);
+        for value in ["8192", "-1"] {
             assert!(config.apply_override("context_window", value).is_err());
             assert_eq!(config.context_window, 16384);
         }
-        assert!(config.apply_override("max_tokens", "0").is_err());
         assert!(config.apply_override("max_tokens", "16384").is_err());
-        assert_eq!(
-            Config::default().context_window,
-            crate::context::DEFAULT_CONTEXT_WINDOW
-        );
+        assert_eq!(config.max_tokens, 8192);
+        config.apply_override("context_window", "0").unwrap();
+        config.apply_override("max_tokens", "32768").unwrap();
+        config.apply_override("max_tokens", "0").unwrap();
+        config.apply_override("context_window", "1").unwrap();
+        assert!(config.apply_override("max_tokens", "-1").is_err());
+        config.apply_override("context_window", "0").unwrap();
+        config.validate().unwrap();
     }
 }
 
@@ -644,11 +651,11 @@ impl Config {
             }
             crate::local_provider::validate_endpoint(self.base_url.as_deref().unwrap_or(""))?;
         }
-        if self.context_window == 0
-            || self.max_tokens == 0
-            || self.max_tokens as usize >= self.context_window
+        if self.context_window > 0
+            && self.max_tokens > 0
+            && self.max_tokens as usize >= self.context_window
         {
-            bail!("context_window must exceed the positive max_tokens output reserve");
+            bail!("explicit context_window must exceed explicit max_tokens");
         }
         if self.model.trim().is_empty() {
             bail!("model cannot be empty");

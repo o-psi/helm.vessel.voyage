@@ -489,7 +489,9 @@ pub(super) fn set_value_suggestions(
         ),
         ConfigValueKind::PositiveInteger | ConfigValueKind::NonNegativeInteger => {
             let values: &[(&str, &str)] = match key {
+                "context_window" => &[("0", "no local token limit")],
                 "max_tokens" => &[
+                    ("0", "provider default; no Helm cap"),
                     ("2048", "small"),
                     ("4096", "standard"),
                     ("8192", "large"),

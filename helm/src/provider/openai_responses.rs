@@ -711,6 +711,30 @@ fn map_transport(error: reqwest::Error) -> ProviderError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn optional_output_limit_is_omitted_for_both_response_modes() {
+        for streaming in [false, true] {
+            for limit in [None, Some(321)] {
+                let body = request_body(
+                    ModelRequest {
+                        model: "fixture".into(),
+                        messages: vec![],
+                        tools: vec![],
+                        max_tokens: limit,
+                        temperature: None,
+                    },
+                    streaming,
+                )
+                .unwrap();
+                assert_eq!(
+                    body.get("max_output_tokens").and_then(Value::as_u64),
+                    limit.map(u64::from)
+                );
+            }
+        }
+    }
+
     use crate::model::ToolDefinition;
     use futures_util::StreamExt;
     #[test]

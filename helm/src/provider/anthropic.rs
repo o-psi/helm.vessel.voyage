@@ -11,6 +11,7 @@ pub struct AnthropicProvider {
     pub(super) client: reqwest::Client,
     api_key: String,
     base_url: String,
+    output_capacities: tokio::sync::Mutex<std::collections::BTreeMap<String, u32>>,
 }
 
 impl AnthropicProvider {
@@ -18,12 +19,56 @@ impl AnthropicProvider {
         Self {
             client: super::native_http_client(),
             api_key,
+            output_capacities: Default::default(),
             base_url: base_url
                 .unwrap_or_else(|| "https://api.anthropic.com/v1".into())
                 .trim_end_matches('/')
                 .into(),
         }
     }
+
+    // Anthropic requires max_tokens. Resolve its supported maximum rather than
+    // imposing a harness default: https://platform.claude.com/docs/en/api/http/models/retrieve
+    async fn output_tokens(&self, request: &ModelRequest) -> Result<u32, ProviderError> {
+        if let Some(value) = request.max_tokens.filter(|value| *value > 0) {
+            return Ok(value);
+        }
+        let mut capacities = self.output_capacities.lock().await;
+        if let Some(value) = capacities.get(&request.model) {
+            return Ok(*value);
+        }
+        let mut url = reqwest::Url::parse(&format!("{}/models/", self.base_url))
+            .map_err(|_| ProviderError::Request("invalid Anthropic model metadata URL".into()))?;
+        url.path_segments_mut()
+            .map_err(|_| ProviderError::Request("invalid Anthropic model metadata URL".into()))?
+            .pop_if_empty()
+            .push(&request.model);
+        let response = self
+            .client
+            .get(url)
+            .header("x-api-key", &self.api_key)
+            .header("anthropic-version", "2023-06-01")
+            .send()
+            .await
+            .map_err(super::catalog::transport)?;
+        if matches!(response.status().as_u16(), 404 | 405 | 501) {
+            return Err(missing_output_capacity());
+        }
+        let mut remaining = super::catalog::MAX_BYTES;
+        let metadata = super::catalog::json(response, &mut remaining).await?;
+        let maximum = metadata
+            .get("max_tokens")
+            .and_then(Value::as_u64)
+            .and_then(|value| u32::try_from(value).ok())
+            .filter(|value| *value > 0)
+            .ok_or_else(missing_output_capacity)?;
+        capacities.insert(request.model.clone(), maximum);
+        Ok(maximum)
+    }
+}
+
+fn missing_output_capacity() -> ProviderError {
+    ProviderError::Request("Anthropic requires max_tokens, but this endpoint did not provide a positive model output capacity; configure an explicit max_tokens supported by the endpoint".into())
 }
 
 #[async_trait]
@@ -103,7 +148,7 @@ impl Provider for AnthropicProvider {
             .join("\n\n");
         let messages = encode_messages(&request.messages);
         let tools: Vec<Value> = request.tools.iter().map(|t| json!({ "name": t.name, "description": t.description, "input_schema": t.input_schema })).collect();
-        let mut body = json!({ "model": request.model, "max_tokens": request.max_tokens.unwrap_or(8192), "system": system, "messages": messages });
+        let mut body = json!({ "model": request.model, "max_tokens": self.output_tokens(&request).await?, "system": system, "messages": messages });
         if !tools.is_empty() {
             body["tools"] = json!(tools);
         }
@@ -132,7 +177,7 @@ impl Provider for AnthropicProvider {
             .join("\n\n");
         let messages = encode_messages(&request.messages);
         let tools: Vec<Value> = request.tools.iter().map(|t| json!({"name":t.name,"description":t.description,"input_schema":t.input_schema})).collect();
-        let mut body = json!({"model":request.model,"max_tokens":request.max_tokens.unwrap_or(8192),"system":system,"messages":messages,"stream":true});
+        let mut body = json!({"model":request.model,"max_tokens":self.output_tokens(&request).await?,"system":system,"messages":messages,"stream":true});
         if !tools.is_empty() {
             body["tools"] = json!(tools);
         }
@@ -421,5 +466,169 @@ mod stream_tests {
         assert_eq!(completed.message.tool_calls[0].name, "shell");
         assert_eq!(completed.usage.input_tokens, 4);
         assert_eq!(completed.usage.output_tokens, 7);
+    }
+}
+
+#[cfg(test)]
+mod output_limit_tests {
+    use super::*;
+    use axum::{
+        Json, Router,
+        extract::{OriginalUri, State},
+        routing::{get, post},
+    };
+    use futures_util::StreamExt;
+
+    fn request(model: &str, max_tokens: Option<u32>) -> ModelRequest {
+        ModelRequest {
+            model: model.into(),
+            messages: vec![Message::new(Role::User, "hello")],
+            tools: vec![],
+            max_tokens,
+            temperature: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn discovers_model_capacity_once_for_complete_and_stream_and_preserves_explicit_limits() {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        async fn metadata(
+            State(tx): State<tokio::sync::mpsc::UnboundedSender<Value>>,
+            OriginalUri(uri): OriginalUri,
+        ) -> Json<Value> {
+            tx.send(json!({"metadata":uri.path()})).unwrap();
+            Json(json!({"id":"fixture", "max_tokens":131072}))
+        }
+        async fn message(
+            State(tx): State<tokio::sync::mpsc::UnboundedSender<Value>>,
+            Json(body): Json<Value>,
+        ) -> String {
+            let streaming = body["stream"] == true;
+            tx.send(body).unwrap();
+            if streaming {
+                "data: {\"type\":\"message_stop\"}\n\n".into()
+            } else {
+                json!({"content":[]}).to_string()
+            }
+        }
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}/v1", listener.local_addr().unwrap());
+        let router = Router::new()
+            .route("/v1/models/{model}", get(metadata))
+            .route("/v1/messages", post(message))
+            .with_state(tx);
+        let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        let provider = AnthropicProvider::new("fixture-secret".into(), Some(base));
+        provider
+            .complete(request("model/with?delimiters", None))
+            .await
+            .unwrap();
+        assert_eq!(
+            rx.recv().await.unwrap()["metadata"],
+            "/v1/models/model%2Fwith%3Fdelimiters"
+        );
+        assert_eq!(rx.recv().await.unwrap()["max_tokens"], 131072);
+        let events = provider
+            .stream(request("model/with?delimiters", None))
+            .await
+            .unwrap()
+            .collect::<Vec<_>>()
+            .await;
+        assert!(matches!(
+            events.last().unwrap(),
+            Ok(ProviderStreamEvent::Completed(_))
+        ));
+        assert_eq!(rx.recv().await.unwrap()["max_tokens"], 131072);
+        provider
+            .complete(request("custom-without-metadata", Some(123)))
+            .await
+            .unwrap();
+        assert_eq!(rx.recv().await.unwrap()["max_tokens"], 123);
+        assert!(rx.try_recv().is_err());
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn metadata_failure_is_sanitized_and_explicit_limits_work_without_discovery() {
+        for status in [401, 404, 405, 500, 501] {
+            let router = Router::new().route(
+                "/v1/models/fixture",
+                get(move || async move {
+                    (
+                        axum::http::StatusCode::from_u16(status).unwrap(),
+                        "fixture-secret private diagnostics",
+                    )
+                }),
+            );
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let provider = AnthropicProvider::new(
+                "fixture-secret".into(),
+                Some(format!("http://{}/v1", listener.local_addr().unwrap())),
+            );
+            let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+            let error = provider
+                .output_tokens(&request("fixture", None))
+                .await
+                .unwrap_err();
+            if status == 401 {
+                assert!(matches!(error, ProviderError::Authentication(_)));
+            }
+            assert!(!error.to_string().contains("fixture-secret"));
+            assert!(!error.to_string().contains("private diagnostics"));
+            assert!(provider.output_capacities.lock().await.is_empty());
+            assert_eq!(
+                provider
+                    .output_tokens(&request("fixture", Some(77)))
+                    .await
+                    .unwrap(),
+                77
+            );
+            server.abort();
+        }
+    }
+
+    #[tokio::test]
+    async fn invalid_or_missing_capacity_is_not_cached_or_replaced_with_a_guessed_limit() {
+        for metadata in [
+            json!({}),
+            json!({"max_tokens":null}),
+            json!({"max_tokens":0}),
+            json!({"max_tokens":-1}),
+            json!({"max_tokens":"8192"}),
+            json!({"max_tokens":4294967296u64}),
+        ] {
+            let router = Router::new().route(
+                "/v1/models/fixture",
+                get(move || {
+                    let metadata = metadata.clone();
+                    async move { Json(metadata) }
+                }),
+            );
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let provider = AnthropicProvider::new(
+                "fixture-secret".into(),
+                Some(format!("http://{}/v1", listener.local_addr().unwrap())),
+            );
+            let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+            let error = provider
+                .output_tokens(&request("fixture", None))
+                .await
+                .unwrap_err()
+                .to_string();
+            assert!(
+                error.contains("configure an explicit max_tokens"),
+                "{error}"
+            );
+            assert!(!error.contains("fixture-secret"));
+            assert!(provider.output_capacities.lock().await.is_empty());
+            assert_eq!(
+                provider
+                    .output_tokens(&request("fixture", Some(32)))
+                    .await
+                    .unwrap(),
+                32
+            );
+            server.abort();
+        }
     }
 }

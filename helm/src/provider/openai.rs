@@ -408,6 +408,44 @@ fn decode_response(value: Value) -> Result<ModelResponse, ProviderError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn optional_output_limit_is_omitted_for_both_chat_dialects_and_stream_modes() {
+        for compatibility in [false, true] {
+            let provider = OpenAiProvider::new("fixture-key".into(), None)
+                .with_max_tokens_parameter(compatibility);
+            for streaming in [false, true] {
+                for limit in [None, Some(321)] {
+                    let body = provider.body(
+                        ModelRequest {
+                            model: "fixture".into(),
+                            messages: vec![],
+                            tools: vec![],
+                            max_tokens: limit,
+                            temperature: None,
+                        },
+                        streaming,
+                    );
+                    let field = if compatibility {
+                        "max_tokens"
+                    } else {
+                        "max_completion_tokens"
+                    };
+                    assert_eq!(
+                        body.get(field).and_then(Value::as_u64),
+                        limit.map(u64::from)
+                    );
+                    let other = if compatibility {
+                        "max_completion_tokens"
+                    } else {
+                        "max_tokens"
+                    };
+                    assert!(body.get(other).is_none());
+                }
+            }
+        }
+    }
+
     use futures_util::StreamExt;
 
     #[test]
