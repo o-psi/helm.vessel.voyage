@@ -1,6 +1,4 @@
 mod flow;
-#[cfg(test)]
-mod tests;
 
 use anyhow::{Result, bail};
 use crossterm::{

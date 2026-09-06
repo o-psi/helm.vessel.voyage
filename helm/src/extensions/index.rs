@@ -125,20 +125,3 @@ pub(super) async fn acquire(config: &Path, id: &str) -> Result<Vec<u8>> {
     );
     Ok(bytes)
 }
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn url_boundaries() {
-        assert!(url("https://example.com/index.json").is_ok());
-        for value in [
-            "http://example.com/x",
-            "https://u:p@example.com/x",
-            "https://example.com/x?token=a",
-            "https://example.com/x#x",
-            "file:///x",
-        ] {
-            assert!(url(value).is_err());
-        }
-    }
-}

@@ -384,7 +384,7 @@ destructive cleanup of dirty work.
 ```sh
 cargo fmt --all -- --check
 cargo clippy --all-targets --all-features -- -D warnings
-cargo test
+cargo check --workspace --all-targets --all-features
 ```
 
 The next durable layers include structured audit logs and model-generated semantic

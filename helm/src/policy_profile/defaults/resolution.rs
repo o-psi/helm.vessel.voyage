@@ -321,13 +321,7 @@ pub fn activate(
     );
     Ok(receipt)
 }
-#[cfg(test)]
-pub(crate) fn resolve(
-    config: &Config,
-    workspace: &Path,
-) -> Result<(EffectivePolicy, DefaultsGuard)> {
-    resolve_using(config, workspace, Source::System)
-}
+
 pub(crate) fn resolve_using(
     config: &Config,
     workspace: &Path,

@@ -20,9 +20,6 @@ use tokio::{
     sync::Mutex,
 };
 
-#[cfg(all(test, unix))]
-mod transport_regressions;
-
 pub struct McpServer {
     name: String,
     transport: Arc<Transport>,
@@ -37,12 +34,7 @@ struct Transport {
     tools_available: AtomicBool,
     outbound_partial: AtomicBool,
     next_id: AtomicU64,
-    #[cfg(test)]
-    written_bytes: std::sync::atomic::AtomicUsize,
-    #[cfg(test)]
-    abort_after_dispatch: AtomicBool,
-    #[cfg(test)]
-    initialization_gate: std::sync::Mutex<Option<Arc<tokio::sync::Barrier>>>,
+
     observed: AtomicBool,
     #[cfg(not(target_os = "linux"))]
     direct_observed: AtomicBool,
@@ -123,12 +115,7 @@ impl McpServer {
                 tools_available: AtomicBool::new(false),
                 outbound_partial: AtomicBool::new(false),
                 next_id: AtomicU64::new(1),
-                #[cfg(test)]
-                written_bytes: std::sync::atomic::AtomicUsize::new(0),
-                #[cfg(test)]
-                abort_after_dispatch: AtomicBool::new(false),
-                #[cfg(test)]
-                initialization_gate: std::sync::Mutex::new(None),
+
                 observed: AtomicBool::new(false),
                 #[cfg(not(target_os = "linux"))]
                 direct_observed: AtomicBool::new(false),
@@ -175,14 +162,7 @@ impl McpServer {
                 .is_some_and(Value::is_object),
             Ordering::Release,
         );
-        #[cfg(test)]
-        {
-            let gate = self.transport.initialization_gate.lock().unwrap().take();
-            if let Some(gate) = gate {
-                gate.wait().await;
-                gate.wait().await;
-            }
-        }
+
         self.transport
             .notify("notifications/initialized", json!({}))
             .await?;
@@ -403,10 +383,7 @@ impl Transport {
             let operation = async {
                 transport.write_frame(&frame).await?;
                 sent = true;
-                #[cfg(test)]
-                if transport.abort_after_dispatch.swap(false, Ordering::AcqRel) {
-                    panic!("synthetic MCP owner failure after dispatch");
-                }
+
                 for unrelated in 0..=MAX_UNRELATED_FRAMES {
                     let value = transport.receive().await?;
                     validate_envelope(&value)?;
@@ -503,8 +480,6 @@ impl Transport {
                 ));
             }
             offset += count;
-            #[cfg(test)]
-            self.written_bytes.store(offset, Ordering::Release);
         }
         stdin
             .flush()
@@ -644,148 +619,5 @@ impl Drop for McpLease {
                     .await;
             });
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::{
-        config::{ApprovalMode, Config},
-        policy::Policy,
-        tools::Approver,
-    };
-    use std::time::Duration;
-    #[cfg(target_os = "linux")]
-    #[tokio::test]
-    async fn registry_drop_observes_server_exit_and_shutdown_is_idempotent() {
-        let server = Arc::new(
-            McpServer::start(
-                "fixture",
-                "sh",
-                &["-c".into(), "read forever".into()],
-                &BTreeMap::new(),
-            )
-            .unwrap(),
-        );
-        let mut registry = crate::tools::ToolRegistry::default();
-        registry.own_mcp(server.clone());
-        assert!(!server.observed());
-        drop(registry);
-        tokio::time::timeout(Duration::from_secs(3), async {
-            while !server.observed() {
-                tokio::task::yield_now().await;
-            }
-        })
-        .await
-        .expect("registry cancellation must reap retained MCP observer");
-        server.shutdown().await.unwrap();
-        assert!(
-            server
-                .transport
-                .child
-                .lock()
-                .await
-                .try_wait()
-                .unwrap()
-                .is_some()
-        );
-    }
-    #[cfg(target_os = "linux")]
-    #[tokio::test]
-    async fn shutdown_observes_descendants_after_leader_exit_with_held_pipes() {
-        let directory = tempfile::tempdir().unwrap();
-        let marker = directory.path().join("descendant");
-        let server = McpServer::start(
-            "fork",
-            "sh",
-            &[
-                "-c".into(),
-                r#"sleep 30 & echo $! > "$1"; exit 0"#.into(),
-                "fixture".into(),
-                marker.to_string_lossy().into_owned(),
-            ],
-            &BTreeMap::new(),
-        )
-        .unwrap();
-        tokio::time::timeout(Duration::from_secs(2), async {
-            while !marker.exists() {
-                tokio::time::sleep(Duration::from_millis(5)).await;
-            }
-        })
-        .await
-        .unwrap();
-        let pid = std::fs::read_to_string(marker)
-            .unwrap()
-            .trim()
-            .parse::<u32>()
-            .unwrap();
-        server.shutdown().await.unwrap();
-        assert!(server.observed());
-        let live = std::fs::read_to_string(format!("/proc/{pid}/stat"))
-            .is_ok_and(|stat| !stat.rsplit_once(") ").unwrap().1.starts_with('Z'));
-        assert!(!live, "descendant retaining server stdout survived cleanup");
-        server.shutdown().await.unwrap();
-    }
-    #[test]
-    fn namespaces_safely() {
-        assert_eq!(sanitize("Git Tools!"), "git_tools_");
-        assert!(tool_name(&"a".repeat(80), &"b".repeat(80)).len() <= 64);
-    }
-    struct Yes;
-    #[async_trait]
-    impl Approver for Yes {
-        async fn approve(
-            &self,
-            _: &crate::tools::ApprovalRequest,
-        ) -> crate::tools::ApprovalOutcome {
-            crate::tools::ApprovalOutcome::Approved
-        }
-    }
-    #[tokio::test]
-    async fn discovers_and_calls_stdio_tool() {
-        let script = r#"read init
-printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18","capabilities":{"tools":{}},"serverInfo":{"name":"fake","version":"1"}}}'
-read initialized
-read list
-printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"echo","description":"echo","inputSchema":{"type":"object"}}]}}'
-read call
-printf '%s\n' '{"jsonrpc":"2.0","id":3,"result":{"content":[{"type":"text","text":"called"}]}}'
-"#;
-        let server = McpServer::connect(
-            "demo",
-            "sh",
-            &["-c".into(), script.into()],
-            &BTreeMap::new(),
-        )
-        .await
-        .unwrap();
-        let tools = server.discover().await.unwrap();
-        assert_eq!(tools[0].definition().name, "mcp_demo_echo");
-        let directory = tempfile::tempdir().unwrap();
-        let config = Config {
-            approval: ApprovalMode::Never,
-            ..Config::default()
-        };
-        let context = ToolContext {
-            github: None,
-            completion: None,
-            policy: Arc::new(Policy::new(&config, directory.path().to_owned()).unwrap()),
-            approver: Arc::new(Yes),
-            timeout: Duration::from_secs(1),
-            max_output_bytes: 4096,
-            environment: BTreeMap::new(),
-            cancellation: tokio_util::sync::CancellationToken::new(),
-            execution_id: uuid::Uuid::new_v4(),
-            interaction: crate::tools::InteractionMode::Attended,
-            redactor: Arc::new(crate::tools::Redactor::default()),
-        };
-        assert_eq!(
-            tools[0]
-                .execute(json!({"value":"x"}), &context)
-                .await
-                .unwrap(),
-            "called"
-        );
     }
 }

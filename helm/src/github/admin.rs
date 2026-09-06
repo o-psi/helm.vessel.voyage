@@ -83,16 +83,6 @@ pub(super) async fn execute(
     .await
 }
 
-#[cfg(test)]
-pub(super) async fn fixture(
-    context: ToolContext,
-    command: Command,
-    scoped: Option<Owner>,
-    directory: std::path::PathBuf,
-) -> Result<CommandResult> {
-    execute_inner(context, command, scoped, directory).await
-}
-
 async fn execute_inner(
     context: ToolContext,
     command: Command,

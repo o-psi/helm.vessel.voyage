@@ -9,7 +9,7 @@ use sha2::{Digest, Sha256};
 #[cfg(unix)]
 use std::fs;
 use std::path::Path;
-#[cfg(any(unix, windows, test))]
+#[cfg(any(unix, windows))]
 use std::time::Duration;
 use uuid::Uuid;
 use voyage_protocol::enrollment::{Challenge, ProofOperation, SignedChallenge};
@@ -18,7 +18,7 @@ const MAX_RECORDS: i64 = 10_000;
 const MAX_CHALLENGES: i64 = 4096;
 const RECOVERY_MS: i64 = 300_000;
 const CHALLENGE_MS: i64 = 60_000;
-#[cfg(any(unix, windows, test))]
+#[cfg(any(unix, windows))]
 const MAX_BYTES: i64 = 64 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -226,7 +226,7 @@ impl EnrollmentStore {
         }
     }
 
-    #[cfg(any(unix, windows, test))]
+    #[cfg(any(unix, windows))]
     fn initialize(mut db: Connection, origin: String) -> Result<Self> {
         db.busy_timeout(Duration::ZERO)?;
         #[cfg(windows)]
@@ -778,7 +778,7 @@ fn apply(
 }
 
 // Also compiled in Unix tests to exercise SQLite bootstrap ordering locally.
-#[cfg(any(windows, test))]
+#[cfg(windows)]
 fn configure_private_journal(db: &Connection) -> rusqlite::Result<()> {
     // Preparing journal_mode may read the schema and recover a hot journal before
     // PERSIST takes effect. Temporary exclusive mode retains that journal during
@@ -789,9 +789,6 @@ fn configure_private_journal(db: &Connection) -> rusqlite::Result<()> {
          PRAGMA locking_mode=NORMAL; PRAGMA temp_store=MEMORY;",
     )
 }
-
-#[cfg(test)]
-mod tests;
 
 pub(crate) mod control;
 pub(crate) mod inspection;

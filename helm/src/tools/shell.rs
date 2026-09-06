@@ -220,7 +220,3 @@ fn terminate_process_group(process_id: Option<u32>) {
 }
 #[cfg(not(unix))]
 fn terminate_process_group(_: Option<u32>) {}
-
-#[cfg(all(test, unix))]
-#[path = "shell/secret_tests.rs"]
-mod secret_tests;

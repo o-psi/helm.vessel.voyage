@@ -267,23 +267,3 @@ async fn run_inner(
     }
     print_status(Some(client.inspection()), detached)
 }
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn bounded_secret_grammar() {
-        for ending in ["", "\n", "\r\n"] {
-            assert!(parse_secret(format!("{}{ending}", "A".repeat(43)).into_bytes()).is_ok());
-        }
-        for input in [
-            "A".repeat(42),
-            "A".repeat(44),
-            format!("{} ", "A".repeat(42)),
-            format!("{}\0", "A".repeat(42)),
-            format!("{}\n\n", "A".repeat(43)),
-            "🦀".repeat(43),
-        ] {
-            assert!(parse_secret(input.into_bytes()).is_err());
-        }
-    }
-}

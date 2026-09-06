@@ -694,16 +694,3 @@ pub fn transition(previous: &EffectivePolicy, proposed: &EffectivePolicy) -> Res
         digest,
     })
 }
-#[cfg(test)]
-mod tests;
-
-#[cfg(all(test, target_os = "linux"))]
-pub(crate) fn resolve_test_layers(
-    workspace: &Path,
-    base: &Rules,
-    layers: &[Layer],
-    root: &Path,
-) -> Result<EffectivePolicy> {
-    let ceiling = ceiling::test_load(root)?;
-    resolve_loaded_inner(workspace, base, layers, ceiling.as_ref(), true)
-}

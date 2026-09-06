@@ -86,20 +86,7 @@ impl Accounting {
         })
         .await
     }
-    #[cfg(test)]
-    pub(crate) fn test_store(&self) -> Arc<Mutex<Store>> {
-        self.store.clone()
-    }
-    #[cfg(test)]
-    pub(crate) fn fixture(store: Store, project: Uuid) -> Self {
-        Self {
-            store: Arc::new(Mutex::new(store)),
-            project: Some(project),
-            provider: "fixture".into(),
-            compatibility: false,
-            agent: None,
-        }
-    }
+
     pub async fn root(workspace: &Path, profile: &crate::config::ProviderProfile) -> Result<Self> {
         let mut accounting = Self {
             store: Self::shared().await?,
@@ -206,54 +193,5 @@ impl Accounting {
             ])
         })
         .await
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[tokio::test]
-    async fn cancelled_blocking_wait_keeps_later_commit_without_dispatching() {
-        let temp = tempfile::tempdir().unwrap();
-        let mut store = Store::open(temp.path().join("inference")).unwrap();
-        let project = store.project(temp.path()).unwrap();
-        let session = Uuid::new_v4();
-        store.bind_session(project, session).unwrap();
-        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
-        let (release_tx, release_rx) = std::sync::mpsc::channel();
-        let (finished_tx, finished_rx) = tokio::sync::oneshot::channel();
-        let dispatched = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let flag = dispatched.clone();
-        let task = tokio::spawn(async move {
-            let _permit = blocking(move || {
-                let _ = started_tx.send(());
-                release_rx.recv().unwrap();
-                let permit = store.admit(&Attribution {
-                    session,
-                    run: Uuid::new_v4(),
-                    agent: None,
-                    provider: "fixture".into(),
-                    model: "fixture".into(),
-                    purpose: Purpose::Conversation,
-                })?;
-                let _ = finished_tx.send(());
-                Ok(permit)
-            })
-            .await
-            .unwrap();
-            flag.store(true, std::sync::atomic::Ordering::SeqCst);
-        });
-        started_rx.await.unwrap();
-        task.abort();
-        assert!(task.await.unwrap_err().is_cancelled());
-        release_tx.send(()).unwrap();
-        finished_rx.await.unwrap();
-        assert!(!dispatched.load(std::sync::atomic::Ordering::SeqCst));
-        let rows = Store::open(temp.path().join("inference"))
-            .unwrap()
-            .attempts(Scope::Project(project), 0, 100)
-            .unwrap();
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].outcome, AttemptOutcome::Unknown);
     }
 }

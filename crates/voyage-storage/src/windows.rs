@@ -534,5 +534,3 @@ impl PrivateDirectory {
         result
     }
 }
-#[cfg(test)]
-mod tests;

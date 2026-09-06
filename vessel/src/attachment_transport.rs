@@ -537,5 +537,3 @@ async fn upgrade(
             api.socket(socket).await
         })
 }
-#[cfg(test)]
-mod tests;

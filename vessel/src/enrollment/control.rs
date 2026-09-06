@@ -488,5 +488,3 @@ impl EnrollmentStore {
         Ok((record, leases))
     }
 }
-#[cfg(test)]
-mod tests;

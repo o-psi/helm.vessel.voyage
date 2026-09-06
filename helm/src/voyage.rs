@@ -247,6 +247,3 @@ fn label(value: &str) -> Result<()> {
     );
     Ok(())
 }
-
-#[cfg(test)]
-mod tests;

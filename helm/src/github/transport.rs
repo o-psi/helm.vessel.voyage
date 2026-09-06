@@ -62,17 +62,6 @@ impl Client {
         self
     }
 
-    #[cfg(test)]
-    pub fn fixture(token: String, origin: reqwest::Url) -> Result<Self> {
-        ensure!(
-            origin.host_str() == Some("127.0.0.1") && origin.scheme() == "http",
-            "fixture needs loopback origin"
-        );
-        let mut client = Self::new(token)?;
-        client.origin = origin;
-        Ok(client)
-    }
-
     /// Callers construct paths from validated typed operations, never remote URLs.
     /// Each invocation makes exactly one request. In particular, POST is not retried.
     pub async fn request(

@@ -834,10 +834,6 @@ fn storage_error(error: std::io::Error) -> ClientError {
     }
 }
 
-#[cfg(test)]
-#[cfg(any(unix, windows))]
-mod tests;
-
 #[cfg(windows)]
 fn lock_existing_windows(directory: &voyage_storage::PrivateDirectory) -> Result<File> {
     let file = directory

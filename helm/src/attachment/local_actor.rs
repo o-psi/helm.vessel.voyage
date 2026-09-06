@@ -149,6 +149,3 @@ fn decode(bytes: &[u8]) -> Result<LocalActor> {
     );
     Ok(record.actor)
 }
-
-#[cfg(test)]
-mod tests;

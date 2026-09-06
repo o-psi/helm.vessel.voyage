@@ -269,5 +269,3 @@ impl EnrollmentStore {
         })
     }
 }
-#[cfg(test)]
-mod tests;

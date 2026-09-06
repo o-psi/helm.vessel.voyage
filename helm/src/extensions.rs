@@ -3,8 +3,7 @@ mod catalog;
 pub mod cli;
 mod index;
 mod store;
-#[cfg(test)]
-mod tests;
+
 use anyhow::{Result, ensure};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};

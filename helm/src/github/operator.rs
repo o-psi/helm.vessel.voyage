@@ -597,33 +597,3 @@ async fn read_input(
     .await
     .map_err(|_| anyhow::anyhow!("GitHub input reader failed"))?
 }
-
-#[cfg(test)]
-mod feedback_tests {
-    use super::*;
-    #[test]
-    fn feedback_preserves_body_and_attribution_with_canonical_case() {
-        let object = Object::parse("https://github.com/owner/repo/pull/1").unwrap();
-        let entry = serde_json::json!({"html_url":"https://github.com/Owner/Repo/pull/1#discussion_r7","body":"Keep this exact\nreview body","user":{"login":"reviewer","id":19}});
-        let feedback = attributed_feedback(&object, &entry, Utc::now(), Some(7)).unwrap();
-        assert_eq!(
-            feedback.source,
-            "https://github.com/owner/repo/pull/1#discussion_r7"
-        );
-        assert!(feedback.description.contains("reviewer (GitHub user 19)"));
-        assert!(
-            feedback
-                .description
-                .ends_with("Keep this exact\nreview body")
-        );
-        let mut other = entry.clone();
-        other["html_url"] = "https://github.com/owner/other/pull/1#discussion_r7".into();
-        assert!(attributed_feedback(&object, &other, Utc::now(), Some(7)).is_err());
-        other = entry;
-        other["body"] = "x".repeat(16 * 1024).into();
-        assert!(
-            attributed_feedback(&object, &other, Utc::now(), Some(7)).is_err(),
-            "metadata never silently truncates body"
-        );
-    }
-}

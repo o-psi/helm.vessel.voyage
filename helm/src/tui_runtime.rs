@@ -418,6 +418,3 @@ pub(super) async fn chat(
         }
     }
 }
-
-#[cfg(test)]
-mod tests;

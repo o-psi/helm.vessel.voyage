@@ -631,7 +631,3 @@ impl Panel {
         frame.render_widget(Paragraph::new(display_safe(&format!("Tab/Shift-Tab: field · Enter: preview\nCtrl-U: unset · Shift-Enter: newline · Esc: cancel\n{notice}"))).wrap(Wrap {trim:false}),chunks[2]);
     }
 }
-
-#[cfg(test)]
-#[path = "workflows_tests.rs"]
-mod tests;

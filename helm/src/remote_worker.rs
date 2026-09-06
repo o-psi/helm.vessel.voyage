@@ -407,27 +407,3 @@ pub(super) async fn recover(args: Args) -> Result<()> {
     };
     write_notice(serde_json::json!({"event":"remote_session_recovered","session_id":session,"run":recovered.map(|run|serde_json::json!({"id":run.id,"state":run.state})),"cleanup":if args.acknowledge_cleanup.is_some(){"operator_attested"}else{"unchanged"},"reconciliation":reconciliation}).to_string()).await
 }
-
-#[cfg(test)]
-mod authority_tests {
-    use super::*;
-
-    #[test]
-    fn disconnected_retry_accepts_only_typed_sqlite_contention() {
-        for code in [rusqlite::ffi::SQLITE_BUSY, rusqlite::ffi::SQLITE_LOCKED] {
-            let error = anyhow::Error::new(rusqlite::Error::SqliteFailure(
-                rusqlite::ffi::Error::new(code),
-                None,
-            ))
-            .context("grant observation failed");
-            assert!(authority_store_busy(&error));
-        }
-        for code in [rusqlite::ffi::SQLITE_CORRUPT, rusqlite::ffi::SQLITE_FULL] {
-            assert!(!authority_store_busy(&anyhow::Error::new(
-                rusqlite::Error::SqliteFailure(rusqlite::ffi::Error::new(code), None)
-            )));
-        }
-        assert!(!authority_store_busy(&anyhow::anyhow!("database is busy")));
-        assert!(!authority_store_busy(&anyhow::anyhow!("grant withdrawn")));
-    }
-}

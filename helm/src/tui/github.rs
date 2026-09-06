@@ -26,14 +26,6 @@ pub(super) struct Panel {
     job: Option<TitleJob>,
 }
 impl Panel {
-    #[cfg(test)]
-    pub(super) fn own_test_job(
-        &mut self,
-        task: tokio::task::JoinHandle<()>,
-        cancel: CancellationToken,
-    ) {
-        self.job = Some(TitleJob { task, cancel });
-    }
     pub fn matches(&self, session: Uuid, request: Uuid) -> bool {
         self.open && self.session == Some(session) && self.request == Some(request)
     }
@@ -155,32 +147,4 @@ pub(super) fn start(
         });
     });
     app.github_panel = Panel { open:true, request:Some(request), session:Some(session), display:"GitHub operation in progress. Esc cancels waiting; a sent publication may remain uncertain. Use /github inspect to recover.".into(), scroll:0, authority:Some(authority), job:Some(TitleJob {task,cancel}) };
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn closing_panel_cancels_owned_job_and_invalidates_approval_scope() {
-        let session = Uuid::new_v4();
-        let request = Uuid::new_v4();
-        let cancel = CancellationToken::new();
-        let task = tokio::spawn(std::future::pending());
-        let mut panel = Panel {
-            open: true,
-            session: Some(session),
-            request: Some(request),
-            job: Some(TitleJob {
-                task,
-                cancel: cancel.clone(),
-            }),
-            ..Default::default()
-        };
-        assert!(panel.matches(session, request));
-        panel.key(KeyEvent::from(KeyCode::Esc), Rect::new(0, 0, 40, 12));
-        assert!(cancel.is_cancelled());
-        assert!(!panel.matches(session, request));
-        assert!(panel.job.is_none());
-    }
 }

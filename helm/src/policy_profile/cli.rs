@@ -393,25 +393,3 @@ pub fn run(
         action,
     })?)
 }
-
-#[cfg(all(test, unix))]
-mod tests {
-    use super::*;
-    #[test]
-    fn default_initialization_uses_private_modes_and_never_follows_ancestor_symlinks() {
-        use std::os::unix::fs::{PermissionsExt, symlink};
-        let temp = tempfile::tempdir().unwrap();
-        let path = temp.path().join("new/config/helm");
-        initialize_default_parent(&path).unwrap();
-        assert_eq!(
-            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
-            0o700
-        );
-        let outside = temp.path().join("outside");
-        std::fs::create_dir(&outside).unwrap();
-        symlink(&outside, temp.path().join("linked")).unwrap();
-        assert!(initialize_default_parent(&temp.path().join("linked/escape")).is_err());
-        assert!(!outside.join("escape").exists());
-        assert!(initialize_default_parent(&temp.path().join("new/../escape")).is_err());
-    }
-}

@@ -144,5 +144,3 @@ impl Selection {
         self.resolve(&self.workspace, &self.base).map(|_| ())
     }
 }
-#[cfg(all(test, target_os = "linux"))]
-mod tests;

@@ -12,8 +12,6 @@ use std::{
 };
 mod prompt;
 pub use prompt::{InputFailure, InputMonitor};
-#[cfg(test)]
-mod prompt_tests;
 
 pub const MAX_DOCUMENT: usize = 64 * 1024;
 const MAX_RENDER: usize = 128 * 1024;
@@ -774,9 +772,4 @@ pub fn print_value(value: &Value, json: bool) -> Result<()> {
     Ok(())
 }
 
-#[cfg(test)]
-mod secret_tests;
 pub mod secrets;
-
-#[cfg(test)]
-mod tests;

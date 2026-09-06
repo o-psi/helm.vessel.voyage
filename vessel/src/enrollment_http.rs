@@ -310,9 +310,5 @@ async fn revoke(
     .map(Json)
 }
 
-#[cfg(test)]
-#[cfg(unix)]
-mod tests;
-
 mod control;
 mod inspection;

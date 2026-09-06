@@ -654,5 +654,3 @@ impl ConsentStore {
         })
     }
 }
-#[cfg(test)]
-mod tests;

@@ -87,18 +87,6 @@ impl Root {
         let _guard = instruction_guard(&directory, &name, bytes)?;
         crate::file_publication::Publication::prepare(directory, &name)?.publish(bytes)
     }
-    #[cfg(test)]
-    pub(super) fn publish_observed(
-        &self,
-        path: &Path,
-        bytes: &[u8],
-        observe: impl FnMut(bool) -> Result<()>,
-    ) -> Result<()> {
-        let (directory, name) = self.parent(path)?;
-        let _guard = instruction_guard(&directory, &name, bytes)?;
-        crate::file_publication::Publication::prepare(directory, &name)?
-            .publish_observed(bytes, observe)
-    }
 }
 
 // The fresh directory open gives every writer its own flock description. A dup

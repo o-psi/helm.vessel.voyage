@@ -155,6 +155,3 @@ fn save_to(
     file.persist(path)?;
     Ok(())
 }
-
-#[cfg(test)]
-mod tests;

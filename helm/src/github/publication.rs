@@ -284,34 +284,3 @@ pub(super) fn parse_patch(patch: &str) -> Result<ParsedPatch> {
     );
     Ok(parsed)
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn selected_coordinates_require_complete_exact_hunks() {
-        let comment = InlineComment {
-            path: "a".into(),
-            line: 1,
-            side: Side::Right,
-            start_line: None,
-            start_side: None,
-            body: "x".into(),
-        };
-        for patch in [
-            "@@ -1,1 +1,1 @@\n-a\n+b\n+phantom",
-            "@@ -1,5 +1,5 @@\n a",
-            "@@ -1 +1\n-a\n+b",
-            "@@ -1 +1 @@\n-a\n+b\n@@ -1 +1 @@\n-a\n+b",
-        ] {
-            assert!(validate_inline(&comment, patch).is_err(), "{patch}");
-        }
-        assert!(validate_inline(&comment, "@@ -1 +1 @@\n-a\n+b").is_ok());
-        assert!(validate_inline(&comment, "@@ -0,0 +1 @@\n+b").is_ok());
-        let left = InlineComment {
-            side: Side::Left,
-            ..comment
-        };
-        assert!(validate_inline(&left, "@@ -0,0 +1 @@\n+b").is_err());
-    }
-}

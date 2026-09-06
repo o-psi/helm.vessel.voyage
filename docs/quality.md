@@ -8,27 +8,26 @@ Run the complete suite from a clean, committed source checkout before publishing
 ```
 
 Install stable Rust with rustfmt and Clippy, Python 3.11 or newer, Git, and the native build,
-PTY and packaging utilities used by the repository tests. The runner selects the
+packaging utilities used by the repository scripts. The runner selects the
 stable toolchain and defaults to one Cargo build job. `--jobs N` changes compiler
 parallelism; coordinate this with other work on the machine. Gates execute in
-sequence, including fixtures that invoke Cargo themselves.
+sequence.
 
-`scripts/quality-gates.json` lists the complete suite: runner regression tests,
-formatting, strict Clippy, all workspace tests, a locked optimized build, all 57
-existing system fixtures, evaluation-definition validation, and full plus installer
-packaging with checksum verification. The fixture baseline preserves all 65 gates
-from the original GitHub/Forgejo workflow union. The shared suite has 67 gates.
-Definition validation does not execute live provider evaluations. Platform and
-approved live-provider acceptance evidence remain separate requirements.
+The current automated tests and evaluation scenarios have been removed at the
+operator's request and will be recreated later. There is currently no automated
+regression coverage. Historical test results do not establish coverage for this
+source tree.
+
+`scripts/quality-gates.json` retains seven non-test gates: formatting, strict
+Clippy, a locked optimized workspace build, and full plus installer packaging
+with checksum verification. A passing run establishes only those checks.
+Native platform and behavioral validation remain separate requirements.
 
 The runner uses this checkout's `target` directory and absolute optimized Helm,
 Vessel and installer paths. Custom `CARGO_TARGET_DIR`, `CARGO_BUILD_TARGET` and
 `TARGET` selections are rejected when they conflict with native packaging.
 Cargo `build.target` settings in checkout, ancestor or Cargo home configuration
-are also rejected. Use native Cargo configuration for this suite. Optional `PRE_CONTROL_HELM_BIN`
-and `PRE_CONTROL_VESSEL_BIN` inputs pass through to compatibility fixtures; the
-results record whether they were supplied. Inspect each fixture log for actual
-saved-peer coverage. No saved binary or live-provider result is implied by a pass.
+are also rejected. Use native Cargo configuration for this suite.
 
 Only one full suite may own a repository, including its linked worktrees. A lock
 in Git's common directory rejects a second runner before it starts gates. Coordinate

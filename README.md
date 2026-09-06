@@ -51,7 +51,7 @@ For structured GitHub context and attended comment/review publication, see
 see [the Git guide](docs/local-git.md).
 The first-version work breakdown is tracked in [the delivery map](docs/roadmap.md).
 
-See the [evaluation suite](eval/README.md) for representative task checks and the
+See the [evaluation status](eval/README.md) and the
 [release procedure](docs/releasing.md) for build and verification requirements.
 
 Helm also supports bounded parallel child agents with explicit permissions,

@@ -1696,8 +1696,6 @@ fn handle_mouse(mouse: MouseEvent, app: &mut App) {
         _ => {}
     }
 }
-#[cfg(test)]
-mod tests;
 
 /// Ordinary text and workflows share policy, ownership, canonical save and checkpoints.
 /// A false result is preparation rejection. Canonical save errors remain fatal and

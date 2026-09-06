@@ -311,23 +311,7 @@ fn publication(output: &std::path::Path) -> Result<crate::file_publication::Publ
     let directory = cap_std::fs::Dir::open_ambient_dir(parent, cap_std::ambient_authority())?;
     crate::file_publication::Publication::prepare(directory, std::path::Path::new(name))
 }
-#[cfg(all(test, target_os = "linux"))]
-fn save(config: &Config, output: &std::path::Path) -> Result<()> {
-    publication(output)?.publish(toml::to_string_pretty(config)?.as_bytes())
-}
-#[cfg(all(test, target_os = "linux"))]
-fn save_observed(
-    config: &Config,
-    output: &std::path::Path,
-    mut observe: impl FnMut() -> Result<()>,
-) -> Result<()> {
-    publication(output)?.publish_observed(toml::to_string_pretty(config)?.as_bytes(), |published| {
-        if !published {
-            observe()?;
-        }
-        Ok(())
-    })
-}
+
 pub async fn run(command: Command) -> Result<()> {
     match command {
         Command::Presets => println!(
@@ -378,5 +362,3 @@ pub async fn run(command: Command) -> Result<()> {
     }
     Ok(())
 }
-#[cfg(test)]
-mod tests;

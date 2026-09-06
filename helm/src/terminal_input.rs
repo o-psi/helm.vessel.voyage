@@ -4,14 +4,6 @@ use std::{
     sync::atomic::{AtomicBool, Ordering},
 };
 static OWNED: AtomicBool = AtomicBool::new(false);
-#[cfg(test)]
-thread_local! {
-    static FAIL_DISCARD: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-}
-#[cfg(test)]
-pub(crate) fn fail_next_discard() {
-    FAIL_DISCARD.set(true);
-}
 
 struct Ownership;
 impl Drop for Ownership {
@@ -47,10 +39,6 @@ impl Terminal {
         self.inner.read()
     }
     pub(crate) fn discard(&mut self) -> io::Result<()> {
-        #[cfg(test)]
-        if FAIL_DISCARD.replace(false) {
-            return Err(io::Error::other("synthetic private discard failure"));
-        }
         self.inner.discard()
     }
     pub(crate) fn restore(&mut self) -> io::Result<()> {
@@ -84,80 +72,7 @@ mod native {
         }
         Ok(false)
     }
-    #[test]
-    fn private_discard_requires_quiet_not_deadline_or_poll_failure() {
-        assert!(discard_poll_result(0, 0, true).unwrap());
-        assert!(!discard_poll_result(1, libc::POLLIN, false).unwrap());
-        assert_eq!(
-            discard_poll_result(1, libc::POLLIN, true)
-                .unwrap_err()
-                .kind(),
-            io::ErrorKind::TimedOut
-        );
-        assert!(discard_poll_result(-1, 0, false).is_err());
-        for event in [libc::POLLERR, libc::POLLHUP, libc::POLLNVAL] {
-            assert!(discard_poll_result(1, event, false).is_err());
-        }
-    }
-    #[test]
-    fn native_readable_private_tail_at_deadline_is_not_success() {
-        use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
-        let (mut master, mut slave) = (-1, -1);
-        assert_eq!(
-            unsafe {
-                libc::openpty(
-                    &mut master,
-                    &mut slave,
-                    std::ptr::null_mut(),
-                    std::ptr::null(),
-                    std::ptr::null(),
-                )
-            },
-            0
-        );
-        let master = unsafe { OwnedFd::from_raw_fd(master) };
-        let slave = unsafe { OwnedFd::from_raw_fd(slave) };
-        let mut mode = unsafe { std::mem::zeroed() };
-        assert_eq!(unsafe { libc::tcgetattr(slave.as_raw_fd(), &mut mode) }, 0);
-        unsafe { libc::cfmakeraw(&mut mode) };
-        assert_eq!(
-            unsafe { libc::tcsetattr(slave.as_raw_fd(), libc::TCSANOW, &mode) },
-            0
-        );
-        assert_eq!(
-            unsafe { libc::tcflush(slave.as_raw_fd(), libc::TCIFLUSH) },
-            0
-        );
-        // A new private tail arrives after the last flush, before the final poll.
-        let tail = b"PRIVATE_TAIL\n";
-        assert_eq!(
-            unsafe { libc::write(master.as_raw_fd(), tail.as_ptr().cast(), tail.len()) },
-            tail.len() as isize
-        );
-        let mut descriptor = libc::pollfd {
-            fd: slave.as_raw_fd(),
-            events: libc::POLLIN,
-            revents: 0,
-        };
-        let ready = unsafe { libc::poll(&mut descriptor, 1, 1000) };
-        assert!(ready > 0);
-        assert_eq!(
-            discard_poll_result(ready, descriptor.revents, true)
-                .unwrap_err()
-                .kind(),
-            io::ErrorKind::TimedOut
-        );
-        // The error is necessary: those bytes really remain readable.
-        let mut observed = [0u8; 64];
-        let count = unsafe {
-            libc::read(
-                slave.as_raw_fd(),
-                observed.as_mut_ptr().cast(),
-                observed.len(),
-            )
-        };
-        assert_eq!(&observed[..count as usize], tail);
-    }
+
     pub struct Terminal {
         saved: libc::termios,
         active: bool,

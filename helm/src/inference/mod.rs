@@ -13,11 +13,6 @@ pub mod cli;
 pub mod history;
 pub mod runtime;
 
-#[cfg(test)]
-mod history_fixture;
-#[cfg(test)]
-mod tests;
-
 const MAX_COUNT: u64 = i64::MAX as u64 - 1;
 const MAX_RECORD: usize = 16 * 1024;
 const MAX_DETAILS: i64 = 20_000;

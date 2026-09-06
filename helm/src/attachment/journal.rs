@@ -14,8 +14,7 @@ use anyhow::{Context, Result, ensure};
 use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-#[cfg(all(test, not(unix)))]
-use std::fs;
+
 #[cfg(unix)]
 use std::fs::{self, OpenOptions};
 use std::{
@@ -1427,6 +1426,3 @@ pub(crate) fn open_private_file(path: &Path) -> Result<File> {
 pub(crate) fn open_private_file(_path: &Path) -> Result<File> {
     anyhow::bail!("private attachment storage unsupported on this platform")
 }
-
-#[cfg(test)]
-mod tests;

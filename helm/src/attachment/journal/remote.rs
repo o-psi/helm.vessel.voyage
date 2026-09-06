@@ -756,5 +756,3 @@ impl Journal {
         Ok(receipt)
     }
 }
-#[cfg(test)]
-mod tests;

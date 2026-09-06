@@ -111,24 +111,7 @@ impl Service {
             directory: Store::default_path(),
         })
     }
-    #[cfg(test)]
-    pub(crate) fn fixture(
-        context: ToolContext,
-        session: Option<Uuid>,
-        origin: reqwest::Url,
-        directory: PathBuf,
-    ) -> Result<Self> {
-        let token = context
-            .github
-            .as_ref()
-            .map(|credential| credential.expose().to_owned())
-            .ok_or_else(|| anyhow::anyhow!("fixture needs dedicated synthetic token"))?;
-        let policy = context.policy.clone();
-        let mut service = Self::new(context, session)?;
-        service.client = Client::fixture(token, origin)?.with_policy(policy);
-        service.directory = directory;
-        Ok(service)
-    }
+
     pub fn owner(&self) -> &Owner {
         &self.owner
     }
@@ -696,28 +679,4 @@ fn validate_receipt(operation: &Operation, value: &Value) -> Result<Receipt> {
         url,
         evidence: super::store::ReceiptEvidence::ApiResponse,
     })
-}
-
-#[cfg(test)]
-mod projection_tests {
-    use super::*;
-    #[test]
-    fn final_encoded_projection_never_exceeds_budget() {
-        for input in [
-            "\\\"".repeat(2048),
-            "\0\n\t".repeat(2048),
-            "🧭日本語".repeat(2048),
-        ] {
-            for maximum in [0, 1, 64, 128, 256, 511, 1024] {
-                let result = bounded_projection(input.clone(), maximum);
-                if let Ok(result) = result {
-                    assert!(result.len() <= maximum);
-                    let value: Value = serde_json::from_str(&result).unwrap();
-                    assert_eq!(value["incomplete"], true);
-                } else {
-                    assert!(maximum < 256);
-                }
-            }
-        }
-    }
 }

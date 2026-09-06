@@ -10,8 +10,6 @@ use std::path::{Path, PathBuf};
 #[derive(Clone, Debug)]
 pub(crate) enum Source {
     System,
-    #[cfg(all(test, target_os = "linux"))]
-    Test(PathBuf),
 }
 impl Source {
     pub(crate) fn resolve(
@@ -23,10 +21,6 @@ impl Source {
         match self {
             Self::System => Ok(policy_profile::resolve_runtime_layers(
                 workspace, base, layers,
-            )?),
-            #[cfg(all(test, target_os = "linux"))]
-            Self::Test(root) => Ok(policy_profile::resolve_test_layers(
-                workspace, base, layers, root,
             )?),
         }
     }
@@ -207,5 +201,3 @@ pub(crate) fn restrictive_unattended(
         *value = UnattendedApprovalMode::Deny
     }
 }
-#[cfg(all(test, target_os = "linux"))]
-mod tests;

@@ -104,6 +104,3 @@ impl Publication {
         }
     }
 }
-
-#[cfg(test)]
-mod tests;

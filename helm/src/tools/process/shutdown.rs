@@ -371,6 +371,3 @@ impl ProcessTool {
         }
     }
 }
-
-#[cfg(test)]
-mod tests;

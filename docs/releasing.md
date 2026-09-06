@@ -24,23 +24,20 @@ Linux builds can be reproduced locally with:
 cargo build --workspace --release --locked
 ./scripts/package-release UNIQUE_VERSION
 (cd dist && sha256sum -c *.sha256)
-python3 tests/system/release_documentation.py
 ```
 
 Choose a new version label for every packaging attempt. Existing archives and
 checksums are never replaced. Handled packaging failures remove their private staging
-directory and leave existing artifacts intact. The documentation fixture extracts
-a disposable archive, checks relative links and configuration, runs its binaries,
-and verifies missing-guide and repeated-label failures. The tag workflow checks
-guide paths, source bytes and checksums in each platform's archive. Native Windows
-execution and clean-install checks remain separate platform evidence.
+directory and leave existing artifacts intact. Automated archive regression fixtures have been removed with the test suite.
+Inspect extracted guide links, generated CLI documentation and executable behavior
+manually until replacement tests are available. Native platform execution and
+clean-install checks remain separate evidence.
 
 If a packaging process is forcibly killed, its `.package-*` directory or
 `.voyage-*.lock` may remain in `dist`. Confirm that attempt has stopped before
 removing its staging directory and lock; preserve published archives and checksums.
 
-Before tagging, update versions and changelog, run `./scripts/check-quality`, complete
-the live evaluation suite, inspect generated manpages/completions, and test a clean
+Before tagging, update versions and changelog, run `./scripts/check-quality`, inspect generated manpages/completions, and test a clean
 archive install. After tagging, compare artifact checksums, smoke-test both binaries
 from each archive, attach evaluation/cutover evidence, and publish known limitations.
 

@@ -185,10 +185,6 @@ mod unix {
         hex::encode(Sha256::digest(bytes))
     }
     fn boundary(fault: Boundary, here: Boundary, cancel: &CancellationToken) -> Result<()> {
-        #[cfg(test)]
-        if fault == here && std::env::var_os("HELM_TRANSFER_TEST_CRASH").is_some() {
-            std::process::exit(77);
-        }
         ensure!(fault != here, "injected transfer interruption");
         ensure!(!cancel.is_cancelled(), "transfer cancelled");
         Ok(())
@@ -383,6 +379,3 @@ mod unix {
         })
     }
 }
-
-#[cfg(test)]
-mod tests;

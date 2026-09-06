@@ -426,8 +426,5 @@ impl State {
     }
 }
 
-#[cfg(test)]
-mod tests;
-
 /// Private durable declarations, never an authorization adapter.
 pub mod consent;

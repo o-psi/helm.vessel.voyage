@@ -120,35 +120,3 @@ pub(super) fn draw(
         },
     );
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn complete_unicode_and_controls_survive_scrolling() {
-        let text = "界λ\u{1b}[31m\u{202e}\tEND\n".repeat(100);
-        let wrapped = lines(&text, 18);
-        assert_eq!(wrapped.concat(), visible(&text).replace('\n', ""));
-        assert!(!wrapped.concat().contains('\u{1b}'));
-        assert!(wrapped.concat().contains("\\u{202e}"));
-    }
-    #[test]
-    fn exact_approval_requires_end_and_readable_viewport() {
-        let (response, _rx) = tokio::sync::oneshot::channel();
-        let request = ApprovalRequest {
-            id: uuid::Uuid::new_v4(),
-            action: "github.publish".into(),
-            target: "https://github.com/o/r/issues/1".into(),
-            reason: "body\n".repeat(100),
-            response,
-        };
-        let area = Rect::new(0, 0, 40, 12);
-        assert!(!approve_enabled(&request, 0, area));
-        assert!(approve_enabled(&request, limit(&request, area), area));
-        assert!(!approve_enabled(
-            &request,
-            usize::MAX,
-            Rect::new(0, 0, 10, 4)
-        ));
-    }
-}

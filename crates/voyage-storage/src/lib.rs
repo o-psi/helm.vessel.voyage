@@ -1,6 +1,6 @@
 //! Private enrollment filesystem primitives; never wire types or authorization.
 //! Windows support is limited to local NTFS directories with verified native ACLs.
-#[cfg(any(windows, test))]
+#[cfg(windows)]
 mod policy;
 #[cfg(windows)]
 mod windows;

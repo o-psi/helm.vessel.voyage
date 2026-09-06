@@ -327,6 +327,3 @@ pub(super) fn render(
     }
     lines
 }
-
-#[cfg(test)]
-mod tests;

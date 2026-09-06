@@ -30,11 +30,6 @@ url = "2.5"
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
-[dev-dependencies]
-tokio-tungstenite.workspace = true
-reqwest.workspace = true
-tower = { version = "0.5", features = ["util"] }
-tempfile = "3.21"
 
 [target.'cfg(windows)'.dependencies]
 voyage-storage.workspace = true

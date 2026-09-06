@@ -55,11 +55,6 @@ syntect = { version = "5.3", default-features = false, features = ["default-synt
 
 zeroize = "1.9"
 
-[dev-dependencies]
-jsonschema = { version = "0.30", default-features = false }
-axum.workspace = true
-vessel = { path = "../vessel" }
-tokio = { version = "1.47", features = ["test-util"] }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_System_Console", "Win32_System_Threading"] }

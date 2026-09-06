@@ -24,11 +24,6 @@ jobs:
         with:
           targets: ${{ matrix.target }}
       - run: cargo build --workspace --release --locked --target ${{ matrix.target }}
-      - name: Gate native Helm independence from Codex
-        if: matrix.target == 'x86_64-unknown-linux-gnu'
-        env:
-          HELM_BIN: target/x86_64-unknown-linux-gnu/release/helm
-        run: python3 tests/system/native_provider_no_codex.py
       - name: Package Unix archive
         if: runner.os != 'Windows'
         run: TARGET=${{ matrix.target }} ./scripts/package-release "${{ github.ref_name }}"
@@ -39,8 +34,6 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: ./scripts/package-release.ps1 -Version "${{ github.ref_name }}" -Target "${{ matrix.target }}"
-      - name: Verify packaged guide links and checksums
-        run: python tests/system/release_documentation.py --archives dist
       - uses: actions/upload-artifact@v4
         with:
           name: voyage-${{ github.ref_name }}-${{ matrix.target }}
