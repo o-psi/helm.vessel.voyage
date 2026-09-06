@@ -660,7 +660,21 @@ mod tests {
         assert_eq!(pending.bytes, b"prefix");
     }
     #[test]
-    fn prompt_view_bounds_columns_and_keeps_control_text_inert() {
+    fn backspace_removes_only_the_final_scalar_or_invalid_byte(){
+        for (bytes,expected) in [
+            ([vec![0xff],b"keep".to_vec()].concat(),[vec![0xff],b"kee".to_vec()].concat()),
+            ("前🧭".as_bytes().to_vec(),"前".as_bytes().to_vec()),
+            (vec![b'x',0xff],vec![b'x']),
+            (vec![b'x',0xf0,0x9f,0xa7],vec![b'x',0xf0,0x9f]),
+            (vec![b'x',0x80,0x80,0x80,0x80,0x80],vec![b'x',0x80,0x80,0x80,0x80]),
+        ]{
+            let mut pending=PendingInput{bytes};pending.backspace();assert_eq!(pending.bytes,expected);
+        }
+        let mut bytes=vec![b'x';MAX_PENDING/2];bytes.push(0xff);bytes.extend(vec![b'y';MAX_PENDING/2-1]);
+        let mut pending=PendingInput{bytes:bytes.clone()};pending.backspace();bytes.pop();assert_eq!(pending.bytes,bytes);
+    }
+    #[test]
+    fn prompt_view_bounds_columns_and_keeps_control_text_inert(){
         for columns in 2..80 {
             let bytes = "前🧭next\x1b]52;c;secret\x07suffix".as_bytes();
             for cursor in [0, 3, 7, bytes.len()] {
