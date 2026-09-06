@@ -13,18 +13,18 @@ The refreshed issue inventory contains 88 open/closed issues; older inventories
 below remain historical records.
 
 - [x] Record the approved execution policy in this plan and `AGENTS.md`.
-- [ ] Implement one local quality entry point shared with manual CI. Preserve
+- [x] Implement one local quality entry point shared with manual CI. Preserve
   formatting, strict Clippy, all workspace tests, locked release builds, every
   existing system fixture, evaluation-definition validation, and full/installer
   packaging with checksums. Inventory both quality workflows before consolidation.
   Use unique package labels and retain exact revision, commands, results and logs.
-- [ ] After the runner is verified, replace push/PR quality triggers with
+- [x] After the runner is verified, replace push/PR quality triggers with
   `workflow_dispatch`; keep GitHub/Forgejo counterparts consistent. Preserve
   separate tag-only platform release builds. Do not dispatch paid reruns or create
   tags for ordinary development verification.
-- [ ] Verify full step coverage, nonzero failure propagation, workflow structure,
-  unique packaging and an actual complete local run; then publish implementation
-  to main and verify the remote workflow definitions. Report failures honestly.
+- [x] Verify full step coverage, nonzero failure propagation, workflow structure,
+  unique packaging and an actual complete local run. Publication and remote
+  definition verification are recorded in the #17 delivery follow-up.
 
 Coordinate with the other active agent before changing shared workflow files or
 starting a full suite. One owner should validate each integration tree; concurrent
@@ -33,19 +33,32 @@ Acceptance-specific failure/security tests and approved live/platform validation
 remain required where applicable; local Linux success is not platform or live
 provider evidence. Documentation-only changes retain their documented exception.
 
-Implementation status: the shared runner and manual workflow definitions are
-implemented under #17; full local validation and publication are pending. Local
-edits do not disable remote push/PR triggers. See [quality validation](quality.md)
-for the shared command and evidence format. Branch
-ruleset and classic protection queries returned HTTP 403, so enforced GitHub checks
-were not verified. Report any actual publication blocker without bypassing it.
+Implementation: `scripts/check-quality` runs the GitHub/Forgejo union of all 65
+original gates plus runner regression coverage. Both quality workflows use manual
+`workflow_dispatch`; the two tag-release workflow files are byte-identical to
+`ccbe69c`. Remote triggers change only when these definitions are published.
+See [quality validation](quality.md) for the command and retained evidence.
+Earlier ruleset/protection queries returned HTTP 403; report actual publication
+blockers without bypassing them.
+
+Local verification passed at revision `f89b2667c396691b713863345d77df6c9b970b7c`,
+tree `dc68da2c0a44ee1ac3cde032c002cbe834de76ae`, on 2026-09-06 from
+18:23:26Z to 18:30:19Z. All 66 gates exited zero: runner regressions, formatting,
+strict Clippy, 1,315 workspace tests (zero failures or ignored), locked release,
+all 56 system fixtures, 12 evaluation definitions, full/installer packaging and
+checksums. Both saved pre-control peers were verified by the coordination fixture.
+Exact commands, exits and logs are retained at
+`.quality-runs/quality-f89b2667c396-589ff68a9aaf489b9e276705577d97e1/results.json`.
+Only this delivery record changes after that tested revision; its documentation
+validation is separate. No duplicate hosted run was dispatched, and no native
+macOS/Windows or live-provider pass is claimed.
 
 Evidence: all 303 available run records were fetched, including 300 quality runs.
 [Successful run 34027937732](https://github.com/o-psi/voyage/actions/runs/34027937732)
 took about 17.5 minutes: release build 334 seconds and Rust tests 237 seconds,
 with system checks running sequentially. No total billing estimate is claimed.
-Plan-only validation checks paths, command accuracy and diffs; no runtime behavior
-is changed or runtime passing result claimed by this update.
+The original policy-only update checked paths, command accuracy and diffs; the
+implementation and its actual local evidence are recorded above.
 
 ## Current product direction (2026-09-05)
 
