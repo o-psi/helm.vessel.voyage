@@ -139,11 +139,20 @@ async fn descendants(close_first: bool) {
     std::fs::write(
         dir.path().join("child.py"),
         r#"import os,time
+read_fd,write_fd=os.pipe()
 child=os.fork()
 if child == 0:
+ os.close(read_fd)
  os.setpgid(0,0)
+ os.write(write_fd,b'1')
+ os.close(write_fd)
  while True: time.sleep(1)
-open('ready','w').write(str(os.getpid())+' '+str(child))
+os.close(write_fd)
+assert os.read(read_fd,1) == b'1'
+os.close(read_fd)
+with open('ready.tmp','w') as ready:
+ ready.write(str(os.getpid())+' '+str(child))
+os.replace('ready.tmp','ready')
 while True: time.sleep(1)
 "#,
     )
@@ -174,6 +183,12 @@ while True: time.sleep(1)
         .split_whitespace()
         .map(|p| p.parse().unwrap())
         .collect();
+    assert_eq!(pids.len(), 2, "readiness must publish both process IDs");
+    assert_eq!(
+        unsafe { libc::getpgid(pids[1] as libc::pid_t) },
+        pids[1] as libc::pid_t,
+        "descendant must enter its separate job group before readiness"
+    );
     if close_first {
         let id = owned.metadata().unwrap()[0].id;
         owned
