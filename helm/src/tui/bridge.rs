@@ -16,6 +16,11 @@ use tokio::sync::{mpsc, oneshot};
 #[doc(hidden)]
 pub enum UiEvent {
     Agent(AgentEvent),
+    InferenceStatus {
+        session: uuid::Uuid,
+        request: uuid::Uuid,
+        result: Result<Vec<crate::inference::Status>, String>,
+    },
     PolicyProfiles {
         request: uuid::Uuid,
         result: Result<

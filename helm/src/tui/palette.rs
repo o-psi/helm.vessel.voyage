@@ -49,6 +49,12 @@ pub(super) struct SlashPaletteItem {
 
 pub(super) const SLASH_COMMANDS: &[SlashCommand] = &[
     SlashCommand {
+        name: "inference",
+        usage: "/inference",
+        description: "Inspect local session/project inference allowances",
+        completion: "/inference",
+    },
+    SlashCommand {
         name: "policy",
         usage: "/policy [DIRECTORY]",
         description: "Review and switch workspace runtime policy",

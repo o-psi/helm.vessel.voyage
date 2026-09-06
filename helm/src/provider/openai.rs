@@ -143,6 +143,9 @@ where
                     return;
                 }
                 let value: Value = serde_json::from_slice(data).map_err(|e| ProviderError::InvalidResponse(format!("invalid OpenAI stream event: {e}")))?;
+                if let Some(usage) = value.get("usage") {
+                    yield ProviderStreamEvent::UsageReported(super::reported_usage(usage, "prompt_tokens", "completion_tokens")?);
+                }
                 for event in apply_stream_chunk(&value, &mut assembly)? {
                     yield ProviderStreamEvent::Delta(event);
                 }

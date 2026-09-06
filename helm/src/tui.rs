@@ -114,6 +114,8 @@ struct App {
     running: Option<Running>,
     checkpoint: Option<checkpoint::State>,
     title_job: Option<TitleJob>,
+    inference_job: Option<TitleJob>,
+    inference_request: Option<uuid::Uuid>,
     approval: Option<ApprovalRequest>,
     question: Option<QuestionDialog>,
     show_sessions: bool,
@@ -147,13 +149,16 @@ fn start_title_job(app: &mut App, agent: &Arc<Agent>, tx: &mpsc::UnboundedSender
         .as_ref()
         .expect("completed run")
         .completed_runs;
-    let messages = app.session.messages.clone();
+    let title_session = app.session.clone();
     let agent = agent.clone();
     let events = tx.clone();
     let cancel = tokio_util::sync::CancellationToken::new();
     let token = cancel.clone();
     let task = tokio::spawn(async move {
-        if let Some(result) = agent.generate_title(&messages, token).await {
+        if let Some(result) = agent
+            .generate_title_for_session(&title_session, token)
+            .await
+        {
             let _ = events.send(UiEvent::TitleReady {
                 session_id,
                 completed_runs,
@@ -244,6 +249,8 @@ impl App {
             running: None,
             checkpoint: None,
             title_job: None,
+            inference_job: None,
+            inference_request: None,
             approval: None,
             question: None,
             show_sessions: false,
@@ -460,6 +467,25 @@ async fn handle_ui_event(
     terminals: &dyn InteractiveTerminals,
 ) -> Result<()> {
     match event {
+        UiEvent::InferenceStatus {
+            session,
+            request,
+            result,
+        } => {
+            if session == app.session.id && app.inference_request == Some(request) {
+                app.inference_job = None;
+                app.inference_request = None;
+                app.status = match result {
+                    Ok(states) if !states.is_empty() => states
+                        .iter()
+                        .map(crate::inference::Status::summary)
+                        .collect::<Vec<_>>()
+                        .join(" · "),
+                    Ok(_) => "Inference accounting is not configured for this runtime".into(),
+                    Err(error) => display_safe(&error),
+                };
+            }
+        }
         UiEvent::PolicyProfiles { request, result } => app.policy_panel.profiles(request, result),
         UiEvent::PolicyPreview { request, result } => app.policy_panel.preview(request, result),
         UiEvent::Workflows {
@@ -589,6 +615,9 @@ async fn handle_ui_event(
             ));
             preserve_manual_anchor(app, before);
             app.status = format!("Provider retry {attempt}…  Esc cancels");
+        }
+        UiEvent::Agent(AgentEvent::InferenceWarning(status)) => {
+            app.status = format!("Inference warning: {}", status.summary());
         }
         UiEvent::Agent(AgentEvent::ContextBudget(report)) => {
             app.status = format!(

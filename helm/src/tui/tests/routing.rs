@@ -1365,3 +1365,99 @@ async fn policy_confirmation_save_failure_retains_review_draft_and_runtime() {
     assert!(app.session.messages.is_empty());
     assert!(paste_test_screen(&app).contains("Cannot save voyage"));
 }
+
+#[tokio::test]
+async fn inference_inspection_keeps_input_resize_and_cancel_responsive_and_fences_stale_results() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut ledger = crate::inference::Store::open(directory.path().join("inference")).unwrap();
+    let project = ledger.project(directory.path()).unwrap();
+    let accounting = crate::inference::runtime::Accounting::fixture(ledger, project);
+    let held_store = accounting.test_store();
+    let agent = Arc::new(
+        Arc::try_unwrap(navigation_agent(&directory))
+            .ok()
+            .unwrap()
+            .with_inference_accounting(accounting),
+    );
+    let mut store = SessionStore::new(directory.path().join("sessions"));
+    let mut app = App::new(Session::new(directory.path().into(), "test".into()), vec![]);
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    let terminals = FakeTerminals::new();
+    let supervisor = Arc::new(FakeSupervisor::new(vec![]));
+    let todos = todo_store(&directory);
+    let (held_tx, held_rx) = oneshot::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+    let holder = std::thread::spawn(move || {
+        let _guard = held_store.lock().unwrap();
+        let _ = held_tx.send(());
+        let _ = release_rx.recv_timeout(Duration::from_secs(5));
+    });
+    held_rx.await.unwrap();
+    tokio::time::timeout(
+        Duration::from_millis(200),
+        handle_command("/inference", &mut app, &mut store, Some(&agent), Some(&tx)),
+    )
+    .await
+    .expect("inspection must not block the event loop")
+    .unwrap();
+    tokio::task::yield_now().await;
+    assert!(rx.try_recv().is_err(), "the actual store is held");
+    handle_input_event(
+        Event::Paste("draft λ".into()),
+        &mut app,
+        &agent,
+        &mut store,
+        &tx,
+        &terminals,
+        supervisor.clone(),
+        todos.clone(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(app.composer.text, "draft λ");
+    for (width, height) in [(32, 10), (100, 30)] {
+        resize_conversation(&mut app, width, height);
+        let mut terminal = Terminal::new(ratatui::backend::TestBackend::new(
+            width as u16,
+            height as u16,
+        ))
+        .unwrap();
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+    }
+    let cancel = tokio_util::sync::CancellationToken::new();
+    let (steering, _receiver) = crate::agent::steering_channel(4);
+    app.running = Some(Running {
+        task: tokio::spawn(std::future::pending()),
+        cancel: cancel.clone(),
+        steering,
+    });
+    handle_key(
+        KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
+        &mut app,
+        &agent,
+        &mut store,
+        &tx,
+        &terminals,
+        supervisor,
+        todos,
+    )
+    .await
+    .unwrap();
+    assert!(cancel.is_cancelled());
+    app.running.take().unwrap().task.abort();
+    let old_session = app.session.id;
+    app.session = Session::new(directory.path().into(), "test".into());
+    app.status = "new session remains active".into();
+    release_tx.send(()).unwrap();
+    holder.join().unwrap();
+    let event = tokio::time::timeout(Duration::from_secs(2), rx.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(matches!(&event,UiEvent::InferenceStatus{session,..} if *session==old_session));
+    handle_ui_event(event, &mut app, &store, &terminals)
+        .await
+        .unwrap();
+    assert_eq!(app.status, "new session remains active");
+    assert_eq!(app.composer.text, "draft λ");
+}

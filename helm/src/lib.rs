@@ -5,6 +5,7 @@ pub mod config;
 pub mod context;
 pub mod extensions;
 mod file_publication;
+pub mod inference;
 pub mod local_provider;
 pub mod markdown;
 pub mod model;

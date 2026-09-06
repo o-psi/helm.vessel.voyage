@@ -453,6 +453,9 @@ where
             pending.extend_from_slice(&chunk.map_err(map_transport)?);
             if pending.len()>MAX_SSE_BUFFER_BYTES{Err(ProviderError::InvalidResponse("OpenAI Responses stream event exceeded 4 MiB".into()))?;}
             while let Some(frame)=super::openai::take_sse_frame(&mut pending){let data=super::openai::sse_data(&frame);if data.is_empty(){continue}let event:Value=serde_json::from_slice(data).map_err(|e|ProviderError::InvalidResponse(format!("invalid OpenAI Responses stream event: {e}")))?;
+                if let Some(usage) = event.pointer("/response/usage") {
+                    yield ProviderStreamEvent::UsageReported(super::reported_usage(usage, "input_tokens", "output_tokens")?);
+                }
                 let kind=event.get("type").and_then(Value::as_str).unwrap_or_default();
                 match kind {
                     "response.output_text.delta"=>if let Some(delta)=event.get("delta").and_then(Value::as_str){assembly.content.push_str(delta);yield ProviderStreamEvent::Delta(ProviderDelta::Text(delta.into()));},

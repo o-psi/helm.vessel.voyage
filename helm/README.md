@@ -27,6 +27,7 @@ execute sessions.
 - Typed provider failures, transient retry/backoff, and cancellation-aware execution
 - Workspace confinement with explicit extra read/write roots and symlink-aware checks
 - Configurable approvals, deny list, command timeout, and output limits
+- Explicit [local inference allowances](../docs/inference-budgets.md), durable attempt accounting and reasoned operator overrides
 - Full-screen Ratatui chat, one-shot/plain modes, session management, and token accounting
 - Bounded parallel subagents with messaging, cancellation, durable results, and Git worktrees
 - Atomic JSON session persistence under the platform data directory

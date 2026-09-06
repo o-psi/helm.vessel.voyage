@@ -116,6 +116,8 @@ enum LogFormat {
 enum Command {
     /// Install, inspect and explicitly enable declarative packages.
     Extension(helm::extensions::cli::ExtensionArgs),
+    /// Inspect and configure local session/project inference attempt allowances.
+    Inference(helm::inference::cli::InferenceArgs),
     /// Manage named policy profiles and preview explicit launch selection.
     Policy(helm::policy_profile::cli::PolicyArgs),
     /// Discover, inspect and run saved nonsecret workflows.
@@ -349,6 +351,9 @@ impl EventSink for Terminal {
                 delay.as_secs_f32(),
                 error = safe_diagnostic(&error)
             ),
+            AgentEvent::InferenceWarning(status) => {
+                eprintln!("[inference warning: {}]", status.summary())
+            }
             AgentEvent::ContextBudget(report) => eprintln!(
                 "[context: estimated {}/{} tokens, {} messages omitted]",
                 report.estimated, report.limit, report.omitted_messages
@@ -580,6 +585,10 @@ async fn main() -> Result<()> {
     }) {
         Command::Extension(_) => {
             unreachable!("extension command handled before provider configuration")
+        }
+        Command::Inference(args) => {
+            let workspace = config.resolve_workspace(cli.workspace)?;
+            helm::inference::cli::run(args, &workspace, &redactor(&config)).await
         }
         Command::Policy(args) => {
             let workspace = config.resolve_workspace(cli.workspace)?;
@@ -1124,6 +1133,10 @@ impl SubagentExecutor for CliSubagentExecutor {
             .policy
             .check_execution_authority()
             .map_err(|error| error.to_string())?;
+        let accounting =
+            helm::inference::runtime::Accounting::child(&config.provider_profile(), context.id.0)
+                .await
+                .map_err(|error| error.to_string())?;
         let mut tools = build_tools(
             &config,
             child_tool,
@@ -1148,12 +1161,13 @@ impl SubagentExecutor for CliSubagentExecutor {
             provider::from_config(&config, workspace).map_err(|e| e.to_string())?,
             tools,
             tool_context,
-            Arc::new(helm::agent::SilentSink),
+            context.inference_warning_sink(),
             config.model.clone(),
             config.system_prompt.clone(),
             config.max_tokens,
             config.temperature,
         )
+        .with_inference_accounting(accounting)
         .with_context_window(config.context_window)
         .with_retry_policy(RetryPolicy {
             max_attempts: config.provider_retry_attempts,
@@ -1489,6 +1503,8 @@ async fn build_authorized_agent_bundle(
         },
         redactor: redactor(config),
     };
+    let accounting =
+        helm::inference::runtime::Accounting::root(&workspace, &config.provider_profile()).await?;
     let managed_resources = sink.as_ref().map(|_| Arc::new(ManagedResources::default()));
     let subagents = build_subagents_managed(
         config,
@@ -1525,6 +1541,7 @@ async fn build_authorized_agent_bundle(
         config.max_tokens,
         config.temperature,
     )
+    .with_inference_accounting(accounting)
     .with_completion_coordinator(subagents.coordinator)
     .with_completion_gate(gate_todos, gate_agents, gate_runtime)
     .with_context_window(config.context_window)
@@ -2040,10 +2057,7 @@ async fn execute_workflow(
         store.save(&mut session).await?;
         if title_due
             && let Some(result) = agent
-                .generate_title(
-                    &session.messages,
-                    tokio_util::sync::CancellationToken::new(),
-                )
+                .generate_title_for_session(&session, tokio_util::sync::CancellationToken::new())
                 .await
         {
             session.apply_generated_title(result);
@@ -2105,7 +2119,7 @@ async fn chat(
             "/quit" | "/exit" => break,
             "/help" => {
                 println!(
-                    "/help  /session  /new [TITLE]  /name TITLE  /access  /tools  /model [MODEL]  /models  /clear  /exit"
+                    "/help  /session  /inference  /new [TITLE]  /name TITLE  /access  /tools  /model [MODEL]  /models  /clear  /exit"
                 );
                 continue;
             }
@@ -2120,6 +2134,25 @@ async fn chat(
             }
             "/name" => {
                 eprintln!("usage: /name TITLE");
+                continue;
+            }
+            "/inference" => {
+                let id = session.id;
+                let workspace = session.workspace.clone();
+                match tokio::time::timeout(
+                    std::time::Duration::from_secs(10),
+                    tokio::task::spawn_blocking(move || {
+                        helm::inference::cli::inspect_session(id, &workspace)
+                    }),
+                )
+                .await
+                {
+                    Ok(Ok(Ok(()))) => {}
+                    Ok(Ok(Err(error))) => eprintln!("{error}"),
+                    _ => eprintln!(
+                        "Local inference inspection unavailable; the conversation remains open"
+                    ),
+                }
                 continue;
             }
             "/session" => {
@@ -2306,8 +2339,8 @@ async fn chat(
                     && let Some(result) = agent
                         .as_ref()
                         .expect("agent initialized")
-                        .generate_title(
-                            &session.messages,
+                        .generate_title_for_session(
+                            &session,
                             tokio_util::sync::CancellationToken::new(),
                         )
                         .await

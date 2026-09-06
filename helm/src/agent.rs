@@ -6,6 +6,8 @@ pub use retry::RetryJitter;
 mod gate;
 #[cfg(test)]
 mod gate_tests;
+#[cfg(test)]
+mod inference_tests;
 pub use gate::{CompletionPhase, FinalizationFailure, OwnedShutdown};
 
 use async_trait::async_trait;
@@ -160,6 +162,7 @@ pub enum AgentEvent {
         error: String,
     },
     ContextBudget(crate::context::ContextReport),
+    InferenceWarning(crate::inference::Status),
     CompletionState {
         phase: CompletionPhase,
         readiness: Option<crate::completion::Readiness>,
@@ -258,6 +261,8 @@ pub struct ContextFailure {
 
 #[derive(Debug, Error)]
 pub enum AgentError {
+    #[error("local inference admission/accounting failed: {0}")]
+    Inference(String),
     #[error(transparent)]
     Finalization(Box<FinalizationFailure>),
     #[error("the fixed reconciliation deadline expired")]
@@ -314,6 +319,7 @@ impl AgentError {
 }
 
 pub struct Agent {
+    inference: Option<crate::inference::runtime::Accounting>,
     provider: Box<dyn Provider>,
     tools: ToolRegistry,
     context: ToolContext,
@@ -396,6 +402,7 @@ impl Agent {
         temperature: Option<f32>,
     ) -> Self {
         Self {
+            inference: None,
             provider,
             tools,
             context,
@@ -412,6 +419,79 @@ impl Agent {
             retry: RetryPolicy::default(),
             retry_jitter: Arc::new(retry::RandomJitter),
         }
+    }
+
+    pub fn with_inference_accounting(
+        mut self,
+        accounting: crate::inference::runtime::Accounting,
+    ) -> Self {
+        self.inference = Some(accounting);
+        self
+    }
+    pub async fn inference_status(
+        &self,
+        session: uuid::Uuid,
+    ) -> Result<Vec<crate::inference::Status>, AgentError> {
+        let Some(accounting) = &self.inference else {
+            return Ok(Vec::new());
+        };
+        accounting
+            .bind(session)
+            .await
+            .map_err(|error| AgentError::Inference(error.to_string()))?;
+        accounting
+            .status(session)
+            .await
+            .map_err(|error| AgentError::Inference(error.to_string()))
+    }
+    async fn inference_admit(
+        &self,
+        reference: Option<&crate::completion::runtime::RunReference>,
+        model: &str,
+        purpose: crate::inference::Purpose,
+    ) -> Result<Option<crate::inference::Permit>, AgentError> {
+        let Some(accounting) = &self.inference else {
+            return Ok(None);
+        };
+        let reference = reference.ok_or_else(|| {
+            AgentError::Inference("execution has no durable session/run attribution".into())
+        })?;
+        let permit = accounting
+            .admit(reference, &self.context.redactor.redact(model), purpose)
+            .await
+            .map_err(|error| AgentError::Inference(error.to_string()))?;
+        for warning in &permit.warnings {
+            self.sink
+                .emit(AgentEvent::InferenceWarning(warning.clone()))
+                .await;
+        }
+        Ok(Some(permit))
+    }
+    async fn inference_report(
+        &self,
+        permit: Option<&crate::inference::Permit>,
+        report: crate::provider::ReportedUsage,
+    ) -> Result<(), AgentError> {
+        if let (Some(accounting), Some(permit)) = (&self.inference, permit) {
+            accounting
+                .report(permit, report)
+                .await
+                .map_err(|error| AgentError::Inference(error.to_string()))?;
+        }
+        Ok(())
+    }
+    async fn inference_finish(
+        &self,
+        permit: Option<&crate::inference::Permit>,
+        outcome: crate::inference::AttemptOutcome,
+    ) -> Result<(), AgentError> {
+        if let (Some(accounting), Some(permit)) = (&self.inference, permit) {
+            accounting
+                .finish(permit, outcome)
+                .await
+                .map_err(|error| AgentError::Inference(error.to_string()))?;
+        }
+        Ok(())
     }
 
     pub fn with_completion_gate(
@@ -466,6 +546,12 @@ impl Agent {
         run_id: uuid::Uuid,
     ) -> Result<Option<crate::completion::runtime::RunHandle>, AgentError> {
         self.check_current_policy()?;
+        if let Some(accounting) = &self.inference {
+            accounting
+                .bind(session.id)
+                .await
+                .map_err(|error| AgentError::Inference(error.to_string()))?;
+        }
         let Some(coordinator) = &self.completion_coordinator else {
             return Ok(None);
         };
@@ -596,6 +682,22 @@ impl Agent {
         messages: &[Message],
         cancel: CancellationToken,
     ) -> Option<crate::titles::TitleResult> {
+        self.generate_title_inner(messages, cancel, None).await
+    }
+    pub async fn generate_title_for_session(
+        &self,
+        session: &crate::session::Session,
+        cancel: CancellationToken,
+    ) -> Option<crate::titles::TitleResult> {
+        self.generate_title_inner(&session.messages, cancel, session.completion_runs.last())
+            .await
+    }
+    async fn generate_title_inner(
+        &self,
+        messages: &[Message],
+        cancel: CancellationToken,
+        reference: Option<&crate::completion::runtime::RunReference>,
+    ) -> Option<crate::titles::TitleResult> {
         use futures_util::StreamExt;
         let work = async {
             let model = crate::titles::title_model()?;
@@ -612,11 +714,51 @@ impl Agent {
             let limit = self.context_limit(&request.model);
             crate::context::preflight(&mut request, limit).ok()?;
             self.context.policy.check_execution_authority().ok()?;
-            let mut stream = self.provider.stream(request).await.ok()?;
+            let permit = self
+                .inference_admit(reference, &request.model, crate::inference::Purpose::Title)
+                .await
+                .ok()?;
+            self.context.policy.check_execution_authority().ok()?;
+            if cancel.is_cancelled() {
+                return None;
+            }
+            let mut stream = match self.provider.stream(request).await {
+                Ok(stream) => stream,
+                Err(_) => {
+                    self.inference_finish(
+                        permit.as_ref(),
+                        crate::inference::AttemptOutcome::Failed,
+                    )
+                    .await
+                    .ok()?;
+                    return None;
+                }
+            };
             let mut text_bytes = 0_usize;
             while let Some(event) = stream.next().await {
-                match event.ok()? {
+                let event = match event {
+                    Ok(event) => event,
+                    Err(_) => {
+                        self.inference_finish(
+                            permit.as_ref(),
+                            crate::inference::AttemptOutcome::Failed,
+                        )
+                        .await
+                        .ok()?;
+                        return None;
+                    }
+                };
+                match event {
+                    crate::provider::ProviderStreamEvent::UsageReported(report) => {
+                        self.inference_report(permit.as_ref(), report).await.ok()?
+                    }
                     crate::provider::ProviderStreamEvent::Completed(response) => {
+                        self.inference_finish(
+                            permit.as_ref(),
+                            crate::inference::AttemptOutcome::Completed,
+                        )
+                        .await
+                        .ok()?;
                         return Some(crate::titles::TitleResult {
                             title: crate::titles::sanitize(
                                 &response.message,
@@ -893,7 +1035,7 @@ impl Agent {
                 temperature: self.temperature,
                 max_tokens: Some(self.max_tokens),
             };
-            let response = gate::guarded(self.stream_with_retry(request, &cancel, checkpoint, &mut partial_output), &cancel, deadline).await?
+            let (response, permit) = gate::guarded(self.stream_with_retry(request, &cancel, checkpoint, &mut partial_output, context.completion.as_ref().map(|run| run.reference()).as_ref()), &cancel, deadline).await?
                 .map_err(|error| error.with_recovery(&history, &usage))?;
             let had_streamed_text = !partial_output.is_empty();
             partial_output.clear();
@@ -905,6 +1047,7 @@ impl Agent {
                 .output_tokens
                 .checked_add(response.usage.output_tokens)
                 .ok_or(AgentError::UsageOverflow)?;
+            self.inference_finish(permit.as_ref(), crate::inference::AttemptOutcome::Completed).await?;
             let mut assistant = response.message;
             tool_replay::normalize(&mut assistant.tool_calls)?;
             let calls = assistant.tool_calls.clone();
@@ -1107,7 +1250,14 @@ impl Agent {
         cancel: &CancellationToken,
         checkpoint: Option<&dyn RunCheckpoint>,
         partial_output: &mut String,
-    ) -> Result<crate::model::ModelResponse, AgentError> {
+        reference: Option<&crate::completion::runtime::RunReference>,
+    ) -> Result<
+        (
+            crate::model::ModelResponse,
+            Option<crate::inference::Permit>,
+        ),
+        AgentError,
+    > {
         use crate::provider::{ProviderDelta, ProviderStreamEvent};
         use futures_util::StreamExt;
         if cancel.is_cancelled() {
@@ -1130,20 +1280,43 @@ impl Agent {
                 .map_err(|_| {
                     AgentError::Policy("foreground execution authority unavailable".into())
                 })?;
+            let permit = self
+                .inference_admit(
+                    reference,
+                    &request.model,
+                    crate::inference::Purpose::Conversation,
+                )
+                .await?;
+            self.check_current_policy()?;
             let stream_result = tokio::select! {biased; _ = cancel.cancelled()=>{self.sink.emit(AgentEvent::Cancelled).await;return Err(AgentError::Cancelled);}, value=self.provider.stream(request.clone())=>value};
             let mut stream = match stream_result {
                 Ok(value) => value,
                 Err(error) if self.retry_allowed(&error, attempt) => {
+                    self.inference_finish(
+                        permit.as_ref(),
+                        crate::inference::AttemptOutcome::Failed,
+                    )
+                    .await?;
                     self.retry_wait(attempt, &error, delay, cancel).await?;
                     delay = delay.saturating_mul(2).min(self.retry.max_delay);
                     continue;
                 }
-                Err(error) => return Err(error.into()),
+                Err(error) => {
+                    self.inference_finish(
+                        permit.as_ref(),
+                        crate::inference::AttemptOutcome::Failed,
+                    )
+                    .await?;
+                    return Err(error.into());
+                }
             };
             let mut partial = false;
             loop {
                 let event = tokio::select! {_ = cancel.cancelled()=>{self.sink.emit(AgentEvent::Cancelled).await;return Err(AgentError::Cancelled);}, value=stream.next()=>value};
                 match event {
+                    Some(Ok(ProviderStreamEvent::UsageReported(report))) => {
+                        self.inference_report(permit.as_ref(), report).await?
+                    }
                     Some(Ok(ProviderStreamEvent::Delta(delta))) => {
                         if matches!(&delta, ProviderDelta::Text(text) if text.is_empty()) {
                             continue;
@@ -1162,14 +1335,33 @@ impl Agent {
                             self.sink.emit(AgentEvent::AssistantTextDelta(text)).await;
                         }
                     }
-                    Some(Ok(ProviderStreamEvent::Completed(response))) => return Ok(response),
+                    Some(Ok(ProviderStreamEvent::Completed(response))) => {
+                        return Ok((response, permit));
+                    }
                     Some(Err(error)) if !partial && self.retry_allowed(&error, attempt) => {
+                        self.inference_finish(
+                            permit.as_ref(),
+                            crate::inference::AttemptOutcome::Failed,
+                        )
+                        .await?;
                         self.retry_wait(attempt, &error, delay, cancel).await?;
                         delay = delay.saturating_mul(2).min(self.retry.max_delay);
                         break;
                     }
-                    Some(Err(error)) => return Err(error.into()),
+                    Some(Err(error)) => {
+                        self.inference_finish(
+                            permit.as_ref(),
+                            crate::inference::AttemptOutcome::Failed,
+                        )
+                        .await?;
+                        return Err(error.into());
+                    }
                     None => {
+                        self.inference_finish(
+                            permit.as_ref(),
+                            crate::inference::AttemptOutcome::Failed,
+                        )
+                        .await?;
                         return Err(ProviderError::InvalidResponse(
                             "provider stream ended without completion".into(),
                         )

@@ -44,6 +44,7 @@ impl std::fmt::Debug for FinalizationFailure {
             AgentError::Cancelled => "cancelled",
             AgentError::Checkpoint(_) => "checkpoint",
             AgentError::UsageOverflow => "usage_overflow",
+            AgentError::Inference(_) => "inference_admission",
         };
         formatter
             .debug_struct("FinalizationFailure")

@@ -1,7 +1,7 @@
 //! Session commands and explicit CLI handoff requests.
 
 use super::{
-    App, CliRequest, TuiExit,
+    App, CliRequest, TitleJob, TuiExit,
     bridge::UiEvent,
     composer::{Composer, PromptHistory},
     models::request_models,
@@ -436,6 +436,32 @@ pub(super) async fn handle_command(
                 let mut arguments = vec!["auth".into()];
                 arguments.extend(words);
                 request_cli(app, store, arguments, true, true).await?;
+            }
+        }
+        "inference" => {
+            app.inference_job = None;
+            app.inference_request = None;
+            if let (Some(agent), Some(tx)) = (agent, tx) {
+                let request = uuid::Uuid::new_v4();
+                let session = app.session.id;
+                let agent = agent.clone();
+                let tx = tx.clone();
+                let cancel = tokio_util::sync::CancellationToken::new();
+                let token = cancel.clone();
+                app.inference_request = Some(request);
+                app.status = "Loading local inference accounting…".into();
+                let task = tokio::spawn(async move {
+                    let result = tokio::select! { biased; _=token.cancelled()=>return, result=agent.inference_status(session)=>result.map_err(|error|error.to_string()) };
+                    let _ = tx.send(UiEvent::InferenceStatus {
+                        session,
+                        request,
+                        result,
+                    });
+                });
+                app.inference_job = Some(TitleJob { task, cancel });
+            } else {
+                app.status =
+                    "Use helm inference inspect for durable local attempt accounting".into();
             }
         }
         "doctor" => {

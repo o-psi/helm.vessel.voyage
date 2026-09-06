@@ -186,6 +186,9 @@ where
                 let data=super::openai::sse_data(&frame);
                 if data.is_empty(){continue;}
                 let value:Value=serde_json::from_slice(data).map_err(|e|ProviderError::InvalidResponse(format!("invalid Anthropic stream event: {e}")))?;
+                if let Some(usage) = value.pointer("/message/usage").or_else(|| value.get("usage")) {
+                    yield ProviderStreamEvent::UsageReported(super::reported_usage(usage, "input_tokens", "output_tokens")?);
+                }
                 if value.get("type").and_then(Value::as_str)==Some("message_stop") {
                     yield ProviderStreamEvent::Completed(finish_stream(assembly)?);
                     return;

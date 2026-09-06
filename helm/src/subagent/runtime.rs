@@ -71,6 +71,10 @@ impl ExecutionContext {
         let (_sender, receiver) = mpsc::channel(1);
         std::mem::replace(&mut self.inbox, receiver)
     }
+    /// Forward only local inference warnings through the existing child progress channel.
+    pub fn inference_warning_sink(&self) -> Arc<dyn crate::agent::EventSink> {
+        Arc::new(InferenceWarnings(self.reporter.clone()))
+    }
     pub async fn progress(&self, text: impl Into<String>) {
         self.reporter.report(text.into()).await;
     }
@@ -161,6 +165,21 @@ struct ProgressReporter {
 impl ProgressReporter {
     async fn report(&self, text: String) {
         self.runtime.record_progress(self.id, text).await;
+    }
+}
+
+struct InferenceWarnings(ProgressReporter);
+#[async_trait]
+impl crate::agent::EventSink for InferenceWarnings {
+    async fn emit(&self, event: crate::agent::AgentEvent) {
+        if matches!(event, crate::agent::AgentEvent::InferenceWarning(_)) {
+            self.0
+                .report(
+                    "Local inference allowance warning; inspect helm inference for current counts"
+                        .into(),
+                )
+                .await;
+        }
     }
 }
 

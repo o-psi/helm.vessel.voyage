@@ -153,3 +153,8 @@ to current local policy. Helm does not automatically retry tools or promise exac
 once effects across requests or crashes. Interrupted managed calls without durable
 results continue to block execution until explicit [unknown-outcome reconciliation](local-tool-reconciliation.md).
 Reconciliation records uncertainty and never repeats the effect or claims rollback.
+
+Local [inference allowances](inference-budgets.md) count dispatch permits across
+root, child, retry and title requests. Their private attempt ledger distinguishes
+reported token values from unavailable usage. These optional limits are not token
+or monetary caps, and do not infer complete billing from saved token sums.

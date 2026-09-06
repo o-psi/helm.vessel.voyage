@@ -4,7 +4,7 @@ use rusqlite::Connection;
 use std::{io::ErrorKind, path::PathBuf, sync::Arc};
 use voyage_storage::PrivateDirectory;
 
-pub(super) fn prepare(directory: PathBuf) -> Result<(PathBuf, Arc<PrivateDirectory>)> {
+pub(crate) fn prepare(directory: PathBuf) -> Result<(PathBuf, Arc<PrivateDirectory>)> {
     let private = Arc::new(PrivateDirectory::open(&directory)?);
     // Preserve explicit user ownership even when the token's default owner is a
     // group. SQLite must never recreate a rollback journal with default security.
@@ -20,7 +20,7 @@ pub(super) fn prepare(directory: PathBuf) -> Result<(PathBuf, Arc<PrivateDirecto
     Ok((private.path().to_owned(), private))
 }
 
-pub(super) fn configure(connection: &Connection) -> Result<()> {
+pub(crate) fn configure(connection: &Connection) -> Result<()> {
     // journal_mode preparation can recover a hot journal before PERSIST takes
     // effect. Exclusive bootstrap retains it; NORMAL restores independent SQLite
     // clients before schema reads/migrations or authority transactions proceed.
@@ -31,7 +31,7 @@ pub(super) fn configure(connection: &Connection) -> Result<()> {
     Ok(())
 }
 
-pub(super) fn verify(private: &PrivateDirectory) -> Result<()> {
+pub(crate) fn verify(private: &PrivateDirectory) -> Result<()> {
     drop(private.open_file("journal.sqlite3", false)?);
     drop(private.open_file("journal.sqlite3-journal", false)?);
     Ok(())

@@ -58,8 +58,42 @@ pub enum ProviderDelta {
 
 #[derive(Debug)]
 pub enum ProviderStreamEvent {
+    /// Internal native accounting metadata; not a public Vessel event.
+    UsageReported(ReportedUsage),
     Delta(ProviderDelta),
     Completed(ModelResponse),
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ReportedUsage {
+    pub input_tokens: Option<u64>,
+    pub output_tokens: Option<u64>,
+}
+pub(crate) fn reported_usage(
+    value: &serde_json::Value,
+    input: &str,
+    output: &str,
+) -> Result<ReportedUsage, ProviderError> {
+    fn field(value: &serde_json::Value, name: &str) -> Result<Option<u64>, ProviderError> {
+        match value.get(name) {
+            None | Some(serde_json::Value::Null) => Ok(None),
+            Some(value) => value.as_u64().map(Some).ok_or_else(|| {
+                ProviderError::InvalidResponse("invalid provider usage counter".into())
+            }),
+        }
+    }
+    if value.is_null() {
+        return Ok(ReportedUsage::default());
+    }
+    if !value.is_object() {
+        return Err(ProviderError::InvalidResponse(
+            "invalid provider usage object".into(),
+        ));
+    }
+    Ok(ReportedUsage {
+        input_tokens: field(value, input)?,
+        output_tokens: field(value, output)?,
+    })
 }
 
 pub type ProviderStream =

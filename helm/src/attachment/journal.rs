@@ -25,7 +25,7 @@ use std::{
 };
 use uuid::Uuid;
 #[cfg(windows)]
-mod storage;
+pub(crate) mod storage;
 #[cfg(windows)]
 use std::sync::Arc;
 
@@ -1333,7 +1333,7 @@ fn append_event_projected(
     Ok(sequence as u64)
 }
 #[cfg(unix)]
-fn prepare_directory(directory: PathBuf) -> Result<PathBuf> {
+pub(crate) fn prepare_directory(directory: PathBuf) -> Result<PathBuf> {
     let mut builder = fs::DirBuilder::new();
     #[cfg(unix)]
     {
@@ -1356,7 +1356,7 @@ fn prepare_directory(directory: PathBuf) -> Result<PathBuf> {
 }
 
 #[cfg(not(any(unix, windows)))]
-fn prepare_directory(_directory: PathBuf) -> Result<PathBuf> {
+pub(crate) fn prepare_directory(_directory: PathBuf) -> Result<PathBuf> {
     anyhow::bail!("private attachment storage unsupported on this platform")
 }
 
@@ -1382,7 +1382,7 @@ fn private(metadata: &fs::Metadata) -> Result<()> {
     Ok(())
 }
 #[cfg(unix)]
-fn open_private_file(path: &Path) -> Result<File> {
+pub(crate) fn open_private_file(path: &Path) -> Result<File> {
     match fs::symlink_metadata(path) {
         Ok(m) => {
             ensure!(
@@ -1413,7 +1413,7 @@ fn open_private_file(path: &Path) -> Result<File> {
 }
 
 #[cfg(windows)]
-fn open_private_file(path: &Path) -> Result<File> {
+pub(crate) fn open_private_file(path: &Path) -> Result<File> {
     let parent = path.parent().context("private sidecar has no parent")?;
     let name = path
         .file_name()
@@ -1424,7 +1424,7 @@ fn open_private_file(path: &Path) -> Result<File> {
 }
 
 #[cfg(not(any(unix, windows)))]
-fn open_private_file(_path: &Path) -> Result<File> {
+pub(crate) fn open_private_file(_path: &Path) -> Result<File> {
     anyhow::bail!("private attachment storage unsupported on this platform")
 }
 

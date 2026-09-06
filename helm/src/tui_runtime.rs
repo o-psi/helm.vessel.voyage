@@ -103,6 +103,11 @@ impl WorkspaceRuntime {
         };
         // Validate the provider before acquiring persistent runtime ownership or
         // starting external MCP servers. Navigation failures are recoverable.
+        let accounting = helm::inference::runtime::Accounting::root(
+            &session.workspace,
+            &runtime_config.provider_profile(),
+        )
+        .await?;
         let provider = provider::from_config(runtime_config, session.workspace.clone())?;
         let subagents = build_subagents_managed(
             runtime_config,
@@ -155,6 +160,7 @@ impl WorkspaceRuntime {
                 runtime_config.max_tokens,
                 runtime_config.temperature,
             )
+            .with_inference_accounting(accounting)
             .with_completion_coordinator(subagents.coordinator)
             .with_completion_gate(
                 todo.store(),

@@ -90,17 +90,19 @@ fn inactive_workspace_children_do_not_wait_for_root_questions_or_approvals() {
         });
         let first = tempfile::tempdir().unwrap();
         let second = tempfile::tempdir().unwrap();
-        let inactive = WorkspaceRuntime::build(&config, &Session::new(first.path().into(), config.model.clone())).await.unwrap();
+        let parent_session = Session::new(first.path().into(), config.model.clone());
+        let inactive = WorkspaceRuntime::build(&config, &parent_session).await.unwrap();
         let active = WorkspaceRuntime::build(&config, &Session::new(second.path().into(), config.model.clone())).await.unwrap();
+        let parent_run = inactive.agent.prepare_run(&parent_session).await.unwrap().unwrap();
         let budget = AgentBudget { max_tokens: 4096, max_terminals: 1 };
-        let id = inactive.subagents.spawn(helm::subagent::SpawnRequest {
+        let id = inactive.subagents.spawn_for_run(helm::subagent::SpawnRequest {
             parent_id: None, name: "inactive-child".into(), task: "ask then request shell approval".into(),
             policy: AgentPolicy {
                 readable_roots: vec![first.path().into()], writable_roots: vec![first.path().into()],
                 allowed_tools: ["questions".into(), "shell".into()].into_iter().collect(),
                 approval: ApprovalPolicy::Deny, budget: budget.clone(),
             }, budget, worktree: None, branch: None,
-        }).await.unwrap();
+        }, Some(parent_run)).await.unwrap();
         tokio::time::timeout(Duration::from_secs(5), waiting.notified()).await.unwrap();
         assert!(inactive.check_idle().await.is_err(), "live child must refuse policy handoff");
         active.check_idle().await.unwrap();
