@@ -33,8 +33,10 @@ Acceptance-specific failure/security tests and approved live/platform validation
 remain required where applicable; local Linux success is not platform or live
 provider evidence. Documentation-only changes retain their documented exception.
 
-Implementation status: workflow triggers and the shared runner are still pending;
-this planning update does not disable existing or future push/PR runs. Branch
+Implementation status: the shared runner and manual workflow definitions are
+implemented under #17; full local validation and publication are pending. Local
+edits do not disable remote push/PR triggers. See [quality validation](quality.md)
+for the shared command and evidence format. Branch
 ruleset and classic protection queries returned HTTP 403, so enforced GitHub checks
 were not verified. Report any actual publication blocker without bypassing it.
 

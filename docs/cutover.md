@@ -14,8 +14,10 @@ gaps explicitly; current HTTP worker tests do not prove the intended product.
 
 ## Entry gates
 
-- Linux CI passes for the exact candidate commit. For macOS or Windows adoption,
-  record separate platform evidence; routine CI does not test those platforms.
+- `./scripts/check-quality` passes locally for the exact candidate commit, with
+  revision/tree and logs retained as described in [quality validation](quality.md).
+  Duplicate hosted checks are not required. For macOS or Windows adoption, record
+  separate platform evidence; the Linux suite does not test those platforms.
 - Archive checksums and binary versions match the candidate source.
 - `python3 eval/run.py live` passes the representative workloads with an explicitly
   configured provider and budget, with reviewed evidence attached to the record.

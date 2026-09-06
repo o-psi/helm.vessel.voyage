@@ -4,7 +4,10 @@ Voyage has no product releases yet. The release workflow packages `helm` and
 `vessel` together from one versioned commit. Tags use
 `vMAJOR.MINOR.PATCH`. A release is immutable: corrections receive a new tag.
 
-Push and pull-request quality checks run on Linux only to limit development costs.
+Run `./scripts/check-quality` locally before publication and retain its exact
+revision and results; see [quality validation](quality.md). Hosted quality is
+manual-only and uses the same Linux suite. Duplicate hosted green checks are not
+required after successful local validation.
 The tag-triggered release workflow builds archives for Linux x86-64, macOS
 x86-64/ARM64, and Windows x86-64; it does not run the workspace test suite on
 macOS or Windows. Record separate platform testing before claiming validation.
@@ -36,7 +39,7 @@ If a packaging process is forcibly killed, its `.package-*` directory or
 `.voyage-*.lock` may remain in `dist`. Confirm that attempt has stopped before
 removing its staging directory and lock; preserve published archives and checksums.
 
-Before tagging, update versions and changelog, run the full CI command set, complete
+Before tagging, update versions and changelog, run `./scripts/check-quality`, complete
 the live evaluation suite, inspect generated manpages/completions, and test a clean
 archive install. After tagging, compare artifact checksums, smoke-test both binaries
 from each archive, attach evaluation/cutover evidence, and publish known limitations.

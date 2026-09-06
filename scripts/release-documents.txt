@@ -44,6 +44,7 @@ docs/policy-defaults.md
 docs/policy-profiles.md
 docs/providers.md
 docs/questions.md
+docs/quality.md
 docs/releasing.md
 docs/remaining-issues-plan.md
 docs/remote-sessions.md

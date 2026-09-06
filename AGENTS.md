@@ -208,14 +208,17 @@ failures require appropriate fresh verification, not reuse of stale results.
 
 The approved [CI execution plan](docs/remaining-issues-plan.md#local-validation-and-hosted-ci-plan-2026-09-06)
 makes hosted quality runs manual-only, with tag-only release builds separate.
-Workflow trigger changes and a shared local runner remain pending in that plan;
-until published, current push/PR triggers still run. Do not report them disabled.
+Both quality workflows call `./scripts/check-quality` through `workflow_dispatch`.
+A local workflow edit changes remote triggers only after publication; verify the
+remote definitions before reporting automatic quality runs disabled.
 Any actual GitHub enforcement/access blocker must be reported, not bypassed.
 
 Run from the repository root with stable Rust, rustfmt, Clippy, and Python 3.
-These commands reflect the GitHub Linux quality workflow; recheck that workflow
-for changes. Build optimized binaries with Cargo's release profile before the
-Python system tests:
+Run `./scripts/check-quality` from a clean committed worktree for the complete
+suite. See [quality validation](docs/quality.md) for ownership, prerequisites and
+evidence. `./scripts/check-quality --plan` lists every gate without running it.
+The individual commands below are useful for focused diagnosis; build optimized
+binaries before the Python system tests:
 
 ```sh
 cargo fmt --all -- --check
@@ -228,9 +231,9 @@ python3 eval/run.py validate
 ```
 
 Run targeted tests during development, then the baseline suite for feature delivery.
-Also run every system fixture and both packaging/checksum gates listed in
-`.github/workflows/ci.yml`; the short command block above is not the full suite.
-Keep any additional Forgejo checks accounted for when consolidating the runner.
+The shared runner executes every gate in `scripts/quality-gates.json`, including
+all system fixtures and both packaging/checksum gates from the GitHub/Forgejo
+workflow union. The short command block above is not the full suite.
 `eval/run.py validate` checks scenario definitions; it does **not** execute live
 agent evaluations. For behavioral/release validation, use `python3 eval/run.py live`
 with an approved configured provider and budget. It can consume provider capacity

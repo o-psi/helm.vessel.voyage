@@ -1,0 +1,224 @@
+#!/usr/bin/env python3
+"""One complete local Linux quality run; shared by manual hosted quality jobs."""
+import argparse
+import datetime
+import fcntl
+import json
+import os
+from pathlib import Path
+import signal
+import subprocess
+import sys
+import time
+import tomllib
+import uuid
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def git(*args):
+    command = [str(ROOT / 'scripts/local-git')] if (ROOT / '.local-git/worktree.git').exists() else ['git']
+    return subprocess.check_output(command + list(args), cwd=ROOT, text=True).strip()
+
+
+def snapshot():
+    status = git('status', '--porcelain', '--untracked-files=normal')
+    if status:
+        raise RuntimeError('quality requires a clean committed worktree; preserve and commit your intended changes first')
+    return {'revision': git('rev-parse', 'HEAD'), 'tree': git('rev-parse', 'HEAD^{tree}')}
+
+
+def stamp():
+    return datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+
+def write_result(path, value):
+    temporary = path.with_suffix('.tmp')
+    temporary.write_text(json.dumps(value, indent=2) + '\n')
+    temporary.replace(path)
+
+
+def group_active(group):
+    # Linux process groups can retain zombies after the leader is reaped. They
+    # cannot execute; only live members require further signal escalation.
+    for entry in Path('/proc').iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            fields = (entry / 'stat').read_text().rsplit(')', 1)[1].split()
+            if int(fields[2]) == group and fields[0] not in ('Z', 'X'):
+                return True
+        except (FileNotFoundError, ProcessLookupError):
+            continue
+    return False
+
+
+def stop(process):
+    for sig, wait in [(signal.SIGINT, 1), (signal.SIGTERM, 1), (signal.SIGKILL, 3)]:
+        process.poll()
+        if not group_active(process.pid):
+            process.wait(timeout=3)
+            return
+        try:
+            os.killpg(process.pid, sig)
+        except ProcessLookupError:
+            pass
+        deadline = time.monotonic() + wait
+        while time.monotonic() < deadline:
+            process.poll()
+            if not group_active(process.pid):
+                process.wait(timeout=3)
+                return
+            time.sleep(.02)
+    raise RuntimeError('quality command process-group shutdown was not observed')
+
+
+def execute(argv, cwd, env, log_path, timeout):
+    with log_path.open('wb') as log:
+        try:
+            process = subprocess.Popen(argv, cwd=cwd, env=env, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
+        except OSError as error:
+            log.write(str(error).encode())
+            return 127, 'launch_failed'
+        try:
+            deadline = time.monotonic() + timeout
+            while process.poll() is None:
+                if time.monotonic() >= deadline:
+                    stop(process)
+                    return 124, 'timeout'
+                if log.tell() > 64 * 1024 * 1024:
+                    stop(process)
+                    return 125, 'output_limit'
+                time.sleep(.05)
+            code = process.returncode
+            if group_active(process.pid):
+                stop(process)
+                return 125, 'descendants_remaining'
+            return code if code >= 0 else 128 - code, 'passed' if code == 0 else 'failed'
+        except BaseException:
+            stop(process)
+            raise
+
+
+def environment(jobs):
+    env = os.environ.copy()
+    selected = env.get('CARGO_TARGET_DIR')
+    if selected and (ROOT / selected).resolve() != (ROOT / 'target').resolve():
+        raise RuntimeError('quality packaging requires this worktree target directory; use an isolated worktree for another build')
+    if env.get('CARGO_BUILD_TARGET') or env.get('TARGET'):
+        raise RuntimeError('quality is native Linux; target-specific release builds are separate')
+    # Cargo discovers configuration in ancestors and CARGO_HOME. Reject target
+    # selection before any gate can consume stale target/release artifacts.
+    cargo_home = Path(env.get('CARGO_HOME', str(Path.home() / '.cargo')))
+    directories = [parent / '.cargo' for parent in [ROOT, *ROOT.parents]] + [cargo_home]
+    for directory in directories:
+        legacy = directory / 'config'
+        config = legacy if legacy.is_file() else directory / 'config.toml'
+        if config.is_file():
+            with config.open('rb') as source:
+                settings = tomllib.load(source)
+            if 'target' in settings.get('build', {}):
+                raise RuntimeError('quality requires native Cargo configuration without build.target: ' + str(config))
+    env['CARGO_TARGET_DIR'] = str(ROOT / 'target')
+    env.update(CARGO_BUILD_JOBS=str(jobs), RUSTUP_TOOLCHAIN='stable',
+               HELM_BIN=str(ROOT / 'target/release/helm'),
+               VESSEL_BIN=str(ROOT / 'target/release/vessel'),
+               INSTALLER_BIN=str(ROOT / 'target/release/voyage-installer'))
+    return env
+
+
+def resolved(gate, version):
+    cwd = ROOT / gate.get('cwd', '.').format(version=version)
+    argv = [arg.format(version=version) for arg in gate['argv']]
+    if 'glob_args' in gate:
+        matches = sorted(path.name for path in cwd.glob(gate['glob_args']))
+        if not matches:
+            raise RuntimeError('checksum gate found no checksum files')
+        argv.extend(matches)
+    return argv, cwd
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--plan', action='store_true', help='print all gates without executing or claiming validation')
+    parser.add_argument('--jobs', type=int, default=1, help='Cargo build jobs (default: 1)')
+    parser.add_argument('--timeout-seconds', type=float, default=3600, help='maximum duration of each gate')
+    args = parser.parse_args()
+    if args.jobs < 1 or not 0 < args.timeout_seconds <= 86400:
+        parser.error('jobs must be positive and timeout must be between 0 and 86400 seconds')
+    gates = json.loads((ROOT / 'scripts/quality-gates.json').read_text())
+    if args.plan:
+        print(json.dumps(gates, indent=2))
+        return 0
+    if sys.platform != 'linux':
+        parser.error('this quality entry point validates native Linux only')
+    env = environment(args.jobs)
+    common = Path(git('rev-parse', '--git-common-dir'))
+    if not common.is_absolute():
+        common = ROOT / common
+    with (common / 'voyage-quality.lock').open('a+') as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise RuntimeError('another full quality suite owns this repository; coordinate with its owner')
+        initial = snapshot()
+        version = 'quality-' + initial['revision'][:12] + '-' + uuid.uuid4().hex
+        evidence = ROOT / '.quality-runs' / version
+        evidence.mkdir(parents=True, exist_ok=False)
+        lock.seek(0)
+        lock.truncate()
+        lock.write(json.dumps({'pid': os.getpid(), 'root': str(ROOT), 'revision': initial['revision'], 'evidence': str(evidence)}))
+        lock.flush()
+        result = {**initial, 'root': str(ROOT), 'version': version, 'started_at': stamp(),
+                  'status': 'running', 'jobs': args.jobs, 'timeout_seconds': args.timeout_seconds,
+                  'saved_peer_inputs': {name: bool(env.get(name)) for name in ['PRE_CONTROL_HELM_BIN', 'PRE_CONTROL_VESSEL_BIN']},
+                  'planned_gates': gates, 'gates': []}
+        result_path = evidence / 'results.json'
+        write_result(result_path, result)
+        print('EVIDENCE ' + str(result_path), flush=True)
+        code = 0
+        try:
+            for gate in gates:
+                if snapshot() != initial:
+                    raise RuntimeError('source revision changed during quality validation')
+                argv, cwd = resolved(gate, version)
+                entry = {'id': gate['id'], 'command': argv, 'cwd': str(cwd),
+                         'log': str(evidence / (gate['id'] + '.log')), 'started_at': stamp(), 'status': 'running'}
+                result['gates'].append(entry)
+                write_result(result_path, result)
+                print('START ' + gate['id'], flush=True)
+                started = time.monotonic()
+                code, status = execute(argv, cwd, env, Path(entry['log']), args.timeout_seconds)
+                entry.update(exit_code=code, status=status, seconds=round(time.monotonic() - started, 3), finished_at=stamp())
+                write_result(result_path, result)
+                print('RESULT ' + gate['id'] + ' ' + str(code), flush=True)
+                if code:
+                    result['status'] = 'failed'
+                    break
+            else:
+                if snapshot() != initial:
+                    raise RuntimeError('source revision changed during quality validation')
+                result['status'] = 'passed'
+        except KeyboardInterrupt:
+            code = 130
+            result['status'] = 'interrupted'
+        except Exception as error:
+            code = 1
+            result.update(status='invalidated', error=str(error))
+        finally:
+            if result['gates'] and result['gates'][-1]['status'] == 'running':
+                result['gates'][-1].update(status='interrupted', finished_at=stamp(), exit_code=code or 1)
+            result.update(exit_code=code, finished_at=stamp())
+            write_result(result_path, result)
+        print('QUALITY ' + result['status'] + ': ' + str(result_path), flush=True)
+        return code
+
+
+if __name__ == '__main__':
+    for sig in [signal.SIGTERM, signal.SIGHUP]:
+        signal.signal(sig, lambda *_: (_ for _ in ()).throw(KeyboardInterrupt()))
+    try:
+        sys.exit(main())
+    except (RuntimeError, OSError, subprocess.CalledProcessError) as error:
+        print('quality: ' + str(error), file=sys.stderr)
+        sys.exit(1)

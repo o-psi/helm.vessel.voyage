@@ -10,3 +10,4 @@ __pycache__/
 
 # Local plans, backups, temporary checkouts and runtime state.
 /.local/
+/.quality-runs/
