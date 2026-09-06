@@ -43,8 +43,8 @@ Helm never automatically resends a tool call or restarts a retired server.
 For a fully written ordinary request, Helm attempts `notifications/cancelled`
 with the exact request ID, allowing at most 100 ms for that write. It sends no
 cancellation notification for initialization, or after any incomplete outbound
-frame, including a reply to a server request. Cleanup closes stdin, allows 100 ms for cooperative exit, then uses the
-existing bounded process observer. The cleanup task has a five-second bound;
+frame, including a reply to a server request. Cleanup closes stdin, allows 100 ms
+for cooperative exit, then uses the existing bounded process observer. The cleanup task has a five-second bound;
 Linux session observation has a four-second bound. Retained resource owners can
 retry unconfirmed cleanup. On other platforms, direct-child retirement does not
 attest full descendant cleanup.

@@ -28,6 +28,8 @@ jobs:
         run: python3 tests/system/github_configured.py
       - name: Configured MCP transport lifecycle
         run: python3 tests/system/mcp_transport.py
+      - name: Verify MCP tool metadata credential isolation
+        run: python3 tests/system/mcp_metadata.py
       - name: Verify offline GitHub journal recovery through the real CLI
         env:
           HELM_BIN: target/release/helm
