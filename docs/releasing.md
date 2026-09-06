@@ -24,11 +24,16 @@ python3 tests/system/release_documentation.py
 ```
 
 Choose a new version label for every packaging attempt. Existing archives and
-checksums are never replaced. Packaging failures remove their private staging
+checksums are never replaced. Handled packaging failures remove their private staging
 directory and leave existing artifacts intact. The documentation fixture extracts
 a disposable archive, checks relative links and configuration, runs its binaries,
-and verifies missing-guide and repeated-label failures. Native Windows packaging
-and clean-install checks remain separate platform evidence.
+and verifies missing-guide and repeated-label failures. The tag workflow checks
+guide paths, source bytes and checksums in each platform's archive. Native Windows
+execution and clean-install checks remain separate platform evidence.
+
+If a packaging process is forcibly killed, its `.package-*` directory or
+`.voyage-*.lock` may remain in `dist`. Confirm that attempt has stopped before
+removing its staging directory and lock; preserve published archives and checksums.
 
 Before tagging, update versions and changelog, run the full CI command set, complete
 the live evaluation suite, inspect generated manpages/completions, and test a clean
