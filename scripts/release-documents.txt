@@ -64,6 +64,7 @@ docs/vessel-connectivity-retirement.md
 docs/vessel-session-management.md
 docs/voyage-coordination.md
 docs/voyages.md
+docs/voyage-multiplexing-plan.md
 docs/worktree-cleanup.md
 docs/extensions.md
 docs/inference-budgets.md
