@@ -1438,6 +1438,7 @@ impl Agent {
         for definition in &mut request.tools {
             crate::provider::redact_tool_definition(definition, &self.context.redactor)?;
         }
+        tool_replay::project_interrupted_calls(&mut request.messages);
         let limit = self.context_limit(&request.model);
         if limit > 0 {
             let report = crate::context::preflight(&mut request, limit)?;

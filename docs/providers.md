@@ -162,6 +162,14 @@ once effects across requests or crashes. Interrupted managed calls without durab
 results continue to block execution until explicit [unknown-outcome reconciliation](local-tool-reconciliation.md).
 Reconciliation records uncertainty and never repeats the effect or claims rollback.
 
+Ordinary chat can continue after an interrupted tool batch, including after resume.
+For historical calls without a saved result, the outgoing provider request includes
+a failed result explaining that the outcome is unknown and the operation may have
+taken effect. This request projection preserves the canonical transcript and all
+saved results; it never re-executes historical calls. Inspect current state before
+retrying an operation whose outcome is unknown. Managed-session admission still
+requires the explicit reconciliation described above.
+
 Local [inference allowances](inference-budgets.md) count dispatch permits across
 root, child, retry and title requests. Their private attempt ledger distinguishes
 reported token values from unavailable usage. These optional limits are not token

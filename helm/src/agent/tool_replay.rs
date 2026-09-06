@@ -1,7 +1,38 @@
 //! Identity validation is local to one completed provider response. Call IDs are
 //! correlation labels, not cross-request, cross-run or durable effect identities.
-use crate::{model::ToolCall, provider::ProviderError};
+use crate::{
+    model::{Message, Role, ToolCall},
+    provider::ProviderError,
+};
 use std::collections::{BTreeMap, BTreeSet};
+
+/// Repair only the outgoing copy. Missing durable results say nothing about
+/// whether an effect happened; never dispatch historical calls or invent success.
+pub(super) fn project_interrupted_calls(messages: &mut Vec<Message>) {
+    let mut projected = Vec::with_capacity(messages.len());
+    let mut pending = Vec::<String>::new();
+    for message in std::mem::take(messages) {
+        if message.role != Role::Tool && message.role != Role::System {
+            append_unknown_results(&mut projected, &mut pending);
+        }
+        if message.role == Role::Assistant {
+            pending.extend(message.tool_calls.iter().map(|call| call.id.clone()));
+        } else if message.role == Role::Tool {
+            pending.retain(|id| Some(id) != message.tool_call_id.as_ref());
+        }
+        projected.push(message);
+    }
+    append_unknown_results(&mut projected, &mut pending);
+    *messages = projected;
+}
+
+fn append_unknown_results(messages: &mut Vec<Message>, pending: &mut Vec<String>) {
+    for id in pending.drain(..) {
+        messages.push(Message::tool_result(id,
+            "No durable tool result is available from the interrupted run. The outcome is unknown; the operation may have taken effect. Inspect current state before deciding whether to retry. Helm has not replayed this call.",
+            false));
+    }
+}
 
 pub(super) fn normalize(calls: &mut Vec<ToolCall>) -> Result<(), ProviderError> {
     let mut identities = BTreeMap::new();
@@ -78,5 +109,30 @@ mod tests {
             assert!(!error.contains("canary"));
         }
         normalize(&mut vec![call(&"x".repeat(1024), json!({}))]).unwrap();
+    }
+
+    #[test]
+    fn interrupted_projection_preserves_results_and_scopes_reused_ids() {
+        let mut assistant = Message::new(Role::Assistant, "batch");
+        assistant.tool_calls = vec![call("a", json!({})), call("b", json!({}))];
+        let mut messages = vec![
+            assistant.clone(),
+            Message::tool("b", "completed"),
+            Message::new(Role::User, "continue"),
+            assistant,
+            Message::tool_result("a", "denied", false),
+        ];
+        project_interrupted_calls(&mut messages);
+        assert_eq!(messages.len(), 7);
+        assert_eq!(messages[1].content, "completed");
+        assert_eq!(messages[2].tool_call_id.as_deref(), Some("a"));
+        assert_eq!(messages[2].tool_success, Some(false));
+        assert!(messages[2].content.contains("outcome is unknown"));
+        assert_eq!(messages[3].role, Role::User);
+        assert_eq!(messages[5].content, "denied");
+        assert_eq!(messages[6].tool_call_id.as_deref(), Some("b"));
+        let before = serde_json::to_value(&messages).unwrap();
+        project_interrupted_calls(&mut messages);
+        assert_eq!(serde_json::to_value(messages).unwrap(), before);
     }
 }

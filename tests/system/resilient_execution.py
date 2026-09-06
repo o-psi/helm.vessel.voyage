@@ -51,6 +51,16 @@ class Provider(BaseHTTPRequestHandler):
         case['requests'].append(body)
         step = len(case['requests'])
         case['times'].append(time.monotonic())
+        if step > 1 and case['mode'] == 'interrupted':
+            if case['provider'] == 'openai-responses':
+                outputs = {item['call_id']: item['output'] for item in body['input'] if item.get('type') == 'function_call_output'}
+            elif case['provider'] == 'openai-chat':
+                outputs = {item['tool_call_id']: item['content'] for item in body['messages'] if item.get('role') == 'tool'}
+            else:
+                outputs = {item['tool_use_id']: item['content'] for message in body['messages'] if isinstance(message.get('content'), list) for item in message['content'] if item.get('type') == 'tool_result'}
+            if set(outputs) != {'completed', 'running', 'unstarted'} or any('outcome is unknown' not in outputs[key] for key in ['running', 'unstarted']):
+                self.send_error(400, 'No tool output found for interrupted function call')
+                return
         if step > 1 and case['mode'] == 'duplicate':
             if case['provider'] == 'openai-responses':
                 prior = [item for item in body['input'] if item.get('type') == 'function_call']
@@ -92,6 +102,12 @@ class Provider(BaseHTTPRequestHandler):
             elif case['mode'] == 'distinct':
                 other['id'] = 'another-call'
             calls = [call] if case['mode'] == 'fresh' else [call, other]
+            if case['mode'] == 'interrupted':
+                calls = [
+                    dict(call, id='completed'),
+                    {'id': 'running', 'name': 'shell', 'arguments': {'command': "printf 'started\\n' >> started; sleep 60"}},
+                    dict(call, id='unstarted'),
+                ]
             data = calls_response(case['provider'], calls)
         elif case['mode'] == 'fresh' and step == 2:
             data = calls_response(case['provider'], [call])
@@ -104,7 +120,54 @@ class Provider(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
 
+def interrupted_resume():
+    for provider in ['openai-chat', 'openai-responses', 'anthropic']:
+        with tempfile.TemporaryDirectory(prefix='helm-interrupted-') as directory:
+            root = Path(directory)
+            case = {'provider': provider, 'mode': 'interrupted', 'requests': [], 'times': []}
+            server = ThreadingHTTPServer(('127.0.0.1', 0), Provider)
+            server.case = case
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            process = None
+            try:
+                config = root/'provider.toml'
+                config.write_text(f'provider="{provider}"\nmodel="resilience-model"\nbase_url="http://127.0.0.1:{server.server_port}/v1"\napi_key_env="RESILIENCE_KEY"\naccess="unrestricted"\ncommand_timeout_secs=120\n')
+                env = dict(os.environ, HOME=str(root/'home'), XDG_CONFIG_HOME=str(root/'config'), XDG_DATA_HOME=str(root/'data'), RESILIENCE_KEY='offline-fixture')
+                command = [str(HELM), '--config', str(config), '--workspace', str(root), 'run', 'exercise interruption']
+                process = subprocess.Popen(command, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                deadline = time.monotonic() + 15
+                while not (root/'started').exists() and time.monotonic() < deadline:
+                    assert process.poll() is None, process.communicate()
+                    time.sleep(0.01)
+                assert (root/'started').exists(), 'tool did not start'
+                process.send_signal(signal.SIGINT)
+                process.communicate(timeout=15)
+                assert process.returncode != 0
+                records = list((root/'data/helm/sessions').glob('*.json'))
+                assert len(records) == 1
+                saved = json.loads(records[0].read_text())
+                assert [m['tool_call_id'] for m in saved['messages'] if m['role'] == 'tool'] == ['completed'], saved
+                for _ in range(2):
+                    resumed = subprocess.run([*command, '--resume', saved['id']], env=env, capture_output=True, text=True, timeout=15)
+                    assert resumed.returncode == 0, (provider, resumed.stderr)
+                    current = json.loads(records[0].read_text())
+                    assert current['messages'][:len(saved['messages'])] == saved['messages'], 'canonical history rewritten'
+                    assert [m['tool_call_id'] for m in current['messages'] if m['role'] == 'tool'] == ['completed'], 'projected unknown result persisted'
+                    assert (root/'effects').read_text().splitlines() == ['effect'], 'historical tool replayed'
+                    assert (root/'started').read_text().splitlines() == ['started'], 'interrupted effect repeated'
+            finally:
+                if process is not None and process.poll() is None:
+                    process.kill()
+                    process.wait(5)
+                server.shutdown()
+                server.server_close()
+                thread.join(5)
+    print('interrupted tool batches: cancellation, persisted resume, unknown wire outcomes and no replay passed for all native providers')
+
+
 def main():
+    interrupted_resume()
     for provider in ['openai-chat', 'openai-responses', 'anthropic']:
         for mode in ['duplicate', 'conflict-arguments', 'conflict-name', 'distinct', 'fresh', 'retry', 'retry-after', 'retry-too-long', 'cancel-retry', 'timeout', 'denied']:
             with tempfile.TemporaryDirectory(prefix='helm-resilient-') as directory:
