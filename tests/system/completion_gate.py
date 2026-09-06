@@ -207,6 +207,7 @@ class GateCase(Case):
         saved = self.latest_session()
         phase = "completed" if success else "interrupted" if self.mode in ("failure", "cancel") else "incomplete"
         assert saved["run_summaries"][-1]["phase"] == phase, saved["run_summaries"]
+        assert not saved["run_summaries"][-1].get("partial_output"), "canonical proposal duplicated as unfinished partial text"
         assert not any(m["role"] == "system" for m in saved["messages"])
         assert len([m for m in saved["messages"] if m["role"] == "user"]) == 1
         texts = [m["content"] for m in saved["messages"] if m["role"] == "assistant" and not m.get("tool_calls")]

@@ -59,6 +59,13 @@ leaves observation inconclusive; an in-memory terminal flag alone is insufficien
 before its final fresh check. Neither path closes unrelated terminals or performs
 Git/worktree cleanup. No new provider request starts after cancellation.
 
+A completed provider response can contain text without incremental text deltas.
+After canonical publication, `RunCheckpoint::unstreamed` lets the managed Journal
+commit that provisional text for public replay exactly once. Canonical-only
+frontends use the default no-op; they do not create duplicate unfinished output.
+Reported usage is persisted before this projection, and failed projection still
+prevents final acceptance.
+
 A durable seal and frontend acknowledgement are distinct boundaries. If cancellation
 or checkpoint acknowledgement fails after a successful seal, the caller receives
 an interrupted recovery and no completed event; the already persisted decision
@@ -154,8 +161,9 @@ have dedicated regressions.
 Frontend status, saved-session annotations, managed Journal outcomes and native
 HTTP reconciliation have additional integration coverage in the acceptance map;
 gate unit tests alone do not prove those surfaces. Dedicated remote execution now
-uses the managed scoped checkpoint path; its broader reconciliation acceptance
-remains separate from the local fixture matrix. Run both focused suites with:
+uses the managed scoped checkpoint path; the actual `remote_completion.py` matrix checks its authenticated public outcomes,
+canonical persistence, false-final reconciliation, interrupted effects and recovery.
+Distributed voyage result collection remains separate. Run both focused suites with:
 
 ```sh
 cargo test -p helm --lib agent::gate_tests --all-features
@@ -192,9 +200,9 @@ see [the dated evidence](completion-validation.md#managed-integration-and-bounde
 These results belong to that commit, not automatically to later changes.
 
 Full #83 acceptance remains open for successful budgeted real-model evidence and
-the full remote worker/Vessel reconciliation matrix. [Dedicated remote sessions](remote-sessions.md)
-are implemented, with offline lifecycle evidence; that is not proof of complete
-remote reconciliation or multi-Helm voyage behavior. The recorded local
+distributed voyage result reconciliation beyond the dedicated worker matrix. [Dedicated remote sessions](remote-sessions.md)
+are implemented, with offline lifecycle evidence; that is not proof of distributed or semantic
+reconciliation or multi-Helm voyage behavior. The recorded local
 live attempts retained failure/recovery evidence; they did not establish
 successful evidence verification or reconciliation. Subscription authentication
 and cutover remain separate unverified requirements. Final dependency changes

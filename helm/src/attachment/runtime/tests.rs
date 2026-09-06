@@ -513,7 +513,12 @@ async fn empty_text_deltas_are_noops_not_storage_failures() {
             .is_ok()
     );
     assert_eq!(effects.load(Ordering::SeqCst), 1);
-    assert_eq!(owner.record().await.unwrap().partial_text, "");
+    // Empty deltas contribute nothing; completed-only assistant text is
+    // durably projected exactly once after its canonical checkpoint.
+    assert_eq!(
+        owner.record().await.unwrap().partial_text,
+        "tool intentfinal answer"
+    );
 }
 
 #[tokio::test]

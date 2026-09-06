@@ -1,3 +1,5 @@
+#[cfg(test)]
+mod projection_tests;
 mod retry;
 mod tool_replay;
 pub use retry::RetryJitter;
@@ -174,13 +176,20 @@ pub trait EventSink: Send + Sync {
     async fn emit(&self, event: AgentEvent);
 }
 
-/// Local persistence boundary, never a transport/event projection. Implementations
+/// Local durable persistence boundary, not a best-effort event notification. Implementations
 /// must commit before returning success and keep provider continuation on Helm.
 #[async_trait]
 pub trait RunCheckpoint: Send + Sync {
     fn run_id(&self) -> uuid::Uuid;
     async fn canonical(&self, messages: &[Message], usage: &Usage) -> Result<(), CheckpointError>;
     async fn partial(&self, text: &str) -> Result<(), CheckpointError>;
+    /// Called after canonical publication for assistant text that had no text
+    /// deltas. It is still provisional. Canonical-only frontends need no extra
+    /// record; live-event journals may durably project it without acceptance.
+    async fn unstreamed(&self, _text: &str) -> Result<(), CheckpointError> {
+        Ok(())
+    }
+
     /// Called only after the durable run decision is sealed. A prior canonical
     /// checkpoint is still provisional and must not imply successful completion.
     async fn accepted(
@@ -876,6 +885,7 @@ impl Agent {
             };
             let response = gate::guarded(self.stream_with_retry(request, &cancel, checkpoint, &mut partial_output), &cancel, deadline).await?
                 .map_err(|error| error.with_recovery(&history, &usage))?;
+            let had_streamed_text = !partial_output.is_empty();
             partial_output.clear();
             usage.input_tokens = usage
                 .input_tokens
@@ -893,6 +903,15 @@ impl Agent {
             gate::guarded(self.checkpoint(checkpoint, &history, &usage), &cancel, deadline).await??;
             if cancel.is_cancelled() {
                 return Err(AgentError::Cancelled);
+            }
+            // A completed-only response is still provisional text. Durable
+            // journals may need its text independently of the local event sink.
+            // Do not duplicate content already delivered as streaming deltas.
+            if !had_streamed_text && !answer.is_empty() && let Some(checkpoint) = checkpoint {
+                gate::guarded(async {
+                    tokio::time::timeout(self.context.timeout, checkpoint.unstreamed(&answer))
+                        .await.map_err(|_| CheckpointError)?
+                }, &cancel, deadline).await??;
             }
             if !answer.is_empty() {
                 self.sink

@@ -28,6 +28,7 @@ unrun platform behavior.
 | Stale evidence, store failures, concurrent writers, late registration | `completion::runtime` review/fingerprint, publication, failed seal and barrier-controlled mutation/registration tests |
 | Scoped abort, failed children, policy and deadline limits | `agent::gate_tests`: scoped shutdown, unrelated work, missing store, cancellation, bounded provider/tool waits, inherited scope |
 | TUI, plain frontend, terminal ownership | `completion_handoff.py`, TUI rendering/outcome tests and session classification tests; gate fixture exercises actual one-shot CLI |
+| Dedicated remote final acceptance and recovery | `remote_completion.py`: all three native adapters, authenticated snapshots/replay, canonical Journal and sealed ledger, the matrix below |
 | Persistence migration and immutable historical decisions | `completion` schema validation and storage/runtime restart tests; [storage contract](completion-storage.md) |
 
 The native fixture runs OpenAI Chat, OpenAI Responses and Anthropic against loopback
@@ -41,6 +42,7 @@ Run from the repository root after building the intended binary:
 HELM_BIN=target/release/helm python3 tests/system/completion_gate.py
 HELM_BIN=target/release/helm python3 tests/system/completion_readiness.py
 HELM_BIN=target/release/helm python3 tests/system/completion_handoff.py
+HELM_BIN=target/release/helm VESSEL_BIN=target/release/vessel python3 tests/system/remote_completion.py
 python3 eval/run.py validate
 ```
 
@@ -200,6 +202,34 @@ See [the delivery evidence](https://github.com/o-psi/voyage/issues/78#issuecomme
 These are historical offline Linux results, not new runs for this documentation
 audit or proof of cross-machine voyage coordination.
 
+## Dedicated remote reconciliation coverage
+
+`remote_completion.py` exercises the current dedicated worker with real Helm,
+Vessel, native HTTP adapters, authenticated commands/replay and private canonical
+storage. It covers 61 cases: 19 per native adapter, three Linux SIGINT/SIGTERM/SIGHUP
+regressions, and one completed-only text-projection failure case. These are deterministic offline checks, not live semantic evaluation
+or distributed voyage coordination.
+
+| Boundary | Assertions |
+| --- | --- |
+| Clean and verified completion | No extra clean request; premature proposal is canonical before reconciliation, while live public state remains Running with no terminal event; evidence is read and accounted before Completed |
+| Pending, blocked and deferred todos | One targeted system update; no synthetic human guidance; ignored updates or accounted incomplete work remain Incomplete |
+| Stale evidence and denied corrective tools | Changed evidence invalidates its prior review; a denied corrective shell command leaves the owned obligation unresolved without expanding policy |
+| Owned children | Failed results require impact accounting; useful late results are explicitly read/incorporated; ignored active children are durably cancelled and do not become successful work |
+| Unrelated previous work | A later clean run does not adopt, account or change prior pending todo/failed-child records or their immutable ledger |
+| Failure, cancel, transport loss and revoke | Reconciliation stops without another provider request or false Completed; provisional canonical text and separately checkpointed partial reconciliation text survive; actual cleanup and authority loss remain distinct |
+| Crash and unknown effects | Running/unconfirmed survives forced death until explicit local recovery; an interrupted shell effect is not replayed, blocks new work, and gets an exact-retry unknown-outcome reconciliation receipt |
+| Completed-only text | A completed response without text deltas projects provisional text once; injected projection failure preserves reported usage and canonical text but prevents acceptance; ordinary local summaries do not duplicate that text as unfinished output |
+| Failed final publication | A sealed local Completed decision does not imply a committed remote terminal event: injected transactional public failure retains Running/unconfirmed until local Interrupted recovery; the historical seal is not rewritten |
+| Retry/restart observation | Immutable command receipts and public replay survive worker restarts without new provider requests or duplicate effects |
+| Foreground signals | A single signal received while the connected notice awaits a full stdout pipe is retained and exits after the pipe drains; no second signal or provider work is needed |
+
+The worker retains one signal subscription across control-plane waits and reconnects.
+The signal test proves delivery retention across the awaited-output gap; it does not
+claim a blocked native stdout write is itself interrupted before its consumer drains.
+The independent `remote_session.py` fixture retains redaction, profile freshness,
+invalid observation, public-admission rollback and unconfirmed-cleanup coverage.
+
 ## Remaining acceptance and merge boundaries
 
 - Verify subsequent schema/runtime changes at their final integrated Linux head.
@@ -213,10 +243,9 @@ audit or proof of cross-machine voyage coordination.
   accurate counting, semantic honesty or correct accounting. A deliberately
   incomplete run must retain truthful impact and cannot substitute for a required
   completed task.
-- Extend dedicated remote worker/Vessel verification to the full reconciliation
-  matrix: withheld false finals, reviewed incomplete work, stale/late participant
-  results, cancellation and provisional-output recovery. Existing remote lifecycle
-  coverage is useful evidence, not completion of that matrix. Planned
+- Preserve the dedicated-worker reconciliation and lifecycle matrices at the final
+  integrated head. Cross-Helm stale/late assignment results, scope edits and
+  coordinator changes remain separate from these one-worker checks. Planned
   [multi-Helm participation](voyages.md) additionally needs evidence across permitted
   Helms with a coordinator separate from the interface. An accepted local run must not imply
   that the open-ended voyage has ended or that another Helm's results were reviewed.

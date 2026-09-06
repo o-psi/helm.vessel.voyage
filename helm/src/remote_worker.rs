@@ -157,6 +157,11 @@ pub(super) async fn run(args: Args, mut config: Config, workspace: Option<PathBu
     config.workspace = Some(workspace.clone());
     let redactor = redactor(&config);
     let mut first = Some(first_client);
+    // Keep signal subscriptions alive while a selected branch awaits storage,
+    // output or connection cleanup. Recreating this future each iteration loses
+    // signals delivered between the select and its next subscription.
+    let interrupt = attachment_interrupt();
+    tokio::pin!(interrupt);
     loop {
         let client = match first.take() {
             Some(client) => client,
@@ -167,7 +172,7 @@ pub(super) async fn run(args: Args, mut config: Config, workspace: Option<PathBu
             )?,
         };
         let mut connection = tokio::select! {biased;
-            _=attachment_interrupt()=>return Ok(()),
+            _=&mut interrupt=>return Ok(()),
             result=transport::connect(client,features(),CancellationToken::new())=>result?,
         };
         ensure!(
@@ -203,7 +208,7 @@ pub(super) async fn run(args: Args, mut config: Config, workspace: Option<PathBu
         let mut cleanup_observed = true;
         loop {
             tokio::select! {biased;
-                _=attachment_interrupt()=>{shutdown=true;break;},
+                _=&mut interrupt=>{shutdown=true;break;},
                 result=async {match &mut active {Some(task)=>Some(task.await),None=>std::future::pending().await}}=>{
                     active=None;
                     if !matches!(result,Some(Ok(Ok(ref finished))) if finished.cleanup_observed) {cleanup_observed=false;break;}
@@ -296,7 +301,7 @@ pub(super) async fn run(args: Args, mut config: Config, workspace: Option<PathBu
         if shutdown {
             return Ok(());
         }
-        tokio::select! {_ = attachment_interrupt()=>return Ok(()),_ = tokio::time::sleep(Duration::from_secs(1))=>{}}
+        tokio::select! {_ = &mut interrupt=>return Ok(()),_ = tokio::time::sleep(Duration::from_secs(1))=>{}}
     }
 }
 

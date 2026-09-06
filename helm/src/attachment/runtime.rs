@@ -720,6 +720,9 @@ impl RunCheckpoint for ManagedRunCheckpoint {
         }
         Ok(())
     }
+    async fn unstreamed(&self, text: &str) -> Result<(), CheckpointError> {
+        self.partial(text).await
+    }
     async fn partial(&self, text: &str) -> Result<(), CheckpointError> {
         let text = text.to_owned();
         let token = self.token.clone();
@@ -752,6 +755,9 @@ impl RunCheckpoint for RunOwner {
         reason: &StopReason,
     ) -> Result<(), CheckpointError> {
         self.checkpoint().accepted(messages, usage, reason).await
+    }
+    async fn unstreamed(&self, text: &str) -> Result<(), CheckpointError> {
+        self.checkpoint().unstreamed(text).await
     }
     async fn partial(&self, text: &str) -> Result<(), CheckpointError> {
         self.checkpoint().partial(text).await
