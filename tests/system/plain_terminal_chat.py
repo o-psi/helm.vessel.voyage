@@ -21,7 +21,7 @@ class Provider(BaseHTTPRequestHandler):
             if step==1:
                 if prompt=='start':value=('process',{'action':'start','name':'live','command':'stty -echo; printf "%s" "$$" > terminal.pid.tmp; mv terminal.pid.tmp terminal.pid; exec /bin/sh'})
                 elif prompt=='inspect🧭':value=('process',{'action':'read','id':state['id']})
-                elif prompt=='other':value=('process',{'action':'start','name':'model-owned','command':'printf PUBLIC_VISIBLE; exec /bin/sh'})
+                elif prompt=='other':value=('process',{'action':'start','name':'model-owned','command':'printf PUBLIC_VISIBLE; : > model.ready; exec /bin/sh'})
                 elif prompt=='read-other':
                     state['read_deadline']=time.monotonic()+5
                     state['read_output']=''
@@ -32,6 +32,11 @@ class Provider(BaseHTTPRequestHandler):
                 if prompt in ['start','other']:
                     assert 'started PTY process ' in result,result
                     state['id' if prompt=='start' else 'other']=result.rsplit(' ',1)[1]
+                    if prompt=='other':
+                        deadline=time.monotonic()+5
+                        while not state['ready'].exists():
+                            assert time.monotonic()<deadline,'model-owned child never signalled readiness'
+                            threading.Event().wait(.01)
                 elif prompt=='inspect🧭':assert 'model capture unavailable' in result and 'private' in result,result
                 elif prompt=='read-other':
                     assert result.startswith('status: running\n'),result
@@ -40,6 +45,7 @@ class Provider(BaseHTTPRequestHandler):
                 value=prompt+'-done'
                 if prompt=='read-other' and 'PUBLIC_VISIBLE' not in state['read_output']:
                     assert step<=16 and time.monotonic()<state['read_deadline'],'model-owned PTY output was never observed'
+                    threading.Event().wait(.02)
                     value=('process',{'action':'read','id':state['other']})
             data=response('openai-chat',value,len(state['requests']))
             self.send_response(200);self.send_header('Content-Type','text/event-stream');self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data)
@@ -115,7 +121,7 @@ def main():
     threading.Thread(target=server.serve_forever,daemon=True).start()
     try:
         with tempfile.TemporaryDirectory(prefix='helm-plain-chat-') as tmp:
-            root=Path(tmp);workspace=root/'workspace';workspace.mkdir()
+            root=Path(tmp);workspace=root/'workspace';workspace.mkdir();state['ready']=workspace/'model.ready'
             config=root/'config.toml';config.write_text(f'provider="openai-chat"\nmodel="plain-fixture"\nbase_url="http://127.0.0.1:{server.server_port}/v1"\napi_key_env="PLAIN_FIXTURE_KEY"\naccess="unrestricted"\nprovider_retry_attempts=1\n')
             env=dict(os.environ,HOME=str(root/'home'),XDG_CONFIG_HOME=str(root/'config'),XDG_DATA_HOME=str(root/'data'),PLAIN_FIXTURE_KEY='plain-attachment-fixture',TERM='xterm-256color')
             plain=Plain(['--config',str(config),'--workspace',str(workspace),'chat','--plain'],env)
@@ -170,7 +176,7 @@ def main():
                 destination=os.environ.get('HELM_PLAIN_TERMINAL_EVIDENCE')
                 if destination:
                     evidence=Path(destination)/str(uuid.uuid4());evidence.mkdir(parents=True)
-                    data=json.dumps(state,ensure_ascii=False,indent=2).encode();assert len(data)<=8*1024*1024
+                    data=json.dumps(state,ensure_ascii=False,indent=2,default=str).encode();assert len(data)<=8*1024*1024
                     (evidence/'provider.json').write_bytes(data)
                     (evidence/'terminal.bin').write_bytes(plain.output)
                     saved=evidence/'sessions';saved.mkdir();total=0
