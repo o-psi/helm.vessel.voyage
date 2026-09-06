@@ -1336,3 +1336,41 @@ async fn checkpoint_recovery_uses_baseline_usage_and_preserves_partial_annotatio
     assert_eq!(saved.messages.len(), 2);
     assert_eq!(saved.run_summaries[0].partial_output, "unfinished");
 }
+
+#[test]
+fn narrow_footer_keeps_steering_acknowledgement_visible() {
+    let session = Session::new(PathBuf::from("/tmp"), "test-model".into());
+    let mut app = App::new(session, Vec::new());
+    app.status = "Steering queued · awaiting the next model boundary".into();
+    let mut terminal = Terminal::new(ratatui::backend::TestBackend::new(49, 19)).unwrap();
+    terminal.draw(|frame| draw(frame, &app)).unwrap();
+    let footer: String = (0..49)
+        .map(|x| terminal.backend().buffer()[(x, 18)].symbol())
+        .collect();
+    assert!(footer.contains("Steering queued"), "{footer}");
+    assert!(!footer.contains("Ctrl+"));
+}
+
+#[test]
+fn access_mode_stays_visible_with_sidebar_and_long_session_metadata() {
+    let mut session = Session::new(
+        PathBuf::from("/a/very/long/workspace/location"),
+        "a-very-long-model-name".into(),
+    );
+    session.set_name("A very long conversation title that must not hide authority".into());
+    let mut app = App::new(session, Vec::new());
+    app.access_mode = crate::config::AccessMode::ReadOnly;
+    app.provider_label = "long-provider-name (native)".into();
+    for (width, height) in [(32, 14), (49, 19), (100, 24), (160, 40)] {
+        let mut terminal =
+            Terminal::new(ratatui::backend::TestBackend::new(width, height)).unwrap();
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let first_row: String = (0..width)
+            .map(|x| terminal.backend().buffer()[(x, 0)].symbol())
+            .collect();
+        assert!(
+            first_row.contains("access: read-only"),
+            "{width}x{height}: {first_row}"
+        );
+    }
+}

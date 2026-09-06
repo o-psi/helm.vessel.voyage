@@ -108,22 +108,28 @@ pub(super) fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
     }
     let title = app.session.display_name();
     frame.render_widget(
-        Paragraph::new(Line::from(vec![
-            Span::styled(
-                " HELM ",
-                Style::default()
-                    .fg(Color::Black)
-                    .bg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::raw(format!(
-                "  {title} · {} · {} · access: {} · {}",
+        Paragraph::new(vec![
+            Line::from(vec![
+                Span::styled(
+                    " HELM ",
+                    Style::default()
+                        .fg(Color::Black)
+                        .bg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw(format!(
+                    " access: {} · {}",
+                    app.access_mode,
+                    display_safe(&title)
+                )),
+            ]),
+            Line::from(display_safe(&format!(
+                " {} · {} · {}",
                 app.session.model,
                 app.provider_label,
-                app.access_mode,
                 app.session.workspace.display()
-            )),
-        ]))
+            ))),
+        ])
         .block(Block::default().borders(Borders::BOTTOM)),
         chunks[0],
     );
@@ -172,11 +178,8 @@ pub(super) fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
         chunks[2],
     );
     frame.render_widget(
-        Paragraph::new(format!(
-            "F1 shortcuts · Ctrl+S recent · Ctrl+V voyages  │  {}",
-            app.status
-        ))
-        .style(Style::default().fg(Color::Gray)),
+        Paragraph::new(format!("F1 shortcuts  │  {}", app.status))
+            .style(Style::default().fg(Color::Gray)),
         chunks[3],
     );
     draw_slash_palette(frame, chunks[2], &app.palette_context());
