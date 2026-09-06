@@ -1,3 +1,4 @@
+mod input;
 mod shutdown;
 use super::{Tool, ToolContext, ToolError};
 use crate::terminal::{
@@ -15,7 +16,6 @@ use shutdown::{OwnedChild, ReaderDone, StartupChild};
 pub use shutdown::{TerminalShutdown, TerminalShutdownFailure};
 use std::{
     collections::BTreeMap,
-    io::Write,
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
@@ -64,7 +64,7 @@ struct Managed {
     cols: u16,
     master: Box<dyn MasterPty + Send>,
     child: OwnedChild,
-    writer: Arc<Mutex<Box<dyn Write + Send>>>,
+    writer: input::Input,
     output: Arc<Mutex<Capture>>,
     notification_pending: Arc<AtomicBool>,
     cursor: usize,
@@ -190,7 +190,14 @@ impl Tool for ProcessTool {
             Args::Read { id, name } => {
                 self.read(self.resolve(id, name.as_deref())?, ctx.max_output_bytes)
             }
-            Args::Write { id, name, data } => self.write(self.resolve(id, name.as_deref())?, &data),
+            Args::Write { id, name, data } => {
+                let writer = self.input(self.resolve(id, name.as_deref())?)?;
+                let count = data.len();
+                tokio::select! { biased;
+                    _ = ctx.cancellation.cancelled() => Err(ToolError::Failed("terminal input cancelled; delivery may be partial".into())),
+                    result = writer.write(data.into_bytes()) => result.map(|()|format!("wrote {count} bytes")).map_err(failed),
+                }
+            }
             Args::Resize {
                 id,
                 name,
@@ -364,7 +371,14 @@ impl ProcessTool {
         after_spawn()?;
         drop(pair.slave);
         let mut reader = pair.master.try_clone_reader().map_err(failed)?;
-        let writer = Arc::new(Mutex::new(pair.master.take_writer().map_err(failed)?));
+        #[cfg(unix)]
+        input::make_nonblocking(&*pair.master).map_err(failed)?;
+        let writer = input::Input::start(
+            pair.master.take_writer().map_err(failed)?,
+            child.input_stop(),
+            child.input_done(),
+        )
+        .map_err(failed)?;
         let output = Arc::new(Mutex::new(Capture::new(rows, cols)));
         let max_unread_bytes = self.max_unread_bytes;
         let sink = output.clone();
@@ -383,7 +397,12 @@ impl ProcessTool {
                 let mut buffer = [0_u8; 8192];
                 loop {
                     match std::io::Read::read(&mut reader, &mut buffer) {
-                        Ok(0) | Err(_) => break,
+                        Ok(0) => break,
+                        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                            std::thread::sleep(std::time::Duration::from_millis(5));
+                            continue;
+                        }
+                        Err(_) => break,
                         Ok(n) => {
                             let mut capture = sink.lock().expect("PTY buffer poisoned");
                             capture.parser.process(&buffer[..n]);
@@ -405,11 +424,8 @@ impl ProcessTool {
                                 let _ = events.send(TerminalEvent::Changed(TerminalId(id)));
                             }
                             drop(capture);
-                            if let Some(report) = cursor_report
-                                && let Ok(mut writer) = reader_writer.lock()
-                            {
-                                let _ = writer.write_all(report.as_bytes());
-                                let _ = writer.flush();
+                            if let Some(report) = cursor_report {
+                                reader_writer.report(report.into_bytes());
                             }
                         }
                     }
@@ -455,15 +471,13 @@ impl ProcessTool {
             .unwrap_or_else(|| "running".into());
         Ok(format!("status: {status}\n{result}"))
     }
-    fn write(&self, id: Uuid, data: &str) -> Result<String, ToolError> {
-        let mut map = self.processes.lock().map_err(failed)?;
-        let p = map
-            .get_mut(&id)
-            .ok_or_else(|| ToolError::Failed(format!("unknown process {id}")))?;
-        let mut writer = p.writer.lock().map_err(failed)?;
-        writer.write_all(data.as_bytes()).map_err(failed)?;
-        writer.flush().map_err(failed)?;
-        Ok(format!("wrote {} bytes", data.len()))
+    fn input(&self, id: Uuid) -> Result<input::Input, ToolError> {
+        self.processes
+            .lock()
+            .map_err(failed)?
+            .get(&id)
+            .map(|process| process.writer.clone())
+            .ok_or_else(|| ToolError::Failed(format!("unknown process {id}")))
     }
     fn resize(&self, id: Uuid, rows: u16, cols: u16) -> Result<String, ToolError> {
         let mut map = self.processes.lock().map_err(failed)?;
@@ -619,20 +633,22 @@ impl InteractiveTerminals for ProcessTool {
                 "terminal manager is shutting down".into(),
             ));
         }
-        let mut map = self
-            .processes
-            .lock()
-            .map_err(|e| TerminalError::Failed(e.to_string()))?;
-        let p = map.get_mut(&id.0).ok_or(TerminalError::NotFound(id))?;
-        let mut writer = p
-            .writer
-            .lock()
-            .map_err(|e| TerminalError::Failed(e.to_string()))?;
+        let writer = {
+            let map = self
+                .processes
+                .lock()
+                .map_err(|_| TerminalError::Failed("terminal manager unavailable".into()))?;
+            map.get(&id.0)
+                .ok_or(TerminalError::NotFound(id))?
+                .writer
+                .clone()
+        };
         writer
-            .write_all(&bytes)
-            .and_then(|_| writer.flush())
-            .map_err(|e| TerminalError::Failed(e.to_string()))
+            .write(bytes)
+            .await
+            .map_err(|error| TerminalError::Failed(error.to_string()))
     }
+
     async fn resize(&self, id: TerminalId, columns: u16, rows: u16) -> Result<(), TerminalError> {
         self.resize(id.0, rows, columns)
             .map(|_| ())
@@ -713,6 +729,7 @@ fn terminate_process_group(_: Option<u32>) {}
 
 #[cfg(test)]
 mod tests {
+    mod backpressure;
     mod shutdown;
     use super::*;
     use crate::{

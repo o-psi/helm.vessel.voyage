@@ -20,6 +20,7 @@ pub enum TerminalShutdownFailure {
     KillFailed,
     WaitFailed,
     ReaderRunning,
+    WriterRunning,
 }
 #[derive(Clone, Debug, Serialize)]
 pub struct TerminalShutdown {
@@ -49,6 +50,8 @@ impl TerminalShutdown {
 pub(super) struct OwnedChild {
     inner: Box<dyn Child + Send + Sync>,
     reader_done: Arc<AtomicBool>,
+    input_done: Arc<AtomicBool>,
+    input_stop: Arc<AtomicBool>,
     reaped: bool,
     #[cfg(target_os = "linux")]
     session_observed: bool,
@@ -64,6 +67,8 @@ impl OwnedChild {
         Self {
             inner,
             reader_done: Arc::new(AtomicBool::new(true)),
+            input_done: Arc::new(AtomicBool::new(true)),
+            input_stop: Arc::new(AtomicBool::new(false)),
             reaped: false,
             #[cfg(target_os = "linux")]
             session_observed: false,
@@ -88,6 +93,7 @@ impl OwnedChild {
         Ok(result)
     }
     pub(super) fn observe(&mut self, deadline: Instant) -> Result<bool, TerminalShutdownFailure> {
+        self.input_stop.store(true, Ordering::Release);
         #[cfg(target_os = "linux")]
         {
             if !self.session_observed {
@@ -111,6 +117,9 @@ impl OwnedChild {
             if self.reaped && !self.reader_done.load(Ordering::Acquire) {
                 return Err(TerminalShutdownFailure::ReaderRunning);
             }
+            if self.reaped && !self.input_done.load(Ordering::Acquire) {
+                return Err(TerminalShutdownFailure::WriterRunning);
+            }
             Ok(self.reaped)
         }
         #[cfg(not(target_os = "linux"))]
@@ -132,6 +141,7 @@ impl OwnedChild {
 }
 impl OwnedChild {
     pub(super) fn stop_best_effort(&mut self) {
+        self.input_stop.store(true, Ordering::Release);
         if !self.reaped {
             // Best effort only. Successful explicit shutdown has already reaped
             // the child and must never signal its potentially recycled number.
@@ -179,6 +189,12 @@ impl StartupChild {
     }
     pub(super) fn reader_done(&self) -> Arc<AtomicBool> {
         self.child.as_ref().unwrap().reader_done.clone()
+    }
+    pub(super) fn input_done(&self) -> Arc<AtomicBool> {
+        self.child.as_ref().unwrap().input_done.clone()
+    }
+    pub(super) fn input_stop(&self) -> Arc<AtomicBool> {
+        self.child.as_ref().unwrap().input_stop.clone()
     }
     pub(super) fn take(mut self) -> OwnedChild {
         self.child.take().unwrap()
