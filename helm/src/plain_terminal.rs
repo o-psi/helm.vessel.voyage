@@ -729,7 +729,10 @@ mod tests {
             ..a.clone()
         };
         assert!(select(&[a.clone(), b], "same").is_err());
-        assert_eq!(select(&[a.clone()], &a.id.to_string()).unwrap(), a.id);
+        assert_eq!(
+            select(std::slice::from_ref(&a), &a.id.to_string()).unwrap(),
+            a.id
+        );
         assert!(select(&[], &a.id.to_string()).is_err());
         let stale = TerminalSummary {
             state: TerminalState::Disconnected,
