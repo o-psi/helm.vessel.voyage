@@ -22,7 +22,10 @@ class Provider(BaseHTTPRequestHandler):
                 if prompt=='start':value=('process',{'action':'start','name':'live','command':'stty -echo; printf "%s" "$$" > terminal.pid.tmp; mv terminal.pid.tmp terminal.pid; exec /bin/sh'})
                 elif prompt=='inspect🧭':value=('process',{'action':'read','id':state['id']})
                 elif prompt=='other':value=('process',{'action':'start','name':'model-owned','command':'printf PUBLIC_VISIBLE; exec /bin/sh'})
-                elif prompt=='read-other':value=('process',{'action':'read','id':state['other']})
+                elif prompt=='read-other':
+                    state['read_deadline']=time.monotonic()+5
+                    state['read_output']=''
+                    value=('process',{'action':'read','id':state['other']})
                 else:raise AssertionError('unexpected prompt '+repr(prompt))
             else:
                 result=next(m['content'] for m in reversed(body['messages']) if m['role']=='tool')
@@ -30,8 +33,14 @@ class Provider(BaseHTTPRequestHandler):
                     assert 'started PTY process ' in result,result
                     state['id' if prompt=='start' else 'other']=result.rsplit(' ',1)[1]
                 elif prompt=='inspect🧭':assert 'model capture unavailable' in result and 'private' in result,result
-                elif prompt=='read-other':assert 'PUBLIC_VISIBLE' in result,result
+                elif prompt=='read-other':
+                    assert result.startswith('status: running\n'),result
+                    state['read_output']+=result.partition('\n')[2]
+                    assert len(state['read_output'])<=4096
                 value=prompt+'-done'
+                if prompt=='read-other' and 'PUBLIC_VISIBLE' not in state['read_output']:
+                    assert step<=16 and time.monotonic()<state['read_deadline'],'model-owned PTY output was never observed'
+                    value=('process',{'action':'read','id':state['other']})
             data=response('openai-chat',value,len(state['requests']))
             self.send_response(200);self.send_header('Content-Type','text/event-stream');self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data)
         except Exception as error:state['failures'].append(repr(error));self.send_error(500)
@@ -142,11 +151,20 @@ def main():
                     assert record.stat().st_size<4*1024*1024
                     assert CANARY not in record.read_text(),'private input persisted canonically'
                 assert not state['failures'],state['failures']
-                assert len(state['requests'])==8,state['requests']
+                expected_requests=6+state['steps']['read-other']
+                assert 8<=expected_requests<=23
+                assert len(state['requests'])==expected_requests,state['requests']
+                canonical=json.loads((root/'data'/'helm'/'sessions'/(session_id+'.json')).read_text())
+                calls=[call for message in canonical['messages'] for call in message.get('tool_calls',[])]
+                assert sum(call['name']=='process' and call['arguments'].get('action')=='start' for call in calls)==2
+                reads=[call for call in calls if call['name']=='process' and call['arguments'].get('action')=='read' and call['arguments'].get('id')==state['other']]
+                assert len(reads)==state['steps']['read-other']-1
+                assert 'PUBLIC_VISIBLE' in state['read_output']
                 status,notice=run_piped(['--config',str(config),'chat','--plain','--resume',session_id],env,'/terminals\n/terminal '+state['id']+'\n/exit\n')
                 assert status==0 and notice.count('No live terminals')==2,(status,notice)
-                assert len(state['requests'])==8 and identity(pid)!=started_at
+                assert len(state['requests'])==expected_requests and identity(pid)!=started_at
                 assert not state['failures'],state['failures']
+                print(f'Observed {expected_requests} provider requests and {len(reads)} model-owned readiness reads',flush=True)
                 print('PASS actual plain chat lease, privacy, multiple exact suffix prompts, unrelated capture, voyage switch, cleanup and stale restart',flush=True)
             except BaseException:
                 destination=os.environ.get('HELM_PLAIN_TERMINAL_EVIDENCE')
