@@ -398,7 +398,7 @@ async fn main() -> Result<()> {
         anyhow::ensure!(
             matches!(
                 &cli.command,
-                None | Some(Command::Run { .. } | Command::Chat { .. } | Command::Models { .. })
+                None | Some(Command::Run { .. } | Command::Chat { .. } | Command::Models { .. } | Command::Github(_))
             ) || matches!(&cli.command, Some(Command::Workflow(args)) if matches!(args.command, helm::workflow::WorkflowCommand::Run(_)))
                 || matches!(&cli.command, Some(Command::Managed(args)) if !args.administrative())
                 || matches!(&cli.command, Some(Command::RemoteWorker(args)) if !args.recover),
@@ -1108,6 +1108,7 @@ impl SubagentExecutor for CliSubagentExecutor {
         let config = resolved.config().clone();
         let policy = Arc::new(resolved.policy().clone());
         let tool_context = ToolContext {
+            github: helm::github::Credential::from_config(&config),
             completion: context.completion.clone(),
             policy,
             approver: Arc::new(UnattendedApprover { allow: false }),
@@ -1236,6 +1237,7 @@ async fn build_subagents_managed(
     allowed_tools.insert("subagent".to_string());
     allowed_tools.insert("todo".to_string());
     allowed_tools.insert("completion".to_string());
+    if config.github_enabled && parent_policy.effective().rules().github_enabled { allowed_tools.insert("github".into()); }
     let budget = AgentBudget {
         max_tokens: config.max_tokens as u64,
 
@@ -1503,6 +1505,7 @@ async fn build_authorized_agent_bundle(
         })
     };
     let context = ToolContext {
+        github: helm::github::Credential::from_config(config),
         completion: None,
         policy,
         approver,
@@ -1605,6 +1608,7 @@ fn github_context(config: &Config, workspace: &std::path::Path) -> Result<ToolCo
     let config = resolved.config();
     let attended = io::stdin().is_terminal() && io::stderr().is_terminal();
     Ok(ToolContext {
+        github: helm::github::Credential::from_config(config),
         completion: None,
         policy: Arc::new(resolved.policy().clone()),
         approver: if attended { Arc::new(Terminal::default()) } else { Arc::new(UnattendedApprover { allow:false }) },
@@ -1898,7 +1902,7 @@ async fn build_tools(
     if let Some(tool) = completion {
         tools.register_arc(Arc::new(tool))?;
     }
-    if tool_environment(config).contains_key("HELM_GITHUB_TOKEN") {
+    if config.github_enabled && helm::github::Credential::from_config(config).is_some() {
         tools.register(helm::github::tool::GithubTool);
     }
     if config.access_mode() == AccessMode::ReadOnly {

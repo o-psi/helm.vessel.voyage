@@ -68,7 +68,8 @@ impl Service {
     }
     pub fn new(mut context: ToolContext, session: Option<Uuid>) -> Result<Self> {
         context.policy.check_current()?;
-        let token = context.environment.get("HELM_GITHUB_TOKEN").cloned().ok_or_else(|| anyhow::anyhow!("GitHub capability is unavailable; explicitly delegate HELM_GITHUB_TOKEN in inherited environment"))?;
+        ensure!(context.policy.effective().rules().github_enabled,"GitHub capability is disabled by current local authority");
+        let token = context.github.as_ref().map(|credential|credential.expose().to_owned()).ok_or_else(|| anyhow::anyhow!("GitHub capability unavailable; enable github_enabled and provide HELM_GITHUB_TOKEN"))?;
         context.redactor = Arc::new(context.redactor.with_additional(super::credential_forms(&token)));
         let reference = context
             .completion
@@ -97,7 +98,7 @@ impl Service {
     }
     #[cfg(test)]
     pub(crate) fn fixture(context: ToolContext, session: Option<Uuid>, origin: reqwest::Url, directory: PathBuf) -> Result<Self> {
-        let token = context.environment.get("HELM_GITHUB_TOKEN").cloned().ok_or_else(|| anyhow::anyhow!("fixture needs synthetic token"))?;
+        let token = context.github.as_ref().map(|credential|credential.expose().to_owned()).ok_or_else(|| anyhow::anyhow!("fixture needs dedicated synthetic token"))?;
         let policy = context.policy.clone();
         let mut service = Self::new(context, session)?;
         service.client = Client::fixture(token, origin)?.with_policy(policy);
@@ -112,6 +113,7 @@ impl Service {
     }
     fn current(&self) -> Result<()> {
         self.context.policy.check_current()?;
+        ensure!(self.context.policy.effective().rules().github_enabled,"GitHub capability is disabled by current local authority");
         ensure!(
             !self.context.cancellation.is_cancelled(),
             "GitHub operation cancelled"
@@ -137,8 +139,7 @@ impl Service {
     fn secret_free(&self, draft: &Draft) -> Result<()> {
         let token = self
             .context
-            .environment
-            .get("HELM_GITHUB_TOKEN")
+            .github.as_ref().map(|credential|credential.expose())
             .expect("validated credential");
         fn contains(value: &Value, token: &str, redactor: &crate::tools::Redactor) -> bool {
             match value {
@@ -195,8 +196,7 @@ impl Service {
     pub fn redact(&self, text: &str) -> String {
         self.context.redactor.redact(text).replace(
             self.context
-                .environment
-                .get("HELM_GITHUB_TOKEN")
+                .github.as_ref().map(|credential|credential.expose())
                 .expect("validated credential"),
             "[REDACTED]",
         )
@@ -330,8 +330,7 @@ impl Service {
             !self.context.redactor.contains_secret(&preview)
                 && !preview.contains(
                     self.context
-                        .environment
-                        .get("HELM_GITHUB_TOKEN")
+                        .github.as_ref().map(|credential|credential.expose())
                         .expect("validated credential")
                 ),
             "GitHub exact preview contains a configured secret"
@@ -472,8 +471,7 @@ impl Service {
             !self.context.redactor.contains_secret(&preview)
                 && !preview.contains(
                     self.context
-                        .environment
-                        .get("HELM_GITHUB_TOKEN")
+                        .github.as_ref().map(|credential|credential.expose())
                         .expect("validated credential")
                 ),
             "GitHub exact preview contains a configured secret"
@@ -558,23 +556,6 @@ fn bounded_projection(text: String, maximum: usize) -> Result<String> {
     }
 }
 
-#[cfg(test)]
-mod projection_tests {
-    use super::*;
-    #[test]
-    fn final_encoded_projection_never_exceeds_budget() {
-        for input in ["\\\"".repeat(2048), "\0\n\t".repeat(2048), "🧭日本語".repeat(2048)] {
-            for maximum in [0, 1, 64, 128, 256, 511, 1024] {
-                let result = bounded_projection(input.clone(), maximum);
-                if let Ok(result) = result {
-                    assert!(result.len() <= maximum);
-                    let value: Value = serde_json::from_str(&result).unwrap();
-                    assert_eq!(value["incomplete"], true);
-                } else { assert!(maximum < 256); }
-            }
-        }
-    }
-}
 
 fn exact_preview(operation: &Operation) -> Result<String> {
     json_preview(
@@ -643,4 +624,22 @@ fn validate_receipt(operation: &Operation, value: &Value) -> Result<Receipt> {
         url,
         evidence: super::store::ReceiptEvidence::ApiResponse,
     })
+}
+
+#[cfg(test)]
+mod projection_tests {
+    use super::*;
+    #[test]
+    fn final_encoded_projection_never_exceeds_budget() {
+        for input in ["\\\"".repeat(2048), "\0\n\t".repeat(2048), "🧭日本語".repeat(2048)] {
+            for maximum in [0, 1, 64, 128, 256, 511, 1024] {
+                let result = bounded_projection(input.clone(), maximum);
+                if let Ok(result) = result {
+                    assert!(result.len() <= maximum);
+                    let value: Value = serde_json::from_str(&result).unwrap();
+                    assert_eq!(value["incomplete"], true);
+                } else { assert!(maximum < 256); }
+            }
+        }
+    }
 }

@@ -182,6 +182,7 @@ mod tests {
         };
         (
             ToolContext {
+                github: None,
                 completion: None,
                 policy: Arc::new(crate::policy::Policy::new(&config, path.into()).unwrap()),
                 approver: frontend.clone(),

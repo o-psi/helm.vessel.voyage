@@ -251,6 +251,7 @@ mod tests {
         let mut registry = ToolRegistry::default();
         registry.register(CompletionTool::new(todos.clone(), agents.clone()));
         let context = ToolContext {
+            github: None,
             completion: Some(run.clone()),
             policy: Arc::new(Policy::new(&Config::default(), root.path().to_owned()).unwrap()),
             approver: Arc::new(UnattendedApprover { allow: false }),

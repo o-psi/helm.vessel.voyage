@@ -183,6 +183,7 @@ pub fn explicit(config: &Config, assignments: &[String], access: bool) -> Result
             .contains(&"deny_commands")
             .then_some(base.deny_commands),
         inherit_env: keys.contains(&"inherit_env").then_some(base.inherit_env),
+        github_enabled: keys.contains(&"github_enabled").then_some(base.github_enabled),
     })
 }
 impl SelectionArgs {

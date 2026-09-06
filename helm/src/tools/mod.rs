@@ -247,6 +247,8 @@ impl Redactor {
 
 #[derive(Clone)]
 pub struct ToolContext {
+    /// Dedicated capability, never forwarded to shell/MCP or serialized.
+    pub github: Option<crate::github::Credential>,
     pub completion: Option<crate::completion::runtime::RunHandle>,
     pub policy: Arc<Policy>,
     pub approver: Arc<dyn Approver>,
@@ -707,6 +709,7 @@ mod security_tests {
         let directory = tempfile::tempdir().unwrap();
         let config = crate::config::Config::default();
         let context = ToolContext {
+            github: None,
             completion: None,
             policy: Arc::new(Policy::new(&config, directory.path().to_owned()).unwrap()),
             approver: Arc::new(UnattendedApprover { allow: false }),
@@ -733,6 +736,7 @@ mod security_tests {
             ..crate::config::Config::default()
         };
         let context = ToolContext {
+            github: None,
             completion: None,
             policy: Arc::new(Policy::new(&config, directory.path().to_owned()).unwrap()),
             approver: Arc::new(UnattendedApprover { allow: true }),

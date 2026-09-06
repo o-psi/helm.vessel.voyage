@@ -11,6 +11,7 @@ use uuid::Uuid;
 
 fn context(path: &std::path::Path) -> ToolContext {
     ToolContext {
+        github: None,
         completion: None,
         policy: Arc::new(
             Policy::new(

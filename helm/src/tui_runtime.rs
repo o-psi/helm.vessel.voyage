@@ -90,6 +90,7 @@ impl WorkspaceRuntime {
                 .with_execution_authority(admission.clone()),
         );
         let context = ToolContext {
+            github: helm::github::Credential::from_config(runtime_config),
             completion: None,
             policy,
             approver: bridge.clone(),

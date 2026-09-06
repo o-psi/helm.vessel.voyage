@@ -44,6 +44,27 @@ fn resolve(root: &tempfile::TempDir, config: &Config) -> anyhow::Result<RuntimeP
     )
 }
 #[test]
+fn dedicated_github_capability_attenuates_and_ceiling_revocation_is_fresh() {
+    let (root, mut config) = fixture();
+    let disabled = resolve(&root,&config).unwrap();
+    let mut child = config.clone();
+    child.github_enabled = true;
+    disabled.policy().limit_child_config(&mut child,&root.path().join("workspace")).unwrap();
+    assert!(!child.github_enabled);
+    config.github_enabled = true;
+    let enabled = resolve(&root,&config).unwrap();
+    assert!(enabled.config().github_enabled);
+    let mut child = enabled.config().clone();
+    enabled.policy().limit_child_config(&mut child,&root.path().join("workspace")).unwrap();
+    assert!(child.github_enabled);
+    write_ceiling(&root,AccessMode::Unrestricted);
+    assert!(enabled.policy().check_current().is_err());
+    let attenuated = resolve(&root,&config).unwrap();
+    assert!(!attenuated.config().github_enabled);
+    assert!(!attenuated.policy().effective().rules().github_enabled);
+    assert_eq!(config.env,enabled.config().env);
+}
+#[test]
 fn no_ceiling_preserves_explicit_environment_precedence_without_mutating_config() {
     let (root, config) = fixture();
     let runtime = resolve(&root, &config).unwrap();
@@ -212,6 +233,7 @@ async fn changed_ceiling_stops_reused_agent_before_provider_or_run_events() {
         Box::new(Count(calls.clone())),
         ToolRegistry::default(),
         ToolContext {
+            github: None,
             completion: None,
             policy: Arc::new(runtime.policy().clone()),
             approver: Arc::new(UnattendedApprover { allow: false }),

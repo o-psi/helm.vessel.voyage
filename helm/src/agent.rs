@@ -1650,6 +1650,7 @@ mod tests {
             provider,
             ToolRegistry::default(),
             ToolContext {
+                github: None,
                 completion: None,
                 policy,
                 approver: Arc::new(Yes),
@@ -2259,6 +2260,7 @@ mod tests {
             Box::new(StreamingOk),
             ToolRegistry::default(),
             ToolContext {
+                github: None,
                 completion: None,
                 policy,
                 approver: Arc::new(Yes),

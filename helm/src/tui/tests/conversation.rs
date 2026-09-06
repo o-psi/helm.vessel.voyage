@@ -290,6 +290,7 @@ fn navigation_agent_with_provider(
         provider,
         crate::tools::ToolRegistry::default(),
         crate::tools::ToolContext {
+            github: None,
             completion: None,
             policy: Arc::new(
                 crate::policy::Policy::new(

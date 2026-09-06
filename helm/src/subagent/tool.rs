@@ -451,6 +451,7 @@ mod tests {
             ..crate::Config::default()
         };
         let context = ToolContext {
+            github: None,
             completion: None,
             policy: Arc::new(crate::policy::Policy::new(&config, workspace).unwrap()),
             approver: Arc::new(crate::tools::UnattendedApprover { allow: true }),
@@ -590,6 +591,7 @@ mod tests {
                 ..crate::Config::default()
             };
             let context = ToolContext {
+                github: None,
                 completion: None,
                 policy: Arc::new(crate::policy::Policy::new(&config, workspace.clone()).unwrap()),
                 approver: Arc::new(crate::tools::UnattendedApprover { allow: true }),
@@ -749,6 +751,7 @@ mod tests {
             ..crate::Config::default()
         };
         let context = ToolContext {
+            github: None,
             completion: None,
             policy: Arc::new(crate::policy::Policy::new(&config, workspace.clone()).unwrap()),
             approver: Arc::new(crate::tools::UnattendedApprover { allow: true }),
@@ -873,6 +876,7 @@ mod tests {
             ..crate::config::Config::default()
         };
         let context = ToolContext {
+            github: None,
             completion: None,
             policy: Arc::new(crate::policy::Policy::new(&config, directory.path().into()).unwrap()),
             approver: approver.clone(),

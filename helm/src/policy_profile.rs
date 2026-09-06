@@ -44,7 +44,10 @@ pub struct Rules {
     pub deny_commands: Vec<String>,
     /// Environment variable names only, never their values.
     pub inherit_env: Vec<String>,
+    #[serde(default, skip_serializing_if = "github_disabled")]
+    pub github_enabled: bool,
 }
+fn github_disabled(value: &bool) -> bool { !value }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProfileDocument {
@@ -83,6 +86,7 @@ impl Builtin {
                 write_roots: vec!["$workspace".into()],
                 deny_commands: vec!["shutdown".into(), "reboot".into(), "mkfs".into()],
                 inherit_env: vec!["PATH".into(), "LANG".into(), "LC_ALL".into(), "TERM".into()],
+                github_enabled: false,
             },
         }
     }
@@ -197,6 +201,8 @@ pub struct Overrides {
     pub write_roots: Option<Vec<String>>,
     pub deny_commands: Option<Vec<String>>,
     pub inherit_env: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub github_enabled: Option<bool>,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -229,6 +235,7 @@ impl Layer {
                 write_roots: Some(r.write_roots.clone()),
                 deny_commands: Some(r.deny_commands.clone()),
                 inherit_env: Some(r.inherit_env.clone()),
+                github_enabled: Some(r.github_enabled),
             },
         )?;
         value.profile_revision = Some(profile.revision);
@@ -265,6 +272,7 @@ impl Layer {
         field!(write_roots);
         field!(deny_commands);
         field!(inherit_env);
+        field!(github_enabled);
     }
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -275,6 +283,8 @@ pub struct EffectiveRules {
     pub write_roots: Vec<PathBuf>,
     pub deny_commands: Vec<String>,
     pub inherit_env: Vec<String>,
+    #[serde(skip_serializing_if = "github_disabled")]
+    pub github_enabled: bool,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct Contribution {
@@ -393,6 +403,7 @@ fn prepare_roots(r: &Rules, workspace: &Path, allow_exact_file: bool) -> Result<
         write_roots: roots(&r.write_roots)?,
         deny_commands: sorted(&r.deny_commands),
         inherit_env: sorted(&r.inherit_env),
+        github_enabled: r.github_enabled,
     })
 }
 fn rank(mode: AccessMode) -> u8 {
@@ -428,6 +439,7 @@ fn ceiling_rules(r: &mut EffectiveRules, c: &EffectiveRules, workspace: &Path) -
     r.read_roots = intersect(&r.read_roots, &c.read_roots);
     r.write_roots = intersect(&r.write_roots, &c.write_roots);
     r.inherit_env.retain(|name| c.inherit_env.contains(name));
+    r.github_enabled &= c.github_enabled;
     r.deny_commands.extend(c.deny_commands.clone());
     r.deny_commands.sort();
     r.deny_commands.dedup();
@@ -657,7 +669,8 @@ pub fn transition(previous: &EffectivePolicy, proposed: &EffectivePolicy) -> Res
             .deny_commands
             .iter()
             .any(|x| !new.deny_commands.contains(x))
-        || new.inherit_env.iter().any(|x| !old.inherit_env.contains(x));
+        || new.inherit_env.iter().any(|x| !old.inherit_env.contains(x))
+        || (new.github_enabled && !old.github_enabled);
     let digest = hash(&(
         &previous.digest,
         &proposed.digest,

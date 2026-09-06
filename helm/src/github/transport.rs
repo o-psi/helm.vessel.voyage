@@ -98,7 +98,7 @@ impl Client {
             url.origin() == self.origin.origin(),
             "invalid GitHub operation origin"
         );
-        let mut authorization = header::HeaderValue::from_str(&format!("Bearer {}", &*self.token))
+        let mut authorization = header::HeaderValue::from_str(&format!("Bearer {}", *self.token))
             .map_err(|_| anyhow::anyhow!("GitHub credential is malformed"))?;
         authorization.set_sensitive(true);
         let mut request = self

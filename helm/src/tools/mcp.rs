@@ -470,6 +470,7 @@ printf '%s\n' '{"jsonrpc":"2.0","id":3,"result":{"content":[{"type":"text","text
             ..Config::default()
         };
         let context = ToolContext {
+            github: None,
             completion: None,
             policy: Arc::new(Policy::new(&config, directory.path().to_owned()).unwrap()),
             approver: Arc::new(Yes),

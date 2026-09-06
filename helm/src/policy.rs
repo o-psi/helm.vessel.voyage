@@ -115,6 +115,7 @@ impl Policy {
             &mut config.unattended_approval,
             &self.snapshot.effective.rules().unattended,
         );
+        config.github_enabled &= self.snapshot.effective.rules().github_enabled;
         config.deny_commands.extend(self.deny_commands.clone());
         config.deny_commands.sort();
         config.deny_commands.dedup();

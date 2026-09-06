@@ -94,6 +94,8 @@ pub struct Config {
     /// Explicit invocation authority; never persisted or restored from sessions.
     #[serde(skip)]
     pub policy_profile: Option<crate::policy_profile::selection::Selection>,
+    /// Explicit GitHub capability; the named credential never enters child environment.
+    pub github_enabled: bool,
     pub provider: ProviderKind,
     pub model: String,
     pub api_key_env: String,
@@ -175,6 +177,7 @@ pub struct ConfigOverrideSpec {
 }
 
 pub const CONFIG_OVERRIDE_SPECS: &[ConfigOverrideSpec] = &[
+    ConfigOverrideSpec { key: "github_enabled", description: "Enable the dedicated GitHub capability using HELM_GITHUB_TOKEN", kind: ConfigValueKind::Bool },
     ConfigOverrideSpec {
         key: "provider",
         description: "Provider transport",
@@ -380,6 +383,7 @@ pub enum UnattendedApprovalMode {
 impl Default for Config {
     fn default() -> Self {
         Self {
+            github_enabled: false,
             provider: ProviderKind::OpenaiResponses,
             model: "gpt-5".into(),
             api_key_env: "OPENAI_API_KEY".into(),
@@ -695,6 +699,18 @@ pub fn default_data_dir() -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn github_opt_in_preserves_secret_inheritance_refusal() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("config.toml");
+        std::fs::write(&path,"github_enabled = true\n").unwrap();
+        let mut config = Config::load(Some(&path)).unwrap();
+        assert!(config.github_enabled);
+        assert!(config.validate().is_ok());
+        config.inherit_env.push("HELM_GITHUB_TOKEN".into());
+        assert!(config.validate().unwrap_err().to_string().contains("refusing to inherit"));
+        assert!(!Config::default().github_enabled);
+    }
 
     #[test]
     fn refuses_secret_environment_inheritance() {

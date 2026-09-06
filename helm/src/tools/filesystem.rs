@@ -320,6 +320,7 @@ mod tests {
             ..Config::default()
         };
         ToolContext {
+            github: None,
             completion: None,
             policy: Arc::new(Policy::new(&config, root.to_owned()).unwrap()),
             approver: Arc::new(Yes),

@@ -179,7 +179,7 @@ pub async fn execute(context: crate::tools::ToolContext, session_id: Option<uuid
 
 pub async fn execute_args(mut context: crate::tools::ToolContext, session_id: Option<uuid::Uuid>, args: Args) -> Result<CommandResult> {
     use super::{publication::{Action, Draft, ReviewEvent}, service::Service};
-    if let Some(token) = context.environment.get("HELM_GITHUB_TOKEN") {
+    if let Some(token) = context.github.as_ref().map(|credential|credential.expose()) {
         context.redactor = std::sync::Arc::new(context.redactor.with_additional(super::credential_forms(token)));
     }
     context.policy.check_current()?;

@@ -125,6 +125,7 @@ impl RuntimePolicy {
         config.allow_write = rules.write_roots.clone();
         config.deny_commands = rules.deny_commands.clone();
         config.inherit_env = rules.inherit_env.clone();
+        config.github_enabled = rules.github_enabled;
         if let Some(allowed) = effective.environment_ceiling() {
             restrict_environment(&mut config, allowed);
         }
@@ -162,6 +163,7 @@ pub(crate) fn config_rules(config: &Config) -> Result<Rules> {
         write_roots: root_names(&config.allow_write)?,
         deny_commands: config.deny_commands.clone(),
         inherit_env: config.inherit_env.clone(),
+        github_enabled: config.github_enabled,
     })
 }
 fn root_names(roots: &[PathBuf]) -> Result<Vec<String>> {

@@ -74,6 +74,7 @@ fn rules(effective: &EffectivePolicy) -> Rules {
             .collect(),
         deny_commands: r.deny_commands.clone(),
         inherit_env: r.inherit_env.clone(),
+        github_enabled: r.github_enabled,
     }
 }
 fn effective(

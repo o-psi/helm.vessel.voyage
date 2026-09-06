@@ -302,6 +302,7 @@ mod tests {
 
     pub(super) fn context(directory: &tempfile::TempDir) -> ToolContext {
         ToolContext {
+            github: None,
             completion: None,
             policy: Arc::new(
                 Policy::new(&Config::default(), directory.path().to_path_buf()).unwrap(),

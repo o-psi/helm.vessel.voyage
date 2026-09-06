@@ -127,6 +127,7 @@ fn activation_arguments(
         ("write_roots", "allow_write"),
         ("deny_commands", "deny_commands"),
         ("inherit_env", "inherit_env"),
+        ("github_enabled", "github_enabled"),
     ] {
         if let Some(value) = values.get(field).filter(|v| !v.is_null()) {
             args.extend([

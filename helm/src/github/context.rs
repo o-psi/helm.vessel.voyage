@@ -373,8 +373,8 @@ pub(super) async fn read(
             page.incomplete.push("Some returned patches are malformed, truncated, or disagree with reported changed-line totals; complete diff coverage is not established.".into());
         }
     }
-    if let Some(next) = next {
-        if (request.section != Section::Files || next <= 30)
+    if let Some(next) = next
+        && (request.section != Section::Files || next <= 30)
             && (request.section != Section::WorkflowRuns || next <= 10)
         {
             page.next = Some(Read {
@@ -383,7 +383,6 @@ pub(super) async fn read(
                 expected_base: page.base.clone(),
                 ..request.clone()
             });
-        }
     }
     if let Some(head) = head {
         let current = details(client, &request.object, cancel).await?;

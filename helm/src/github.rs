@@ -6,15 +6,26 @@ pub mod logs;
 pub mod approval;
 #[cfg(test)]
 mod approval_fixture;
+#[cfg(test)]
+mod context_fixture;
 pub mod tool;
 
 /// Supported diagnostic projections for the explicitly delegated credential.
 /// This is redaction, not a claim to detect arbitrary encodings or exfiltration.
+#[derive(Clone)]
+pub struct Credential(std::sync::Arc<zeroize::Zeroizing<String>>);
+impl Credential {
+    pub fn from_config(config: &crate::Config) -> Option<Self> {
+        if !config.github_enabled { return None; }
+        std::env::var("HELM_GITHUB_TOKEN").ok().map(|token|Self(std::sync::Arc::new(zeroize::Zeroizing::new(token))))
+    }
+    pub(crate) fn expose(&self) -> &str { self.0.as_str() }
+    #[cfg(test)]
+    pub(crate) fn fixture(token: &str) -> Self { Self(std::sync::Arc::new(zeroize::Zeroizing::new(token.into()))) }
+}
+
 pub fn credential_redactions(config: &crate::Config) -> Vec<String> {
-    let token = config.env.get("HELM_GITHUB_TOKEN").cloned().or_else(|| {
-        config.inherit_env.iter().any(|name|name == "HELM_GITHUB_TOKEN").then(||std::env::var("HELM_GITHUB_TOKEN").ok()).flatten()
-    });
-    token.map(|token|credential_forms(&token)).unwrap_or_default()
+    Credential::from_config(config).map(|credential|credential_forms(credential.expose())).unwrap_or_default()
 }
 pub(crate) fn credential_forms(token: &str) -> Vec<String> {
     use base64::Engine;
@@ -34,7 +45,9 @@ mod credential_tests {
         let mut config = crate::Config::default();
         let token = "fixture-github-secret-9876";
         config.env.insert("HELM_GITHUB_TOKEN".into(),token.into());
-        let forms = super::credential_redactions(&config);
+        assert!(super::credential_redactions(&config).is_empty());
+        let credential = super::Credential::fixture(token);
+        let forms = super::credential_forms(credential.expose());
         let redactor = crate::tools::Redactor::new(forms.clone());
         for form in forms {
             assert_eq!(redactor.redact(format!("before {form} after")),"before [REDACTED] after");
