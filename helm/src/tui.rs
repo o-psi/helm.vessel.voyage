@@ -343,8 +343,8 @@ pub async fn run(
         tokio::select! {
             event = input.next() => {
                 match event {
-                    Some(Ok(Event::Key(key))) if key.is_press() => {
-                        handle_key(key, &mut app, &agent, store, &tx, terminals.as_ref(), supervisor.clone(), todos.clone()).await?;
+                    Some(Ok(event @ (Event::Key(_) | Event::Paste(_)))) => {
+                        handle_input_event(event, &mut app, &agent, store, &tx, terminals.as_ref(), supervisor.clone(), todos.clone()).await?;
                     }
                     Some(Ok(Event::Resize(columns, rows))) => {
                         let viewport = conversation_layout(
@@ -363,34 +363,6 @@ pub async fn run(
                             recent::open_selected(&mut app, store).await?;
                         }
                     },
-                    Some(Ok(Event::Paste(text))) if app.question.is_some() => {
-                        if let Some(question) = &mut app.question { question.insert(&text); }
-                    }
-                    Some(Ok(Event::Paste(text))) if app.approval.is_none() && !app.show_sessions => {
-                        if let Some(id) = app.terminal_panel.attached_terminal {
-                            if let Err(error) = terminals.write(id, text.into_bytes()).await {
-                                app.status = format!("Terminal input failed: {error}");
-                            }
-                        } else if !app.terminal_panel.terminal_picker {
-                            let text = text.replace("\r\n", "\n").replace('\r', "\n");
-                            if app.voyage_panel.is_open() {
-                                app.voyage_panel.paste(&text);
-                            } else if app.workflow_panel.is_open() {
-                                app.workflow_panel.paste(&text);
-                            } else if app.model_panel.model_picker {
-                                app.model_panel.model_filter.insert_str(&text);
-                                app.model_panel.selected_model = 0;
-                            } else if matches!(app.supervisor_panel.supervisor_mode, Some(SupervisorMode::Message { .. })) {
-                                app.supervisor_panel.supervisor_input.insert_str(&text);
-                            } else if matches!(app.todo_panel.todo_mode, Some(TodoMode::Input { .. })) {
-                                app.todo_panel.todo_input.insert_str(&text);
-                            } else if app.supervisor_panel.supervisor_mode.is_none() {
-                                app.insert_composer(&text);
-                                reset_slash_palette(&mut app);
-                                request_slash_models_if_needed(&mut app, &agent, &tx);
-                            }
-                        }
-                    }
                     Some(Err(error)) => return Err(error.into()),
                     None => break,
                     _ => {}
@@ -849,6 +821,122 @@ fn handle_question_key(key: KeyEvent, app: &mut App) -> bool {
     false
 }
 
+// Keyboard and paste share one owner; a panel's nonediting modes still own input.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum InputOwner {
+    Question,
+    Approval,
+    Attached,
+    Help,
+    Voyage,
+    Workflow,
+    Model,
+    Supervisor,
+    Todo,
+    Terminals,
+    Sessions,
+    Composer,
+}
+
+fn input_owner(app: &App) -> InputOwner {
+    if app.question.is_some() {
+        InputOwner::Question
+    } else if app.approval.is_some() {
+        InputOwner::Approval
+    } else if app.terminal_panel.attached_terminal.is_some() {
+        InputOwner::Attached
+    } else if app.shortcut_help {
+        InputOwner::Help
+    } else if app.voyage_panel.is_open() {
+        InputOwner::Voyage
+    } else if app.workflow_panel.is_open() {
+        InputOwner::Workflow
+    } else if app.model_panel.model_picker {
+        InputOwner::Model
+    } else if app.supervisor_panel.supervisor_mode.is_some() {
+        InputOwner::Supervisor
+    } else if app.todo_panel.todo_mode.is_some() {
+        InputOwner::Todo
+    } else if app.terminal_panel.terminal_picker {
+        InputOwner::Terminals
+    } else if app.show_sessions {
+        InputOwner::Sessions
+    } else {
+        InputOwner::Composer
+    }
+}
+
+// The production event stream and input regressions share this dispatch boundary.
+#[allow(clippy::too_many_arguments)]
+async fn handle_input_event(
+    event: Event,
+    app: &mut App,
+    agent: &Arc<Agent>,
+    store: &mut SessionStore,
+    tx: &mpsc::UnboundedSender<UiEvent>,
+    terminals: &dyn InteractiveTerminals,
+    supervisor: Arc<dyn AgentSupervisor>,
+    todos: Arc<TodoStore>,
+) -> Result<()> {
+    match event {
+        Event::Key(key) if key.is_press() => {
+            handle_key(key, app, agent, store, tx, terminals, supervisor, todos).await?;
+        }
+        Event::Paste(text) => {
+            let owner = input_owner(app);
+            if owner == InputOwner::Attached {
+                let id = app
+                    .terminal_panel
+                    .attached_terminal
+                    .expect("attached input owner");
+                if let Err(error) = terminals.write(id, text.into_bytes()).await {
+                    app.status = format!("Terminal input failed: {error}");
+                }
+                return Ok(());
+            }
+            let text = text.replace("\r\n", "\n").replace('\r', "\n");
+            match owner {
+                InputOwner::Question => {
+                    if let Some(question) = &mut app.question {
+                        question.insert(&text);
+                    }
+                }
+                InputOwner::Voyage => app.voyage_panel.paste(&text),
+                InputOwner::Workflow => app.workflow_panel.paste(&text),
+                InputOwner::Model => {
+                    app.model_panel.model_filter.insert_str(&text);
+                    app.model_panel.selected_model = 0;
+                }
+                InputOwner::Supervisor => {
+                    if matches!(
+                        app.supervisor_panel.supervisor_mode,
+                        Some(SupervisorMode::Message { .. })
+                    ) {
+                        app.supervisor_panel.supervisor_input.insert_str(&text);
+                    }
+                }
+                InputOwner::Todo => {
+                    if matches!(app.todo_panel.todo_mode, Some(TodoMode::Input { .. })) {
+                        app.todo_panel.todo_input.insert_str(&text);
+                    }
+                }
+                InputOwner::Composer => {
+                    app.insert_composer(&text);
+                    reset_slash_palette(app);
+                    request_slash_models_if_needed(app, agent, tx);
+                }
+                InputOwner::Approval
+                | InputOwner::Help
+                | InputOwner::Terminals
+                | InputOwner::Sessions
+                | InputOwner::Attached => {}
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
 // Keeping these explicit makes modal input routing auditable (especially PTY isolation).
 #[allow(clippy::too_many_arguments)]
 async fn handle_key(
@@ -861,7 +949,8 @@ async fn handle_key(
     supervisor: Arc<dyn AgentSupervisor>,
     todos: Arc<TodoStore>,
 ) -> Result<()> {
-    if handle_question_key(key, app) {
+    let owner = input_owner(app);
+    if owner == InputOwner::Question && handle_question_key(key, app) {
         return Ok(());
     }
     if let Some(approval) = app.approval.take() {
@@ -885,11 +974,14 @@ async fn handle_key(
         handle_attached_key(id, key, &mut app.terminal_panel, &mut app.status, terminals).await;
         return Ok(());
     }
-    if app.voyage_panel.is_open() {
+    if owner == InputOwner::Help && handle_shortcut_help_key(key, app) {
+        return Ok(());
+    }
+    if owner == InputOwner::Voyage {
         app.voyage_panel.key(key);
         return Ok(());
     }
-    if app.workflow_panel.is_open() {
+    if owner == InputOwner::Workflow {
         app.workflow_panel
             .key(key, app.session.workspace.clone(), tx);
         return Ok(());
@@ -897,7 +989,7 @@ async fn handle_key(
     if handle_shortcut_help_key(key, app) {
         return Ok(());
     }
-    if app.model_panel.model_picker {
+    if owner == InputOwner::Model {
         handle_model_key(
             key,
             &mut app.model_panel,
@@ -910,7 +1002,7 @@ async fn handle_key(
         .await?;
         return Ok(());
     }
-    if app.supervisor_panel.supervisor_mode.is_some() {
+    if owner == InputOwner::Supervisor {
         handle_supervisor_key(
             key,
             &mut app.supervisor_panel,
@@ -921,11 +1013,11 @@ async fn handle_key(
         .await;
         return Ok(());
     }
-    if app.todo_panel.todo_mode.is_some() {
+    if owner == InputOwner::Todo {
         handle_todo_key(key, &mut app.todo_panel, tx, todos).await;
         return Ok(());
     }
-    if app.terminal_panel.terminal_picker {
+    if owner == InputOwner::Terminals {
         match key.code {
             KeyCode::Esc | KeyCode::Char('t') => app.terminal_panel.terminal_picker = false,
             KeyCode::Up => {
@@ -960,7 +1052,7 @@ async fn handle_key(
         }
         return Ok(());
     }
-    if app.show_sessions {
+    if owner == InputOwner::Sessions {
         match key.code {
             KeyCode::Esc | KeyCode::Char('s') => app.show_sessions = false,
             KeyCode::Up => app.selected_session = app.selected_session.saturating_sub(1),

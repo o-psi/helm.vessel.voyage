@@ -670,3 +670,409 @@ async fn workflow_canonical_save_failure_never_dispatches() {
     assert!(app.checkpoint.is_none());
     assert!(rx.try_recv().is_err());
 }
+
+#[tokio::test]
+async fn paste_is_consumed_by_help_and_nonediting_todo_panels() {
+    let directory = tempfile::tempdir().unwrap();
+    let agent = navigation_agent(&directory);
+    let mut store = SessionStore::new(directory.path().join("sessions"));
+    let terminals = FakeTerminals::new();
+    let supervisor = Arc::new(FakeSupervisor::new(vec![]));
+    let todos = todo_store(&directory);
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    for view in 0..3 {
+        let mut app = App::new(Session::new(directory.path().into(), "test".into()), vec![]);
+        app.composer.insert_str("original draft");
+        if view == 0 {
+            app.shortcut_help = true;
+        } else {
+            app.todo_panel.todo_mode = Some(if view == 1 {
+                TodoMode::List
+            } else {
+                TodoMode::Inspect(crate::todo::TodoId(Uuid::new_v4()))
+            });
+        }
+        handle_input_event(
+            Event::Paste("PASTED 雪\r\nλ".into()),
+            &mut app,
+            &agent,
+            &mut store,
+            &tx,
+            &terminals,
+            supervisor.clone(),
+            todos.clone(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(app.composer.text, "original draft", "view {view}");
+        assert!(app.session.messages.is_empty());
+        assert!(rx.try_recv().is_err());
+    }
+}
+
+#[tokio::test]
+async fn paste_owner_matrix_is_exclusive_during_idle_and_active_steering() {
+    let directory = tempfile::tempdir().unwrap();
+    let agent = navigation_agent(&directory);
+    let mut store = SessionStore::new(directory.path().join("sessions"));
+    let terminals = FakeTerminals::new();
+    let supervisor = Arc::new(FakeSupervisor::new(vec![]));
+    let todos = todo_store(&directory);
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    for active in [false, true] {
+        for view in [
+            "help",
+            "todo-list",
+            "todo-inspect",
+            "todo-input",
+            "model",
+            "supervisor-tree",
+            "supervisor-inspect",
+            "supervisor-message",
+            "terminals",
+            "sessions",
+            "composer",
+        ] {
+            let mut app = App::new(Session::new(directory.path().into(), "test".into()), vec![]);
+            app.composer.insert_str("draft");
+            app.todo_panel.todo_input.insert_str("todo");
+            app.supervisor_panel
+                .supervisor_input
+                .insert_str("supervisor");
+            app.model_panel.model_filter.insert_str("model");
+            let id = AgentId(Uuid::new_v4());
+            match view {
+                "help" => {
+                    app.shortcut_help = true;
+                    open_todo_input(&mut app.todo_panel, None, TodoInput::Add, "todo");
+                }
+                "todo-list" => app.todo_panel.todo_mode = Some(TodoMode::List),
+                "todo-inspect" => {
+                    app.todo_panel.todo_mode =
+                        Some(TodoMode::Inspect(crate::todo::TodoId(Uuid::new_v4())))
+                }
+                "todo-input" => open_todo_input(&mut app.todo_panel, None, TodoInput::Add, "todo"),
+                "model" => app.model_panel.model_picker = true,
+                "supervisor-tree" => {
+                    app.supervisor_panel.supervisor_mode = Some(SupervisorMode::Tree)
+                }
+                "supervisor-inspect" => {
+                    app.supervisor_panel.supervisor_mode = Some(SupervisorMode::Inspect(id))
+                }
+                "supervisor-message" => {
+                    app.supervisor_panel.supervisor_mode = Some(SupervisorMode::Message {
+                        target: id,
+                        follow_up: false,
+                    })
+                }
+                "terminals" => app.terminal_panel.terminal_picker = true,
+                "sessions" => app.show_sessions = true,
+                _ => {}
+            }
+            let (steering, _receiver) = crate::agent::steering_channel(1);
+            if active {
+                app.running = Some(Running {
+                    task: tokio::spawn(std::future::pending()),
+                    cancel: tokio_util::sync::CancellationToken::new(),
+                    steering,
+                });
+            }
+            handle_input_event(
+                Event::Paste(" 雪\r\nλ\r🦀".into()),
+                &mut app,
+                &agent,
+                &mut store,
+                &tx,
+                &terminals,
+                supervisor.clone(),
+                todos.clone(),
+            )
+            .await
+            .unwrap();
+            let expected = |original: &str, edits: bool| {
+                if edits {
+                    format!("{original} 雪\nλ\n🦀")
+                } else {
+                    original.to_owned()
+                }
+            };
+            assert_eq!(
+                app.composer.text,
+                expected("draft", view == "composer"),
+                "{view}/{active}"
+            );
+            assert_eq!(
+                app.todo_panel.todo_input.text,
+                expected("todo", view == "todo-input"),
+                "{view}/{active}"
+            );
+            assert_eq!(
+                app.supervisor_panel.supervisor_input.text,
+                expected("supervisor", view == "supervisor-message"),
+                "{view}/{active}"
+            );
+            assert_eq!(
+                app.model_panel.model_filter.text,
+                expected("model", view == "model"),
+                "{view}/{active}"
+            );
+            for (width, height) in [(32, 10), (80, 24)] {
+                resize_conversation(&mut app, width, height);
+                let mut terminal = Terminal::new(ratatui::backend::TestBackend::new(
+                    width as u16,
+                    height as u16,
+                ))
+                .unwrap();
+                terminal.draw(|frame| draw(frame, &app)).unwrap();
+            }
+            assert!(app.session.messages.is_empty());
+            assert!(rx.try_recv().is_err());
+            assert!(terminals.writes.lock().unwrap().is_empty());
+            if let Some(run) = app.running.take() {
+                run.task.abort();
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn paste_questions_approvals_and_attached_terminal_keep_priority() {
+    let directory = tempfile::tempdir().unwrap();
+    let agent = navigation_agent(&directory);
+    let mut store = SessionStore::new(directory.path().join("sessions"));
+    let terminals = FakeTerminals::new();
+    let supervisor = Arc::new(FakeSupervisor::new(vec![]));
+    let todos = todo_store(&directory);
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    let mut app = App::new(Session::new(directory.path().into(), "test".into()), vec![]);
+    app.composer.insert_str("draft");
+    app.show_sessions = true;
+    app.shortcut_help = true;
+    app.model_panel.model_picker = true;
+    app.terminal_panel.attached_terminal = Some(terminals.id);
+    let (response, mut approval_answer) = oneshot::channel();
+    app.approval = Some(ApprovalRequest {
+        id: Uuid::new_v4(),
+        action: "shell".into(),
+        target: "fixture".into(),
+        reason: "test".into(),
+        response,
+    });
+    let (response, mut question_answer) = oneshot::channel();
+    app.question = Some(QuestionDialog {
+        request: QuestionRequest {
+            question: crate::tools::Question {
+                question: "Question?".into(),
+                options: vec!["choice".into()],
+            },
+            response,
+        },
+        selected: 1,
+        custom: Composer::default(),
+        scroll: None,
+    });
+    let paste = "雪\r\nλ\x1b";
+    handle_input_event(
+        Event::Paste(paste.into()),
+        &mut app,
+        &agent,
+        &mut store,
+        &tx,
+        &terminals,
+        supervisor.clone(),
+        todos.clone(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(app.question.as_ref().unwrap().custom.text, "雪λ");
+    assert!(question_answer.try_recv().is_err());
+    assert!(approval_answer.try_recv().is_err());
+    assert!(terminals.writes.lock().unwrap().is_empty());
+    app.question = None;
+    handle_input_event(
+        Event::Paste("y\n".into()),
+        &mut app,
+        &agent,
+        &mut store,
+        &tx,
+        &terminals,
+        supervisor.clone(),
+        todos.clone(),
+    )
+    .await
+    .unwrap();
+    assert!(approval_answer.try_recv().is_err());
+    assert!(terminals.writes.lock().unwrap().is_empty());
+    app.approval = None;
+    handle_input_event(
+        Event::Paste(paste.into()),
+        &mut app,
+        &agent,
+        &mut store,
+        &tx,
+        &terminals,
+        supervisor,
+        todos,
+    )
+    .await
+    .unwrap();
+    assert_eq!(*terminals.writes.lock().unwrap(), [paste.as_bytes()]);
+    assert_eq!(app.composer.text, "draft");
+    assert!(app.model_panel.model_filter.text.is_empty());
+    assert!(app.session.messages.is_empty());
+    assert!(rx.try_recv().is_err());
+}
+
+fn paste_test_screen(app: &App) -> String {
+    let mut terminal = Terminal::new(ratatui::backend::TestBackend::new(100, 30)).unwrap();
+    terminal.draw(|frame| draw(frame, app)).unwrap();
+    terminal
+        .backend()
+        .buffer()
+        .content
+        .iter()
+        .map(|cell| cell.symbol())
+        .collect()
+}
+
+#[tokio::test]
+async fn paste_workflow_and_voyage_fields_never_fall_through_or_bypass_help() {
+    let directory = tempfile::tempdir().unwrap();
+    let repo = directory.path().join(".helm/workflows");
+    std::fs::create_dir_all(&repo).unwrap();
+    std::fs::write(repo.join("review.toml"), "schema_version=1\nid='review'\nversion='1'\ndescription='Review'\nprompt='Review {{topic}}'\n[parameters.topic]\ntype='string'\nrequired=true\n").unwrap();
+    let agent = navigation_agent(&directory);
+    let mut store = SessionStore::new(directory.path().join("sessions"));
+    let terminals = FakeTerminals::new();
+    let supervisor = Arc::new(FakeSupervisor::new(vec![]));
+    let todos = todo_store(&directory);
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    let mut app = App::new(Session::new(directory.path().into(), "test".into()), vec![]);
+    app.composer.insert_str("draft");
+    app.workflow_panel
+        .open("", directory.path().into(), &tx)
+        .unwrap();
+    for loaded in [false, true] {
+        if loaded {
+            let event = tokio::time::timeout(Duration::from_secs(6), rx.recv())
+                .await
+                .unwrap()
+                .unwrap();
+            handle_ui_event(event, &mut app, &store, &terminals)
+                .await
+                .unwrap();
+        }
+        handle_input_event(
+            Event::Paste("ignored-picker-canary".into()),
+            &mut app,
+            &agent,
+            &mut store,
+            &tx,
+            &terminals,
+            supervisor.clone(),
+            todos.clone(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(app.composer.text, "draft");
+        assert!(!paste_test_screen(&app).contains("ignored-picker-canary"));
+    }
+    handle_input_event(
+        Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+        &mut app,
+        &agent,
+        &mut store,
+        &tx,
+        &terminals,
+        supervisor.clone(),
+        todos.clone(),
+    )
+    .await
+    .unwrap();
+    handle_input_event(
+        Event::Paste("workflow-雪".into()),
+        &mut app,
+        &agent,
+        &mut store,
+        &tx,
+        &terminals,
+        supervisor.clone(),
+        todos.clone(),
+    )
+    .await
+    .unwrap();
+    assert!(paste_test_screen(&app).contains("workflow-雪"));
+    app.shortcut_help = true;
+    handle_input_event(
+        Event::Paste("hidden-help-canary".into()),
+        &mut app,
+        &agent,
+        &mut store,
+        &tx,
+        &terminals,
+        supervisor.clone(),
+        todos.clone(),
+    )
+    .await
+    .unwrap();
+    app.shortcut_help = false;
+    assert!(!paste_test_screen(&app).contains("hidden-help-canary"));
+    app.workflow_panel.close();
+    app.voyage_panel = voyage_setup::Hub::new(directory.path().join("voyage-drafts"));
+    app.voyage_panel.open();
+    handle_input_event(
+        Event::Paste("ignored-voyage-canary".into()),
+        &mut app,
+        &agent,
+        &mut store,
+        &tx,
+        &terminals,
+        supervisor.clone(),
+        todos.clone(),
+    )
+    .await
+    .unwrap();
+    assert!(!paste_test_screen(&app).contains("ignored-voyage-canary"));
+    handle_input_event(
+        Event::Key(KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE)),
+        &mut app,
+        &agent,
+        &mut store,
+        &tx,
+        &terminals,
+        supervisor.clone(),
+        todos.clone(),
+    )
+    .await
+    .unwrap();
+    handle_input_event(
+        Event::Paste("voyage-雪".into()),
+        &mut app,
+        &agent,
+        &mut store,
+        &tx,
+        &terminals,
+        supervisor.clone(),
+        todos.clone(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(app.voyage_panel.form.draft().name, "voyage-雪");
+    app.shortcut_help = true;
+    handle_input_event(
+        Event::Paste("hidden-help-canary".into()),
+        &mut app,
+        &agent,
+        &mut store,
+        &tx,
+        &terminals,
+        supervisor,
+        todos,
+    )
+    .await
+    .unwrap();
+    assert_eq!(app.voyage_panel.form.draft().name, "voyage-雪");
+    assert_eq!(app.composer.text, "draft");
+    assert!(app.session.messages.is_empty());
+    assert!(rx.try_recv().is_err());
+}

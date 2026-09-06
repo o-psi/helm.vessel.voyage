@@ -169,6 +169,10 @@ are omitted from the request copy when needed while saved history remains intact
 oversized indivisible input fails locally. See [context limits](../docs/context-window.md).
 The conversation footer shows current status rather than permanently listing global shortcuts;
 press `F1` to open contextual keyboard help and `F1` or `Esc` to close it.
+Bracketed paste belongs to the active input surface. Help, lists and other
+nonediting panels ignore it; editable panel fields receive it without changing
+the chat draft. Questions and approvals retain priority, and attached-terminal
+paste goes directly to the terminal. These rules also apply during active steering.
 Use `Up` and `Down` in the chat input to recall previously sent messages in the current
 session (including messages from a resumed session). `Down` past the newest message
 restores your unsent draft. Recalled messages can be edited before sending; slash-command
