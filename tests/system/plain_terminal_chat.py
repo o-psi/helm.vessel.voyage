@@ -19,7 +19,7 @@ class Provider(BaseHTTPRequestHandler):
             prompt=next(m['content'] for m in reversed(body['messages']) if m['role']=='user')
             step=state['steps'].get(prompt,0)+1;state['steps'][prompt]=step
             if step==1:
-                if prompt=='start':value=('process',{'action':'start','name':'live','command':'stty -echo; printf "%s" "$$" > terminal.pid; exec /bin/sh'})
+                if prompt=='start':value=('process',{'action':'start','name':'live','command':'stty -echo; printf "%s" "$$" > terminal.pid.tmp; mv terminal.pid.tmp terminal.pid; exec /bin/sh'})
                 elif prompt=='inspect🧭':value=('process',{'action':'read','id':state['id']})
                 elif prompt=='other':value=('process',{'action':'start','name':'model-owned','command':'printf PUBLIC_VISIBLE; exec /bin/sh'})
                 elif prompt=='read-other':value=('process',{'action':'read','id':state['other']})
@@ -41,22 +41,50 @@ class Plain:
         fcntl.ioctl(self.slave,termios.TIOCSWINSZ,struct.pack('HHHH',25,100,0,0))
         def setup():os.setsid();fcntl.ioctl(self.slave,termios.TIOCSCTTY,0)
         self.process=subprocess.Popen([str(HELM),*args],stdin=self.slave,stdout=self.slave,stderr=self.slave,env=env,preexec_fn=setup)
-    def wait(self,text,after=0):
+    def pump(self):
+        assert time.monotonic()<self.deadline,bytes(self.output[-5000:])
+        if select.select([self.master],[],[],.03)[0]:
+            try:self.output.extend(os.read(self.master,65536))
+            except OSError:pass
+        assert len(self.output)<8*1024*1024
+    def wait(self,text,after=0,pattern=False):
         expected=text.encode()
-        while expected not in CSI.sub(b'',self.output[after:]):
-            assert time.monotonic()<self.deadline,(text,bytes(self.output[-5000:]))
-            if select.select([self.master],[],[],.03)[0]:
-                try:self.output.extend(os.read(self.master,65536))
-                except OSError:pass
-            assert len(self.output)<8*1024*1024
-            assert self.process.poll() is None or expected in CSI.sub(b'',self.output[after:]),bytes(self.output[-5000:])
+        def found():
+            data=CSI.sub(b'',self.output[after:])
+            return re.search(expected,data) is not None if pattern else expected in data
+        while not found():
+            self.pump()
+            assert self.process.poll() is None or found(),bytes(self.output[-5000:])
     def send(self,text):os.write(self.master,text.encode() if isinstance(text,str) else text)
     def command(self,text,result):
         offset=len(self.output);self.send(text+'\n');self.wait(result,offset);return offset
-    def turn(self,text):self.command(text,text+'-done')
+    def turn(self,text):
+        offset=len(self.output);self.send(text+'\n')
+        self.wait(re.escape(text+'-done')+r'[\s\S]*helm> ',offset,pattern=True)
     def close(self):
         if self.process.poll() is None:os.killpg(self.process.pid,signal.SIGKILL);self.process.wait(timeout=5)
         os.close(self.master);os.close(self.slave)
+def identity(pid):
+    try:value=Path(f'/proc/{pid}/stat').read_text()
+    except FileNotFoundError:return None
+    return value[value.rfind(')')+2:].split()[19]
+
+def wait_pid(path,plain):
+    deadline=time.monotonic()+5
+    while True:
+        try:
+            descriptor=os.open(path,os.O_RDONLY|os.O_NOFOLLOW)
+            try:
+                size=os.fstat(descriptor).st_size;assert 0<size<=32,'invalid PID artifact size'
+                data=os.read(descriptor,33);assert data.isdigit(),'malformed PID artifact'
+            finally:os.close(descriptor)
+            pid=int(data);assert 1<pid<2**31
+            observed=identity(pid);assert observed is not None,'published terminal PID already exited'
+            return pid,observed
+        except FileNotFoundError:
+            assert time.monotonic()<deadline,'terminal did not atomically publish its PID'
+            plain.pump()
+
 def run_piped(args,env,text):
     """Bound both diagnostic storage and the lifetime of an actual CLI process."""
     with tempfile.TemporaryFile() as output:
@@ -87,28 +115,28 @@ def main():
                 plain.command('/terminals','No live terminals');assert not state['requests']
                 offset=len(plain.output);plain.send('/terminal missing\n'+CANARY+'\n')
                 plain.wait('No queued prompt was submitted',offset);assert not state['requests']
-                plain.turn('start');pid=int((workspace/'terminal.pid').read_text());assert Path(f'/proc/{pid}').exists()
+                plain.turn('start');pid,started_at=wait_pid(workspace/'terminal.pid',plain);assert identity(pid)==started_at
                 records=list((root/'data').glob('helm/sessions/*.json'));assert len(records)==1,records
                 session_id=records[0].stem;count=len(state['requests'])
                 status,notice=run_piped(['--config',str(config),'chat','--plain','--resume',session_id],env,'/terminal '+state['id']+'\n/exit\n')
                 assert status!=0 and 'session busy; another frontend owns execution' in notice,(status,notice)
-                assert len(state['requests'])==count and Path(f'/proc/{pid}').exists()
+                assert len(state['requests'])==count and identity(pid)==started_at
                 count=len(state['requests']);offset=len(plain.output)
                 plain.send('/terminal '+str(uuid.uuid4())+'\n'+CANARY+'\n')
                 plain.wait('No queued prompt was submitted',offset);assert len(state['requests'])==count
                 plain.command('/terminal live','Ctrl+T/Ctrl+] detach')
                 plain.command(f"printf '%s' '{CANARY}' > human.txt; printf SCREEN_READY",'SCREEN_READY')
-                offset=len(plain.output);plain.send('\x14inspect🧭\nother\nread-other\n');plain.wait('read-other-done',offset)
+                offset=len(plain.output);plain.send('\x14inspect🧭\nother\nread-other\n');plain.wait(r'read-other-done[\s\S]*helm> ',offset,pattern=True)
                 assert (workspace/'human.txt').read_text()==CANARY
-                assert Path(f'/proc/{pid}').exists(),'detach killed inner process'
+                assert identity(pid)==started_at,'detach killed inner process'
                 count=len(state['requests']);plain.command('/new PLAIN-B','new session: PLAIN-B')
-                plain.command('/terminals',state['id']);assert Path(f'/proc/{pid}').exists();assert len(state['requests'])==count
+                plain.command('/terminals',state['id']);assert identity(pid)==started_at;assert len(state['requests'])==count
                 plain.command('/terminal '+state['id'],'Ctrl+T/Ctrl+] detach')
                 plain.command('printf SWITCH_SURVIVED','SWITCH_SURVIVED')
                 plain.send(b'\x1d/exit\n');plain.process.wait(timeout=10)
                 assert plain.process.returncode==0
                 assert termios.tcgetattr(plain.slave)==plain.initial,'outer terminal not restored'
-                assert not Path(f'/proc/{pid}').exists(),'Helm exit did not reap terminal'
+                assert identity(pid)!=started_at,'Helm exit did not reap terminal'
                 records=list((root/'data').glob('helm/sessions/*.json'));assert records,'no canonical session records'
                 for record in records:
                     assert record.stat().st_size<4*1024*1024
@@ -117,7 +145,7 @@ def main():
                 assert len(state['requests'])==8,state['requests']
                 status,notice=run_piped(['--config',str(config),'chat','--plain','--resume',session_id],env,'/terminals\n/terminal '+state['id']+'\n/exit\n')
                 assert status==0 and notice.count('No live terminals')==2,(status,notice)
-                assert len(state['requests'])==8 and not Path(f'/proc/{pid}').exists()
+                assert len(state['requests'])==8 and identity(pid)!=started_at
                 assert not state['failures'],state['failures']
                 print('PASS actual plain chat lease, privacy, multiple exact suffix prompts, unrelated capture, voyage switch, cleanup and stale restart',flush=True)
             except BaseException:
