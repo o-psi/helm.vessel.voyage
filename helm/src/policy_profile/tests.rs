@@ -1,4 +1,40 @@
 use super::*;
+
+#[test]
+fn explicit_disabled_github_resolves_and_preserves_document_compatibility() {
+    let temp = root();
+    let document = Builtin::Balanced.document();
+    let encoded = document.encode().unwrap();
+    assert!(
+        !std::str::from_utf8(&encoded)
+            .unwrap()
+            .contains("github_enabled")
+    );
+    let restored = ProfileDocument::decode(&encoded).unwrap();
+    assert!(!restored.rules.github_enabled);
+    for enabled in [false, true] {
+        let mut base = rules();
+        base.github_enabled = enabled;
+        let policy = resolve_test(
+            temp.path(),
+            &base,
+            &[Layer::from_profile(LayerKind::Global, &restored).unwrap()],
+            None,
+        )
+        .unwrap();
+        assert!(!policy.rules().github_enabled);
+        assert_eq!(
+            policy.provenance()["github_enabled"].last().unwrap().value,
+            serde_json::Value::Bool(false)
+        );
+        assert!(
+            serde_json::to_value(policy.rules())
+                .unwrap()
+                .get("github_enabled")
+                .is_none()
+        );
+    }
+}
 fn root() -> tempfile::TempDir {
     tempfile::tempdir().unwrap()
 }

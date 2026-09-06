@@ -115,6 +115,10 @@ origin and do not follow redirects. Actions log downloads are a separate,
 validated signed-download path that sends no GitHub credential to the download
 host. Redaction covers the configured credential and supported raw, base64 and
 hex representations; it is not a guarantee against arbitrary encodings.
+Helm redacts newly received assistant text before saving or replaying it. If a
+configured secret appears in executable tool arguments or opaque provider
+continuation data, the run stops before those calls execute. Existing saved
+history is retained; outgoing copies are checked against current secrets.
 The dedicated credential is not added to the shared shell or MCP subprocess
 environment. Application policy is not an OS sandbox:
 programs running as the same account may have access to configuration, the
@@ -288,10 +292,10 @@ In the standalone/plain preview, use Space for the next page, `b` for the
 previous page, and `n` or Esc to deny. Confirmation with `y` is available only
 on the final page. The terminal must be at least 60 columns by 8 rows; resizing
 repages the preview, and shrinking below the minimum makes approval unavailable.
-Bracketed paste is denied, so pasted confirmation text cannot approve it.
+Bracketed paste events are denied.
 In the TUI, use arrows, Page Up/Page Down, Home/End or scrolling to inspect the
 complete exact preview; `y` is enabled only at the end of a usable viewport.
-Paste does not approve. Denial leaves the prepared record inspectable.
+Paste events do not approve. Denial leaves the prepared record inspectable.
 
 TUI `/github` work runs in a scoped panel and preserves the composer. While the
 panel owns an operation, close/cancel it before starting a model run or switching

@@ -2,6 +2,8 @@
 mod projection_tests;
 #[cfg(test)]
 mod provider_redaction_tests;
+#[cfg(test)]
+mod replay_argument_tests;
 mod retry;
 mod tool_replay;
 pub use retry::RetryJitter;

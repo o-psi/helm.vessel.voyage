@@ -172,3 +172,5 @@ mod credential_tests {
         assert!(super::credential_redactions(&undelegated).is_empty());
     }
 }
+#[cfg(test)]
+mod review_publication_fixture;

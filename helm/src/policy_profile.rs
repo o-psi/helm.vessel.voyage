@@ -590,12 +590,19 @@ fn resolve_prepared(
     for (source, next, fields) in layers {
         let value = serde_json::to_value(&next).map_err(|_| Error::Invalid)?;
         for field in fields {
+            // Disabled GitHub is omitted from serialized rules for document
+            // compatibility, but an explicit false remains a contribution.
+            let contribution = if field == "github_enabled" {
+                serde_json::Value::Bool(next.github_enabled)
+            } else {
+                value.get(&field).ok_or(Error::Invalid)?.clone()
+            };
             provenance
                 .entry(field.clone())
                 .or_default()
                 .push(Contribution {
                     source: source.clone(),
-                    value: value.get(&field).ok_or(Error::Invalid)?.clone(),
+                    value: contribution,
                 });
         }
         current = next;
