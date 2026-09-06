@@ -189,6 +189,11 @@ async fn exercise(draft: Draft, reply: Reply, invalid: bool) {
                     200,
                     json!([{"filename":"src/a.rs","patch":"@@ -1 +1,2 @@\n context\n+added"}]),
                 )
+            } else if route == "GET /repos/o/r/pulls/1/files?per_page=100&page=2 HTTP/1.1" {
+                // Missing paths require exhausting the actual bounded search.
+                // Returning an empty next page establishes absence without a
+                // fixture-server panic masquerading as production refusal.
+                (200, json!([]))
             } else {
                 let is_review = matches!(action, Action::Review { .. });
                 assert_eq!(
@@ -272,14 +277,33 @@ async fn exercise(draft: Draft, reply: Reply, invalid: bool) {
     let session = Uuid::new_v4();
     let service =
         Service::fixture(context.clone(), Some(session), origin.clone(), path.clone()).unwrap();
+    let missing_path = matches!(&draft.action,Action::Review {comments,..} if comments.iter().any(|comment|comment.path=="missing.rs"));
     let operation = tokio::time::timeout(Duration::from_secs(5), service.prepare(draft))
         .await
         .unwrap();
     if invalid {
-        assert!(
-            operation.is_err(),
-            "invalid inline coordinate prepared successfully"
-        );
+        let error = operation.expect_err("invalid inline coordinate prepared successfully");
+        if missing_path {
+            assert!(
+                error
+                    .to_string()
+                    .contains("inline review file is unavailable")
+            );
+            let file_routes = routes
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|route| route.contains("/files?"))
+                .cloned()
+                .collect::<Vec<_>>();
+            assert_eq!(
+                file_routes,
+                vec![
+                    "GET /repos/o/r/pulls/1/files?per_page=100&page=1 HTTP/1.1",
+                    "GET /repos/o/r/pulls/1/files?per_page=100&page=2 HTTP/1.1",
+                ]
+            );
+        }
         assert!(approvals.lock().unwrap().is_empty());
         assert!(posts.lock().unwrap().is_empty());
         assert!(
