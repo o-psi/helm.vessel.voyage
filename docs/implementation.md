@@ -12,6 +12,40 @@ by Helm through a local or remote Vessel. A local runtime socket directly expose
 to Helm, a TUI task per session, or agent loops inside Vessel do not satisfy it.
 Uncommitted experiments and historical issue closure are not implementation evidence.
 
+## Code disposition and runtime ownership
+
+**Keep means preserve useful behavior and reuse its implementation; it does not
+mean keep execution code in Helm.** The existing agent loop belongs in the voyage
+runtime. Extraction must move its dependencies and authority with it, not leave
+Helm constructing an agent behind a new connection abstraction.
+
+The destinations below are planned source boundaries. Add a `voyage/` workspace
+package for the executable and its runtime modules; it does not exist today.
+Runtime libraries may be factored out as needed, but only the voyage process
+instantiates the session executor. Shared code does not imply shared session
+ownership. Helm and Vessel must not depend on an execution library to run agents.
+
+| Component and current source | Disposition and target source home | Target process responsibility |
+| --- | --- | --- |
+| Agent construction in `helm/src/main.rs` and `helm/src/tui_runtime.rs`; `helm/src/agent.rs`, `helm/src/agent/`, `helm/src/context.rs` | **Move and adapt** into `voyage/`, retaining agent semantics, cancellation and context handling. Replace workspace runtime construction with per-session startup. | Voyage owns the agent loop and each run. |
+| `helm/src/provider/`, `helm/src/local_provider.rs`, `helm/src/inference/`; execution configuration in `helm/src/config.rs` | **Move** provider execution and configuration resolution into `voyage/`; split interface preferences from execution settings. Preserve native providers and the distinct optional compatibility bridge. | Voyage loads provider credentials on the executing machine and owns requests and continuation state. Helm displays permitted metadata and submits configuration requests. |
+| `helm/src/tools/`, `helm/src/policy.rs`, `helm/src/policy_profile/`, `helm/src/runtime_policy.rs`, `helm/src/workspace_instructions.rs` | **Move and adapt** tools, registry construction, policy enforcement and instruction loading into `voyage/`. Keep policy controls in Helm as protocol clients. | Voyage enforces roots, denials, approvals and limits; neither Helm nor Vessel can broaden execution authority. |
+| `helm/src/session.rs`, `helm/src/session/`, `helm/src/attachment/journal/`, `helm/src/attachment/runtime.rs`; checkpoint integration in `helm/src/tui/checkpoint.rs` | **Consolidate and move** canonical persistence, admission, fences, steering and checkpoints into `voyage/`. Reuse existing primitives with an explicit storage migration. | Voyage is the exclusive session writer. Helm holds presentation state; Vessel holds supervision metadata. |
+| `helm/src/terminal.rs`, `helm/src/subagent/`, `helm/src/supervision.rs`, `helm/src/todo.rs`, `helm/src/completion/`; resource tracking in `helm/src/managed.rs` | **Move and adapt** resource ownership and reconciliation into `voyage/`, retaining cleanup obligations and workspace arbitration. Agent supervision here is distinct from Vessel's new process supervision. | Voyage owns tools, subordinate agents, terminals and cleanup for its session. Vessel manages the voyage process lifecycle. |
+| Decision bridges and execution callbacks in `helm/src/tui.rs` and `helm/src/tui_runtime.rs` | **Split and replace** in-process channels with durable runtime decisions and protocol commands/events. Move decision authority into `voyage/`; retain prompts and response controls in Helm. | Voyage validates and resolves decisions; Helm presents them and sends precisely targeted responses through Vessel. |
+| `helm/src/workflow/`, `helm/src/github/`, `helm/src/extensions/` | **Split by responsibility**: move execution services and their policy/resource dependencies into `voyage/`; retain operator views and commands in Helm. | Voyage executes supported operations; Helm requests and renders them. Preserve existing workflows through the new boundary. |
+| `helm/src/tui/`, rendering in `helm/src/tui.rs`, `helm/src/markdown.rs`, `helm/src/onboarding/`, `helm/src/voyage.rs`, `helm/src/voyage_client.rs` | **Keep and adapt** interface code in `helm/`: navigation, drafts, rendering, connection setup and Vessel clients. Replace embedded runtime access and old Helm-participant assumptions. The current `voyage.rs` contains configuration drafts, not the execution runtime. | Helm owns operator interaction and local view state, never canonical session execution. |
+| `helm/src/managed.rs`, `helm/src/remote_worker.rs`, execution entrypoints in `helm/src/main.rs`; relay paths in `vessel/src/attachment_transport.rs` | **Reuse internals, replace entrypoints and topology** with the voyage executable and Vessel routing. Retire the dedicated Helm worker and direct in-process chat execution once equivalent supported workflows are connected. | All session execution runs in voyage processes; Helm clients reach them through Vessel. |
+| `vessel/src/` management, enrollment and transport code | **Keep and adapt** applicable authentication, grants and transport machinery; **build** process launch, discovery, incarnation tracking, health, stop and recovery in `vessel/`. | Vessel supervises and exposes independent voyage processes without hosting their agent loops or canonical transcripts. |
+| `crates/voyage-protocol/`, `crates/voyage-storage/` | **Keep shared primitives** and evolve contracts at both ends. Share wire types and private-storage mechanisms, not live executors or competing session writers. | Each process uses primitives within its authority; canonical checkpoint writes remain voyage-owned. |
+| Workspace manifests, `installer/` and release scripts | **Extend** build, packaging and service setup for the voyage binary and Vessel supervision. Existing installer provisioning is mocked and needs real implementation before deployment claims. | Provision distinct executables and supported service lifetimes; starting Helm must not become the voyage lifetime boundary. |
+
+This is an ownership migration, not a blanket directory rename or a second copy of
+the executor. Mixed modules must be split along these boundaries. Retire replaced
+paths only after their supported workflows, authority checks and failure handling
+are delivered through the new contracts; do not retain an alternate Helm-owned
+execution path in the finished architecture.
+
 ## 1. Define component and connection contracts
 
 Define versioned Helm–Vessel and Vessel–voyage contracts before moving frontends.
@@ -53,7 +87,10 @@ continuation state and local tool authority remain with the executing runtime.
 
 Exit evidence: runtime execution without a TUI; exclusive ownership under competing
 clients; durable streamed output; interrupted admission/checkpoint/cleanup with no
-uncertain tool replay. Relevant work: #5, #78, #71, #82 and #83.
+uncertain tool replay. Inspect workspace dependencies and all executable entrypoints
+to show that agent/provider/tool construction and canonical writes have moved to
+the voyage runtime, with no embedded executor left in Helm or Vessel at final
+cutover. File relocation alone is insufficient evidence. Relevant work: #5, #78, #71, #82 and #83.
 
 ## 3. Make Vessel supervise voyage processes
 
