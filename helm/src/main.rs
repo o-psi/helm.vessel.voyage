@@ -483,7 +483,7 @@ async fn main() -> Result<()> {
             .workspace
             .unwrap_or(std::env::current_dir()?)
             .canonicalize()?;
-        if let Some(prepared) = helm::workflow::prepare(args, &workspace)? {
+        if let Some(prepared) = prepare_workflow(args, &workspace).await? {
             helm::workflow::print_value(
                 &serde_json::json!({"prompt":prepared.prompt,"workflow":prepared.invocation}),
                 json,
@@ -591,8 +591,14 @@ async fn main() -> Result<()> {
                 "workflow run streams ordinary agent output; --json is for list, inspect, validate and preview"
             );
             let workspace = config.resolve_workspace(cli.workspace)?;
-            let prepared =
-                helm::workflow::prepare(args, &workspace)?.context("workflow run required")?;
+            let prepared = prepare_workflow(args, &workspace)
+                .await?
+                .context("workflow run required")?;
+            let cancellation = prepared
+                .input_monitor
+                .as_ref()
+                .map(|monitor| monitor.cancellation());
+            let _input_monitor = prepared.input_monitor;
             execute_workflow(
                 config,
                 Some(workspace),
@@ -601,6 +607,7 @@ async fn main() -> Result<()> {
                 prepared.no_save,
                 model_overridden,
                 Some((prepared.invocation, prepared.secrets)),
+                cancellation,
             )
             .await
             .map(|_| ())
@@ -1689,7 +1696,7 @@ async fn run_with_ctrl_c(
     scope: Option<helm::completion::runtime::RunHandle>,
     checkpoint: &helm::session::SessionCheckpoint,
 ) -> std::result::Result<helm::agent::AgentOutcome, helm::agent::AgentError> {
-    run_with_ctrl_c_and_secrets(agent, history, prompt, scope, checkpoint, None).await
+    run_with_ctrl_c_and_secrets(agent, history, prompt, scope, checkpoint, None, None).await
 }
 
 async fn run_with_ctrl_c_and_secrets(
@@ -1699,8 +1706,9 @@ async fn run_with_ctrl_c_and_secrets(
     scope: Option<helm::completion::runtime::RunHandle>,
     checkpoint: &helm::session::SessionCheckpoint,
     bindings: Option<helm::workflow::secrets::RunBindings>,
+    external_cancel: Option<tokio_util::sync::CancellationToken>,
 ) -> std::result::Result<helm::agent::AgentOutcome, helm::agent::AgentError> {
-    let cancellation = tokio_util::sync::CancellationToken::new();
+    let cancellation = external_cancel.clone().unwrap_or_default();
     let run = agent.run_checkpointed_scoped_with_workflow_secrets(
         history,
         prompt,
@@ -1714,7 +1722,11 @@ async fn run_with_ctrl_c_and_secrets(
     wait_for_run_interrupt(
         run,
         cancellation,
-        tokio::signal::ctrl_c(),
+        async move {
+            if let Some(token) = external_cancel {
+                tokio::select! { _ = token.cancelled() => Ok(()), result = tokio::signal::ctrl_c() => result }
+            } else { tokio::signal::ctrl_c().await }
+        },
         std::time::Duration::from_secs(15),
     )
     .await
@@ -1792,6 +1804,7 @@ async fn execute(
         no_save,
         model_overridden,
         None,
+        None,
     )
     .await
 }
@@ -1807,7 +1820,14 @@ async fn execute_workflow(
         helm::workflow::Invocation,
         helm::workflow::secrets::SecretInputs,
     )>,
+    cancellation: Option<tokio_util::sync::CancellationToken>,
 ) -> Result<Session> {
+    anyhow::ensure!(
+        !cancellation
+            .as_ref()
+            .is_some_and(|token| token.is_cancelled()),
+        "workflow input cancelled"
+    );
     let store = SessionStore::default();
     let (store, mut session) = if let Some(reference) = resume {
         store.load_owned(&reference).await?
@@ -1862,8 +1882,16 @@ async fn execute_workflow(
         run_id,
     );
     let bindings = secrets.map(|inputs| inputs.bind(run_id)).transpose()?;
-    let result =
-        run_with_ctrl_c_and_secrets(&agent, history, prompt, scope, &checkpoint, bindings).await;
+    let result = run_with_ctrl_c_and_secrets(
+        &agent,
+        history,
+        prompt,
+        scope,
+        &checkpoint,
+        bindings,
+        cancellation,
+    )
+    .await;
     session = checkpoint.snapshot_after_run(&result).await;
     let outcome = match result {
         Ok(outcome) => outcome,
@@ -2316,6 +2344,35 @@ fn render_terminal_markdown(source: &str, width: usize) -> String {
 
 // A stalled terminal (or full stderr pipe) must not obstruct cancellation after
 // native mode restoration. The process exits after this bounded best effort.
+async fn prepare_workflow(
+    args: helm::workflow::WorkflowArgs,
+    workspace: &std::path::Path,
+) -> Result<Option<helm::workflow::Prepared>> {
+    match helm::workflow::prepare(args, workspace).await {
+        Err(error)
+            if error
+                .downcast_ref::<helm::workflow::InputFailure>()
+                .is_some() =>
+        {
+            let (message, status) = match error
+                .downcast_ref::<helm::workflow::InputFailure>()
+                .unwrap()
+            {
+                helm::workflow::InputFailure::Cancelled => ("workflow input cancelled", 130),
+                helm::workflow::InputFailure::TimedOut => ("workflow input timed out", 1),
+                helm::workflow::InputFailure::Restoration => {
+                    ("workflow terminal restoration failed", 1)
+                }
+            };
+            // A stalled terminal may hold stderr's lock. Restoration has already
+            // completed; bound the notice and never await a blocked input thread.
+            attachment_notice(message).await;
+            std::process::exit(status)
+        }
+        result => result,
+    }
+}
+
 async fn attachment_notice(message: &'static str) {
     let _ = tokio::time::timeout(
         std::time::Duration::from_millis(100),

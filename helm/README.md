@@ -395,4 +395,7 @@ See [repository onboarding](../docs/repo-onboarding.md) for editing, explicit ac
 and rerun diffs.
 
 Saved workflows support typed public inputs, preview, digest-bound repository trust,
-and explicit transient private shell bindings. See [Saved workflows](../docs/saved-workflows.md).
+and explicit transient private shell bindings. Use `--prompt-missing` with
+`workflow preview` or `workflow run` to collect required missing inputs from an
+attended terminal, with hidden secret entry for runs. Unattended calls require
+explicit inputs. See [Saved workflows](../docs/saved-workflows.md).

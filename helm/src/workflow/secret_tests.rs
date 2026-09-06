@@ -180,6 +180,8 @@ fn cli_environment_source_is_explicit_and_preview_never_reads_it() {
         secret_env: vec!["token=OPERATOR_TOKEN".into()],
         trust_repository: None,
         no_save: false,
+        prompt_missing: false,
+        input_timeout_seconds: 120,
     };
     let preview = super::prepare_inputs(&definition, args(), false, |_| {
         panic!("preview read operator environment")

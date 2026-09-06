@@ -17,8 +17,9 @@ worker HTTP operations (#129), workflow secrets (#130) and private policy defaul
 (#131). The [worktree cleanup](worktree-cleanup.md) records their integration and
 verification. The unified Helm management interface and multi-Helm coordination
 remain unfinished under #77/#14/#78, with protocol, identity and privacy dependencies
-#9/#10/#79. Browser console work is deferred. Remaining workflow and policy criteria
-include plain-mode missing-input prompting and TUI profile switching.
+#9/#10/#79. Browser console work is deferred. Workflow CLI supports explicit
+[attended missing-input collection](saved-workflows.md#attended-cli-input-collection).
+TUI profile switching remains open under #70.
 
 The refreshed inventory for this documentation audit contains 83 open/closed issues,
 22 open, preserved in `.local-git/evidence/product-alignment-20260905/`. The

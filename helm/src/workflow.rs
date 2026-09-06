@@ -10,6 +10,11 @@ use std::{
     io::Read,
     path::{Path, PathBuf},
 };
+mod prompt;
+pub use prompt::{InputFailure, InputMonitor};
+#[cfg(test)]
+mod prompt_tests;
+
 pub const MAX_DOCUMENT: usize = 64 * 1024;
 const MAX_RENDER: usize = 128 * 1024;
 const MAX_FILES: usize = 128;
@@ -156,6 +161,25 @@ pub fn parse(bytes: &[u8]) -> Result<Document> {
     Ok(value)
 }
 impl Parameter {
+    fn decode(&self, text: &str) -> Result<Value> {
+        ensure!(text.len() <= 8192, "workflow input exceeds limit");
+        let value = match self.kind {
+            ParameterType::String => Value::String(text.to_owned()),
+            ParameterType::Integer => Value::from(
+                text.parse::<i64>()
+                    .map_err(|_| anyhow::anyhow!("workflow integer input is invalid"))?,
+            ),
+            ParameterType::Boolean => Value::Bool(
+                text.parse::<bool>()
+                    .map_err(|_| anyhow::anyhow!("workflow boolean input must be true or false"))?,
+            ),
+        };
+        ensure!(
+            self.accepts(&value),
+            "workflow input fails type, bounds or choices"
+        );
+        Ok(value)
+    }
     fn accepts(&self, value: &Value) -> bool {
         let typed = match self.kind {
             ParameterType::String => value
@@ -297,21 +321,7 @@ impl Document {
                 .parameters
                 .get(name)
                 .ok_or_else(|| anyhow::anyhow!("unknown workflow input"))?;
-            ensure!(text.len() <= 8192, "workflow input exceeds limit");
-            let value = match parameter.kind {
-                ParameterType::String => Value::String(text.clone()),
-                ParameterType::Integer => Value::from(
-                    text.parse::<i64>()
-                        .map_err(|_| anyhow::anyhow!("workflow integer input is invalid"))?,
-                ),
-                ParameterType::Boolean => Value::Bool(text.parse::<bool>().map_err(|_| {
-                    anyhow::anyhow!("workflow boolean input must be true or false")
-                })?),
-            };
-            ensure!(
-                parameter.accepts(&value),
-                "workflow input fails type, bounds or choices"
-            );
+            let value = parameter.decode(text)?;
             ensure!(
                 inputs.insert(name.clone(), value).is_none(),
                 "duplicate workflow input"
@@ -485,14 +495,21 @@ pub struct InputArgs {
     pub trust_repository: Option<String>,
     #[arg(long)]
     pub no_save: bool,
+    /// Collect required missing inputs from an attended terminal before preview/run.
+    #[arg(long)]
+    pub prompt_missing: bool,
+    /// Total attended collection deadline, including retries (1..300 seconds).
+    #[arg(long, default_value_t = 120, value_parser = clap::value_parser!(u64).range(1..=300))]
+    pub input_timeout_seconds: u64,
 }
 pub struct Prepared {
+    pub input_monitor: Option<InputMonitor>,
     pub secrets: secrets::SecretInputs,
     pub prompt: String,
     pub invocation: Invocation,
     pub no_save: bool,
 }
-pub fn prepare(args: WorkflowArgs, workspace: &Path) -> Result<Option<Prepared>> {
+pub async fn prepare(args: WorkflowArgs, workspace: &Path) -> Result<Option<Prepared>> {
     let definitions = discover(workspace, args.user_directory.as_deref())?;
     let is_run = matches!(&args.command, WorkflowCommand::Run(_));
     let output = match args.command {
@@ -504,14 +521,63 @@ pub fn prepare(args: WorkflowArgs, workspace: &Path) -> Result<Option<Prepared>>
             let d = select(definitions, &s.id, s.scope)?;
             serde_json::json!({"valid":true,"id":d.document.id,"digest":d.digest})
         }
-        WorkflowCommand::Preview(input) | WorkflowCommand::Run(input) => {
+        WorkflowCommand::Preview(mut input) | WorkflowCommand::Run(mut input) => {
             let d = select(definitions, &input.selection.id, input.selection.scope)?;
-            return prepare_inputs(&d, input, is_run, |name| {
+            d.authorize(input.trust_repository.as_deref())?;
+            let mut collected = Vec::new();
+            let mut input_monitor = None;
+            if input.prompt_missing {
+                ensure!(
+                    (1..=300).contains(&input.input_timeout_seconds),
+                    "workflow input timeout must be 1..300 seconds"
+                );
+                let fields = missing_fields(&d, &input, is_run)?;
+                if !fields.is_empty() {
+                    let entered = prompt::collect(
+                        fields,
+                        std::time::Duration::from_secs(input.input_timeout_seconds),
+                    )
+                    .await?;
+                    input_monitor = Some(entered.monitor);
+                    for (name, value) in entered.values {
+                        if d.document.parameters[&name].secret {
+                            collected.push((name, value));
+                        } else {
+                            input.inputs.push(format!("{name}={}", *value));
+                        }
+                    }
+                }
+                if !is_run {
+                    let sources = parse_inputs(&d, &input)?.sources;
+                    for (name, parameter) in &d.document.parameters {
+                        if parameter.secret && parameter.required && !sources.contains_key(name) {
+                            collected.push((name.clone(), zeroize::Zeroizing::new(String::new())));
+                        }
+                    }
+                }
+                let fresh = select(
+                    discover(workspace, args.user_directory.as_deref())?,
+                    &input.selection.id,
+                    input.selection.scope,
+                )?;
+                ensure!(
+                    fresh.scope == d.scope && fresh.digest == d.digest,
+                    "workflow definition changed during input collection; inspect and retry"
+                );
+                fresh.authorize(input.trust_repository.as_deref())?;
+            }
+            let lookup = |name: &str| {
                 std::env::var(name).map_err(|_| {
                     anyhow::anyhow!("workflow secret environment source is missing or not UTF-8")
                 })
-            })
-            .map(Some);
+            };
+            let mut prepared = if input.prompt_missing {
+                prepare_inputs_collected(&d, input, is_run, lookup, collected)
+            } else {
+                prepare_inputs(&d, input, is_run, lookup)
+            }?;
+            prepared.input_monitor = input_monitor;
+            return Ok(Some(prepared));
         }
     };
     print_value(&output, args.json)?;
@@ -521,9 +587,15 @@ fn prepare_inputs(
     definition: &Definition,
     input: InputArgs,
     is_run: bool,
-    mut lookup: impl FnMut(&str) -> Result<String>,
+    lookup: impl FnMut(&str) -> Result<String>,
 ) -> Result<Prepared> {
-    definition.authorize(input.trust_repository.as_deref())?;
+    prepare_inputs_collected(definition, input, is_run, lookup, Vec::new())
+}
+struct ParsedInputs {
+    supplied: Vec<(String, String)>,
+    sources: BTreeMap<String, String>,
+}
+fn parse_inputs(definition: &Definition, input: &InputArgs) -> Result<ParsedInputs> {
     ensure!(
         input.inputs.len() <= MAX_PARAMETERS && input.secret_env.len() <= MAX_PARAMETERS,
         "too many workflow inputs"
@@ -539,7 +611,7 @@ fn prepare_inputs(
         })
         .collect::<Result<Vec<_>>>()?;
     let mut sources = BTreeMap::new();
-    for reference in input.secret_env {
+    for reference in &input.secret_env {
         let (name, environment) = reference
             .split_once('=')
             .ok_or_else(|| anyhow::anyhow!("workflow secret source must be NAME=VARIABLE"))?;
@@ -569,13 +641,67 @@ fn prepare_inputs(
             "duplicate workflow secret input"
         );
     }
-    let names = sources.keys().cloned().collect();
+    let mut seen = std::collections::BTreeSet::new();
+    for (name, text) in &supplied {
+        let parameter = definition
+            .document
+            .parameters
+            .get(name)
+            .filter(|parameter| !parameter.secret)
+            .ok_or_else(|| {
+                anyhow::anyhow!("unknown workflow input; secret values require --secret-env")
+            })?;
+        parameter.decode(text)?;
+        ensure!(seen.insert(name), "duplicate workflow input");
+    }
+    Ok(ParsedInputs { supplied, sources })
+}
+fn missing_fields(
+    definition: &Definition,
+    input: &InputArgs,
+    is_run: bool,
+) -> Result<Vec<prompt::Field>> {
+    definition.authorize(input.trust_repository.as_deref())?;
+    let ParsedInputs { supplied, sources } = parse_inputs(definition, input)?;
+    Ok(definition
+        .document
+        .parameters
+        .iter()
+        .filter(|(name, parameter)| {
+            parameter.required
+                && parameter.default.is_none()
+                && if parameter.secret {
+                    is_run && !sources.contains_key(*name)
+                } else {
+                    !supplied.iter().any(|(provided, _)| provided == *name)
+                }
+        })
+        .map(|(name, parameter)| prompt::Field {
+            name: name.clone(),
+            parameter: parameter.clone(),
+        })
+        .collect())
+}
+fn prepare_inputs_collected(
+    definition: &Definition,
+    input: InputArgs,
+    is_run: bool,
+    mut lookup: impl FnMut(&str) -> Result<String>,
+    mut collected: Vec<(String, zeroize::Zeroizing<String>)>,
+) -> Result<Prepared> {
+    definition.authorize(input.trust_repository.as_deref())?;
+    let ParsedInputs { supplied, sources } = parse_inputs(definition, &input)?;
+    let names = sources
+        .keys()
+        .chain(collected.iter().map(|(name, _)| name))
+        .cloned()
+        .collect();
     // Validate public inputs and reference completeness before touching private sources.
     let rendered = secrets::render_public(&definition.document, &supplied, &names)?;
     let mut values = Vec::new();
     if is_run {
         // Keep earlier resolved values clearing-on-drop if a later source fails.
-        let mut held = Vec::new();
+        let mut held = std::mem::take(&mut collected);
         for (name, source) in sources {
             held.push((name, zeroize::Zeroizing::new(lookup(&source)?)));
         }
@@ -586,6 +712,7 @@ fn prepare_inputs(
     }
     let secrets = secrets::SecretInputs::collect(&definition.document, values)?;
     Ok(Prepared {
+        input_monitor: None,
         prompt: rendered.prompt,
         invocation: definition.invocation(rendered.inputs),
         no_save: input.no_save,

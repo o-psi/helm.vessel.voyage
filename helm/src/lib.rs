@@ -16,6 +16,7 @@ pub mod session;
 pub mod subagent;
 pub mod supervision;
 pub mod terminal;
+mod terminal_input;
 pub mod titles;
 pub mod todo;
 pub mod tools;

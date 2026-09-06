@@ -82,8 +82,8 @@ Parameters support `string`, signed 64-bit `integer`, and `boolean` (`true` or
 `choices`. Integers support `minimum`/`maximum`; strings support a byte-count
 `max_length`. Missing optional parameters without defaults render as JSON `null`.
 Unknown or duplicate inputs, invalid defaults, out-of-range values and unknown
-fields fail before provider execution. Missing required inputs produce an error;
-this CLI does not read a competing input prompt.
+fields fail before provider execution. Missing required inputs produce an error
+unless you explicitly request the attended collection described below.
 
 `{{name}}` substitutes the parameter as a JSON value: strings include quotes and
 escape newlines, quotes and controls. Substitution is single-pass; parameter values
@@ -123,6 +123,52 @@ policy denial, provider failure, cancellation, no-save and secret rejection. Uni
 coverage includes parser/render bounds, malformed data, file confinement, session
 round trips and branching. Native macOS/Windows execution is not claimed; Linux is the verification gate. No live provider evaluation accompanies
 this prompt-format feature.
+
+## Attended CLI input collection
+
+Use `--prompt-missing` to collect required inputs before previewing or running a
+workflow. For example, with a personal workflow:
+
+```sh
+helm workflow preview review-change --scope user --prompt-missing
+helm workflow run review-change --scope user --prompt-missing --input-timeout-seconds 120
+```
+
+Repository workflows still require `--trust-repository DIGEST` for the exact
+inspected definition. Trust and supplied arguments are checked before input is
+read; the selected scope and digest are checked again after collection. A changed
+or removed definition aborts without dispatch. Current runtime policy, approvals
+and run ownership continue to apply when execution starts.
+
+Collection requires terminal stdin and stderr. Redirected or missing input fails
+promptly when a field needs collection; there is no automatic unattended prompt.
+Only missing required fields without defaults are requested. Supplied values,
+defaults and absent optional inputs keep their existing meanings. Public fields
+are labeled model-visible and recorded when a run is saved; secret fields are hidden, without even a
+length mask. Preview collects public values only and displays required secret
+references without reading private values or environment sources. Run collects
+missing required secrets; `--secret-env` remains available for explicit sources.
+
+Input is one UTF-8 line per field, bounded to 8 KiB and the declared type, byte
+limit and choices. Invalid values allow up to three attempts without repeating
+the submitted value in diagnostics. Enter accepts a field, Backspace edits, and
+Esc, Ctrl+C or Ctrl+D cancels. The total deadline defaults to 120 seconds;
+`--input-timeout-seconds` accepts 1..300. A timeout, input error or cancellation
+aborts the invocation and discards collected values. Cancellation exits with 130;
+timeouts and input errors exit nonzero. There is no automatic retry or secret
+recovery after restart.
+
+The collector owns stdin until it finishes, discards queued input before restoring
+the saved terminal mode, and releases it before execution can request approval or
+ask a question. Signals observed during collection continue to cancel that workflow
+through its ordinary run cleanup after collection finishes. Secrets remain transient run bindings, outside public prompts,
+workflow metadata, terminal output and logs. Do not paste multiple fields together:
+queued text after Enter is discarded rather than becoming the next answer.
+
+`tests/system/workflow_prompting.py` checks actual CLI/PTY preview, private shell
+execution, exact trust and changed definitions, Unicode/narrow terminals, failures,
+timeouts, signal cancellation and terminal restoration. Native macOS/Windows
+execution remains separate platform evidence.
 
 ## TUI workflow forms
 
@@ -175,8 +221,8 @@ changes, defaults, literal input, metadata-before-dispatch, ordinary policy deni
 cancellation. Unit/routing tests cover malformed values, stale discovery, secret
 masking/cancellation, modifier keys, draft retention, input isolation, narrow rendering, run limits
 and canonical save failure. This is deterministic offline evidence; no new live model
-or native-platform acceptance is implied. Plain-mode missing-input prompting remains
-separate #67 work; unattended calls must supply required inputs explicitly.
+or native-platform acceptance is implied. Unattended calls must supply required
+inputs explicitly; attended CLI collection uses the same rendering and run bindings.
 
 
 ## Transient private shell bindings
@@ -192,7 +238,8 @@ helm workflow run private-check --secret-env token=OPERATOR_TOKEN
 The preview validates input names and completeness but never reads `OPERATOR_TOKEN`.
 Execution reads that source explicitly; it does not expand template text or import
 other environment variables. Missing/non-UTF-8 sources fail with a fixed diagnostic.
-In the TUI, enter the secret in the masked field instead. Do not send secret values
+With `--prompt-missing`, enter a required run secret in its hidden CLI field; in
+the TUI, use the masked field instead. Do not send secret values
 through ordinary messages, steering, Questions, `--input`, or command-line arguments.
 
 A `{{token}}` placeholder becomes the public JSON reference

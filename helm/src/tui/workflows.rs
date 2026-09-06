@@ -164,6 +164,7 @@ impl Form {
             &secrets.names(),
         )?;
         Ok(Prepared {
+            input_monitor: None,
             prompt: rendered.prompt,
             invocation: self.definition.invocation(rendered.inputs),
             no_save: false,
