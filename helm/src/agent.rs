@@ -1384,6 +1384,9 @@ impl Agent {
         for message in &mut request.messages {
             crate::provider::redact_message(message, &self.context.redactor)?;
         }
+        for definition in &mut request.tools {
+            crate::provider::redact_tool_definition(definition, &self.context.redactor)?;
+        }
         let limit = self.context_limit(&request.model);
         let report = crate::context::preflight(&mut request, limit)?;
         tracing::info!(

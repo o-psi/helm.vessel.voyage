@@ -1,5 +1,8 @@
 //! Redact natural text without changing executable or opaque provider data.
-use crate::{model::Message, tools::Redactor};
+use crate::{
+    model::{Message, ToolDefinition},
+    tools::Redactor,
+};
 use serde_json::Value;
 
 use super::ProviderError;
@@ -13,6 +16,24 @@ fn contains(value: &Value, redactor: &Redactor) -> bool {
             .any(|(key, value)| redactor.contains_secret(key) || contains(value, redactor)),
         _ => false,
     }
+}
+
+/// Project only the outgoing description. Names and schemas define executable
+/// behavior, so a known secret there must refuse dispatch rather than alter it.
+pub(crate) fn definition(
+    definition: &mut ToolDefinition,
+    redactor: &Redactor,
+) -> Result<(), ProviderError> {
+    definition.description = redactor.redact_public_prefix(&definition.description);
+    if redactor.contains_secret(&definition.description)
+        || redactor.contains_secret(&definition.name)
+        || contains(&definition.input_schema, redactor)
+    {
+        return Err(ProviderError::InvalidResponse(
+            "configured secret in executable tool metadata; provider dispatch refused".into(),
+        ));
+    }
+    Ok(())
 }
 
 /// Called on newly received messages and outgoing history copies. Never rewrite
@@ -80,6 +101,56 @@ mod tests {
     use super::*;
     use crate::model::{Role, ToolCall};
     use serde_json::json;
+
+    #[test]
+    fn tool_description_redacts_but_executable_schema_stays_exact() {
+        let redactor = Redactor::new(["private-\"\n秘密".into()]);
+        let original = ToolDefinition {
+            name: "fixture".into(),
+            description: "before private-\"\n秘密 after".into(),
+            input_schema: json!({"type":"object","properties":{"value":{"type":"string","enum":["safe"]}}}),
+        };
+        let mut outgoing = original.clone();
+        definition(&mut outgoing, &redactor).unwrap();
+        assert_eq!(outgoing.description, "before [REDACTED] after");
+        assert_eq!(outgoing.name, original.name);
+        assert_eq!(outgoing.input_schema, original.input_schema);
+        assert!(original.description.contains("private-\"\n秘密"));
+        let unchanged = outgoing.clone();
+        definition(&mut outgoing, &redactor).unwrap();
+        assert_eq!(
+            serde_json::to_value(outgoing).unwrap(),
+            serde_json::to_value(unchanged).unwrap()
+        );
+    }
+
+    #[test]
+    fn secret_tool_name_or_schema_is_refused_without_semantic_rewriting() {
+        let secret = "private-\"\n秘密";
+        let redactor = Redactor::new([secret.into()]);
+        for schema in [
+            json!({"description":secret}),
+            json!({"properties":{(secret):{"type":"string"}}}),
+            json!({"properties":{"value":{"enum":[secret]}}}),
+            json!({"properties":{"value":{"default":secret}}}),
+        ] {
+            let mut outgoing = ToolDefinition {
+                name: "fixture".into(),
+                description: "safe".into(),
+                input_schema: schema.clone(),
+            };
+            assert!(definition(&mut outgoing, &redactor).is_err());
+            assert_eq!(outgoing.input_schema, schema);
+            assert_eq!(outgoing.name, "fixture");
+        }
+        let mut outgoing = ToolDefinition {
+            name: secret.into(),
+            description: "safe".into(),
+            input_schema: json!({"type":"object"}),
+        };
+        assert!(definition(&mut outgoing, &redactor).is_err());
+        assert_eq!(outgoing.name, secret);
+    }
 
     #[test]
     fn responses_text_redacts_without_changing_nonsecret_opaque_items() {

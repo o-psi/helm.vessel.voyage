@@ -7,6 +7,7 @@ pub(crate) mod discovery;
 mod openai;
 mod openai_responses;
 mod redaction;
+pub(crate) use redaction::definition as redact_tool_definition;
 pub(crate) use redaction::message as redact_message;
 
 use async_trait::async_trait;
