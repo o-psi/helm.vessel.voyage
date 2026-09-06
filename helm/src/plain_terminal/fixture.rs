@@ -57,7 +57,7 @@ fn native_driver() {
         let directory=tempfile::tempdir().unwrap();
         use crate::policy_profile::{Builtin,Overrides,selection::{Selection,SelectionRequest},store::{Action,ProfileChange,ProfileStore}};
         let mut config=crate::Config{approval:crate::config::ApprovalMode::Never,..Default::default()};
-        let profiles=if mode=="policy" {
+        let profiles=if mode=="policy"||mode=="policy-preflight" {
             let path=directory.path().join("profiles");let store=ProfileStore::open(&path).unwrap();
             let snapshot=store.change(&ProfileChange{operation_id:uuid::Uuid::new_v4(),name:"plain-fixture".into(),expected_revision:0,action:Action::Create{rules:Builtin::Autonomous.document().rules}}).unwrap().snapshot;
             let request=SelectionRequest{directory:path,name:snapshot.name.clone(),revision:snapshot.revision,digest:snapshot.digest().unwrap(),explicit:Overrides::default()};
@@ -83,6 +83,10 @@ fn native_driver() {
         let cancel=CancellationToken::new();
         let frontend:Arc<dyn InteractiveTerminals>=if mode.starts_with("write-failure"){Arc::new(FailingWrite(manager.clone()))}else{manager.clone()};
         let attachment_policy=if mode=="read-only" {Arc::new(Policy::new(&crate::Config{access:Some(crate::config::AccessMode::ReadOnly),..Default::default()},directory.path().into()).unwrap())}else{policy};
+        if mode=="policy-preflight" {
+            let (store,revision)=profiles.as_ref().unwrap();
+            store.change(&ProfileChange{operation_id:uuid::Uuid::new_v4(),name:"plain-fixture".into(),expected_revision:*revision,action:Action::Delete{}}).unwrap();
+        }
         let operation=attach(frontend,id,attachment_policy,cancel.clone());tokio::pin!(operation);
         let result=tokio::select!{ biased;
             _=stop.recv()=>{cancel.cancel();operation.await},
@@ -115,6 +119,11 @@ fn native_driver() {
             }
             Err(error)=>{
                 assert!(!owns_terminal());
+                if mode=="read-only"||mode=="policy-preflight" {
+                    discard_failed_attempt(&mut pending).unwrap();
+                    let mut input=crate::terminal_input::Terminal::enter_preserving_input().unwrap();
+                    assert!(input.read().unwrap().is_none(),"failed attach retained ambiguous private input");input.restore().unwrap();
+                }
                 if mode=="write-failure-private" {
                     let mut input=crate::terminal_input::Terminal::enter_preserving_input().unwrap();
                     assert!(input.read().unwrap().is_none(),"unread private bytes escaped into the next prompt");input.restore().unwrap();

@@ -31,7 +31,11 @@ If an agent requests approval while a terminal is attached, Helm returns
 
 In plain chat, use `/terminals` to list this workspace's live terminals, then
 `/terminal ID_OR_EXACT_NAME` to attach. An ambiguous name requires the listed ID.
-Listing an empty workspace does not construct a provider or launch a shell. Saved
+Listing an empty workspace does not construct a provider or launch a shell.
+If a TTY attachment attempt fails selection or policy checks, Helm discards its
+queued input before displaying the refusal. No queued prompt is submitted; re-enter
+your next command. This prevents private input sent together with a mistyped attach
+command from becoming a model prompt. Piped input keeps its normal command semantics. Saved
 terminal metadata cannot reattach a process after Helm restarts.
 
 Attachment requires local TTY input and output and current writable local policy.

@@ -38,7 +38,7 @@ def main():
     parser=argparse.ArgumentParser();parser.add_argument('--test-binary',required=True);args=parser.parse_args()
     with tempfile.TemporaryDirectory(prefix='helm-plain-pty-') as tmp:
         env=dict(os.environ,HOME=tmp,XDG_CONFIG_HOME=tmp+'/config',XDG_DATA_HOME=tmp+'/data',TERM='xterm-256color')
-        cases=['ctrl-t','ctrl-bracket','partial','coalesced-command','resize','too-small','interrupt','inner-exit','write-failure-detach','write-failure-private','policy','read-only','ctrl-c','editing','bytes','invalid']
+        cases=['ctrl-t','ctrl-bracket','partial','coalesced-command','resize','too-small','interrupt','inner-exit','write-failure-detach','write-failure-private','policy','read-only','ctrl-c','editing','bytes','invalid','policy-preflight']
         for case in cases:
             terminal=Terminal(args.test_binary,env,mode=case)
             try:
@@ -46,13 +46,13 @@ def main():
                 if case=='coalesced-command':
                     terminal.send('/terminal\n'.encode()+b"printf 'PRIVATE_CANARY\\n'\n\x14"+'next🧭\n'.encode())
                 else:
-                    terminal.send(b'/terminal\n')
-                    if case=='read-only':terminal.wait(b'DRIVER_ERROR=')
+                    terminal.send(b'/terminal\n'+(b'PRIVATE_CANARY\n' if case in ['read-only','policy-preflight'] else b''))
+                    if case in ['read-only','policy-preflight']:terminal.wait(b'DRIVER_ERROR=')
                     else:terminal.wait(b'INNER_READY')
                     if case=='resize':terminal.resize(30,8)
                     if case=='bytes':
                         terminal.send(b'\x1b[200~private\x1b[201~\x1b[A\x1bOP\x03\x00');terminal.wait(b'BYTES_RECORDED');terminal.send(b'\x14'+'next🧭\n'.encode())
-                    elif case=='read-only':pass
+                    elif case in ['read-only','policy-preflight']:pass
                     elif case=='policy':os.kill(terminal.process.pid,signal.SIGUSR2);terminal.wait(b'DRIVER_ERROR=')
                     elif case=='write-failure-detach':terminal.send(b'private bytes\x14'+'next🧭\n'.encode())
                     elif case=='write-failure-private':terminal.send(b'PRIVATE_CANARY'*600);terminal.wait(b'DRIVER_ERROR=')
@@ -72,8 +72,8 @@ def main():
                         elif case=='partial':
                             terminal.send(chord+b'next');terminal.wait(b'DRIVER_RESUMED');terminal.send('🧭\n'.encode())
                         else:terminal.send(chord+'next🧭\n'.encode())
-                if case not in ['too-small','interrupt','inner-exit','write-failure-private','policy','read-only']:terminal.wait(b'DRIVER_HANDOFF_OK')
-                terminal.finish(entered=case!='read-only');print('PASS plain terminal '+case,flush=True)
+                if case not in ['too-small','interrupt','inner-exit','write-failure-private','policy','read-only','policy-preflight']:terminal.wait(b'DRIVER_HANDOFF_OK')
+                terminal.finish(entered=case not in ['read-only','policy-preflight']);print('PASS plain terminal '+case,flush=True)
             finally:terminal.close()
         result=subprocess.run([args.test_binary,'--exact',DRIVER,'--nocapture'],input=b'',stdout=subprocess.PIPE,stderr=subprocess.PIPE,env=dict(env,HELM_PLAIN_TERMINAL_DRIVER='non-tty'),timeout=15)
         assert result.returncode==0,(result.stdout,result.stderr)

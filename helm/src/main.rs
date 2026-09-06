@@ -2429,21 +2429,16 @@ async fn chat(
             _ => {}
         }
         if prompt == "/terminals" || prompt == "/terminal" || prompt.starts_with("/terminal ") {
-            if prompt == "/terminal" {
-                eprintln!("usage: /terminal ID_OR_EXACT_NAME (see /terminals)");
-                continue;
-            }
-            let Some(current) = agent.as_ref() else {
-                eprintln!(
-                    "No live terminals in this voyage. Saved terminal metadata cannot reattach a process."
-                );
-                continue;
-            };
             let result: Result<bool> = async {
+                if prompt == "/terminal" { anyhow::bail!("usage: /terminal ID_OR_EXACT_NAME (see /terminals)"); }
+                let Some(current) = agent.as_ref() else {
+                    if prompt == "/terminals" { println!("No live terminals in this workspace. Saved metadata cannot reattach a process.");return Ok(false); }
+                    anyhow::bail!("No live terminals in this workspace. Saved metadata cannot reattach a process.");
+                };
                 let (manager, policy) = current.plain_terminals()?;
                 let items = manager.list().await?;
                 if prompt == "/terminals" {
-                    if items.is_empty() { println!("No live terminals in this voyage."); }
+                    if items.is_empty() { println!("No live terminals in this workspace."); }
                     for item in items { println!("{}  {:?}  {}", item.id, item.state, safe_diagnostic(&item.title)); }
                     return Ok(false);
                 }
@@ -2463,10 +2458,21 @@ async fn chat(
             match result {
                 Ok(true) => break,
                 Ok(false) => (),
-                Err(error) => eprintln!(
-                    "{}",
-                    safe_diagnostic(&current.redact_diagnostic(error.to_string()))
-                ),
+                Err(error) => {
+                    if prompt != "/terminals" && io::stdin().is_terminal() {
+                        // This includes failed selection and preflight, before
+                        // any PTY ownership or privacy activation succeeded.
+                        helm::plain_terminal::discard_failed_attempt(&mut pending)?;
+                        eprintln!(
+                            "Queued attachment input was discarded. No queued prompt was submitted; re-enter your next Helm command."
+                        );
+                    }
+                    let message = agent
+                        .as_ref()
+                        .map(|current| current.redact_diagnostic(error.to_string()))
+                        .unwrap_or_else(|| redactor(&config).redact(error.to_string()));
+                    eprintln!("{}", safe_diagnostic(&message));
+                }
             }
             continue;
         }

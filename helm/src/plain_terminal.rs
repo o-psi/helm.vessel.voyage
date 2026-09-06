@@ -60,6 +60,9 @@ impl PendingInput {
     pub fn is_empty(&self) -> bool {
         self.bytes.is_empty()
     }
+    pub fn discard(&mut self) {
+        self.bytes.clear();
+    }
     pub fn take_line(&mut self) -> Result<Option<String>> {
         let Some(end) = self
             .bytes
@@ -87,6 +90,25 @@ impl PendingInput {
             self.bytes.pop();
         }
     }
+}
+
+/// A failed TTY attachment command cannot classify its queued tail as a prompt.
+/// Clear it before displaying the refusal; piped input retains ordinary semantics.
+pub fn discard_failed_attempt(pending: &mut PendingInput) -> Result<()> {
+    if !io::stdin().is_terminal() {
+        return Ok(());
+    }
+    pending.discard();
+    let mut input = crate::terminal_input::Terminal::enter_preserving_input().map_err(|_| {
+        anyhow::anyhow!("queued attachment input could not be isolated; chat must stop")
+    })?;
+    input.discard().map_err(|_| {
+        anyhow::anyhow!("queued attachment input could not be discarded; chat must stop")
+    })?;
+    input
+        .restore()
+        .map_err(|_| anyhow::anyhow!("terminal input restoration failed; chat must stop"))?;
+    Ok(())
 }
 
 pub fn select(items: &[TerminalSummary], reference: &str) -> Result<TerminalId> {
@@ -137,26 +159,39 @@ impl InputEncoding {
 }
 /// Resume editing a partial byte suffix without a competing buffered stdin reader.
 /// Complete lines are returned first; later lines remain queued for later prompts.
-pub async fn pending_prompt(pending:&mut PendingInput,cancel:CancellationToken)->Result<Option<String>> {
-    if let Ok(Some(line))=pending.take_line() {return Ok(Some(line));}
-    ensure!(io::stdin().is_terminal()&&io::stdout().is_terminal(),"pending terminal input needs a local TTY");
-    let mut input=crate::terminal_input::Terminal::enter_preserving_input()?;
-    let mut output=Output::new()?;
-    let result=async {
-        let mut displayed=String::new();
-        let mut displayed_cursor=usize::MAX;
-        let mut encoding=InputEncoding::default();
-        let mut escape=Vec::new();
-        let mut cursor=pending.bytes.len();
-        let mut blocked=false;
+pub async fn pending_prompt(
+    pending: &mut PendingInput,
+    cancel: CancellationToken,
+) -> Result<Option<String>> {
+    if let Ok(Some(line)) = pending.take_line() {
+        return Ok(Some(line));
+    }
+    ensure!(
+        io::stdin().is_terminal() && io::stdout().is_terminal(),
+        "pending terminal input needs a local TTY"
+    );
+    let mut input = crate::terminal_input::Terminal::enter_preserving_input()?;
+    let mut output = Output::new()?;
+    let result = async {
+        let mut displayed = String::new();
+        let mut displayed_cursor = usize::MAX;
+        let mut encoding = InputEncoding::default();
+        let mut escape = Vec::new();
+        let mut cursor = pending.bytes.len();
+        let mut blocked = false;
         loop {
-            if cancel.is_cancelled(){return Ok(None);}
-            let columns=crossterm::terminal::size()?.0.max(2);
-            let (display,back)=prompt_view(&pending.bytes,cursor,columns,blocked);
-            if display!=displayed||back!=displayed_cursor {
+            if cancel.is_cancelled() {
+                return Ok(None);
+            }
+            let columns = crossterm::terminal::size()?.0.max(2);
+            let (display, back) = prompt_view(&pending.bytes, cursor, columns, blocked);
+            if display != displayed || back != displayed_cursor {
                 output.write(format!("\r\x1b[2K{display}").as_bytes())?;
-                if back>0 {output.write(format!("\x1b[{back}D").as_bytes())?;}
-                displayed=display;displayed_cursor=back;
+                if back > 0 {
+                    output.write(format!("\x1b[{back}D").as_bytes())?;
+                }
+                displayed = display;
+                displayed_cursor = back;
             }
             match input.read()? {
                 Some((3, _)) => return Ok(None),
@@ -273,27 +308,55 @@ pub async fn pending_prompt(pending:&mut PendingInput,cancel:CancellationToken)-
     result
 }
 
-fn prompt_view(bytes:&[u8],cursor:usize,columns:u16,blocked:bool)->(String,usize) {
-    use unicode_width::{UnicodeWidthChar,UnicodeWidthStr};
-    let width=usize::from(columns.saturating_sub(1));
-    let prefix=if width<8 {">"}else if blocked&&width>=18 {"limit; Ctrl+U> "}else{"helm> "};
-    let room=width.saturating_sub(prefix.len());
-    let before=visible(&String::from_utf8_lossy(&bytes[..cursor.min(bytes.len())]));
-    let after=visible(&String::from_utf8_lossy(&bytes[cursor.min(bytes.len())..]));
-    let mut used=0;let mut left=Vec::new();
+fn prompt_view(bytes: &[u8], cursor: usize, columns: u16, blocked: bool) -> (String, usize) {
+    use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+    let width = usize::from(columns.saturating_sub(1));
+    let prefix = if width < 8 {
+        ">"
+    } else if blocked && width >= 18 {
+        "limit; Ctrl+U> "
+    } else {
+        "helm> "
+    };
+    let room = width.saturating_sub(prefix.len());
+    let before = visible(&String::from_utf8_lossy(&bytes[..cursor.min(bytes.len())]));
+    let after = visible(&String::from_utf8_lossy(&bytes[cursor.min(bytes.len())..]));
+    let mut used = 0;
+    let mut left = Vec::new();
     for ch in before.chars().rev() {
-        let size=UnicodeWidthChar::width(ch).unwrap_or(0);
-        if used+size>room {break;}
-        used+=size;left.push(ch);
+        let size = UnicodeWidthChar::width(ch).unwrap_or(0);
+        if used + size > room {
+            break;
+        }
+        used += size;
+        left.push(ch);
     }
-    let mut text=prefix.to_owned();text.extend(left.into_iter().rev());
-    let mut suffix=String::new();
-    for ch in after.chars(){let size=UnicodeWidthChar::width(ch).unwrap_or(0);if used+size>room{break;}used+=size;suffix.push(ch);}
-    let back=UnicodeWidthStr::width(suffix.as_str());text.push_str(&suffix);(text,back)
+    let mut text = prefix.to_owned();
+    text.extend(left.into_iter().rev());
+    let mut suffix = String::new();
+    for ch in after.chars() {
+        let size = UnicodeWidthChar::width(ch).unwrap_or(0);
+        if used + size > room {
+            break;
+        }
+        used += size;
+        suffix.push(ch);
+    }
+    let back = UnicodeWidthStr::width(suffix.as_str());
+    text.push_str(&suffix);
+    (text, back)
 }
 
-fn visible(text:&str)->String {
-    text.chars().flat_map(|c| if c.is_control()||matches!(c,'\u{202a}'..='\u{202e}'|'\u{2066}'..='\u{2069}') {c.escape_default().collect::<Vec<_>>()} else {vec![c]}).collect()
+fn visible(text: &str) -> String {
+    text.chars()
+        .flat_map(|c| {
+            if c.is_control() || matches!(c,'\u{202a}'..='\u{202e}'|'\u{2066}'..='\u{2069}') {
+                c.escape_default().collect::<Vec<_>>()
+            } else {
+                vec![c]
+            }
+        })
+        .collect()
 }
 
 /// Only bytes following a locally consumed detach chord may become Helm input.
@@ -597,23 +660,37 @@ mod tests {
         assert_eq!(pending.bytes, b"prefix");
     }
     #[test]
-    fn prompt_view_bounds_columns_and_keeps_control_text_inert(){
+    fn prompt_view_bounds_columns_and_keeps_control_text_inert() {
         for columns in 2..80 {
-            let bytes="前🧭next\x1b]52;c;secret\x07suffix".as_bytes();
-            for cursor in [0,3,7,bytes.len()] {
-                let (view,back)=prompt_view(bytes,cursor,columns,false);
-                assert!(unicode_width::UnicodeWidthStr::width(view.as_str())<usize::from(columns));
-                assert!(!view.contains('\x1b')&&!view.contains('\x07'));
-                assert!(back<=unicode_width::UnicodeWidthStr::width(view.as_str()));
+            let bytes = "前🧭next\x1b]52;c;secret\x07suffix".as_bytes();
+            for cursor in [0, 3, 7, bytes.len()] {
+                let (view, back) = prompt_view(bytes, cursor, columns, false);
+                assert!(
+                    unicode_width::UnicodeWidthStr::width(view.as_str()) < usize::from(columns)
+                );
+                assert!(!view.contains('\x1b') && !view.contains('\x07'));
+                assert!(back <= unicode_width::UnicodeWidthStr::width(view.as_str()));
             }
         }
     }
     #[test]
-    fn selection_requires_current_unique_running_identity(){
-        let a=TerminalSummary{id:TerminalId(uuid::Uuid::new_v4()),title:"same".into(),state:TerminalState::Running};
-        let b=TerminalSummary{id:TerminalId(uuid::Uuid::new_v4()),..a.clone()};
-        assert!(select(&[a.clone(),b],"same").is_err());assert_eq!(select(&[a.clone()],&a.id.to_string()).unwrap(),a.id);
-        assert!(select(&[],&a.id.to_string()).is_err());
-        let stale=TerminalSummary{state:TerminalState::Disconnected,..a};assert!(select(&[stale],"same").is_err());
+    fn selection_requires_current_unique_running_identity() {
+        let a = TerminalSummary {
+            id: TerminalId(uuid::Uuid::new_v4()),
+            title: "same".into(),
+            state: TerminalState::Running,
+        };
+        let b = TerminalSummary {
+            id: TerminalId(uuid::Uuid::new_v4()),
+            ..a.clone()
+        };
+        assert!(select(&[a.clone(), b], "same").is_err());
+        assert_eq!(select(&[a.clone()], &a.id.to_string()).unwrap(), a.id);
+        assert!(select(&[], &a.id.to_string()).is_err());
+        let stale = TerminalSummary {
+            state: TerminalState::Disconnected,
+            ..a
+        };
+        assert!(select(&[stale], "same").is_err());
     }
 }

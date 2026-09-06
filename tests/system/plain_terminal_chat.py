@@ -97,6 +97,19 @@ def main():
                 assert not state['failures'],state['failures']
                 assert len(state['requests'])==8,state['requests']
                 print('PASS actual plain chat ownership, privacy, exact suffix, unrelated capture, voyage switch, and cleanup',flush=True)
+            except BaseException:
+                destination=os.environ.get('HELM_PLAIN_TERMINAL_EVIDENCE')
+                if destination:
+                    evidence=Path(destination)/str(uuid.uuid4());evidence.mkdir(parents=True)
+                    data=json.dumps(state,ensure_ascii=False,indent=2).encode();assert len(data)<=8*1024*1024
+                    (evidence/'provider.json').write_bytes(data)
+                    (evidence/'terminal.bin').write_bytes(plain.output)
+                    saved=evidence/'sessions';saved.mkdir();total=0
+                    for record in (root/'data').glob('helm/sessions/*.json'):
+                        size=record.stat().st_size;total+=size;assert total<=8*1024*1024
+                        (saved/record.name).write_bytes(record.read_bytes())
+                    print('Synthetic plain fixture failure retained at '+str(evidence),flush=True)
+                raise
             finally:plain.close()
     finally:server.shutdown();server.server_close()
 if __name__=='__main__':main()
