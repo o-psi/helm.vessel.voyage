@@ -94,7 +94,7 @@ async fn terminal_busy_deadline_preserves_running_and_unconfirmed_cleanup() {
     let started = std::time::Instant::now();
     let result = owner
         .execute_before_finish(&agent, CancellationToken::new(), None, || {
-            let db = fixture_database(&dir.path().join("attachment/journal.sqlite3")).unwrap();
+            let db = fixture_database(dir.path().join("attachment/journal.sqlite3")).unwrap();
             db.execute_batch("BEGIN; SELECT * FROM runs").unwrap();
             reader = Some(db);
             Ok(())
