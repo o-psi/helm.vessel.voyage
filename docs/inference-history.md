@@ -120,8 +120,9 @@ allowance status.
 
 ## Availability and privacy
 
-Queries use bounded blocking workers and a ten-second caller wait. Cancellation
-stops waiting promptly and is checked during scanning. It cannot undo an identity
+Each ledger operation uses a bounded blocking worker and a ten-second caller
+wait. TUI initialization can precede the query. Cancellation stops waiting promptly
+and is checked during scanning. It cannot undo an identity
 binding already committed before inspection. No inference admission occurs.
 
 Malformed records, inconsistent identity/counts, unsupported schema, overflowing
