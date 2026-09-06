@@ -1,14 +1,21 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-version="${1:?usage: package-release VERSION}"
+version="${1:?usage: package-release UNIQUE_VERSION}"
+[[ "$version" =~ ^[A-Za-z0-9._-]+$ && "$version" != . && "$version" != .. ]] || { echo 'invalid version label' >&2; exit 1; }
 target="${TARGET:-}"
+[[ -z "$target" || "$target" =~ ^[A-Za-z0-9_-]+$ ]] || { echo 'invalid target label' >&2; exit 1; }
 target_dir="target${target:+/$target}/release"
 archive="voyage-${version}-${target:-$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m)}"
-stage="$(mktemp -d)"
-trap 'rm -rf "$stage"' EXIT
+mkdir -p dist
+lock="dist/.$archive.lock"
+mkdir "$lock" # Exclusive publication; existing artifacts are never overwritten.
+stage=""
+trap 'rm -rf "$stage"; rmdir "$lock"' EXIT
+[[ ! -e "dist/$archive.tar.gz" && ! -L "dist/$archive.tar.gz" && ! -e "dist/$archive.tar.gz.sha256" && ! -L "dist/$archive.tar.gz.sha256" ]] || { echo 'release label already exists' >&2; exit 1; }
+stage="$(mktemp -d dist/.package-XXXXXXXX)"
 
-mkdir -p "dist" "$stage/$archive/bin" "$stage/$archive/share/man/man1" \
+mkdir -p "$stage/$archive/bin" "$stage/$archive/share/man/man1" \
   "$stage/$archive/share/bash-completion/completions" "$stage/$archive/share/zsh/site-functions" \
   "$stage/$archive/share/fish/vendor_completions.d"
 install -m 755 "$target_dir/helm" "$target_dir/vessel" "$target_dir/voyage-installer" "$stage/$archive/bin/"
@@ -18,7 +25,26 @@ for binary in helm vessel; do
   "$target_dir/$binary" completions zsh > "$stage/$archive/share/zsh/site-functions/_$binary"
   "$target_dir/$binary" completions fish > "$stage/$archive/share/fish/vendor_completions.d/$binary.fish"
 done
-cp README.md LICENSE* "$stage/$archive/" 2>/dev/null || cp README.md "$stage/$archive/"
-tar -C "$stage" -czf "dist/$archive.tar.gz" "$archive"
-(cd dist && sha256sum "$archive.tar.gz" > "$archive.tar.gz.sha256")
+while IFS= read -r document || [[ -n "$document" ]]; do
+  [[ "$document" =~ ^[A-Za-z0-9_./-]+$ && "$document" != /* && "/$document/" != */../* && "/$document/" != */./* ]] || { echo 'invalid release document path' >&2; exit 1; }
+  ancestor="$document"
+  while [[ "$ancestor" != . ]]; do
+    [[ ! -L "$ancestor" ]] || { echo "symlink in release document path" >&2; exit 1; }
+    ancestor="$(dirname "$ancestor")"
+  done
+  [[ -f "$document" && ! -L "$document" ]] || { echo "missing release document: $document" >&2; exit 1; }
+  mkdir -p "$stage/$archive/$(dirname "$document")"
+  cp "$document" "$stage/$archive/$document"
+done < scripts/release-documents.txt
+for license in LICENSE*; do
+  [[ ! -f "$license" ]] || cp "$license" "$stage/$archive/"
+done
+tar -C "$stage" -czf "$stage/$archive.tar.gz" "$archive"
+(cd "$stage" && if command -v sha256sum >/dev/null 2>&1; then sha256sum "$archive.tar.gz"; else shasum -a 256 "$archive.tar.gz"; fi) > "$stage/$archive.tar.gz.sha256"
+# Hard links publish complete files without replacing a concurrently created path.
+ln "$stage/$archive.tar.gz" "dist/$archive.tar.gz"
+if ! ln "$stage/$archive.tar.gz.sha256" "dist/$archive.tar.gz.sha256"; then
+  rm "dist/$archive.tar.gz"
+  exit 1
+fi
 printf 'created dist/%s.tar.gz\n' "$archive"

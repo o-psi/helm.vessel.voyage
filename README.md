@@ -20,6 +20,13 @@ reliable workflows that deliver tested value.
 
 ## Run locally
 
+From an extracted full archive, run `./bin/helm chat` (Windows:
+`.\bin\helm.exe chat`). The [Helm setup guide](helm/README.md) explains provider
+credentials and configuration; [the example configuration](helm/config.example.toml)
+is included. Keep the archive's `docs`, `helm`, `vessel` and `eval` directories
+together to browse the guides offline. Source-build commands below require a
+repository checkout.
+
 Try the interactive [setup preview](docs/installer-preview.md) to explore local,
 remote and Vessel setup choices. All setup actions in that wizard are mocked.
 

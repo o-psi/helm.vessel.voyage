@@ -9,13 +9,26 @@ The tag-triggered release workflow builds archives for Linux x86-64, macOS
 x86-64/ARM64, and Windows x86-64; it does not run the workspace test suite on
 macOS or Windows. Record separate platform testing before claiming validation.
 Archives contain Helm, Vessel and the mock setup-preview executable, Helm and Vessel manpages, shell completions,
-the README, and a SHA-256 checksum. Linux builds can be reproduced locally with:
+the README, linked guides, the example Helm configuration, and a SHA-256 checksum.
+Both full-archive packagers use `scripts/release-documents.txt` to include the same
+documentation paths without collecting unlisted local notes. Add newly linked
+documents to that manifest. Developer build/test commands in the guides require
+the source checkout; extracted binaries can run directly from `bin`.
+Linux builds can be reproduced locally with:
 
 ```sh
 cargo build --workspace --release --locked
 ./scripts/package-release UNIQUE_VERSION
 (cd dist && sha256sum -c *.sha256)
+python3 tests/system/release_documentation.py
 ```
+
+Choose a new version label for every packaging attempt. Existing archives and
+checksums are never replaced. Packaging failures remove their private staging
+directory and leave existing artifacts intact. The documentation fixture extracts
+a disposable archive, checks relative links and configuration, runs its binaries,
+and verifies missing-guide and repeated-label failures. Native Windows packaging
+and clean-install checks remain separate platform evidence.
 
 Before tagging, update versions and changelog, run the full CI command set, complete
 the live evaluation suite, inspect generated manpages/completions, and test a clean

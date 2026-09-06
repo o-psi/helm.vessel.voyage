@@ -18,6 +18,8 @@ jobs:
       - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
       - run: cargo test --workspace --all-features
       - run: cargo build --workspace --release --locked
+      - name: Verify full archive guides and publication failures
+        run: python3 tests/system/release_documentation.py
       - name: Verify mock installer through a real terminal and piped launcher
         run: python3 tests/system/installer_tui.py
       - name: Prove native provider works without Codex
