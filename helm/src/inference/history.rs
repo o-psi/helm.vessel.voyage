@@ -276,10 +276,8 @@ impl Store {
                 (attempt.outcome == AttemptOutcome::Unknown) == finish.is_none(),
                 Failure::Invalid
             );
-            ensure!(
-                finish.is_none_or(|end| end.with_timezone(&Utc) >= at),
-                Failure::Invalid
-            );
+            // These are independent wall-clock observations, not monotonic
+            // durations; clock correction can put completion before admission.
             attempt.sequence = sequence;
             digest.update(serde_json::to_vec(&attempt)?);
             if at < query.from || at >= query.until {
@@ -308,7 +306,7 @@ impl Store {
                 .snapshot
                 .as_ref()
                 .is_none_or(|expected| *expected == snapshot),
-            Failure::Stale
+            Failure::HistoryChanged
         );
         let matching_groups = groups.len() as u64;
         let count = if query.detail.is_some() {
@@ -792,6 +790,48 @@ mod tests {
         assert_eq!(h.scope_lifetime_permits, 1);
         assert_eq!(f.read(query()).scope_lifetime_permits, 2);
     }
+    #[test]
+    fn reversed_wall_clock_keeps_exact_timestamps_without_inventing_duration() {
+        let mut f = Fixture::new();
+        let id = f.row(
+            "2026-01-01T10:00:00Z",
+            "a",
+            Some(2),
+            Some(3),
+            AttemptOutcome::Completed,
+        );
+        let text: String = f
+            .store
+            .connection
+            .query_row(
+                "SELECT record FROM attempts WHERE id=?1",
+                [id.to_string()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let mut record: Attempt = serde_json::from_str(&text).unwrap();
+        record.finished_at = Some("2026-01-01T09:00:00Z".into());
+        f.store
+            .connection
+            .execute(
+                "UPDATE attempts SET record=?2 WHERE id=?1",
+                params![id.to_string(), serde_json::to_string(&record).unwrap()],
+            )
+            .unwrap();
+        let mut q = query();
+        q.detail = Some(GroupKey::Model {
+            provider: "fixture".into(),
+            model: "a".into(),
+        });
+        let h = f.read(q);
+        assert_eq!(h.totals.completed, 1);
+        assert_eq!(h.attempts[0].admitted_at, "2026-01-01T10:00:00Z");
+        assert_eq!(
+            h.attempts[0].finished_at.as_deref(),
+            Some("2026-01-01T09:00:00Z")
+        );
+    }
+
     #[test]
     fn cancelled_query_returns_no_partial_history() {
         let f = Fixture::new();

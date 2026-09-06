@@ -67,3 +67,4 @@ docs/worktree-cleanup.md
 docs/extensions.md
 docs/inference-budgets.md
 docs/github-workflows.md
+docs/inference-history.md

@@ -29,6 +29,7 @@ pub(super) fn default_query() -> Query {
 #[derive(Default)]
 pub(super) struct Panel {
     pub open: bool,
+    pub authority: Option<Arc<Agent>>,
     session: Option<Uuid>,
     request: Option<Uuid>,
     job: Option<TitleJob>,
@@ -47,6 +48,7 @@ impl Panel {
         self.job = None;
         self.request = None;
         self.open = false;
+        self.authority = None;
         self.data = None;
         self.error = None;
     }
@@ -260,6 +262,7 @@ pub(super) fn start(
     let cancel = CancellationToken::new();
     let token = cancel.clone();
     let worker_query = query.clone();
+    let authority = agent.clone();
     let task = tokio::spawn(async move {
         let result = agent
             .inference_history(session, project_scope, worker_query, token)
@@ -273,6 +276,7 @@ pub(super) fn start(
     });
     app.usage_panel = Panel {
         open: true,
+        authority: Some(authority),
         session: Some(session),
         request: Some(request),
         job: Some(TitleJob { task, cancel }),

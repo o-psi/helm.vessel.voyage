@@ -26,6 +26,10 @@ jobs:
         env:
           HELM_BIN: target/release/helm
         run: python3 tests/system/github_journal.py
+      - name: Verify historical usage through the real CLI
+        env:
+          HELM_BIN: target/release/helm
+        run: python3 tests/system/inference_history.py
       - name: Verify full archive guides and publication failures
         run: python3 tests/system/release_documentation.py
       - name: Verify bounded model catalog discovery and safe display

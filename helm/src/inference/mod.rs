@@ -14,6 +14,8 @@ pub mod history;
 pub mod runtime;
 
 #[cfg(test)]
+mod history_fixture;
+#[cfg(test)]
 mod tests;
 
 const MAX_COUNT: u64 = i64::MAX as u64 - 1;
@@ -46,6 +48,8 @@ pub enum Failure {
     Conflict,
     #[error("inference allowances require a native provider")]
     Compatibility,
+    #[error("historical usage snapshot changed; refresh from its first page before continuing")]
+    HistoryChanged,
 }
 impl Failure {
     pub fn from_error(error: &anyhow::Error) -> Self {

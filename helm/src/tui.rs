@@ -570,6 +570,16 @@ async fn handle_ui_event(
             result,
         } => {
             if session == app.session.id && app.usage_panel.matches(session, request) {
+                let result = if app
+                    .usage_panel
+                    .authority
+                    .as_ref()
+                    .is_some_and(|agent| agent.check_current_policy().is_ok())
+                {
+                    result
+                } else {
+                    Err("Current local authority changed; reopen historical usage after reviewing policy".into())
+                };
                 app.usage_panel.finished(result);
             }
         }

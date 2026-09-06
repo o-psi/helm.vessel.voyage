@@ -8,8 +8,9 @@ count, or duration limits.
 
 Use this workflow when you want a predictable bound on how often Helm may start
 inference, including retries and delegated work. Token and monetary hard limits,
-price estimates, machine resource telemetry, distributed budgets and historical
-trend dashboards remain planned.
+price estimates, machine resource telemetry and distributed budgets remain planned.
+The [historical usage explorer](inference-history.md) groups retained local attempts
+and provider reports without inferring those missing capabilities.
 
 ## Inspect, preview and configure
 
