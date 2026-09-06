@@ -4,11 +4,18 @@ Helm is a Rust LLM harness for general work through a terminal. It is intentiona
 not coding-specific: the runtime can inspect and transform files, run commands,
 administer scoped systems, and maintain a durable working conversation.
 
-Helm is also the intended operator interface for local and remote work through
-Vessel. In the planned [voyage model](../docs/voyages.md), the interface, coordinating
-agent and executing participants can be on different Helms. A voyage scopes the
-permitted machines without requiring a repository or fixing all work to one host.
-The [voyage setup UI](../docs/helm-voyage-ui.md) provides machine selection and saved drafts; cross-Helm coordination remains planned.
+**Every Helm session is a voyage**, including a new local chat. Start one with
+`helm chat`; no Vessel, enrollment or setup wizard is required. “Session” remains
+the technical term in current commands and storage, and “conversation” describes
+the interaction history within the voyage.
+
+Helm is also the intended operator interface for remote work through Vessel.
+The [voyage model](../docs/voyages.md) permits one or more user-selected Helms;
+planned cross-Helm coordination allows the interface, coordinator and participants
+to be on different machines. It requires no repository or fixed host assignment.
+The [voyage UI guide](../docs/helm-voyage-ui.md) covers current chat/session controls
+and the optional machine-selection draft picker. That picker does not create or
+execute sessions.
 
 ## Capabilities
 
@@ -83,7 +90,7 @@ applies to its next turn.
 ## Use
 
 ```sh
-# Interactive work in the current directory
+# Start a local voyage in the current directory
 helm chat
 
 # Keep the line-oriented frontend for pipes or limited terminals
@@ -94,7 +101,7 @@ helm run "inventory the log files and summarize unusual failures"
 helm --workspace /srv/example --access read-only run "inspect service health"
 helm --access unrestricted chat
 
-# Find and continue durable sessions
+# Find and continue saved voyages (the CLI calls them sessions)
 helm sessions
 helm run --resume 0198... "continue, but export the findings as markdown"
 ```
@@ -139,14 +146,14 @@ Fibonacci checkpoints using the independent model in `utility-models.json`
 On landscape displays, recent conversations stay in a left sidebar. Helm uses the
 terminal's pixel dimensions when available, otherwise assumes cells are twice as
 tall as they are wide; narrow terminals keep the conversation full width. `Ctrl+S`
-focuses recent conversations, or opens a compact drawer in portrait. Use arrow
-keys, Home/End and Enter, or click a conversation; the mouse wheel scrolls the list
+focuses recent conversations (your saved voyages), or opens a compact drawer in
+portrait. Use arrow keys, Home/End and Enter, or click a conversation; the mouse wheel scrolls the list
 when the pointer is over it. `Esc` returns to the composer. The filled dot marks
 the current conversation. Finish or cancel an active run before switching.
 
 Unsent composer drafts are saved locally when switching conversations, creating a
-new session, or leaving normally, and restored when reopening that session. Drafts
-are not sent as model messages or included in Markdown exports. Conversation
+new voyage, or leaving normally, and restored when reopening that voyage. Composer
+drafts are not sent as model messages or included in Markdown exports. Conversation
 switching rebuilds the session's existing workspace and execution configuration.
 
 The composer remains editable while Helm is working. Press `Enter` to queue its text as steering
@@ -229,7 +236,10 @@ does not repeat it at completion. Styled line-oriented output buffers one respon
 be rendered coherently, then writes it once.
 
 Dedicated remote execution is available through `helm remote-worker` and the
-[Vessel HTTP lifecycle](../docs/remote-sessions.md). The TUI offers [voyage setup](../docs/helm-voyage-ui.md) with authenticated Helm discovery and saved drafts (Ctrl+V). Executing multi-Helm voyages remains planned; see the
+[Vessel HTTP lifecycle](../docs/remote-sessions.md). These remote sessions are also
+voyages. The TUI offers an optional [configuration draft picker](../docs/helm-voyage-ui.md)
+with authenticated Helm discovery (Ctrl+V); it is separate from starting a voyage
+with Ctrl+N. Executing multi-Helm voyages remains planned; see the
 [session management design](../docs/vessel-session-management.md).
 
 Helm does not impose a model-turn count limit: work continues until completion, cancellation,

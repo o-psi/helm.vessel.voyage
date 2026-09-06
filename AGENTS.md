@@ -22,10 +22,15 @@ behavior to a later version to declare the first version complete.
 
 ## Product model
 
-The accepted [voyage model](docs/voyages.md) is an open-ended session across an
-explicitly user-scoped set of Helms. Helm is the interface for local and remote
-work through Vessel. Interface, coordinating and participant Helms are distinct
-roles that may overlap; the coordinator need not be on the open workstation.
+Helm is the program; every session is a **voyage**, including a new local chat.
+The accepted [voyage model](docs/voyages.md) is one ongoing session with a
+user-controlled scope of one or more Helms. Local use needs no Vessel, enrollment,
+or machine-selection wizard. Adding Helms configures a voyage, rather than
+converting a chat into a different product object. Session remains the technical
+term in existing commands, APIs and storage; conversation is its interaction
+history, and a run is one execution within it. Configuration drafts are not sessions.
+Helm is the interface for local work and remote work through Vessel. Interface,
+coordinating and participant Helms are distinct roles that may overlap; the coordinator need not be on the open workstation.
 Do not require a project/repository/component map or bind every task permanently
 to one Helm. Each executing Helm retains local authority and provider credentials.
 Multi-Helm orchestration, coordinator handoff and the unified operator interface

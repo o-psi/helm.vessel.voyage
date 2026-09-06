@@ -1,6 +1,9 @@
 # Voyage
 
 Voyage is a system for general-purpose LLM work across local and remote machines.
+**Helm is the program; each session is a voyage.** Starting a new local chat starts
+a new voyage. Vessel connects Helms for authorized remote work; it is not required
+for a local voyage.
 
 Voyage is in development toward its first release, with a focus on complete,
 reliable workflows that deliver tested value.
@@ -59,15 +62,20 @@ Assistant responses use safe, streaming-aware Markdown presentation without chan
 session text. See [Markdown rendering](docs/markdown-rendering.md) for syntax, fallback, and terminal
 safety behavior.
 
-## Voyages across Helms
+## Every session is a voyage
 
-The agreed [voyage model](docs/voyages.md) is an open-ended session across a
-user-scoped set of Helms. The interface Helm and coordinating Helm are separate
-roles: coordination can run remotely while the user connects from a workstation.
+The agreed [voyage model](docs/voyages.md) covers local and remote sessions alike.
+A voyage can stay on one Helm or, with planned multi-Helm coordination, involve a
+user-selected set of Helms. Starting locally needs no machine-selection step.
+The interface Helm and coordinating Helm are separate roles: coordination can run
+remotely while the user connects from a workstation.
 Work can move among permitted participants without a required repository, component
 map or permanent assignment to one machine.
 
-The [Helm voyage setup UI](docs/helm-voyage-ui.md) provides a responsive recent-conversation sidebar and explicit machine/coordinator selection in saved drafts. Drafts do not start remote work.
+The [Helm voyage UI guide](docs/helm-voyage-ui.md) explains starting and resuming
+voyages through current chat/session controls and the responsive recent-conversation
+sidebar. The separate machine/coordinator picker currently saves only optional
+configuration drafts; saving one does not create or run a session.
 
 The [session management design](docs/vessel-session-management.md) describes the
 supporting lifecycle, authority and sharing boundaries. Multi-Helm coordination,

@@ -3,8 +3,10 @@
 **Agreed design with partially implemented foundations.**
 Tracking: [#77](https://github.com/o-psi/voyage/issues/77).
 The [voyage product model](voyages.md) defines the operator experience: an open-ended
-session across user-scoped Helms, with separate interface, coordinator and execution
-roles. This document describes the supporting management and lifecycle boundaries.
+session on one or more user-scoped Helms. Every session, including local chat, is
+a voyage; Helm is the program. Interface, coordinator and execution roles may
+overlap. This document describes supporting management and lifecycle boundaries;
+remote coordination is planned, while local voyages already work.
 
 ## Current implementation
 
@@ -19,7 +21,8 @@ and [remote-session guide](remote-sessions.md) for working commands, HTTP shapes
 privacy limits and recovery. Presence alone cannot execute work or expose sessions.
 Existing private sessions are not implicitly imported or shared.
 
-The unified Helm operator interface, voyage scope, remote coordinating agent,
+Integration of voyage scope with execution, the unified remote Helm interface,
+a remote coordinating agent,
 cross-Helm delegation, coordinator handoff and full remote session lifecycle remain
 planned. `helm attach` is not an implemented command. The existing Vessel `/ui`
 page is an authenticated static status page; browser console work is deferred.
@@ -30,20 +33,23 @@ page is an authenticated static status page; browser console work is deferred.
 | --- | --- |
 | Enrollment | Association of a Helm installation with Vessel using scoped credentials. |
 | Connection | Renewable authenticated outbound channel, independent of conversation identity. |
-| Voyage | Planned ongoing session spanning its explicitly permitted Helms. |
+| Voyage / session | The same ongoing unit of work, including an ordinary local chat; cross-Helm coordination is planned. |
 | Interface Helm | Authorized operator view and steering surface for the voyage. |
 | Coordinating Helm | Agent runtime that plans and delegates within voyage scope; may be remote. |
 | Participant Helm | Runtime executing assigned work under its local authority. |
-| Local session | Helm-owned canonical conversation with its own persistence and visibility. |
+| Local session | A local voyage with Helm-owned canonical history, persistence and visibility. |
 | Run | One execution within a session, with its own completion and cleanup state. |
 | Command | Identified request with separate delivery, acceptance and outcome states. |
 
-A Helm can hold multiple roles. Opening the interface does not assign coordination
-to the workstation. A voyage need not have a repository or predefined component map,
+A Helm can hold multiple roles. In ordinary local chat, the local Helm supplies
+the interface and execution. For planned distributed voyages, opening an interface
+does not by itself move coordination to that workstation. A voyage need not have a repository or predefined component map,
 and choosing a Helm for one task does not lock later tasks to that machine.
-The mapping between voyage history and participant-local sessions needs an explicit
-persistence/context contract; the existing session and run IDs are not silently
-reinterpreted as a distributed voyage identifier.
+A local voyage already has its session identity and persistence; it is not a
+separate entity above a local chat. Distribution of its history and attribution of
+participant execution records need an explicit cross-Helm persistence/context
+contract. This terminology leaves session/run IDs and wire schemas unchanged; it
+does not establish a distributed identifier mapping.
 
 Helm owns tool execution, canonical local state, provider credentials, opaque
 provider continuation, model configuration, local policy and approvals. Vessel owns
@@ -60,8 +66,8 @@ response-loss recovery, revocation, private storage and explicit re-enrollment.
 Changing Vessel identity must not silently transfer authority.
 
 Enrollment is not voyage membership, session sharing or approval delegation. Planned
-Helm management must let the user select the voyage's permitted Helms and inspect
-scope changes. A user can name a permitted execution target or let the coordinator
+Helm management must let the user select permitted Helms when starting a voyage
+or extend an existing voyage's scope, and inspect scope changes. A user can name a permitted execution target or let the coordinator
 choose within scope. Details for active-work removal and reassignment remain open;
 the interface must not report a removed machine's work as cancelled without evidence.
 

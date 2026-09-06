@@ -1,14 +1,48 @@
-# Voyages across Helms
+# Voyages: sessions in Helm
 
 **Agreed product direction; multi-Helm voyage orchestration is planned.**
 Tracking: [#77](https://github.com/o-psi/voyage/issues/77).
 This document defines the product model for the related designs and delivery issues.
 Current setup and execution commands are documented separately below.
 
-A **voyage** is an open-ended session in which the user and agents work across a
-user-scoped set of Helms. Helm is the interface for local work and for working
-through Vessel with other Helms. Vessel supplies the authenticated control plane.
-The conversation and its purpose provide continuity as work moves between machines.
+**Helm is the program. Every session is a voyage.** Starting a new local chat is
+starting a new voyage; it needs no Vessel, enrollment, name, purpose form or machine
+selection. A voyage is an open-ended session in which the user and agents work
+within a user-controlled scope of one or more Helms. It may remain entirely local.
+
+Helm is the interface for local work and for working through Vessel with other
+Helms. Vessel supplies the authenticated control plane for remote work. Adding
+permitted Helms configures the scope of the voyage; it does not turn an ordinary
+chat into a separate kind of session. The conversation provides continuity across
+turns and, with planned cross-Helm coordination, across machines.
+
+## Terms and everyday workflow
+
+| Term | Meaning |
+| --- | --- |
+| Helm | The program providing the interface and agent runtime; an installed or running instance may fulfill several roles. |
+| Voyage / session | The same ongoing unit of work. Session is the technical name retained in current CLI, API and storage contracts. |
+| Conversation | The interaction history presented within a voyage, not a separate local-only product object. |
+| Turn | An interaction within the voyage. |
+| Run | An execution within the voyage, with its own completion and cleanup state; finishing it does not end the session. |
+| Composer draft | Unsent input belonging to a voyage. |
+| Configuration draft | Optional saved setup choices; it is not a session or a running voyage. |
+
+- Start a local voyage with `helm chat`, or use **Ctrl+N** / `/new [TITLE]` in
+  full-screen Helm. A fallback title is supplied automatically.
+- Find saved voyages with **Ctrl+S** or `helm sessions`; current interface labels
+  also call these sessions or recent conversations. Resume continues the same
+  voyage; creating or branching a session creates a new voyage.
+- `helm run` starts a voyage when it creates a session; `helm run --resume REF`
+  continues an existing one. Managed and dedicated remote sessions are voyages too.
+- Selecting other Helms is optional scope configuration. The current **Ctrl+V** /
+  `/voyages` picker only saves configuration drafts and cannot attach those choices
+  to an executing session. See the [current UI guide](helm-voyage-ui.md).
+
+The intended interface has one ordinary new-voyage action and a recent-voyage list,
+with optional Helm selection. A separate local-chat versus voyage workflow is not
+part of the product model. Current labels and draft controls do not fully express
+that model yet; their UI/runtime integration remains required work.
 
 A voyage can involve research, files, systems administration, software, or several
 kinds of work together. A repository, project, component map or fixed workflow is
@@ -38,8 +72,10 @@ same voyage; it must show actual coordination and execution state.
 
 ## Machine scope and routing
 
-Each voyage has an explicit user-controlled scope of permitted Helms. Enrollment
-makes a machine known to Vessel; it does not automatically admit the machine to
+A new local voyage uses the local Helm; choosing local chat establishes that scope
+without an extra picker. Extending the scope to other Helms must be explicit and
+user-controlled. Enrollment makes a machine known to Vessel; it does not
+automatically admit the machine to
 every voyage, share its private sessions, or authorize work on it.
 
 The user can direct a particular piece of work to a permitted Helm, or let the
@@ -73,9 +109,11 @@ repeat a tool effect whose outcome is unknown.
 
 Users must be able to follow assignments and results across permitted machines,
 understand blockers, and distinguish provisional output from verified outcomes.
-The mechanics of shared context, voyage persistence and reconciliation with each
-Helm's canonical local session/run history are still to be designed. This product
-model does not redefine the existing local Journal schema or completion ledger.
+Local voyages already persist through the existing session stores. Cross-Helm
+context distribution and reconciliation with participant execution records still
+need a contract. “Voyage” does not introduce a second local identity layered over
+a session. This terminology does not rename existing IDs, change the Journal
+schema or completion ledger, or establish a distributed identifier mapping.
 
 ## Authority and privacy
 
@@ -103,12 +141,13 @@ Application policy is not an OS sandbox.
 
 | Workflow | Current status |
 | --- | --- |
-| Local Helm chat, saved sessions, tools and local subagents | Available; see [Helm](../helm/README.md). |
+| Local voyages: Helm chat, saved sessions, tools and local subagents | Available; see [Helm](../helm/README.md). |
 | Private managed local sessions and run-owned completion accounting | Available; see [managed sessions](local-managed-sessions.md) and [completion](completion-gate.md). |
 | Enrollment and authenticated outbound presence | Available through [enrollment](attachment-cli.md) and [presence](attachment-presence.md). |
 | One new dedicated foreground remote session | Available through `helm remote-worker` and opt-in authenticated Vessel HTTP operations; see [remote sessions](remote-sessions.md). |
 | Helm voyage setup and machine/coordinator selection | Available as [saved configuration drafts](helm-voyage-ui.md); no runtime execution or sharing. |
-| Helm interface for executing/managing local/remote voyages | Planned. |
+| Start, resume and work in local voyages through Helm | Available through current chat/session controls. |
+| Unified voyage creation/scope UI and remote voyage management in Helm | Planned integration; current configuration drafts are separate from sessions. |
 | Remote voyage coordinator, cross-Helm delegation and coordinator handoff | Planned. Local subagent supervision and managed-session ownership are foundations, not these features. |
 | Full remote lifecycle, broader sharing, services and delegated approvals | Still require delivery and verification under the attachment issues. |
 
@@ -126,10 +165,15 @@ operations and its authenticated static status page remain useful current surfac
 The [session management design](vessel-session-management.md) and
 [production contract](attachment-production-contract.md) map the remaining work.
 The full agreed workflow is the completion standard; a working transport or a
-single remote task alone does not establish voyage readiness.
+single remote task alone does not establish full multi-Helm readiness.
 
-Acceptance must demonstrate an interface on one Helm, coordination on another and
-work on additional permitted Helms, as well as overlapping roles and local-only
+Acceptance must first demonstrate that an ordinary local chat creates a voyage
+without Vessel or a configuration wizard, and that resume preserves its identity
+while new/branch creates another. Optional scope configuration must not create a
+second conversation category or silently share its history.
+
+Multi-Helm acceptance must demonstrate an interface on one Helm, coordination on
+another and work on additional permitted Helms, as well as overlapping roles and local-only
 use. Cover explicit targeting, coordinator routing, scope edits, reconnecting from
 another interface, cancellation, handoff conflicts and honest interrupted recovery.
 Include work without a repository and work across multiple unrelated directories.

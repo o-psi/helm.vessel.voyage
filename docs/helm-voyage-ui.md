@@ -1,4 +1,11 @@
-# Conversations and voyage setup in Helm
+# Voyages in Helm
+
+Every session is a voyage, including local chat. Start a local voyage with
+`helm chat` or **Ctrl+N** / `/new [TITLE]` in the full-screen interface. No Vessel
+connection, configuration draft or machine-selection wizard is required. Current
+UI labels use “session” and “conversation” for these voyages.
+
+## Start and resume a voyage
 
 Helm shows recent conversations beside the active conversation when the terminal
 display is wider than it is tall and has room for both panes. It uses terminal
@@ -9,13 +16,16 @@ Press **Ctrl+S** to focus recent conversations, use the arrow keys and Enter to
 open one, or click a row. Esc returns to the composer. Portrait displays expose
 the same list as a drawer. Switching saves your unsent composer text and rebuilds
 the runtime for the destination session's workspace. Finish or cancel active work
-before switching. **Ctrl+N** starts a local conversation; **F1** shows shortcuts.
+before switching. Opening an existing session resumes the same voyage; **Ctrl+N**
+starts a new one. **Ctrl+B** branches into a new voyage. **F1** shows shortcuts.
 
-## Create a voyage draft
+## Optional Helm configuration drafts
 
 Press **Ctrl+V**, or use **`/voyages`**, to open voyage setup. This feature saves
-configuration drafts. The distributed voyage runtime remains planned: saving a
-draft does not create remote sessions, start coordination, or execute work.
+configuration drafts, separate from sessions. Saving a draft does not create a
+local or remote voyage, change the active voyage's scope, start coordination, or
+execute work. Drafts are not required for local chat. Connecting these choices to
+the ordinary voyage workflow and executing across Helms remain planned.
 
 1. Press **N** for a new draft. Enter a name and an optional purpose.
 2. Select permitted Helms with **Space**. Type to search by label or full machine
@@ -60,6 +70,10 @@ An originless saved draft stays local-only.
 
 ## Storage and recovery
 
+A voyage uses its existing session store and identity. Resuming it preserves that
+session; the terminology does not create a second storage object. Unsent composer
+text belongs to that session and is distinct from the configuration drafts below.
+
 Drafts are private local files under `voyage-drafts/` in Helm's data directory,
 separate from conversation history. They contain the name, purpose, selected IDs,
 coordinator, labels and optional Vessel origin. They contain no credentials or
@@ -74,6 +88,7 @@ asks before discarding unfinished setup. Malformed records and unsafe filesystem
 error instead of being replaced. Linux storage and terminal tests cover this
 workflow; native macOS and Windows validation is separate.
 
-See the [voyage model](voyages.md) for planned runtime behavior and
+See the [voyage model](voyages.md) for the local workflow and planned cross-Helm
+behavior, and
 [dedicated remote sessions](remote-sessions.md) for the currently available remote
 execution APIs.
