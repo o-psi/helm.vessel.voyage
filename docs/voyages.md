@@ -150,6 +150,7 @@ Application policy is not an OS sandbox.
 | Local voyages: Helm chat, saved sessions, tools and local subagents | Available; see [Helm](../helm/README.md). |
 | Private managed local sessions and run-owned completion accounting | Available; see [managed sessions](local-managed-sessions.md) and [completion](completion-gate.md). |
 | Enrollment and authenticated outbound presence | Available through [enrollment](attachment-cli.md) and [presence](attachment-presence.md). |
+| Explicit metadata registration and outbound control leases | Available through [coordination control](coordination-control.md); nominations confer no execution authority. |
 | One new dedicated foreground remote session | Available through `helm remote-worker` and opt-in authenticated Vessel HTTP operations; see [remote sessions](remote-sessions.md). |
 | Helm voyage setup and machine/coordinator selection | Available as [saved configuration drafts](helm-voyage-ui.md); no runtime execution or sharing. |
 | Start, resume and work in local voyages through Helm | Available through current chat/session controls. |

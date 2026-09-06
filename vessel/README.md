@@ -37,7 +37,9 @@ are supported, as are `completions` and `manpage`.
 Configure enrollment and run an explicit foreground Helm connection using the
 [attachment presence guide](../docs/attachment-presence.md). Operator diagnostics
 show bounded current connection metadata. Presence does not grant execution or
-share session content.
+share session content. Explicit [coordination control](../docs/coordination-control.md)
+adds authenticated configuration, immutable receipts and control-only leases; it
+does not activate coordinators or admit distributed tasks.
 
 ## Voyages across Helms
 

@@ -23,3 +23,5 @@ pub mod stream;
 
 /// Typed bounded observations; no execution authority.
 pub mod events;
+
+pub mod control;

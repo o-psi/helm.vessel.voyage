@@ -24,6 +24,7 @@ use voyage_protocol::enrollment::{Challenge, MAX_PROOF_BYTES, ProofOperation, Si
 
 #[derive(Clone)]
 pub struct EnrollmentApi {
+    control_generation: Option<u64>,
     store: Arc<Mutex<EnrollmentStore>>,
     origin: String,
     operator_hash: [u8; 32],
@@ -42,6 +43,7 @@ impl EnrollmentApi {
             return Err(EnrollmentError::Invalid);
         }
         Ok(Self {
+            control_generation: None,
             origin: store.origin().into(),
             store: Arc::new(Mutex::new(store)),
             operator_hash: Sha256::digest(operator_token.as_bytes()).into(),
@@ -311,3 +313,5 @@ async fn revoke(
 #[cfg(test)]
 #[cfg(unix)]
 mod tests;
+
+mod control;

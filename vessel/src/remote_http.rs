@@ -447,6 +447,7 @@ mod tests {
                 operator_token_hash: Some(token_hash(TOKEN)),
                 attachment: None,
                 remote: Some(remote.clone()),
+                control: None,
             };
             let mut headers = HeaderMap::new();
             headers.insert("authorization", format!("Bearer {TOKEN}").parse().unwrap());

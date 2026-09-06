@@ -6,6 +6,11 @@ runtime or wire feature is enabled by this document.** The accepted
 [#77](https://github.com/o-psi/voyage/issues/77). The dependency and test map below
 specifies remaining work; it does not mark those issues complete.
 
+The bounded [coordination control capability](coordination-control.md) implements
+explicit metadata registration, nomination CAS, immutable receipts and outbound
+control leases. It does not implement coordinator activation, participant
+acceptance, distributed execution, disclosure or handoff described below.
+
 The selected deployment model is [one owner controlling their Helms](https://github.com/o-psi/voyage/issues/77#issuecomment-5548263061).
 This scopes authentication, not the distinct interface/coordinator/participant or
 approver roles; it does not prescribe a future multi-operator deployment. A voyage needs no
@@ -17,9 +22,11 @@ can also all belong to one Helm.
 
 ## 1. Identity and ownership
 
-Names in this document are domain concepts, **not existing JSON fields, commands,
-capabilities or schema versions**. A negotiated implementation must encode and test
-them explicitly; existing strict v2 peers must refuse unsupported coordination.
+Names in this document are domain concepts. The separately documented
+[control wire capability](coordination-control.md) covers only its explicit
+metadata subset; remaining concepts are not existing JSON fields or commands.
+Every negotiated implementation must encode and test its contract explicitly;
+strict v2 peers must refuse unsupported coordination.
 
 | Identity | Meaning and lifetime |
 | --- | --- |

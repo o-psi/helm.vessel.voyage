@@ -1,3 +1,4 @@
+mod coordination_http;
 mod remote_http;
 use anyhow::Result;
 use axum::{
@@ -39,6 +40,9 @@ struct Cli {
     /// Enable authenticated relay to explicitly running dedicated Helm remote workers.
     #[arg(long, requires = "attachment_directory")]
     remote_execution: bool,
+    /// Enable durable coordination metadata and nomination leases; never task execution.
+    #[arg(long, requires = "attachment_directory")]
+    coordination_control: bool,
     /// Allow HTTP only for literal loopback development origins.
     #[arg(long, requires = "attachment_directory")]
     allow_insecure_loopback: bool,
@@ -74,6 +78,7 @@ struct AppState {
     operator_token_hash: Option<String>,
     attachment: Option<vessel::attachment_transport::AttachmentApi>,
     remote: Option<remote_http::RemoteApi>,
+    control: Option<vessel::enrollment_http::EnrollmentApi>,
 }
 type ApiResult<T> = Result<Json<T>, (StatusCode, Json<ApiError>)>;
 
@@ -127,7 +132,11 @@ async fn main() -> Result<()> {
                 origin,
                 cli.allow_insecure_loopback,
             )?;
-            Some(vessel::enrollment_http::EnrollmentApi::new(store, token)?)
+            let mut api = vessel::enrollment_http::EnrollmentApi::new(store, token)?;
+            if cli.coordination_control {
+                api.enable_control()?;
+            }
+            Some(api)
         } else {
             None
         };
@@ -153,6 +162,7 @@ async fn main() -> Result<()> {
         operator_token_hash: cli.operator_token.as_deref().map(token_hash),
         attachment: attachment.clone(),
         remote,
+        control: enrollment.clone().filter(|api| api.control_enabled()),
     };
     let app = Router::new()
         .route("/health", get(health))
@@ -160,6 +170,14 @@ async fn main() -> Result<()> {
         .route("/metrics", get(metrics))
         .route("/v1/diagnostics", get(diagnostics))
         .route("/ui", get(operator_dashboard))
+        .route(
+            "/v2/coordination/command",
+            axum::routing::post(coordination_http::command),
+        )
+        .route(
+            "/v2/coordination/{installation}/{session}",
+            get(coordination_http::inspect),
+        )
         .route(
             "/v1/remote/{machine}/command",
             axum::routing::post(remote_http::command),
@@ -254,6 +272,7 @@ async fn diagnostics(
         "legacy_state": "not_loaded",
         "attachment": if state.remote.is_some() { "managed_execution" } else if state.attachment.is_some() { "presence_only" } else { "disabled" },
         "remote_execution": if state.remote.is_some() { "enabled" } else { "unavailable" },
+        "coordination_control": if state.control.is_some() { "configured" } else { "unavailable" },
         "connections": connections,
     })))
 }
@@ -476,6 +495,7 @@ mod tests {
             operator_token_hash: None,
             attachment: None,
             remote: None,
+            control: None,
         };
         let mut headers = HeaderMap::new();
         assert!(operator_auth(&state, &headers).is_err());
@@ -521,6 +541,7 @@ mod tests {
             operator_token_hash: None,
             attachment: None,
             remote: None,
+            control: None,
         }))
         .await;
         assert_eq!(result.unwrap_err().0, StatusCode::INTERNAL_SERVER_ERROR);

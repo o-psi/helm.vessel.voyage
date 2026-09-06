@@ -115,6 +115,8 @@ jobs:
         run: python3 tests/system/policy_ceiling.py
       - name: Verify foreground outbound attachment presence with real binaries
         run: python3 tests/system/attachment_presence.py
+      - name: Outbound coordination control lifecycle
+        run: python3 tests/system/coordination_control.py
       - name: Verify saved workflow CLI and native execution
         env:
           HELM_BIN: target/release/helm

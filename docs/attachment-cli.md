@@ -134,6 +134,8 @@ coverage requires a separate native run; Linux PTY results do not establish it.
 
 The explicit [foreground presence command](attachment-presence.md) maintains the
 authenticated production socket without dispatching work.
+[Coordination control](coordination-control.md) adds explicit metadata registration
+and control-only nominations with no execution authority.
 [Dedicated remote execution](remote-sessions.md) is a separate opt-in command.
 Enrollment alone does not select a voyage's machine scope or make this Helm its
 coordinator. The planned remote Helm interface, cross-Helm coordination, approval

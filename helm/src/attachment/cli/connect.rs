@@ -34,7 +34,7 @@ pub(super) async fn run(
     }
     .into())
 }
-async fn write_notice(notice: String) -> Result<(), CliError> {
+pub(super) async fn write_notice(notice: String) -> Result<(), CliError> {
     let (sender, receiver) = tokio::sync::oneshot::channel();
     // A blocked output worker owns only this bounded, content-free notice, never
     // enrollment or its file lease. Runtime shutdown need not join this thread.

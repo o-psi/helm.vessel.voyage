@@ -13,6 +13,7 @@ pub enum Feature {
     ToolActivity,
     Usage,
     ManagedExecution,
+    CoordinationControl,
 }
 #[derive(Clone, Default, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -23,6 +24,13 @@ impl Features {
         value.validate()?;
         Ok(value)
     }
+    pub fn with(mut self, feature: Feature) -> Result<Self, &'static str> {
+        if !self.contains(feature) {
+            self.0.push(feature);
+        }
+        self.validate()?;
+        Ok(self)
+    }
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
@@ -30,7 +38,7 @@ impl Features {
         self.0.contains(&feature)
     }
     pub fn validate(&self) -> Result<(), &'static str> {
-        if self.0.len() > 5
+        if self.0.len() > 6
             || self
                 .0
                 .iter()
@@ -39,7 +47,9 @@ impl Features {
         {
             return Err("invalid feature set");
         }
-        if !self.is_empty() && !self.contains(Feature::SequencedEvents) {
+        if self.0.iter().any(|f| *f != Feature::CoordinationControl)
+            && !self.contains(Feature::SequencedEvents)
+        {
             return Err("event feature dependency missing");
         }
         Ok(())

@@ -385,7 +385,7 @@ async fn main() -> Result<()> {
     if let Some(Command::Attachment(args)) = cli.command {
         if matches!(
             &args.command,
-            helm::attachment::cli::AttachmentCommand::Connect
+            helm::attachment::cli::AttachmentCommand::Connect(_)
         ) {
             return attachment_connect(args).await;
         }

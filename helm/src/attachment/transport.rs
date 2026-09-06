@@ -241,7 +241,9 @@ fn validate_inbound(context: &ConnectionContext, frame: &Frame) -> Result<()> {
                 && command.machine_id == context.machine_id
                 && command.principal_id == context.owner_id
         }
-        Frame::ReplayRequest { connection_id, .. } => *connection_id == context.connection_id,
+        Frame::ReplayRequest { connection_id, .. } | Frame::ControlResult { connection_id, .. } => {
+            *connection_id == context.connection_id
+        }
         _ => false,
     };
     if valid {
@@ -255,7 +257,8 @@ fn validate_outbound(context: &ConnectionContext, frame: &Frame) -> Result<()> {
         .validate_features(&context.features)
         .map_err(|_| TransportError::Invalid)?;
     let connection_id = match frame {
-        Frame::Result { connection_id, .. }
+        Frame::ControlRequest { connection_id, .. }
+        | Frame::Result { connection_id, .. }
         | Frame::Event { connection_id, .. }
         | Frame::Replay { connection_id, .. }
         | Frame::SnapshotRequired { connection_id, .. } => *connection_id,

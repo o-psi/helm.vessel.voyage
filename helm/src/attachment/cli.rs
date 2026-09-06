@@ -1,5 +1,7 @@
 //! Explicit enrollment administration, separate from provider login and execution.
 mod connect;
+pub mod control;
+mod control_intent;
 pub mod prompt;
 use super::client::{ClientError, EnrollmentClient, Inspection, Status, validate_origin};
 use clap::{Args, Subcommand};
@@ -36,7 +38,7 @@ pub enum AttachmentCommand {
     /// Inspect local status without creating or changing enrollment.
     Status,
     /// Maintain one foreground outbound presence connection; remote execution is unavailable.
-    Connect,
+    Connect(control::ConnectArgs),
     /// Resume the original pending transaction (enrollment requires its invitation key).
     Resume {
         /// Use a pipe/file instead of the hidden prompt for a pending enrollment.
@@ -66,6 +68,18 @@ pub enum CliError {
     Transport(#[from] super::transport::TransportError),
     #[error("attachment output unavailable")]
     Output,
+    #[error(
+        "coordination control unavailable; inspect state and retry the exact registration if its outcome is uncertain"
+    )]
+    Control,
+    #[error("selected session unavailable or busy; registration was not published")]
+    Session,
+    #[error(
+        "private registration intent unavailable or uncertain; preserve it and retry without changing its identity"
+    )]
+    Intent,
+    #[error("session registration preview changed; inspect and confirm current metadata")]
+    Confirmation,
 }
 struct Secret(Vec<u8>);
 impl Drop for Secret {
@@ -149,7 +163,7 @@ pub async fn run_cancellable(
     args: AttachmentArgs,
     cancel: tokio_util::sync::CancellationToken,
 ) -> Result<(), CliError> {
-    if !matches!(&args.command, AttachmentCommand::Connect) {
+    if !matches!(&args.command, AttachmentCommand::Connect(_)) {
         return Err(CliError::Arguments);
     }
     run_inner(args, prompt::PromptControl::default(), cancel).await
@@ -218,7 +232,13 @@ async fn run_inner(
         args.allow_insecure_loopback || detached,
     )?;
     match args.command {
-        AttachmentCommand::Connect => return connect::run(client, cancel).await,
+        AttachmentCommand::Connect(args) => {
+            return if args.coordination {
+                control::run(client, args, cancel).await
+            } else {
+                connect::run(client, cancel).await
+            };
+        }
         AttachmentCommand::Resume {
             invitation_key_stdin,
         } => {

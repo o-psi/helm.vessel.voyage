@@ -118,6 +118,16 @@ pub enum Reply {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Frame {
+    ControlRequest {
+        connection_id: Uuid,
+        request_id: Uuid,
+        operation: crate::control::ClientOperation,
+    },
+    ControlResult {
+        connection_id: Uuid,
+        request_id: Uuid,
+        reply: crate::control::Reply,
+    },
     Authenticate {
         version: u16,
         proof: SignedChallenge,
@@ -206,6 +216,12 @@ impl Frame {
         self.validate_structure()?;
         negotiated.validate()?;
         match self {
+            Self::ControlRequest { .. } | Self::ControlResult { .. } => {
+                if !negotiated.contains(Feature::CoordinationControl) {
+                    return Err("coordination control not negotiated");
+                }
+                Ok(())
+            }
             Self::Result {
                 reply: Reply::ExecutionSnapshot { .. },
                 ..
@@ -245,6 +261,22 @@ impl Frame {
 
     fn validate_structure(&self) -> Result<(), &'static str> {
         match self {
+            Self::ControlRequest {
+                connection_id,
+                request_id,
+                operation,
+            } => {
+                identities(&[*connection_id, *request_id])?;
+                operation.validate()?;
+            }
+            Self::ControlResult {
+                connection_id,
+                request_id,
+                reply,
+            } => {
+                identities(&[*connection_id, *request_id])?;
+                reply.validate()?;
+            }
             Self::Authenticate {
                 version,
                 proof,

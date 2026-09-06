@@ -93,6 +93,9 @@ impl Fixture {
         Self::new_at_with_limits(now(), limits).await
     }
     async fn new_at_with_limits(seed_time: i64, limits: Limits) -> Self {
+        Self::configured(seed_time, limits, false).await
+    }
+    async fn configured(seed_time: i64, limits: Limits, control: bool) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap().to_string();
@@ -119,13 +122,18 @@ impl Fixture {
         store
             .complete(&proof, Some(&invitation.key), seed_time)
             .unwrap();
-        let enrollment = EnrollmentApi::new(
+        let mut enrollment = EnrollmentApi::new(
             EnrollmentStore::open(&dir.path().join("authority"), &origin, true).unwrap(),
             "fixture-operator-token-at-least-32-bytes",
         )
         .unwrap();
-        let (api, rx) =
-            AttachmentApi::with_limits(enrollment, Features::default(), limits).unwrap();
+        let features = if control {
+            enrollment.enable_control().unwrap();
+            Features::new(vec![voyage_protocol::events::Feature::CoordinationControl]).unwrap()
+        } else {
+            Features::default()
+        };
+        let (api, rx) = AttachmentApi::with_limits(enrollment, features, limits).unwrap();
         let router = api.clone().router();
         let task = tokio::spawn(async move {
             axum::serve(listener, router).await.unwrap();
@@ -961,4 +969,106 @@ async fn independent_enrollment_writer_fences_live_connection_without_revocation
     // Releasing the database lock cannot resurrect cancelled authority.
     assert!(!f.api.is_current(f.machine, id).await);
     assert!(!f.store.current(f.machine, 1).unwrap().revoked);
+}
+
+#[tokio::test]
+async fn control_frames_require_negotiation_and_current_connection_and_never_reach_execution_queue()
+{
+    use voyage_protocol::{control, events::Feature};
+    let mut fixture = Fixture::configured(now(), functional_limits(), true).await;
+    let proof = fixture.proof();
+    let mut socket = fixture.socket().await;
+    let connection = fixture.authenticate(&mut socket, proof).await;
+    socket
+        .send(ClientMessage::Text(
+            Frame::ControlRequest {
+                connection_id: connection,
+                request_id: Uuid::new_v4(),
+                operation: control::ClientOperation::Refresh {},
+            }
+            .encode()
+            .unwrap()
+            .into(),
+        ))
+        .await
+        .unwrap();
+    closed(&mut socket).await;
+    // The strict old peer was not exposed to an unsolicited new feature.
+    let proof = fixture.proof();
+    let mut socket = fixture.socket().await;
+    socket
+        .send(ClientMessage::Text(
+            Frame::Authenticate {
+                version: 2,
+                proof,
+                features: Features::new(vec![Feature::CoordinationControl]).unwrap(),
+            }
+            .encode()
+            .unwrap()
+            .into(),
+        ))
+        .await
+        .unwrap();
+    let Frame::Welcome {
+        connection_id,
+        features,
+        ..
+    } = Frame::decode(
+        socket
+            .next()
+            .await
+            .unwrap()
+            .unwrap()
+            .into_text()
+            .unwrap()
+            .as_bytes(),
+    )
+    .unwrap()
+    else {
+        panic!("welcome")
+    };
+    assert!(features.contains(Feature::CoordinationControl));
+    let request_id = Uuid::new_v4();
+    socket
+        .send(ClientMessage::Text(
+            Frame::ControlRequest {
+                connection_id,
+                request_id,
+                operation: control::ClientOperation::Refresh {},
+            }
+            .encode()
+            .unwrap()
+            .into(),
+        ))
+        .await
+        .unwrap();
+    let response = Frame::decode(
+        socket
+            .next()
+            .await
+            .unwrap()
+            .unwrap()
+            .into_text()
+            .unwrap()
+            .as_bytes(),
+    )
+    .unwrap();
+    assert!(
+        matches!(response,Frame::ControlResult{request_id:id,reply:control::Reply::Snapshot{views},..} if id==request_id&&views.is_empty())
+    );
+    assert!(fixture.rx.try_recv().is_err());
+    socket
+        .send(ClientMessage::Text(
+            Frame::ControlRequest {
+                connection_id: Uuid::new_v4(),
+                request_id: Uuid::new_v4(),
+                operation: control::ClientOperation::Refresh {},
+            }
+            .encode()
+            .unwrap()
+            .into(),
+        ))
+        .await
+        .unwrap();
+    closed(&mut socket).await;
 }

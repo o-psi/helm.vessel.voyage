@@ -157,6 +157,13 @@ impl AttachmentApi {
         enrollment: EnrollmentApi,
         supported: Features,
     ) -> Result<(Self, mpsc::Receiver<AuthenticatedFrame>)> {
+        let supported = if enrollment.control_enabled() {
+            supported
+                .with(voyage_protocol::events::Feature::CoordinationControl)
+                .map_err(|_| TransportError::Invalid)?
+        } else {
+            supported
+        };
         Self::with_limits(enrollment, supported, Limits::default())
     }
     fn with_limits(
@@ -425,6 +432,14 @@ impl AttachmentApi {
                         heartbeat=tokio::time::Instant::now();
                         connection.heartbeat.send_replace(heartbeat);
                         if self.write(socket,connection,Frame::Lease{connection_id:connection.id,lease_ms:self.limits.lease.as_millis() as u32}).await.is_err(){return;}
+                    } else if let Frame::ControlRequest{request_id,operation,..}=frame {
+                        let held=connection.clone();let closed=self.closed.clone();let lease=self.limits.lease;
+                        let peer=crate::enrollment::control::Peer{machine:voyage_protocol::control::Machine{machine_id:machine,epoch:connection.epoch},owner:connection.owner,connection:connection.id,live:Arc::new(move||!closed.is_cancelled()&&!held.cancel.is_cancelled()&&tokio::time::Instant::now()<*held.heartbeat.borrow()+lease)};
+                        let reply=self.enrollment.control_peer(peer,operation).await.unwrap_or_else(|error|{
+                            use crate::enrollment::EnrollmentError as E;use voyage_protocol::stream::DenialCode as D;
+                            voyage_protocol::control::Reply::Denied{code:match error{E::Denied=>D::Unauthorized,E::Conflict=>D::Conflict,E::Busy=>D::Busy,E::Capacity=>D::ResourceExhausted,E::Invalid=>D::InvalidRequest,_=>D::Internal}}
+                        });
+                        if !self.is_current(machine,connection.id).await||self.write(socket,connection,Frame::ControlResult{connection_id:connection.id,request_id,reply}).await.is_err(){return;}
                     } else {
                         let registry=self.registry.lock().await;
                         if registry.get(&machine).is_none_or(|c|c.id!=connection.id||!self.live(c)){return;}
@@ -457,7 +472,8 @@ async fn bounded_write<E>(
 }
 fn inbound(frame: &Frame, connection: Uuid) -> Result<()> {
     let id = match frame {
-        Frame::Result { connection_id, .. }
+        Frame::ControlRequest { connection_id, .. }
+        | Frame::Result { connection_id, .. }
         | Frame::Event { connection_id, .. }
         | Frame::Replay { connection_id, .. }
         | Frame::SnapshotRequired { connection_id, .. }
@@ -479,7 +495,11 @@ fn outbound(frame: &Frame, machine: Uuid, connection: Uuid, owner: Uuid) -> Resu
         {
             Ok(())
         }
-        Frame::ReplayRequest { connection_id, .. } if *connection_id == connection => Ok(()),
+        Frame::ReplayRequest { connection_id, .. } | Frame::ControlResult { connection_id, .. }
+            if *connection_id == connection =>
+        {
+            Ok(())
+        }
         _ => Err(TransportError::Invalid),
     }
 }
