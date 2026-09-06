@@ -467,6 +467,28 @@ impl Agent {
     pub async fn shutdown_plain_terminals(&self) -> crate::tools::TerminalShutdown {
         self.tools.shutdown_terminals(Duration::from_secs(3)).await
     }
+
+    /// Operator presentation only; executable names and schemas stay in the registry.
+    pub fn tool_inventory_display(&self) -> Vec<String> {
+        self.tools.definitions().iter().map(|tool| {
+            // Redact original bytes before making terminal controls visible.
+            let text = self.context.redactor.redact_public_prefix(&format!("{} — {}", tool.name, tool.description));
+            let mut display = String::new();
+            for ch in text.chars() {
+                if ch.is_control() || matches!(ch, '\u{61c}' | '\u{200e}'..='\u{200f}' | '\u{2028}'..='\u{202e}' | '\u{2066}'..='\u{2069}') {
+                    display.extend(ch.escape_default());
+                } else {
+                    display.push(ch);
+                }
+            }
+            // Also guard replacement-marker collisions and values formed by
+            // presentation escaping, without touching executable metadata.
+            if self.context.redactor.contains_secret(&display) {
+                display.clear();
+            }
+            display
+        }).collect()
+    }
     pub fn terminal_metadata(&self) -> Vec<crate::terminal::TerminalSummary> {
         self.tools
             .terminals()

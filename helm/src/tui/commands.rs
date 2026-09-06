@@ -349,13 +349,10 @@ pub(super) async fn handle_command(
         "tools" => {
             if let Some(agent) = agent {
                 app.show_activity = true;
-                let tools = agent.tool_inventory();
+                let tools = agent.tool_inventory_display();
                 app.activity.push("Available Helm tool calls:".into());
-                app.activity.extend(
-                    tools
-                        .iter()
-                        .map(|tool| format!("  {} — {}", tool.name, tool.description)),
-                );
+                app.activity
+                    .extend(tools.iter().map(|tool| format!("  {tool}")));
                 app.status = format!("{} tool call(s) available", tools.len());
             } else {
                 app.status = "Tool inventory unavailable while runtime is starting".into();

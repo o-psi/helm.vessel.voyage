@@ -2524,8 +2524,12 @@ async fn chat(
                     build_agent(&active_config, session.workspace.clone(), interactive).await?,
                 );
             }
-            for tool in agent.as_ref().expect("agent initialized").tool_inventory() {
-                println!("{}\t{}", tool.name, tool.description);
+            for line in agent
+                .as_ref()
+                .expect("agent initialized")
+                .tool_inventory_display()
+            {
+                println!("{line}");
             }
             continue;
         }

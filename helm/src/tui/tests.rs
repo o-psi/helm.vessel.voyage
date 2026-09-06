@@ -199,5 +199,5 @@ mod todos;
 
 mod github;
 mod routing;
-mod usage;
 mod tool_inventory;
+mod usage;

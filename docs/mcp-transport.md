@@ -26,6 +26,12 @@ schema property names, defaults and enum values. Registry definitions stay
 unchanged; an offending tool is not silently omitted. These checks cover known
 values, not arbitrary secret transformations.
 
+The operator's `/tools` inventory uses a separate display copy: known configured
+secrets are redacted, and terminal and bidi controls appear as visible escapes.
+Inspecting the inventory does not change executable names or schemas and does
+not invoke a model or tool. Registry definitions remain available unchanged to
+the runtime; their raw text is not used for operator display.
+
 Each encoded outgoing request and incoming JSON frame is limited to **1,048,576
 UTF-8 bytes**, excluding its newline delimiter. The incoming limit applies while
 reading, including when a peer never sends a newline. A request can consume at
