@@ -38,7 +38,7 @@ def main():
     parser=argparse.ArgumentParser();parser.add_argument('--test-binary',required=True);args=parser.parse_args()
     with tempfile.TemporaryDirectory(prefix='helm-plain-pty-') as tmp:
         env=dict(os.environ,HOME=tmp,XDG_CONFIG_HOME=tmp+'/config',XDG_DATA_HOME=tmp+'/data',TERM='xterm-256color')
-        cases=['ctrl-t','ctrl-bracket','partial','coalesced-command','resize','too-small','interrupt','inner-exit','write-failure-detach','write-failure-private','policy','read-only','ctrl-c','editing']
+        cases=['ctrl-t','ctrl-bracket','partial','coalesced-command','resize','too-small','interrupt','inner-exit','write-failure-detach','write-failure-private','policy','read-only','ctrl-c','editing','bytes','invalid']
         for case in cases:
             terminal=Terminal(args.test_binary,env,mode=case)
             try:
@@ -50,7 +50,9 @@ def main():
                     if case=='read-only':terminal.wait(b'DRIVER_ERROR=')
                     else:terminal.wait(b'INNER_READY')
                     if case=='resize':terminal.resize(30,8)
-                    if case=='read-only':pass
+                    if case=='bytes':
+                        terminal.send(b'\x1b[200~private\x1b[201~\x1b[A\x1bOP\x03\x00');terminal.wait(b'BYTES_RECORDED');terminal.send(b'\x14'+'next🧭\n'.encode())
+                    elif case=='read-only':pass
                     elif case=='policy':os.kill(terminal.process.pid,signal.SIGUSR2);terminal.wait(b'DRIVER_ERROR=')
                     elif case=='write-failure-detach':terminal.send(b'private bytes\x14'+'next🧭\n'.encode())
                     elif case=='write-failure-private':terminal.send(b'PRIVATE_CANARY'*600);terminal.wait(b'DRIVER_ERROR=')
@@ -63,7 +65,9 @@ def main():
                         terminal.send(b"printf 'PRIVATE_CANARY\\n'; printf '\\033]52;c;PRIVATE_CANARY\\007'\n")
                         terminal.wait(b'PRIVATE_CANARY')
                         chord=b'\x1d' if case=='ctrl-bracket' else b'\x14'
-                        if case=='editing':
+                        if case=='invalid':
+                            terminal.send(chord+b'\xff\n');terminal.wait(b'DRIVER_RESUMED');terminal.send(b'\x15'+'next🧭\n'.encode())
+                        elif case=='editing':
                             terminal.send(chord+b'nextX');terminal.wait(b'DRIVER_RESUMED');terminal.send(b'\x7f'+'🧭\n'.encode())
                         elif case=='partial':
                             terminal.send(chord+b'next');terminal.wait(b'DRIVER_RESUMED');terminal.send('🧭\n'.encode())

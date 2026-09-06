@@ -68,7 +68,10 @@ fn native_driver() {
         let policy=Arc::new(Policy::new(&config,directory.path().into()).unwrap());
         let context=ToolContext{github:None,completion:None,policy:policy.clone(),approver:Arc::new(No),timeout:Duration::from_secs(3),max_output_bytes:4096,environment:std::collections::BTreeMap::from([("PATH".into(),"/usr/bin:/bin".into())]),cancellation:CancellationToken::new(),execution_id:uuid::Uuid::new_v4(),interaction:crate::tools::InteractionMode::Attended,redactor:Arc::new(crate::tools::Redactor::default())};
         let manager=Arc::new(ProcessTool::default());
-        let started=manager.execute(json!({"action":"start","name":"fixture-shell","command":"stty -echo; printf INNER_READY; exec /bin/sh"}),&context).await.unwrap();
+        let command=if mode=="bytes" {
+            "python3 -u -c 'import os,tty; tty.setraw(0); print(\"INNER_READY\",flush=True); f=open(\"human-bytes\",\"wb\",buffering=0); exec(\"while True:\\n data=os.read(0,4096)\\n f.write(data)\\n if f.tell()>=27: print(\\\"BYTES_RECORDED\\\",flush=True)\")'"
+        }else{"stty -echo; printf INNER_READY; exec /bin/sh"};
+        let started=manager.execute(json!({"action":"start","name":"fixture-shell","command":command}),&context).await.unwrap();
         let id=TerminalId(uuid::Uuid::parse_str(started.split_whitespace().last().unwrap()).unwrap());
         let mut policy_signal=tokio::signal::unix::signal(tokio::signal::unix::SignalKind::user_defined2()).unwrap();
         let mut stop=tokio::signal::unix::signal(tokio::signal::unix::SignalKind::user_defined1()).unwrap();
@@ -103,6 +106,10 @@ fn native_driver() {
                     println!("DRIVER_RESUMED");
                     let line=pending_prompt(&mut pending,CancellationToken::new()).await.unwrap().unwrap();
                     assert_eq!(line,"next🧭");
+                    if mode=="bytes" {
+                        let expected=b"\x1b[200~private\x1b[201~\x1b[A\x1bOP\x03\x00";
+                        assert_eq!(std::fs::read(directory.path().join("human-bytes")).unwrap(),expected);
+                    }
                     println!("DRIVER_HANDOFF_OK");
                 } else {println!("DRIVER_INNER_EXIT");}
             }
