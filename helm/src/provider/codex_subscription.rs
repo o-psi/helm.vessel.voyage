@@ -166,10 +166,17 @@ impl Provider for CodexSubscriptionProvider {
                     input_modalities,
                 });
             }
-            cursor = result
-                .get("nextCursor")
-                .and_then(Value::as_str)
-                .map(str::to_owned);
+            // Reject an oversized or unsafe accumulated catalog before another query.
+            super::validate_models(&models, &[])?;
+            cursor = match result.get("nextCursor") {
+                None | Some(Value::Null) => None,
+                Some(Value::String(cursor)) => Some(cursor.clone()),
+                _ => {
+                    return Err(ProviderError::InvalidResponse(
+                        "model/list cursor must be a string or null".into(),
+                    ));
+                }
+            };
             if let Some(cursor) = &cursor {
                 super::catalog::validate_text(cursor, 512, true, &[])?;
                 if !cursors.insert(cursor.clone()) || cursors.len() >= super::catalog::MAX_PAGES {
@@ -566,6 +573,76 @@ fn classify_message(message: String) -> ProviderError {
 mod tests {
     use super::*;
     use futures_util::StreamExt;
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn catalog_pages_reject_bad_cursor_types_and_aggregate_before_following() {
+        let directory = tempfile::tempdir().unwrap();
+        let script = directory.path().join("catalog.py");
+        std::fs::write(&script, r#"
+import json, pathlib, sys
+page = json.loads(pathlib.Path(sys.argv[1]).read_text())
+count = pathlib.Path(sys.argv[2])
+for line in sys.stdin:
+    request = json.loads(line)
+    if 'id' not in request:
+        continue
+    if request['method'] == 'initialize':
+        result = {'userAgent':'fixture','platformFamily':'unix','platformOs':'linux','codexHome':'/tmp'}
+    elif request['method'] == 'model/list':
+        calls = int(count.read_text()) if count.exists() else 0
+        count.write_text(str(calls + 1))
+        result = page if calls == 0 else {'data':[], 'nextCursor':None}
+    else:
+        raise RuntimeError('unexpected inference request')
+    print(json.dumps({'id':request['id'], 'result':result}), flush=True)
+"#).unwrap();
+        let large = (0..257)
+            .map(|index| json!({"model":format!("m{index}"),"description":"x".repeat(4096)}))
+            .collect::<Vec<_>>();
+        for (index, (page, valid)) in [
+            (json!({"data":[{"model":"good"}],"nextCursor":17}), false),
+            (
+                json!({"data":[{"model":"good"}],"nextCursor":{"bad":true}}),
+                false,
+            ),
+            (json!({"data":large,"nextCursor":"next"}), false),
+            (json!({"data":[{"model":"good"}],"nextCursor":null}), true),
+            (json!({"data":[{"model":"good"}]}), true),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let page_file = directory.path().join(format!("page{index}.json"));
+            let count_file = directory.path().join(format!("count{index}"));
+            std::fs::write(&page_file, serde_json::to_vec(&page).unwrap()).unwrap();
+            let provider = CodexSubscriptionProvider::with_command(
+                "python3".into(),
+                vec![
+                    script.display().to_string(),
+                    page_file.display().to_string(),
+                    count_file.display().to_string(),
+                ],
+                directory.path().into(),
+            );
+            let result = tokio::time::timeout(std::time::Duration::from_secs(5), provider.models())
+                .await
+                .unwrap();
+            if valid {
+                assert_eq!(result.unwrap()[0].id, "good");
+            } else {
+                assert!(matches!(
+                    result.unwrap_err(),
+                    ProviderError::InvalidResponse(_)
+                ));
+            }
+            assert_eq!(
+                std::fs::read_to_string(count_file).unwrap(),
+                "1",
+                "bad first page must not dispatch another query"
+            );
+        }
+    }
+
     async fn completed(stream: &mut ProviderStream) -> ModelResponse {
         while let Some(event) = stream.next().await {
             if let ProviderStreamEvent::Completed(response) = event.unwrap() {
