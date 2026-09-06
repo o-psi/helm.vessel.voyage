@@ -127,3 +127,29 @@ request error without displaying its body or destination. Configure the intended
 final endpoint explicitly after checking its authority; Helm does not forward
 credentials or replay request bodies at a redirect destination. Browser navigation
 during interactive OAuth authorization remains part of the browser login flow.
+
+
+## Retries and tool-call identity
+
+Helm retries retryable provider failures only before any streamed text or tool-call
+fragment has been received. Attempts are bounded by `provider_retry_attempts`.
+Without a server delay, each wait uses equal jitter between half of the current
+exponential delay and that delay, capped by `provider_retry_max_ms`. Cancellation
+interrupts the wait. A provider's explicit Retry-After delay is honored without
+jitter; if it exceeds the configured maximum wait, Helm returns the original
+provider failure instead of retrying earlier. Reported usage remains known usage;
+unreported work on failed requests is not treated as a measured zero cost.
+
+Within one completed provider response, exact duplicate tool-call IDs with the
+same tool name and JSON arguments produce one tool invocation and one canonical
+result, in first-occurrence order. Helm validates the entire response before any
+tool effects: conflicting calls sharing an ID fail the response. Empty, oversized
+or control-containing IDs also fail validation. OpenAI Responses continuation
+preserves opaque reasoning items while emitting the retained call only once.
+
+A call ID is a response-local correlation label, not a durable effect identity.
+The same ID in a later request or a resumed run is a fresh call and remains subject
+to current local policy. Helm does not automatically retry tools or promise exactly
+once effects across requests or crashes. Interrupted managed calls without durable
+results continue to block execution until explicit [unknown-outcome reconciliation](local-tool-reconciliation.md).
+Reconciliation records uncertainty and never repeats the effect or claims rollback.

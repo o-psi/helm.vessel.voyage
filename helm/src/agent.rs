@@ -1,3 +1,6 @@
+mod retry;
+mod tool_replay;
+pub use retry::RetryJitter;
 mod gate;
 #[cfg(test)]
 mod gate_tests;
@@ -316,6 +319,7 @@ pub struct Agent {
     completion_gate: Option<gate::GateResources>,
     temperature: Option<f32>,
     retry: RetryPolicy,
+    retry_jitter: Arc<dyn RetryJitter>,
 }
 
 #[derive(Clone, Debug)]
@@ -396,6 +400,7 @@ impl Agent {
             completion_gate: None,
             temperature,
             retry: RetryPolicy::default(),
+            retry_jitter: Arc::new(retry::RandomJitter),
         }
     }
 
@@ -494,6 +499,19 @@ impl Agent {
     pub fn with_retry_policy(mut self, retry: RetryPolicy) -> Self {
         self.retry = retry;
         self
+    }
+
+    pub fn with_retry_jitter(mut self, jitter: Arc<dyn RetryJitter>) -> Self {
+        self.retry_jitter = jitter;
+        self
+    }
+
+    fn retry_allowed(&self, error: &ProviderError, attempt: usize) -> bool {
+        error.is_retryable()
+            && attempt < self.retry.max_attempts
+            && error
+                .retry_after()
+                .is_none_or(|wait| wait <= self.retry.max_delay)
     }
 
     pub fn with_model_mirror(mut self, mirror: Arc<RwLock<String>>) -> Self {
@@ -867,7 +885,8 @@ impl Agent {
                 .output_tokens
                 .checked_add(response.usage.output_tokens)
                 .ok_or(AgentError::UsageOverflow)?;
-            let assistant = response.message;
+            let mut assistant = response.message;
+            tool_replay::normalize(&mut assistant.tool_calls)?;
             let calls = assistant.tool_calls.clone();
             let answer = assistant.content.clone();
             history.push(assistant);
@@ -1085,7 +1104,7 @@ impl Agent {
             let stream_result = tokio::select! {biased; _ = cancel.cancelled()=>{self.sink.emit(AgentEvent::Cancelled).await;return Err(AgentError::Cancelled);}, value=self.provider.stream(request.clone())=>value};
             let mut stream = match stream_result {
                 Ok(value) => value,
-                Err(error) if error.is_retryable() && attempt < self.retry.max_attempts => {
+                Err(error) if self.retry_allowed(&error, attempt) => {
                     self.retry_wait(attempt, &error, delay, cancel).await?;
                     delay = delay.saturating_mul(2).min(self.retry.max_delay);
                     continue;
@@ -1115,11 +1134,7 @@ impl Agent {
                         }
                     }
                     Some(Ok(ProviderStreamEvent::Completed(response))) => return Ok(response),
-                    Some(Err(error))
-                        if !partial
-                            && error.is_retryable()
-                            && attempt < self.retry.max_attempts =>
-                    {
+                    Some(Err(error)) if !partial && self.retry_allowed(&error, attempt) => {
                         self.retry_wait(attempt, &error, delay, cancel).await?;
                         delay = delay.saturating_mul(2).min(self.retry.max_delay);
                         break;
@@ -1144,10 +1159,9 @@ impl Agent {
         delay: Duration,
         cancel: &CancellationToken,
     ) -> Result<(), AgentError> {
-        let wait = error
-            .retry_after()
-            .unwrap_or(delay)
-            .min(self.retry.max_delay);
+        let wait = error.retry_after().unwrap_or_else(|| {
+            retry::jittered(delay.min(self.retry.max_delay), self.retry_jitter.sample())
+        });
         self.sink
             .emit(AgentEvent::ProviderRetry {
                 attempt,
@@ -1282,6 +1296,7 @@ mod tests {
     }
     struct PartialFailure {
         calls: Arc<AtomicUsize>,
+        tool: bool,
     }
     struct StreamingOk;
     #[async_trait]
@@ -1330,9 +1345,16 @@ mod tests {
         ) -> Result<crate::provider::ProviderStream, ProviderError> {
             self.calls.fetch_add(1, Ordering::SeqCst);
             Ok(Box::pin(futures_util::stream::iter(vec![
-                Ok(crate::provider::ProviderStreamEvent::Delta(
-                    crate::provider::ProviderDelta::Text("partial".into()),
-                )),
+                Ok(crate::provider::ProviderStreamEvent::Delta(if self.tool {
+                    crate::provider::ProviderDelta::ToolCall {
+                        index: 0,
+                        id: Some("partial-call".into()),
+                        name: Some("shell".into()),
+                        arguments: "{\"command\":".into(),
+                    }
+                } else {
+                    crate::provider::ProviderDelta::Text("partial".into())
+                })),
                 Err(ProviderError::Unavailable("connection lost".into())),
             ])))
         }
@@ -1923,22 +1945,25 @@ mod tests {
 
     #[tokio::test]
     async fn never_retries_after_visible_partial_output() {
-        let directory = tempfile::tempdir().unwrap();
-        let calls = Arc::new(AtomicUsize::new(0));
-        let error = agent(
-            Box::new(PartialFailure {
-                calls: calls.clone(),
-            }),
-            &directory,
-        )
-        .run(vec![], "hello".into())
-        .await
-        .unwrap_err();
-        assert!(matches!(
-            error,
-            AgentError::Provider(ProviderError::Unavailable(_))
-        ));
-        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        for tool in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let calls = Arc::new(AtomicUsize::new(0));
+            let error = agent(
+                Box::new(PartialFailure {
+                    calls: calls.clone(),
+                    tool,
+                }),
+                &directory,
+            )
+            .run(vec![], "hello".into())
+            .await
+            .unwrap_err();
+            assert!(matches!(
+                error,
+                AgentError::Provider(ProviderError::Unavailable(_))
+            ));
+            assert_eq!(calls.load(Ordering::SeqCst), 1);
+        }
     }
 
     #[tokio::test]

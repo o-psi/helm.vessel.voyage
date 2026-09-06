@@ -125,6 +125,38 @@ pub(crate) fn request_body(request: ModelRequest, stream: bool) -> Result<Value,
     Ok(body)
 }
 
+// Preserve opaque reasoning/message records, while an exact repeated function
+// call in one provider response has one outgoing call/result correlation.
+fn unique_replay_calls(items: Vec<Value>) -> Result<Vec<Value>, ProviderError> {
+    let mut seen = std::collections::BTreeMap::new();
+    let mut result = Vec::with_capacity(items.len());
+    for item in items {
+        if item.get("type").and_then(Value::as_str) == Some("function_call") {
+            let id = item["call_id"].as_str().unwrap_or_default().to_owned();
+            let name = item["name"].as_str().unwrap_or_default().to_owned();
+            let arguments: Value = serde_json::from_str(
+                item["arguments"].as_str().unwrap_or_default(),
+            )
+            .map_err(|_| {
+                ProviderError::InvalidResponse(
+                    "invalid function arguments in Responses continuation".into(),
+                )
+            })?;
+            let identity = (name, arguments);
+            if let Some(previous) = seen.insert(id, identity.clone()) {
+                if previous != identity {
+                    return Err(ProviderError::InvalidResponse(
+                        "conflicting function call identities in Responses continuation".into(),
+                    ));
+                }
+                continue;
+            }
+        }
+        result.push(item);
+    }
+    Ok(result)
+}
+
 fn encode_message(message: &Message) -> Result<Vec<Value>, ProviderError> {
     if message.role == Role::Tool {
         return Ok(message
@@ -172,7 +204,7 @@ fn encode_message(message: &Message) -> Result<Vec<Value>, ProviderError> {
                 }));
             }
         }
-        return Ok(replay);
+        return unique_replay_calls(replay);
     }
     let role = match message.role {
         Role::System => "system",
@@ -678,6 +710,32 @@ mod tests {
     use super::*;
     use crate::model::ToolDefinition;
     use futures_util::StreamExt;
+    #[test]
+    fn duplicate_continuations_preserve_opaque_items_and_first_call() {
+        let reasoning = json!({"type":"reasoning","encrypted_content":"opaque"});
+        let first = json!({"type":"function_call","id":"first","call_id":"same","name":"shell","arguments":"{\"a\":1,\"b\":2}"});
+        let duplicate = json!({"type":"function_call","id":"second","call_id":"same","name":"shell","arguments":"{\"b\":2,\"a\":1}"});
+        let items = vec![reasoning.clone(), first.clone(), duplicate.clone()];
+        assert_eq!(
+            unique_replay_calls(items.clone()).unwrap(),
+            [reasoning, first.clone()]
+        );
+        // Each assistant message has an independent scope.
+        assert_eq!(
+            unique_replay_calls(vec![duplicate.clone()])
+                .unwrap()
+                .as_slice(),
+            std::slice::from_ref(&duplicate)
+        );
+        for arguments in ["{\"secret\":\"canary\"}", "malformed canary"] {
+            let mut conflicting = duplicate.clone();
+            conflicting["arguments"] = json!(arguments);
+            let error = unique_replay_calls(vec![first.clone(), conflicting])
+                .unwrap_err()
+                .to_string();
+            assert!(!error.contains("canary"));
+        }
+    }
     #[test]
     fn orphaned_tool_results_are_preserved_as_context() {
         let body = request_body(
