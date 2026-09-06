@@ -114,7 +114,7 @@ for line in sys.stdin:
     if 'id' not in request: continue
     if request['method']=='initialize':
         if Path(sys.argv[1]).exists() and Path(sys.argv[1]).read_text()=='initialize': time.sleep(30)
-        result={}
+        result={'protocolVersion':'2025-06-18','capabilities':{'tools':{}},'serverInfo':{'name':'navigation','version':'1'}}
     elif Path(sys.argv[1]).exists(): result={}
     else: result={'tools':[{'name':'probe','description':'fixture','inputSchema':{'type':'object'}}]}
     print(json.dumps({'jsonrpc':'2.0','id':request['id'],'result':result}),flush=True)

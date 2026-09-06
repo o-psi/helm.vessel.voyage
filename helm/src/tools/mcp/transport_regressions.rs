@@ -20,9 +20,13 @@ for line in sys.stdin:
         continue
     if method == 'notifications/initialized':
         mark('initialized')
+        if mode == 'block_read': time.sleep(30)
         continue
     identifier = request['id']
     if method == 'initialize':
+        if mode == 'init_hold':
+            mark('init_dispatched', str(identifier))
+            continue
         if mode == 'init_error':
             reply({'jsonrpc':'2.0','id':identifier,'error':{'code':-32602,'message':'unsupported'}})
         elif mode == 'init_version':
@@ -38,10 +42,24 @@ for line in sys.stdin:
         if mode == 'oversized':
             sys.stdout.write('x' * (1024 * 1024 + 1)); sys.stdout.flush()
             time.sleep(30)
-        elif mode == 'flood':
-            for i in range(129):
+        elif mode in ('flood', 'flood_exact'):
+            for i in range(129 if mode == 'flood' else 128):
                 reply({'jsonrpc':'2.0','method':'notifications/progress','params':{}})
             reply({'jsonrpc':'2.0','id':identifier,'result':{'content':[]}})
+        elif mode in ('frame_exact', 'frame_plus_one'):
+            raw = json.dumps({'jsonrpc':'2.0','id':identifier,'result':{'content':[]}},separators=(',',':'))
+            size = 1024 * 1024 + (mode == 'frame_plus_one')
+            sys.stdout.write(raw + ' ' * (size - len(raw)) + '\n'); sys.stdout.flush()
+        elif mode == 'unicode':
+            raw = json.dumps({'jsonrpc':'2.0','id':identifier,'result':{'content':[{'type':'text','text':'雪é'}]}},ensure_ascii=False).encode() + b'\n'
+            for byte in raw:
+                os.write(sys.stdout.fileno(), bytes([byte]))
+        elif mode == 'late':
+            reply({'jsonrpc':'2.0','id':identifier-1,'result':{'content':[{'type':'text','text':'WRONG'}]}})
+            reply({'jsonrpc':'2.0','id':identifier,'result':{'content':[{'type':'text','text':'ok'}]}})
+        elif mode == 'gate':
+            while not (root / 'release').exists(): time.sleep(.002)
+            reply({'jsonrpc':'2.0','id':identifier,'result':{'content':[{'type':'text','text':'ok'}]}})
         elif mode == 'hold':
             pass
         elif mode == 'partial':
@@ -52,10 +70,21 @@ for line in sys.stdin:
 "#;
 
 fn peer(mode: &str, directory: &std::path::Path) -> Arc<McpServer> {
-    Arc::new(McpServer::start("fixture", "python3", &[
-        "-u".into(), "-c".into(), PEER.into(), mode.into(),
-        directory.to_string_lossy().into_owned(),
-    ], &BTreeMap::new()).unwrap())
+    Arc::new(
+        McpServer::start(
+            "fixture",
+            "python3",
+            &[
+                "-u".into(),
+                "-c".into(),
+                PEER.into(),
+                mode.into(),
+                directory.to_string_lossy().into_owned(),
+            ],
+            &BTreeMap::new(),
+        )
+        .unwrap(),
+    )
 }
 
 async fn marker(path: &std::path::Path) {
@@ -63,7 +92,9 @@ async fn marker(path: &std::path::Path) {
         while !path.exists() {
             tokio::time::sleep(Duration::from_millis(2)).await;
         }
-    }).await.expect("fixture did not reach observed barrier");
+    })
+    .await
+    .expect("fixture did not reach observed barrier");
 }
 
 #[tokio::test]
@@ -83,9 +114,16 @@ async fn newline_free_frame_is_rejected_before_peer_closes() {
     let directory = tempfile::tempdir().unwrap();
     let server = peer("oversized", directory.path());
     server.initialize().await.unwrap();
-    let result = tokio::time::timeout(Duration::from_secs(2), server.transport.request("tools/call", json!({}))).await;
+    let result = tokio::time::timeout(
+        Duration::from_secs(2),
+        server.transport.request("tools/call", json!({})),
+    )
+    .await;
     server.shutdown().await.unwrap();
-    assert!(matches!(result, Ok(Err(_))), "unbounded frame waited for newline: {result:?}");
+    assert!(
+        matches!(result, Ok(Err(_))),
+        "unbounded frame waited for newline: {result:?}"
+    );
 }
 
 #[tokio::test]
@@ -106,11 +144,253 @@ async fn dropped_dispatched_and_partial_read_call_retire_transport() {
         server.initialize().await.unwrap();
         let transport = server.transport.clone();
         let task = tokio::spawn(async move { transport.request("tools/call", json!({})).await });
-        marker(&directory.path().join(if mode == "partial" { "partial" } else { "dispatched" })).await;
+        marker(&directory.path().join(if mode == "partial" {
+            "partial"
+        } else {
+            "dispatched"
+        }))
+        .await;
         task.abort();
         let _ = task.await;
-        let result = tokio::time::timeout(Duration::from_millis(500), server.transport.request("tools/call", json!({}))).await;
+        let result = tokio::time::timeout(
+            Duration::from_millis(500),
+            server.transport.request("tools/call", json!({})),
+        )
+        .await;
         server.shutdown().await.unwrap();
-        assert!(matches!(result, Ok(Err(_))), "abandoned call transport remained usable or hung: {result:?}");
+        assert!(
+            matches!(result, Ok(Err(_))),
+            "abandoned call transport remained usable or hung: {result:?}"
+        );
     }
+}
+
+#[tokio::test]
+async fn exact_frame_and_unrelated_limits_unicode_and_late_ids() {
+    for mode in [
+        "frame_exact",
+        "frame_plus_one",
+        "flood_exact",
+        "unicode",
+        "late",
+    ] {
+        let directory = tempfile::tempdir().unwrap();
+        let server = peer(mode, directory.path());
+        server.initialize().await.unwrap();
+        let result = server.transport.request("tools/call", json!({})).await;
+        server.shutdown().await.unwrap();
+        if mode == "frame_plus_one" {
+            assert!(result.is_err());
+        } else {
+            let result = result.unwrap();
+            if mode == "unicode" {
+                assert_eq!(extract_content(&result["result"]), "雪é");
+            }
+            if mode == "late" {
+                assert_eq!(extract_content(&result["result"]), "ok");
+            }
+        }
+    }
+}
+
+#[test]
+fn outgoing_limit_counts_encoded_utf8_without_delimiter() {
+    let exact = json!("x".repeat(MAX_FRAME_BYTES - 2));
+    assert_eq!(encode_frame(&exact).unwrap().len(), MAX_FRAME_BYTES + 1);
+    assert!(encode_frame(&json!("x".repeat(MAX_FRAME_BYTES - 1))).is_err());
+    assert!(encode_frame(&json!("\n".repeat(MAX_FRAME_BYTES / 2))).is_err());
+    assert_eq!(encode_frame(&json!("雪")).unwrap(), "\"雪\"\n".as_bytes());
+}
+
+#[tokio::test]
+async fn oversized_outgoing_request_has_no_effect_and_preserves_connection() {
+    let directory = tempfile::tempdir().unwrap();
+    let server = peer("echo", directory.path());
+    server.initialize().await.unwrap();
+    assert!(
+        server
+            .transport
+            .request("tools/call", json!({"value":"x".repeat(MAX_FRAME_BYTES)}))
+            .await
+            .is_err()
+    );
+    assert!(!directory.path().join("dispatched").exists());
+    assert!(
+        server
+            .transport
+            .request("tools/call", json!({}))
+            .await
+            .is_ok()
+    );
+    server.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn dropped_queued_request_sends_nothing_and_does_not_retire_active_call() {
+    let directory = tempfile::tempdir().unwrap();
+    let server = peer("gate", directory.path());
+    server.initialize().await.unwrap();
+    let transport = server.transport.clone();
+    let task = tokio::spawn(async move { transport.request("tools/call", json!({})).await });
+    marker(&directory.path().join("dispatched")).await;
+    let before = server.transport.next_id.load(Ordering::Acquire);
+    {
+        let queued = server.transport.request("tools/call", json!({}));
+        tokio::pin!(queued);
+        assert!(futures_util::poll!(&mut queued).is_pending());
+    }
+    assert_eq!(server.transport.next_id.load(Ordering::Acquire), before);
+    assert!(!server.transport.closed.load(Ordering::Acquire));
+    std::fs::write(directory.path().join("release"), "release").unwrap();
+    assert!(task.await.unwrap().is_ok());
+    assert!(
+        server
+            .transport
+            .request("tools/call", json!({}))
+            .await
+            .is_ok()
+    );
+    server.shutdown().await.unwrap();
+    assert!(!directory.path().join("cancelled").exists());
+}
+
+#[tokio::test]
+async fn dropped_request_cancellation_is_exact_but_initialize_is_never_cancelled() {
+    for mode in ["hold", "init_hold"] {
+        let directory = tempfile::tempdir().unwrap();
+        let server = peer(mode, directory.path());
+        if mode == "hold" {
+            server.initialize().await.unwrap();
+        }
+        let transport = server.transport.clone();
+        let task = tokio::spawn(async move {
+            transport
+                .request(
+                    if mode == "hold" {
+                        "tools/call"
+                    } else {
+                        "initialize"
+                    },
+                    json!({}),
+                )
+                .await
+        });
+        let path = directory.path().join(if mode == "hold" {
+            "dispatched"
+        } else {
+            "init_dispatched"
+        });
+        marker(&path).await;
+        let id: u64 = std::fs::read_to_string(path).unwrap().parse().unwrap();
+        task.abort();
+        let _ = task.await;
+        if mode == "hold" {
+            marker(&directory.path().join("cancelled")).await;
+            let notification: Value =
+                serde_json::from_slice(&std::fs::read(directory.path().join("cancelled")).unwrap())
+                    .unwrap();
+            assert_eq!(notification["params"]["requestId"], id);
+        }
+        server.shutdown().await.unwrap();
+        assert_eq!(directory.path().join("cancelled").exists(), mode == "hold");
+    }
+}
+
+#[tokio::test]
+async fn cancelled_partial_write_retires_without_appending_notification() {
+    let directory = tempfile::tempdir().unwrap();
+    let server = peer("block_read", directory.path());
+    server.initialize().await.unwrap();
+    marker(&directory.path().join("initialized")).await;
+    server.transport.written_bytes.store(0, Ordering::Release);
+    let transport = server.transport.clone();
+    let task = tokio::spawn(async move {
+        transport
+            .request(
+                "tools/call",
+                json!({"padding":"x".repeat(MAX_FRAME_BYTES - 1024)}),
+            )
+            .await
+    });
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while server.transport.written_bytes.load(Ordering::Acquire) == 0 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert!(server.transport.written_bytes.load(Ordering::Acquire) < MAX_FRAME_BYTES - 1024);
+    task.abort();
+    let _ = task.await;
+    assert!(server.transport.closed.load(Ordering::Acquire));
+    assert!(
+        server
+            .transport
+            .request("tools/call", json!({}))
+            .await
+            .is_err()
+    );
+    server.shutdown().await.unwrap();
+    assert!(!directory.path().join("dispatched").exists());
+    assert!(!directory.path().join("cancelled").exists());
+}
+
+fn context(directory: &std::path::Path, maximum: usize) -> ToolContext {
+    ToolContext {
+        github: None,
+        completion: None,
+        policy: Arc::new(
+            crate::policy::Policy::new(&crate::config::Config::default(), directory.to_owned())
+                .unwrap(),
+        ),
+        approver: Arc::new(crate::tools::UnattendedApprover { allow: false }),
+        timeout: Duration::from_millis(200),
+        max_output_bytes: maximum,
+        environment: BTreeMap::new(),
+        cancellation: tokio_util::sync::CancellationToken::new(),
+        execution_id: uuid::Uuid::new_v4(),
+        interaction: crate::tools::InteractionMode::Unattended,
+        redactor: Arc::new(crate::tools::Redactor::default()),
+    }
+}
+
+#[tokio::test]
+async fn tool_result_limit_is_exact_and_timeout_retires_only_its_server() {
+    let directory = tempfile::tempdir().unwrap();
+    let server = peer("echo", directory.path());
+    server.initialize().await.unwrap();
+    let tools = server.discover().await.unwrap();
+    assert_eq!(
+        tools[0]
+            .execute(json!({}), &context(directory.path(), 2))
+            .await
+            .unwrap(),
+        "ok"
+    );
+    assert!(
+        tools[0]
+            .execute(json!({}), &context(directory.path(), 1))
+            .await
+            .is_err()
+    );
+
+    let held_directory = tempfile::tempdir().unwrap();
+    let held = peer("hold", held_directory.path());
+    held.initialize().await.unwrap();
+    let held_tools = held.discover().await.unwrap();
+    let result = held_tools[0]
+        .execute(json!({}), &context(held_directory.path(), 2))
+        .await;
+    assert!(matches!(result, Err(ToolError::Timeout(_))));
+    marker(&held_directory.path().join("cancelled")).await;
+    assert!(held.transport.closed.load(Ordering::Acquire));
+    assert_eq!(
+        tools[0]
+            .execute(json!({}), &context(directory.path(), 2))
+            .await
+            .unwrap(),
+        "ok"
+    );
+    held.shutdown().await.unwrap();
+    server.shutdown().await.unwrap();
 }

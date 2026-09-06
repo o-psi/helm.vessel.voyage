@@ -29,10 +29,15 @@ pub struct McpServer {
 }
 struct Transport {
     child: Mutex<Child>,
-    stdin: Mutex<ChildStdin>,
+    stdin: Mutex<Option<ChildStdin>>,
     stdout: Mutex<BufReader<ChildStdout>>,
-    rpc: Mutex<()>,
+    rpc: Arc<Mutex<()>>,
+    closed: AtomicBool,
+    stopping: tokio_util::sync::CancellationToken,
+    tools_available: AtomicBool,
     next_id: AtomicU64,
+    #[cfg(test)]
+    written_bytes: std::sync::atomic::AtomicUsize,
     observed: AtomicBool,
     #[cfg(not(target_os = "linux"))]
     direct_observed: AtomicBool,
@@ -105,10 +110,15 @@ impl McpServer {
             name,
             transport: Arc::new(Transport {
                 child: Mutex::new(child),
-                stdin: Mutex::new(stdin),
+                stdin: Mutex::new(Some(stdin)),
                 stdout: Mutex::new(BufReader::new(stdout)),
-                rpc: Mutex::new(()),
+                rpc: Arc::new(Mutex::new(())),
+                closed: AtomicBool::new(false),
+                stopping: tokio_util::sync::CancellationToken::new(),
+                tools_available: AtomicBool::new(false),
                 next_id: AtomicU64::new(1),
+                #[cfg(test)]
+                written_bytes: std::sync::atomic::AtomicUsize::new(0),
                 observed: AtomicBool::new(false),
                 #[cfg(not(target_os = "linux"))]
                 direct_observed: AtomicBool::new(false),
@@ -120,7 +130,31 @@ impl McpServer {
     }
 
     pub async fn initialize(&self) -> Result<(), ToolError> {
-        self.transport.request("initialize", json!({"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"helm","version":env!("CARGO_PKG_VERSION")}})).await?;
+        let response = self.transport.request("initialize", json!({"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"helm","version":env!("CARGO_PKG_VERSION")}})).await?;
+        let Some(result) = response.get("result") else {
+            self.transport.closed.store(true, Ordering::Release);
+            return Err(failed("MCP initialization failed"));
+        };
+        if result.get("protocolVersion").and_then(Value::as_str) != Some("2025-06-18")
+            || !result.get("capabilities").is_some_and(Value::is_object)
+            || !result
+                .pointer("/serverInfo/name")
+                .is_some_and(Value::is_string)
+            || !result
+                .pointer("/serverInfo/version")
+                .is_some_and(Value::is_string)
+        {
+            self.transport.closed.store(true, Ordering::Release);
+            return Err(failed(
+                "MCP initialization returned an unsupported version or malformed result",
+            ));
+        }
+        self.transport.tools_available.store(
+            result
+                .pointer("/capabilities/tools")
+                .is_some_and(Value::is_object),
+            Ordering::Release,
+        );
         self.transport
             .notify("notifications/initialized", json!({}))
             .await?;
@@ -128,6 +162,12 @@ impl McpServer {
     }
 
     pub async fn discover(&self) -> Result<Vec<Arc<dyn Tool>>, ToolError> {
+        if self.transport.closed.load(Ordering::Acquire) {
+            return Err(failed("MCP connection retired"));
+        }
+        if !self.transport.tools_available.load(Ordering::Acquire) {
+            return Ok(Vec::new());
+        }
         let response = self.transport.request("tools/list", json!({})).await?;
         let tools = response
             .pointer("/result/tools")
@@ -181,47 +221,7 @@ impl McpServer {
     /// Idempotent and observation-based: a cancelled earlier shutdown can be
     /// retried without treating a sent kill signal as evidence of exit.
     pub async fn shutdown(&self) -> Result<(), ToolError> {
-        let mut child = self.transport.child.lock().await;
-        if self.observed() {
-            return Ok(());
-        }
-        #[cfg(target_os = "linux")]
-        {
-            let identity =
-                self.transport.identity.clone().ok_or_else(|| {
-                    failed("MCP session identity unavailable; cleanup unconfirmed")
-                })?;
-            let observed = tokio::task::spawn_blocking(move || {
-                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(4);
-                while std::time::Instant::now() < deadline {
-                    match identity.kill_and_observe(deadline) {
-                        Ok(true) => return true,
-                        Ok(false) => std::thread::sleep(std::time::Duration::from_millis(5)),
-                        Err(_) => return false,
-                    }
-                }
-                false
-            })
-            .await
-            .map_err(|_| failed("MCP cleanup observer failed"))?;
-            if !observed {
-                return Err(failed("MCP original session cleanup unconfirmed"));
-            }
-            child.wait().await.map_err(failed)?;
-            self.transport.observed.store(true, Ordering::Release);
-        }
-        #[cfg(not(target_os = "linux"))]
-        {
-            // Preserve ordinary direct-child cleanup on other platforms, but do
-            // not attest process-session observation for an authority handoff.
-            if child.try_wait().map_err(failed)?.is_none() {
-                child.kill().await.map_err(failed)?;
-            }
-            self.transport
-                .direct_observed
-                .store(true, Ordering::Release);
-        }
-        Ok(())
+        self.transport.shutdown().await
     }
 }
 
@@ -244,52 +244,272 @@ impl Tool for McpTool {
             return Err(failed(format!("MCP error: {error}")));
         }
         let result = response.get("result").cloned().unwrap_or(Value::Null);
-        if result.get("isError").and_then(Value::as_bool) == Some(true) {
-            return Err(failed(extract_content(&result)));
+        let is_error = result.get("isError").and_then(Value::as_bool) == Some(true);
+        let output = extract_content(&result);
+        if output.len() > context.max_output_bytes {
+            return Err(failed("MCP result exceeds configured max_output_bytes"));
         }
-        Ok(extract_content(&result))
+        if is_error {
+            return Err(failed(output));
+        }
+        Ok(output)
+    }
+}
+
+/// Limits apply to UTF-8 JSON payload bytes, excluding the newline delimiter.
+const MAX_FRAME_BYTES: usize = 1024 * 1024;
+const MAX_UNRELATED_FRAMES: usize = 128;
+
+struct RequestWaiter {
+    transport: Arc<Transport>,
+    cancel: tokio_util::sync::CancellationToken,
+    armed: bool,
+}
+impl Drop for RequestWaiter {
+    fn drop(&mut self) {
+        if self.armed {
+            // Synchronous admission fence, even if the caller is simply dropped.
+            self.transport.closed.store(true, Ordering::Release);
+            self.cancel.cancel();
+            // Also covers a response already queued when its caller disappears.
+            let transport = self.transport.clone();
+            if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+                runtime.spawn(async move {
+                    // Let the request owner issue bounded cancellation first.
+                    tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+                    let _ = tokio::time::timeout(
+                        std::time::Duration::from_secs(5),
+                        transport.shutdown(),
+                    )
+                    .await;
+                });
+            }
+        }
     }
 }
 
 impl Transport {
-    async fn request(&self, method: &str, params: Value) -> Result<Value, ToolError> {
-        let _guard = self.rpc.lock().await;
-        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
-        self.send(json!({"jsonrpc":"2.0","id":id,"method":method,"params":params}))
-            .await?;
-        loop {
-            let value = self.receive().await?;
-            if value.get("id").and_then(Value::as_u64) == Some(id) {
-                return Ok(value);
-            }
+    async fn shutdown(&self) -> Result<(), ToolError> {
+        self.closed.store(true, Ordering::Release);
+        self.stopping.cancel();
+        self.stdin.lock().await.take();
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        let mut child = self.child.lock().await;
+        if self.observed.load(Ordering::Acquire) {
+            return Ok(());
         }
+        #[cfg(target_os = "linux")]
+        {
+            let identity = self
+                .identity
+                .clone()
+                .ok_or_else(|| failed("MCP session identity unavailable; cleanup unconfirmed"))?;
+            let observed = tokio::task::spawn_blocking(move || {
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(4);
+                while std::time::Instant::now() < deadline {
+                    match identity.kill_and_observe(deadline) {
+                        Ok(true) => return true,
+                        Ok(false) => std::thread::sleep(std::time::Duration::from_millis(5)),
+                        Err(_) => return false,
+                    }
+                }
+                false
+            })
+            .await
+            .map_err(|_| failed("MCP cleanup observer failed"))?;
+            if !observed {
+                return Err(failed("MCP original session cleanup unconfirmed"));
+            }
+            child.wait().await.map_err(failed)?;
+            self.observed.store(true, Ordering::Release);
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            // Preserve ordinary direct-child cleanup on other platforms, but do
+            // not attest process-session observation for an authority handoff.
+            if child.try_wait().map_err(failed)?.is_none() {
+                child.kill().await.map_err(failed)?;
+            }
+            self.direct_observed.store(true, Ordering::Release);
+        }
+        Ok(())
+    }
+
+    async fn request(self: &Arc<Self>, method: &str, params: Value) -> Result<Value, ToolError> {
+        // A queued caller owns no I/O and can disappear without affecting the peer.
+        if self.closed.load(Ordering::Acquire) {
+            return Err(failed(
+                "MCP connection retired; outcome of prior effects may be unknown",
+            ));
+        }
+        let guard = self.rpc.clone().lock_owned().await;
+        if self.closed.load(Ordering::Acquire) {
+            return Err(failed(
+                "MCP connection retired; restart the runtime before new calls",
+            ));
+        }
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        let frame =
+            encode_frame(&json!({"jsonrpc":"2.0","id":id,"method":method,"params":params}))?;
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let mut waiter = RequestWaiter {
+            transport: self.clone(),
+            cancel: cancel.clone(),
+            armed: true,
+        };
+        let transport = self.clone();
+        let initialize = method == "initialize";
+        let (sender, receiver) = tokio::sync::oneshot::channel();
+        tokio::spawn(async move {
+            let _guard = guard;
+            let mut sent = false;
+            let operation = async {
+                transport.write_frame(&frame).await?;
+                sent = true;
+                for unrelated in 0..=MAX_UNRELATED_FRAMES {
+                    let value = transport.receive().await?;
+                    if value.get("jsonrpc").and_then(Value::as_str) != Some("2.0")
+                        || !value.is_object()
+                    {
+                        return Err(failed("MCP malformed JSON-RPC envelope"));
+                    }
+                    if value.get("id").and_then(Value::as_u64) == Some(id)
+                        && value.get("method").is_none()
+                    {
+                        if value.get("result").is_some() == value.get("error").is_some() {
+                            return Err(failed(
+                                "MCP response requires exactly one result or error",
+                            ));
+                        }
+                        return Ok(value);
+                    }
+                    if unrelated == MAX_UNRELATED_FRAMES {
+                        return Err(failed("MCP unrelated-message limit exceeded"));
+                    }
+                    // Servers may ping during initialization and operation. Never
+                    // execute server requests as Helm tools or grant capabilities.
+                    if let Some(request_id) = value.get("id")
+                        && let Some(method) = value.get("method").and_then(Value::as_str)
+                    {
+                        let reply = if method == "ping" {
+                            json!({"jsonrpc":"2.0","id":request_id,"result":{}})
+                        } else {
+                            json!({"jsonrpc":"2.0","id":request_id,"error":{"code":-32601,"message":"Method not supported"}})
+                        };
+                        transport.send(reply).await?;
+                    }
+                }
+                unreachable!()
+            };
+            let result = tokio::select! {
+                biased;
+                _ = cancel.cancelled() => Err(ToolError::Cancelled),
+                _ = transport.stopping.cancelled() => Err(failed("MCP connection is shutting down; outcome uncertain")),
+                value = operation => value,
+            };
+            if result.is_err() || sender.is_closed() {
+                transport.closed.store(true, Ordering::Release);
+                if cancel.is_cancelled() && sent && !initialize {
+                    // This notification is best effort; it never attests that
+                    // an external effect stopped or can safely be retried.
+                    let _ = tokio::time::timeout(
+                        std::time::Duration::from_millis(100),
+                        transport.notify(
+                            "notifications/cancelled",
+                            json!({"requestId":id,"reason":"Helm stopped waiting"}),
+                        ),
+                    )
+                    .await;
+                }
+                let _ =
+                    tokio::time::timeout(std::time::Duration::from_secs(5), transport.shutdown())
+                        .await;
+            }
+            let _ = sender.send(result);
+        });
+        let result = receiver
+            .await
+            .map_err(|_| failed("MCP request owner stopped; outcome uncertain"));
+        waiter.armed = false;
+        result?
     }
     async fn notify(&self, method: &str, params: Value) -> Result<(), ToolError> {
         self.send(json!({"jsonrpc":"2.0","method":method,"params":params}))
             .await
     }
     async fn send(&self, value: Value) -> Result<(), ToolError> {
+        self.write_frame(&encode_frame(&value)?).await
+    }
+    async fn write_frame(&self, frame: &[u8]) -> Result<(), ToolError> {
         let mut stdin = self.stdin.lock().await;
-        let mut line = serde_json::to_vec(&value).map_err(failed)?;
-        line.push(b'\n');
-        stdin.write_all(&line).await.map_err(failed)?;
-        stdin.flush().await.map_err(failed)
+        let stdin = stdin.as_mut().ok_or_else(|| failed("MCP input closed"))?;
+        let mut offset = 0;
+        while offset < frame.len() {
+            let count = stdin
+                .write(&frame[offset..])
+                .await
+                .map_err(|_| failed("MCP request write failed; outcome uncertain"))?;
+            if count == 0 {
+                return Err(failed(
+                    "MCP request write made no progress; outcome uncertain",
+                ));
+            }
+            offset += count;
+            #[cfg(test)]
+            self.written_bytes.store(offset, Ordering::Release);
+        }
+        stdin
+            .flush()
+            .await
+            .map_err(|_| failed("MCP request flush failed; outcome uncertain"))
     }
     async fn receive(&self) -> Result<Value, ToolError> {
-        let mut line = String::new();
-        let count = self
-            .stdout
-            .lock()
-            .await
-            .read_line(&mut line)
-            .await
-            .map_err(failed)?;
-        if count == 0 {
-            return Err(failed("MCP server closed stdout"));
+        let mut reader = self.stdout.lock().await;
+        let mut bytes = Vec::new();
+        loop {
+            let available = reader
+                .fill_buf()
+                .await
+                .map_err(|_| failed("MCP response read failed"))?;
+            if available.is_empty() {
+                return Err(failed("MCP server closed stdout before a complete frame"));
+            }
+            let newline = available.iter().position(|byte| *byte == b'\n');
+            let count = newline.unwrap_or(available.len());
+            if bytes.len().saturating_add(count) > MAX_FRAME_BYTES {
+                return Err(failed("MCP frame exceeds 1048576 bytes"));
+            }
+            bytes.extend_from_slice(&available[..count]);
+            reader.consume(count + usize::from(newline.is_some()));
+            if newline.is_some() {
+                return serde_json::from_slice(&bytes)
+                    .map_err(|_| failed("MCP malformed UTF-8 JSON frame"));
+            }
         }
-        serde_json::from_str(&line).map_err(failed)
     }
 }
+
+fn encode_frame(value: &Value) -> Result<Vec<u8>, ToolError> {
+    struct Bounded(Vec<u8>);
+    impl std::io::Write for Bounded {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            if self.0.len().saturating_add(bytes.len()) > MAX_FRAME_BYTES {
+                return Err(std::io::Error::other("MCP outgoing frame limit"));
+            }
+            self.0.extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let mut writer = Bounded(Vec::new());
+    serde_json::to_writer(&mut writer, value)
+        .map_err(|_| failed("MCP request exceeds 1048576 bytes"))?;
+    writer.0.push(b'\n');
+    Ok(writer.0)
+}
+
 fn extract_content(result: &Value) -> String {
     result
         .get("content")
@@ -450,7 +670,7 @@ mod tests {
     #[tokio::test]
     async fn discovers_and_calls_stdio_tool() {
         let script = r#"read init
-printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18","capabilities":{},"serverInfo":{"name":"fake","version":"1"}}}'
+printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18","capabilities":{"tools":{}},"serverInfo":{"name":"fake","version":"1"}}}'
 read initialized
 read list
 printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"echo","description":"echo","inputSchema":{"type":"object"}}]}}'
