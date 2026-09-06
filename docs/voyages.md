@@ -58,8 +58,9 @@ work spread across machines, not a required structure for every voyage.
 | Participant Helm | Executes assigned work under its own local authority and reports results. |
 | Vessel | Authenticates access and provides machine presence, routing and permitted coordination metadata. |
 
-These are roles, not three different kinds of installation. A Helm may serve more
-than one role. The interface open on a workstation need not be the coordinating
+These are roles, not three different kinds of installation. In ordinary local
+chat, the local Helm supplies the interface, coordinates the voyage and executes
+its work. A Helm may serve more than one role. The interface open on a workstation need not be the coordinating
 Helm; the coordinator may run on an always-on remote machine. The coordinator may
 also execute work itself when permitted. Vessel does not become the agent runtime
 or acquire provider credentials.

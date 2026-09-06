@@ -10,7 +10,8 @@ in-process UI responsibility, distinct from the [coordinating Helm
 role](voyages.md). Every session shown by the TUI is a voyage. Planned remote
 interface support must let an interface Helm view and steer a voyage
 whose coordinator runs elsewhere. Current panels and local response channels do
-not implement that remote interface, voyage machine scope or coordinator handoff.
+not integrate machine-scope drafts with execution or implement the remote
+interface and coordinator handoff.
 
 ## Ownership
 

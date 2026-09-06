@@ -82,8 +82,8 @@ restart restores completed tool history, never a live question or invented answe
 Question results use ordinary tool history; there is no Vessel question-routing
 contract. With planned [multi-Helm participation](voyages.md), a question may
 originate on a coordinating or participant Helm away from the operator interface.
-Forwarding it
-to an authorized interface, with clear origin and bounded response lifetime, remains
+Forwarding it to an authorized interface, with clear origin and bounded response
+lifetime, remains
 unfinished; the current local dialog does not supply that behavior.
 
 ## Verification
