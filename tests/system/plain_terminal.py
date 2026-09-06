@@ -23,6 +23,13 @@ class Terminal:
     def wait(self,value):
         while value not in CSI.sub(b'',self.output):
             self.pump();assert self.process.poll() is None or value in CSI.sub(b'',self.output),bytes(self.output[-4000:])
+    def resumed_prompt(self):
+        self.wait(b'DRIVER_RESUMED')
+        offset=self.output.index(b'DRIVER_RESUMED')+len(b'DRIVER_RESUMED')
+        # The driver marker precedes native prompt ownership. Control keys sent
+        # in that gap are interpreted by the outer terminal's canonical mode.
+        while b'\r\x1b[2Khelm> ' not in self.output[offset:] or termios.tcgetattr(self.slave)[3]&termios.ICANON:
+            self.pump()
     def send(self,data):os.write(self.master,data)
     def finish(self,entered=True):
         self.wait(b'DRIVER_CLEANUP_OK')
@@ -67,11 +74,11 @@ def main():
                         terminal.wait(b'PRIVATE_CANARY')
                         chord=b'\x1d' if case=='ctrl-bracket' else b'\x14'
                         if case=='invalid':
-                            terminal.send(chord+b'\xff\n');terminal.wait(b'DRIVER_RESUMED');terminal.send(b'\x15'+'next🧭\n'.encode())
+                            terminal.send(chord+b'\xff\n');terminal.resumed_prompt();terminal.send(b'\x15'+'next🧭\n'.encode())
                         elif case=='editing':
-                            terminal.send(chord+b'nextX');terminal.wait(b'DRIVER_RESUMED');terminal.send(b'\x7f'+'🧭\n'.encode())
+                            terminal.send(chord+b'nextX');terminal.resumed_prompt();terminal.send(b'\x7f'+'🧭\n'.encode())
                         elif case=='partial':
-                            terminal.send(chord+b'next');terminal.wait(b'DRIVER_RESUMED');terminal.send('🧭\n'.encode())
+                            terminal.send(chord+b'next');terminal.resumed_prompt();terminal.send('🧭\n'.encode())
                         else:terminal.send(chord+'next🧭\n'.encode())
                 if case not in ['discard-failure','too-small','interrupt','inner-exit','write-failure-private','policy','read-only','policy-preflight']:terminal.wait(b'DRIVER_HANDOFF_OK')
                 terminal.finish(entered=case not in ['read-only','policy-preflight']);print('PASS plain terminal '+case,flush=True)
