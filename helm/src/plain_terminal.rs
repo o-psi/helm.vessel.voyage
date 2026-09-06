@@ -535,6 +535,18 @@ fn frame(snapshot: &TerminalSnapshot, columns: u16, rows: u16) -> Vec<u8> {
     text.into_bytes()
 }
 
+/// Input isolation or restoration was not confirmed. The chat must stop.
+#[derive(Debug, thiserror::Error)]
+#[error("private terminal input cleanup failed; chat must stop")]
+pub struct CleanupFailure;
+
+fn cleanup_result(discard: io::Result<()>, restore: io::Result<()>) -> Result<()> {
+    if discard.is_err() || restore.is_err() {
+        return Err(CleanupFailure.into());
+    }
+    Ok(())
+}
+
 // Before an explicit detach, every unread byte is still private PTY input.
 struct AttachmentInput {
     inner: crate::terminal_input::Terminal,
@@ -551,11 +563,15 @@ impl AttachmentInput {
     }
     fn finish(&mut self) -> Result<()> {
         if !self.finished {
-            if !self.preserve {
-                let _ = self.inner.discard();
-            }
-            self.inner.restore()?;
+            let discard = if self.preserve {
+                Ok(())
+            } else {
+                self.inner.discard()
+            };
+            // Restore even when isolation fails, but never resume prompt input.
+            let restore = self.inner.restore();
             self.finished = true;
+            cleanup_result(discard, restore)?;
         }
         Ok(())
     }
@@ -593,14 +609,14 @@ pub async fn attach(
     );
     let _ownership = Ownership::acquire()?;
     let mut input = AttachmentInput::new()?;
-    let mut screen = Screen::enter()?;
     let mut events = manager.subscribe();
-    let mut snapshot = terminal_operation(manager.attach(id), &cancel).await?;
     let mut dimensions = (0, 0);
     let mut revision = None;
     let mut filter = PlainDetachFilter::default();
     let mut encoding = InputEncoding::default();
     let result=async {
+        let mut screen = Screen::enter()?;
+        let mut snapshot = terminal_operation(manager.attach(id), &cancel).await?;
         loop {
             if cancel.is_cancelled(){anyhow::bail!("plain attachment interrupted");}
             policy.check_current()?;
@@ -636,13 +652,25 @@ pub async fn attach(
     }.await;
     // Preserve bytes still in the OS queue as well as the explicit returned suffix.
     input.finish()?;
-    drop(screen);
     result
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn unconfirmed_private_cleanup_is_fatal_even_if_restore_succeeds() {
+        let error =
+            cleanup_result(Err(io::Error::other("synthetic discard failure")), Ok(())).unwrap_err();
+        assert!(error.is::<CleanupFailure>());
+        assert!(!error.to_string().contains("synthetic"));
+        assert!(
+            cleanup_result(Ok(()), Err(io::Error::other("restore failed")))
+                .unwrap_err()
+                .is::<CleanupFailure>()
+        );
+        assert!(cleanup_result(Ok(()), Ok(())).is_ok());
+    }
     #[test]
     fn exact_detach_suffix_preserves_unicode_multiple_lines_and_each_split() {
         let bytes = "private秘密\u{14}next🧭\nsecond\n".as_bytes();

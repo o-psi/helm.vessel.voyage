@@ -38,7 +38,7 @@ def main():
     parser=argparse.ArgumentParser();parser.add_argument('--test-binary',required=True);args=parser.parse_args()
     with tempfile.TemporaryDirectory(prefix='helm-plain-pty-') as tmp:
         env=dict(os.environ,HOME=tmp,XDG_CONFIG_HOME=tmp+'/config',XDG_DATA_HOME=tmp+'/data',TERM='xterm-256color')
-        cases=['ctrl-t','ctrl-bracket','partial','coalesced-command','resize','too-small','interrupt','inner-exit','write-failure-detach','write-failure-private','policy','read-only','ctrl-c','editing','bytes','invalid','policy-preflight']
+        cases=['ctrl-t','ctrl-bracket','partial','coalesced-command','resize','too-small','interrupt','inner-exit','write-failure-detach','write-failure-private','policy','read-only','ctrl-c','editing','bytes','invalid','policy-preflight','discard-failure']
         for case in cases:
             terminal=Terminal(args.test_binary,env,mode=case)
             try:
@@ -58,6 +58,7 @@ def main():
                     elif case=='write-failure-private':terminal.send(b'PRIVATE_CANARY'*600);terminal.wait(b'DRIVER_ERROR=')
                     elif case=='too-small':terminal.resize(2,2);terminal.wait(b'DRIVER_ERROR=')
                     elif case=='interrupt':os.kill(terminal.process.pid,signal.SIGUSR1);terminal.wait(b'DRIVER_ERROR=')
+                    elif case=='discard-failure':terminal.send(b'exit\n');terminal.wait(b'DRIVER_ERROR=private terminal input cleanup failed; chat must stop');assert b'DRIVER_RESUMED' not in terminal.output
                     elif case=='inner-exit':terminal.send(b'exit\n');terminal.wait(b'DRIVER_INNER_EXIT')
                     else:
                         if case=='ctrl-c':
@@ -72,7 +73,7 @@ def main():
                         elif case=='partial':
                             terminal.send(chord+b'next');terminal.wait(b'DRIVER_RESUMED');terminal.send('🧭\n'.encode())
                         else:terminal.send(chord+'next🧭\n'.encode())
-                if case not in ['too-small','interrupt','inner-exit','write-failure-private','policy','read-only','policy-preflight']:terminal.wait(b'DRIVER_HANDOFF_OK')
+                if case not in ['discard-failure','too-small','interrupt','inner-exit','write-failure-private','policy','read-only','policy-preflight']:terminal.wait(b'DRIVER_HANDOFF_OK')
                 terminal.finish(entered=case not in ['read-only','policy-preflight']);print('PASS plain terminal '+case,flush=True)
             finally:terminal.close()
         result=subprocess.run([args.test_binary,'--exact',DRIVER,'--nocapture'],input=b'',stdout=subprocess.PIPE,stderr=subprocess.PIPE,env=dict(env,HELM_PLAIN_TERMINAL_DRIVER='non-tty'),timeout=15)

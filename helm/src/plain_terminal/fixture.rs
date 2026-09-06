@@ -87,6 +87,7 @@ fn native_driver() {
             let (store,revision)=profiles.as_ref().unwrap();
             store.change(&ProfileChange{operation_id:uuid::Uuid::new_v4(),name:"plain-fixture".into(),expected_revision:*revision,action:Action::Delete{}}).unwrap();
         }
+        if mode=="discard-failure" { crate::terminal_input::fail_next_discard(); }
         let operation=attach(frontend,id,attachment_policy,cancel.clone());tokio::pin!(operation);
         let result=tokio::select!{ biased;
             _=stop.recv()=>{cancel.cancel();operation.await},
@@ -99,6 +100,7 @@ fn native_driver() {
         };
         match result {
             Ok(detached)=>{
+                assert_ne!(mode,"discard-failure","unconfirmed private cleanup resumed chat");
                 assert!(!owns_terminal());
                 assert_eq!(detached.delivery_failed,mode=="write-failure-detach");
                 let capture=manager.execute(json!({"action":"read","id":id.0}),&context).await.unwrap();
@@ -118,6 +120,7 @@ fn native_driver() {
                 } else {println!("DRIVER_INNER_EXIT");}
             }
             Err(error)=>{
+                if mode=="discard-failure" { assert!(error.is::<CleanupFailure>()); }
                 assert!(!owns_terminal());
                 if mode=="read-only"||mode=="policy-preflight" {
                     discard_failed_attempt(&mut pending).unwrap();

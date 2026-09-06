@@ -2459,13 +2459,33 @@ async fn chat(
                 Ok(true) => break,
                 Ok(false) => (),
                 Err(error) => {
-                    if prompt != "/terminals" && io::stdin().is_terminal() {
-                        // This includes failed selection and preflight, before
-                        // any PTY ownership or privacy activation succeeded.
-                        helm::plain_terminal::discard_failed_attempt(&mut pending)?;
-                        eprintln!(
-                            "Queued attachment input was discarded. No queued prompt was submitted; re-enter your next Helm command."
-                        );
+                    let cleanup_failed = if error.is::<helm::plain_terminal::CleanupFailure>() {
+                        true
+                    } else if prompt != "/terminals" && io::stdin().is_terminal() {
+                        // Failed selection/preflight also leaves an ambiguous private tail.
+                        match helm::plain_terminal::discard_failed_attempt(&mut pending) {
+                            Ok(()) => {
+                                eprintln!(
+                                    "Queued attachment input was discarded. No queued prompt was submitted; re-enter your next Helm command."
+                                );
+                                false
+                            }
+                            Err(_) => true,
+                        }
+                    } else {
+                        false
+                    };
+                    if cleanup_failed {
+                        // A failed privacy handoff cannot be retried as ordinary input.
+                        if let Some(current) = agent.as_ref() {
+                            let cleanup = current.shutdown_plain_terminals().await;
+                            session.terminals = current.terminal_metadata();
+                            store.save(&mut session).await?;
+                            if !cleanup.observation_complete {
+                                eprintln!("Terminal cleanup remains unobserved.");
+                            }
+                        }
+                        return Err(helm::plain_terminal::CleanupFailure.into());
                     }
                     let message = agent
                         .as_ref()
