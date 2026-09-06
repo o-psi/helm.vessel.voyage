@@ -130,6 +130,10 @@ presented as complete. Busy state can be retried after other work settles. Exist
 ledger detail and physical storage limits remain unchanged; queries do not prune,
 rewrite or repair evidence.
 
+Invisible direction and zero-width formatting in provider/model labels is shown
+as visible Unicode escapes in CLI JSON and the TUI. JSON decoding preserves the
+exact group key, so a copied key still identifies its original group.
+
 Provider/model labels and identifiers may be sensitive. If configured secrets
 appear in the projection, Helm refuses to display it rather than silently changing
 an immutable group key. Keep exported JSON private. This is local operator data,

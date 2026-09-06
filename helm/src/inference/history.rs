@@ -349,6 +349,17 @@ impl Store {
     }
 }
 
+/// Visible JSON escaping preserves exact decoded keys and avoids terminal
+/// direction/zero-width formatting in both structured CLI and TUI projections.
+pub(crate) fn display_json(value: &impl Serialize) -> Result<String> {
+    let text = serde_json::to_string_pretty(value)?;
+    Ok(text.chars().flat_map(|ch| {
+        if matches!(ch,'\u{061c}'|'\u{200b}'..='\u{200f}'|'\u{2028}'..='\u{202e}'|'\u{2060}'..='\u{206f}'|'\u{feff}') {
+            format!("\\u{:04x}",ch as u32).chars().collect::<Vec<_>>()
+        } else {vec![ch]}
+    }).collect())
+}
+
 /// Refuse secret-bearing metadata rather than changing immutable group keys.
 pub fn ensure_display_safe(history: &History, redactor: &crate::tools::Redactor) -> Result<()> {
     fn contains(value: &serde_json::Value, redactor: &crate::tools::Redactor) -> bool {
@@ -790,6 +801,64 @@ mod tests {
         assert_eq!(h.scope_lifetime_permits, 1);
         assert_eq!(f.read(query()).scope_lifetime_permits, 2);
     }
+    #[test]
+    fn quoted_secret_metadata_is_refused_without_changing_group_identity() {
+        let mut f = Fixture::new();
+        let secret = "private-quoted\"credential";
+        f.row(
+            "2026-01-01T10:00:00Z",
+            secret,
+            Some(0),
+            None,
+            AttemptOutcome::Unknown,
+        );
+        let h = f.read(query());
+        let exact = serde_json::to_value(&h).unwrap();
+        let redactor = crate::tools::Redactor::new([secret.to_owned()]);
+        assert!(
+            !redactor.contains_secret(&serde_json::to_string(&h).unwrap()),
+            "raw secret is hidden by JSON escaping"
+        );
+        assert!(ensure_display_safe(&h, &redactor).is_err());
+        assert_eq!(serde_json::to_value(&h).unwrap(), exact);
+        assert_eq!(
+            h.groups[0].key,
+            GroupKey::Model {
+                provider: "fixture".into(),
+                model: secret.into()
+            }
+        );
+    }
+    #[test]
+    fn invisible_label_json_is_visible_and_exactly_round_trips() {
+        let mut f = Fixture::new();
+        let label = "label\u{061c}\u{202e}\u{200b}\u{2066}\u{feff}尾";
+        f.row(
+            "2026-01-01T10:00:00Z",
+            label,
+            None,
+            None,
+            AttemptOutcome::Unknown,
+        );
+        let h = f.read(query());
+        let displayed = display_json(&h).unwrap();
+        for ch in ['\u{061c}', '\u{202e}', '\u{200b}', '\u{2066}', '\u{feff}'] {
+            assert!(!displayed.contains(ch));
+            assert!(displayed.contains(&format!("\\u{:04x}", ch as u32)));
+        }
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&displayed).unwrap(),
+            serde_json::to_value(&h).unwrap()
+        );
+        assert_eq!(
+            h.groups[0].key,
+            GroupKey::Model {
+                provider: "fixture".into(),
+                model: label.into()
+            }
+        );
+    }
+
     #[test]
     fn reversed_wall_clock_keeps_exact_timestamps_without_inventing_duration() {
         let mut f = Fixture::new();

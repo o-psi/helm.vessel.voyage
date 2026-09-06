@@ -125,7 +125,7 @@ pub async fn run(
         )
         .await?;
         history::ensure_display_safe(&result, redactor)?;
-        println!("{}", serde_json::to_string_pretty(&result)?);
+        println!("{}", history::display_json(&result)?);
         return Ok(());
     }
     run_inner(args, workspace, redactor)

@@ -193,7 +193,7 @@ impl Panel {
         text.push_str("Tokens are provider-reported, not billed cost. Completion is attempt outcome, not voyage success.\n");
         if query.detail.is_some() {
             text.push_str(&display_safe(
-                &serde_json::to_string_pretty(
+                &crate::inference::history::display_json(
                     &serde_json::json!({"group":query.detail,"attempts":data.attempts}),
                 )
                 .unwrap_or_else(|_| "Historical display unavailable".into()),
@@ -203,7 +203,11 @@ impl Panel {
                 text.push_str(&format!(
                     "{} {} · {} permits · input {} · output {}\n",
                     if index == self.selected { "▶" } else { " " },
-                    display_safe(&serde_json::to_string(&group.key).unwrap_or_default()),
+                    display_safe(
+                        &crate::inference::history::display_json(&group.key)
+                            .unwrap_or_default()
+                            .replace('\n', " ")
+                    ),
                     group.totals.retained_attempts,
                     tokens(&group.totals.input),
                     tokens(&group.totals.output)
