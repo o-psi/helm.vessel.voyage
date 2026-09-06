@@ -21,6 +21,16 @@ navigation keeps the current voyage available. Finish or cancel active work
 before switching. Opening an existing session resumes the same voyage; **Ctrl+N**
 starts a new one. **Ctrl+B** branches into a new voyage. **F1** shows shortcuts.
 
+Branching with **Ctrl+B** saves the latest unsent text on the source voyage and
+copies it to the new branch. Both drafts are available after reopening; neither
+is submitted to the model. **`/branch [TITLE]`** consumes its command and starts
+with an empty draft in both voyages, so an older saved draft does not reappear.
+If saving or creating the branch fails, Helm keeps the source open and retains
+the input (including a failed `/branch` command) for retry. It does not switch or
+retry automatically; if storage reports an uncertain result or failed rollback,
+inspect the recent voyages before retrying. Branches receive a new identity;
+resuming either voyage retains its existing identity.
+
 ## Optional Helm configuration drafts
 
 Press **Ctrl+V**, or use **`/voyages`**, to open voyage setup. This feature saves

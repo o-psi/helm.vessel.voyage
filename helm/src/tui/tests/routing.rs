@@ -1076,3 +1076,144 @@ async fn paste_workflow_and_voyage_fields_never_fall_through_or_bypass_help() {
     assert!(app.session.messages.is_empty());
     assert!(rx.try_recv().is_err());
 }
+
+#[tokio::test]
+async fn branch_keys_preserve_latest_source_draft_and_restart_identity() {
+    for slash in [false, true] {
+        let directory = tempfile::tempdir().unwrap();
+        let agent = navigation_agent(&directory);
+        let unbound = SessionStore::new(directory.path().join("sessions"));
+        let mut source = Session::new(directory.path().into(), "test".into());
+        source.draft = "previously saved draft".into();
+        let source_id = source.id;
+        let mut store = unbound.with_execution(source_id).await.unwrap();
+        store.save(&mut source).await.unwrap();
+        let mut app = App::new(source, vec![]);
+        app.composer = Composer::default();
+        let expected = if slash { "" } else { "edited 雪\nsecond λ" };
+        app.composer
+            .insert_str(if slash { "/branch chosen" } else { expected });
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        handle_input_event(
+            Event::Key(if slash {
+                KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)
+            } else {
+                KeyEvent::new(KeyCode::Char('b'), KeyModifiers::CONTROL)
+            }),
+            &mut app,
+            &agent,
+            &mut store,
+            &tx,
+            &FakeTerminals::new(),
+            Arc::new(FakeSupervisor::new(vec![])),
+            todo_store(&directory),
+        )
+        .await
+        .unwrap();
+        assert_ne!(app.session.id, source_id);
+        assert_eq!(app.session.parent_id, Some(source_id));
+        assert_eq!(app.composer.text, expected);
+        assert_eq!(unbound.load(source_id).await.unwrap().draft, expected);
+        assert_eq!(unbound.load(app.session.id).await.unwrap().draft, expected);
+        assert!(app.session.messages.is_empty());
+        assert!(rx.try_recv().is_err());
+        let child_id = app.session.id;
+        assert_eq!(store.owned_session_id(), Some(child_id));
+        unbound.with_execution(source_id).await.unwrap();
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), unbound.with_execution(child_id))
+                .await
+                .is_err()
+        );
+        drop(store);
+        for id in [source_id, child_id] {
+            let (owner, session) = unbound.load_owned(&id.to_string()).await.unwrap();
+            assert_eq!(session.id, id);
+            assert_eq!(App::new(session, vec![]).composer.text, expected);
+            drop(owner);
+        }
+    }
+}
+
+#[tokio::test]
+async fn branch_keys_keep_source_and_retry_input_on_save_failure() {
+    for slash in [false, true] {
+        for failure in ["malformed", "stale", "owned"] {
+            let directory = tempfile::tempdir().unwrap();
+            let agent = navigation_agent(&directory);
+            let unbound = SessionStore::new(directory.path().join("sessions"));
+            let mut source = Session::new(directory.path().into(), "test".into());
+            source.draft = "persisted old draft".into();
+            let id = source.id;
+            let foreign = unbound.with_execution(id).await.unwrap();
+            foreign.save(&mut source).await.unwrap();
+            let mut store = if failure == "owned" {
+                unbound.clone()
+            } else {
+                foreign.clone()
+            };
+            let path = directory.path().join("sessions").join(format!("{id}.json"));
+            let original = std::fs::read(&path).unwrap();
+            let mut app = App::new(source, vec![]);
+            app.composer = Composer::default();
+            let input = if slash {
+                "/branch retry"
+            } else {
+                "current 雪 input"
+            };
+            app.composer.insert_str(input);
+            if failure == "malformed" {
+                std::fs::write(&path, b"{invalid").unwrap();
+            }
+            if failure == "stale" {
+                app.session.revision -= 1;
+            }
+            let (tx, mut rx) = mpsc::unbounded_channel();
+            handle_input_event(
+                Event::Key(if slash {
+                    KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)
+                } else {
+                    KeyEvent::new(KeyCode::Char('b'), KeyModifiers::CONTROL)
+                }),
+                &mut app,
+                &agent,
+                &mut store,
+                &tx,
+                &FakeTerminals::new(),
+                Arc::new(FakeSupervisor::new(vec![])),
+                todo_store(&directory),
+            )
+            .await
+            .unwrap();
+            assert_eq!(app.session.id, id);
+            assert_eq!(app.session.draft, "persisted old draft");
+            assert_eq!(app.composer.text, input);
+            assert!(app.status.starts_with("Cannot branch:"), "{}", app.status);
+            assert!(!app.quit);
+            assert!(app.exit.is_none());
+            assert!(rx.try_recv().is_err());
+            assert_eq!(
+                std::fs::read(&path).unwrap(),
+                if failure == "malformed" {
+                    b"{invalid".to_vec()
+                } else {
+                    original
+                }
+            );
+            assert_eq!(
+                std::fs::read_dir(path.parent().unwrap())
+                    .unwrap()
+                    .filter_map(Result::ok)
+                    .filter(|entry| entry
+                        .path()
+                        .extension()
+                        .is_some_and(|extension| extension == "json"))
+                    .count(),
+                1
+            );
+            if failure != "owned" {
+                assert_eq!(store.owned_session_id(), Some(id));
+            }
+        }
+    }
+}

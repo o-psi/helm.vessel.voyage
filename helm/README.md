@@ -159,6 +159,16 @@ runtime and terminals in the same Helm process. A workspace runtime is built on
 its first visit; returning to it reuses that runtime under its existing policy
 freshness checks. Failed navigation keeps the current voyage and terminals available.
 
+Branching with **Ctrl+B** saves the latest unsent text on the source voyage and
+copies it to the new branch. Both drafts are available after reopening; neither
+is submitted to the model. **`/branch [TITLE]`** consumes its command and starts
+with an empty draft in both voyages, so an older saved draft does not reappear.
+If saving or creating the branch fails, Helm keeps the source open and retains
+the input (including a failed `/branch` command) for retry. It does not switch or
+retry automatically; if storage reports an uncertain result or failed rollback,
+inspect the recent voyages before retrying. Branches receive a new identity;
+resuming either voyage retains its existing identity.
+
 The composer remains editable while Helm is working. Press `Enter` to queue its text as steering
 for the active run; `Shift+Enter` still inserts a newline. Helm records accepted steering in the
 session immediately and applies queued messages in order before the next provider request. A

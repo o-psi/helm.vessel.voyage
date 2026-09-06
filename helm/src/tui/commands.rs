@@ -93,6 +93,59 @@ pub(super) async fn start_new_session(
     Ok(())
 }
 
+pub(super) async fn branch_session(
+    app: &mut App,
+    store: &mut SessionStore,
+    name: Option<String>,
+) -> Result<()> {
+    branch_session_with(app, store, name, |owner, source, name| async move {
+        owner.branch_owned(&source, name).await
+    })
+    .await
+}
+
+// Keep the persistence boundary explicit: no frontend identity/owner changes until
+// the branch has been saved under its own lease. The callback also allows tests
+// to fail branch acquisition/publication after the source save succeeds.
+async fn branch_session_with<F, Fut>(
+    app: &mut App,
+    store: &mut SessionStore,
+    name: Option<String>,
+    create: F,
+) -> Result<()>
+where
+    F: FnOnce(SessionStore, Session, Option<String>) -> Fut,
+    Fut: std::future::Future<Output = Result<(SessionStore, Session)>>,
+{
+    anyhow::ensure!(
+        !app.is_running(),
+        "finish or cancel active work before branching"
+    );
+    let mut source = app.session.clone();
+    source.draft.clone_from(&app.composer.text);
+    store.save(&mut source).await?;
+    app.session = source;
+    let (owner, branch) = create(store.clone(), app.session.clone(), name).await?;
+    app.title_job = None;
+    app.session = branch;
+    *store = owner;
+    app.streaming_response.clear();
+    app.scroll = 0;
+    app.status = "Branched session".into();
+    match store.list().await {
+        Ok(sessions) => app.sessions = sessions,
+        Err(error) => {
+            app.sessions.retain(|session| session.id != app.session.id);
+            app.sessions.insert(0, app.session.clone());
+            app.status = format!(
+                "Branched session; cannot refresh recent list: {}",
+                super::compact_line(&error.to_string(), 100)
+            );
+        }
+    }
+    Ok(())
+}
+
 pub(super) async fn handle_command(
     command: &str,
     app: &mut App,
@@ -320,14 +373,15 @@ pub(super) async fn handle_command(
         }
         "branch" => {
             let branch_name = (!argument.trim().is_empty()).then(|| argument.trim().to_owned());
-            app.title_job = None;
-            let (owner, branch) = store.branch_owned(&app.session, branch_name).await?;
-            app.session = branch;
-            *store = owner;
-            app.sessions = store.list().await?;
-            app.streaming_response.clear();
-            app.scroll = 0;
-            app.status = "Branched session".into();
+            if let Err(error) = branch_session(app, store, branch_name).await {
+                if app.composer.text.is_empty() {
+                    app.composer.insert_str(&format!("/{command}"));
+                }
+                app.status = format!(
+                    "Cannot branch: {}",
+                    super::compact_line(&error.to_string(), 100)
+                );
+            }
         }
         "compact" => {
             let retain = if argument.trim().is_empty() {
@@ -453,4 +507,152 @@ pub(super) async fn handle_command(
         _ => app.status = format!("Unknown or incomplete command: /{name}"),
     }
     Ok(true)
+}
+
+#[cfg(test)]
+mod branch_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn branch_creation_failure_keeps_saved_source_owner_and_input_for_retry() {
+        for failure in ["branch lease denied", "branch publication failed"] {
+            let directory = tempfile::tempdir().unwrap();
+            let unbound = SessionStore::new(directory.path().join("sessions"));
+            let mut source = Session::new(directory.path().into(), "test".into());
+            let id = source.id;
+            let mut store = unbound.with_execution(id).await.unwrap();
+            store.save(&mut source).await.unwrap();
+            let mut app = App::new(source, vec![]);
+            app.composer.insert_str("retain 雪\ninput");
+            app.streaming_response = "preserve presentation".into();
+            let error =
+                branch_session_with(&mut app, &mut store, None, |owner, saved, _| async move {
+                    assert_eq!(owner.owned_session_id(), Some(saved.id));
+                    assert_eq!(
+                        owner.load(saved.id).await.unwrap().draft,
+                        "retain 雪\ninput"
+                    );
+                    anyhow::bail!(failure)
+                })
+                .await
+                .unwrap_err();
+            assert_eq!(error.to_string(), failure);
+            assert_eq!(app.session.id, id);
+            assert_eq!(store.owned_session_id(), Some(id));
+            assert_eq!(app.composer.text, "retain 雪\ninput");
+            assert_eq!(app.streaming_response, "preserve presentation");
+            assert_eq!(unbound.list().await.unwrap().len(), 1);
+            assert!(
+                tokio::time::timeout(
+                    std::time::Duration::from_millis(50),
+                    unbound.with_execution(id)
+                )
+                .await
+                .is_err()
+            );
+            branch_session(&mut app, &mut store, None).await.unwrap();
+            assert_ne!(app.session.id, id);
+            assert_eq!(app.session.draft, "retain 雪\ninput");
+        }
+    }
+
+    #[tokio::test]
+    async fn uncertain_branch_publication_never_activates_or_retries_child() {
+        let directory = tempfile::tempdir().unwrap();
+        let unbound = SessionStore::new(directory.path().join("sessions"));
+        let mut source = Session::new(directory.path().into(), "test".into());
+        let id = source.id;
+        let mut store = unbound.with_execution(id).await.unwrap();
+        store.save(&mut source).await.unwrap();
+        let mut app = App::new(source, vec![]);
+        app.composer.insert_str("keep draft");
+        let error = branch_session_with(
+            &mut app,
+            &mut store,
+            None,
+            |owner, saved, name| async move {
+                let (_child_owner, _child) = owner.branch_owned(&saved, name).await?;
+                anyhow::bail!("branch publication outcome uncertain")
+            },
+        )
+        .await
+        .unwrap_err();
+        assert!(error.to_string().contains("uncertain"));
+        assert_eq!(app.session.id, id);
+        assert_eq!(store.owned_session_id(), Some(id));
+        assert_eq!(app.composer.text, "keep draft");
+        let records = unbound.list().await.unwrap();
+        assert_eq!(records.len(), 2);
+        let child = records.iter().find(|record| record.id != id).unwrap();
+        assert_eq!(child.parent_id, Some(id));
+        assert_eq!(child.draft, "keep draft");
+        // The unconfirmed child has no active frontend owner or execution.
+        unbound.with_execution(child.id).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn active_branch_request_does_not_save_or_change_identity() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut store = SessionStore::new(directory.path().join("sessions"));
+        let source = Session::new(directory.path().into(), "test".into());
+        let id = source.id;
+        let mut app = App::new(source, vec![]);
+        let (steering, _receiver) = crate::agent::steering_channel(1);
+        app.running = Some(super::super::Running {
+            task: tokio::spawn(std::future::pending()),
+            cancel: tokio_util::sync::CancellationToken::new(),
+            steering,
+        });
+        app.composer.insert_str("active draft");
+        assert!(branch_session(&mut app, &mut store, None).await.is_err());
+        assert_eq!(app.session.id, id);
+        assert_eq!(app.session.revision, 0);
+        assert_eq!(app.composer.text, "active draft");
+        assert!(store.list().await.unwrap().is_empty());
+        app.running.take().unwrap().task.abort();
+    }
+
+    // Fault injection renames a directory containing live lease handles.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn branch_remains_active_when_recent_list_refresh_fails() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("sessions");
+        let backup = directory.path().join("temporarily-moved-sessions");
+        let mut store = SessionStore::new(path.clone());
+        let source = Session::new(directory.path().into(), "test".into());
+        let source_id = source.id;
+        let mut app = App::new(source, vec![]);
+        app.composer.insert_str("branch draft");
+        let blocked = path.clone();
+        let restored = backup.clone();
+        branch_session_with(
+            &mut app,
+            &mut store,
+            None,
+            |owner, source, name| async move {
+                let result = owner.branch_owned(&source, name).await?;
+                std::fs::rename(&blocked, &restored)?;
+                std::fs::write(&blocked, b"not a directory")?;
+                Ok(result)
+            },
+        )
+        .await
+        .unwrap();
+        assert_ne!(app.session.id, source_id);
+        assert_eq!(store.owned_session_id(), Some(app.session.id));
+        assert_eq!(app.composer.text, "branch draft");
+        assert!(
+            app.status
+                .starts_with("Branched session; cannot refresh recent list:")
+        );
+        assert_eq!(app.sessions[0].id, app.session.id);
+        std::fs::remove_file(&path).unwrap();
+        std::fs::rename(&backup, &path).unwrap();
+        assert_eq!(store.list().await.unwrap().len(), 2);
+        assert_eq!(
+            store.load(app.session.id).await.unwrap().draft,
+            "branch draft"
+        );
+    }
 }

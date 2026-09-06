@@ -44,6 +44,8 @@ jobs:
         env:
           HELM_BIN: target/release/helm
         run: python3 tests/system/paste_routing.py
+      - name: Verify branch draft preservation and recovery
+        run: python3 tests/system/branch_drafts.py
       - name: Verify tool output previews and expanded details
         env:
           HELM_BIN: target/release/helm

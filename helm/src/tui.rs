@@ -1139,14 +1139,10 @@ async fn handle_key(
             }
             KeyCode::Char('n') if !app.is_running() => start_new_session(app, store, None).await?,
             KeyCode::Char('b') if !app.is_running() => {
-                app.title_job = None;
-                let (owner, branch) = store.branch_owned(&app.session, None).await?;
-                app.session = branch;
-                *store = owner;
-                app.sessions = store.list().await?;
-                app.streaming_response.clear();
-                app.scroll = 0;
-                app.status = "Branched session".into();
+                if let Err(error) = commands::branch_session(app, store, None).await {
+                    app.status =
+                        format!("Cannot branch: {}", compact_line(&error.to_string(), 100));
+                }
             }
             KeyCode::Char('e') => {
                 let path = export_path(&app.session);
