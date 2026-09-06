@@ -7,7 +7,7 @@ the administrator ceiling through matching runtime policy and environment rules.
 See [runtime boundaries](policy-ceiling-runtime.md) for enforcement points and
 limitations. Explicit named-profile CLI management and launch selection are
 implemented below. [Persistent private defaults](policy-defaults.md) are available;
-in-TUI switching remains unfinished under issue #70.
+the TUI can review and switch the active workspace runtime as described below.
 
 Policy layers named global, project and session refer to local policy resolution;
 they do not define a mandatory voyage project or a fleet-wide grant. Planned
@@ -235,3 +235,53 @@ new revision/digest/transition selections. Do not overwrite evidence or reuse ol
 selection receipts as permission. History exhaustion uses the same explicit new-store
 workflow; there is no destructive automatic compaction. Locks are never retained
 across network, provider, approval, or Journal operations.
+
+
+## Switch policy in the TUI
+
+Press **Ctrl+P** or enter `/policy` to browse private profiles. Use
+`/policy "/absolute/private/directory"` for another store. Opening the picker may
+initialize inert preset metadata; it does not select a policy. **I** shows the
+running effective rules and their field provenance even if profile sources are
+unavailable. Profile creation, editing, duplication, deletion, import/export and
+persistent-default management use the CLI commands above and in
+[policy defaults](policy-defaults.md).
+
+Select a profile or **Use launch defaults**, then press **Enter** to review the
+current and proposed rules, provenance and exact review receipt. The proposal is
+compared with both the running policy and the original launch configuration.
+An authority increase requires **Y**; Enter and pasted text cannot confirm it.
+Otherwise Enter applies the reviewed policy. Escape cancels. Arrow keys and
+Page Up/Page Down scroll the review; Home returns to its beginning. Controls and
+bidirectional formatting in metadata are made safe for display, and known runtime
+secrets are redacted without altering the rules being checked.
+
+Preview never stops work. Apply refuses while a root run, child, outstanding
+model/title/supervisor request, terminal or unobserved shell effect remains. Finish or cancel
+work first; explicitly terminate retained terminals through the process tool before
+retrying. If stale policy prevents cleanup requests or retained child resources cannot
+be controlled from the current workspace, quit Helm for owned cleanup, then reopen
+under freshly resolved policy. Helm rechecks profile revision/source identity, workspace identity,
+explicit overrides, defaults and the administrator ceiling before handoff. A
+changed review must be opened again; old confirmation cannot authorize new rules.
+
+If saving the voyage fails, confirmation leaves the review and draft open with
+the current runtime intact. Repair session storage and retry.
+
+An accepted idle handoff blocks old runtime admission and observes owned cleanup
+before releasing its persistent writer. Linux shell, PTY and MCP cleanup observes
+the original process session, including ordinary forked descendants; this is not
+OS containment and cannot account for processes deliberately escaping that session.
+On other platforms, handoff from a runtime allowing shell or MCP effects is refused
+because equivalent cleanup observation is unavailable. Ordinary shell execution
+and direct-child MCP cleanup on those platforms remain available. Native macOS and
+Windows validation has not been performed for this workflow.
+
+If cleanup cannot be confirmed, the old runtime remains blocked with its ownership
+retained. If constructing the replacement fails, Helm restores only the exact
+previous effective policy after fresh validation. If that policy cannot be restored,
+Helm exits with the voyage and draft saved; reopen under a freshly resolved policy.
+A successful switch applies to the current workspace runtime, including its child
+policies. Other cached workspaces keep their existing authority. Selection is not
+written as session or Config authority and does not change persistent defaults;
+ordinary restart resolves the configured launch policy afresh.

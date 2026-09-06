@@ -725,6 +725,7 @@ async fn paste_owner_matrix_is_exclusive_during_idle_and_active_steering() {
             "todo-list",
             "todo-inspect",
             "todo-input",
+            "policy",
             "model",
             "supervisor-tree",
             "supervisor-inspect",
@@ -752,6 +753,7 @@ async fn paste_owner_matrix_is_exclusive_during_idle_and_active_steering() {
                         Some(TodoMode::Inspect(crate::todo::TodoId(Uuid::new_v4())))
                 }
                 "todo-input" => open_todo_input(&mut app.todo_panel, None, TodoInput::Add, "todo"),
+                "policy" => app.policy_panel.open = true,
                 "model" => app.model_panel.model_picker = true,
                 "supervisor-tree" => {
                     app.supervisor_panel.supervisor_mode = Some(SupervisorMode::Tree)
@@ -1216,4 +1218,150 @@ async fn branch_keys_keep_source_and_retry_input_on_save_failure() {
             }
         }
     }
+}
+
+#[tokio::test]
+async fn policy_panel_owns_paste_and_preserves_composer_without_provider_dispatch() {
+    let directory = tempfile::tempdir().unwrap();
+    let agent = navigation_agent(&directory);
+    let mut store = SessionStore::new(directory.path().join("sessions"));
+    let terminals = FakeTerminals::new();
+    let supervisor = Arc::new(FakeSupervisor::new(vec![]));
+    let todos = todo_store(&directory);
+    let (tx, _) = mpsc::unbounded_channel();
+    let mut app = App::new(Session::new(directory.path().into(), "test".into()), vec![]);
+    app.composer.insert_str("preserved draft 工作");
+    let config = crate::Config::default();
+    let policy = crate::policy::Policy::new(&config, directory.path().into()).unwrap();
+    app.policy_panel
+        .configure(Some(crate::policy_profile::switching::SwitchContext::new(
+            config,
+            policy.effective().clone(),
+        )));
+    let (steering, _) = crate::agent::steering_channel(1);
+    app.running = Some(Running {
+        task: tokio::spawn(std::future::pending()),
+        cancel: tokio_util::sync::CancellationToken::new(),
+        steering,
+    });
+    handle_input_event(
+        Event::Key(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::CONTROL)),
+        &mut app,
+        &agent,
+        &mut store,
+        &tx,
+        &terminals,
+        supervisor.clone(),
+        todos.clone(),
+    )
+    .await
+    .unwrap();
+    assert!(!app.policy_panel.open);
+    assert!(app.status.contains("Finish or cancel active work"));
+    app.running.take().unwrap().task.abort();
+    app.policy_panel
+        .open(Some(directory.path().join("profiles")), &tx)
+        .unwrap();
+    assert!(input_owner(&app) == InputOwner::Policy);
+    handle_input_event(
+        Event::Paste("y\n/shell touch injected".into()),
+        &mut app,
+        &agent,
+        &mut store,
+        &tx,
+        &terminals,
+        supervisor.clone(),
+        todos.clone(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(app.composer.text, "preserved draft 工作");
+    assert!(app.exit.is_none() && !app.is_running());
+    handle_input_event(
+        Event::Key(KeyEvent::from(KeyCode::Esc)),
+        &mut app,
+        &agent,
+        &mut store,
+        &tx,
+        &terminals,
+        supervisor,
+        todos,
+    )
+    .await
+    .unwrap();
+    assert!(input_owner(&app) == InputOwner::Composer);
+    assert_eq!(app.composer.text, "preserved draft 工作");
+}
+
+#[tokio::test]
+async fn policy_confirmation_save_failure_retains_review_draft_and_runtime() {
+    let directory = tempfile::tempdir().unwrap();
+    let agent = navigation_agent(&directory);
+    let blocked = directory.path().join("blocked");
+    std::fs::write(&blocked, "occupied").unwrap();
+    let mut store = SessionStore::new(blocked.join("sessions"));
+    let terminals = FakeTerminals::new();
+    let supervisor = Arc::new(FakeSupervisor::new(vec![]));
+    let todos = todo_store(&directory);
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    let mut app = App::new(Session::new(directory.path().into(), "test".into()), vec![]);
+    app.composer.insert_str("retained draft 工作");
+    let config = crate::Config::default();
+    let policy = crate::policy::Policy::new(&config, directory.path().into()).unwrap();
+    app.policy_panel
+        .configure(Some(crate::policy_profile::switching::SwitchContext::new(
+            config,
+            policy.effective().clone(),
+        )));
+    app.policy_panel
+        .open(Some(directory.path().join("profiles")), &tx)
+        .unwrap();
+    let event = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    handle_ui_event(event, &mut app, &store, &terminals)
+        .await
+        .unwrap();
+    for code in [KeyCode::Down, KeyCode::Enter] {
+        handle_input_event(
+            Event::Key(KeyEvent::from(code)),
+            &mut app,
+            &agent,
+            &mut store,
+            &tx,
+            &terminals,
+            supervisor.clone(),
+            todos.clone(),
+        )
+        .await
+        .unwrap();
+    }
+    let event = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    handle_ui_event(event, &mut app, &store, &terminals)
+        .await
+        .unwrap();
+    // Defaults may already grant the chosen profile; either confirmation key must retain state.
+    for code in [KeyCode::Char('y'), KeyCode::Enter] {
+        handle_input_event(
+            Event::Key(KeyEvent::from(code)),
+            &mut app,
+            &agent,
+            &mut store,
+            &tx,
+            &terminals,
+            supervisor.clone(),
+            todos.clone(),
+        )
+        .await
+        .unwrap();
+    }
+    assert!(app.policy_panel.open && app.exit.is_none() && !app.quit && !app.is_running());
+    assert_eq!(app.composer.text, "retained draft 工作");
+    assert_eq!(app.session.draft, "retained draft 工作");
+    assert!(app.session.messages.is_empty());
+    assert!(paste_test_screen(&app).contains("Cannot save voyage"));
 }

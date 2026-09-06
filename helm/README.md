@@ -229,6 +229,12 @@ before writes or potentially consequential commands. Unrestricted skips those pr
 still enforcing workspace roots and the explicit command deny list. The active mode is shown in
 the full-screen header.
 
+`Ctrl+P` opens private policy profiles and current effective rules/provenance.
+Review a selection with Enter; any authority increase needs explicit Y confirmation.
+Switching is runtime-only and refuses outstanding work. See
+[policy switching](../docs/policy-profiles.md#switch-policy-in-the-tui) for cleanup,
+freshness, recovery and platform limits.
+
 `Ctrl+T` opens the interactive-terminal picker. Once attached, all keyboard and paste
 input belongs exclusively to the selected terminal; detach with `Ctrl+]` without
 stopping its process. See the [direct terminal attachment contract](../docs/terminal-attach.md).

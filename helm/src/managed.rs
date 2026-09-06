@@ -759,7 +759,17 @@ pub(super) async fn execute_admitted(
     let shells_observed = shell_reports
         .as_ref()
         .is_ok_and(|reports| reports.iter().all(|report| report.observation_complete));
-    let observed = children_observed
+    let mcp_reports = tokio::time::timeout(
+        Duration::from_secs(15),
+        futures_util::future::join_all(retained.mcp.iter().map(|server| server.shutdown())),
+    )
+    .await;
+    let mcp_observed = retained.mcp.iter().all(|server| server.observed())
+        && mcp_reports
+            .as_ref()
+            .is_ok_and(|reports| reports.iter().all(Result::is_ok));
+    let observed = mcp_observed
+        && children_observed
         && terminals_observed
         && shells_observed
         && result.is_some()

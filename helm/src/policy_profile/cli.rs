@@ -129,7 +129,7 @@ fn directory(flags: &SelectionArgs) -> Result<PathBuf> {
 // Provision only the default administration path, one pinned no-follow component
 // at a time. Selection freshness never calls this initialization helper.
 #[cfg(unix)]
-fn initialize_default_parent(path: &Path) -> Result<()> {
+pub(super) fn initialize_default_parent(path: &Path) -> Result<()> {
     use cap_fs_ext::DirExt;
     use cap_std::fs::{Dir, DirBuilder, DirBuilderExt};
     use std::path::Component;

@@ -70,6 +70,15 @@ pub(super) fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
         draw_shortcut_help(frame, area, app);
         return;
     }
+    if app.question.is_none()
+        && app.approval.is_none()
+        && !app.voyage_panel.is_open()
+        && !app.workflow_panel.is_open()
+        && app.policy_panel.open
+    {
+        super::policy::draw(frame, area, app);
+        return;
+    }
     if app.question.is_none() && app.model_panel.model_picker {
         draw_model_picker(frame, area, &app.model_panel, &app.session.model);
         return;
@@ -265,7 +274,7 @@ pub(super) fn draw_shortcut_help(frame: &mut ratatui::Frame<'_>, area: Rect, app
     } else {
         (
             "Conversation",
-            "Enter: send or steer active run\nShift+Enter: newline\nUp/Down: message history\nPageUp/PageDown: scroll\nEsc: cancel active work\nCtrl+D: todos\nCtrl+A: agents\nCtrl+M: models\nCtrl+T: terminals\nCtrl+L: activity\nCtrl+O: tool details\nCtrl+S: sessions\nCtrl+N: new session\nCtrl+V: voyage drafts\nCtrl+B: branch\nCtrl+K: compact\nCtrl+E: export\nCtrl+C: cancel or quit\nCtrl+Q: quit",
+            "Enter: send or steer active run\nShift+Enter: newline\nUp/Down: message history\nPageUp/PageDown: scroll\nEsc: cancel active work\nCtrl+D: todos\nCtrl+A: agents\nCtrl+M: models\nCtrl+P: policy\nCtrl+T: terminals\nCtrl+L: activity\nCtrl+O: tool details\nCtrl+S: sessions\nCtrl+N: new session\nCtrl+V: voyage drafts\nCtrl+B: branch\nCtrl+K: compact\nCtrl+E: export\nCtrl+C: cancel or quit\nCtrl+Q: quit",
             "^D todos · ^A agents · ^M models · ^T terminals · ^L activity · ^S sessions · ^N new · ^B branch · ^K compact · ^E export",
         )
     };

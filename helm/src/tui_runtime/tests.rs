@@ -45,6 +45,9 @@ fn inactive_workspace_children_do_not_wait_for_root_questions_or_approvals() {
             provider_retry_attempts: 1,
             ..Config::default()
         };
+        let waiting = Arc::new(tokio::sync::Notify::new());
+        let release = Arc::new(tokio::sync::Notify::new());
+        let (server_waiting, server_release) = (waiting.clone(), release.clone());
         let server = tokio::spawn(async move {
             for step in 0..3 {
                 let (mut socket, _) = listener.accept().await.unwrap();
@@ -72,6 +75,10 @@ fn inactive_workspace_children_do_not_wait_for_root_questions_or_approvals() {
                     if step == 1 { assert!(result.contains("unavailable"), "{result}"); }
                     else { assert!(result.contains("denied") || result.contains("approval"), "{result}"); }
                 }
+                if step == 2 {
+                    server_waiting.notify_one();
+                    server_release.notified().await;
+                }
                 let delta = match step {
                     0 => json!({"tool_calls":[{"index":0,"id":"question","type":"function","function":{"name":"questions","arguments":json!({"question":"Continue?","options":["One","Two"]}).to_string()}}]}),
                     1 => json!({"tool_calls":[{"index":0,"id":"shell","type":"function","function":{"name":"shell","arguments":json!({"command":"printf forbidden > child-effect"}).to_string()}}]}),
@@ -94,6 +101,10 @@ fn inactive_workspace_children_do_not_wait_for_root_questions_or_approvals() {
                 approval: ApprovalPolicy::Deny, budget: budget.clone(),
             }, budget, worktree: None, branch: None,
         }).await.unwrap();
+        tokio::time::timeout(Duration::from_secs(5), waiting.notified()).await.unwrap();
+        assert!(inactive.check_idle().await.is_err(), "live child must refuse policy handoff");
+        active.check_idle().await.unwrap();
+        release.notify_one();
         // Both cached root receivers remain unpolled. The production child
         // executor must resolve its own unattended question/approval boundary.
         let result = tokio::time::timeout(Duration::from_secs(5), inactive.subagents.wait(id)).await.unwrap().unwrap().unwrap();
@@ -103,4 +114,148 @@ fn inactive_workspace_children_do_not_wait_for_root_questions_or_approvals() {
         inactive.subagents.shutdown().await;
         active.subagents.shutdown().await;
     });
+}
+
+#[test]
+fn policy_handoff_revalidates_before_ownership_and_preserves_other_workspaces() {
+    const CHILD: &str = "HELM_POLICY_HANDOFF_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "tui_runtime::tests::policy_handoff_revalidates_before_ownership_and_preserves_other_workspaces", "--nocapture"])
+            .env(CHILD, "1").env("HOME", directory.path())
+            .env("XDG_CONFIG_HOME", directory.path().join("config"))
+            .env("XDG_DATA_HOME", directory.path().join("data"))
+            .env("POLICY_HANDOFF_FIXTURE_KEY", "offline-fixture").spawn().unwrap();
+        let deadline = Instant::now() + Duration::from_secs(30);
+        loop {
+            if let Some(status) = child.try_wait().unwrap() {
+                assert!(status.success(), "policy fixture failed: {status}");
+                return;
+            }
+            if Instant::now() >= deadline {
+                child.kill().unwrap();
+                child.wait().unwrap();
+                panic!("policy fixture timed out");
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let root = tempfile::tempdir().unwrap();
+            let other = tempfile::tempdir().unwrap();
+            let session = Session::new(root.path().into(), "fixture".into());
+            let other_session = Session::new(other.path().into(), "fixture".into());
+            let config = Config {
+                provider: helm::config::ProviderKind::OpenaiChat,
+                base_url: Some("http://127.0.0.1:1/v1".into()),
+                api_key_env: "POLICY_HANDOFF_FIXTURE_KEY".into(),
+                access: Some(AccessMode::Unrestricted),
+                provider_retry_attempts: 1,
+                ..Config::default()
+            };
+            let closed = Arc::new(ManagedResources::local());
+            closed.close().unwrap();
+            assert!(
+                WorkspaceRuntime::build_with_resources(&config, &session, None, closed)
+                    .await
+                    .is_err()
+            );
+            // Failed post-build registration released its persistent writer; no stale
+            // registry, bridge or native executor holds a hidden runtime lease.
+            let runtime = WorkspaceRuntime::build(&config, &session).await.unwrap();
+            let other_runtime = WorkspaceRuntime::build(&config, &other_session)
+                .await
+                .unwrap();
+            runtime.check_idle().await.unwrap();
+            let pending = runtime.agent.clone();
+            assert!(runtime.check_idle().await.is_err());
+            drop(pending);
+            let observer = runtime.supervisor.clone();
+            assert!(runtime.check_idle().await.is_err());
+            drop(observer);
+            let directory = root.path().join("profiles");
+            let profiles = runtime.policy.profiles(&directory).unwrap();
+            let target = runtime
+                .policy
+                .target(
+                    directory,
+                    profiles
+                        .iter()
+                        .find(|profile| profile.name == "restricted")
+                        .unwrap(),
+                )
+                .unwrap();
+            let preview = runtime.policy.preview(&target).unwrap();
+            assert!(!preview.requires_confirmation);
+            let request = helm::policy_profile::switching::SwitchRequest {
+                target,
+                preview_digest: preview.digest,
+                confirmation: None,
+            };
+            let candidate = runtime.policy.prepare(&request).unwrap();
+            let next_digest = preview.proposed.digest().to_owned();
+            assert!(
+                WorkspaceRuntime::build_checked(&candidate, &session, Some("wrong digest"))
+                    .await
+                    .is_err()
+            );
+            runtime.check_idle().await.unwrap();
+            runtime.stop_observed().await.unwrap();
+            assert!(
+                runtime
+                    .agent
+                    .run(vec![], "must never request provider".into())
+                    .await
+                    .is_err()
+            );
+            drop(runtime);
+            let selected =
+                WorkspaceRuntime::build_checked(&candidate, &session, Some(&next_digest))
+                    .await
+                    .unwrap();
+            assert_eq!(selected.access, AccessMode::ReadOnly);
+            assert_eq!(other_runtime.access, AccessMode::Unrestricted);
+            assert!(other_runtime.config.policy_profile.is_none());
+            other_runtime.check_idle().await.unwrap();
+            assert_eq!(config.access_mode(), AccessMode::Unrestricted);
+            selected.stop_observed().await.unwrap();
+            drop(selected);
+            // Selection was runtime-only: ordinary restart uses fresh launch policy.
+            let reopened = WorkspaceRuntime::build(&config, &session).await.unwrap();
+            assert_eq!(reopened.access, AccessMode::Unrestricted);
+            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let _guard = reopened.resources.0.lock().unwrap();
+                panic!("injected resource observation failure");
+            }));
+            assert!(reopened.stop_observed().await.is_err());
+            assert!(
+                reopened
+                    .agent
+                    .run(vec![], "must remain blocked".into())
+                    .await
+                    .is_err()
+            );
+            assert!(WorkspaceRuntime::build(&config, &session).await.is_err());
+            let failure = WorkspaceRuntime::construction_error(
+                anyhow::anyhow!("injected build failure"),
+                &reopened.subagents,
+                &reopened.resources,
+                true,
+            )
+            .await;
+            assert!(
+                failure
+                    .downcast_ref::<UnconfirmedRuntimeCleanup>()
+                    .is_some()
+            );
+            drop(reopened);
+            let recovered = WorkspaceRuntime::build(&config, &session).await.unwrap();
+            recovered.stop_observed().await.unwrap();
+            other_runtime.stop_observed().await.unwrap();
+        });
 }

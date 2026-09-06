@@ -16,6 +16,26 @@ use tokio::sync::{mpsc, oneshot};
 #[doc(hidden)]
 pub enum UiEvent {
     Agent(AgentEvent),
+    PolicyProfiles {
+        request: uuid::Uuid,
+        result: Result<
+            (
+                std::path::PathBuf,
+                Vec<crate::policy_profile::store::ProfileSnapshot>,
+            ),
+            String,
+        >,
+    },
+    PolicyPreview {
+        request: uuid::Uuid,
+        result: Result<
+            (
+                crate::policy_profile::switching::Target,
+                Box<crate::policy_profile::switching::SwitchPreview>,
+            ),
+            String,
+        >,
+    },
     Checkpoint(super::checkpoint::Request),
     Approval(ApprovalRequest),
     Question(QuestionRequest),

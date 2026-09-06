@@ -28,6 +28,7 @@ The other guide links remain available in full release archives.
 | [tui/recent.rs](https://github.com/o-psi/voyage/blob/main/helm/src/tui/recent.rs) | Responsive recent-conversation sidebar/drawer, selection, mouse navigation and guarded session switching |
 | [tui/palette.rs](https://github.com/o-psi/voyage/blob/main/helm/src/tui/palette.rs) | Shared slash-command metadata, contextual suggestions and palette rendering |
 | [tui/questions.rs](https://github.com/o-psi/voyage/blob/main/helm/src/tui/questions.rs) | Question-dialog state, bounded custom input and safe rendering |
+| [tui/policy.rs](https://github.com/o-psi/voyage/blob/main/helm/src/tui/policy.rs) | Private profile browsing, current/proposed rules and provenance, request-bound asynchronous previews and exact escalation confirmation; no execution authority |
 | [tui/models.rs](https://github.com/o-psi/voyage/blob/main/helm/src/tui/models.rs) | Model discovery requests, filtering, manual selection and picker rendering |
 | [tui/supervisor.rs](https://github.com/o-psi/voyage/blob/main/helm/src/tui/supervisor.rs) | Agent-panel state, inspection, messages/follow-ups, cancellation requests and rendering |
 | [tui/todos.rs](https://github.com/o-psi/voyage/blob/main/helm/src/tui/todos.rs) | Todo-panel state, editing, store actions and rendering |
@@ -54,11 +55,27 @@ shutdown path for retained runtimes. See [terminal attachment](terminal-attach.m
 and [session ownership](session-ownership.md) for the execution boundaries.
 
 `App` composes `TodoPanel`, `SupervisorPanel`, `TerminalPanel`, `ModelPanel`,
-`PaletteState`, `workflows::Panel`, `voyage_setup::Hub`, the composer/history and
+`policy::Panel`, `PaletteState`, `workflows::Panel`, `voyage_setup::Hub`, the composer/history and
 optional question/checkpoint state. Feature handlers generally receive their
 panel state and explicit dependencies. Cross-feature helpers such as `recent`
 and `commands` receive `App` because they coordinate session state and navigation.
 Model selection explicitly receives the session, agent and store it must update.
+Policy preview workers own only immutable configuration and effective metadata;
+request IDs reject late replies after cancellation or replacement. The policy
+panel consumes paste without treating it as consent, and blocks recent-list mouse
+navigation and conversation scrolling while open. Ctrl+P opens it only when idle.
+
+A `TuiExit::SwitchPolicy` request keeps session ownership while the binary host
+revalidates exact consent and checks workspace quiescence. The host owns a local
+admission guard plus terminal, shell and MCP observers shared with child executors.
+MCP spawn admission registers its observer before asynchronous initialization;
+dropping a tool registry arranges bounded server cleanup. Completed detached
+resource registrations retire without imposing a lifetime child count limit.
+Only observed cleanup permits releasing the old runtime writer and constructing a
+replacement. Failed cleanup retains a blocked runtime; failed construction restores
+only freshly validated identical prior policy or exits with saved recovery state.
+See [policy switching](policy-profiles.md#switch-policy-in-the-tui) for platform
+limits, source freshness and runtime-only selection behavior.
 
 Completion reads a `PaletteContext`: input text, running/dismissed state,
 selection, model catalog, saved sessions and workspace. It cannot mutate the
@@ -86,12 +103,13 @@ Both paths consult `input_owner` in this order:
 4. Already-open shortcut help.
 5. Voyage configuration panel.
 6. Workflow panel.
-7. Model picker.
-8. Supervisor panel.
-9. Todo panel.
-10. Terminal picker.
-11. Recent-session selection.
-12. Conversation composer.
+7. Policy review/picker.
+8. Model picker.
+9. Supervisor panel.
+10. Todo panel.
+11. Terminal picker.
+12. Recent-session selection.
+13. Conversation composer.
 
 Questions consume input without editing underlying panels or drafts. Approval
 paste is ignored and cannot select a decision. Attached PTY paste is forwarded as
@@ -103,7 +121,7 @@ rules. Conversation paste uses the bounded composer and normalizes CRLF/CR to LF
 Keyboard-only controls remain distinct from text insertion. An open help view
 consumes keys until F1 or Esc closes it. When help is closed, its F1 entrypoint is
 checked after question, approval, attached-terminal and voyage/workflow handling,
-before the model/supervisor/todo/picker handlers. With no panel owner, global
+before the policy/model/supervisor/todo/picker handlers. With no panel owner, global
 shortcuts precede slash completion and ordinary composer editing. Existing
 active-run guards still control model changes, new voyages and panel entrypoints;
 paste does not bypass them or submit a turn.
@@ -121,7 +139,8 @@ recovery](../helm/README.md#steering-delivery-and-recovery).
 Rendering has its own explicit branch order in `render::draw`; it is not derived
 from `input_owner`. An attached terminal occupies the whole frame. Without a
 question, a terminal smaller than 32×10 shows the resize notice. The other early
-views, when no question is present, are help (only without an approval), model
+views, when no question is present, are help (only without an approval), policy
+(only without an approval or open voyage/workflow panel), model
 picker, supervisor, todo, voyage configuration and workflow. Supervisor, todo,
 voyage and workflow views overlay any pending approval before returning.
 

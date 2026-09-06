@@ -49,6 +49,19 @@ pub struct ShellShutdown {
     pub remaining: Vec<Uuid>,
 }
 impl ManagedShell {
+    pub fn has_owned_work(&self) -> bool {
+        self.state.lock().map_or(true, |state| {
+            state
+                .jobs
+                .values()
+                .any(|job| !job.observed.load(Ordering::Acquire))
+        })
+    }
+
+    pub fn can_retire(&self) -> bool {
+        Arc::strong_count(&self.state) == 1 && !self.has_owned_work()
+    }
+
     pub fn new() -> Self {
         Self::default()
     }

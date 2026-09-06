@@ -29,6 +29,9 @@ pub struct Policy {
 }
 
 impl Policy {
+    pub fn effective(&self) -> &crate::policy_profile::EffectivePolicy {
+        &self.snapshot.effective
+    }
     pub fn new(config: &Config, workspace: PathBuf) -> Result<Self> {
         Ok(crate::runtime_policy::RuntimePolicy::resolve(config, &workspace)?.into_policy())
     }

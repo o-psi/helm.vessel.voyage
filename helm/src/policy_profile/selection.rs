@@ -7,7 +7,7 @@ use crate::{
 use anyhow::{Result, ensure};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SelectionRequest {
     pub directory: PathBuf,
     pub name: String,
@@ -74,6 +74,9 @@ impl SelectionRequest {
     }
 }
 impl Selection {
+    pub fn request(&self) -> &SelectionRequest {
+        &self.request
+    }
     pub fn preview(
         config: &Config,
         workspace: &Path,

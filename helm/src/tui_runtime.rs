@@ -2,8 +2,25 @@
 //! while the operator navigates saved voyages. A session switch is not a child
 //! process launch; fresh target ownership is acquired before activating it.
 use super::*;
+use helm::policy_profile::switching::SwitchContext;
 use helm::tui::{UiBridge, UiEvent};
 use std::collections::BTreeMap;
+
+#[derive(Debug, thiserror::Error)]
+#[error("candidate runtime cleanup unconfirmed; automatic policy fallback refused")]
+struct UnconfirmedRuntimeCleanup;
+
+#[derive(Debug, Default)]
+struct Admission(std::sync::atomic::AtomicBool);
+impl helm::policy::ExecutionAuthority for Admission {
+    fn check(&self) -> Result<()> {
+        anyhow::ensure!(
+            !self.0.load(std::sync::atomic::Ordering::Acquire),
+            "policy handoff blocked this runtime; reopen the saved voyage to resolve its policy"
+        );
+        Ok(())
+    }
+}
 
 struct WorkspaceRuntime {
     agent: Arc<Agent>,
@@ -16,9 +33,33 @@ struct WorkspaceRuntime {
     provider_label: String,
     access: AccessMode,
     config: Config,
+    policy: SwitchContext,
+    admission: Arc<Admission>,
+    resources: Arc<ManagedResources>,
 }
 impl WorkspaceRuntime {
     async fn build(config: &Config, session: &Session) -> Result<Self> {
+        Self::build_checked(config, session, None).await
+    }
+    async fn build_checked(
+        config: &Config,
+        session: &Session,
+        expected: Option<&str>,
+    ) -> Result<Self> {
+        Self::build_with_resources(
+            config,
+            session,
+            expected,
+            Arc::new(ManagedResources::local()),
+        )
+        .await
+    }
+    async fn build_with_resources(
+        config: &Config,
+        session: &Session,
+        expected: Option<&str>,
+        resources: Arc<ManagedResources>,
+    ) -> Result<Self> {
         let (bridge, receiver) = helm::tui::bridge();
         let mut active_config = config.clone();
         active_config.model = session.model.clone();
@@ -34,8 +75,20 @@ impl WorkspaceRuntime {
         );
         let resolved =
             helm::runtime_policy::RuntimePolicy::resolve(&active_config, &session.workspace)?;
+        anyhow::ensure!(
+            expected.is_none_or(|digest| digest == resolved.policy().effective().digest()),
+            "policy changed during handoff; review again"
+        );
+        let policy_context =
+            SwitchContext::new(active_config.clone(), resolved.policy().effective().clone());
         let runtime_config = resolved.config();
-        let policy = Arc::new(resolved.policy().clone());
+        let admission = Arc::new(Admission::default());
+        let policy = Arc::new(
+            resolved
+                .policy()
+                .clone()
+                .with_execution_authority(admission.clone()),
+        );
         let context = ToolContext {
             completion: None,
             policy,
@@ -51,26 +104,45 @@ impl WorkspaceRuntime {
         // Validate the provider before acquiring persistent runtime ownership or
         // starting external MCP servers. Navigation failures are recoverable.
         let provider = provider::from_config(runtime_config, session.workspace.clone())?;
-        let subagents =
-            build_subagents(runtime_config, &session.workspace, context.policy.clone()).await?;
+        let subagents = build_subagents_managed(
+            runtime_config,
+            &session.workspace,
+            context.policy.clone(),
+            Some(resources.clone()),
+        )
+        .await?;
         let subagent_runtime = subagents.runtime;
         let todo = subagents.todos.clone();
-        let tools = match build_tools(
+        let mut tools = match build_tools(
             runtime_config,
             Some(subagents.tool),
             Some(todo.clone()),
             Some(subagents.completion_tool),
+            Some(&resources),
+            &context.policy,
         )
         .await
         {
             Ok(tools) => tools,
             Err(error) => {
-                // No child work has been admitted yet. Explicitly release the
-                // persistent runtime before returning to the active workspace.
-                subagent_runtime.shutdown().await;
-                return Err(error);
+                return Err(Self::construction_error(
+                    error,
+                    &subagent_runtime,
+                    &resources,
+                    expected.is_some(),
+                )
+                .await);
             }
         };
+        if let Err(error) = resources.register(&mut tools) {
+            return Err(Self::construction_error(
+                error,
+                &subagent_runtime,
+                &resources,
+                expected.is_some(),
+            )
+            .await);
+        }
         let terminals = tools.terminals().unwrap_or_default();
         let agent = Arc::new(
             Agent::new(
@@ -113,7 +185,66 @@ impl WorkspaceRuntime {
             provider_label,
             access: runtime_config.access_mode(),
             config: active_config.clone(),
+            policy: policy_context,
+            admission,
+            resources,
         })
+    }
+    async fn construction_error(
+        error: anyhow::Error,
+        children: &SubagentRuntime,
+        resources: &ManagedResources,
+        handoff: bool,
+    ) -> anyhow::Error {
+        let closed = resources.close();
+        let children =
+            tokio::time::timeout(std::time::Duration::from_secs(10), children.shutdown()).await;
+        let observed = resources
+            .shutdown_observed(handoff || cfg!(target_os = "linux"))
+            .await;
+        if closed.is_err() || children.is_err() || observed.is_err() {
+            error.context(UnconfirmedRuntimeCleanup)
+        } else {
+            error
+        }
+    }
+    async fn check_idle(&self) -> Result<()> {
+        anyhow::ensure!(
+            Arc::strong_count(&self.agent) == 1 && Arc::strong_count(&self.supervisor) == 1,
+            "wait for outstanding model, title or supervisor requests"
+        );
+        anyhow::ensure!(
+            !self
+                .subagents
+                .list()
+                .await
+                .iter()
+                .any(|record| !record.status.is_terminal()),
+            "finish or cancel child work first"
+        );
+        anyhow::ensure!(
+            !self.resources.has_owned_work()?,
+            "close terminals and finish background shell work first"
+        );
+        #[cfg(not(target_os = "linux"))]
+        anyhow::ensure!(
+            self.access == AccessMode::ReadOnly,
+            "shell/MCP process-session cleanup cannot be observed on this platform"
+        );
+        Ok(())
+    }
+    async fn stop_observed(&self) -> Result<()> {
+        self.admission
+            .0
+            .store(true, std::sync::atomic::Ordering::Release);
+        self.resources.close()?;
+        tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            self.subagents.shutdown(),
+        )
+        .await
+        .context("child shutdown unconfirmed; runtime remains blocked")?;
+        self.resources.shutdown_observed(true).await
     }
 }
 
@@ -153,7 +284,7 @@ pub(super) async fn chat(
             let exit = helm::tui::run(runtime.agent.clone(), &mut store, session,
                 &mut runtime.receiver, runtime.bridge.sender(), Arc::new(runtime.terminals.clone()),
                 runtime.supervisor.clone(),
-                runtime.todos.clone(), runtime.provider_label.clone(), runtime.access, notice.take()).await?;
+                runtime.todos.clone(), runtime.provider_label.clone(), runtime.access, Some(runtime.policy.clone()), notice.take()).await?;
             let current_id = store.owned_session_id().context("active session ownership missing")?;
             session = store.load(current_id).await?;
             match exit {
@@ -162,6 +293,47 @@ pub(super) async fn chat(
                     let mut launch_config = runtime.config.clone();
                     launch_config.model = session.model.clone();
                     return Ok(Some((launch_config, current_id, request)));
+                }
+                helm::tui::TuiExit::SwitchPolicy(request) => {
+                    // Stage and validate without disturbing the old runtime. Source
+                    // reads run off the UI executor and exact rules are checked again
+                    // in build_checked before new provider/MCP construction.
+                    let context = runtime.policy.clone();
+                    let prepared = tokio::task::spawn_blocking(move || {
+                        helm::policy_profile::switching::read_sources(|| context.prepare_with_digest(&request))
+                    }).await;
+                    let (candidate, digest) = match prepared {
+                        Ok(Ok(value)) => value,
+                        _ => { notice = Some("Policy changed or confirmation invalid; reopen policy review. Current runtime retained.".into()); continue; }
+                    };
+                    if let Err(error) = runtime.check_idle().await {
+                        notice = Some(format!("Cannot switch policy: {error}. Current runtime retained."));
+                        continue;
+                    }
+                    let old_config = runtime.config.clone();
+                    let old_digest = runtime.policy.current().digest().to_owned();
+                    if let Err(error) = runtime.stop_observed().await {
+                        notice = Some(error.to_string());
+                        continue;
+                    }
+                    // Drop every persistent writer only after observed cleanup; the
+                    // SessionStore lease and canonical draft remain owned throughout.
+                    drop(runtimes.remove(&workspace));
+                    match WorkspaceRuntime::build_checked(&candidate, &session, Some(&digest)).await {
+                        Ok(next) => {
+                            runtimes.insert(workspace.clone(), next);
+                            notice = Some("Policy applied to this workspace runtime. Launch defaults are unchanged.".into());
+                        }
+                        Err(error) => {
+                            if error.downcast_ref::<UnconfirmedRuntimeCleanup>().is_some() {
+                                return Err(anyhow::Error::new(UnconfirmedRuntimeCleanup).context("policy switch stopped; saved voyage retained, review unconfirmed cleanup before reopening"));
+                            }
+                            let fallback = WorkspaceRuntime::build_checked(&old_config, &session, Some(&old_digest)).await
+                                .map_err(|_| anyhow::anyhow!("policy handoff failed and exact previous policy cannot be restored; saved voyage retained, reopen with freshly reviewed policy"))?;
+                            runtimes.insert(workspace.clone(), fallback);
+                            notice = Some("Policy handoff failed; exact previous policy restored after fresh validation.".into());
+                        }
+                    }
                 }
                 helm::tui::TuiExit::Navigate(reference) => {
                     let candidate = async {
@@ -189,6 +361,17 @@ pub(super) async fn chat(
     // workspace, including inactive ones. Navigation never reaches this path.
     let mut cleanup = Ok(());
     for runtime in runtimes.values() {
+        runtime
+            .admission
+            .0
+            .store(true, std::sync::atomic::Ordering::Release);
+        if let Err(error) = runtime
+            .resources
+            .shutdown_observed(cfg!(target_os = "linux"))
+            .await
+        {
+            cleanup = Err(error);
+        }
         if tokio::time::timeout(
             std::time::Duration::from_secs(10),
             runtime.subagents.shutdown(),

@@ -243,14 +243,32 @@ for line in sys.stdin:
                 captured.extend(os.read(master, 65536))
             if child.poll() is not None: break
         assert b'read-only' in captured, captured[-2000:]
+        # Review a preset under the fixed administrator ceiling. Even an
+        # unchanged selected preset cannot reuse consent after that ceiling moves.
+        os.write(master, b'\x10')
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline and 'autonomous · revision' not in rendered_screen(captured, 30, 100):
+            if select.select([master], [], [], .1)[0]: captured.extend(os.read(master, 65536))
+        assert 'autonomous · revision' in rendered_screen(captured, 30, 100)
+        os.write(master, b'\x1b[B\r')
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline and 'Review receipt:' not in rendered_screen(captured, 30, 100):
+            if select.select([master], [], [], .1)[0]: captured.extend(os.read(master, 65536))
+        assert 'Review receipt:' in rendered_screen(captured, 30, 100)
+        assert 'AUTHORITY INCREASE' not in rendered_screen(captured, 30, 100), 'preset must remain clamped by administrator'
         cap('unrestricted')
+        os.write(master, b'\r')
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline and 'Policy changed or confirmation invalid' not in rendered_screen(captured, 30, 100):
+            if select.select([master], [], [], .1)[0]: captured.extend(os.read(master, 65536))
+        assert 'Policy changed or confirmation invalid' in rendered_screen(captured, 30, 100)
         cutoff = len(captured)
         refused = 'tui refused before canonical 界'
         os.write(master, (refused + '\r').encode())
         deadline = time.monotonic() + 10
-        while time.monotonic() < deadline and b'policy' not in captured[cutoff:].lower():
+        while time.monotonic() < deadline and 'cannot start run under' not in rendered_screen(captured, 30, 100):
             if select.select([master], [], [], .1)[0]: captured.extend(os.read(master, 65536))
-        assert b'policy' in captured[cutoff:].lower(), captured[-2000:]
+        assert 'cannot start run under' in rendered_screen(captured, 30, 100), rendered_screen(captured, 30, 100)
         cutoff = len(captured)
         fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH', 14, 60, 0, 0))
         os.kill(child.pid, signal.SIGWINCH)

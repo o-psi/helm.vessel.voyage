@@ -158,6 +158,19 @@ pub(super) async fn handle_command(
     };
     let (name, argument) = command.split_once(' ').unwrap_or((command, ""));
     match name {
+        "policy" => {
+            if app.is_running() {
+                app.status = "Finish or cancel active work before reviewing policy".into();
+            } else if let Some(tx) = tx {
+                let words = parse_words(argument, "/policy [DIRECTORY]")?;
+                anyhow::ensure!(words.len() <= 1, "usage: /policy [DIRECTORY]");
+                let directory = words.first().map(|path| expand_user_path(path));
+                if let Err(error) = app.policy_panel.open(directory, tx) {
+                    app.status = error.to_string();
+                }
+            }
+        }
+
         "voyages" if argument.trim().is_empty() => {
             if app.is_running() {
                 app.status = "Finish or cancel active work before opening voyage setup".into();

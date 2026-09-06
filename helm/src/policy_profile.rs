@@ -6,6 +6,7 @@ pub mod cli;
 pub mod defaults;
 pub mod selection;
 pub mod store;
+pub mod switching;
 use crate::config::{AccessMode, UnattendedApprovalMode};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};

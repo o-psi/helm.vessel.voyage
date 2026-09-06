@@ -20,6 +20,7 @@ use todos::*;
 mod supervisor;
 use supervisor::*;
 mod models;
+mod policy;
 use models::*;
 mod terminals;
 use terminals::*;
@@ -79,12 +80,14 @@ pub enum TuiExit {
     Launch(CliRequest),
     /// Navigate within this Helm while retaining workspace runtimes.
     Navigate(String),
+    SwitchPolicy(crate::policy_profile::switching::SwitchRequest),
 }
 
 struct App {
     diagnostic_agent: Option<Arc<Agent>>,
     palette: PaletteState,
     model_panel: ModelPanel,
+    policy_panel: policy::Panel,
     terminal_panel: TerminalPanel,
     supervisor_panel: SupervisorPanel,
     todo_panel: TodoPanel,
@@ -212,6 +215,7 @@ impl App {
         composer.insert_str(&session.draft);
         Self {
             diagnostic_agent: None,
+            policy_panel: policy::Panel::default(),
             palette: PaletteState::default(),
             model_panel: ModelPanel::default(),
             terminal_panel: TerminalPanel::default(),
@@ -289,6 +293,7 @@ pub async fn run(
     todos: Arc<TodoStore>,
     provider_label: String,
     access_mode: AccessMode,
+    policy: Option<crate::policy_profile::switching::SwitchContext>,
     notice: Option<String>,
 ) -> Result<TuiExit> {
     anyhow::ensure!(
@@ -298,6 +303,7 @@ pub async fn run(
     let sessions = store.list().await?;
     let mut app = App::new(session, sessions);
     app.diagnostic_agent = Some(agent.clone());
+    app.policy_panel.configure(policy);
     app.provider_label = provider_label;
     app.access_mode = access_mode;
     if let Some(notice) = notice {
@@ -454,6 +460,8 @@ async fn handle_ui_event(
     terminals: &dyn InteractiveTerminals,
 ) -> Result<()> {
     match event {
+        UiEvent::PolicyProfiles { request, result } => app.policy_panel.profiles(request, result),
+        UiEvent::PolicyPreview { request, result } => app.policy_panel.preview(request, result),
         UiEvent::Workflows {
             request,
             definitions,
@@ -860,6 +868,7 @@ enum InputOwner {
     Help,
     Voyage,
     Workflow,
+    Policy,
     Model,
     Supervisor,
     Todo,
@@ -881,6 +890,8 @@ fn input_owner(app: &App) -> InputOwner {
         InputOwner::Voyage
     } else if app.workflow_panel.is_open() {
         InputOwner::Workflow
+    } else if app.policy_panel.open {
+        InputOwner::Policy
     } else if app.model_panel.model_picker {
         InputOwner::Model
     } else if app.supervisor_panel.supervisor_mode.is_some() {
@@ -955,7 +966,8 @@ async fn handle_input_event(
                     reset_slash_palette(app);
                     request_slash_models_if_needed(app, agent, tx);
                 }
-                InputOwner::Approval
+                InputOwner::Policy
+                | InputOwner::Approval
                 | InputOwner::Help
                 | InputOwner::Terminals
                 | InputOwner::Sessions
@@ -1017,6 +1029,24 @@ async fn handle_key(
         return Ok(());
     }
     if handle_shortcut_help_key(key, app) {
+        return Ok(());
+    }
+    if owner == InputOwner::Policy {
+        if let Some(request) = app.policy_panel.key(key, tx) {
+            anyhow::ensure!(
+                !app.is_running(),
+                "finish active work before changing policy"
+            );
+            app.session.draft.clone_from(&app.composer.text);
+            if store.save(&mut app.session).await.is_err() {
+                app.policy_panel.failed(
+                    "Cannot save voyage; draft retained and policy unchanged. Repair session storage and retry confirmation.".into(),
+                );
+                return Ok(());
+            }
+            app.exit = Some(TuiExit::SwitchPolicy(request));
+            app.quit = true;
+        }
         return Ok(());
     }
     if owner == InputOwner::Model {
@@ -1118,6 +1148,13 @@ async fn handle_key(
                     .position(|item| item.id == app.session.id)
                     .unwrap_or(0);
                 app.show_sessions = true;
+            }
+            KeyCode::Char('p') => {
+                if app.is_running() {
+                    app.status = "Finish or cancel active work before reviewing policy".into();
+                } else if let Err(error) = app.policy_panel.open(None, tx) {
+                    app.status = error.to_string();
+                }
             }
             KeyCode::Char('t') => {
                 refresh_terminals(&mut app.terminal_panel, &mut app.status, terminals).await;
@@ -1402,6 +1439,7 @@ fn handle_mouse(mouse: MouseEvent, app: &mut App) {
         && !app.terminal_panel.terminal_picker
         && !app.model_panel.model_picker
         && !app.shortcut_help
+        && !app.policy_panel.open
         && !app.workflow_panel.is_open()
         && !app.voyage_panel.is_open()
         && app.supervisor_panel.supervisor_mode.is_none()

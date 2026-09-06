@@ -253,6 +253,23 @@ impl Tool for ProcessTool {
 }
 
 impl ProcessTool {
+    /// Conservative nonmutating handoff check. Even an exited terminal must be
+    /// explicitly closed so its readers and original process session are observed.
+    pub fn has_owned_work(&self) -> bool {
+        self.uncertain.load(Ordering::Acquire)
+            || self.starting.try_lock().is_err()
+            || self
+                .processes
+                .lock()
+                .map_or(true, |items| !items.is_empty())
+            || self.pending.lock().map_or(true, |items| !items.is_empty())
+    }
+
+    /// Only a detached, empty observer can retire from a resource registry.
+    pub fn can_retire(&self) -> bool {
+        Arc::strong_count(&self.starting) == 1 && !self.has_owned_work()
+    }
+
     pub fn with_limits(max_count: usize, max_unread_bytes: usize) -> Self {
         let (events, _) = broadcast::channel(64);
         Self {

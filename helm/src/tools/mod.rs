@@ -292,9 +292,16 @@ pub trait Tool: Send + Sync {
 pub struct ToolRegistry {
     tools: BTreeMap<String, Arc<dyn Tool>>,
     terminals: Option<ProcessTool>,
+    mcp: Vec<mcp::McpLease>,
 }
 
 impl ToolRegistry {
+    pub fn own_mcp(&mut self, server: Arc<mcp::McpServer>) {
+        self.mcp.push(mcp::McpLease(server));
+    }
+    pub fn mcp_servers(&self) -> Vec<Arc<mcp::McpServer>> {
+        self.mcp.iter().map(|lease| lease.0.clone()).collect()
+    }
     pub fn standard() -> Self {
         Self::standard_with_terminal_limits(16, 8 * 1024 * 1024)
     }

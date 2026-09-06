@@ -1107,6 +1107,8 @@ impl SubagentExecutor for CliSubagentExecutor {
             child_tool,
             Some(self.todos.clone()),
             completion_tool,
+            self.managed_resources.as_deref(),
+            &tool_context.policy,
         )
         .await
         .map_err(|e| e.to_string())?;
@@ -1166,13 +1168,6 @@ struct SubagentBundle {
     runtime: Arc<SubagentRuntime>,
     tool: SubagentTool,
     model: Arc<RwLock<String>>,
-}
-async fn build_subagents(
-    config: &Config,
-    workspace: &std::path::Path,
-    parent_policy: Arc<Policy>,
-) -> Result<SubagentBundle> {
-    build_subagents_managed(config, workspace, parent_policy, None).await
 }
 async fn build_subagents_managed(
     config: &Config,
@@ -1298,29 +1293,103 @@ struct ManagedResourceState {
     closed: bool,
     terminals: Vec<helm::tools::ProcessTool>,
     shells: Vec<helm::tools::ManagedShell>,
+    mcp: Vec<Arc<helm::tools::mcp::McpServer>>,
 }
-#[derive(Default)]
-struct ManagedResources(std::sync::Mutex<ManagedResourceState>);
+struct ManagedResources(std::sync::Mutex<ManagedResourceState>, bool);
+impl Default for ManagedResources {
+    fn default() -> Self {
+        Self(std::sync::Mutex::new(ManagedResourceState::default()), true)
+    }
+}
 impl ManagedResources {
+    fn local() -> Self {
+        Self(
+            std::sync::Mutex::new(ManagedResourceState::default()),
+            cfg!(target_os = "linux"),
+        )
+    }
     fn register(&self, tools: &mut ToolRegistry) -> Result<()> {
         let mut state = self
             .0
             .lock()
             .map_err(|_| anyhow::anyhow!("managed resources poisoned"))?;
         anyhow::ensure!(!state.closed, "managed resource admission closed");
+        state.terminals.retain(|resource| !resource.can_retire());
+        state.shells.retain(|resource| !resource.can_retire());
+        state.mcp.retain(|server| !server.can_retire());
         anyhow::ensure!(
             state.terminals.len() < 1024,
             "managed resource limit reached"
         );
+        for server in tools.mcp_servers() {
+            if !state.mcp.iter().any(|other| Arc::ptr_eq(other, &server)) {
+                state.mcp.push(server);
+            }
+        }
         if let Some(terminals) = tools.terminals() {
             state.terminals.push(terminals);
         }
         // Replace only an already-authorized shell; never reintroduce a filtered tool.
-        if tools.definitions().iter().any(|tool| tool.name == "shell") {
+        if self.1 && tools.definitions().iter().any(|tool| tool.name == "shell") {
             let shell = helm::tools::ManagedShell::new();
             tools.register(shell.clone());
             state.shells.push(shell);
         }
+        Ok(())
+    }
+    fn start_mcp(
+        &self,
+        start: impl FnOnce() -> Result<Arc<helm::tools::mcp::McpServer>>,
+    ) -> Result<Arc<helm::tools::mcp::McpServer>> {
+        let mut state = self
+            .0
+            .lock()
+            .map_err(|_| anyhow::anyhow!("managed resources poisoned"))?;
+        anyhow::ensure!(!state.closed, "managed resource admission closed");
+        let server = start()?;
+        state.mcp.push(server.clone());
+        Ok(server)
+    }
+    fn has_owned_work(&self) -> Result<bool> {
+        let state = self
+            .0
+            .lock()
+            .map_err(|_| anyhow::anyhow!("managed resources poisoned"))?;
+        Ok(state.terminals.iter().any(|item| item.has_owned_work())
+            || state.shells.iter().any(|item| item.has_owned_work()))
+    }
+    async fn shutdown_observed(&self, require_session_observation: bool) -> Result<()> {
+        let retained = self.close()?;
+        let observed = tokio::time::timeout(std::time::Duration::from_secs(15), async {
+            let terminals = futures_util::future::join_all(
+                retained
+                    .terminals
+                    .iter()
+                    .map(|item| item.shutdown(std::time::Duration::from_secs(5))),
+            )
+            .await;
+            let shells = futures_util::future::join_all(
+                retained
+                    .shells
+                    .iter()
+                    .map(|item| item.shutdown(std::time::Duration::from_secs(5))),
+            )
+            .await;
+            let mcp =
+                futures_util::future::join_all(retained.mcp.iter().map(|item| item.shutdown()))
+                    .await;
+            terminals.iter().all(|item| item.observation_complete)
+                && shells.iter().all(|item| item.observation_complete)
+                && mcp.iter().all(Result::is_ok)
+                && (!require_session_observation
+                    || retained.mcp.iter().all(|server| server.observed()))
+        })
+        .await
+        .unwrap_or(false);
+        anyhow::ensure!(
+            observed,
+            "runtime cleanup unconfirmed; execution remains blocked"
+        );
         Ok(())
     }
     fn close(&self) -> Result<ManagedResourceState> {
@@ -1333,6 +1402,7 @@ impl ManagedResources {
             closed: true,
             terminals: state.terminals.clone(),
             shells: state.shells.clone(),
+            mcp: state.mcp.clone(),
         })
     }
 }
@@ -1414,6 +1484,8 @@ async fn build_authorized_agent_bundle(
         Some(subagents.tool),
         Some(subagents.todos),
         Some(subagents.completion_tool),
+        managed_resources.as_deref(),
+        &context.policy,
     )
     .await?;
     if let Some(resources) = &managed_resources {
@@ -1617,7 +1689,10 @@ async fn build_tools(
     subagents: Option<SubagentTool>,
     todos: Option<TodoTool>,
     completion: Option<helm::completion::tool::CompletionTool>,
+    resources: Option<&ManagedResources>,
+    policy: &Policy,
 ) -> Result<ToolRegistry> {
+    policy.check_current()?;
     let mut tools = ToolRegistry::standard_with_terminal_limits(
         config.terminal_max_count,
         config.terminal_max_unread_bytes,
@@ -1644,13 +1719,24 @@ async fn build_tools(
         for (name, server) in &config.mcp_servers {
             let mut environment = tool_environment(config);
             environment.extend(server.env.clone());
-            let mcp = helm::tools::mcp::McpServer::start(
-                name,
-                &server.command,
-                &server.args,
-                &environment,
-            )
-            .with_context(|| format!("failed to start MCP server `{name}`"))?;
+            let start = || {
+                policy.check_current()?;
+                helm::tools::mcp::McpServer::start(
+                    name,
+                    &server.command,
+                    &server.args,
+                    &environment,
+                )
+                .map(Arc::new)
+                .with_context(|| format!("failed to start MCP server `{name}`"))
+            };
+            // Admission and observer registration are atomic with spawn. A
+            // cancelled child initialization cannot hide a server from cleanup.
+            let mcp = match resources {
+                Some(resources) => resources.start_mcp(start)?,
+                None => start()?,
+            };
+            tools.own_mcp(mcp.clone());
             servers.push(mcp);
             let mcp = servers.last().expect("new MCP server");
             tokio::time::timeout(config.timeout(), mcp.initialize())
@@ -1667,6 +1753,7 @@ async fn build_tools(
                     .with_context(|| format!("MCP server `{name}` exposed a duplicate tool"))?;
             }
         }
+        policy.check_current()?;
         Ok(())
     }
     .await;
@@ -2866,5 +2953,32 @@ mod workflow_command_tests {
                 command.get_name()
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod resource_handoff_tests {
+    use super::*;
+    #[test]
+    fn completed_detached_registrations_do_not_impose_a_lifetime_child_cap() {
+        let resources = ManagedResources::default();
+        for _ in 0..1100 {
+            let mut tools = ToolRegistry::standard();
+            resources.register(&mut tools).unwrap();
+        }
+        let state = resources.0.lock().unwrap();
+        assert_eq!(state.terminals.len(), 1);
+        assert_eq!(state.shells.len(), 1);
+    }
+    #[test]
+    fn retained_registry_and_closed_admission_cannot_retire_early() {
+        let resources = ManagedResources::default();
+        let mut first = ToolRegistry::standard();
+        resources.register(&mut first).unwrap();
+        let mut second = ToolRegistry::standard();
+        resources.register(&mut second).unwrap();
+        assert_eq!(resources.0.lock().unwrap().terminals.len(), 2);
+        resources.close().unwrap();
+        assert!(resources.register(&mut ToolRegistry::standard()).is_err());
     }
 }
