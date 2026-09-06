@@ -4,7 +4,7 @@ User mandate: comprehensively resolve remaining issues, including epics. Latest 
 
 ## Remove implicit execution barriers (2026-09-06)
 
-The operator requested a [guardrail removal plan](guardrail-removal-plan.md),
+The operator requested a [guardrail removal plan on GitHub](https://github.com/o-psi/voyage/blob/main/docs/guardrail-removal-plan.md),
 including removal of Helm-imposed token gates. Track it under
 [#5](https://github.com/o-psi/voyage/issues/5#issuecomment-5561523660) with the related
 context, completion, authority and resource issues. The plan removes arbitrary
