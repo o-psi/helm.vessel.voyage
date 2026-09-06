@@ -185,7 +185,7 @@ def main():
                 assert len(local['draft']['participants']) == 1
                 assert local['draft']['coordinator'] in local['draft']['participants']
                 terminal.send('v')
-                terminal.text('Operator token:')
+                terminal.text('Operator token')
                 terminal.send(f'http://127.0.0.1:{server.server_port}\t')
                 terminal.send(b'\x1b[200~' + TOKEN.encode() + b'\x1b[201~')
                 terminal.text('•')
