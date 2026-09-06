@@ -202,6 +202,29 @@ fn outgoing_limit_counts_encoded_utf8_without_delimiter() {
     assert_eq!(encode_frame(&json!("雪")).unwrap(), "\"雪\"\n".as_bytes());
 }
 
+#[test]
+fn response_envelopes_reject_malformed_and_ambiguous_values() {
+    for value in [
+        json!({"jsonrpc":"1.0","id":1,"result":{}}),
+        json!({"jsonrpc":"2.0","id":null,"result":{}}),
+        json!({"jsonrpc":"2.0","id":1,"result":{},"error":{"code":1,"message":"x"}}),
+        json!({"jsonrpc":"2.0","id":1,"error":{"code":"bad","message":"x"}}),
+        json!({"jsonrpc":"2.0","id":1,"method":7}),
+        json!({"jsonrpc":"2.0","method":"ping","result":{}}),
+        json!([]),
+    ] {
+        assert!(validate_envelope(&value).is_err(), "accepted {value}");
+    }
+    for value in [
+        json!({"jsonrpc":"2.0","id":1,"result":{}}),
+        json!({"jsonrpc":"2.0","id":"peer","method":"ping"}),
+        json!({"jsonrpc":"2.0","method":"notifications/progress","params":{}}),
+        json!({"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"x"}}),
+    ] {
+        validate_envelope(&value).unwrap();
+    }
+}
+
 #[tokio::test]
 async fn oversized_outgoing_request_has_no_effect_and_preserves_connection() {
     let directory = tempfile::tempdir().unwrap();
@@ -352,6 +375,35 @@ fn context(directory: &std::path::Path, maximum: usize) -> ToolContext {
         interaction: crate::tools::InteractionMode::Unattended,
         redactor: Arc::new(crate::tools::Redactor::default()),
     }
+}
+
+#[tokio::test]
+async fn owner_failure_after_dispatch_fences_connection_and_retains_cleanup() {
+    let directory = tempfile::tempdir().unwrap();
+    let server = peer("hold", directory.path());
+    server.initialize().await.unwrap();
+    server
+        .transport
+        .abort_after_dispatch
+        .store(true, Ordering::Release);
+    let result = server.transport.request("tools/call", json!({})).await;
+    assert!(result.unwrap_err().to_string().contains("owner stopped"));
+    assert!(server.transport.closed.load(Ordering::Acquire));
+    assert!(
+        server
+            .transport
+            .request("tools/call", json!({}))
+            .await
+            .is_err()
+    );
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while !server.can_retire() {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap();
+    server.shutdown().await.unwrap();
 }
 
 #[tokio::test]

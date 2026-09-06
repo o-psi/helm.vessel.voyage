@@ -38,6 +38,8 @@ struct Transport {
     next_id: AtomicU64,
     #[cfg(test)]
     written_bytes: std::sync::atomic::AtomicUsize,
+    #[cfg(test)]
+    abort_after_dispatch: AtomicBool,
     observed: AtomicBool,
     #[cfg(not(target_os = "linux"))]
     direct_observed: AtomicBool,
@@ -119,6 +121,8 @@ impl McpServer {
                 next_id: AtomicU64::new(1),
                 #[cfg(test)]
                 written_bytes: std::sync::atomic::AtomicUsize::new(0),
+                #[cfg(test)]
+                abort_after_dispatch: AtomicBool::new(false),
                 observed: AtomicBool::new(false),
                 #[cfg(not(target_os = "linux"))]
                 direct_observed: AtomicBool::new(false),
@@ -241,11 +245,17 @@ impl Tool for McpTool {
             result = tokio::time::timeout(context.timeout, self.transport.request("tools/call", json!({"name":self.remote_name,"arguments":arguments}))) => result.map_err(|_| ToolError::Timeout(context.timeout))??,
         };
         if let Some(error) = response.get("error") {
-            return Err(failed(format!("MCP error: {error}")));
+            return Err(failed(format!(
+                "MCP request failed with code {}",
+                error["code"]
+            )));
         }
-        let result = response.get("result").cloned().unwrap_or(Value::Null);
+        let result = response
+            .get("result")
+            .filter(|value| value.is_object())
+            .ok_or_else(|| failed("MCP tool response omitted an object result"))?;
         let is_error = result.get("isError").and_then(Value::as_bool) == Some(true);
-        let output = extract_content(&result);
+        let output = extract_content(result);
         if output.len() > context.max_output_bytes {
             return Err(failed("MCP result exceeds configured max_output_bytes"));
         }
@@ -277,11 +287,13 @@ impl Drop for RequestWaiter {
                 runtime.spawn(async move {
                     // Let the request owner issue bounded cancellation first.
                     tokio::time::sleep(std::time::Duration::from_millis(150)).await;
-                    let _ = tokio::time::timeout(
+                    if !matches!(tokio::time::timeout(
                         std::time::Duration::from_secs(5),
                         transport.shutdown(),
                     )
-                    .await;
+                    .await, Ok(Ok(()))) {
+                        tracing::warn!("MCP dropped-call cleanup unconfirmed; retained owner may retry observation");
+                    }
                 });
             }
         }
@@ -366,21 +378,16 @@ impl Transport {
             let operation = async {
                 transport.write_frame(&frame).await?;
                 sent = true;
+                #[cfg(test)]
+                if transport.abort_after_dispatch.swap(false, Ordering::AcqRel) {
+                    panic!("synthetic MCP owner failure after dispatch");
+                }
                 for unrelated in 0..=MAX_UNRELATED_FRAMES {
                     let value = transport.receive().await?;
-                    if value.get("jsonrpc").and_then(Value::as_str) != Some("2.0")
-                        || !value.is_object()
-                    {
-                        return Err(failed("MCP malformed JSON-RPC envelope"));
-                    }
+                    validate_envelope(&value)?;
                     if value.get("id").and_then(Value::as_u64) == Some(id)
                         && value.get("method").is_none()
                     {
-                        if value.get("result").is_some() == value.get("error").is_some() {
-                            return Err(failed(
-                                "MCP response requires exactly one result or error",
-                            ));
-                        }
                         return Ok(value);
                     }
                     if unrelated == MAX_UNRELATED_FRAMES {
@@ -401,7 +408,7 @@ impl Transport {
                 }
                 unreachable!()
             };
-            let result = tokio::select! {
+            let mut result = tokio::select! {
                 biased;
                 _ = cancel.cancelled() => Err(ToolError::Cancelled),
                 _ = transport.stopping.cancelled() => Err(failed("MCP connection is shutting down; outcome uncertain")),
@@ -421,17 +428,28 @@ impl Transport {
                     )
                     .await;
                 }
-                let _ =
+                if !matches!(
                     tokio::time::timeout(std::time::Duration::from_secs(5), transport.shutdown())
-                        .await;
+                        .await,
+                    Ok(Ok(()))
+                ) {
+                    tracing::warn!(
+                        "MCP connection retired with cleanup unconfirmed; external effect outcome uncertain"
+                    );
+                    result = Err(failed(
+                        "MCP connection retired; external effect outcome uncertain; cleanup unconfirmed",
+                    ));
+                }
             }
             let _ = sender.send(result);
         });
-        let result = receiver
-            .await
-            .map_err(|_| failed("MCP request owner stopped; outcome uncertain"));
-        waiter.armed = false;
-        result?
+        match receiver.await {
+            Ok(result) => {
+                waiter.armed = false;
+                result
+            }
+            Err(_) => Err(failed("MCP request owner stopped; outcome uncertain")),
+        }
     }
     async fn notify(&self, method: &str, params: Value) -> Result<(), ToolError> {
         self.send(json!({"jsonrpc":"2.0","method":method,"params":params}))
@@ -486,6 +504,31 @@ impl Transport {
                     .map_err(|_| failed("MCP malformed UTF-8 JSON frame"));
             }
         }
+    }
+}
+
+fn validate_envelope(value: &Value) -> Result<(), ToolError> {
+    let valid_id = |id: &Value| id.is_string() || id.as_i64().is_some() || id.as_u64().is_some();
+    let valid = value.get("jsonrpc").and_then(Value::as_str) == Some("2.0")
+        && if let Some(method) = value.get("method") {
+            method.is_string()
+                && value.get("id").is_none_or(valid_id)
+                && value.get("result").is_none()
+                && value.get("error").is_none()
+        } else {
+            value.get("id").is_some_and(valid_id)
+                && (value.get("result").is_some() != value.get("error").is_some())
+                && value.get("error").is_none_or(|error| {
+                    error
+                        .get("code")
+                        .is_some_and(|code| code.as_i64().is_some())
+                        && error.get("message").is_some_and(Value::is_string)
+                })
+        };
+    if valid {
+        Ok(())
+    } else {
+        Err(failed("MCP malformed JSON-RPC envelope"))
     }
 }
 

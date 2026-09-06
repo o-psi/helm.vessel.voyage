@@ -23,7 +23,7 @@ execute sessions.
 - Native tool calling across repeated model/tool turns
 - File reading/writing, SHA-guarded atomic patching, directory traversal, and search
 - One-shot shell execution plus persistent PTY processes with incremental I/O and resize
-- MCP stdio server discovery with collision-resistant namespaced tools
+- [MCP stdio discovery](../docs/mcp-transport.md) with namespaced tools and bounded transport lifecycles
 - Typed provider failures, transient retry/backoff, and cancellation-aware execution
 - Workspace confinement with explicit extra read/write roots and symlink-aware checks
 - Configurable approvals, deny list, command timeout, and output limits

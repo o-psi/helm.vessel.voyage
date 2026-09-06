@@ -68,3 +68,4 @@ docs/extensions.md
 docs/inference-budgets.md
 docs/github-workflows.md
 docs/inference-history.md
+docs/mcp-transport.md
