@@ -26,6 +26,10 @@ pub(super) struct Panel {
     job: Option<TitleJob>,
 }
 impl Panel {
+    #[cfg(test)]
+    pub(super) fn own_test_job(&mut self, task: tokio::task::JoinHandle<()>, cancel: CancellationToken) {
+        self.job = Some(TitleJob { task, cancel });
+    }
     pub fn matches(&self, session: Uuid, request: Uuid) -> bool {
         self.open && self.session == Some(session) && self.request == Some(request)
     }
