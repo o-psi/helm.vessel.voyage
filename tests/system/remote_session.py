@@ -244,18 +244,32 @@ def case(root,provider,profile=False,shutdown_failure=False,defaults=False):
         assert len(state['requests'])==count,'altered receipt dispatched'
         # Reject admission atomically if its public outbox cannot be committed.
         with sqlite3.connect(state['database']) as db:
+            # External schema writes can interrupt the worker's fail-closed
+            # replay reads. Hold the lock to make that boundary deterministic.
+            db.execute('BEGIN EXCLUSIVE')
             before_runs=db.execute('SELECT count(*) FROM runs').fetchone()[0]
             db.execute("CREATE TRIGGER fixture_public_failure BEFORE INSERT ON remote_events BEGIN SELECT RAISE(ABORT, 'fixture public failure'); END")
+            wait(lambda:not connected(),'external writer disconnects idle replay')
+        rejected_id=str(uuid.uuid4());rejected_expiry=int(time.time()*1000)+120000
         try:
-            rejected=command({'type':'submit','session_id':session,'expected_revision':completed['session']['revision'],'prompt':'Must not dispatch without public receipt.'})['reply']
+            def rejected_after_reconnect():
+                result=command({'type':'submit','session_id':session,'expected_revision':completed['session']['revision'],'prompt':'Must not dispatch without public receipt.'},rejected_id,rejected_expiry,expected=(200,404))
+                return result['reply'] if isinstance(result,dict) else None
+            rejected=wait(rejected_after_reconnect,'same admission denied after writer disconnect')
             assert rejected['type']=='denied',rejected
             assert len(state['requests'])==count,'failed admission dispatched provider'
             with sqlite3.connect(state['database']) as db:
                 assert db.execute('SELECT count(*) FROM runs').fetchone()[0]==before_runs
             assert command({'type':'inspect','session_id':session})['reply']['session']['revision']==completed['session']['revision']
         finally:
-            with sqlite3.connect(state['database']) as db:db.execute('DROP TRIGGER fixture_public_failure')
-        events=request(base+f'/events?session_id={session}&after=0&limit=128')
+            with sqlite3.connect(state['database']) as db:
+                db.execute('BEGIN EXCLUSIVE')
+                db.execute('DROP TRIGGER fixture_public_failure')
+                wait(lambda:not connected(),'external writer disconnects idle replay after rollback')
+        def replay_after_reconnect():
+            result=request(base+f'/events?session_id={session}&after=0&limit=128',expected=(200,404))
+            return result if isinstance(result,dict) else None
+        events=wait(replay_after_reconnect,'original replay after writer disconnect')
         assert events['type']=='replay',events
         kinds=[event['event']['type'] for event in events['events']]
         assert 'tool_started' in kinds and 'tool_finished' in kinds and kinds[-1]=='cleanup',kinds
