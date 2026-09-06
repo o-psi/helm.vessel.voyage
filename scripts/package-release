@@ -36,9 +36,6 @@ while IFS= read -r document || [[ -n "$document" ]]; do
   mkdir -p "$stage/$archive/$(dirname "$document")"
   cp "$document" "$stage/$archive/$document"
 done < scripts/release-documents.txt
-for license in LICENSE*; do
-  [[ ! -f "$license" ]] || cp "$license" "$stage/$archive/"
-done
 tar -C "$stage" -czf "$stage/$archive.tar.gz" "$archive"
 (cd "$stage" && if command -v sha256sum >/dev/null 2>&1; then sha256sum "$archive.tar.gz"; else shasum -a 256 "$archive.tar.gz"; fi) > "$stage/$archive.tar.gz.sha256"
 # Hard links publish complete files without replacing a concurrently created path.

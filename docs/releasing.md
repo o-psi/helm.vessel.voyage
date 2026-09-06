@@ -12,8 +12,9 @@ Archives contain Helm, Vessel and the mock setup-preview executable, Helm and Ve
 the README, linked guides, the example Helm configuration, and a SHA-256 checksum.
 Both full-archive packagers use `scripts/release-documents.txt` to include the same
 documentation paths without collecting unlisted local notes. Add newly linked
-documents to that manifest. Developer build/test commands in the guides require
-the source checkout; extracted binaries can run directly from `bin`.
+documents and any distributable license files to that manifest. Unlisted files,
+including files named `LICENSE*`, are not collected. Developer build/test commands
+in the guides require the source checkout; extracted binaries can run directly from `bin`.
 Linux builds can be reproduced locally with:
 
 ```sh

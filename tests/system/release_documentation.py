@@ -65,6 +65,8 @@ def main():
             shutil.copy2(ROOT / name, destination)
         # Unlisted local material must not enter published archives.
         (root / 'docs/untracked-private-note.md').write_text('UNTRACKED_PACKAGING_CANARY')
+        (root / 'LICENSE-private-note').write_text('UNLISTED_LICENSE_CANARY')
+        (root / 'LICENSE-link').symlink_to(root / 'docs/untracked-private-note.md')
         binaries = root / 'target/release'
         binaries.mkdir(parents=True)
         for name, variable in [('helm', 'HELM_BIN'), ('vessel', 'VESSEL_BIN'), ('voyage-installer', 'INSTALLER_BIN')]:
@@ -90,6 +92,8 @@ def main():
             relative = {name.removeprefix(prefix + '/') for name in names}
             assert set(documents) <= relative, sorted(set(documents) - relative)
             assert 'docs/untracked-private-note.md' not in relative
+            assert 'LICENSE-private-note' not in relative
+            assert 'LICENSE-link' not in relative
             for name in documents:
                 if not name.endswith('.md'):
                     continue
@@ -137,6 +141,28 @@ def main():
         guide.unlink()
         guide.write_bytes(guide_bytes)
         assert not list((root / 'dist').glob('*symlink-guide*'))
+        # A regular file reached through a symlinked directory is equally invalid.
+        (root / 'docs').rename(root / 'docs-real')
+        (root / 'docs').symlink_to(root / 'docs-real', target_is_directory=True)
+        package('symlink-ancestor', False)
+        (root / 'docs').unlink()
+        (root / 'docs-real').rename(root / 'docs')
+        assert not list((root / 'dist').glob('*symlink-ancestor*'))
+        # Either half of a prior publication reserves its label, even dangling links.
+        for label, extension, symlink in [('checksum-only', '.tar.gz.sha256', False),
+                                          ('archive-only', '.tar.gz', False),
+                                          ('dangling-archive', '.tar.gz', True)]:
+            reserved = root / 'dist' / archive.name.replace('documentation-test', label)
+            if extension.endswith('.sha256'):
+                reserved = reserved.with_name(reserved.name + '.sha256')
+            if symlink:
+                reserved.symlink_to(root / 'absent-artifact')
+            else:
+                reserved.write_bytes(b'EXISTING_ARTIFACT_CANARY')
+            package(label, False)
+            assert reserved.is_symlink() if symlink else reserved.read_bytes() == b'EXISTING_ARTIFACT_CANARY'
+            assert len(list((root / 'dist').glob('*' + label + '*'))) == 1
+            reserved.unlink()
         original_manifest = (root / 'scripts/release-documents.txt').read_text()
         (root / 'scripts/release-documents.txt').write_text('../outside.md\n')
         package('invalid-manifest', False)

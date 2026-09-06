@@ -35,7 +35,6 @@ try {
     New-Item (Split-Path $output) -ItemType Directory -Force | Out-Null
     Copy-Item -LiteralPath $document -Destination $output
   }
-  Get-ChildItem -File LICENSE* | Copy-Item -Destination $content
   $temporaryArchive = Join-Path $stage "$archive.zip"
   Compress-Archive -Path $content -DestinationPath $temporaryArchive
   $hash = (Get-FileHash $temporaryArchive -Algorithm SHA256).Hash.ToLower()
