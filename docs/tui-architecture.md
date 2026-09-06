@@ -149,6 +149,10 @@ Ratatui terminal is resized to clear stale cells, and subsequent redraws refresh
 pixel-based orientation when available. Resize does not submit input or change
 execution authority.
 
+Helm enables Crossterm's level-triggered Unix event reader so simultaneous resize
+and input readiness cannot leave a paste waiting for another keystroke. The
+resize/paste regression sends repeated pairs without an extra wake-up key.
+
 ## Regression checks
 
 [Shared fixtures](https://github.com/o-psi/voyage/blob/main/helm/src/tui/tests.rs) and the `tests/` modules cover commands,

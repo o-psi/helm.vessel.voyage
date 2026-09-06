@@ -47,6 +47,36 @@ def close_panel(terminal, count=1):
             terminal.drain()
 
 
+def resize_paste_burst(port):
+    """A resize must not strand readable input until a later key wakes it."""
+    with tempfile.TemporaryDirectory(prefix='helm-resize-paste-') as raw:
+        terminal = Terminal(Path(raw), port)
+        try:
+            terminal.text('Recent · Ctrl+S')
+            terminal.send(b'\x1b[109;5u')
+            terminal.text('Search models')
+            expected = ''
+            for index in range(20):
+                token = f'B{index:02}'
+                expected += token
+                terminal.resize(16, 48, 480, 320)
+                terminal.send(b'\x1b[200~' + token.encode() + b'\x1b[201~')
+                for _ in range(4):
+                    terminal.drain()
+                terminal.resize(32, 120, 1200, 640)
+                # No following key, sleep workaround, or resend may release it.
+                terminal.text(expected)
+            close_panel(terminal)
+            terminal.finish()
+            sessions = terminal.sessions()
+            assert len(sessions) == 1 and sessions[0].get('draft', '') == ''
+            assert expected not in json.dumps(sessions)
+            assert Server.model_posts == 0
+            print('paste routing: 20 simultaneous resize/input pairs passed')
+        finally:
+            terminal.close()
+
+
 def main():
     server = ThreadingHTTPServer(('127.0.0.1', 0), Server)
     threading.Thread(target=server.serve_forever, daemon=True).start()
@@ -54,6 +84,7 @@ def main():
              'workflow-picker', 'workflow-form', 'voyage-library', 'voyage-form',
              'sessions', 'terminals', 'active-steering')
     try:
+        resize_paste_burst(server.server_port)
         for case in cases:
             Server.model_posts = 0
             Server.requests = []
