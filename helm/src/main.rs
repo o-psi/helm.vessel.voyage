@@ -398,7 +398,12 @@ async fn main() -> Result<()> {
         anyhow::ensure!(
             matches!(
                 &cli.command,
-                None | Some(Command::Run { .. } | Command::Chat { .. } | Command::Models { .. } | Command::Github(_))
+                None | Some(
+                    Command::Run { .. }
+                        | Command::Chat { .. }
+                        | Command::Models { .. }
+                        | Command::Github(_)
+                )
             ) || matches!(&cli.command, Some(Command::Workflow(args)) if matches!(args.command, helm::workflow::WorkflowCommand::Run(_)))
                 || matches!(&cli.command, Some(Command::Managed(args)) if !args.administrative())
                 || matches!(&cli.command, Some(Command::RemoteWorker(args)) if !args.recover),
@@ -597,7 +602,7 @@ async fn main() -> Result<()> {
         resume: None,
         plain: false,
     }) {
-        Command::Github(args) => github_cli(&config,cli.workspace,args).await,
+        Command::Github(args) => github_cli(&config, cli.workspace, args).await,
         Command::Extension(_) => {
             unreachable!("extension command handled before provider configuration")
         }
@@ -1237,7 +1242,9 @@ async fn build_subagents_managed(
     allowed_tools.insert("subagent".to_string());
     allowed_tools.insert("todo".to_string());
     allowed_tools.insert("completion".to_string());
-    if config.github_enabled && parent_policy.effective().rules().github_enabled { allowed_tools.insert("github".into()); }
+    if config.github_enabled && parent_policy.effective().rules().github_enabled {
+        allowed_tools.insert("github".into());
+    }
     let budget = AgentBudget {
         max_tokens: config.max_tokens as u64,
 
@@ -1604,56 +1611,104 @@ fn redactor(config: &Config) -> Arc<Redactor> {
 }
 
 fn github_context(config: &Config, workspace: &std::path::Path) -> Result<ToolContext> {
-    let resolved = helm::runtime_policy::RuntimePolicy::resolve(config,workspace)?;
+    let resolved = helm::runtime_policy::RuntimePolicy::resolve(config, workspace)?;
     let config = resolved.config();
     let attended = io::stdin().is_terminal() && io::stderr().is_terminal();
     Ok(ToolContext {
         github: helm::github::Credential::from_config(config),
         completion: None,
         policy: Arc::new(resolved.policy().clone()),
-        approver: if attended { Arc::new(Terminal::default()) } else { Arc::new(UnattendedApprover { allow:false }) },
+        approver: if attended {
+            Arc::new(Terminal::default())
+        } else {
+            Arc::new(UnattendedApprover { allow: false })
+        },
         timeout: config.timeout(),
         max_output_bytes: config.max_output_bytes,
         environment: tool_environment(config),
         cancellation: tokio_util::sync::CancellationToken::new(),
         execution_id: uuid::Uuid::new_v4(),
-        interaction: if attended { InteractionMode::Attended } else { InteractionMode::Unattended },
+        interaction: if attended {
+            InteractionMode::Attended
+        } else {
+            InteractionMode::Unattended
+        },
         redactor: redactor(config),
     })
 }
 
-async fn github_import(context: &ToolContext, result: &mut helm::github::operator::CommandResult) -> Result<()> {
-    let Some(feedback) = result.feedback.take() else { return Ok(()) };
+async fn github_import(
+    context: &ToolContext,
+    result: &mut helm::github::operator::CommandResult,
+) -> Result<()> {
+    let Some(feedback) = result.feedback.take() else {
+        return Ok(());
+    };
     context.policy.check_current()?;
     let workspace = context.policy.workspace();
     let root = helm::config::default_data_dir().join("completion");
     let mut directories = std::fs::DirBuilder::new();
     directories.recursive(true);
-    #[cfg(unix)] { use std::os::unix::fs::DirBuilderExt; directories.mode(0o700); }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        directories.mode(0o700);
+    }
     directories.create(&root)?;
     let key = hex::encode(Sha256::digest(workspace.as_os_str().as_encoded_bytes()));
-    let coordinator = helm::completion::runtime::Coordinator::open(root.join(key),workspace)?;
-    let todo = todo_tool(workspace,coordinator).store().import_github_feedback(feedback,context.policy.clone(),context.cancellation.clone()).await?;
-    result.display.push_str(&format!("\nLocal task {} · {:?}; existing edits/status are retained on repeated import.",todo.id.0,todo.status));
+    let coordinator = helm::completion::runtime::Coordinator::open(root.join(key), workspace)?;
+    let todo = todo_tool(workspace, coordinator)
+        .store()
+        .import_github_feedback(
+            feedback,
+            context.policy.clone(),
+            context.cancellation.clone(),
+        )
+        .await?;
+    result.display.push_str(&format!(
+        "\nLocal task {} · {:?}; existing edits/status are retained on repeated import.",
+        todo.id.0, todo.status
+    ));
     Ok(())
 }
 
-async fn github_cli(config: &Config, workspace_arg: Option<PathBuf>, args: GithubArgs) -> Result<()> {
+async fn github_cli(
+    config: &Config,
+    workspace_arg: Option<PathBuf>,
+    args: GithubArgs,
+) -> Result<()> {
     let (owner, mut session) = if let Some(reference) = args.session {
         let (owner, session) = SessionStore::default().load_owned(&reference).await?;
-        if let Some(workspace) = &workspace_arg { anyhow::ensure!(workspace.canonicalize()? == session.workspace.canonicalize()?, "selected workspace differs from the voyage"); }
-        (Some(owner),Some(session))
-    } else { (None,None) };
-    let workspace = if let Some(session) = &session { session.workspace.clone() } else { config.resolve_workspace(workspace_arg)? };
-    let context = github_context(config,&workspace)?;
+        if let Some(workspace) = &workspace_arg {
+            anyhow::ensure!(
+                workspace.canonicalize()? == session.workspace.canonicalize()?,
+                "selected workspace differs from the voyage"
+            );
+        }
+        (Some(owner), Some(session))
+    } else {
+        (None, None)
+    };
+    let workspace = if let Some(session) = &session {
+        session.workspace.clone()
+    } else {
+        config.resolve_workspace(workspace_arg)?
+    };
+    let context = github_context(config, &workspace)?;
     match &args.args.command {
         helm::github::operator::Command::References => {
             let session = session.as_ref().context("references requires --session")?;
-            println!("{}",safe_diagnostic(&serde_json::to_string_pretty(&session.github_references)?));
+            println!(
+                "{}",
+                safe_diagnostic(&serde_json::to_string_pretty(&session.github_references)?)
+            );
             return Ok(());
         }
         helm::github::operator::Command::Unreference { url } => {
-            anyhow::ensure!(context.policy.access_mode() != AccessMode::ReadOnly,"GitHub reference removal is denied in read-only mode");
+            anyhow::ensure!(
+                context.policy.access_mode() != AccessMode::ReadOnly,
+                "GitHub reference removal is denied in read-only mode"
+            );
             let session = session.as_mut().context("unreference requires --session")?;
             let removed = session.forget_github(&helm::github::repository::Object::parse(url)?)?;
             owner.as_ref().expect("session owner").save(session).await?;
@@ -1662,21 +1717,28 @@ async fn github_cli(config: &Config, workspace_arg: Option<PathBuf>, args: Githu
         }
         _ => (),
     }
-    let execution = helm::github::operator::execute_args(context.clone(),session.as_ref().map(|session|session.id),args.args);
+    let execution = helm::github::operator::execute_args(
+        context.clone(),
+        session.as_ref().map(|session| session.id),
+        args.args,
+    );
     let mut result = tokio::select! {
         biased;
         signal = tokio::signal::ctrl_c() => { signal?; context.cancellation.cancel(); anyhow::bail!("GitHub operation interrupted; inspect its receipt before repeating"); }
         result = execution => result?,
     };
-    github_import(&context,&mut result).await?;
+    github_import(&context, &mut result).await?;
     if let Some(reference) = result.reference {
         context.policy.check_current()?;
-        anyhow::ensure!(context.policy.access_mode() != AccessMode::ReadOnly,"GitHub reference update is denied in read-only mode");
+        anyhow::ensure!(
+            context.policy.access_mode() != AccessMode::ReadOnly,
+            "GitHub reference update is denied in read-only mode"
+        );
         let session = session.as_mut().context("reference needs --session")?;
         session.remember_github(reference)?;
         owner.as_ref().expect("session owner").save(session).await?;
     }
-    println!("{}",safe_diagnostic(&result.display));
+    println!("{}", safe_diagnostic(&result.display));
     Ok(())
 }
 
@@ -1694,20 +1756,26 @@ async fn github_plain(
             agent.github_operator_authority(write)
         } else {
             context.policy.check_current()?;
-            anyhow::ensure!(!write || context.policy.access_mode() != AccessMode::ReadOnly,
-                "GitHub reference edits are denied in read-only mode");
+            anyhow::ensure!(
+                !write || context.policy.access_mode() != AccessMode::ReadOnly,
+                "GitHub reference edits are denied in read-only mode"
+            );
             Ok(())
         }
     };
     authority(false)?;
     if words.as_slice() == ["references"] {
-        println!("{}", safe_diagnostic(&serde_json::to_string_pretty(&session.github_references)?));
+        println!(
+            "{}",
+            safe_diagnostic(&serde_json::to_string_pretty(&session.github_references)?)
+        );
         return Ok(());
     }
     if words.first().is_some_and(|word| word == "unreference") {
         anyhow::ensure!(words.len() == 2, "usage: /github unreference URL");
         authority(true)?;
-        let removed = session.forget_github(&helm::github::repository::Object::parse(&words[1])?)?;
+        let removed =
+            session.forget_github(&helm::github::repository::Object::parse(&words[1])?)?;
         store.save(session).await?;
         println!("reference removed: {removed}");
         return Ok(());
@@ -1715,9 +1783,12 @@ async fn github_plain(
     let cancel = context.cancellation.clone();
     let execution = async {
         if let Some(agent) = agent {
-            agent.github_command(session.id, words, cancel.clone()).await
+            agent
+                .github_command(session.id, words, cancel.clone())
+                .await
         } else {
-            let mut result = helm::github::operator::execute(context.clone(), Some(session.id), words).await?;
+            let mut result =
+                helm::github::operator::execute(context.clone(), Some(session.id), words).await?;
             github_import(&context, &mut result).await?;
             Ok(result)
         }
@@ -2338,9 +2409,19 @@ async fn chat(
             _ => {}
         }
         if prompt == "/github" || prompt.starts_with("/github ") {
-            if let Err(error) = github_plain(&config, agent.as_ref(), &store, &mut session,
-                prompt.strip_prefix("/github").unwrap_or_default().trim()).await {
-                eprintln!("{}", safe_diagnostic(&redactor(&config).redact(error.to_string())));
+            if let Err(error) = github_plain(
+                &config,
+                agent.as_ref(),
+                &store,
+                &mut session,
+                prompt.strip_prefix("/github").unwrap_or_default().trim(),
+            )
+            .await
+            {
+                eprintln!(
+                    "{}",
+                    safe_diagnostic(&redactor(&config).redact(error.to_string()))
+                );
             }
             continue;
         }

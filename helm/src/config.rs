@@ -177,7 +177,11 @@ pub struct ConfigOverrideSpec {
 }
 
 pub const CONFIG_OVERRIDE_SPECS: &[ConfigOverrideSpec] = &[
-    ConfigOverrideSpec { key: "github_enabled", description: "Enable the dedicated GitHub capability using HELM_GITHUB_TOKEN", kind: ConfigValueKind::Bool },
+    ConfigOverrideSpec {
+        key: "github_enabled",
+        description: "Enable the dedicated GitHub capability using HELM_GITHUB_TOKEN",
+        kind: ConfigValueKind::Bool,
+    },
     ConfigOverrideSpec {
         key: "provider",
         description: "Provider transport",
@@ -703,12 +707,18 @@ mod tests {
     fn github_opt_in_preserves_secret_inheritance_refusal() {
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join("config.toml");
-        std::fs::write(&path,"github_enabled = true\n").unwrap();
+        std::fs::write(&path, "github_enabled = true\n").unwrap();
         let mut config = Config::load(Some(&path)).unwrap();
         assert!(config.github_enabled);
         assert!(config.validate().is_ok());
         config.inherit_env.push("HELM_GITHUB_TOKEN".into());
-        assert!(config.validate().unwrap_err().to_string().contains("refusing to inherit"));
+        assert!(
+            config
+                .validate()
+                .unwrap_err()
+                .to_string()
+                .contains("refusing to inherit")
+        );
         assert!(!Config::default().github_enabled);
     }
 

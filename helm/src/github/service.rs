@@ -24,7 +24,10 @@ pub(super) async fn database<T: Send + 'static>(
 ) -> Result<T> {
     database_at(Store::default_path(), work).await
 }
-async fn database_at<T: Send + 'static>(path: PathBuf, work: impl FnOnce(&mut Store) -> Result<T> + Send + 'static) -> Result<T> {
+async fn database_at<T: Send + 'static>(
+    path: PathBuf,
+    work: impl FnOnce(&mut Store) -> Result<T> + Send + 'static,
+) -> Result<T> {
     static SLOTS: OnceLock<Arc<tokio::sync::Semaphore>> = OnceLock::new();
     let result = tokio::time::timeout(Duration::from_secs(10), async {
         let slot = SLOTS
@@ -59,18 +62,30 @@ pub struct Service {
     directory: PathBuf,
 }
 impl Service {
-    pub async fn logs(&self, object: super::repository::Object, job: u64) -> Result<super::logs::Log> {
+    pub async fn logs(
+        &self,
+        object: super::repository::Object,
+        job: u64,
+    ) -> Result<super::logs::Log> {
         self.current()?;
-        let mut log = super::logs::read(&self.client,object,job,&self.context.cancellation).await?;
+        let mut log =
+            super::logs::read(&self.client, object, job, &self.context.cancellation).await?;
         log.text = self.redact(&log.text);
         self.current()?;
         Ok(log)
     }
     pub fn new(mut context: ToolContext, session: Option<Uuid>) -> Result<Self> {
         context.policy.check_current()?;
-        ensure!(context.policy.effective().rules().github_enabled,"GitHub capability is disabled by current local authority");
+        ensure!(
+            context.policy.effective().rules().github_enabled,
+            "GitHub capability is disabled by current local authority"
+        );
         let token = context.github.as_ref().map(|credential|credential.expose().to_owned()).ok_or_else(|| anyhow::anyhow!("GitHub capability unavailable; enable github_enabled and provide HELM_GITHUB_TOKEN"))?;
-        context.redactor = Arc::new(context.redactor.with_additional(super::credential_forms(&token)));
+        context.redactor = Arc::new(
+            context
+                .redactor
+                .with_additional(super::credential_forms(&token)),
+        );
         let reference = context
             .completion
             .as_ref()
@@ -97,8 +112,17 @@ impl Service {
         })
     }
     #[cfg(test)]
-    pub(crate) fn fixture(context: ToolContext, session: Option<Uuid>, origin: reqwest::Url, directory: PathBuf) -> Result<Self> {
-        let token = context.github.as_ref().map(|credential|credential.expose().to_owned()).ok_or_else(|| anyhow::anyhow!("fixture needs dedicated synthetic token"))?;
+    pub(crate) fn fixture(
+        context: ToolContext,
+        session: Option<Uuid>,
+        origin: reqwest::Url,
+        directory: PathBuf,
+    ) -> Result<Self> {
+        let token = context
+            .github
+            .as_ref()
+            .map(|credential| credential.expose().to_owned())
+            .ok_or_else(|| anyhow::anyhow!("fixture needs dedicated synthetic token"))?;
         let policy = context.policy.clone();
         let mut service = Self::new(context, session)?;
         service.client = Client::fixture(token, origin)?.with_policy(policy);
@@ -113,7 +137,10 @@ impl Service {
     }
     fn current(&self) -> Result<()> {
         self.context.policy.check_current()?;
-        ensure!(self.context.policy.effective().rules().github_enabled,"GitHub capability is disabled by current local authority");
+        ensure!(
+            self.context.policy.effective().rules().github_enabled,
+            "GitHub capability is disabled by current local authority"
+        );
         ensure!(
             !self.context.cancellation.is_cancelled(),
             "GitHub operation cancelled"
@@ -139,7 +166,9 @@ impl Service {
     fn secret_free(&self, draft: &Draft) -> Result<()> {
         let token = self
             .context
-            .github.as_ref().map(|credential|credential.expose())
+            .github
+            .as_ref()
+            .map(|credential| credential.expose())
             .expect("validated credential");
         fn contains(value: &Value, token: &str, redactor: &crate::tools::Redactor) -> bool {
             match value {
@@ -196,7 +225,9 @@ impl Service {
     pub fn redact(&self, text: &str) -> String {
         self.context.redactor.redact(text).replace(
             self.context
-                .github.as_ref().map(|credential|credential.expose())
+                .github
+                .as_ref()
+                .map(|credential| credential.expose())
                 .expect("validated credential"),
             "[REDACTED]",
         )
@@ -330,7 +361,9 @@ impl Service {
             !self.context.redactor.contains_secret(&preview)
                 && !preview.contains(
                     self.context
-                        .github.as_ref().map(|credential|credential.expose())
+                        .github
+                        .as_ref()
+                        .map(|credential| credential.expose())
                         .expect("validated credential")
                 ),
             "GitHub exact preview contains a configured secret"
@@ -350,7 +383,10 @@ impl Service {
         self.current()?;
         Ok(())
     }
-    async fn validate_draft(&self, draft: &Draft) -> Result<(Option<String>,Option<context::Base>)> {
+    async fn validate_draft(
+        &self,
+        draft: &Draft,
+    ) -> Result<(Option<String>, Option<context::Base>)> {
         let detail =
             context::details(&self.client, &draft.object, &self.context.cancellation).await?;
         let head = if draft.object.kind == ObjectKind::PullRequest {
@@ -358,7 +394,11 @@ impl Service {
         } else {
             None
         };
-        let base = if head.is_some() { Some(context::base(&detail)?) } else { None };
+        let base = if head.is_some() {
+            Some(context::base(&detail)?)
+        } else {
+            None
+        };
         if let Action::Review {
             commit_id,
             comments,
@@ -418,9 +458,12 @@ impl Service {
                 context::sha(&current["head"]["sha"])? == *commit_id,
                 "pull request changed during inline validation"
             );
-            ensure!(Some(context::base(&current)?) == base, "pull request base changed during inline validation");
+            ensure!(
+                Some(context::base(&current)?) == base,
+                "pull request base changed during inline validation"
+            );
         }
-        Ok((head,base))
+        Ok((head, base))
     }
     fn mutation_allowed(&self) -> Result<()> {
         self.context.policy.check_current()?;
@@ -463,7 +506,10 @@ impl Service {
             "GitHub authenticated account changed"
         );
         ensure!(
-            (operation.observed_head.clone(),operation.observed_base.clone()) == self.validate_draft(&operation.draft).await?,
+            (
+                operation.observed_head.clone(),
+                operation.observed_base.clone()
+            ) == self.validate_draft(&operation.draft).await?,
             "GitHub object head changed since preparation"
         );
         let preview = exact_preview(&operation)?;
@@ -471,7 +517,9 @@ impl Service {
             !self.context.redactor.contains_secret(&preview)
                 && !preview.contains(
                     self.context
-                        .github.as_ref().map(|credential|credential.expose())
+                        .github
+                        .as_ref()
+                        .map(|credential| credential.expose())
                         .expect("validated credential")
                 ),
             "GitHub exact preview contains a configured secret"
@@ -497,7 +545,10 @@ impl Service {
             "GitHub authenticated account changed after approval"
         );
         ensure!(
-            (operation.observed_head.clone(),operation.observed_base.clone()) == self.validate_draft(&operation.draft).await?,
+            (
+                operation.observed_head.clone(),
+                operation.observed_base.clone()
+            ) == self.validate_draft(&operation.draft).await?,
             "GitHub object head changed after approval"
         );
         self.mutation_allowed()?;
@@ -545,17 +596,27 @@ impl Service {
 }
 
 fn bounded_projection(text: String, maximum: usize) -> Result<String> {
-    if text.len() <= maximum { return Ok(text); }
+    if text.len() <= maximum {
+        return Ok(text);
+    }
     let mut end = maximum.min(text.len());
     loop {
-        while !text.is_char_boundary(end) { end -= 1; }
-        let encoded = serde_json::to_string(&serde_json::json!({"incomplete":true,"reason":"local output byte limit; use operator CLI or narrower context","excerpt":&text[..end]}))?;
-        if encoded.len() <= maximum { return Ok(encoded); }
-        ensure!(end > 0, "GitHub output budget is too small for an honest incomplete result");
+        while !text.is_char_boundary(end) {
+            end -= 1;
+        }
+        let encoded = serde_json::to_string(
+            &serde_json::json!({"incomplete":true,"reason":"local output byte limit; use operator CLI or narrower context","excerpt":&text[..end]}),
+        )?;
+        if encoded.len() <= maximum {
+            return Ok(encoded);
+        }
+        ensure!(
+            end > 0,
+            "GitHub output budget is too small for an honest incomplete result"
+        );
         end = end.saturating_sub(encoded.len().saturating_sub(maximum).max(1));
     }
 }
-
 
 fn exact_preview(operation: &Operation) -> Result<String> {
     json_preview(
@@ -631,14 +692,20 @@ mod projection_tests {
     use super::*;
     #[test]
     fn final_encoded_projection_never_exceeds_budget() {
-        for input in ["\\\"".repeat(2048), "\0\n\t".repeat(2048), "🧭日本語".repeat(2048)] {
+        for input in [
+            "\\\"".repeat(2048),
+            "\0\n\t".repeat(2048),
+            "🧭日本語".repeat(2048),
+        ] {
             for maximum in [0, 1, 64, 128, 256, 511, 1024] {
                 let result = bounded_projection(input.clone(), maximum);
                 if let Ok(result) = result {
                     assert!(result.len() <= maximum);
                     let value: Value = serde_json::from_str(&result).unwrap();
                     assert_eq!(value["incomplete"], true);
-                } else { assert!(maximum < 256); }
+                } else {
+                    assert!(maximum < 256);
+                }
             }
         }
     }

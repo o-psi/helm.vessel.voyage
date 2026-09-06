@@ -10,14 +10,30 @@ fn github_profile_opt_in_is_visible_and_cannot_expand_a_ceiling() {
     let temp = root();
     let base = rules();
     assert!(!base.github_enabled);
-    assert!(serde_json::to_value(&base).unwrap().get("github_enabled").is_none());
-    let enabled = Layer::new(LayerKind::Explicit,"github-opt-in",Overrides { github_enabled:Some(true),..Overrides::default() }).unwrap();
-    let before = resolve_test(temp.path(),&base,&[],None).unwrap();
-    let after = resolve_test(temp.path(),&base,std::slice::from_ref(&enabled),None).unwrap();
+    assert!(
+        serde_json::to_value(&base)
+            .unwrap()
+            .get("github_enabled")
+            .is_none()
+    );
+    let enabled = Layer::new(
+        LayerKind::Explicit,
+        "github-opt-in",
+        Overrides {
+            github_enabled: Some(true),
+            ..Overrides::default()
+        },
+    )
+    .unwrap();
+    let before = resolve_test(temp.path(), &base, &[], None).unwrap();
+    let after = resolve_test(temp.path(), &base, std::slice::from_ref(&enabled), None).unwrap();
     assert!(after.rules().github_enabled);
-    assert!(transition(&before,&after).unwrap().requires_confirmation);
-    let ceiling = CeilingDocument { schema:1,rules:base.clone() };
-    let restricted = resolve_test(temp.path(),&base,&[enabled],Some(&ceiling)).unwrap();
+    assert!(transition(&before, &after).unwrap().requires_confirmation);
+    let ceiling = CeilingDocument {
+        schema: 1,
+        rules: base.clone(),
+    };
+    let restricted = resolve_test(temp.path(), &base, &[enabled], Some(&ceiling)).unwrap();
     assert!(!restricted.rules().github_enabled);
 }
 fn resolve_test(

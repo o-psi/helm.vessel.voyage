@@ -27,7 +27,11 @@ pub(super) struct Panel {
 }
 impl Panel {
     #[cfg(test)]
-    pub(super) fn own_test_job(&mut self, task: tokio::task::JoinHandle<()>, cancel: CancellationToken) {
+    pub(super) fn own_test_job(
+        &mut self,
+        task: tokio::task::JoinHandle<()>,
+        cancel: CancellationToken,
+    ) {
         self.job = Some(TitleJob { task, cancel });
     }
     pub fn matches(&self, session: Uuid, request: Uuid) -> bool {
@@ -94,8 +98,16 @@ struct ScopedApprover {
     session: Uuid,
     request: Uuid,
 }
-pub(super) fn scoped_approver(tx: mpsc::UnboundedSender<UiEvent>, session: Uuid, request: Uuid) -> Arc<dyn Approver> {
-    Arc::new(ScopedApprover { tx, session, request })
+pub(super) fn scoped_approver(
+    tx: mpsc::UnboundedSender<UiEvent>,
+    session: Uuid,
+    request: Uuid,
+) -> Arc<dyn Approver> {
+    Arc::new(ScopedApprover {
+        tx,
+        session,
+        request,
+    })
 }
 #[async_trait]
 impl Approver for ScopedApprover {
@@ -159,7 +171,10 @@ mod tests {
             open: true,
             session: Some(session),
             request: Some(request),
-            job: Some(TitleJob { task, cancel: cancel.clone() }),
+            job: Some(TitleJob {
+                task,
+                cancel: cancel.clone(),
+            }),
             ..Default::default()
         };
         assert!(panel.matches(session, request));

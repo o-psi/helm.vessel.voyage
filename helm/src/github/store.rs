@@ -42,26 +42,43 @@ fn audit_snapshot(connection: &Connection) -> Result<AuditSnapshot> {
         let id: String = row.get(0)?;
         let digest: String = row.get(1)?;
         let text: String = row.get(2)?;
-        let entry: Audit = serde_json::from_str(&text).map_err(|_| anyhow::anyhow!("GitHub audit is corrupt"))?;
-        ensure!(entry.id.to_string() == id && entry.digest == digest
-            && digest.len() == 64 && digest.bytes().all(|byte| byte.is_ascii_hexdigit())
-            && matches!(entry.former_state, State::Published | State::Cancelled | State::Disposed),
-            "GitHub audit identity is corrupt");
+        let entry: Audit =
+            serde_json::from_str(&text).map_err(|_| anyhow::anyhow!("GitHub audit is corrupt"))?;
+        ensure!(
+            entry.id.to_string() == id
+                && entry.digest == digest
+                && digest.len() == 64
+                && digest.bytes().all(|byte| byte.is_ascii_hexdigit())
+                && matches!(
+                    entry.former_state,
+                    State::Published | State::Cancelled | State::Disposed
+                ),
+            "GitHub audit identity is corrupt"
+        );
         entry.owner.scope()?;
         entry.object.validate()?;
-        ensure!((entry.former_state == State::Published) == entry.receipt.is_some()
-            && (entry.former_state == State::Disposed) == entry.disposition.is_some(),
-            "GitHub audit terminal evidence is corrupt");
+        ensure!(
+            (entry.former_state == State::Published) == entry.receipt.is_some()
+                && (entry.former_state == State::Disposed) == entry.disposition.is_some(),
+            "GitHub audit terminal evidence is corrupt"
+        );
         if let Some(note) = &entry.disposition {
-            ensure!(!note.trim().is_empty() && note.len() <= 1024,"GitHub audit disposition is corrupt");
+            ensure!(
+                !note.trim().is_empty() && note.len() <= 1024,
+                "GitHub audit disposition is corrupt"
+            );
         }
         if let Some(receipt) = &entry.receipt {
             let prefix = entry.object.url();
-            ensure!(receipt.id > 0 && receipt.id <= i64::MAX as u64
-                && (receipt.url == format!("{prefix}#issuecomment-{}",receipt.id)
-                    || (entry.object.kind == super::repository::ObjectKind::PullRequest
-                        && receipt.url == format!("{prefix}#pullrequestreview-{}",receipt.id))),
-                "GitHub audit receipt is corrupt");
+            ensure!(
+                receipt.id > 0
+                    && receipt.id <= i64::MAX as u64
+                    && (receipt.url == format!("{prefix}#issuecomment-{}", receipt.id)
+                        || (entry.object.kind == super::repository::ObjectKind::PullRequest
+                            && receipt.url
+                                == format!("{prefix}#pullrequestreview-{}", receipt.id))),
+                "GitHub audit receipt is corrupt"
+            );
         }
         entries.push(entry);
     }
@@ -195,19 +212,28 @@ fn decode(text: &str) -> Result<Operation> {
         (operation.state == State::Published) == operation.receipt.is_some(),
         "GitHub operation receipt state is corrupt"
     );
-    ensure!((operation.state == State::Disposed) == operation.disposition.is_some(),
-        "GitHub operation disposition state is corrupt");
+    ensure!(
+        (operation.state == State::Disposed) == operation.disposition.is_some(),
+        "GitHub operation disposition state is corrupt"
+    );
     if let Some(note) = &operation.disposition {
-        ensure!(!note.trim().is_empty() && note.len() <= 1024, "GitHub operation disposition is corrupt");
+        ensure!(
+            !note.trim().is_empty() && note.len() <= 1024,
+            "GitHub operation disposition is corrupt"
+        );
     }
     if let Some(receipt) = &operation.receipt {
         let marker = match operation.draft.action {
             super::publication::Action::Comment { .. } => "issuecomment",
             super::publication::Action::Review { .. } => "pullrequestreview",
         };
-        ensure!(receipt.id > 0 && receipt.id <= i64::MAX as u64
-            && receipt.url == format!("{}#{marker}-{}",operation.draft.object.url(),receipt.id),
-            "GitHub operation receipt identity is corrupt");
+        ensure!(
+            receipt.id > 0
+                && receipt.id <= i64::MAX as u64
+                && receipt.url
+                    == format!("{}#{marker}-{}", operation.draft.object.url(), receipt.id),
+            "GitHub operation receipt identity is corrupt"
+        );
     }
     Ok(operation)
 }
@@ -219,16 +245,52 @@ fn schema(connection: &Connection) -> Result<()> {
         })?;
     ensure!(version == 1, "unsupported GitHub operation schema");
     for (table, expected) in [
-        ("github_schema", vec![("id","INTEGER",0,1),("version","INTEGER",1,0)]),
-        ("operations", vec![("id","TEXT",0,1),("digest","TEXT",1,0),("owner","TEXT",1,0),("state","TEXT",1,0),("data","TEXT",1,0)]),
-        ("audit", vec![("sequence","INTEGER",0,1),("id","TEXT",1,0),("digest","TEXT",1,0),("data","TEXT",1,0)]),
+        (
+            "github_schema",
+            vec![("id", "INTEGER", 0, 1), ("version", "INTEGER", 1, 0)],
+        ),
+        (
+            "operations",
+            vec![
+                ("id", "TEXT", 0, 1),
+                ("digest", "TEXT", 1, 0),
+                ("owner", "TEXT", 1, 0),
+                ("state", "TEXT", 1, 0),
+                ("data", "TEXT", 1, 0),
+            ],
+        ),
+        (
+            "audit",
+            vec![
+                ("sequence", "INTEGER", 0, 1),
+                ("id", "TEXT", 1, 0),
+                ("digest", "TEXT", 1, 0),
+                ("data", "TEXT", 1, 0),
+            ],
+        ),
     ] {
         let mut statement = connection.prepare(&format!("PRAGMA table_info({table})"))?;
-        let columns = statement.query_map([],|row| Ok((row.get::<_,String>(1)?,row.get::<_,String>(2)?,row.get::<_,i64>(3)?,row.get::<_,i64>(5)?)))?
+        let columns = statement
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, i64>(3)?,
+                    row.get::<_, i64>(5)?,
+                ))
+            })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
-        ensure!(columns.len() == expected.len() && columns.iter().zip(expected).all(|(actual,expected)|
-            actual.0 == expected.0 && actual.1 == expected.1 && actual.2 == expected.2 && actual.3 == expected.3),
-            "GitHub journal table contract is corrupt; restore its private evidence");
+        ensure!(
+            columns.len() == expected.len()
+                && columns
+                    .iter()
+                    .zip(expected)
+                    .all(|(actual, expected)| actual.0 == expected.0
+                        && actual.1 == expected.1
+                        && actual.2 == expected.2
+                        && actual.3 == expected.3),
+            "GitHub journal table contract is corrupt; restore its private evidence"
+        );
     }
     Ok(())
 }
@@ -248,12 +310,24 @@ impl Store {
         connection.busy_timeout(Duration::ZERO)?;
         #[cfg(windows)]
         crate::attachment::journal::storage::configure(&connection)?;
-        connection.execute_batch("PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON; PRAGMA temp_store=MEMORY;")?;
+        connection.execute_batch(
+            "PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON; PRAGMA temp_store=MEMORY;",
+        )?;
         let page_size: u64 = connection.query_row("PRAGMA page_size", [], |row| row.get(0))?;
-        ensure!((512..=65536).contains(&page_size), "GitHub store page size is unsupported");
+        ensure!(
+            (512..=65536).contains(&page_size),
+            "GitHub store page size is unsupported"
+        );
         let maximum_pages = 96 * 1024 * 1024 / page_size;
-        let actual_maximum: u64 = connection.query_row(&format!("PRAGMA max_page_count={maximum_pages}"), [], |row| row.get(0))?;
-        ensure!(actual_maximum <= maximum_pages, "GitHub store exceeds its physical capacity");
+        let actual_maximum: u64 = connection.query_row(
+            &format!("PRAGMA max_page_count={maximum_pages}"),
+            [],
+            |row| row.get(0),
+        )?;
+        ensure!(
+            actual_maximum <= maximum_pages,
+            "GitHub store exceeds its physical capacity"
+        );
         let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         tx.execute_batch("CREATE TABLE IF NOT EXISTS github_schema(id INTEGER PRIMARY KEY CHECK(id=1), version INTEGER NOT NULL);")?;
         let version: Option<i64> = tx
@@ -333,8 +407,10 @@ impl Store {
             "GitHub operation capacity reached; inspect and forget terminal records explicitly"
         );
         let audit_count: u64 = tx.query_row("SELECT count(*) FROM audit", [], |row| row.get(0))?;
-        ensure!(audit_count < MAX_AUDIT - MAX_OPERATIONS,
-            "GitHub audit admission capacity reached; export and explicitly maintain the audit before preparing more operations");
+        ensure!(
+            audit_count < MAX_AUDIT - MAX_OPERATIONS,
+            "GitHub audit admission capacity reached; export and explicitly maintain the audit before preparing more operations"
+        );
         let now = Utc::now();
         let operation = Operation {
             id: Uuid::new_v4(),
@@ -410,11 +486,19 @@ impl Store {
 
     pub(super) fn admin_list(&self, offset: u32) -> Result<Vec<Operation>> {
         schema(&self.connection)?;
-        ensure!(offset <= MAX_OPERATIONS as u32, "GitHub operation offset exceeds limit");
-        let mut statement = self.connection.prepare("SELECT id FROM operations ORDER BY rowid DESC LIMIT 50 OFFSET ?1")?;
-        let ids = statement.query_map([offset], |row| row.get::<_,String>(0))?
+        ensure!(
+            offset <= MAX_OPERATIONS as u32,
+            "GitHub operation offset exceeds limit"
+        );
+        let mut statement = self
+            .connection
+            .prepare("SELECT id FROM operations ORDER BY rowid DESC LIMIT 50 OFFSET ?1")?;
+        let ids = statement
+            .query_map([offset], |row| row.get::<_, String>(0))?
             .collect::<rusqlite::Result<Vec<_>>>()?;
-        ids.into_iter().map(|id| self.admin_inspect(Uuid::parse_str(&id)?)).collect()
+        ids.into_iter()
+            .map(|id| self.admin_inspect(Uuid::parse_str(&id)?))
+            .collect()
     }
 
     pub(super) fn audit(&self) -> Result<AuditSnapshot> {
@@ -424,9 +508,14 @@ impl Store {
     /// The operator must export and confirm this exact snapshot first. This
     /// removes local audit evidence, never authorizes a remote request retry.
     pub(super) fn clear_audit(&mut self, expected: &str) -> Result<u64> {
-        let tx = self.connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let tx = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
         let snapshot = audit_snapshot(&tx)?;
-        ensure!(snapshot.digest == expected, "GitHub audit changed; export the current snapshot before maintenance");
+        ensure!(
+            snapshot.digest == expected,
+            "GitHub audit changed; export the current snapshot before maintenance"
+        );
         let removed = tx.execute("DELETE FROM audit", [])?;
         tx.commit()?;
         Ok(removed as u64)
@@ -496,23 +585,42 @@ impl Store {
         })
     }
     pub fn forget(&mut self, id: Uuid, digest: &str, owner: &Owner) -> Result<()> {
-        self.forget_checked(id,digest,owner,None)
+        self.forget_checked(id, digest, owner, None)
     }
     pub(super) fn forget_exact(&mut self, expected: &Operation) -> Result<()> {
-        self.forget_checked(expected.id,&expected.digest,&expected.owner,Some(expected.snapshot_digest()?))
+        self.forget_checked(
+            expected.id,
+            &expected.digest,
+            &expected.owner,
+            Some(expected.snapshot_digest()?),
+        )
     }
-    fn forget_checked(&mut self, id: Uuid, digest: &str, owner: &Owner, snapshot: Option<String>) -> Result<()> {
-        let tx = self.connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    fn forget_checked(
+        &mut self,
+        id: Uuid,
+        digest: &str,
+        owner: &Owner,
+        snapshot: Option<String>,
+    ) -> Result<()> {
+        let tx = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
         schema(&tx)?;
         let (indexed_digest, indexed_state, data): (String, String, String) = tx.query_row(
             "SELECT digest,state,CASE WHEN length(CAST(data AS BLOB))<=131072 THEN data ELSE NULL END FROM operations WHERE id=?1 AND owner=?2",
             params![id.to_string(),owner.scope()?], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?)))?;
         let operation = decode(&data)?;
-        ensure!(snapshot.as_ref().is_none_or(|snapshot| operation.snapshot_digest().as_ref().ok() == Some(snapshot)),
-            "GitHub operation changed after preview; confirm the current snapshot");
         ensure!(
-            operation.id == id && operation.owner.scope()? == owner.scope()?
-                && indexed_digest == digest && indexed_state == state_name(&operation.state)
+            snapshot
+                .as_ref()
+                .is_none_or(|snapshot| operation.snapshot_digest().as_ref().ok() == Some(snapshot)),
+            "GitHub operation changed after preview; confirm the current snapshot"
+        );
+        ensure!(
+            operation.id == id
+                && operation.owner.scope()? == owner.scope()?
+                && indexed_digest == digest
+                && indexed_state == state_name(&operation.state)
                 && operation.digest == digest
                 && matches!(
                     operation.state,
@@ -521,14 +629,26 @@ impl Store {
             "only exact terminal GitHub records may be forgotten"
         );
         let count: u64 = tx.query_row("SELECT count(*) FROM audit", [], |row| row.get(0))?;
-        ensure!(count < MAX_AUDIT, "GitHub audit is full; export and explicitly maintain it before forgetting records");
-        let audit = Audit { id, digest: digest.into(), owner: operation.owner,
-            object: operation.draft.object, former_state: operation.state,
-            receipt: operation.receipt, disposition: operation.disposition,
-            forgotten_at: Utc::now() };
+        ensure!(
+            count < MAX_AUDIT,
+            "GitHub audit is full; export and explicitly maintain it before forgetting records"
+        );
+        let audit = Audit {
+            id,
+            digest: digest.into(),
+            owner: operation.owner,
+            object: operation.draft.object,
+            former_state: operation.state,
+            receipt: operation.receipt,
+            disposition: operation.disposition,
+            forgotten_at: Utc::now(),
+        };
         let audit = serde_json::to_string(&audit)?;
         ensure!(audit.len() <= 4096, "GitHub audit record exceeds limit");
-        tx.execute("INSERT INTO audit(id,digest,data) VALUES(?1,?2,?3)", params![id.to_string(),digest,audit])?;
+        tx.execute(
+            "INSERT INTO audit(id,digest,data) VALUES(?1,?2,?3)",
+            params![id.to_string(), digest, audit],
+        )?;
         let changed = tx.execute("DELETE FROM operations WHERE id=?1 AND digest=?2 AND owner=?3 AND state IN ('published','cancelled','disposed')", params![id.to_string(), digest,owner.scope()?])?;
         ensure!(changed == 1, "GitHub operation changed before forgetting");
         tx.commit()?;
@@ -536,23 +656,52 @@ impl Store {
     }
     pub(super) fn cancel_exact(&mut self, expected: &Operation) -> Result<Operation> {
         let snapshot = expected.snapshot_digest()?;
-        self.transition(expected.id,&expected.digest,&expected.owner,move |operation| {
-            ensure!(operation.snapshot_digest()? == snapshot,"GitHub operation changed after preview");
-            ensure!(operation.state == State::Prepared,"only prepared GitHub operations can be cancelled");
-            operation.state = State::Cancelled;
-            Ok(())
-        })
+        self.transition(
+            expected.id,
+            &expected.digest,
+            &expected.owner,
+            move |operation| {
+                ensure!(
+                    operation.snapshot_digest()? == snapshot,
+                    "GitHub operation changed after preview"
+                );
+                ensure!(
+                    operation.state == State::Prepared,
+                    "only prepared GitHub operations can be cancelled"
+                );
+                operation.state = State::Cancelled;
+                Ok(())
+            },
+        )
     }
-    pub(super) fn dispose_exact(&mut self, expected: &Operation, note: String) -> Result<Operation> {
-        ensure!(!note.trim().is_empty() && note.len() <= 1024,"GitHub disposition requires a bounded note");
+    pub(super) fn dispose_exact(
+        &mut self,
+        expected: &Operation,
+        note: String,
+    ) -> Result<Operation> {
+        ensure!(
+            !note.trim().is_empty() && note.len() <= 1024,
+            "GitHub disposition requires a bounded note"
+        );
         let snapshot = expected.snapshot_digest()?;
-        self.transition(expected.id,&expected.digest,&expected.owner,move |operation| {
-            ensure!(operation.snapshot_digest()? == snapshot,"GitHub operation changed after preview");
-            ensure!(operation.state == State::Sending,"only uncertain GitHub operations need disposition");
-            operation.state = State::Disposed;
-            operation.disposition = Some(note);
-            Ok(())
-        })
+        self.transition(
+            expected.id,
+            &expected.digest,
+            &expected.owner,
+            move |operation| {
+                ensure!(
+                    operation.snapshot_digest()? == snapshot,
+                    "GitHub operation changed after preview"
+                );
+                ensure!(
+                    operation.state == State::Sending,
+                    "only uncertain GitHub operations need disposition"
+                );
+                operation.state = State::Disposed;
+                operation.disposition = Some(note);
+                Ok(())
+            },
+        )
     }
     fn transition(
         &mut self,
@@ -606,8 +755,13 @@ fn operation_digest(
     if let Some(head) = head {
         super::context::sha(&serde_json::Value::String(head.into()))?;
     }
-    ensure!(head.is_some() == base.is_some(), "GitHub operation base binding is missing or unexpected");
-    if let Some(base) = base { base.validate()?; }
+    ensure!(
+        head.is_some() == base.is_some(),
+        "GitHub operation base binding is missing or unexpected"
+    );
+    if let Some(base) = base {
+        base.validate()?;
+    }
     owner.scope()?;
     Ok(hex::encode(Sha256::digest(serde_json::to_vec(&(
         draft.digest(actor, policy_digest)?,
@@ -649,38 +803,93 @@ mod tests {
     #[test]
     fn audit_failure_rolls_back_forget_and_success_records_no_body() {
         let (_temp, mut store, owner, draft, actor) = fixture();
-        let operation = store.prepare(draft,actor,"policy".into(),None,None,owner.clone()).unwrap();
-        store.cancel(operation.id,&operation.digest,&owner).unwrap();
+        let operation = store
+            .prepare(draft, actor, "policy".into(), None, None, owner.clone())
+            .unwrap();
+        store
+            .cancel(operation.id, &operation.digest, &owner)
+            .unwrap();
         store.connection.execute_batch("CREATE TRIGGER deny_audit BEFORE INSERT ON audit BEGIN SELECT RAISE(ABORT,'injected audit failure'); END;").unwrap();
-        assert!(store.forget(operation.id,&operation.digest,&owner).is_err());
-        assert_eq!(store.inspect(operation.id,&owner).unwrap().state,State::Cancelled);
+        assert!(
+            store
+                .forget(operation.id, &operation.digest, &owner)
+                .is_err()
+        );
+        assert_eq!(
+            store.inspect(operation.id, &owner).unwrap().state,
+            State::Cancelled
+        );
         assert!(store.audit().unwrap().entries.is_empty());
-        store.connection.execute_batch("DROP TRIGGER deny_audit").unwrap();
-        store.forget(operation.id,&operation.digest,&owner).unwrap();
-        assert!(store.inspect(operation.id,&owner).is_err());
+        store
+            .connection
+            .execute_batch("DROP TRIGGER deny_audit")
+            .unwrap();
+        store
+            .forget(operation.id, &operation.digest, &owner)
+            .unwrap();
+        assert!(store.inspect(operation.id, &owner).is_err());
         let snapshot = store.audit().unwrap();
-        assert_eq!(snapshot.entries.len(),1);
-        assert_eq!(snapshot.entries[0].digest,operation.digest);
-        assert!(!serde_json::to_string(&snapshot).unwrap().contains("Review this exact text"));
+        assert_eq!(snapshot.entries.len(), 1);
+        assert_eq!(snapshot.entries[0].digest, operation.digest);
+        assert!(
+            !serde_json::to_string(&snapshot)
+                .unwrap()
+                .contains("Review this exact text")
+        );
         assert!(store.clear_audit("stale").is_err());
-        assert_eq!(store.audit().unwrap().entries.len(),1);
-        assert_eq!(store.clear_audit(&snapshot.digest).unwrap(),1);
+        assert_eq!(store.audit().unwrap().entries.len(), 1);
+        assert_eq!(store.clear_audit(&snapshot.digest).unwrap(), 1);
     }
 
     #[test]
     fn full_ordinary_audit_admission_preserves_terminal_maintenance_reserve() {
         let (_temp, mut store, owner, draft, actor) = fixture();
-        let operation = store.prepare(draft.clone(),actor.clone(),"policy".into(),None,None,owner.clone()).unwrap();
-        store.cancel(operation.id,&operation.digest,&owner).unwrap();
-        let terminal = store.inspect(operation.id,&owner).unwrap();
-        let audit = serde_json::to_string(&Audit { id:terminal.id,digest:terminal.digest.clone(),owner:terminal.owner,
-            object:terminal.draft.object,former_state:terminal.state,receipt:None,disposition:None,forgotten_at:Utc::now() }).unwrap();
-        for _ in 0..(MAX_AUDIT-MAX_OPERATIONS) {
-            store.connection.execute("INSERT INTO audit(id,digest,data) VALUES(?1,?2,?3)",params![operation.id.to_string(),operation.digest,audit]).unwrap();
+        let operation = store
+            .prepare(
+                draft.clone(),
+                actor.clone(),
+                "policy".into(),
+                None,
+                None,
+                owner.clone(),
+            )
+            .unwrap();
+        store
+            .cancel(operation.id, &operation.digest, &owner)
+            .unwrap();
+        let terminal = store.inspect(operation.id, &owner).unwrap();
+        let audit = serde_json::to_string(&Audit {
+            id: terminal.id,
+            digest: terminal.digest.clone(),
+            owner: terminal.owner,
+            object: terminal.draft.object,
+            former_state: terminal.state,
+            receipt: None,
+            disposition: None,
+            forgotten_at: Utc::now(),
+        })
+        .unwrap();
+        for _ in 0..(MAX_AUDIT - MAX_OPERATIONS) {
+            store
+                .connection
+                .execute(
+                    "INSERT INTO audit(id,digest,data) VALUES(?1,?2,?3)",
+                    params![operation.id.to_string(), operation.digest, audit],
+                )
+                .unwrap();
         }
-        assert!(store.prepare(draft,actor,"policy".into(),None,None,owner.clone()).is_err());
-        store.forget(operation.id,&operation.digest,&owner).unwrap();
-        assert_eq!(store.audit().unwrap().entries.len(),(MAX_AUDIT-MAX_OPERATIONS+1) as usize);
+        assert!(
+            store
+                .prepare(draft, actor, "policy".into(), None, None, owner.clone())
+                .is_err()
+        );
+        store
+            .forget(operation.id, &operation.digest, &owner)
+            .unwrap();
+        assert_eq!(
+            store.audit().unwrap().entries.len(),
+            (MAX_AUDIT - MAX_OPERATIONS + 1) as usize
+        );
     }
 
     #[test]
@@ -693,43 +902,95 @@ mod tests {
     #[test]
     fn same_named_malformed_audit_table_cannot_admit_or_send() {
         let (temp, mut store, owner, draft, actor) = fixture();
-        let operation = store.prepare(draft.clone(),actor.clone(),"policy".into(),None,None,owner.clone()).unwrap();
-        store.connection.execute_batch("DROP TABLE audit; CREATE TABLE audit(bogus TEXT)").unwrap();
+        let operation = store
+            .prepare(
+                draft.clone(),
+                actor.clone(),
+                "policy".into(),
+                None,
+                None,
+                owner.clone(),
+            )
+            .unwrap();
+        store
+            .connection
+            .execute_batch("DROP TABLE audit; CREATE TABLE audit(bogus TEXT)")
+            .unwrap();
         assert!(store.begin_send(&operation).is_err());
-        assert!(store.prepare(draft,actor,"policy".into(),None,None,owner).is_err());
+        assert!(
+            store
+                .prepare(draft, actor, "policy".into(), None, None, owner)
+                .is_err()
+        );
         drop(store);
         assert!(Store::open(temp.path().join("operations")).is_err());
     }
     #[test]
     fn corrupt_audit_evidence_cannot_be_exported_or_cleared() {
         let (_temp, mut store, owner, draft, actor) = fixture();
-        let operation = store.prepare(draft,actor,"policy".into(),None,None,owner.clone()).unwrap();
-        store.cancel(operation.id,&operation.digest,&owner).unwrap();
-        store.forget(operation.id,&operation.digest,&owner).unwrap();
+        let operation = store
+            .prepare(draft, actor, "policy".into(), None, None, owner.clone())
+            .unwrap();
+        store
+            .cancel(operation.id, &operation.digest, &owner)
+            .unwrap();
+        store
+            .forget(operation.id, &operation.digest, &owner)
+            .unwrap();
         let snapshot = store.audit().unwrap();
         let mut corrupt = serde_json::to_value(&snapshot.entries[0]).unwrap();
-        for state in ["published","disposed"] {
+        for state in ["published", "disposed"] {
             corrupt["former_state"] = state.into();
-            store.connection.execute("UPDATE audit SET data=?1",[serde_json::to_string(&corrupt).unwrap()]).unwrap();
+            store
+                .connection
+                .execute(
+                    "UPDATE audit SET data=?1",
+                    [serde_json::to_string(&corrupt).unwrap()],
+                )
+                .unwrap();
             assert!(store.audit().is_err());
             assert!(store.clear_audit(&snapshot.digest).is_err());
-            assert_eq!(store.connection.query_row("SELECT count(*) FROM audit",[],|row|row.get::<_,u64>(0)).unwrap(),1);
+            assert_eq!(
+                store
+                    .connection
+                    .query_row("SELECT count(*) FROM audit", [], |row| row.get::<_, u64>(0))
+                    .unwrap(),
+                1
+            );
         }
     }
     #[test]
     fn concurrent_terminal_change_invalidates_approved_snapshot_without_audit_deletion() {
         let (temp, mut store, owner, draft, actor) = fixture();
-        let operation = store.prepare(draft,actor,"policy".into(),None,None,owner.clone()).unwrap();
+        let operation = store
+            .prepare(draft, actor, "policy".into(), None, None, owner.clone())
+            .unwrap();
         let snapshot = store.begin_send(&operation).unwrap();
         let directory = temp.path().join("operations");
         let changed = snapshot.clone();
         std::thread::spawn(move || {
             let mut other = Store::open(directory).unwrap();
-            other.dispose(changed.id,&changed.digest,&changed.owner,"Investigated externally; still no proof of an unsent request".into()).unwrap();
-        }).join().unwrap();
+            other
+                .dispose(
+                    changed.id,
+                    &changed.digest,
+                    &changed.owner,
+                    "Investigated externally; still no proof of an unsent request".into(),
+                )
+                .unwrap();
+        })
+        .join()
+        .unwrap();
         assert!(store.forget_exact(&snapshot).is_err());
-        assert!(store.dispose_exact(&snapshot,"stale decision".into()).is_err());
-        assert_eq!(store.inspect(snapshot.id,&owner).unwrap().state,State::Disposed);
+        assert!(
+            store
+                .dispose_exact(&snapshot, "stale decision".into())
+                .is_err()
+        );
+        assert_eq!(
+            store.inspect(snapshot.id, &owner).unwrap().state,
+            State::Disposed
+        );
         assert!(store.audit().unwrap().entries.is_empty());
     }
     #[test]

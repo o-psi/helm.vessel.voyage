@@ -76,35 +76,89 @@ pub struct Args {
 #[derive(Clone, Debug, clap::Subcommand)]
 pub enum Command {
     /// Attended local recovery across orphaned voyage/workspace records.
-    Admin { #[command(subcommand)] command: super::admin::Command },
+    Admin {
+        #[command(subcommand)]
+        command: super::admin::Command,
+    },
     /// Show the explicitly delegated GitHub account (never the token).
     Auth,
     /// Read bounded job logs associated with the selected pull-request head SHA.
-    Logs { url: String, job: u64 },
+    Logs {
+        url: String,
+        job: u64,
+    },
     /// Inspect local remote candidates without choosing between forks.
     Remotes,
     View(ViewArgs),
     /// Follow an exact JSON continuation returned by a prior observation.
-    Continue { request: String },
+    Continue {
+        request: String,
+    },
     /// Return a reference for the owning idle voyage to save.
-    Reference { url: String },
+    Reference {
+        url: String,
+    },
     /// List references saved in the selected voyage (frontend-owned).
     References,
     /// Remove one saved reference without changing GitHub.
-    Unreference { url: String },
+    Unreference {
+        url: String,
+    },
     /// Import selected attributed feedback as open local work.
-    Feedback { #[command(flatten)] view: ViewArgs, #[arg(long)] id: Option<u64> },
+    Feedback {
+        #[command(flatten)]
+        view: ViewArgs,
+        #[arg(long)]
+        id: Option<u64>,
+    },
     Prepare(PrepareArgs),
-    Publish { id: uuid::Uuid, digest: String },
-    Inspect { id: uuid::Uuid },
-    List { #[arg(long, default_value_t = 0)] offset: u32 },
-    Cancel { id: uuid::Uuid, digest: String },
-    Forget { id: uuid::Uuid, digest: String },
-    Reconcile { id: uuid::Uuid, digest: String, remote_id: u64 },
-    Dispose { id: uuid::Uuid, digest: String, note: String },
+    Publish {
+        id: uuid::Uuid,
+        digest: String,
+    },
+    Inspect {
+        id: uuid::Uuid,
+    },
+    List {
+        #[arg(long, default_value_t = 0)]
+        offset: u32,
+    },
+    Cancel {
+        id: uuid::Uuid,
+        digest: String,
+    },
+    Forget {
+        id: uuid::Uuid,
+        digest: String,
+    },
+    Reconcile {
+        id: uuid::Uuid,
+        digest: String,
+        remote_id: u64,
+    },
+    Dispose {
+        id: uuid::Uuid,
+        digest: String,
+        note: String,
+    },
 }
 #[derive(Clone, Copy, Debug, clap::ValueEnum)]
-pub enum SectionArg { Details, Comments, Reviews, Files, Threads, ThreadComments, ReviewComments, Statuses, Checks, Suites, SuiteChecks, Annotations, Runs, Jobs }
+pub enum SectionArg {
+    Details,
+    Comments,
+    Reviews,
+    Files,
+    Threads,
+    ThreadComments,
+    ReviewComments,
+    Statuses,
+    Checks,
+    Suites,
+    SuiteChecks,
+    Annotations,
+    Runs,
+    Jobs,
+}
 #[derive(Clone, Debug, clap::Args)]
 pub struct ViewArgs {
     pub url: String,
@@ -125,15 +179,25 @@ pub struct ViewArgs {
 impl ViewArgs {
     fn read(self) -> Result<super::context::Read> {
         use super::context::Section;
-        let resource = || self.resource.ok_or_else(|| anyhow::anyhow!("this section requires --resource ID"));
+        let resource = || {
+            self.resource
+                .ok_or_else(|| anyhow::anyhow!("this section requires --resource ID"))
+        };
         let section = match self.section {
             SectionArg::Details => Section::Details,
             SectionArg::Comments => Section::Comments,
             SectionArg::Reviews => Section::Reviews,
             SectionArg::Files => Section::Files,
             SectionArg::Threads => Section::Threads { after: self.after },
-            SectionArg::ThreadComments => Section::ThreadComments { thread: self.thread.ok_or_else(|| anyhow::anyhow!("thread comments require --thread NODE_ID"))?, after: self.after },
-            SectionArg::ReviewComments => Section::ReviewComments { review: resource()? },
+            SectionArg::ThreadComments => Section::ThreadComments {
+                thread: self
+                    .thread
+                    .ok_or_else(|| anyhow::anyhow!("thread comments require --thread NODE_ID"))?,
+                after: self.after,
+            },
+            SectionArg::ReviewComments => Section::ReviewComments {
+                review: resource()?,
+            },
             SectionArg::Statuses => Section::Statuses,
             SectionArg::Checks => Section::Checks,
             SectionArg::Suites => Section::CheckSuites,
@@ -142,7 +206,13 @@ impl ViewArgs {
             SectionArg::Runs => Section::WorkflowRuns,
             SectionArg::Jobs => Section::Jobs { run: resource()? },
         };
-        let request = super::context::Read { object: Object::parse(&self.url)?, section, page: self.page, expected_head: self.head, expected_base:None };
+        let request = super::context::Read {
+            object: Object::parse(&self.url)?,
+            section,
+            page: self.page,
+            expected_head: self.head,
+            expected_base: None,
+        };
         request.validate()?;
         Ok(request)
     }
@@ -163,41 +233,98 @@ pub struct PrepareArgs {
     pub commit: Option<String>,
 }
 
-pub async fn execute(context: crate::tools::ToolContext, session_id: Option<uuid::Uuid>, words: Vec<String>) -> Result<CommandResult> {
+pub async fn execute(
+    context: crate::tools::ToolContext,
+    session_id: Option<uuid::Uuid>,
+    words: Vec<String>,
+) -> Result<CommandResult> {
     use clap::Parser;
     #[derive(clap::Parser)]
     #[command(name = "github")]
-    struct Parsed { #[command(flatten)] args: Args }
+    struct Parsed {
+        #[command(flatten)]
+        args: Args,
+    }
     let parsed = Parsed::try_parse_from(std::iter::once("github".to_owned()).chain(words));
     let args = match parsed {
         Ok(parsed) => parsed.args,
-        Err(error) if error.kind() == clap::error::ErrorKind::DisplayHelp => return Ok(CommandResult { display: error.to_string(), reference: None, feedback: None }),
+        Err(error) if error.kind() == clap::error::ErrorKind::DisplayHelp => {
+            return Ok(CommandResult {
+                display: error.to_string(),
+                reference: None,
+                feedback: None,
+            });
+        }
         Err(_) => anyhow::bail!("invalid GitHub arguments; use /github --help"),
     };
     execute_args(context, session_id, args).await
 }
 
-pub async fn execute_args(mut context: crate::tools::ToolContext, session_id: Option<uuid::Uuid>, args: Args) -> Result<CommandResult> {
-    use super::{publication::{Action, Draft, ReviewEvent}, service::Service};
-    if let Some(token) = context.github.as_ref().map(|credential|credential.expose()) {
-        context.redactor = std::sync::Arc::new(context.redactor.with_additional(super::credential_forms(token)));
+pub async fn execute_args(
+    mut context: crate::tools::ToolContext,
+    session_id: Option<uuid::Uuid>,
+    args: Args,
+) -> Result<CommandResult> {
+    use super::{
+        publication::{Action, Draft, ReviewEvent},
+        service::Service,
+    };
+    if let Some(token) = context
+        .github
+        .as_ref()
+        .map(|credential| credential.expose())
+    {
+        context.redactor = std::sync::Arc::new(
+            context
+                .redactor
+                .with_additional(super::credential_forms(token)),
+        );
     }
     context.policy.check_current()?;
-    ensure!(!context.cancellation.is_cancelled(), "GitHub operator action cancelled");
-    let mut result = CommandResult { display: String::new(), reference: None, feedback: None };
+    ensure!(
+        !context.cancellation.is_cancelled(),
+        "GitHub operator action cancelled"
+    );
+    let mut result = CommandResult {
+        display: String::new(),
+        reference: None,
+        feedback: None,
+    };
     if let Command::Admin { command } = args.command {
-        return super::admin::execute(context,command,None).await;
+        return super::admin::execute(context, command, None).await;
     }
-    if let Command::Dispose { id,digest,note } = args.command {
-        let owner = super::store::Owner::new(context.policy.workspace(),session_id,None)?;
-        return super::admin::execute(context,super::admin::Command::Dispose { id,digest,note },Some(owner)).await;
+    if let Command::Dispose { id, digest, note } = args.command {
+        let owner = super::store::Owner::new(context.policy.workspace(), session_id, None)?;
+        return super::admin::execute(
+            context,
+            super::admin::Command::Dispose { id, digest, note },
+            Some(owner),
+        )
+        .await;
     }
-    ensure!(!matches!(args.command,Command::References | Command::Unreference { .. }), "reference maintenance requires an owning voyage frontend");
+    ensure!(
+        !matches!(
+            args.command,
+            Command::References | Command::Unreference { .. }
+        ),
+        "reference maintenance requires an owning voyage frontend"
+    );
     // Offline receipt administration does not require a usable GitHub token.
-    if matches!(args.command, Command::Inspect { .. } | Command::List { .. } | Command::Cancel { .. } | Command::Forget { .. }) {
-        let write = matches!(args.command, Command::Cancel { .. } | Command::Forget { .. });
-        ensure!(!write || context.policy.access_mode() != crate::config::AccessMode::ReadOnly,
-            "GitHub journal maintenance is denied in read-only mode");
+    if matches!(
+        args.command,
+        Command::Inspect { .. }
+            | Command::List { .. }
+            | Command::Cancel { .. }
+            | Command::Forget { .. }
+    ) {
+        let write = matches!(
+            args.command,
+            Command::Cancel { .. } | Command::Forget { .. }
+        );
+        ensure!(
+            !write || context.policy.access_mode() != crate::config::AccessMode::ReadOnly,
+            "GitHub journal maintenance is denied in read-only mode"
+        );
         let owner = super::store::Owner::new(context.policy.workspace(), session_id, None)?;
         let policy = context.policy.clone();
         let cancel = context.cancellation.clone();
@@ -215,84 +342,194 @@ pub async fn execute_args(mut context: crate::tools::ToolContext, session_id: Op
             }
         }).await?;
         context.policy.check_current()?;
-        result.display = context.redactor.redact(serde_json::to_string_pretty(&value)?);
+        result.display = context
+            .redactor
+            .redact(serde_json::to_string_pretty(&value)?);
         return Ok(result);
     }
     if matches!(args.command, Command::Remotes) {
-        result.display = serde_json::to_string_pretty(&super::repository::discover(&context).await?)?;
+        result.display =
+            serde_json::to_string_pretty(&super::repository::discover(&context).await?)?;
         return Ok(result);
     }
     let service = Service::new(context.clone(), session_id)?;
     let value = match args.command {
-        Command::Auth => serde_json::json!({"host":"github.com","credential_source":"explicitly delegated HELM_GITHUB_TOKEN","actor":service.actor().await?}),
-        Command::Logs { url, job } => serde_json::to_value(service.logs(Object::parse(&url)?,job).await?)?,
+        Command::Auth => {
+            serde_json::json!({"host":"github.com","credential_source":"explicitly delegated HELM_GITHUB_TOKEN","actor":service.actor().await?})
+        }
+        Command::Logs { url, job } => {
+            serde_json::to_value(service.logs(Object::parse(&url)?, job).await?)?
+        }
         Command::View(view) => serde_json::to_value(service.read(view.read()?).await?)?,
         Command::Continue { request } => {
-            ensure!(request.len() <= 16 * 1024, "GitHub continuation exceeds limit");
-            let request: super::context::Read = serde_json::from_str(&request).map_err(|_| anyhow::anyhow!("invalid GitHub continuation"))?;
+            ensure!(
+                request.len() <= 16 * 1024,
+                "GitHub continuation exceeds limit"
+            );
+            let request: super::context::Read = serde_json::from_str(&request)
+                .map_err(|_| anyhow::anyhow!("invalid GitHub continuation"))?;
             serde_json::to_value(service.read(request).await?)?
         }
         Command::Reference { url } => {
-            ensure!(session_id.is_some(), "a GitHub reference needs an owning voyage");
-            let page = service.read(super::context::Read { object: Object::parse(&url)?, section: super::context::Section::Details, page: 1, expected_head: None, expected_base:None }).await?;
-            let reference = Reference { object: page.object, head: page.head, fetched_at: page.fetched_at };
+            ensure!(
+                session_id.is_some(),
+                "a GitHub reference needs an owning voyage"
+            );
+            let page = service
+                .read(super::context::Read {
+                    object: Object::parse(&url)?,
+                    section: super::context::Section::Details,
+                    page: 1,
+                    expected_head: None,
+                    expected_base: None,
+                })
+                .await?;
+            let reference = Reference {
+                object: page.object,
+                head: page.head,
+                fetched_at: page.fetched_at,
+            };
             reference.validate()?;
             result.reference = Some(reference.clone());
             serde_json::json!({"reference":reference})
         }
         Command::Feedback { view, id } => {
-            ensure!(session_id.is_some(), "GitHub feedback import needs an owning voyage");
+            ensure!(
+                session_id.is_some(),
+                "GitHub feedback import needs an owning voyage"
+            );
             let request = view.read()?;
-            ensure!(matches!(request.section, super::context::Section::Details | super::context::Section::Comments | super::context::Section::Reviews | super::context::Section::ReviewComments { .. }), "select issue or review feedback content");
+            ensure!(
+                matches!(
+                    request.section,
+                    super::context::Section::Details
+                        | super::context::Section::Comments
+                        | super::context::Section::Reviews
+                        | super::context::Section::ReviewComments { .. }
+                ),
+                "select issue or review feedback content"
+            );
             let page = service.read(request).await?;
             let entry = if page.section == super::context::Section::Details {
                 ensure!(id.is_none(), "issue body import does not take a comment ID");
                 &page.data
             } else {
-                let id = id.ok_or_else(|| anyhow::anyhow!("comment or review feedback needs --id ID"))?;
-                page.data["items"].as_array().and_then(|items| items.iter().find(|item| item["id"].as_u64() == Some(id))).ok_or_else(|| anyhow::anyhow!("feedback ID is absent from this page; follow its continuation"))?
+                let id =
+                    id.ok_or_else(|| anyhow::anyhow!("comment or review feedback needs --id ID"))?;
+                page.data["items"]
+                    .as_array()
+                    .and_then(|items| items.iter().find(|item| item["id"].as_u64() == Some(id)))
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "feedback ID is absent from this page; follow its continuation"
+                        )
+                    })?
             };
-            let source = entry["html_url"].as_str().ok_or_else(|| anyhow::anyhow!("feedback source URL is missing"))?.to_owned();
-            ensure!(source == page.object.url() || source.starts_with(&format!("{}#",page.object.url())), "feedback source belongs to another object");
-            let body = entry["body"].as_str().ok_or_else(|| anyhow::anyhow!("feedback body is unavailable"))?;
-            let feedback = Feedback { source, title: format!("GitHub {}#{} feedback{}", page.object.repository.slug(),page.object.number,id.map(|id|format!(" {id}")).unwrap_or_default()), description: service.redact(body) };
+            let source = entry["html_url"]
+                .as_str()
+                .ok_or_else(|| anyhow::anyhow!("feedback source URL is missing"))?
+                .to_owned();
+            ensure!(
+                source == page.object.url()
+                    || source.starts_with(&format!("{}#", page.object.url())),
+                "feedback source belongs to another object"
+            );
+            let body = entry["body"]
+                .as_str()
+                .ok_or_else(|| anyhow::anyhow!("feedback body is unavailable"))?;
+            let feedback = Feedback {
+                source,
+                title: format!(
+                    "GitHub {}#{} feedback{}",
+                    page.object.repository.slug(),
+                    page.object.number,
+                    id.map(|id| format!(" {id}")).unwrap_or_default()
+                ),
+                description: service.redact(body),
+            };
             feedback.validate()?;
-            result.reference = Some(Reference { object: page.object, head: page.head, fetched_at: page.fetched_at });
+            result.reference = Some(Reference {
+                object: page.object,
+                head: page.head,
+                fetched_at: page.fetched_at,
+            });
             let value = serde_json::json!({"source":feedback.source,"title":feedback.title,"description":feedback.description,"status":"pending local import"});
             result.feedback = Some(feedback);
             value
         }
         Command::Prepare(args) => {
             let draft = if let Some(path) = args.draft_file {
-                ensure!(args.url.is_none() && args.event.is_none() && args.commit.is_none(), "full draft file cannot be combined with separate publication parameters");
-                serde_json::from_str::<Draft>(&read_input(&context, path).await?).map_err(|_| anyhow::anyhow!("invalid GitHub draft JSON"))?
+                ensure!(
+                    args.url.is_none() && args.event.is_none() && args.commit.is_none(),
+                    "full draft file cannot be combined with separate publication parameters"
+                );
+                serde_json::from_str::<Draft>(&read_input(&context, path).await?)
+                    .map_err(|_| anyhow::anyhow!("invalid GitHub draft JSON"))?
             } else {
-                let object = Object::parse(args.url.as_deref().ok_or_else(|| anyhow::anyhow!("GitHub preparation needs an object URL"))?)?;
+                let object =
+                    Object::parse(args.url.as_deref().ok_or_else(|| {
+                        anyhow::anyhow!("GitHub preparation needs an object URL")
+                    })?)?;
                 let body = match (args.body, args.body_file) {
                     (Some(body), None) => body,
                     (None, Some(path)) => read_input(&context, path).await?,
-                    _ => anyhow::bail!("GitHub preparation requires exactly one --body or --body-file"),
+                    _ => anyhow::bail!(
+                        "GitHub preparation requires exactly one --body or --body-file"
+                    ),
                 };
                 let action = if let Some(event) = args.event {
-                    let event = match event.as_str() { "COMMENT" => ReviewEvent::Comment,"APPROVE" => ReviewEvent::Approve,"REQUEST_CHANGES" => ReviewEvent::RequestChanges,_ => anyhow::bail!("invalid GitHub review event") };
-                    Action::Review { event, commit_id: args.commit.ok_or_else(|| anyhow::anyhow!("GitHub review requires exact --commit SHA"))?, body, comments: Vec::new() }
-                } else { ensure!(args.commit.is_none(), "--commit requires a review --event"); Action::Comment { body } };
+                    let event = match event.as_str() {
+                        "COMMENT" => ReviewEvent::Comment,
+                        "APPROVE" => ReviewEvent::Approve,
+                        "REQUEST_CHANGES" => ReviewEvent::RequestChanges,
+                        _ => anyhow::bail!("invalid GitHub review event"),
+                    };
+                    Action::Review {
+                        event,
+                        commit_id: args.commit.ok_or_else(|| {
+                            anyhow::anyhow!("GitHub review requires exact --commit SHA")
+                        })?,
+                        body,
+                        comments: Vec::new(),
+                    }
+                } else {
+                    ensure!(args.commit.is_none(), "--commit requires a review --event");
+                    Action::Comment { body }
+                };
                 Draft { object, action }
             };
             serde_json::to_value(service.prepare(draft).await?)?
         }
-        Command::Publish { id, digest } => serde_json::to_value(service.publish(id, &digest).await?)?,
-        Command::Reconcile { id, digest, remote_id } => serde_json::to_value(service.reconcile(id, &digest, remote_id).await?)?,
+        Command::Publish { id, digest } => {
+            serde_json::to_value(service.publish(id, &digest).await?)?
+        }
+        Command::Reconcile {
+            id,
+            digest,
+            remote_id,
+        } => serde_json::to_value(service.reconcile(id, &digest, remote_id).await?)?,
         Command::Admin { .. } | Command::Dispose { .. } => unreachable!(),
-        Command::Remotes | Command::Inspect { .. } | Command::List { .. } | Command::Cancel { .. } | Command::Forget { .. } | Command::References | Command::Unreference { .. } => unreachable!(),
+        Command::Remotes
+        | Command::Inspect { .. }
+        | Command::List { .. }
+        | Command::Cancel { .. }
+        | Command::Forget { .. }
+        | Command::References
+        | Command::Unreference { .. } => unreachable!(),
     };
     result.display = service.project(&value, 2 * 1024 * 1024)?;
     context.policy.check_current()?;
-    ensure!(!context.cancellation.is_cancelled(), "GitHub operator action cancelled; inspect receipts before repeating");
+    ensure!(
+        !context.cancellation.is_cancelled(),
+        "GitHub operator action cancelled; inspect receipts before repeating"
+    );
     Ok(result)
 }
 
-async fn read_input(context: &crate::tools::ToolContext, path: std::path::PathBuf) -> Result<String> {
+async fn read_input(
+    context: &crate::tools::ToolContext,
+    path: std::path::PathBuf,
+) -> Result<String> {
     let policy = context.policy.clone();
     let cancel = context.cancellation.clone();
     tokio::task::spawn_blocking(move || {
@@ -300,15 +537,26 @@ async fn read_input(context: &crate::tools::ToolContext, path: std::path::PathBu
         policy.check_current()?;
         ensure!(!cancel.is_cancelled(), "GitHub input read cancelled");
         let path = policy.resolve_read(&path)?;
-        let root = policy.effective().rules().read_roots.iter().find(|root| path.starts_with(root)).ok_or_else(|| anyhow::anyhow!("GitHub input is outside readable roots"))?;
+        let root = policy
+            .effective()
+            .rules()
+            .read_roots
+            .iter()
+            .find(|root| path.starts_with(root))
+            .ok_or_else(|| anyhow::anyhow!("GitHub input is outside readable roots"))?;
         let directory = cap_std::fs::Dir::open_ambient_dir(root, cap_std::ambient_authority())?;
         let file = directory.open(path.strip_prefix(root)?)?;
-        ensure!(file.metadata()?.is_file(), "GitHub input is not a regular file");
+        ensure!(
+            file.metadata()?.is_file(),
+            "GitHub input is not a regular file"
+        );
         let mut bytes = Vec::new();
         file.take(128 * 1024 + 1).read_to_end(&mut bytes)?;
         ensure!(bytes.len() <= 128 * 1024, "GitHub input exceeds limit");
         policy.check_current()?;
         ensure!(!cancel.is_cancelled(), "GitHub input read cancelled");
         String::from_utf8(bytes).map_err(|_| anyhow::anyhow!("GitHub input must be UTF-8"))
-    }).await.map_err(|_| anyhow::anyhow!("GitHub input reader failed"))?
+    })
+    .await
+    .map_err(|_| anyhow::anyhow!("GitHub input reader failed"))?
 }

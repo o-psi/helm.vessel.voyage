@@ -130,8 +130,8 @@ pub struct Redactor {
 impl Redactor {
     pub(crate) fn with_additional(&self, secrets: impl IntoIterator<Item = String>) -> Self {
         let mut combined = self.secrets.clone();
-        combined.extend(secrets.into_iter().filter(|secret|secret.len() >= 4));
-        combined.sort_by_key(|secret|std::cmp::Reverse(secret.len()));
+        combined.extend(secrets.into_iter().filter(|secret| secret.len() >= 4));
+        combined.sort_by_key(|secret| std::cmp::Reverse(secret.len()));
         combined.dedup();
         Self { secrets: combined }
     }
@@ -654,10 +654,24 @@ mod security_tests {
     #[test]
     fn read_only_github_allows_observation_only() {
         for action in ["read", "logs", "inspect", "list"] {
-            assert!(allowed_in_read_only("github", &serde_json::json!({"action":action})));
+            assert!(allowed_in_read_only(
+                "github",
+                &serde_json::json!({"action":action})
+            ));
         }
-        for action in ["prepare", "publish", "cancel", "forget", "reconcile", "dispose", "unknown"] {
-            assert!(!allowed_in_read_only("github", &serde_json::json!({"action":action})));
+        for action in [
+            "prepare",
+            "publish",
+            "cancel",
+            "forget",
+            "reconcile",
+            "dispose",
+            "unknown",
+        ] {
+            assert!(!allowed_in_read_only(
+                "github",
+                &serde_json::json!({"action":action})
+            ));
         }
         assert!(!allowed_in_read_only("github", &serde_json::json!({})));
     }

@@ -348,7 +348,11 @@ pub async fn run(
 
     while !app.quit {
         app.voyage_panel.poll();
-        if app.approval.as_ref().is_some_and(|request| publication::exact(request) && request.response.is_closed()) {
+        if app
+            .approval
+            .as_ref()
+            .is_some_and(|request| publication::exact(request) && request.response.is_closed())
+        {
             app.approval = None;
             app.github_approval = None;
         }

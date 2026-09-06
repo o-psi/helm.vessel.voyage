@@ -410,7 +410,12 @@ impl Agent {
         }.await;
         outcome.map_err(|error| {
             let mut text = self.context.redactor.redact(error.to_string());
-            if let Some(token) = self.context.environment.get("HELM_GITHUB_TOKEN").filter(|token| !token.is_empty()) {
+            if let Some(token) = self
+                .context
+                .environment
+                .get("HELM_GITHUB_TOKEN")
+                .filter(|token| !token.is_empty())
+            {
                 text = text.replace(token, "[REDACTED]");
             }
             anyhow::anyhow!(text)

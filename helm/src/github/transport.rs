@@ -31,7 +31,9 @@ impl Response {
 
 impl Client {
     pub fn check_current(&self) -> Result<()> {
-        if let Some(policy) = &self.policy { policy.check_current()?; }
+        if let Some(policy) = &self.policy {
+            policy.check_current()?;
+        }
         Ok(())
     }
     pub fn new(token: String) -> Result<Self> {

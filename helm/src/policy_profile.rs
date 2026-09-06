@@ -47,7 +47,9 @@ pub struct Rules {
     #[serde(default, skip_serializing_if = "github_disabled")]
     pub github_enabled: bool,
 }
-fn github_disabled(value: &bool) -> bool { !value }
+fn github_disabled(value: &bool) -> bool {
+    !value
+}
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProfileDocument {
