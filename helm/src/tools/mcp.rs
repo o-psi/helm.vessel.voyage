@@ -41,6 +41,8 @@ struct Transport {
     written_bytes: std::sync::atomic::AtomicUsize,
     #[cfg(test)]
     abort_after_dispatch: AtomicBool,
+    #[cfg(test)]
+    initialization_gate: std::sync::Mutex<Option<Arc<tokio::sync::Barrier>>>,
     observed: AtomicBool,
     #[cfg(not(target_os = "linux"))]
     direct_observed: AtomicBool,
@@ -125,6 +127,8 @@ impl McpServer {
                 written_bytes: std::sync::atomic::AtomicUsize::new(0),
                 #[cfg(test)]
                 abort_after_dispatch: AtomicBool::new(false),
+                #[cfg(test)]
+                initialization_gate: std::sync::Mutex::new(None),
                 observed: AtomicBool::new(false),
                 #[cfg(not(target_os = "linux"))]
                 direct_observed: AtomicBool::new(false),
@@ -136,6 +140,13 @@ impl McpServer {
     }
 
     pub async fn initialize(&self) -> Result<(), ToolError> {
+        // Assembly retains its own lease. This additionally covers library
+        // callers dropped between the initialization response and notification.
+        let mut handshake = RequestWaiter {
+            transport: self.transport.clone(),
+            cancel: tokio_util::sync::CancellationToken::new(),
+            armed: true,
+        };
         let response = self.transport.request("initialize", json!({"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"helm","version":env!("CARGO_PKG_VERSION")}})).await?;
         let Some(result) = response.get("result") else {
             self.transport.closed.store(true, Ordering::Release);
@@ -161,9 +172,18 @@ impl McpServer {
                 .is_some_and(Value::is_object),
             Ordering::Release,
         );
+        #[cfg(test)]
+        {
+            let gate = self.transport.initialization_gate.lock().unwrap().take();
+            if let Some(gate) = gate {
+                gate.wait().await;
+                gate.wait().await;
+            }
+        }
         self.transport
             .notify("notifications/initialized", json!({}))
             .await?;
+        handshake.armed = false;
         Ok(())
     }
 

@@ -448,6 +448,33 @@ async fn owner_failure_after_dispatch_fences_connection_and_retains_cleanup() {
 }
 
 #[tokio::test]
+async fn dropping_handshake_after_response_before_notification_retires_server() {
+    let directory = tempfile::tempdir().unwrap();
+    let server = peer("echo", directory.path());
+    let gate = Arc::new(tokio::sync::Barrier::new(2));
+    *server.transport.initialization_gate.lock().unwrap() = Some(gate.clone());
+    let owned = server.clone();
+    let task = tokio::spawn(async move { owned.initialize().await });
+    tokio::time::timeout(Duration::from_secs(2), gate.wait())
+        .await
+        .unwrap();
+    task.abort();
+    let _ = task.await;
+    assert!(server.transport.closed.load(Ordering::Acquire));
+    assert!(server.discover().await.is_err());
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while !server.can_retire() {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert!(!directory.path().join("initialized").exists());
+    assert!(!directory.path().join("cancelled").exists());
+    server.shutdown().await.unwrap();
+}
+
+#[tokio::test]
 async fn tool_result_limit_is_exact_and_timeout_retires_only_its_server() {
     let directory = tempfile::tempdir().unwrap();
     let server = peer("echo", directory.path());
