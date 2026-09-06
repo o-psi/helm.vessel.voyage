@@ -1,24 +1,15 @@
-//! Explicit foreground export of one dedicated managed session. Stored metadata is not a grant.
-use super::*;
-use anyhow::ensure;
-use helm::attachment::{
-    client::EnrollmentClient,
-    journal::{Journal, RemoteBinding, RemoteGrantObserver, RemoteReplay, TurnAdmission},
-    local_actor::LocalActorStore,
-    runtime::{Admission, ManagedSessionOwner, RuntimeClock, SystemClock},
-    transport::{self, ConnectionLease},
+//! Explicit outbound worker activation is a thin supervised-process client.
+use crate::Config;
+use anyhow::{Context, Result, ensure};
+use helm::process_client;
+use std::{
+    io::Write,
+    path::{Path, PathBuf},
 };
-use std::time::Duration;
-use tokio_util::sync::CancellationToken;
-use voyage_protocol::{
-    attachment::{Operation, VERSION},
-    events::{Feature, Features},
-    stream::{DenialCode, Frame, Reply},
-};
-
+use uuid::Uuid;
+use voyage_protocol::process::{ProcessInfo, VesselCommand};
 #[derive(clap::Args)]
 pub(super) struct Args {
-    /// Dedicated absolute installation directory. Never selects an existing private session.
     #[arg(long)]
     directory: PathBuf,
     #[arg(long, required_unless_present = "recover", conflicts_with = "recover")]
@@ -27,383 +18,244 @@ pub(super) struct Args {
     origin: Option<String>,
     #[arg(long, conflicts_with = "recover")]
     allow_insecure_loopback: bool,
-    /// Recover locally as Interrupted; never reconnect or replay tools.
     #[arg(long)]
     pub recover: bool,
-    /// Attest that the exact run's effects have stopped. This is not observed cleanup.
     #[arg(long, requires = "recover")]
-    acknowledge_cleanup: Option<uuid::Uuid>,
-    /// Append explicit unknown results for unresolved tools, without execution.
+    acknowledge_cleanup: Option<Uuid>,
     #[arg(long,requires_all=["recover","expected_revision"])]
-    reconcile_tools: Option<uuid::Uuid>,
+    reconcile_tools: Option<Uuid>,
     #[arg(long, requires = "reconcile_tools")]
     expected_revision: Option<u64>,
 }
-#[derive(Debug)]
-struct Authority {
-    lease: ConnectionLease,
-    consent: Arc<RemoteGrantObserver>,
-}
-impl helm::policy::ExecutionAuthority for Authority {
-    fn check(&self) -> Result<()> {
-        ensure!(
-            self.lease.is_active(),
-            "foreground connection authority unavailable"
-        );
-        self.consent.check()
-    }
-}
-/// Dispatch combines the still-live remote grant with the locally selected
-/// policy snapshot. Remote observation/cancellation require the current lease and
-/// durable grant; a changed local profile does not obstruct them. Local cleanup
-/// and recovery remain available independently after withdrawal.
-#[derive(Debug)]
-struct DispatchAuthority {
-    lease: Arc<Authority>,
-    policy: Policy,
-}
-impl helm::policy::ExecutionAuthority for DispatchAuthority {
-    fn check(&self) -> Result<()> {
-        self.lease.check()?;
-        self.policy.check_current()
-    }
-}
-fn features() -> Features {
-    Features::new(vec![
-        Feature::SequencedEvents,
-        Feature::Replay,
-        Feature::ToolActivity,
-        Feature::Usage,
-        Feature::ManagedExecution,
-    ])
-    .expect("fixed features")
-}
-fn public_reply(mut reply: Reply, redactor: &Redactor) -> Reply {
-    match &mut reply {
-        Reply::ExecutionSnapshot { session, .. } | Reply::Session { session } => {
-            session.name = redactor.redact(&session.name);
-            session.model = redactor.redact(&session.model);
-        }
-        Reply::Sessions { sessions } => {
-            for session in sessions {
-                session.name = redactor.redact(&session.name);
-                session.model = redactor.redact(&session.model);
-            }
-        }
-        _ => {}
-    }
-    reply
-}
-/// Caller selected this mode locally. Enrollment proves destination ownership only;
-/// fixed supported operations below are the explicit foreground grant.
-pub(super) async fn run(args: Args, mut config: Config, workspace: Option<PathBuf>) -> Result<()> {
-    let enrollment_directory = args
-        .enrollment_directory
-        .as_ref()
-        .context("enrollment directory required")?;
-    let origin = args.origin.as_deref().context("origin required")?;
+pub(super) async fn run(args: Args, config: Config, workspace: Option<PathBuf>) -> Result<()> {
     ensure!(
-        args.directory.is_absolute() && enrollment_directory.is_absolute(),
-        "remote directories must be absolute"
+        args.directory.is_absolute(),
+        "absolute outbound installation required"
     );
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        std::fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(&args.directory)?;
+    }
+    process_client::local::check_private_directory(&args.directory)?;
+    let client =
+        process_client::local::connect(process_client::cli::default_directory(), true).await?;
     let workspace = config.resolve_workspace(workspace)?;
-    ensure!(
-        config.provider != helm::ProviderKind::CodexSubscription,
-        "remote execution requires a native provider with observable cleanup"
-    );
-    ensure!(
-        config.access_mode() == AccessMode::ReadOnly || config.mcp_servers.is_empty(),
-        "remote execution does not support effectful MCP servers without cleanup adapters"
-    );
-    let launch_policy = Policy::new(&config, workspace.clone())?;
-    std::time::Instant::now()
-        .checked_add(config.timeout())
-        .context("configured timeout exceeds clock range")?;
-    let local = LocalActorStore::open(&args.directory)?;
-    let actor = local.identity()?;
-    let first_client = EnrollmentClient::open_existing(
-        enrollment_directory,
-        origin,
-        args.allow_insecure_loopback,
-    )?;
-    let inspection = first_client.inspection();
-    let binding = RemoteBinding {
-        origin: first_client.origin().into(),
-        machine_id: inspection.machine_id,
-        owner_id: inspection.owner_id.context("enrollment is not active")?,
-        epoch: inspection.epoch,
-        local_installation_id: actor.installation_id,
-        local_principal_id: actor.principal_id,
-    };
-    let directory = args.directory.join("journal");
-    let mut journal = Journal::open(directory.clone())?;
-    let session = match journal.remote_session(&binding)? {
-        Some(id) => id,
-        None => {
-            let session = Session::new(workspace.clone(), config.model.clone());
-            journal.create_remote_session(&session, &binding)?;
-            session.id
-        }
-    };
-    drop(journal);
-    let owner = ManagedSessionOwner::open(directory, session).await?;
-    let grant = Arc::new(owner.remote_grant_observer(binding.clone()).await?);
-    grant.check()?;
-    let saved = owner.snapshot().await?;
-    ensure!(
-        saved.session.workspace.canonicalize()? == workspace,
-        "remote workspace differs from dedicated session"
-    );
-    ensure!(
-        saved.session.model == config.model,
-        "remote model differs from dedicated session"
-    );
-    config.workspace = Some(workspace.clone());
-    let redactor = redactor(&config);
-    let mut first = Some(first_client);
-    // Keep signal subscriptions alive while a selected branch awaits storage,
-    // output or connection cleanup. Recreating this future each iteration loses
-    // signals delivered between the select and its next subscription.
-    let interrupt = attachment_interrupt();
-    tokio::pin!(interrupt);
-    loop {
-        if let Err(error) = grant.check() {
-            if !authority_store_busy(&error) {
-                return Err(error);
-            }
-            // Stay disconnected until a fresh durable observation succeeds. This
-            // retries only an authority read, never admission or a tool effect.
-            tokio::select! {_ = &mut interrupt=>return Ok(()),_ = tokio::time::sleep(Duration::from_secs(1))=>{}}
-            continue;
-        }
-        let client = match first.take() {
-            Some(client) => client,
-            None => EnrollmentClient::open_existing(
-                enrollment_directory,
-                origin,
-                args.allow_insecure_loopback,
-            )?,
-        };
-        let mut connection = tokio::select! {biased;
-            _=&mut interrupt=>return Ok(()),
-            result=transport::connect(client,features(),CancellationToken::new())=>result?,
-        };
-        ensure!(
-            connection.context().machine_id == binding.machine_id
-                && connection.context().owner_id == binding.owner_id
-                && connection.context().epoch == binding.epoch,
-            "remote enrollment generation changed"
-        );
-        ensure!(
-            connection.context().features == features(),
-            "remote lifecycle features unavailable"
-        );
-        let authority = Arc::new(Authority {
-            lease: connection.lease(),
-            consent: grant.clone(),
-        });
-        let dispatch_authority = Arc::new(DispatchAuthority {
-            lease: authority.clone(),
-            policy: launch_policy.clone(),
-        });
-        let connected = serde_json::json!({"event":"remote_session_connected","session_id":session,"machine_id":binding.machine_id,"connection_id":connection.context().connection_id});
-        write_notice(connected.to_string()).await?;
-        let cancel = CancellationToken::new();
-        let mut active: Option<tokio::task::JoinHandle<Result<managed::ManagedExecution>>> = None;
-        let Reply::ExecutionSnapshot { latest, .. } = owner
-            .remote_snapshot(binding.clone(), authority.clone())
-            .await?
+    let manifest = args.directory.join("outbound-launch.json");
+    let command = if manifest.exists() {
+        let command: VesselCommand = serde_json::from_slice(&read(&manifest)?)?;
+        let VesselCommand::StartOutbound {
+            workspace: old_workspace,
+            enrollment_directory,
+            origin,
+            allow_insecure_loopback,
+            config_path,
+            ..
+        } = &command
         else {
-            bail!("remote snapshot unavailable")
+            anyhow::bail!("invalid outbound launch receipt")
         };
-        let mut cursor = latest.get();
-        let mut interval = tokio::time::interval(Duration::from_millis(100));
-        let mut shutdown = false;
-        let mut cleanup_observed = true;
-        loop {
-            tokio::select! {biased;
-                _=&mut interrupt=>{shutdown=true;break;},
-                result=async {match &mut active {Some(task)=>Some(task.await),None=>std::future::pending().await}}=>{
-                    active=None;
-                    if !matches!(result,Some(Ok(Ok(ref finished))) if finished.cleanup_observed) {cleanup_observed=false;break;}
-                },
-                frame=connection.receive()=>{
-                    let Some(frame)=frame else {break};
-                    use helm::policy::ExecutionAuthority;
-                    if authority.check().is_err(){break;}
-                    let context=connection.context().clone();
-                    match frame {
-                        Frame::Command{command}=>{
-                            let reply=if command.machine_id!=binding.machine_id || command.principal_id!=binding.owner_id || command.connection_id!=context.connection_id || command.version!=VERSION {
-                                Reply::Denied{code:DenialCode::Unauthorized}
-                            } else if !matches!(&command.operation, Operation::Submit {..} | Operation::Cancel {..}) && SystemClock.now_ms().ok().is_none_or(|now|command.validate(now).is_err()) {
-                                Reply::Denied{code:DenialCode::Expired}
-                            } else {
-                                match &command.operation {
-                                    Operation::List{after,limit} if *limit>0=>match owner.remote_snapshot(binding.clone(),authority.clone()).await {
-                                        Ok(Reply::ExecutionSnapshot{session:metadata,..})=>Reply::Sessions{sessions:if after.is_none_or(|after|session>after){vec![metadata]}else{vec![]}},
-                                        _=>Reply::Denied{code:DenialCode::Internal},
-                                    },
-                                    Operation::Inspect{session_id} if *session_id==session=>owner.remote_snapshot(binding.clone(),authority.clone()).await.unwrap_or(Reply::Denied{code:DenialCode::Internal}),
-                                    Operation::Submit{session_id,expected_revision,prompt} if *session_id==session=>{
-                                        let request=TurnAdmission{command_id:command.command_id,machine_id:binding.machine_id,principal_id:binding.owner_id,session_id:session,expected_revision:*expected_revision,expires_at_ms:command.expires_at_ms,prompt:prompt.clone()};
-                                        match owner.admit_authorized(request,dispatch_authority.clone()).await {
-                                            Ok(Admission::Existing(run))=>Reply::Run{session_id:run.session_id,run_id:run.id,state:public_state(run.state)},
-                                            Ok(Admission::New(mut run))=>{
-                                                if active.is_some() || run.register_local_cleanup().await.is_err(){let _=run.fail_before_execution().await;Reply::Denied{code:DenialCode::Internal}}
-                                                else {
-                                                    let snapshot=owner.remote_snapshot(binding.clone(),authority.clone()).await;
-                                                    let owner=owner.clone();let config=config.clone();let workspace=workspace.clone();let authority=dispatch_authority.clone();let execution_cancel=cancel.child_token();let interrupt=execution_cancel.clone();
-                                                    active=Some(tokio::spawn(async move {managed::execute_admitted(&owner,&mut run,&config,workspace,Arc::new(helm::agent::SilentSink),execution_cancel,async move{interrupt.cancelled().await},Some(authority)).await}));
-                                                    snapshot.unwrap_or(Reply::Denied{code:DenialCode::Internal})
-                                                }
-                                            },
-                                            Err(_)=>Reply::Denied{code:DenialCode::Conflict},
-                                        }
-                                    },
-                                    Operation::Cancel{session_id,..} if *session_id==session=>match owner.remote_cancel(binding.clone(),command.clone(),authority.clone()).await {Ok(_)=>Reply::Accepted{},Err(_)=>Reply::Denied{code:DenialCode::Conflict}},
-                                    _=>Reply::Denied{code:DenialCode::Unauthorized},
-                                }
-                            };
-                            if connection.send(Frame::Result{connection_id:context.connection_id,command_id:command.command_id,reply:public_reply(reply,&redactor)}).is_err(){break;}
-                        },
-                        Frame::ReplayRequest{request_id,session_id,after,limit,..}=>{
-                            // Observation never falls through to connection-loss cleanup for
-                            // a caller-selected session or cursor. Reuse the v2 denial result;
-                            // its command_id correlates this replay's request_id.
-                            if session_id != session {
-                                if connection.send(Frame::Result{connection_id:context.connection_id,command_id:request_id,reply:Reply::Denied{code:DenialCode::Unauthorized}}).is_err(){break;}
-                                continue;
-                            }
-                            let frame=match owner.remote_replay(binding.clone(),after.get(),usize::from(limit),authority.clone()).await {
-                                Ok(RemoteReplay::Events{events,latest})=>{Frame::Replay{connection_id:context.connection_id,request_id,session_id,after,latest:voyage_protocol::events::EventCursor::new(latest).map_err(anyhow::Error::msg)?,events}},
-                                Ok(RemoteReplay::InvalidCursor)=>Frame::Result{connection_id:context.connection_id,command_id:request_id,reply:Reply::Denied{code:DenialCode::InvalidRequest}},
-                                Ok(RemoteReplay::SnapshotRequired{latest})=>Frame::SnapshotRequired{connection_id:context.connection_id,request_id,session_id,after,latest:voyage_protocol::events::EventCursor::new(latest).map_err(anyhow::Error::msg)?},
-                                Err(_)=>break,
-                            };
-                            if connection.send(frame).is_err(){break;}
-                        },
-                        _=>break,
-                    }
-                },
-                _=interval.tick()=>{
-                    match owner.remote_replay(binding.clone(),cursor,4,authority.clone()).await {
-                        Ok(RemoteReplay::Events{events,..})=>{
-
-                            let mut failed=false;
-                            for event in events {cursor=event.cursor.get();if connection.send(Frame::Event{connection_id:connection.context().connection_id,session_id:session,event}).is_err(){failed=true;break;}}
-                            if failed {break;}
-                        },
-                        _=>break,
-                    }
-                }
+        ensure!(
+            *old_workspace == workspace
+                && Some(enrollment_directory) == args.enrollment_directory.as_ref()
+                && Some(origin) == args.origin.as_ref()
+                && *allow_insecure_loopback == args.allow_insecure_loopback,
+            "outbound launch parameters differ from retained request"
+        );
+        let launch: voyage_runtime::launch_config::LaunchConfig =
+            serde_json::from_slice(&read(config_path)?)?;
+        ensure!(
+            launch.matches_config(&config)?,
+            "outbound configuration differs from retained launch; use explicit owner configuration workflow"
+        );
+        command
+    } else {
+        let (session, revision, source) =
+            if args.directory.join("journal/journal.sqlite3").is_file() {
+                let actor = voyage_runtime::attachment::local_actor::LocalActorStore::open(
+                    &args.directory,
+                )?
+                .identity()?;
+                let journal = voyage_runtime::attachment::journal::Journal::open(
+                    args.directory.join("journal"),
+                )?;
+                let (id, _) = journal.remote_local_binding(&actor)?;
+                (
+                    id,
+                    Some(journal.load_session(id)?.revision),
+                    Some(args.directory.clone()),
+                )
+            } else {
+                (Uuid::new_v4(), None, None)
+            };
+        let config_path =
+            process_client::frontend::persist_launch(&config, &workspace, &client.directory)?;
+        let command = VesselCommand::StartOutbound {
+            command_id: Uuid::new_v4(),
+            session_id: session,
+            workspace,
+            config_path,
+            enrollment_directory: args
+                .enrollment_directory
+                .context("enrollment directory required")?,
+            origin: args.origin.context("origin required")?,
+            allow_insecure_loopback: args.allow_insecure_loopback,
+            source_directory: source,
+            expected_revision: revision,
+        };
+        persist(&manifest, &serde_json::to_value(&command)?)?;
+        command
+    };
+    let mut process: ProcessInfo = serde_json::from_value(client.request(command).await?)?;
+    if process.state == voyage_protocol::process::ProcessState::Stopped {
+        process = serde_json::from_value(
+            client
+                .request(VesselCommand::Restart {
+                    command_id: Uuid::new_v4(),
+                    session_id: process.session_id,
+                    incarnation: process.incarnation,
+                })
+                .await?,
+        )?;
+    }
+    write_notice(serde_json::json!({"event":"outbound_voyage_started","session_id":process.session_id,"incarnation":process.incarnation,"state":process.state,"lifetime":"supervised"}).to_string()).await
+}
+pub(super) async fn recover(args: Args) -> Result<()> {
+    ensure!(
+        args.directory.is_absolute(),
+        "absolute outbound installation required"
+    );
+    let manifest = args.directory.join("outbound-launch.json");
+    let result = if manifest.exists() {
+        let command: VesselCommand = serde_json::from_slice(&read(&manifest)?)?;
+        let VesselCommand::StartOutbound { session_id, .. } = command else {
+            anyhow::bail!("invalid outbound launch receipt")
+        };
+        let client =
+            process_client::local::connect(process_client::cli::default_directory(), true).await?;
+        let processes: Vec<ProcessInfo> =
+            serde_json::from_value(client.request(VesselCommand::Catalogue).await?)?;
+        let process = processes
+            .into_iter()
+            .find(|process| process.session_id == session_id)
+            .context("outbound registration unavailable")?;
+        client
+            .request(VesselCommand::Recover {
+                command_id: Uuid::new_v4(),
+                session_id,
+                incarnation: process.incarnation,
+                acknowledge_cleanup: args.acknowledge_cleanup,
+                acknowledge_resources: vec![],
+                reconcile_tools: args.reconcile_tools,
+                expected_revision: args.expected_revision,
+            })
+            .await?
+    } else {
+        let actor =
+            voyage_runtime::attachment::local_actor::LocalActorStore::open(&args.directory)?
+                .identity()?;
+        let journal =
+            voyage_runtime::attachment::journal::Journal::open(args.directory.join("journal"))?;
+        let (session, _) = journal.remote_local_binding(&actor)?;
+        let mut command = vec![
+            "legacy-recover".into(),
+            "--directory".into(),
+            args.directory.into_os_string(),
+            "--session".into(),
+            session.to_string().into(),
+            "--remote".into(),
+        ];
+        for (flag, value) in [
+            (
+                "--acknowledge-cleanup",
+                args.acknowledge_cleanup.map(|id| id.to_string()),
+            ),
+            (
+                "--reconcile-tools",
+                args.reconcile_tools.map(|id| id.to_string()),
+            ),
+            (
+                "--expected-revision",
+                args.expected_revision.map(|id| id.to_string()),
+            ),
+        ] {
+            if let Some(value) = value {
+                command.push(flag.into());
+                command.push(value.into());
             }
         }
-        cancel.cancel();
-        // Never abandon an admitted executor: it owns its bounded cleanup and durable blocker.
-        if let Some(task) = active {
-            cleanup_observed &=
-                matches!(task.await, Ok(Ok(ref finished)) if finished.cleanup_observed);
-        }
-        drop(dispatch_authority);
-        drop(authority);
-        connection.close().await;
-        ensure!(
-            cleanup_observed,
-            "remote owned-resource cleanup unconfirmed; inspect the dedicated journal and recover locally"
-        );
-        if shutdown {
-            return Ok(());
-        }
-        tokio::select! {_ = &mut interrupt=>return Ok(()),_ = tokio::time::sleep(Duration::from_secs(1))=>{}}
-    }
+        crate::managed::maintenance::invoke(command).await?
+    };
+    write_notice(result.to_string()).await
 }
-
-fn authority_store_busy(error: &anyhow::Error) -> bool {
-    error.chain().any(|cause| {
-        matches!(
-            cause.downcast_ref::<rusqlite::Error>(),
-            Some(rusqlite::Error::SqliteFailure(code, _))
-                if matches!(code.code, rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked)
-        )
-    })
-}
-
 pub(super) async fn write_notice(notice: String) -> Result<()> {
-    let (sender, receiver) = tokio::sync::oneshot::channel();
-    std::thread::Builder::new()
-        .name("remote-notice".into())
-        .spawn(move || {
-            use std::io::Write;
-            let mut output = std::io::stdout().lock();
-            let ok = writeln!(output, "{notice}")
-                .and_then(|()| output.flush())
-                .is_ok();
-            let _ = sender.send(ok);
-        })?;
+    println!("{}", helm::process_client::safe(&notice));
+    Ok(())
+}
+fn read(path: &Path) -> Result<Vec<u8>> {
+    use std::io::Read;
+    for ancestor in path.ancestors() {
+        ensure!(
+            !std::fs::symlink_metadata(ancestor)?
+                .file_type()
+                .is_symlink(),
+            "symlink in outbound receipt path"
+        );
+    }
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+    }
+    let file = options.open(path)?;
+    let metadata = file.metadata()?;
     ensure!(
-        matches!(
-            tokio::time::timeout(Duration::from_secs(2), receiver).await,
-            Ok(Ok(true))
-        ),
-        "remote output unavailable"
+        metadata.is_file() && metadata.len() <= 65536,
+        "invalid outbound receipt"
     );
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        ensure!(
+            metadata.uid() == unsafe { libc::geteuid() } && metadata.mode() & 0o077 == 0,
+            "outbound receipt must be private"
+        );
+    }
+    let mut bytes = Vec::new();
+    file.take(65537).read_to_end(&mut bytes)?;
+    ensure!(bytes.len() <= 65536, "outbound receipt too large");
+    Ok(bytes)
+}
+fn persist(path: &Path, value: &serde_json::Value) -> Result<()> {
+    let parent = path.parent().context("receipt parent missing")?;
+    let mut file = tempfile::NamedTempFile::new_in(parent)?;
+    file.write_all(&serde_json::to_vec(value)?)?;
+    file.as_file().sync_all()?;
+    file.persist_noclobber(path)?;
+    std::fs::File::open(parent)?.sync_all()?;
     Ok(())
 }
 
-fn public_state(state: helm::attachment::journal::RunState) -> voyage_protocol::stream::RunState {
-    use helm::attachment::journal::RunState as Local;
-    use voyage_protocol::stream::RunState as Public;
-    match state {
-        Local::Accepted => Public::Accepted,
-        Local::Running => Public::Running,
-        Local::Completed => Public::Completed,
-        Local::Incomplete => Public::Incomplete,
-        Local::Cancelled => Public::Cancelled,
-        Local::Failed => Public::Failed,
-        Local::Interrupted => Public::Interrupted,
+pub(super) fn supervised_directory(directory: &Path) -> Result<PathBuf> {
+    let manifest = directory.join("outbound-launch.json");
+    if !manifest.exists() {
+        return Ok(directory.to_path_buf());
     }
-}
-
-pub(super) async fn recover(args: Args) -> Result<()> {
-    ensure!(
-        args.recover && args.directory.is_absolute(),
-        "explicit absolute remote recovery directory required"
-    );
-    let directory = args.directory.join("journal");
-    ensure!(
-        args.directory.join("actor.json").is_file() && directory.join("journal.sqlite3").is_file(),
-        "existing remote installation required"
-    );
-    let local = LocalActorStore::open(&args.directory)?;
-    let actor = local.identity()?;
-    let journal = Journal::open(directory.clone())?;
-    let (session, binding) = journal.remote_local_binding(&actor)?;
-    drop(journal);
-    let owner = ManagedSessionOwner::open(directory, session).await?;
-    let recovered = owner.recover_interrupted().await?;
-    if let Some(run) = args.acknowledge_cleanup {
-        owner
-            .attest_remote_cleanup(binding.clone(), run, actor)
-            .await?;
-    }
-    let reconciliation = if let Some(run_id) = args.reconcile_tools {
-        Some(
-            owner
-                .reconcile_remote_tools(
-                    binding,
-                    helm::attachment::journal::LocalReconcileRequest {
-                        session_id: session,
-                        run_id,
-                        installation_id: actor.installation_id,
-                        principal_id: actor.principal_id,
-                        expected_revision: args.expected_revision.context("revision required")?,
-                    },
-                )
-                .await?,
-        )
-    } else {
-        None
+    let command: VesselCommand = serde_json::from_slice(&read(&manifest)?)?;
+    let VesselCommand::StartOutbound { session_id, .. } = command else {
+        anyhow::bail!("invalid outbound receipt")
     };
-    write_notice(serde_json::json!({"event":"remote_session_recovered","session_id":session,"run":recovered.map(|run|serde_json::json!({"id":run.id,"state":run.state})),"cleanup":if args.acknowledge_cleanup.is_some(){"operator_attested"}else{"unchanged"},"reconciliation":reconciliation}).to_string()).await
+    let target = process_client::cli::default_directory()
+        .join("sessions")
+        .join(session_id.to_string());
+    ensure!(
+        target.join("registration.json").is_file(),
+        "supervised outbound registration missing"
+    );
+    Ok(target)
 }

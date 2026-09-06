@@ -38,6 +38,14 @@ pub fn lock(directory: &Path) -> Result<File> {
         .mode(0o600)
         .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
         .open(directory.join("supervisor.lock"))?;
+    let metadata = file.metadata()?;
+    ensure!(
+        metadata.is_file()
+            && metadata.nlink() == 1
+            && metadata.uid() == unsafe { libc::geteuid() }
+            && metadata.mode() & 0o077 == 0,
+        "unsafe supervisor ownership lock"
+    );
     ensure!(
         unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0,
         "another Vessel owns this directory"
@@ -53,6 +61,7 @@ pub fn load(path: &Path) -> Result<ProcessRegistration> {
     let metadata = file.metadata()?;
     ensure!(
         metadata.is_file()
+            && metadata.nlink() == 1
             && metadata.uid() == unsafe { libc::geteuid() }
             && metadata.mode() & 0o077 == 0
             && metadata.len() < 16384,
@@ -63,13 +72,15 @@ pub fn load(path: &Path) -> Result<ProcessRegistration> {
 
 pub fn save(directory: &Path, registration: &ProcessRegistration) -> Result<()> {
     use std::io::Write;
+    let bytes = serde_json::to_vec(registration)?;
+    ensure!(bytes.len() < 16384, "process registration exceeds limit");
     let temporary = directory.join(format!("registration.{}.tmp", uuid::Uuid::new_v4()));
     let mut file = OpenOptions::new()
         .write(true)
         .create_new(true)
         .mode(0o600)
         .open(&temporary)?;
-    file.write_all(&serde_json::to_vec(registration)?)?;
+    file.write_all(&bytes)?;
     file.sync_all()?;
     fs::rename(temporary, directory.join("registration.json"))?;
     File::open(directory)?.sync_all()?;
@@ -97,6 +108,10 @@ pub fn command_record(
     private_directory(&directory)?;
     let path = directory.join(format!("{id}.json"));
     let bytes = serde_json::to_vec(command)?;
+    ensure!(
+        bytes.len() <= 16384,
+        "lifecycle command exceeds receipt limit"
+    );
     match OpenOptions::new()
         .read(true)
         .custom_flags(libc::O_NOFOLLOW)
@@ -117,13 +132,24 @@ pub fn command_record(
             std::fs::read_dir(&directory)?.take(65536).count() < 65536,
             "lifecycle receipt capacity exhausted"
         );
+        let temporary = directory.join(format!(".{}.tmp", uuid::Uuid::new_v4()));
         let mut file = OpenOptions::new()
             .write(true)
             .create_new(true)
             .mode(0o600)
-            .open(path)?;
+            .open(&temporary)?;
         file.write_all(&bytes)?;
         file.sync_all()?;
+        // Publish complete immutable bytes without replacing a concurrent ID.
+        let published = fs::hard_link(&temporary, &path);
+        fs::remove_file(&temporary)?;
+        match published {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                return command_record(root, id, command, false);
+            }
+            Err(error) => return Err(error.into()),
+        }
         File::open(directory)?.sync_all()?;
     }
     Ok(false)

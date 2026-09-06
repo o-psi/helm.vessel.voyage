@@ -13,7 +13,10 @@ impl ManagedSessionOwner {
                 .map_err(|_| anyhow::anyhow!("owner poisoned"))?;
             let Store { journal, guard, .. } = &mut *store;
             journal.initialize_process_commands(guard)?;
-            journal.initialize_decisions(guard)
+            journal.initialize_decisions(guard)?;
+            journal.initialize_lifecycle(guard)?;
+            journal.initialize_assignments(guard)?;
+            journal.initialize_observations(guard)
         })
         .await?
     }
@@ -51,7 +54,7 @@ impl ManagedSessionOwner {
             let summary = store.journal.list_session_summaries(None,100)?.sessions.into_iter().find(|s|s.id==store.session_id);
             let run = store.journal.process_latest_run(store.session_id)?;
             let (messages, offset) = projection::recent(&session.messages)?;
-            Ok(json!({"session_id":session.id,"revision":saved.revision,"name":session.name,"model":session.model,"workspace":session.workspace,"messages":messages,"total_messages":session.messages.len(),"message_offset":offset,"history_truncated":offset>0 || messages.iter().any(|message| message["projection_truncated"]==true),"run":run.map(|run| { let (partial,truncated)=projection::text_prefix(&run.partial_text,65536); json!({"run_id":run.id,"state":run.state,"partial_text":partial,"partial_text_truncated":truncated,"partial_text_bytes":run.partial_text.len()}) }),"pending_cleanup_run":summary.and_then(|s|s.pending_cleanup_run),"decisions":[],"observation":"snapshot","replay":"snapshot_required"}))
+            Ok(json!({"session_id":session.id,"revision":saved.revision,"name":session.name,"model":session.model,"workspace":session.workspace,"messages":messages,"total_messages":session.messages.len(),"message_offset":offset,"history_truncated":offset>0 || messages.iter().any(|message| message["projection_truncated"]==true),"run":run.map(|run| { let (partial,truncated)=projection::text_prefix(&run.partial_text,65536); json!({"run_id":run.id,"state":run.state,"partial_text":partial,"partial_text_truncated":truncated,"partial_text_bytes":run.partial_text.len()}) }),"pending_cleanup_run":summary.and_then(|s|s.pending_cleanup_run),"decisions":[],"session_resources":store.journal.session_resources(store.session_id)?,"lifecycle":store.journal.lifecycle_status(store.session_id)?,"observation_cursor":store.journal.observation_cursor(store.session_id)?,"observation":"snapshot","projection":"public-v1"}))
         }).await?
     }
     pub(crate) async fn process_history(

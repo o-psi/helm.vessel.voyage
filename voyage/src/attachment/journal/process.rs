@@ -22,6 +22,11 @@ impl Journal {
         Ok(())
     }
     pub(crate) fn process_receipt(&self, id: Uuid) -> Result<Option<Value>> {
+        if let Some(record) = self.transferred_command(id)? {
+            return Ok(Some(
+                json!({"command_id":id,"status":"transferred","original_status":record.original_status,"run_id":record.run_id,"state":record.run_state,"effects_replayed":false}),
+            ));
+        }
         let saved: Option<String> = self
             .connection
             .query_row(
@@ -44,7 +49,7 @@ impl Journal {
         if let Some(run) = run {
             let run = self.run(Uuid::parse_str(&run)?)?;
             return Ok(Some(
-                json!({"run_id":run.id,"command_id":id,"status":"accepted","state":run.state}),
+                json!({"run_id":run.id,"command_id":id,"status":if self.lifecycle_status(run.session_id)?["deleted"]==true {"deleted"}else{"accepted"},"state":run.state}),
             ));
         }
         let steering: Option<String> = self
@@ -55,14 +60,19 @@ impl Journal {
                 |row| row.get(0),
             )
             .optional()?;
-        steering
-            .map(|record| serde_json::from_str(&record).map_err(Into::into))
-            .transpose()
+        if let Some(encoded) = steering {
+            let record: super::steering::SteeringRecord = serde_json::from_str(&encoded)?;
+            if self.lifecycle_status(record.request.session_id)?["deleted"] == true {
+                return Ok(Some(json!({"command_id":id,"status":"deleted"})));
+            }
+            return Ok(Some(serde_json::to_value(record)?));
+        }
+        Ok(None)
     }
     pub(crate) fn process_metadata(
         &mut self,
         guard: &ExecutionGuard,
-        actor: super::super::local_actor::LocalActor,
+        _actor: super::super::local_actor::LocalActor,
         command: &RuntimeCommand,
         now: i64,
     ) -> Result<Value> {
@@ -111,18 +121,14 @@ impl Journal {
             expiry > now && expiry - now <= 300_000,
             "invalid command deadline"
         );
+        super::lifecycle::ensure_admissible(&tx, guard.session_id)?;
         let mut saved = read_session(&tx, guard.session_id)?;
         ensure!(saved.revision == expected, "session revision conflict");
         let mut next = saved.revision;
         let receipt = match command {
             RuntimeCommand::Cancel { run_id, .. } => {
                 let run = read_run(&tx, *run_id)?;
-                ensure!(
-                    run.session_id == guard.session_id
-                        && run.machine_id == actor.installation_id
-                        && run.principal_id == actor.principal_id,
-                    "run authority mismatch"
-                );
+                ensure!(run.session_id == guard.session_id, "run authority mismatch");
                 let active = matches!(run.state, RunState::Accepted | RunState::Running);
                 if active {
                     tx.execute(
@@ -130,8 +136,8 @@ impl Journal {
                         params![
                             run_id.to_string(),
                             guard.session_id.to_string(),
-                            actor.installation_id.to_string(),
-                            actor.principal_id.to_string(),
+                            run.machine_id.to_string(),
+                            run.principal_id.to_string(),
                             now,
                             expiry
                         ],

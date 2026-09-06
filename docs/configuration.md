@@ -1,26 +1,32 @@
 # Configuring the current implementation
 
-Configuration loading and execution policy now live in the shared `voyage/` runtime.
-Legacy Helm commands still call that runtime in-process. Connected voyages load
-configuration on the executing host; Helm's connection does not forward provider
-credentials or execution overrides. The target separation is specified in
-[Architecture](architecture.md); current workflows are in [Operations](operations.md).
+Execution configuration and policy are resolved in the voyage process on the
+executing host. Helm submits configuration references through Vessel; remote routes
+never copy provider credentials. See [Architecture](architecture.md) and
+[Operations](operations.md).
 
-## Connected runtime configuration
+## Runtime configuration
 
-Supervisor-launched voyages currently use the existing default `helm/config.toml`
-location described below. The supervisor does not yet expose a configuration-file
-selection flag; the low-level runtime serve option is not a client configuration
-API. Provider environment credentials must be available to the supervisor on that host before it starts the child. The Linux
-installer service uses that user's default configuration; see its
-[service guide](../installer/README.md) for lifecycle and paths. Native OAuth tokens
-also stay with the executing account. SSH access does not forward provider keys.
+By default a launched owner uses that host's `helm/config.toml`. Explicit
+`helm connect new --config-path /absolute/host/config.toml --workspace /absolute/project`
+selects an owned private configuration file. Normal local `helm --config`, `--set`,
+provider and policy options capture a private launch envelope on the same executing
+machine. This preserves explicit policy selection while revalidating current host
+ceilings. Provider environment credentials must be available to the supervisor
+before it starts the child. OAuth tokens stay with the executing account.
 
-A created process is bound to one workspace and session identity. Connected
-`/model NAME` requests a revision-bound model change; execution policy and provider
-credentials are not edited through the connected UI. Existing legacy CLI profile
-and configuration commands remain available, but their invocation flags do not
-implicitly configure an already-running independent voyage.
+A voyage is bound to one workspace and session identity. `/model NAME` selects the
+next-turn model. `/configure /absolute/host/file` replaces settings only while idle
+with required cleanup observed. Persisted settings take precedence on restart;
+removed or revoked authority is never silently revived. On ordinary resume, only
+explicit configuration/model overrides request a change; reconnect alone does not
+mutate active work. Configuration drafts remain distinct from session history.
+
+The Linux installer service uses that user's configuration; see its
+[service guide](../installer/README.md). Custom workflow directories are host paths
+and require owner authority. Participant endpoint configuration names a private
+scoped credential file, receiver identity and accepted binding revision; see
+[process access](process-access.md).
 
 ## Configuration sources
 
@@ -143,14 +149,16 @@ apply. `provider_retry_attempts`, `provider_retry_initial_ms` and
 ## Storage and diagnostics
 
 The platform local-data directory's `helm` child is the ordinary data root,
-normally `~/.local/share/helm` on Linux. Saved JSON sessions are under `sessions/`;
+normally `~/.local/share/helm` on Linux. Legacy JSON import sources are under `sessions/`;
 TUI diagnostics append to `logs/helm.log`. Non-TUI diagnostics go to stderr.
 `--log-format json` changes diagnostic formatting, and `--verbose` enables more
 logging; neither is a transcript-export command. Protect logs and backups as
 private operator data. No automatic log-retention guarantee is implied.
 
-Managed installations use the explicitly chosen directory's `journal/journal.sqlite3`
-(current schema 8), with ownership, receipt and cleanup state. Enrollment defaults
+Current owners store canonical data in `VESSEL_DIR/sessions/SESSION_UUID/journal/`
+with private identity and resource directories beside it. Managed installations use
+`STORE/vessel/sessions/SESSION_UUID/journal/`; their old `STORE/journal/journal.sqlite3`
+is a legacy import/recovery source (journal schema 8). Enrollment defaults
 to the data root's `attachment/`; its identities differ from provider credentials.
 Remote workers use a dedicated installation and fixed enrollment binding.
 Vessel's database and private attachment authority directory are separate again.

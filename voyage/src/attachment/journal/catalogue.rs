@@ -123,7 +123,7 @@ impl Journal {
         let tx = self.connection.unchecked_transaction()?;
         check_transaction_schema(&tx, self.opened_schema)?;
         let mut ids = tx
-            .prepare("SELECT id FROM sessions WHERE (?1 IS NULL OR id>?1) ORDER BY id LIMIT ?2")?
+            .prepare("SELECT id FROM sessions WHERE (?1 IS NULL OR id>?1) AND coalesce(json_extract(state,'$.format'),'') != 'voyage.managed-retired' ORDER BY id LIMIT ?2")?
             .query_map(params![after.map(|id| id.to_string()), limit + 1], |r| {
                 r.get::<_, String>(0)
             })?
@@ -404,6 +404,16 @@ impl Journal {
                 installation == target.installation_id && principal == target.principal_id,
                 "cleanup attestation actor mismatch"
             );
+        }
+        if super::assignments::pending(&tx, run_id)? > 0 {
+            if actor.is_none() {
+                tx.execute(
+                    "INSERT OR IGNORE INTO process_assignment_local_cleanup VALUES(?1)",
+                    [run_id.to_string()],
+                )?;
+                commit(tx, &self.commit_fence)?;
+            }
+            anyhow::bail!("participant cleanup remains pending; local observation retained");
         }
         let expected = if actor.is_some() {
             "operator_attested"

@@ -11,6 +11,7 @@ use voyage_protocol::process::{
 pub struct Client {
     pub directory: PathBuf,
     pub ssh: Option<String>,
+    pub access_file: Option<PathBuf>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -18,6 +19,22 @@ pub struct Client {
 pub struct Refusal(pub String);
 
 impl Client {
+    pub fn is_local(&self) -> bool {
+        self.ssh.is_none() && self.access_file.is_none()
+    }
+    pub fn label(&self) -> String {
+        self.ssh.clone().unwrap_or_else(|| {
+            self.access_file
+                .as_ref()
+                .map(|p| {
+                    format!(
+                        "grant:{}",
+                        p.file_name().unwrap_or_default().to_string_lossy()
+                    )
+                })
+                .unwrap_or_else(|| "local".into())
+        })
+    }
     pub async fn request(&self, command: VesselCommand) -> Result<Value> {
         tokio::time::timeout(Duration::from_secs(15), self.exchange(command))
             .await
@@ -26,6 +43,9 @@ impl Client {
 
     #[cfg(unix)]
     async fn exchange(&self, command: VesselCommand) -> Result<Value> {
+        if let Some(path) = &self.access_file {
+            return super::access::exchange(path, command).await;
+        }
         if let Some(destination) = &self.ssh {
             return super::ssh::exchange(destination, &self.directory, command).await;
         }

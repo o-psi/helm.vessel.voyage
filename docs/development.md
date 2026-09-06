@@ -6,15 +6,14 @@ Voyage is a Rust 2024 workspace in first-release development. Read the
 
 ## Source map
 
-The runtime implementation has moved to `voyage/`; this source move does not mean
-legacy Helm execution entrypoints have been retired. Paths in backticks require
-the source checkout.
+Runtime execution belongs to `voyage/`. Helm modules contain protocol clients and
+operator interfaces. Paths in backticks require the source checkout.
 
 | Path | Current responsibility |
 | --- | --- |
-| `helm/src/main.rs`, `helm/src/tui_runtime.rs` | Legacy CLI/full-screen execution adapters still instantiate shared runtime code |
-| `helm/src/process_client/` | Connected CLI, local/SSH Vessel transport and independent-process multiplexer |
-| `helm/src/tui/`, `helm/src/markdown.rs`, `helm/src/onboarding/` | Legacy UI, rendering and onboarding |
+| `helm/src/main.rs`, `helm/src/cli.rs`, `helm/src/diagnostics.rs` | CLI dispatch, grammar and execution-host diagnostics clients |
+| `helm/src/process_client/` | Connected CLI, local/SSH/grant transports, lifecycle/courier clients and multiplexer |
+| `helm/src/markdown.rs`, `helm/src/onboarding/` | Rendering and repository onboarding |
 | `voyage/src/main.rs`, `voyage/src/server/` | Independent runtime entrypoint, private transport and session command dispatch |
 | `voyage/src/agent.rs`, `voyage/src/agent/`, `voyage/src/context.rs` | Provider-neutral loop, cancellation, context and completion integration |
 | `voyage/src/provider/`, `voyage/src/tools/`, `voyage/src/config.rs` | Provider transports, local tools and execution configuration |
@@ -24,17 +23,18 @@ the source checkout.
 | `voyage/src/terminal.rs`, `voyage/src/subagent/`, `voyage/src/todo.rs`, `voyage/src/completion/` | Resources, task state and completion accounting |
 | `voyage/src/policy_profile/`, `voyage/src/runtime_policy.rs` | Local policy, administrator ceilings and profile transitions |
 | `voyage/src/github/`, `voyage/src/workflow/`, `voyage/src/extensions/`, `voyage/src/inference/` | Execution services and shared legacy operator workflows |
-| `helm/src/managed.rs`, `helm/src/remote_worker.rs` | Retained legacy foreground managed/worker adapters |
+| `helm/src/managed.rs`, `helm/src/remote_worker.rs` | Thin supervised managed and outbound-worker clients |
 | `vessel/src/process/` | Linux launch, private registry, routing and conservative stop/restart |
-| `vessel/src/main.rs` and HTTP/transport modules | Legacy management, enrollment and authenticated relay |
+| `vessel/src/main.rs` and HTTP/transport modules | Management, enrollment, scoped process gateway and compatibility relay |
 | `crates/voyage-protocol/src/process/` | Versioned bounded Helm–Vessel–voyage messages |
 | `crates/voyage-storage/src/` | Native private-storage primitives |
 | `installer/src/service/` | Linux private installation and explicit service lifecycle |
 | `installer/src/flow.rs` | Simulated interactive setup wizard |
 
-`helm/src/lib.rs` still re-exports execution types from the voyage library for legacy
-paths. Final cutover requires replacing those clients without losing supported
-behavior; the [implementation ledger](implementation.md) records that remaining work.
+`helm/src/lib.rs` re-exports shared configuration/presentation types; executable
+session construction and canonical mutation remain in voyage. New code is split
+by transport, lifecycle, authorization, storage and resource responsibility. Keep
+these boundaries when extending the command surface.
 
 ## Build and inspect
 

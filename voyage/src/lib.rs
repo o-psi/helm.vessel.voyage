@@ -7,7 +7,9 @@ pub mod context;
 pub mod extensions;
 pub mod file_publication;
 pub mod github;
+pub mod host_resources;
 pub mod inference;
+pub mod launch_config;
 pub mod local_provider;
 pub mod model;
 pub mod policy;
@@ -30,3 +32,5 @@ pub use model::{Message, Role};
 pub mod build;
 pub mod execution;
 pub mod server;
+
+pub mod participant;

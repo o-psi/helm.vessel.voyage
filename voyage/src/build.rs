@@ -26,9 +26,14 @@ mod subagents;
 pub use resources::{ManagedResourceState, ManagedResources};
 pub use subagents::{SubagentBundle, build_subagents_managed};
 pub struct ManagedAgent {
-    pub agent: Agent,
+    pub agent: Arc<Agent>,
     pub subagents: Arc<SubagentRuntime>,
     pub resources: Option<Arc<ManagedResources>>,
+}
+#[derive(Default)]
+pub struct BuildResources {
+    pub extra_tool: Option<Arc<dyn crate::tools::Tool>>,
+    pub terminal_manager: Option<crate::tools::ProcessTool>,
 }
 pub async fn build_authorized_agent_bundle(
     config: &Config,
@@ -37,27 +42,12 @@ pub async fn build_authorized_agent_bundle(
     sink: Option<Arc<dyn EventSink>>,
     authority: Option<Arc<dyn crate::policy::ExecutionAuthority>>,
     decision_approver: Option<Arc<dyn Approver>>,
+    retained: BuildResources,
 ) -> Result<ManagedAgent> {
-    build_agent_bundle_with_output(
-        config,
-        workspace,
-        attended,
-        sink,
-        authority,
-        decision_approver,
-        Arc::new(SilentEvents),
-    )
-    .await
-}
-pub async fn build_agent_bundle_with_output(
-    config: &Config,
-    workspace: PathBuf,
-    attended: bool,
-    sink: Option<Arc<dyn EventSink>>,
-    authority: Option<Arc<dyn crate::policy::ExecutionAuthority>>,
-    decision_approver: Option<Arc<dyn Approver>>,
-    fallback_sink: Arc<dyn EventSink>,
-) -> Result<ManagedAgent> {
+    let BuildResources {
+        extra_tool,
+        terminal_manager,
+    } = retained;
     if let Some(authority) = &authority {
         authority.check()?;
     }
@@ -120,6 +110,12 @@ pub async fn build_agent_bundle_with_output(
         &context.policy,
     )
     .await?;
+    if let Some(tool) = extra_tool {
+        tools.register_arc(tool)?;
+    }
+    if let Some(manager) = terminal_manager {
+        tools.reuse_terminals(manager);
+    }
     if let Some(resources) = &managed_resources {
         resources.register(&mut tools)?;
     }
@@ -129,7 +125,7 @@ pub async fn build_agent_bundle_with_output(
         provider::from_config(config, context.policy.workspace().to_owned())?,
         tools,
         context,
-        sink.unwrap_or(fallback_sink),
+        sink.unwrap_or_else(|| Arc::new(SilentEvents)),
         config.model.clone(),
         config.system_prompt.clone(),
         config.max_tokens,
@@ -146,7 +142,7 @@ pub async fn build_agent_bundle_with_output(
         max_delay: std::time::Duration::from_millis(config.provider_retry_max_ms),
     });
     Ok(ManagedAgent {
-        agent,
+        agent: Arc::new(agent),
         subagents: retained_runtime,
         resources: managed_resources,
     })
@@ -194,7 +190,7 @@ pub(crate) fn set_resource_root(path: PathBuf) -> Result<()> {
         .set(path)
         .map_err(|_| anyhow::anyhow!("runtime resource scope already set"))
 }
-fn resource_root() -> PathBuf {
+pub(crate) fn resource_root() -> PathBuf {
     RESOURCE_ROOT
         .get()
         .cloned()

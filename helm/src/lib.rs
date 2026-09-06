@@ -27,7 +27,6 @@ pub use voyage_runtime::terminal;
 pub use voyage_runtime::titles;
 pub use voyage_runtime::todo;
 pub use voyage_runtime::tools;
-pub mod tui;
 pub mod voyage;
 pub mod voyage_client;
 pub use voyage_runtime::workflow;

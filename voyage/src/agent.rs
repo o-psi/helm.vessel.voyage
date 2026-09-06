@@ -333,6 +333,8 @@ pub struct Agent {
     retry_jitter: Arc<dyn RetryJitter>,
 }
 
+mod operator;
+
 #[derive(Clone, Debug)]
 pub struct RetryPolicy {
     pub max_attempts: usize,

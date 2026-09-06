@@ -383,6 +383,7 @@ impl ManagedSessionOwner {
                 input: Some((session.messages, request.prompt)),
                 steering_sender,
                 steering_receiver: Some(steering_receiver),
+                workflow_bindings: None,
             }))
         })
         .await?
@@ -412,6 +413,7 @@ pub enum Admission {
 }
 
 pub struct RunOwner {
+    workflow_bindings: Option<crate::workflow::secrets::RunBindings>,
     store: Arc<Mutex<Store>>,
     token: Arc<TurnToken>,
     run_id: Uuid,
@@ -628,6 +630,7 @@ impl RunOwner {
         drop(input);
         let input = self.steering_receiver.take();
         let (history, prompt) = self.input.take().ok_or(CheckpointError)?;
+        let workflow_bindings = self.workflow_bindings.take();
         let result = if cancel.is_cancelled() {
             Err(AgentError::Cancelled)
         } else if external_input
@@ -663,7 +666,7 @@ impl RunOwner {
                     .await?;
                 }
                 agent
-                    .run_checkpointed_scoped(
+                    .run_checkpointed_scoped_with_workflow_secrets(
                         history,
                         prompt,
                         cancel.clone(),
@@ -671,6 +674,7 @@ impl RunOwner {
                         self,
                         self.model.clone(),
                         scope,
+                        workflow_bindings,
                     )
                     .await
             }
@@ -826,6 +830,25 @@ impl RunCheckpoint for RunOwner {
     }
 }
 
+mod controls;
 mod process;
 
 mod decisions;
+
+mod lifecycle;
+
+mod observations;
+
+mod command_binding;
+
+mod rejections;
+
+mod transfer;
+
+mod assignments;
+
+mod configuration;
+
+mod operator;
+
+mod session_resources;

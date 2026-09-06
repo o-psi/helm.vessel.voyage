@@ -15,6 +15,7 @@ docs/development.md
 docs/implementation.md
 docs/local-git.md
 docs/operations.md
+docs/process-access.md
 docs/quality.md
 docs/releasing.md
 docs/runtime-contract.md

@@ -3,6 +3,25 @@ use super::*;
 impl App {
     pub(super) fn update(&mut self, update: Update) {
         match update {
+            Update::Control {
+                target,
+                incarnation,
+                result,
+            } => {
+                if let Some(view) = self
+                    .views
+                    .get_mut(&target)
+                    .filter(|view| view.process.incarnation == incarnation)
+                {
+                    match result {
+                        Ok(value) => {
+                            view.panel = Some(safe(&value));
+                            view.scroll = 0;
+                        }
+                        Err(error) => view.error = Some(safe(&error)),
+                    }
+                }
+            }
             Update::Catalogue { route, processes } => {
                 for process in processes.into_iter().take(256) {
                     let target = Target {
@@ -44,7 +63,7 @@ impl App {
                 else {
                     return;
                 };
-                match result {
+                match *result {
                     Ok(snapshot) if snapshot.session_id == target.session => {
                         if view
                             .snapshot
@@ -99,6 +118,7 @@ impl App {
             Update::Command {
                 target,
                 command_id,
+                refused,
                 result,
             } => {
                 let Some(view) = self.views.get_mut(&target) else {
@@ -125,7 +145,17 @@ impl App {
                             self.status = "Receipt identity mismatch; draft retained".into();
                             return;
                         }
-                        if view.draft.text == pending.draft {
+                        let rejected = value.get("status").and_then(|status| status.as_str())
+                            == Some("rejected")
+                            || (value["status"] == "transferred"
+                                && matches!(
+                                    value["original_status"].as_str(),
+                                    Some("rejected" | "not_admitted")
+                                ));
+                        if !rejected && !pending.draft.trim_start().starts_with('/') {
+                            view.history.record(&pending.draft);
+                        }
+                        if !rejected && view.draft.text == pending.draft {
                             view.draft.take();
                         }
                         view.pending = None;
@@ -133,6 +163,9 @@ impl App {
                     }
                     Err(error) => {
                         self.status = format!("{} · draft retained", safe(&error));
+                        if refused {
+                            view.pending = None;
+                        }
                         // A runtime/Vessel error can follow durable admission. Only
                         // a positive receipt resolves this command's identity.
                     }

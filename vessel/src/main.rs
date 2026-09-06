@@ -1,5 +1,6 @@
 mod coordination_http;
 mod enrollment_inspection_http;
+mod process_http;
 mod remote_http;
 use anyhow::Result;
 use axum::{
@@ -35,6 +36,9 @@ struct Cli {
     /// Private enrollment authority directory; enables authenticated attachment presence.
     #[arg(long, requires = "public_origin")]
     attachment_directory: Option<PathBuf>,
+    /// Expose the authenticated process gateway to a private local supervisor.
+    #[arg(long, requires = "attachment_directory")]
+    process_directory: Option<PathBuf>,
     /// Canonical HTTPS origin served by a TLS proxy on this host.
     #[arg(long, requires = "attachment_directory")]
     public_origin: Option<String>,
@@ -58,6 +62,21 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Issue an explicit scoped credential through the local supervisor.
+    #[cfg(target_os = "linux")]
+    ProcessGrant(vessel::process::grant_cli::GrantArgs),
+    /// Revoke a scoped credential; current dispatch checks fail closed immediately.
+    #[cfg(target_os = "linux")]
+    ProcessRevoke {
+        #[arg(long)]
+        directory: PathBuf,
+        #[arg(long)]
+        grant: Uuid,
+        #[arg(long)]
+        expected_revision: u64,
+        #[arg(long)]
+        command_id: Uuid,
+    },
     /// Relay one framed request over stdio to this account's local Vessel.
     LocalRequest {
         #[arg(long)]
@@ -89,6 +108,7 @@ enum LogFormat {
 
 #[derive(Clone)]
 struct AppState {
+    process_directory: Option<PathBuf>,
     database: Arc<Mutex<Connection>>,
     operator_token_hash: Option<String>,
     attachment: Option<vessel::attachment_transport::AttachmentApi>,
@@ -115,6 +135,23 @@ async fn main() -> Result<()> {
             .init(),
     }
     match &cli.command {
+        #[cfg(target_os = "linux")]
+        Some(Command::ProcessGrant(_)) => {}
+        #[cfg(target_os = "linux")]
+        Some(Command::ProcessRevoke {
+            directory,
+            grant,
+            expected_revision,
+            command_id,
+        }) => {
+            return vessel::process::grant_cli::revoke(
+                directory.clone(),
+                *grant,
+                *expected_revision,
+                *command_id,
+            )
+            .await;
+        }
         Some(Command::LocalRequest { directory }) => {
             #[cfg(target_os = "linux")]
             return vessel::process::request(directory.clone()).await;
@@ -152,6 +189,10 @@ async fn main() -> Result<()> {
             return Ok(());
         }
         _ => {}
+    }
+    #[cfg(target_os = "linux")]
+    if let Some(Command::ProcessGrant(args)) = cli.command {
+        return vessel::process::grant_cli::issue(args).await;
     }
     let enrollment =
         if let (Some(directory), Some(origin)) = (&cli.attachment_directory, &cli.public_origin) {
@@ -201,6 +242,7 @@ async fn main() -> Result<()> {
     };
     let database = open_database(&cli.database)?;
     let state = AppState {
+        process_directory: cli.process_directory.clone(),
         database: Arc::new(Mutex::new(database)),
         operator_token_hash: cli.operator_token.as_deref().map(token_hash),
         attachment: attachment.clone(),
@@ -209,6 +251,17 @@ async fn main() -> Result<()> {
         enrollment: enrollment.clone(),
     };
     let app = Router::new()
+        .route(
+            "/v3/process/command",
+            axum::routing::post(process_http::command)
+                .layer(axum::extract::DefaultBodyLimit::max(
+                    voyage_protocol::process::MAX_PROCESS_FRAME,
+                ))
+                .layer(middleware::from_fn_with_state(
+                    state.clone(),
+                    process_http::boundary,
+                )),
+        )
         .route(
             "/v2/enrollment/machines",
             axum::routing::post(enrollment_inspection_http::machines)

@@ -7,15 +7,48 @@ struct Cli {
 }
 #[derive(Subcommand)]
 enum Command {
+    /// Run one supervisor-registered session owner.
     Serve(voyage::server::ServeArgs),
-    Completions { shell: clap_complete::Shell },
+    /// Inspect or reconcile an unavailable incarnation under its exclusive fence.
+    Recover(voyage::server::recovery::RecoverArgs),
+    /// Inspect or withdraw a dedicated outbound execution grant.
+    RemoteConsent(voyage::server::remote_consent::Args),
+    /// Reconcile abandoned work in a legacy installation without replay.
+    LegacyRecover(voyage::server::legacy_recovery::LegacyRecoverArgs),
+    /// Upgrade an existing quiescent journal under its ownership guards.
+    UpgradeJournal(voyage::server::bootstrap::UpgradeArgs),
+    Completions {
+        shell: clap_complete::Shell,
+    },
     Manpage,
+    /// Inspect retained host quota charges or explicitly attest cleanup.
+    HostResources(voyage::host_resources::cli::Args),
+    /// Validate host configuration and workspace without dispatching a model.
+    ValidateStart(voyage::server::bootstrap::ValidateStartArgs),
+    /// Inspect a private ordinary session and its exact migration fingerprint.
+    ImportPlan(voyage::server::bootstrap::ImportPlanArgs),
 }
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     match cli.command {
+        Command::RemoteConsent(args) => voyage::server::remote_consent::run(args).await,
+        Command::LegacyRecover(args) => {
+            println!("{}", voyage::server::legacy_recovery::recover(args).await?);
+            Ok(())
+        }
+        Command::UpgradeJournal(args) => voyage::server::bootstrap::upgrade(args),
+        Command::Recover(args) => {
+            println!("{}", voyage::server::recovery::recover(args).await?);
+            Ok(())
+        }
         Command::Serve(args) => voyage::server::serve(args).await,
+        Command::HostResources(args) => voyage::host_resources::cli::run(args),
+        Command::ValidateStart(args) => voyage::server::bootstrap::validate_start(args),
+        Command::ImportPlan(args) => {
+            println!("{}", voyage::server::bootstrap::import_plan(args)?);
+            Ok(())
+        }
         Command::Completions { shell } => {
             clap_complete::generate(shell, &mut Cli::command(), "voyage", &mut std::io::stdout());
             Ok(())

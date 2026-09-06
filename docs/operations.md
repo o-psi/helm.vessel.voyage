@@ -1,10 +1,10 @@
 # Operating the current implementation
 
-This guide covers both the new connected process route and retained legacy
-entrypoints. `helm connect` reaches independent voyage processes through Vessel;
-`helm chat`, `run`, `managed` and `remote-worker` still execute through embedded
-shared runtime code. Their lifetime and capability differences matter. See
-[Current state](current-state.md) and the [Architecture](architecture.md).
+Helm interfaces reach independent voyage processes through Vessel. Ordinary chat,
+one-shot runs, managed sessions and the outbound compatibility adapter share that
+process boundary. See [Current state](current-state.md) and the
+[Architecture](architecture.md). Scoped grants, participants and signed owner moves
+are documented in [process access](process-access.md).
 
 Examples use installed executables. In a checkout, use `target/release/helm`,
 `target/release/vessel` and `target/release/voyage` after building the workspace.
@@ -48,7 +48,14 @@ an exact approval; `/answer DECISION_UUID text` answers a model question. There 
 no approve-all operation. Responses are tied to the observed decision, run,
 incarnation and revision, and an expired request cannot authorize an action.
 Decision waits are bounded; leaving an unanswered prompt is not approval.
-Legacy slash commands and terminal/workflow panels are not all available here.
+`/tools`, `/policy`, `/todos`, `/subagents`, `/terminals`, `/workflows` and `/models`
+inspect runtime controls; `/conversation` returns to history. `/tool NAME JSON`
+executes a real authorized tool, using an operator run when idle. `/terminal UUID`
+opens a separate private attachment (Ctrl+] detaches). `/configure /absolute/host/file`
+applies trusted host settings while idle. `/branch [name]`, `/archive`, `/restore`,
+`/clear SESSION_UUID`, `/compact RETAIN_COUNT`, `/delete SESSION_UUID` and
+`/export local-new-file.md` provide lifecycle controls. Clear retains old run/receipt
+evidence; delete purges text after cleanup and leaves a tombstone.
 
 For plain automation, capture identity before mutation and preserve exact commands
 when delivery is uncertain:
@@ -110,7 +117,7 @@ per-session grant delegation or participant-Vessel execution. The provider and i
 credentials remain on the remote executing machine. Snapshot polling/reconnect does
 not replay work, and SSH loss does not request runtime cancellation.
 
-## Legacy ordinary local work
+## Ordinary local work and migration
 
 ```sh
 helm --workspace /absolute/project chat
@@ -119,55 +126,44 @@ helm --workspace /absolute/project run "Describe this repository"
 helm sessions
 helm chat --resume SESSION_UUID
 helm run --resume SESSION_UUID "Continue the previous work"
+helm connect export SESSION_UUID /absolute/new-transcript.md
 ```
 
-With terminal input and output, chat uses the full-screen interface. `--plain`
-selects the line interface. A run executes one prompt and normally saves its session;
-`run --no-save` disables that save. Resuming uses the saved session's workspace.
-Model/provider overrides remain explicit invocation choices. Ordinary saved
-sessions are JSON files, separate from the managed journal below.
+Chat uses the multiplexer when attached to a terminal; `--plain` selects the line
+interface. One-shot runs stream durable output. Ctrl+C and EOF detach rather than
+cancel accepted work. Use explicit cancellation when intended. A resumed session
+keeps its saved workspace/model; explicit configuration changes require idle state.
+Ordinary JSON sessions import on explicit resume with their original identity and
+fingerprint, after exclusive source fencing. An already-retired source cannot be
+reopened as a competing owner.
 
-The TUI offers `/help`, `/new`, `/resume SESSION`, `/name TITLE`, `/branch`,
-and `/model`; Ctrl-Q exits from the normal input view. Session ownership can
-refuse conflicting work. Branching
-requires idle execution. Current TUI navigation does not establish independent
-background process lifetimes: do not assume closing it detaches a surviving run.
-Do not open the same saved session through competing writable copies.
+`run --no-save` still uses a durable temporary runtime journal so interruption cannot
+lose cleanup obligations. It deletes application records after observed completion
+and cleanup. Resuming with `--no-save` first branches; the original remains intact.
+An uncertain command or cleanup leaves recoverable records and reports the reason.
+This option does not promise that content never reaches disk or forensic erasure.
 
-## Legacy private managed sessions
+## Private managed sessions
 
-A managed directory identifies a local installation, not a workspace. Choose an
-absolute directory whose parent exists and retain it for later commands.
-These commands neither import ordinary JSON sessions nor publish them through Vessel.
+A managed installation is an absolute directory, separate from a workspace. Its
+supervisor lives under `vessel/`, with one dedicated journal per session. Existing
+legacy `journal/` sessions migrate on submit only after exclusive fencing and
+cleanup; use recovery first for abandoned legacy work.
 
 ```sh
 STORE="$HOME/.local/share/helm-managed"
 helm --workspace /absolute/project managed --directory "$STORE" create --name "Project work"
 helm managed --directory "$STORE" list
-helm managed --directory "$STORE" submit SESSION_UUID --expected-revision 0 \
+helm managed --directory "$STORE" --json submit SESSION_UUID --expected-revision REVISION \
   "Inspect the project and explain its build setup"
 ```
 
-Create is create-only; `create --id SESSION_UUID` cannot replace an existing session.
-If its response is lost, inspect `list` before creating anything else. Use
-`list --limit 20 --after SESSION_UUID` for another page, or the managed `--json`
-option for records with an explicit `next_after` cursor. Listing excludes transcript
-and provider continuation state. Submit uses the saved workspace and model with
-current local configuration and policy.
-
-Only one foreground owner mutates a session. A conflicting owner or revision is
-refused. Different workspaces can execute concurrently; sessions sharing a workspace
-also contend for shared runtime resources. Managed execution supports native
-providers and built-in tools. Effectful MCP configurations and `codex-compatibility`
-are refused because their cleanup is not observable through this owner.
-Required interactive approval cannot wait for stdin: without an explicit unattended
-grant, an approval-required action is refused.
-
-Submit prints an admission receipt before provisional output. Save that receipt.
-New execution succeeds only after an accepted completed run with confirmed owned
-cleanup. Streamed text alone does not establish completion. An unfinished stream
-can remain provisional evidence without becoming an accepted assistant message.
-Persistent terminals belong to this foreground invocation, not its next submit.
+Create cannot replace an existing identity. Recover a lost response with list;
+`--limit` and `--after` bound metadata pages. Listings exclude transcript/provider
+state. Submit prints an admission receipt before output; JSON mode emits bounded
+output, decision and completion records. Decisions can be answered from another
+connected interface. Plain attended submission presents approval/question prompts.
+Persistent root terminals remain owned by the independent voyage between turns.
 
 ## Exact retries, cancellation and recovery
 
@@ -191,8 +187,7 @@ helm managed --directory "$STORE" recover SESSION_UUID
 ```
 
 Cancel records intent for that exact run. Its owner cooperatively stops work and
-cleans up; acknowledgment is not proof that effects stopped. Ctrl-C also requests
-cooperative cancellation. Recovery requires exclusive ownership, marks abandoned
+cleans up; acknowledgment is not proof that effects stopped. Ctrl+C detaches the interface; use cancel to request cleanup. Recovery requires exclusive ownership, marks abandoned
 execution interrupted and saved PTYs stale, and preserves conversation/evidence.
 It neither replays tools nor claims terminated processes survived.
 
@@ -218,10 +213,10 @@ currently 8. Stop owners and resolve interrupted work before explicitly running
 `helm managed --directory "$STORE" upgrade`. Keep private backups; never remove
 cleanup or ownership records to force admission.
 
-## Legacy dedicated remote work
+## Supervised outbound compatibility relay
 
-Current remote execution exposes one dedicated session per foreground Helm worker.
-It is separate from the new Vessel-supervised process route. Enrollment
+The compatibility relay exposes one dedicated supervised voyage through an outgoing
+enrollment connection. `helm remote-worker` starts it through local Vessel and exits. Enrollment
 and presence alone grant no execution or access to existing private sessions.
 Configure a private Vessel authority directory, operator token and canonical HTTPS
 origin behind a TLS proxy on the Vessel host. Supply the token through the
@@ -253,8 +248,8 @@ not itself enroll a machine. Current enrollment administration also supports
 Obtain an invitation and its one-use secret from the authenticated Vessel operator.
 Enter the secret only at the hidden prompt; automation uses `--invitation-key-stdin`
 with private piped input. HTTPS is required outside explicitly allowed literal
-loopback development origins. Helm connects outbound and needs no inbound task port.
-The worker creates a new dedicated session and later reopens only its exact binding;
+loopback development origins. The voyage connects outbound and needs no inbound task port.
+The runtime creates a new dedicated session and later reopens only its exact binding;
 it cannot relabel an existing private journal. Workspace/model bindings stay fixed.
 Providers, credentials, execution policy and cleanup remain on the executing host.
 
@@ -282,8 +277,11 @@ contains `type`, `session_id` and `run_id`; a list contains `type`, `after` and
 Preserve the entire envelope on uncertain retries. Inspection returns metadata,
 usage and cleanup, not canonical history or provider continuation. Replay uses its
 own contiguous public cursor; `snapshot_required` means inspect and resume there.
-No remote create, history, model/root editing, approval delegation or recovery API
-is provided. Disconnecting an HTTP observer does not cancel execution; losing the
+These compatibility routes do not provide create/history/model/root editing or
+approval delegation. The separate scoped process gateway provides explicitly
+granted history, lifecycle/model and decision operations; host/root configuration
+requires local or SSH account-owner access. Disconnecting an HTTP observer does
+not cancel execution; losing the
 worker's Vessel link conservatively cancels it and stops dispatch.
 
 ## Withdraw and recover a remote grant

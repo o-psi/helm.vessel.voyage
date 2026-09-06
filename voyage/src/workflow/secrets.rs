@@ -38,6 +38,13 @@ fn validate_names(document: &Document) -> Result<()> {
 }
 
 impl SecretInputs {
+    /// One-time private process transport, never persistence or model input.
+    pub fn into_private_transport(self) -> Vec<(String, String)> {
+        self.values
+            .into_iter()
+            .map(|(name, value)| (name, value.to_string()))
+            .collect()
+    }
     pub fn collect(document: &Document, values: Vec<(String, String)>) -> Result<Self> {
         // Wrap every input before any fallible validation, including unconsumed
         // trailing values. This does not promise to erase copies held by the OS.

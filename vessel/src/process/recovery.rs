@@ -90,7 +90,8 @@ impl Supervisor {
         );
         let directory = registry::directory(&self.directory, session_id);
         ensure!(
-            routing::inspect(&directory, registration).await.state == ProcessState::Stopped,
+            routing::inspect(&directory, registration).await.state == ProcessState::Stopped
+                || super::recover_command::restart_permitted(&directory, registration),
             "restart requires positively observed clean runtime stop; unavailable is not stopped"
         );
         let occupied = registrations
@@ -98,7 +99,10 @@ impl Supervisor {
             .filter(|entry| {
                 let path = registry::directory(&self.directory, entry.session_id);
                 entry.session_id != session_id
-                    && (path.join("runtime.sock").exists() || !clean_stop(&path, entry))
+                    && entry.state != ProcessState::Relinquished
+                    && (path.join("runtime.sock").exists()
+                        || (!clean_stop(&path, entry)
+                            && !super::recover_command::restart_permitted(&path, entry)))
             })
             .count();
         ensure!(

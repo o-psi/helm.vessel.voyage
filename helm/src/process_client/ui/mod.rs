@@ -1,6 +1,9 @@
 //! Multiplexed presentation; dropping this interface only drops observations.
 mod actions;
+mod controls;
+mod export;
 mod input;
+mod lifecycle;
 mod updates;
 use crate::composer;
 mod drafts;
@@ -32,6 +35,7 @@ pub(super) struct App {
     sender: mpsc::Sender<Update>,
     status: String,
     quit: bool,
+    terminal_request: Option<(Target, uuid::Uuid, uuid::Uuid)>,
 }
 
 struct Screen;
@@ -48,6 +52,10 @@ impl Drop for Screen {
 }
 
 pub async fn run(clients: Vec<Client>) -> Result<()> {
+    run_selected(clients, None).await
+}
+
+pub async fn run_selected(clients: Vec<Client>, session: Option<uuid::Uuid>) -> Result<()> {
     anyhow::ensure!(
         io::stdin().is_terminal() && io::stdout().is_terminal(),
         "connected TUI needs a terminal; use connect list/new/inspect/submit for plain operation"
@@ -65,12 +73,13 @@ pub async fn run(clients: Vec<Client>) -> Result<()> {
     let mut app = App {
         clients,
         views: BTreeMap::new(),
-        selected: None,
+        selected: session.map(|session| Target { route: 0, session }),
         sender,
         status:
             "Connected views · Ctrl+N creates · Tab switches · Ctrl+C detaches without cancellation"
                 .into(),
         quit: false,
+        terminal_request: None,
     };
     let mut events = EventStream::new();
     let mut repaint = tokio::time::interval(Duration::from_millis(100));
@@ -85,6 +94,13 @@ pub async fn run(clients: Vec<Client>) -> Result<()> {
                 },
                 update = receiver.recv() => if let Some(update) = update { app.update(update); },
             }
+            if let Some((target,run,terminal_id))=app.terminal_request.take() {
+                let result=super::terminal::attach(&app.clients[target.route],target.session,run,terminal_id).await;
+                terminal::enable_raw_mode()?;
+                execute!(io::stdout(),terminal::EnterAlternateScreen,crossterm::event::EnableBracketedPaste)?;
+                terminal.clear()?;
+                app.status=match result {Ok(())=>"Private terminal detached; voyage remains active".into(),Err(error)=>safe(&error.to_string())};
+            }
         }
         for (target, view) in &app.views { drafts::save(&app.clients[target.route], view)?; }
         Ok(())
@@ -97,10 +113,6 @@ pub async fn run(clients: Vec<Client>) -> Result<()> {
 
 impl App {
     fn route_label(&self, route: usize) -> String {
-        self.clients[route]
-            .ssh
-            .as_deref()
-            .unwrap_or("local")
-            .to_owned()
+        self.clients[route].label()
     }
 }

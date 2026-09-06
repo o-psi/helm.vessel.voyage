@@ -276,10 +276,13 @@ pub async fn build_subagents_managed(
         directories.mode(0o700);
     }
     directories.create(&completion_root)?;
+    let shared_completion_root = crate::config::default_data_dir().join("completion");
+    directories.create(&shared_completion_root)?;
     let coordinator = crate::completion::runtime::Coordinator::open(
         completion_root.join(&workspace_key),
         workspace,
-    )?;
+    )?
+    .with_writer_directory(shared_completion_root.join(&workspace_key))?;
     let todos = todo_tool(workspace, coordinator.clone());
     let worktrees = worktree_manager(workspace, &workspace_key).map(|manager| {
         if parent_policy.ceiling_present() {

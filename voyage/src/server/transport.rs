@@ -59,7 +59,7 @@ pub(super) async fn listen(directory: PathBuf, state: Arc<State>) -> Result<()> 
                 let (socket,_)=connection?;
                 if socket.peer_cred()?.uid()!=unsafe{libc::geteuid()} {continue}
                 let Ok(permit)=capacity.clone().try_acquire_owned() else {continue};
-                let state=state.clone();clients.spawn(async move{let _permit=permit;let _=tokio::time::timeout(std::time::Duration::from_secs(30),respond(socket,state)).await;});
+                let state=state.clone();let directory=directory.clone();clients.spawn(async move{let _permit=permit;let _=tokio::time::timeout(std::time::Duration::from_secs(30),respond(socket,state,directory)).await;});
             }
         }
     }
@@ -82,8 +82,29 @@ pub(super) async fn listen(directory: PathBuf, state: Arc<State>) -> Result<()> 
         while clients.join_next().await.is_some() {}
     })
     .await;
+    clients.abort_all();
+    let handlers = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        while clients.join_next().await.is_some() {}
+    })
+    .await;
+    let relay = match state.outbound_task.lock().await.take() {
+        Some(task) => matches!(
+            tokio::time::timeout(std::time::Duration::from_secs(75), task).await,
+            Ok(Ok(_))
+        ),
+        None => true,
+    };
+    let retained = state.controls.shutdown_retained(&state.owner).await;
+    let compatibility = crate::provider::shutdown_compatibility().await;
     let snapshot = state.owner.process_snapshot().await?;
-    let observed = cleanup.is_ok() && snapshot["pending_cleanup_run"].is_null();
+    let session_resources = state.owner.session_resources().await?;
+    let observed = relay
+        && retained.is_ok()
+        && session_resources.as_array().is_some_and(Vec::is_empty)
+        && cleanup.is_ok()
+        && handlers.is_ok()
+        && compatibility.is_ok()
+        && snapshot["pending_cleanup_run"].is_null();
     if observed {
         use std::io::Write;
         let candidate = directory.join(format!(".stopped-{}", Uuid::new_v4()));
@@ -109,7 +130,7 @@ pub(super) async fn listen(directory: PathBuf, state: Arc<State>) -> Result<()> 
     );
     Ok(())
 }
-async fn respond(mut socket: UnixStream, state: Arc<State>) -> Result<()> {
+async fn respond(mut socket: UnixStream, state: Arc<State>, directory: PathBuf) -> Result<()> {
     let request: RuntimeRequest = read_frame(&mut socket).await?;
     ensure!(
         request.protocol == PROCESS_PROTOCOL
@@ -118,13 +139,22 @@ async fn respond(mut socket: UnixStream, state: Arc<State>) -> Result<()> {
             && token_matches(&request.token, &state.registration.token),
         "runtime authentication rejected"
     );
-    let result = commands::dispatch(&state, request.command).await;
+    let authorization = super::authorization::authorize(&state, &request, &directory)?;
+    let result = commands::dispatch(&state, request.command.clone(), authorization).await;
+    let rejected = result
+        .as_ref()
+        .err()
+        .and_then(|error| error.downcast_ref::<commands::Rejected>())
+        .map(|rejected| rejected.0.clone());
     let response = RuntimeResponse {
         protocol: PROCESS_PROTOCOL,
-        outcome_unknown: result.is_err(),
+        outcome_unknown: result.is_err() && rejected.is_none(),
         session_id: state.registration.session_id,
         incarnation: state.registration.incarnation,
-        result: result.as_ref().cloned().unwrap_or(serde_json::Value::Null),
+        result: result
+            .as_ref()
+            .cloned()
+            .unwrap_or_else(|_| rejected.unwrap_or(serde_json::Value::Null)),
         error: result.err().map(|error| {
             error
                 .to_string()
@@ -134,6 +164,7 @@ async fn respond(mut socket: UnixStream, state: Arc<State>) -> Result<()> {
                 .collect()
         }),
     };
+    super::authorization::authorize(&state, &request, &directory)?;
     write_frame(&mut socket, &response).await?;
     Ok(())
 }

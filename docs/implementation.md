@@ -1,6 +1,7 @@
 # Implementation sequence
 
-Status: implementation in progress for the [architecture](architecture.md). The current source
+Status: implementation delivered for the [architecture](architecture.md) on the
+supported Linux process path; verification and platform limits are recorded below. The current source
 map is in [development](development.md); available behavior is in
 [current state](current-state.md). Tracking spans
 [#77](https://github.com/o-psi/voyage/issues/77),
@@ -14,25 +15,25 @@ Uncommitted experiments and historical issue closure are not implementation evid
 
 ## Implementation status ledger
 
-The entries below describe source delivered in this migration, not completed
-roadmap acceptance. Commit identity and exact final checks belong in the linked
-issue delivery records. Do not infer live-provider, native deployment or end-to-end
-coverage from static/build checks. The full requested implementation remains open.
+The six delivery steps now have implemented runtime and operator paths. The table
+identifies source boundaries; the verification record below identifies what was
+actually observed. Linux build/behavior evidence does not establish native
+macOS/Windows support, deployed remote SSH/TLS operation or live-provider quality.
+Those limits are explicit rather than alternate embedded execution fallbacks.
 
-| Step | Implemented source | Remaining acceptance |
-| --- | --- | --- |
-| 1. Contracts | `crates/voyage-protocol/src/process/` defines versioned bounded private requests, session/incarnation identities, receipts and exact-run commands. Both runtime and Vessel authenticate local account peers; Helm has local and SSH clients. | Cursor-based subscriptions/replay gaps, enrolled session/responder grants, complete lifecycle capabilities and reviewed cross-component failure evidence. |
-| 2. Independent owner | `voyage/` contains runtime modules and a real executable. Its server holds one managed session owner, checkpoints streamed output, scopes resources per process, handles steering and durable decisions, and retains cleanup obligations. | Retire legacy embedded Helm execution after feature parity; integrate explicit ordinary-session migration; complete resource/budget audit and interruption evidence. File movement does not complete this step. |
-| 3. Supervision | `vessel/src/process/` starts independent processes, authenticates registrations, enforces capacity, inspects health, stops exact incarnations and permits restart only with positive clean-stop evidence. Linux installer service CLI packages a separate service lifetime. | Full active-work crash/outage/reboot/cleanup acceptance, secure native macOS/Windows service paths and broader deployment validation. Unavailable owners remain fenced, not automatically resurrected. |
-| 4. Multiplexing Helm | `helm/src/process_client/` implements connected local/SSH CLI and a TUI with per-voyage drafts, captured command identities, snapshots, unread state, switching, steering and exact cancellation. | Final replacement of chat/run/managed/worker adapters; full workflow/task/subagent/PTY and modal parity; complete background decision and narrow/Unicode/flood acceptance evidence. |
-| 5. Remote lifecycle | Up to 16 paired SSH account routes can be combined with local voyages. Runtime snapshot/history, rename/model, decisions and exact receipt/cancel commands are present. SSH credentials are not provider credentials. | Enrolled per-session authority and revocation, branch/archive/confirmed delete, transport capability/replay coverage and remote decision authority evidence. SSH account access is not the intended fine-grained grant model. |
-| 6. Participants and owner moves | Existing coordination/grant primitives remain available as foundations. No new participant execution or owner movement is enabled by the process route. | Define and implement accepted execution bindings, disclosure, assignment admission, subordinate cleanup, ambiguous-result handling, membership drain/removal and positively fenced owner transfer; exercise all listed failure scenarios. |
+| Step | Implemented source and behavior |
+| --- | --- |
+| 1. Contracts | `crates/voyage-protocol/src/process/`: bounded versioned requests, exact session/incarnation/run identities, caller-bound immutable receipts and durable rejection, metadata event cursors/replay gaps, lifecycle, scoped grants and participant/transfer contracts. |
+| 2. Independent owner | `voyage/`: independent lifetime owner, canonical journals/checkpoints/decisions, original-UUID JSON and managed migration, run/session cleanup and host resource accounting. Ordinary/managed/workflow/outbound Helm entrypoints now use Vessel; the embedded TUI and executor wrappers are removed. |
+| 3. Supervision | `vessel/src/process/`: serialized independent launch, startup preflight, authenticated health, positive stop/restart/recovery, capacity and Linux service provisioning. Unavailable owners remain fenced. Recovery exposes pending run/resource IDs and distinguishes operator attestation. |
+| 4. Multiplexing Helm | `helm/src/process_client/`: local/SSH/grant routes, per-voyage drafts/history navigation/cursors/scroll/pending identities, plain and one-shot clients, durable decisions, runtime controls, real operator tools/workflows/GitHub operations, private PTY attachment and revision-bound exports. |
+| 5. Remote lifecycle | Host-private scoped grants and HTTP gateway; current rights/workspace/epoch/revocation checks; branch, archive/restore, confirmed clear/delete, compaction and next-turn model/configuration. Credentials remain on the execution host. |
+| 6. Participants and owner moves | Explicit receiver bindings, bounded disclosed context, distinct subordinate sessions, immutable assignment/result/cleanup obligations, cancellation tombstones and idle reconciliation. Pinned signing identities, destination readiness, permanent source fencing and verified checkpoint courier implement explicit owner movement without timeout takeover. |
 
-The interactive installer wizard and legacy enrollment/relay topology remain
-explicitly separate from the connected process route. Live model calls require an
-approved provider and budget. Missing platform or behavioral evidence remains
-missing even when all existing quality gates pass. Broader issues stay open until
-their acceptance is actually met.
+The interactive installer wizard remains simulated and the browser execution
+console remains deferred, as required by the product scope. Native process-service
+paths outside Linux fail explicitly. The outbound enrollment compatibility route
+retains its narrower grant/lease semantics inside a supervised voyage.
 
 ## Code disposition and runtime ownership
 
@@ -43,11 +44,10 @@ Helm constructing an agent behind a new connection abstraction.
 
 The table records the pre-extraction source paths and required final destinations;
 its Helm execution paths are historical baseline references, not the current source
-map. Runtime modules have now moved to the `voyage/` workspace package. The
-[current development map](development.md) lists their actual locations. Helm still
-links the voyage library for legacy execution, so final process ownership remains
-unfinished. In the completed architecture only the voyage process instantiates the
-session executor; shared code must not become competing session ownership.
+map. Runtime modules live in the `voyage/` workspace package. The
+[current development map](development.md) lists their actual locations. Helm links
+shared configuration/data types but its executable clients no longer construct the
+session executor. Shared code must not become competing session ownership.
 
 | Component and current source | Disposition and target source home | Target process responsibility |
 | --- | --- | --- |
@@ -199,9 +199,10 @@ a duplicate session owner. Relevant work: #77, #78 and #79.
 
 The previous automated tests and evaluation suite were removed by request. Do not
 recreate them during documentation work or interpret the remaining seven non-test
-[quality gates](quality.md) as behavioral coverage. The scenarios above are delivery
-requirements for implementation; replacement automated coverage and approved live
-or native deployment checks need to be addressed when validation work resumes.
+[quality gates](quality.md) as behavioral coverage. The scenarios above guide delivery verification. Temporary offline manual probes
+exercise actual processes without recreating a repository test suite. Replacement
+automated coverage, approved live calls and native deployment evidence remain
+separate work.
 
 For every delivered slice, record the source revision, observed behavior, failure
 handling, supported platforms and unresolved requirements. Run applicable existing
@@ -214,3 +215,30 @@ resolve a background decision; close/reopen Helm; recover output without replay;
 cancel one run and observe cleanup while the others continue. Then exercise a
 runtime crash, a Vessel outage and revoked access. Multi-Vessel participation needs
 its additional evidence before being advertised.
+
+## Observed Linux verification
+
+Temporary offline probes exercised real Helm, Vessel and voyage binaries and
+private SQLite stores. Native-provider responses came only from local HTTP fixtures;
+compatibility/MCP processes were local fixtures. These are manual observations,
+not a recreated regression suite or a claim about live provider quality.
+
+| Area | Observed behavior |
+| --- | --- |
+| Admission and resources | Durable streamed output, exact steering retry, one approved shell effect, question response, exact cancellation with no late shell effect, compatibility and effectful MCP child-session cleanup. |
+| Interface | Two independent workspaces execute concurrently while switching; separate drafts, Unicode/paste and narrow resize; background approval targeting rejects another voyage's decision; approval executes once, denial executes nothing; detach/reconnect does not replay; terminal modes restore. |
+| Observation and lifecycle | 2,048-event retention, explicit replay gap and snapshot cursor recovery; archive/restore, branch retry, history denial/revocation, deletion isolation; full revision-bound export, clear/compact exact retry. |
+| Migration and configuration | Two-session legacy managed source extracts only the selected UUID/history/receipts and retires its source; ordinary JSON source fencing, retained backup deletion and deleted restart; configured branch survives source deletion and removal of original configuration files; managed/outbound owners restart after the entire retired source installation is removed. |
+| Process failure | Vessel shutdown/restart preserves an active owner's incarnation and output; killing one voyage leaves another available; restart refuses absent cleanup, recovery exposes pending resources, explicit attestation permits a new incarnation without replay. |
+| Operator workflows | Real operator tool registry; retained root PTY across runs, stale terminal run rejection and private input absent from durable files; ordinary/resumed/no-save runs preserve parent history; actual private workflow shell binding remains absent from provider requests/history; temporary model discovery cleanup. |
+| Scoped access and participants | HTTP observe-only history refusal and revocation; a real participant child executes once under its accepted binding; parent attribution/cleanup once; exact retry, pre-admission cancellation fence, active cancellation and binding removal prevent late effects; dropped admission response retains one assignment and attributes late terminal cleanup. |
+| Outbound compatibility and movement | Actual local enrollment and outbound remote admission after Helm exits; exact activation does not replay, and logical relay outage/withdrawal retains the local owner for observation. Full Helm signed courier preserves UUID/history, exact transfer retry retains destination incarnation and source restart stays fenced; historical command receipts survive with original-principal/payload checks and no provider replay. |
+
+Final source revisions and clean-checkout quality-gate results are recorded on
+[#78](https://github.com/o-psi/voyage/issues/78), with access/coordination results on
+[#79](https://github.com/o-psi/voyage/issues/79) and
+[#77](https://github.com/o-psi/voyage/issues/77). No macOS/Windows native service,
+real remote SSH/TLS deployment, reboot deployment, live paid-provider or browser
+console validation is claimed. Linux supports the implementation; these additional
+deployment/provider certifications remain separate and must not be inferred from
+the seven formatting, analysis, build and packaging gates.

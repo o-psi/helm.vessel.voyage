@@ -48,6 +48,7 @@ impl TerminalShutdown {
 }
 
 pub(super) struct OwnedChild {
+    host_reservation: crate::host_resources::Reservation,
     inner: Box<dyn Child + Send + Sync>,
     reader_done: Arc<AtomicBool>,
     input_done: Arc<AtomicBool>,
@@ -59,12 +60,16 @@ pub(super) struct OwnedChild {
     identity: Option<super::SessionIdentity>,
 }
 impl OwnedChild {
-    fn new(inner: Box<dyn Child + Send + Sync>) -> Self {
+    fn new(
+        inner: Box<dyn Child + Send + Sync>,
+        host_reservation: crate::host_resources::Reservation,
+    ) -> Self {
         #[cfg(target_os = "linux")]
         let identity = inner
             .process_id()
             .and_then(|pid| super::SessionIdentity::capture(pid).ok());
         Self {
+            host_reservation,
             inner,
             reader_done: Arc::new(AtomicBool::new(true)),
             input_done: Arc::new(AtomicBool::new(true)),
@@ -119,6 +124,11 @@ impl OwnedChild {
             }
             if self.reaped && !self.input_done.load(Ordering::Acquire) {
                 return Err(TerminalShutdownFailure::WriterRunning);
+            }
+            if self.reaped {
+                self.host_reservation
+                    .release_observed()
+                    .map_err(|_| TerminalShutdownFailure::ObservationUnavailable)?;
             }
             Ok(self.reaped)
         }
@@ -176,10 +186,14 @@ pub(super) struct StartupChild {
     uncertain: Arc<AtomicBool>,
 }
 impl StartupChild {
-    pub(super) fn new(tool: &ProcessTool, child: Box<dyn Child + Send + Sync>) -> Self {
+    pub(super) fn new(
+        tool: &ProcessTool,
+        child: Box<dyn Child + Send + Sync>,
+        reservation: crate::host_resources::Reservation,
+    ) -> Self {
         Self {
             id: Uuid::new_v4(),
-            child: Some(OwnedChild::new(child)),
+            child: Some(OwnedChild::new(child, reservation)),
             pending: tool.pending.clone(),
             uncertain: tool.uncertain.clone(),
         }

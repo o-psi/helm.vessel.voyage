@@ -1,6 +1,8 @@
 mod filesystem;
 pub mod mcp;
 mod process;
+#[cfg(target_os = "linux")]
+pub(crate) use process::SessionIdentity;
 mod questions;
 mod shell;
 mod todo;
@@ -336,6 +338,12 @@ impl ToolRegistry {
     }
     pub fn terminals(&self) -> Option<ProcessTool> {
         self.terminals.clone()
+    }
+    pub(crate) fn reuse_terminals(&mut self, terminals: ProcessTool) {
+        if self.terminals.is_some() {
+            self.terminals = Some(terminals.clone());
+            self.register(terminals);
+        }
     }
     pub fn register_subagents(
         &mut self,

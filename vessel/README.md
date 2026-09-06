@@ -1,6 +1,6 @@
 # Vessel
 
-The target Vessel supervises and exposes local Voyage runtime processes to Helm
+Vessel supervises and exposes local Voyage runtime processes to Helm
 interfaces. Helm connects only to local or remote Vessels; each Voyage runtime owns
 **one session per independent process**. See the
 [architecture](../docs/architecture.md).
@@ -10,9 +10,11 @@ independent voyage executables through an owned private Unix socket. It verifies
 runtime identity, serializes competing starts, enforces capacity and supports
 explicit stop/restart. `local-request` is its framed stdin/stdout adapter for SSH.
 These account-authorized operations are separate from the existing HTTP management,
-enrollment, presence and opt-in legacy Helm-worker relay. Enrolled per-session
-grants are not yet connected to the new process surface. See
-[current implementation](../docs/current-state.md).
+enrollment, presence and opt-in outbound compatibility relay. The separate scoped
+HTTP process gateway binds explicit grants and current enrollment epochs. Participant
+bindings, signed owner transfer and explicit recovery use the same supervisor. See
+[current implementation](../docs/current-state.md) and
+[process access setup](../docs/process-access.md).
 
 From the repository root:
 
@@ -20,7 +22,7 @@ From the repository root:
 cargo build --workspace --locked
 ./target/debug/vessel local-serve --directory /absolute/private-vessel \
   --voyage-binary "$PWD/target/debug/voyage" --capacity 16
-# Separate legacy HTTP management service:
+# Separate HTTP management/gateway service:
 ./target/debug/vessel --bind 127.0.0.1:9480 --database vessel.db
 ```
 

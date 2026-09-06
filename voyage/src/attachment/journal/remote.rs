@@ -452,9 +452,14 @@ impl Journal {
             run.state == RunState::Accepted,
             "redaction must precede dispatch"
         );
+        // Process grants have execution authority without using the legacy
+        // enrollment relay projection. Canonical checkpoints remain unchanged.
+        let Some((session, _)) = binding(&self.connection)? else {
+            return Ok(());
+        };
         ensure!(
-            binding(&self.connection)?.is_some_and(|(id, _)| id == run.session_id),
-            "not a dedicated remote session"
+            session == run.session_id,
+            "remote redaction session mismatch"
         );
         self.remote_redactor = Some(redactor);
         Ok(())

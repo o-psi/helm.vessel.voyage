@@ -72,8 +72,19 @@ impl PromptHistory {
 
     pub(super) fn record(&mut self, prompt: &str) {
         self.reset_navigation();
-        if !prompt.trim().is_empty() {
-            self.entries.push(prompt.to_owned());
+        if !prompt.trim().is_empty() && prompt.len() <= 65536 {
+            if self
+                .entries
+                .last()
+                .is_none_or(|previous| previous != prompt)
+            {
+                self.entries.push(prompt.to_owned());
+            }
+            while self.entries.len() > 256
+                || self.entries.iter().map(String::len).sum::<usize>() > 1024 * 1024
+            {
+                self.entries.remove(0);
+            }
         }
     }
 

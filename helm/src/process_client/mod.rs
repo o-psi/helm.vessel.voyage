@@ -8,6 +8,23 @@ mod ui;
 pub fn safe(value: &str) -> String {
     value
         .chars()
-        .filter(|ch| !ch.is_control() || matches!(ch, '\n' | '\t'))
+        .filter(|ch| {
+            (!ch.is_control() || matches!(ch, '\n' | '\t'))
+                && !matches!(ch, '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')
+        })
         .collect()
 }
+
+pub mod plain;
+
+mod access;
+
+mod commands;
+
+pub mod terminal;
+
+pub mod frontend;
+
+mod admin;
+
+pub mod export;

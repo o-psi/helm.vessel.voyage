@@ -1,11 +1,16 @@
 //! Slow observers cannot block the terminal input loop or another Vessel.
 use super::state::{Snapshot, Target};
 use crate::process_client::transport::Client;
-use std::{sync::Arc, time::Duration};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 use tokio::sync::{Semaphore, mpsc};
 use voyage_protocol::process::{ProcessInfo, RuntimeCommand, VesselCommand};
 
 pub enum Update {
+    Control {
+        target: Target,
+        incarnation: uuid::Uuid,
+        result: Result<String, String>,
+    },
     Catalogue {
         route: usize,
         processes: Vec<ProcessInfo>,
@@ -13,7 +18,7 @@ pub enum Update {
     Snapshot {
         target: Target,
         incarnation: uuid::Uuid,
-        result: Result<Snapshot, String>,
+        result: Box<Result<Snapshot, String>>,
     },
     RouteError {
         route: usize,
@@ -22,6 +27,7 @@ pub enum Update {
     Command {
         target: Target,
         command_id: uuid::Uuid,
+        refused: bool,
         result: Result<serde_json::Value, String>,
     },
     Created {
@@ -39,6 +45,10 @@ pub fn spawn(clients: &[Client], sender: mpsc::Sender<Update>) -> Vec<tokio::tas
             let sender = sender.clone();
             tokio::spawn(async move {
                 let limit = Arc::new(Semaphore::new(8));
+                let cursors = Arc::new(tokio::sync::Mutex::new(HashMap::<
+                    (uuid::Uuid, uuid::Uuid),
+                    u64,
+                >::new()));
                 loop {
                     let result = client
                         .request(VesselCommand::Catalogue)
@@ -46,6 +56,11 @@ pub fn spawn(clients: &[Client], sender: mpsc::Sender<Update>) -> Vec<tokio::tas
                         .and_then(|value| Ok(serde_json::from_value::<Vec<ProcessInfo>>(value)?));
                     match result {
                         Ok(processes) => {
+                            cursors.lock().await.retain(|(id, incarnation), _| {
+                                processes
+                                    .iter()
+                                    .any(|p| p.session_id == *id && p.incarnation == *incarnation)
+                            });
                             if sender
                                 .send(Update::Catalogue {
                                     route,
@@ -62,6 +77,7 @@ pub fn spawn(clients: &[Client], sender: mpsc::Sender<Update>) -> Vec<tokio::tas
                                     break;
                                 };
                                 let client = client.clone();
+                                let cursors = cursors.clone();
                                 let sender = sender.clone();
                                 jobs.spawn(async move {
                                     let _permit = permit;
@@ -69,6 +85,23 @@ pub fn spawn(clients: &[Client], sender: mpsc::Sender<Update>) -> Vec<tokio::tas
                                         route,
                                         session: process.session_id,
                                     };
+                                    let key = (process.session_id, process.incarnation);
+                                    let after = cursors.lock().await.get(&key).copied();
+                                    if let Some(after) = after {
+                                        // Events are durable invalidations. A gap or unsupported
+                                        // capability is recovered by the snapshot below, never replay.
+                                        let _ = client
+                                            .forward(
+                                                target.session,
+                                                process.incarnation,
+                                                RuntimeCommand::Events {
+                                                    after,
+                                                    limit: 128,
+                                                    wait_ms: 0,
+                                                },
+                                            )
+                                            .await;
+                                    }
                                     let result = client
                                         .forward(
                                             target.session,
@@ -76,13 +109,20 @@ pub fn spawn(clients: &[Client], sender: mpsc::Sender<Update>) -> Vec<tokio::tas
                                             RuntimeCommand::Snapshot,
                                         )
                                         .await
-                                        .and_then(|value| Ok(serde_json::from_value(value)?))
+                                        .and_then(|value| {
+                                            Ok(serde_json::from_value::<Snapshot>(value)?)
+                                        })
                                         .map_err(|error| error.to_string());
+                                    if let Ok(snapshot) = &result
+                                        && let Some(cursor) = snapshot.observation_cursor
+                                    {
+                                        cursors.lock().await.insert(key, cursor);
+                                    }
                                     let _ = sender
                                         .send(Update::Snapshot {
                                             target,
                                             incarnation: process.incarnation,
-                                            result,
+                                            result: Box::new(result),
                                         })
                                         .await;
                                 });

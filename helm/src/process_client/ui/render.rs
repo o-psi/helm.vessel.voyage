@@ -94,6 +94,14 @@ pub fn draw(frame: &mut Frame<'_>, app: &App) {
                     safe(&snapshot.model),
                     snapshot.revision
                 )));
+                if snapshot.lifecycle["deleted"] == true {
+                    text.lines.push(Line::from(
+                        "Deleted · history purged; identity tombstone retained",
+                    ));
+                } else if snapshot.lifecycle["archived"] == true {
+                    text.lines
+                        .push(Line::from("Archived · /restore before submitting"));
+                }
                 if snapshot.messages.len() > 400 {
                     text.lines
                         .push(Line::from("[Showing the most recent 400 messages]"));
@@ -180,6 +188,10 @@ pub fn draw(frame: &mut Frame<'_>, app: &App) {
                 observed.elapsed().as_secs()
             )));
         }
+    }
+    if let Some(panel) = view.and_then(|v| v.panel.as_ref()) {
+        title.push_str(" · controls · /conversation returns");
+        text = Text::raw(panel.clone());
     }
     let scroll = view.map_or(0, |v| v.scroll);
     let automatic = text

@@ -17,6 +17,14 @@ pub async fn forward(
     registration: &ProcessRegistration,
     command: RuntimeCommand,
 ) -> Result<RuntimeResponse> {
+    forward_authorized(directory, registration, command, None).await
+}
+pub(super) async fn forward_authorized(
+    directory: &Path,
+    registration: &ProcessRegistration,
+    command: RuntimeCommand,
+    authorization: Option<GrantBinding>,
+) -> Result<RuntimeResponse> {
     let result = tokio::time::timeout(Duration::from_secs(15), async {
         let mut stream = UnixStream::connect(directory.join("runtime.sock")).await?;
         ensure!(
@@ -30,6 +38,7 @@ pub async fn forward(
                 session_id: registration.session_id,
                 incarnation: registration.incarnation,
                 token: registration.token.clone(),
+                authorization,
                 command,
             },
         )
@@ -53,6 +62,7 @@ pub async fn inspect(directory: &Path, registration: &ProcessRegistration) -> Pr
     let mut info = ProcessInfo::from(registration);
     info.state = match forward(directory, registration, RuntimeCommand::Health).await {
         Ok(response) if response.error.is_none() => ProcessState::Live,
+        _ if registration.state == ProcessState::Relinquished => ProcessState::Relinquished,
         _ if !directory.join("runtime.sock").exists()
             && super::recovery::clean_stop(directory, registration) =>
         {

@@ -61,16 +61,17 @@ provides the remote account's local authority, not enrolled per-session grants.
 Do not expose its private socket as an unauthenticated network service.
 
 Pending runtime decisions have exact targeting, durable receipts, single-response
-semantics and bounded expiry. Local policy remains the execution ceiling. Those
-controls do not establish the target multi-principal responder/grant model. Shared
+semantics and bounded expiry. Local policy remains the execution ceiling. Scoped process grants bind principal, workspace, session, rights, revision and
+expiry; current grant/enrollment state is checked at dispatch and during execution.
+Private credential files are separate from provider keys. History and responder
+authority are distinct rights; see [process access](process-access.md). Shared
 OS accounts and arbitrary code running as that user remain within the cooperating
 process trust boundary.
 
 ## Current controls
 
-Execution checks now live in the shared voyage runtime library. Independent
-connected voyages execute them in their voyage process; legacy Helm frontends
-still instantiate the same runtime in-process. Native providers do not require
+Execution checks live in the voyage process. All Helm session execution entrypoints
+reach that supervised owner. Native providers do not require
 the Codex executable. API-key and subscription credentials use distinct configured
 transports; selecting a model transport does not grant tool authority.
 

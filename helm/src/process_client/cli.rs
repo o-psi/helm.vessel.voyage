@@ -1,10 +1,9 @@
 //! Connected frontends share the same Vessel requests as the multiplexer.
 use super::{local, transport::Client};
-use anyhow::{Context, Result, ensure};
+use anyhow::{Result, ensure};
 use clap::{Args, Subcommand};
 use std::path::PathBuf;
 use uuid::Uuid;
-use voyage_protocol::process::{ProcessInfo, RuntimeCommand, VesselCommand};
 
 #[derive(Args)]
 pub struct ConnectArgs {
@@ -18,17 +17,45 @@ pub struct ConnectArgs {
     #[arg(long, requires = "ssh")]
     pub remote_directory: Vec<PathBuf>,
     /// Include the local Vessel alongside the SSH host.
-    #[arg(long, requires = "ssh")]
+    #[arg(long)]
     pub include_local: bool,
     /// Connect without starting an absent local Vessel.
     #[arg(long)]
     pub no_start: bool,
+    /// Private JSON credential for one explicitly granted remote voyage.
+    #[arg(long)]
+    pub access_file: Vec<PathBuf>,
     #[command(subcommand)]
     pub command: Option<ConnectedCommand>,
 }
 
 #[derive(Subcommand)]
 pub enum ConnectedCommand {
+    /// Export complete public history at one revision to a new local Markdown file.
+    Export { session: Uuid, path: PathBuf },
+    /// Explicit account administration, participant bindings and signed owner moves.
+    Admin {
+        #[command(subcommand)]
+        command: super::admin::AdminCommand,
+    },
+    /// Attach a separate private human-input channel to a runtime terminal.
+    Terminal {
+        session: Uuid,
+        #[arg(long)]
+        run: Uuid,
+        #[arg(long)]
+        terminal: Uuid,
+    },
+    /// Run a turn in an existing independent voyage and stream its durable output.
+    Run {
+        session: Uuid,
+        #[arg(long)]
+        command_id: Option<Uuid>,
+        #[arg(required = true)]
+        prompt: Vec<String>,
+    },
+    /// Use a line-oriented client; EOF or Ctrl+C detaches without cancelling work.
+    Chat { session: Uuid },
     /// List independently supervised voyages.
     List,
     /// Start a voyage on the selected host. UUIDs make create outcomes recoverable.
@@ -39,6 +66,63 @@ pub enum ConnectedCommand {
         command_id: Option<Uuid>,
         #[arg(long)]
         workspace: PathBuf,
+        /// Absolute execution-host configuration path.
+        #[arg(long)]
+        config_path: Option<PathBuf>,
+    },
+    /// Migrate a fenced ordinary session with its exact UUID and source fingerprint.
+    Import {
+        session: Uuid,
+        #[arg(long)]
+        command_id: Uuid,
+        #[arg(long)]
+        workspace: PathBuf,
+        #[arg(long)]
+        source_directory: PathBuf,
+        #[arg(long)]
+        expected_revision: u64,
+        #[arg(long)]
+        source_sha256: String,
+        #[arg(long)]
+        config_path: Option<PathBuf>,
+    },
+    /// Fork an idle voyage's canonical history into a new independent owner.
+    Branch {
+        session: Uuid,
+        #[arg(long)]
+        branch_id: Uuid,
+        #[arg(long)]
+        command_id: Uuid,
+        #[arg(long)]
+        expected_revision: u64,
+        #[arg(long)]
+        expires_at_ms: u64,
+        #[arg(long)]
+        name: Option<String>,
+    },
+    /// Archive or restore an idle voyage.
+    Archive {
+        session: Uuid,
+        #[arg(long)]
+        restore: bool,
+        #[arg(long)]
+        command_id: Uuid,
+        #[arg(long)]
+        expected_revision: u64,
+        #[arg(long)]
+        expires_at_ms: u64,
+    },
+    /// Purge canonical history after exact session confirmation; retain a tombstone.
+    Delete {
+        session: Uuid,
+        #[arg(long)]
+        confirm_session_id: Uuid,
+        #[arg(long)]
+        command_id: Uuid,
+        #[arg(long)]
+        expected_revision: u64,
+        #[arg(long)]
+        expires_at_ms: u64,
     },
     /// Read a current canonical projection without resubmitting work.
     Inspect { session: Uuid },
@@ -92,26 +176,67 @@ pub async fn run(args: ConnectArgs) -> Result<()> {
         args.ssh.len() == args.remote_directory.len() && args.ssh.len() <= 16,
         "provide one --remote-directory per --ssh destination, with at most 16 remote Vessels"
     );
-    if args.ssh.is_empty() || args.include_local {
+    if (args.ssh.is_empty() && args.access_file.is_empty()) || args.include_local {
         let directory = args.directory.unwrap_or_else(default_directory);
-        clients.push(local::connect(directory, !args.no_start).await?);
+        if args.command.is_some() {
+            clients.push(local::connect(directory, !args.no_start).await?);
+        } else {
+            let client = Client {
+                directory: directory.clone(),
+                ssh: None,
+                access_file: None,
+            };
+            clients.push(client);
+            if !args.no_start {
+                tokio::spawn(async move {
+                    let _ = local::connect(directory, true).await;
+                });
+            }
+        }
     }
     for (ssh, directory) in args.ssh.into_iter().zip(args.remote_directory) {
         let client = Client {
             directory,
             ssh: Some(ssh),
+            access_file: None,
         };
-        client.request(VesselCommand::Capabilities).await?;
         clients.push(client);
+    }
+    ensure!(args.access_file.len() <= 16, "at most 16 grant routes");
+    for path in args.access_file {
+        clients.push(Client {
+            directory: PathBuf::new(),
+            ssh: None,
+            access_file: Some(path),
+        });
     }
     if let Some(command) = args.command {
         ensure!(
             clients.len() == 1,
             "CLI operations require a single selected Vessel"
         );
-        let value = execute(&clients[0], command).await?;
-        println!("{}", serde_json::to_string_pretty(&value)?);
-        Ok(())
+        match command {
+            ConnectedCommand::Terminal {
+                session,
+                run,
+                terminal,
+            } => return super::terminal::attach(&clients[0], session, run, terminal).await,
+            ConnectedCommand::Run {
+                session,
+                command_id,
+                prompt,
+            } => {
+                return super::plain::run(&clients[0], session, command_id, prompt.join(" ")).await;
+            }
+            ConnectedCommand::Chat { session } => {
+                return super::plain::chat(&clients[0], session).await;
+            }
+            command => {
+                let value = super::commands::execute(&clients[0], command).await?;
+                println!("{}", serde_json::to_string_pretty(&value)?);
+                Ok(())
+            }
+        }
     } else {
         super::ui::run(clients).await
     }
@@ -127,103 +252,16 @@ pub fn default_directory() -> PathBuf {
         .join("voyage/vessel")
 }
 
-async fn execute(client: &Client, command: ConnectedCommand) -> Result<serde_json::Value> {
-    let (session, command) = match command {
-        ConnectedCommand::List => return client.request(VesselCommand::Catalogue).await,
-        ConnectedCommand::New {
-            id,
-            command_id,
-            workspace,
-        } => {
-            let workspace = if client.ssh.is_none() {
-                workspace.canonicalize()?
-            } else {
-                workspace
-            };
-            return client
-                .request(VesselCommand::Start {
-                    command_id: command_id.unwrap_or_else(Uuid::new_v4),
-                    session_id: id.unwrap_or_else(Uuid::new_v4),
-                    workspace,
-                })
-                .await;
-        }
-        ConnectedCommand::Inspect { session } => (session, RuntimeCommand::Snapshot),
-        ConnectedCommand::Submit {
-            session,
-            expected_revision,
-            command_id,
-            expires_at_ms,
-            prompt,
-        } => (
-            session,
-            RuntimeCommand::Submit {
-                command_id,
-                expected_revision,
-                expires_at_ms,
-                prompt: prompt.join(" "),
-            },
-        ),
-        ConnectedCommand::Receipt {
-            session,
-            command_id,
-        } => (session, RuntimeCommand::Receipt { command_id }),
-        ConnectedCommand::Cancel {
-            session,
-            run,
-            expected_revision,
-            command_id,
-            expires_at_ms,
-        } => (
-            session,
-            RuntimeCommand::Cancel {
-                command_id,
-                expected_revision,
-                expires_at_ms,
-                run_id: run,
-            },
-        ),
-        ConnectedCommand::Stop {
-            session,
-            incarnation,
-        } => {
-            return client
-                .request(VesselCommand::Stop {
-                    session_id: session,
-                    incarnation,
-                })
-                .await;
-        }
-        ConnectedCommand::Restart {
-            session,
-            incarnation,
-            command_id,
-        } => {
-            return client
-                .request(VesselCommand::Restart {
-                    command_id,
-                    session_id: session,
-                    incarnation,
-                })
-                .await;
-        }
-        ConnectedCommand::Request { session, request } => {
-            ensure!(
-                request.len() <= 256 * 1024,
-                "command JSON exceeds client limit"
-            );
-            (
-                session,
-                serde_json::from_str(&request).context("invalid typed runtime command")?,
-            )
-        }
-    };
-    let process: ProcessInfo = serde_json::from_value(
-        client
-            .request(VesselCommand::Inspect {
-                session_id: session,
-            })
-            .await?,
-    )?;
-    client.forward(session, process.incarnation, command).await
+impl ConnectedCommand {
+    /// Clap propagates the shared workspace option ID to the global parser.
+    pub fn uses_host_workspace(&self) -> bool {
+        matches!(
+            self,
+            Self::New { .. }
+                | Self::Import { .. }
+                | Self::Admin {
+                    command: super::admin::AdminCommand::Move(_)
+                }
+        )
+    }
 }

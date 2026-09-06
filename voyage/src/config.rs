@@ -85,6 +85,8 @@ impl ProviderKind {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
+    /// Locally accepted participant endpoints; credential contents never enter model context.
+    pub participants: Vec<voyage_protocol::process::ParticipantEndpoint>,
     /// Chat-only preference recording; never carried to workers or runtime config files.
     #[serde(default, rename = "_chat_preferences", skip_serializing)]
     pub chat_preferences: Option<crate::chat_preferences::State>,
@@ -390,6 +392,7 @@ pub enum UnattendedApprovalMode {
 impl Default for Config {
     fn default() -> Self {
         Self {
+            participants: Vec::new(),
             chat_preferences: None,
             github_enabled: false,
             provider: ProviderKind::OpenaiResponses,

@@ -3,7 +3,7 @@
 Voyage is a system for ongoing AI-assisted work, operated through a terminal
 interface across local and remote machines.
 
-The target architecture has three programs:
+The architecture has three programs:
 
 | Program | Responsibility |
 | --- | --- |
@@ -28,12 +28,12 @@ The [architecture](docs/architecture.md) defines these boundaries.
 
 ## Current implementation
 
-This is a first-release development project with an incomplete architecture migration.
-`helm connect` now reaches separate `voyage` processes through a local Vessel or an
-explicit SSH account on a remote host. The runtime code lives in `voyage/`; legacy
-`helm chat`, `run`, managed and remote-worker entrypoints still execute in Helm
-through that shared library. They have not been retired because connected feature
-parity is incomplete. See the [current-state guide](docs/current-state.md).
+This is a first-release development project. Ordinary Helm chat and run commands,
+managed sessions and connected clients reach independent `voyage` processes through
+Vessel. Local, SSH and scoped-grant routes share the same owner protocol. Session
+lifecycle, durable decisions, private terminal attachment, participant execution
+and positively fenced owner moves are implemented. See the
+[current-state guide](docs/current-state.md) for supported paths and validation limits.
 
 From a source checkout:
 

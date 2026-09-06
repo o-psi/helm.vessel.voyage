@@ -85,6 +85,8 @@ impl App {
                         view.draft.cursor += ch.len_utf8();
                     }
                 }
+                KeyCode::Up => view.history.navigate(&mut view.draft, true),
+                KeyCode::Down => view.history.navigate(&mut view.draft, false),
                 KeyCode::PageUp => view.scroll = view.scroll.saturating_add(10),
                 KeyCode::PageDown => view.scroll = view.scroll.saturating_sub(10),
                 _ => return Ok(()),

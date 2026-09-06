@@ -13,6 +13,7 @@ pub(super) struct Supervisor {
     pub(super) directory: PathBuf,
     pub(super) binary: PathBuf,
     pub(super) capacity: usize,
+    pub(super) assignment_locks: Mutex<HashMap<Uuid, Arc<Mutex<()>>>>,
     pub(super) registrations: Mutex<HashMap<Uuid, ProcessRegistration>>,
 }
 
@@ -23,6 +24,7 @@ pub async fn serve(directory: PathBuf, binary: PathBuf, capacity: usize) -> Resu
     );
     registry::private_directory(&directory)?;
     let _lock = registry::lock(&directory)?;
+    super::identity::public(&directory)?;
     let sessions = directory.join("sessions");
     registry::private_directory(&sessions)?;
     let mut registrations = HashMap::new();
@@ -54,6 +56,7 @@ pub async fn serve(directory: PathBuf, binary: PathBuf, capacity: usize) -> Resu
         binary,
         capacity,
         registrations: Mutex::new(registrations),
+        assignment_locks: Mutex::new(HashMap::new()),
     });
     let connections = Arc::new(Semaphore::new(64));
     let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
@@ -116,14 +119,58 @@ pub async fn serve(directory: PathBuf, binary: PathBuf, capacity: usize) -> Resu
 }
 
 impl Supervisor {
-    async fn handle(&self, command: VesselCommand) -> Result<Value> {
+    pub(super) async fn handle(&self, command: VesselCommand) -> Result<Value> {
         match command {
+            command @ (VesselCommand::AcceptParticipant { .. }
+            | VesselCommand::RemoveParticipant { .. }) => self.participant_admin(command).await,
+            VesselCommand::Assign { .. }
+            | VesselCommand::FenceAssignment { .. }
+            | VesselCommand::ObserveAssignment { .. }
+            | VesselCommand::CancelAssignment { .. } => {
+                anyhow::bail!("participant operations require an explicit scoped execution grant")
+            }
+            VesselCommand::Identity => Ok(serde_json::to_value(super::identity::public(
+                &self.directory,
+            )?)?),
+            VesselCommand::TrustVessel { identity } => {
+                let _serial = self.registrations.lock().await;
+                super::identity::pin(&self.directory, &identity)?;
+                Ok(serde_json::json!({"trusted":identity.vessel_id}))
+            }
+            command @ (VesselCommand::PrepareTransfer { .. }
+            | VesselCommand::ExportTransfer { .. }
+            | VesselCommand::AcceptTransfer { .. }
+            | VesselCommand::TransferChunk { .. }
+            | VesselCommand::UploadTransferChunk { .. }
+            | VesselCommand::ActivateTransfer { .. }) => self.transfer(command).await,
+            command @ VesselCommand::Import { .. } => self.initialize_import(command).await,
+            command @ VesselCommand::Branch { .. } => self.branch(command).await,
+            command @ VesselCommand::Grant { .. } => self.grant(command).await,
+            command @ VesselCommand::RevokeGrant { .. } => self.revoke_grant(command).await,
+            VesselCommand::Granted {
+                grant_id,
+                token,
+                command,
+            } => self.granted(grant_id, token, *command).await,
+            command @ VesselCommand::StartOutbound { .. } => self.start_outbound(command).await,
+            command @ VesselCommand::ManagedImport { .. } => self.initialize_managed(command).await,
             VesselCommand::Capabilities => Ok(
-                json!({"protocol":PROCESS_PROTOCOL,"platform":std::env::consts::OS,"features":["catalogue","start","inspect","forward","stop","restart"],"max_frame_bytes":MAX_PROCESS_FRAME,"capacity":self.capacity,"max_connections":64}),
+                json!({"protocol":PROCESS_PROTOCOL,"platform":std::env::consts::OS,"features":["catalogue","start","start_configured","inspect","forward","stop","restart","explicit_recovery","durable_receipts","history_paging","events","decisions","lifecycle","branch","ordinary_import","managed_import","outbound_adapter","scoped_grants","revocation","participant_bindings","participant_assignments","signed_owner_transfer"],"max_frame_bytes":MAX_PROCESS_FRAME,"capacity":self.capacity,"max_connections":64}),
             ),
             VesselCommand::Catalogue => {
-                let registrations: Vec<_> =
-                    self.registrations.lock().await.values().cloned().collect();
+                let registrations: Vec<_> = self
+                    .registrations
+                    .lock()
+                    .await
+                    .values()
+                    .filter(|registration| {
+                        !matches!(
+                            registration.initialize,
+                            Some(RuntimeInitialization::Participant { .. })
+                        )
+                    })
+                    .cloned()
+                    .collect();
                 let mut tasks = tokio::task::JoinSet::new();
                 for registration in registrations {
                     let directory = registry::directory(&self.directory, registration.session_id);
@@ -140,7 +187,17 @@ impl Supervisor {
                 command_id,
                 session_id,
                 workspace,
-            } => self.start(command_id, session_id, workspace).await,
+            } => self.start(command_id, session_id, workspace, None).await,
+            VesselCommand::StartConfigured {
+                command_id,
+                session_id,
+                workspace,
+                config_path,
+            } => {
+                self.start(command_id, session_id, workspace, Some(config_path))
+                    .await
+            }
+            command @ VesselCommand::Recover { .. } => self.recover(command).await,
             VesselCommand::Restart {
                 command_id,
                 session_id,
@@ -193,6 +250,10 @@ impl Supervisor {
                     "stale runtime incarnation"
                 );
                 let directory = registry::directory(&self.directory, session_id);
+                ensure!(
+                    registration.state != ProcessState::Relinquished,
+                    "source ownership has been permanently relinquished"
+                );
                 registration.state = ProcessState::CleanupUnconfirmed;
                 registry::save(&directory, &registration)?;
                 registrations.insert(session_id, registration.clone());
@@ -205,114 +266,12 @@ impl Supervisor {
         }
     }
 
-    async fn registration(&self, session_id: Uuid) -> Result<ProcessRegistration> {
+    pub(super) async fn registration(&self, session_id: Uuid) -> Result<ProcessRegistration> {
         self.registrations
             .lock()
             .await
             .get(&session_id)
             .cloned()
             .ok_or_else(|| anyhow::anyhow!("unknown session"))
-    }
-
-    async fn start(&self, command_id: Uuid, session_id: Uuid, workspace: PathBuf) -> Result<Value> {
-        ensure!(
-            !command_id.is_nil() && !session_id.is_nil(),
-            "session and command IDs must be nonnil"
-        );
-        let command = VesselCommand::Start {
-            command_id,
-            session_id,
-            workspace: workspace.clone(),
-        };
-        let workspace = std::fs::canonicalize(workspace)?;
-        ensure!(workspace.is_dir(), "workspace must be a directory");
-        let mut registrations = self.registrations.lock().await;
-        if registry::command_record(&self.directory, command_id, &command, false)? {
-            let previous = registrations.get(&session_id).ok_or_else(|| {
-                anyhow::anyhow!("start outcome unconfirmed; retained admission prevents replay")
-                    .context(routing::OutcomeUnknown)
-            })?;
-            return Ok(serde_json::to_value(
-                routing::inspect(&registry::directory(&self.directory, session_id), previous).await,
-            )?);
-        }
-        if let Some(previous) = registrations
-            .values()
-            .find(|item| item.command_id == command_id)
-        {
-            ensure!(
-                previous.session_id == session_id && previous.workspace == workspace,
-                "start command id payload conflict"
-            );
-        }
-        if let Some(previous) = registrations.get(&session_id) {
-            ensure!(
-                previous.workspace == workspace,
-                "session workspace conflict"
-            );
-            registry::command_record(&self.directory, command_id, &command, true)
-                .map_err(|error| error.context(routing::OutcomeUnknown))?;
-            return Ok(serde_json::to_value(
-                routing::inspect(&registry::directory(&self.directory, session_id), previous).await,
-            )?);
-        }
-        ensure!(
-            registrations.len() < 4096,
-            "supervisor registration retention limit reached"
-        );
-        for registration in registrations.values_mut() {
-            let directory = registry::directory(&self.directory, registration.session_id);
-            if !directory.join("runtime.sock").exists()
-                && super::recovery::clean_stop(&directory, registration)
-            {
-                registration.state = ProcessState::Stopped;
-            }
-        }
-        // Unavailable owners retain capacity: neither a timeout nor a PID proves cleanup.
-        ensure!(
-            registrations
-                .values()
-                .filter(|item| item.state != ProcessState::Stopped)
-                .count()
-                < self.capacity,
-            "Vessel process capacity exhausted"
-        );
-        let directory = registry::directory(&self.directory, session_id);
-        registry::private_directory(&directory)?;
-        let registration = ProcessRegistration {
-            protocol: PROCESS_PROTOCOL,
-            session_id,
-            incarnation: Uuid::new_v4(),
-            command_id,
-            restart_from: None,
-            token: format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple()),
-            workspace,
-            state: ProcessState::Starting,
-        };
-        registry::command_record(&self.directory, command_id, &command, true)
-            .map_err(|error| error.context(routing::OutcomeUnknown))?;
-        registry::save(&directory, &registration)
-            .map_err(|error| error.context(routing::OutcomeUnknown))?;
-        registrations.insert(session_id, registration.clone());
-        drop(registrations);
-        super::launch::launch(&self.binary, &directory, &registration)
-            .map_err(|error| error.context(routing::OutcomeUnknown))?;
-        let observed = tokio::time::timeout(Duration::from_secs(10), async {
-            loop {
-                let info = routing::inspect(&directory, &registration).await;
-                if info.state == ProcessState::Live {
-                    return info;
-                }
-                tokio::time::sleep(Duration::from_millis(100)).await;
-            }
-        })
-        .await;
-        if let Ok(info) = observed {
-            return Ok(serde_json::to_value(info)?);
-        }
-        Err(anyhow::anyhow!(
-            "runtime startup unconfirmed; retained registration prevents duplicate launch"
-        )
-        .context(routing::OutcomeUnknown))
     }
 }

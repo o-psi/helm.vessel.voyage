@@ -1,14 +1,14 @@
 # Helm
 
-The target Helm is a TUI that connects only to local or remote Vessels. Each Vessel
+Helm is a TUI that connects only to local or remote Vessels. Each Vessel
 supervises and exposes Voyage runtime processes, with **one session per independent
 Voyage process**. See the [architecture](../docs/architecture.md).
 
-`helm connect` is the connected multiplexer for independent voyage processes through
-local or SSH-accessed Vessels. The legacy `helm chat`, plain chat and one-shot
-entrypoints still execute locally through the shared voyage library. Connected
-mode does not yet replace all legacy workflow, task, terminal and lifecycle controls.
-See the [current implementation](../docs/current-state.md).
+`helm connect` combines independent voyages through local, SSH and scoped-grant
+Vessel routes. Ordinary chat, plain chat, one-shot, workflow and managed commands
+also use supervised voyage owners. Tools, policy, tasks, subagents, terminals,
+workflows and lifecycle actions are authorized runtime requests. See the
+[current implementation](../docs/current-state.md).
 
 From the repository root:
 
@@ -32,7 +32,7 @@ endpoints, credentials, policy and remembered chat preferences are covered in
 [example configuration](config.example.toml).
 
 [Operations](../docs/operations.md) covers session controls, managed sessions,
-connected local/SSH voyages, foreground legacy remote workers, diagnostics and
+connected local/SSH voyages, supervised outbound workers, diagnostics and
 recovery. `helm connect` needs the companion `vessel` and `voyage` executables. See
 [security](../docs/security.md) for execution and privacy boundaries and
 [development](../docs/development.md) for repository work. Automated tests and

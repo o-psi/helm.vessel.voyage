@@ -27,6 +27,7 @@ fn path(client: &Client, view: &View) -> Result<PathBuf> {
     super::super::local::check_private_directory(&root)?;
     let identity = serde_json::to_vec(&(
         client.ssh.as_deref(),
+        &client.access_file,
         &client.directory,
         view.process.session_id,
     ))?;

@@ -611,6 +611,7 @@ impl Journal {
                     <= now_ms.checked_add(300_000).context("clock overflow")?,
             "command expired or deadline invalid"
         );
+        lifecycle::ensure_admissible(&tx, request.session_id)?;
         let count: i64 = tx.query_row("SELECT count(*) FROM commands", [], |r| r.get(0))?;
         ensure!(count < MAX_COMMANDS, "command evidence capacity reached");
         let active: i64 = tx.query_row(
@@ -1028,6 +1029,13 @@ impl Journal {
                 None,
                 None,
             )
+        } else if state == RunState::Completed && assignments::pending(&tx, run_id)? > 0 {
+            (
+                RunState::Incomplete,
+                Some("participant assignment cleanup pending"),
+                None,
+                None,
+            )
         } else {
             (state, reason, final_text, classification)
         };
@@ -1431,6 +1439,36 @@ pub(crate) fn open_private_file(_path: &Path) -> Result<File> {
     anyhow::bail!("private attachment storage unsupported on this platform")
 }
 
+mod controls;
 mod process;
 
 mod decisions;
+
+mod lifecycle;
+
+mod branch;
+
+mod observations;
+
+mod command_binding;
+
+mod rejections;
+
+mod deletion;
+
+mod transfer;
+
+mod assignments;
+
+mod configuration;
+
+mod operator;
+
+mod session_resources;
+mod startup;
+
+mod managed_import;
+
+mod import_status;
+
+mod tombstones;

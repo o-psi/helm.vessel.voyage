@@ -21,6 +21,9 @@ pub fn launch(binary: &Path, directory: &Path, registration: &ProcessRegistratio
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
+    if let Some(path) = &registration.config_path {
+        command.arg("--config").arg(path);
+    }
     // The supervisor's lifetime and terminal must not become the runtime lifetime.
     unsafe {
         command.pre_exec(|| {

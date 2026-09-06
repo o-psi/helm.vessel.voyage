@@ -23,10 +23,12 @@ cancellation and retains uncertain cleanup obligations. A clean-stop marker is
 written only after observed cleanup. Unavailability does not authorize another
 owner or automatic replay of uncertain effects.
 
-Runtime code also remains a library used by legacy Helm chat/run/managed/worker
-entrypoints. That compatibility dependency means the final architecture cutover
-is incomplete. Connected workflow parity, branch/archive/delete, private terminal
-attachment, enrolled session grants, participant execution and owner migration
-remain unfinished. See [current state](../docs/current-state.md),
-[operations](../docs/operations.md), [configuration](../docs/configuration.md) and
-the [implementation ledger](../docs/implementation.md).
+The runtime library supplies shared configuration and data types to Helm; Helm no
+longer constructs a session executor. Additional process operations cover lifecycle,
+configuration, workflow/operator tools, private terminal attachment, scoped grants,
+participant assignments and positively fenced owner transfer. Administrative
+`recover`, `legacy-recover`, `upgrade-journal`, `remote-consent` and `host-resources`
+commands preserve explicit recovery and attestation boundaries without model calls.
+See [current state](../docs/current-state.md), [operations](../docs/operations.md),
+[configuration](../docs/configuration.md), [process access](../docs/process-access.md)
+and the [implementation ledger](../docs/implementation.md) for evidence and limits.

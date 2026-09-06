@@ -14,7 +14,7 @@ impl App {
         let client = self.clients[route].clone();
         let workspace = match workspace {
             Some(path) => std::path::PathBuf::from(path),
-            None if client.ssh.is_none() => std::env::current_dir()?,
+            None if client.is_local() => std::env::current_dir()?,
             None => anyhow::bail!("remote creation needs /new /absolute/workspace"),
         };
         ensure!(
@@ -44,14 +44,20 @@ impl App {
 
     pub fn send(&mut self) -> Result<()> {
         let target = self.selected.context("create or select a voyage first")?;
-        let draft = self.views[&target].draft.text.clone();
+        let draft = self
+            .views
+            .get(&target)
+            .context("waiting for selected voyage catalogue")?
+            .draft
+            .text
+            .clone();
         let command_text = draft.trim();
         if command_text == "/quit" {
             self.quit = true;
             return Ok(());
         }
         if command_text == "/help" {
-            self.status = "Tab switches · Ctrl+N creates · /new [absolute-workspace] · /use UUID · /rename NAME · /model NAME · /cancel · /approve UUID · /deny UUID · /answer UUID text · /receipt · /quit".into();
+            self.status = "Tab switches · Ctrl+N creates · /new [absolute-workspace] · /use UUID · /rename NAME · /model NAME · /cancel · /approve UUID · /deny UUID · /answer UUID text · /receipt · /tools /policy /todos /subagents /terminals /terminal UUID /workflows · /tool NAME JSON · /configure /host/path · /branch [name] /archive /restore /delete UUID · /clear UUID · /compact N · /export PATH · Up/Down recall · /conversation · /quit".into();
             return Ok(());
         }
         if command_text == "/new" || command_text.starts_with("/new ") {
@@ -62,10 +68,52 @@ impl App {
             let key = self
                 .views
                 .keys()
-                .find(|key| key.session == session)
+                .filter(|key| key.session == session)
                 .copied()
-                .context("voyage not in permitted catalogue")?;
+                .collect::<Vec<_>>();
+            ensure!(
+                key.len() == 1,
+                "voyage UUID is absent or ambiguous across routes; use Tab to select"
+            );
+            let key = key[0];
             self.selected = Some(key);
+            return Ok(());
+        }
+        if let Some(path) = command_text.strip_prefix("/export ") {
+            return self.export(target, path);
+        }
+        if let Some(id) = command_text.strip_prefix("/terminal ") {
+            let terminal_id = id.parse()?;
+            let run = self.views[&target]
+                .snapshot
+                .as_ref()
+                .and_then(|s| s.run.as_ref())
+                .context("no observed terminal run")?
+                .run_id;
+            self.terminal_request = Some((target, run, terminal_id));
+            return Ok(());
+        }
+        if command_text == "/branch" || command_text.starts_with("/branch ") {
+            return self.branch(
+                target,
+                command_text.strip_prefix("/branch ").map(str::to_owned),
+            );
+        }
+        if matches!(
+            command_text,
+            "/tools"
+                | "/policy"
+                | "/todos"
+                | "/subagents"
+                | "/terminals"
+                | "/workflows"
+                | "/models"
+                | "/host_resources"
+        ) {
+            return self.inspect_control(target, &command_text[1..]);
+        }
+        if command_text == "/conversation" {
+            self.views.get_mut(&target).expect("selected view").panel = None;
             return Ok(());
         }
         let view = self.views.get_mut(&target).expect("selected view");
@@ -105,7 +153,15 @@ impl App {
                 .as_millis(),
         )?
         .saturating_add(60_000);
-        let command = if command_text.starts_with("/approve ")
+        let command = if let Some(command) = super::controls::mutation(
+            command_text,
+            view,
+            command_id,
+            expected_revision,
+            expires_at_ms,
+        )? {
+            command
+        } else if command_text.starts_with("/approve ")
             || command_text.starts_with("/deny ")
             || command_text.starts_with("/answer ")
         {
@@ -219,6 +275,11 @@ impl App {
                 .send(Update::Command {
                     target,
                     command_id,
+                    refused: result.as_ref().err().is_some_and(|error| {
+                        error
+                            .downcast_ref::<crate::process_client::transport::Refusal>()
+                            .is_some()
+                    }),
                     result: result.map_err(|error| error.to_string()),
                 })
                 .await;

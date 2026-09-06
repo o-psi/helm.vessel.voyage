@@ -1,7 +1,8 @@
 # Architecture
 
-Status: target design. The current code has not completed these process boundaries;
-see [current state](current-state.md). This is the canonical component model.
+Status: canonical component model. The Linux implementation uses these process
+boundaries; see [current state](current-state.md) and [delivery evidence](implementation.md)
+for supported paths, verification and deployment limits.
 
 ## Three programs
 

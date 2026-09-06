@@ -26,6 +26,9 @@ use tokio::{
     sync::{Mutex, mpsc},
 };
 
+mod cleanup;
+pub(crate) use cleanup::shutdown as shutdown_owned;
+
 const MAX_MESSAGE_BYTES: usize = 4 * 1024 * 1024;
 const CHANNEL_CAPACITY: usize = 256;
 const CONTROL_TIMEOUT: Duration = Duration::from_secs(30);
@@ -57,6 +60,10 @@ struct AppClient {
     inbox: Mutex<Inbox>,
     child: StdMutex<Child>,
     next_id: AtomicU64,
+    cleanup_observed: AtomicBool,
+    _slot: tokio::sync::OwnedSemaphorePermit,
+    #[cfg(target_os = "linux")]
+    identity: Option<Arc<crate::tools::SessionIdentity>>,
 }
 struct Inbox {
     receiver: mpsc::Receiver<Result<Value, String>>,
@@ -276,6 +283,7 @@ impl Drop for CodexSubscriptionProvider {
 
 impl AppClient {
     async fn spawn(program: &str, args: &[String]) -> Result<Arc<Self>, ProviderError> {
+        let slot = cleanup::capacity()?;
         let mut command = Command::new(program);
         command
             .args(args)
@@ -283,9 +291,24 @@ impl AppClient {
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .kill_on_drop(true);
+        #[cfg(target_os = "linux")]
+        unsafe {
+            command.pre_exec(|| {
+                if libc::setsid() < 0 {
+                    Err(std::io::Error::last_os_error())
+                } else {
+                    Ok(())
+                }
+            });
+        }
         let mut child = command.spawn().map_err(|e| {
             ProviderError::Unavailable(format!("failed to start `{program} app-server`: {e}"))
         })?;
+        #[cfg(target_os = "linux")]
+        let identity = child
+            .id()
+            .and_then(|id| crate::tools::SessionIdentity::capture(id).ok())
+            .map(Arc::new);
         let stdin = child
             .stdin
             .take()
@@ -296,7 +319,7 @@ impl AppClient {
             .ok_or_else(|| ProviderError::Unavailable("app-server stdout unavailable".into()))?;
         let (sender, receiver) = mpsc::channel(CHANNEL_CAPACITY);
         tokio::spawn(read_messages(stdout, sender));
-        Ok(Arc::new(Self {
+        let client = Arc::new(Self {
             stdin: Mutex::new(stdin),
             inbox: Mutex::new(Inbox {
                 receiver,
@@ -304,7 +327,13 @@ impl AppClient {
             }),
             child: StdMutex::new(child),
             next_id: AtomicU64::new(1),
-        }))
+            cleanup_observed: AtomicBool::new(false),
+            _slot: slot,
+            #[cfg(target_os = "linux")]
+            identity,
+        });
+        cleanup::retain(client.clone())?;
+        Ok(client)
     }
     async fn initialize(&self) -> Result<(), ProviderError> {
         self.request("initialize",json!({"clientInfo":{"name":"helm","version":env!("CARGO_PKG_VERSION")},"capabilities":{"experimentalApi":true}})).await?;

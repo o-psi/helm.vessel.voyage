@@ -26,6 +26,7 @@ use uuid::Uuid;
 
 #[derive(Clone)]
 pub struct ProcessTool {
+    origin_policies: Arc<Mutex<Vec<Arc<crate::policy::Policy>>>>,
     processes: Arc<Mutex<BTreeMap<Uuid, Managed>>>,
     pending: Arc<Mutex<BTreeMap<Uuid, OwnedChild>>>,
     starting: Arc<Mutex<()>>,
@@ -37,6 +38,20 @@ pub struct ProcessTool {
     events: broadcast::Sender<TerminalEvent>,
 }
 pub type TerminalManager = ProcessTool;
+impl ProcessTool {
+    pub(crate) fn same_manager(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.processes, &other.processes)
+    }
+    pub(crate) fn retain_policy(&self, policy: Arc<crate::policy::Policy>) -> anyhow::Result<()> {
+        let mut policies = self
+            .origin_policies
+            .lock()
+            .map_err(|_| anyhow::anyhow!("terminal origins poisoned"))?;
+        anyhow::ensure!(policies.len() < 256, "terminal origin capacity reached");
+        policies.push(policy);
+        Ok(())
+    }
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TerminalMetadata {
@@ -183,6 +198,9 @@ impl Tool for ProcessTool {
     }
 
     async fn execute(&self, value: Value, ctx: &ToolContext) -> Result<String, ToolError> {
+        for policy in self.origin_policies.lock().map_err(failed)?.iter() {
+            policy.check_current().map_err(failed)?;
+        }
         let args: Args = serde_json::from_value(value)
             .map_err(|e| ToolError::InvalidArguments(e.to_string()))?;
         if self.shutting_down.load(Ordering::SeqCst)
@@ -274,6 +292,7 @@ impl ProcessTool {
         let (events, _) = broadcast::channel(64);
         Self {
             processes: Arc::new(Mutex::new(BTreeMap::new())),
+            origin_policies: Arc::new(Mutex::new(Vec::new())),
             pending: Arc::new(Mutex::new(BTreeMap::new())),
             starting: Arc::new(Mutex::new(())),
             shutting_down: Arc::new(AtomicBool::new(false)),
@@ -413,7 +432,17 @@ impl ProcessTool {
         ctx.policy
             .check_execution_authority()
             .map_err(|_| ToolError::Denied("foreground execution authority unavailable".into()))?;
-        let child = StartupChild::new(self, pair.slave.spawn_command(builder).map_err(failed)?);
+        let reservation =
+            crate::host_resources::Reservation::acquire("terminals", ctx.execution_id, 1)
+                .map_err(failed)?;
+        let spawned = match pair.slave.spawn_command(builder) {
+            Ok(child) => child,
+            Err(error) => {
+                reservation.release_observed().map_err(failed)?;
+                return Err(failed(error));
+            }
+        };
+        let child = StartupChild::new(self, spawned, reservation);
         after_spawn()?;
         drop(pair.slave);
         let mut reader = pair.master.try_clone_reader().map_err(failed)?;

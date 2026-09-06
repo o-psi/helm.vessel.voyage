@@ -3,6 +3,7 @@ mod catalog;
 pub use catalog::{validate_model, validate_models, validate_models_for_display};
 mod chatgpt_oauth;
 mod codex_subscription;
+pub(crate) use codex_subscription::shutdown_owned as shutdown_compatibility;
 pub(crate) mod discovery;
 mod openai;
 mod openai_responses;

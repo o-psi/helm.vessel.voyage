@@ -1,4 +1,4 @@
-use super::composer::Composer;
+use super::composer::{Composer, PromptHistory};
 use serde::{Deserialize, Serialize};
 use std::time::Instant;
 use uuid::Uuid;
@@ -39,6 +39,8 @@ impl Run {
 pub struct Snapshot {
     pub session_id: Uuid,
     pub revision: u64,
+    #[serde(default)]
+    pub observation_cursor: Option<u64>,
     pub name: Option<String>,
     pub model: String,
     pub messages: Vec<Message>,
@@ -47,6 +49,8 @@ pub struct Snapshot {
     pub decisions: Vec<Decision>,
     #[serde(default)]
     pub history_truncated: bool,
+    #[serde(default)]
+    pub lifecycle: serde_json::Value,
 }
 
 #[derive(Clone, Deserialize, PartialEq)]
@@ -69,7 +73,9 @@ pub struct View {
     pub process: ProcessInfo,
     pub snapshot: Option<Snapshot>,
     pub draft: Composer,
+    pub history: PromptHistory,
     pub pending: Option<Pending>,
+    pub panel: Option<String>,
     pub scroll: u16,
     pub unread: bool,
     pub observed: Option<Instant>,
@@ -83,7 +89,9 @@ impl View {
             process,
             snapshot: None,
             draft: Composer::default(),
+            history: PromptHistory::default(),
             pending: None,
+            panel: None,
             scroll: 0,
             unread: false,
             observed: None,
