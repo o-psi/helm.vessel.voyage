@@ -135,14 +135,13 @@ as `replay` and `snapshot_required` when polling.
 
 Text is provisional until the durable terminal outcome. `completed`, `incomplete`, `cancelled`, `failed` and `interrupted` describe execution; cleanup is independently `pending`, `unconfirmed`, `observed` or `operator_attested`. Only `observed` confirms the coordinator's owned-resource observation. Cleanup events may follow a terminal event under the explicitly negotiated managed-execution feature. No terminal-looking agent event is promoted to durable success before the journal's terminal transaction.
 
-When an external SQLite connection temporarily blocks terminal persistence, the
-owner retries only that terminal transaction for up to two seconds after obtaining
+When an external SQLite connection temporarily blocks finalizing an executed run,
+the owner retries only that terminal transaction for up to two seconds after obtaining
 its local store lock. Each retry requires a typed Busy error and confirmation that
 no transaction remains open; provider requests and tool effects are never repeated.
 Cancellation is checked again for every attempt. If persistence still fails, the run
 can remain active and cleanup is not reported as observed; use the local recovery
 workflow below. Withdrawal continues to block public events during these retries.
-
 
 Configured secrets are removed at the transactional public-text projection boundary. A suffix that might complete a secret remains private until later text or terminal flushing. Public text and its raw offset commit together, and replay never applies redaction again. Unresolved suffixes are withheld if crash recovery has no initialized redactor. This does not promise detection of unknown secrets or arbitrary encoded/fragmented transformations of a credential.
 
