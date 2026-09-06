@@ -60,6 +60,17 @@ Preserve the original command ID, deadline and operation when retrying an uncert
 
 Progress uses a separate contiguous public cursor, not filtered private journal sequence numbers. Replay pages are bounded to 128 events and a frame budget; the retained suffix has count and byte limits. Receivers replace cumulative usage and deduplicate by cursor. A `snapshot_required` response means inspect the current snapshot and continue from its latest cursor. Disconnecting an HTTP observer does not cancel work; loss of the worker's Vessel connection does, as described above. Vessel keeps no transcript cache; polling requests bounded replay directly from Helm.
 
+Unknown or private session IDs return a bounded `result` envelope with
+`reply: {"type":"denied","code":"unauthorized"}`. A cursor ahead of the
+current public journal returns the same envelope with `invalid_request`; inspect
+the dedicated session and retry from its reported cursor. In these refusal
+responses, `command_id` correlates the replay request ID, using the existing v2
+result vocabulary. Malformed HTTP cursors/limits are rejected before dispatch.
+Rejected observations do not replace the worker connection, create a run or
+cancellation intent, or stop already-admitted work. Actual authority, journal and
+transport failures still fail closed. Clients must accept a denied result as well
+as `replay` and `snapshot_required` when polling.
+
 Text is provisional until the durable terminal outcome. `completed`, `incomplete`, `cancelled`, `failed` and `interrupted` describe execution; cleanup is independently `pending`, `unconfirmed`, `observed` or `operator_attested`. Only `observed` confirms the coordinator's owned-resource observation. Cleanup events may follow a terminal event under the explicitly negotiated managed-execution feature. No terminal-looking agent event is promoted to durable success before the journal's terminal transaction.
 
 Configured secrets are removed at the transactional public-text projection boundary. A suffix that might complete a secret remains private until later text or terminal flushing. Public text and its raw offset commit together, and replay never applies redaction again. Unresolved suffixes are withheld if crash recovery has no initialized redactor. This does not promise detection of unknown secrets or arbitrary encoded/fragmented transformations of a credential.
@@ -107,5 +118,5 @@ Fresh dedicated journals use schema 7. Existing local schema 6 remains supported
 
 Tracking: [#9](https://github.com/o-psi/voyage/issues/9), [#77](https://github.com/o-psi/voyage/issues/77), [#78](https://github.com/o-psi/voyage/issues/78), [#79](https://github.com/o-psi/voyage/issues/79). These broader issues remain open for their excluded session lifecycle, approval, sharing and product surfaces.
 
-`tests/system/remote_session.py` runs real Helm and Vessel binaries against isolated native OpenAI Chat, Responses and Anthropic HTTP fixtures. It checks file effects, pre-effect durable cleanup registration, exact retries, restart observation, cancellation, split-secret/Unicode replay, forced-death recovery and local attestation, revocation, selected-profile denial/freshness, failed-publication rollback, private-scope denial, and nonzero worker exit after unconfirmed cleanup both during Ctrl-C and ordinary task completion. Journal/runtime tests cover transactional projection rollback, schema compatibility, receipt fencing, tool invocation identities and local recovery attribution. Offline fixtures do not establish live provider or deployment compatibility; final Linux baseline evidence is reported with the PR. These fixtures use no paid/live provider calls. Routine quality gates are Linux-only;
+`tests/system/remote_session.py` runs real Helm and Vessel binaries against isolated native OpenAI Chat, Responses and Anthropic HTTP fixtures. It checks file effects, pre-effect durable cleanup registration, exact retries, restart observation, cancellation, split-secret/Unicode replay, forced-death recovery and local attestation, revocation, selected-profile denial/freshness, failed-publication rollback, private-scope denial, rejected replay during active work, and nonzero worker exit after unconfirmed cleanup both during Ctrl-C and ordinary task completion. Journal/runtime tests cover transactional projection rollback, schema compatibility, receipt fencing, tool invocation identities and local recovery attribution. Offline fixtures do not establish live provider or deployment compatibility; final Linux baseline evidence is reported with the PR. These fixtures use no paid/live provider calls. Routine quality gates are Linux-only;
 native-platform behavior requires separate evidence.

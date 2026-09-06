@@ -27,6 +27,28 @@ fn direction_rejects_server_observations_and_client_commands() {
         .is_err()
     );
 }
+#[test]
+fn replay_denial_result_remains_compatible_and_connection_bound() {
+    use voyage_protocol::{
+        events::Features,
+        stream::{DenialCode, Reply},
+    };
+    let connection = Uuid::new_v4();
+    let request = Uuid::new_v4();
+    for code in [DenialCode::Unauthorized, DenialCode::InvalidRequest] {
+        let frame = Frame::Result {
+            connection_id: connection,
+            command_id: request,
+            reply: Reply::Denied { code },
+        };
+        let decoded = Frame::decode(frame.encode().unwrap().as_bytes()).unwrap();
+        assert!(inbound(&decoded, connection).is_ok());
+        assert!(inbound(&decoded, Uuid::new_v4()).is_err());
+        assert!(outbound(&decoded, connection, Uuid::new_v4(), Uuid::new_v4()).is_err());
+        assert!(decoded.validate_features(&Features::default()).is_ok());
+    }
+}
+
 use crate::enrollment::EnrollmentStore;
 use futures_util::{SinkExt, StreamExt};
 use tokio_tungstenite::{

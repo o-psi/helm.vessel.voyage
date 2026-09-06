@@ -8,7 +8,7 @@ use vessel::attachment_transport::{AttachmentApi, AuthenticatedFrame, Connection
 use voyage_protocol::{
     attachment::{Command, Operation, VERSION},
     events::{EventCursor, Feature, Features},
-    stream::Frame,
+    stream::{Frame, Reply},
 };
 
 type PendingKey = (Uuid, Uuid, Uuid);
@@ -372,11 +372,43 @@ pub(super) async fn watch(
         .encode()
         .map_err(|_| ui_error(StatusCode::BAD_REQUEST))?;
     let result = api.exchange(&current, request_id, frame).await?;
-    if !matches!(&result,Frame::Replay{session_id,after:received,..}|Frame::SnapshotRequired{session_id,after:received,..} if *session_id==request.session_id && *received==after)
-    {
-        return Err(ui_error(StatusCode::BAD_GATEWAY));
-    }
+    validate_watch_reply(&result, request_id, request.session_id, after)?;
     Ok(private_response(result))
+}
+
+fn validate_watch_reply(
+    result: &Frame,
+    request_id: Uuid,
+    session: Uuid,
+    after: EventCursor,
+) -> UiResult<()> {
+    let valid = match result {
+        Frame::Replay {
+            request_id: id,
+            session_id,
+            after: received,
+            ..
+        }
+        | Frame::SnapshotRequired {
+            request_id: id,
+            session_id,
+            after: received,
+            ..
+        } => *id == request_id && *session_id == session && *received == after,
+        // v2 already carries bounded denials. For a replay refusal the result ID
+        // names its request, and no session metadata or cursor is disclosed.
+        Frame::Result {
+            command_id,
+            reply: Reply::Denied { .. },
+            ..
+        } => *command_id == request_id,
+        _ => false,
+    };
+    if valid {
+        Ok(())
+    } else {
+        Err(ui_error(StatusCode::BAD_GATEWAY))
+    }
 }
 
 fn private_response(frame: Frame) -> Response {
@@ -474,6 +506,55 @@ mod tests {
             session_id: Uuid::new_v4(),
             after: EventCursor::new(0).unwrap(),
             latest: EventCursor::new(0).unwrap(),
+        }
+    }
+
+    #[test]
+    fn watch_accepts_only_matching_observation_or_bounded_denial() {
+        use voyage_protocol::stream::DenialCode;
+        let request = Uuid::new_v4();
+        let session = Uuid::new_v4();
+        let connection = Uuid::new_v4();
+        let after = EventCursor::new(0).unwrap();
+        for code in [DenialCode::Unauthorized, DenialCode::InvalidRequest] {
+            let denial = Frame::Result {
+                connection_id: connection,
+                command_id: request,
+                reply: Reply::Denied { code },
+            };
+            assert!(validate_watch_reply(&denial, request, session, after).is_ok());
+            assert!(validate_watch_reply(&denial, Uuid::new_v4(), session, after).is_err());
+        }
+        let accepted = Frame::Result {
+            connection_id: connection,
+            command_id: request,
+            reply: Reply::Accepted {},
+        };
+        assert!(validate_watch_reply(&accepted, request, session, after).is_err());
+        for observation in [
+            Frame::Replay {
+                connection_id: connection,
+                request_id: request,
+                session_id: session,
+                after,
+                latest: after,
+                events: vec![],
+            },
+            Frame::SnapshotRequired {
+                connection_id: connection,
+                request_id: request,
+                session_id: session,
+                after,
+                latest: EventCursor::new(1).unwrap(),
+            },
+        ] {
+            assert!(validate_watch_reply(&observation, request, session, after).is_ok());
+            assert!(validate_watch_reply(&observation, Uuid::new_v4(), session, after).is_err());
+            assert!(validate_watch_reply(&observation, request, Uuid::new_v4(), after).is_err());
+            assert!(
+                validate_watch_reply(&observation, request, session, EventCursor::new(1).unwrap())
+                    .is_err()
+            );
         }
     }
 

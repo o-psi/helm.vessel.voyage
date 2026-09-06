@@ -860,3 +860,69 @@ fn public_outbox_byte_cap_preserves_contiguous_replay_and_bounded_pages() {
     }
     assert_eq!(latest, 600);
 }
+
+#[test]
+fn future_replay_cursor_is_a_read_only_refusal_but_binding_and_storage_fail_closed() {
+    let (_dir, mut journal, session, binding) = fixture();
+    journal.create_remote_session(&session, &binding).unwrap();
+    let guard = journal.acquire_execution(session.id).unwrap();
+    let request = TurnAdmission {
+        command_id: Uuid::new_v4(),
+        machine_id: binding.machine_id,
+        principal_id: binding.owner_id,
+        session_id: session.id,
+        expected_revision: 0,
+        expires_at_ms: 60000,
+        prompt: "held run".into(),
+    };
+    let run = journal.admit_turn(&guard, &request, 1).unwrap().run;
+    journal.mark_running(&guard, run.id).unwrap();
+    let before =
+        serde_json::to_value(journal.remote_snapshot(&binding, session.id).unwrap()).unwrap();
+    let changes = journal.connection.total_changes();
+    for cursor in [1000, i64::MAX as u64] {
+        assert!(matches!(
+            journal
+                .remote_replay(&binding, session.id, cursor, 128)
+                .unwrap(),
+            RemoteReplay::InvalidCursor
+        ));
+        assert!(journal.connection.is_autocommit());
+    }
+    assert_eq!(journal.connection.total_changes(), changes);
+    assert_eq!(
+        serde_json::to_value(journal.remote_snapshot(&binding, session.id).unwrap()).unwrap(),
+        before
+    );
+    assert_eq!(journal.run(run.id).unwrap().state, RunState::Running);
+    assert!(matches!(
+        journal.remote_replay(&binding, session.id, 0, 128).unwrap(),
+        RemoteReplay::Events { .. }
+    ));
+    let mut wrong = binding.clone();
+    wrong.epoch += 1;
+    assert!(
+        journal
+            .remote_replay(&wrong, session.id, 1000, 128)
+            .is_err()
+    );
+    assert!(
+        journal
+            .remote_replay(&binding, Uuid::new_v4(), 1000, 128)
+            .is_err()
+    );
+    assert!(
+        journal
+            .remote_replay(&binding, session.id, u64::MAX, 128)
+            .is_err()
+    );
+    journal
+        .connection
+        .execute_batch("DROP TABLE remote_session")
+        .unwrap();
+    assert!(
+        journal
+            .remote_replay(&binding, session.id, 1000, 128)
+            .is_err()
+    );
+}

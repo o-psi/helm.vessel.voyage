@@ -59,6 +59,8 @@ pub struct RemoteCancelReceipt {
     pub state: RunState,
 }
 pub enum RemoteReplay {
+    /// A bounded caller cursor is ahead of this authorized public journal.
+    InvalidCursor,
     Events {
         events: Vec<SequencedEvent>,
         latest: u64,
@@ -605,7 +607,9 @@ impl Journal {
         )?;
         ensure!(next > 0, "invalid public cursor");
         let latest = next as u64 - 1;
-        ensure!(after <= latest, "public cursor ahead");
+        if after > latest {
+            return Ok(RemoteReplay::InvalidCursor);
+        }
         let rows=tx.prepare("SELECT sequence,CASE WHEN length(CAST(event AS BLOB))<=131072 THEN event END FROM remote_events WHERE sequence>?1 ORDER BY sequence LIMIT ?2")?.query_map(params![after as i64,limit],|r|Ok((r.get::<_,i64>(0)?,r.get::<_,Option<String>>(1)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
         let mut events = Vec::new();
         let mut bytes = 0;

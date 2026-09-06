@@ -573,6 +573,28 @@ mod tests {
     }
 
     #[test]
+    fn replay_denial_uses_existing_v2_result_without_new_features() {
+        use voyage_protocol::stream::Reply;
+        let scope = context();
+        let request = Uuid::new_v4();
+        for code in [
+            voyage_protocol::stream::DenialCode::Unauthorized,
+            voyage_protocol::stream::DenialCode::InvalidRequest,
+        ] {
+            let frame = Frame::Result {
+                connection_id: scope.connection_id,
+                command_id: request,
+                reply: Reply::Denied { code },
+            };
+            let decoded = Frame::decode(frame.encode().unwrap().as_bytes()).unwrap();
+            assert!(validate_outbound(&scope, &decoded).is_ok());
+            assert!(validate_outbound(&context(), &decoded).is_err());
+            assert!(validate_inbound(&scope, &decoded).is_err());
+            assert!(decoded.validate_features(&Features::default()).is_ok());
+        }
+    }
+
+    #[test]
     fn unsupported_observations_never_enter_the_outgoing_queue() {
         use voyage_protocol::events::{EventCursor, RunEvent, SequencedEvent};
         let mut scope = context();

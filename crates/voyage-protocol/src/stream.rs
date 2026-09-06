@@ -164,6 +164,9 @@ pub enum Frame {
     Command {
         command: Command,
     },
+    /// A command response, or a ReplayRequest refusal with Reply::Denied.
+    /// In the latter case command_id equals the replay request_id; no new wire
+    /// variant or feature is needed and earlier v2 decoders accept the envelope.
     Result {
         connection_id: Uuid,
         command_id: Uuid,

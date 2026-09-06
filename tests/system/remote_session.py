@@ -107,7 +107,8 @@ def case(root,provider,profile=False,shutdown_failure=False,defaults=False):
         try:return request('/ready',authenticated=False)
         except (OSError,urllib.error.URLError):return None
     try:
-        server=spawn([str(VESSEL),'--bind',origin.removeprefix('http://'),'--database',str(root/'vessel.db'),'--attachment-directory',str(root/'authority'),'--public-origin',origin,'--allow-insecure-loopback','--remote-execution'])
+        server_command=[str(VESSEL),'--bind',origin.removeprefix('http://'),'--database',str(root/'vessel.db'),'--attachment-directory',str(root/'authority'),'--public-origin',origin,'--allow-insecure-loopback','--remote-execution']
+        server=spawn(server_command)
         wait(ready,'server startup')
         invitation=request('/v2/enrollment/invitations',{'ttl_ms':60000})
         enrolled=subprocess.run([str(HELM),'attachment','--directory',str(root/'enrollment'),'--origin',origin,'--allow-insecure-loopback','enroll','--invitation-id',invitation['id'],'--invitation-key-stdin'],input=invitation['key']+'\n',text=True,capture_output=True,env=env,timeout=10)
@@ -253,10 +254,69 @@ def case(root,provider,profile=False,shutdown_failure=False,defaults=False):
         state['hold']=True
         cancel_run=command({'type':'submit','session_id':session,'expected_revision':completed['session']['revision'],'prompt':'Wait for cancellation.'})['reply']['run']['run_id']
         assert state['started'].wait(10),'provider did not start second turn'
+        # Observational input rejection must not cancel the admitted held run (#134).
+        private_dir=root/'private-managed'
+        private=subprocess.run([str(HELM),'--config',str(config),'--workspace',str(workspace),'managed','--directory',str(private_dir),'--json','create','--name','PRIVATE_REPLAY_CANARY'],env=env,capture_output=True,text=True,timeout=10)
+        assert private.returncode==0,(private.stdout,private.stderr)
+        private_id=json.loads(private.stdout)['session']['id']
+        private_db=private_dir/'journal/journal.sqlite3'
+        private_before=private_db.read_bytes()
+        active_connection=connected()['connection_id']
+        before=command({'type':'inspect','session_id':session})['reply']
+        assert before['run']['state']=='running',before
+        request_count=len(state['requests'])
+        def journal_observation():
+            with sqlite3.connect(state['database']) as db:
+                return tuple(db.execute('SELECT count(*) FROM '+table).fetchone()[0] for table in ('runs','local_cancel_intents','remote_receipts'))
+        journal_before=journal_observation()
+        for target,cursor,code in [(str(uuid.uuid4()),0,'unauthorized'),(private_id,0,'unauthorized'),(session,before['latest']+1000,'invalid_request'),(session,2**63-1,'invalid_request')]:
+            denied=request(base+f'/events?session_id={target}&after={cursor}&limit=32')
+            assert denied['type']=='result' and denied['reply']=={'type':'denied','code':code},denied
+            assert denied['connection_id']==active_connection,denied
+        for query in [f'session_id={session}&after=-1',f'session_id={session}&after=wat',f'session_id={session}&after={2**63}',f'session_id={session}&after=0&limit=0',f'session_id={session}&after=0&limit=129',f'session_id={session}&after=0&after=1','session_id=invalid&after=0',f'session_id={uuid.UUID(int=0)}&after=0']:
+            request(base+'/events?'+query,expected=(400,422))
+        after=command({'type':'inspect','session_id':session})['reply']
+        assert after==before,'rejected observation changed the held run'
+        assert connected()['connection_id']==active_connection,'rejected observation replaced the connection'
+        assert journal_observation()==journal_before,'observation allocated a run or cancellation intent'
+        assert len(state['requests'])==request_count,'observation dispatched another provider request'
+        assert private_db.read_bytes()==private_before,'private history changed'
+        replay=request(base+f'/events?session_id={session}&after=0&limit=128')
+        assert replay['type']=='replay' and replay['latest']==before['latest'],replay
+        assert private_id not in json.dumps(replay),'private session disclosed'
+        caught_up=request(base+f"/events?session_id={session}&after={before['latest']}&limit=128")
+        assert caught_up['type']=='replay' and caught_up['events']==[],caught_up
         cancelled=command({'type':'cancel','session_id':session,'run_id':cancel_run})
         assert cancelled['reply']['type']=='accepted',cancelled
         observed=wait(terminal,'cancelled observed cleanup')
         assert observed['run']['run_id']==cancel_run and observed['run']['state']=='cancelled',observed
+        state['release'].set()
+        # Genuine transport loss still cancels the owned turn. Reconnect observes
+        # the same receipt and cannot silently resume effects.
+        state['started'].clear();state['release'].clear()
+        transport_command=str(uuid.uuid4());transport_expiry=int(time.time()*1000)+120000
+        transport_operation={'type':'submit','session_id':session,'expected_revision':observed['session']['revision'],'prompt':'Hold for actual Vessel transport loss.'}
+        transport_run=command(transport_operation,transport_command,transport_expiry)['reply']['run']['run_id']
+        assert state['started'].wait(10),'provider did not start transport-loss turn'
+        transport_count=len(state['requests'])
+        server.terminate();server.wait(15)
+        # The fresh-proof reconnect fails while Vessel is down, so the worker
+        # exits. Observe its exit before opening a separate SQLite reader: a
+        # racing reader can deliberately make the journal's COMMIT fail closed.
+        worker.wait(20)
+        assert worker.returncode!=0,'unavailable Vessel reported a usable worker'
+        with sqlite3.connect(state['database']) as db:
+            row=db.execute('SELECT r.record,o.confirmation FROM runs r JOIN local_cleanup_obligations o ON o.run_id=r.id WHERE r.id=?',(transport_run,)).fetchone()
+        assert json.loads(row[0])['state']=='cancelled' and row[1]=='observed',(json.loads(row[0])['state'],row[1])
+        server=spawn(server_command);wait(ready,'Vessel restart')
+        worker=spawn(worker_command)
+        reconnected=wait(connected,'worker reconnect after transport loss')
+        assert reconnected['connection_id']!=active_connection
+        retry=command(transport_operation,transport_command,transport_expiry)['reply']
+        assert retry['type']=='run' and retry['run_id']==transport_run and retry['state']=='cancelled',retry
+        observed=command({'type':'inspect','session_id':session})['reply']
+        assert observed['run']['cleanup']=='observed' and len(state['requests'])==transport_count,observed
+        assert request(base+f'/events?session_id={session}&after=0&limit=128')['type']=='replay'
         state['release'].set()
         # Forced death leaves a durable cleanup obligation; only local explicit
         # recovery/attestation can clear it. Invalid provider configuration is irrelevant.
@@ -332,4 +392,4 @@ if __name__=='__main__':
         case(Path(directory)/'defaults','openai-chat',defaults=True)
         case(Path(directory)/'shutdown-failure','openai-chat',shutdown_failure=True)
         case(Path(directory)/'completed-cleanup-failure','openai-chat',shutdown_failure='completed')
-    print('remote session: three native adapters, actual file effects, exact retry/restart, cancellation, forced-death recovery/attestation, revocation, private-scope denial, publication rollback, selected-profile freshness and unconfirmed-cleanup exit status passed')
+    print('remote session: three native adapters, actual file effects, exact retry/restart, cancellation, forced-death recovery/attestation, revocation, private-scope denial, rejected observational replay, transport-loss cleanup/reconnect, publication rollback, selected-profile freshness and unconfirmed-cleanup exit status passed')

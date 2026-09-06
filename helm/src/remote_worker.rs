@@ -248,9 +248,17 @@ pub(super) async fn run(args: Args, mut config: Config, workspace: Option<PathBu
                             };
                             if connection.send(Frame::Result{connection_id:context.connection_id,command_id:command.command_id,reply:public_reply(reply,&redactor)}).is_err(){break;}
                         },
-                        Frame::ReplayRequest{request_id,session_id,after,limit,..} if session_id==session=>{
+                        Frame::ReplayRequest{request_id,session_id,after,limit,..}=>{
+                            // Observation never falls through to connection-loss cleanup for
+                            // a caller-selected session or cursor. Reuse the v2 denial result;
+                            // its command_id correlates this replay's request_id.
+                            if session_id != session {
+                                if connection.send(Frame::Result{connection_id:context.connection_id,command_id:request_id,reply:Reply::Denied{code:DenialCode::Unauthorized}}).is_err(){break;}
+                                continue;
+                            }
                             let frame=match owner.remote_replay(binding.clone(),after.get(),usize::from(limit),authority.clone()).await {
                                 Ok(RemoteReplay::Events{events,latest})=>{Frame::Replay{connection_id:context.connection_id,request_id,session_id,after,latest:voyage_protocol::events::EventCursor::new(latest).map_err(anyhow::Error::msg)?,events}},
+                                Ok(RemoteReplay::InvalidCursor)=>Frame::Result{connection_id:context.connection_id,command_id:request_id,reply:Reply::Denied{code:DenialCode::InvalidRequest}},
                                 Ok(RemoteReplay::SnapshotRequired{latest})=>Frame::SnapshotRequired{connection_id:context.connection_id,request_id,session_id,after,latest:voyage_protocol::events::EventCursor::new(latest).map_err(anyhow::Error::msg)?},
                                 Err(_)=>break,
                             };
