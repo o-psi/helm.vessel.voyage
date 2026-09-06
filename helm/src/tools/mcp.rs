@@ -35,6 +35,7 @@ struct Transport {
     closed: AtomicBool,
     stopping: tokio_util::sync::CancellationToken,
     tools_available: AtomicBool,
+    outbound_partial: AtomicBool,
     next_id: AtomicU64,
     #[cfg(test)]
     written_bytes: std::sync::atomic::AtomicUsize,
@@ -118,6 +119,7 @@ impl McpServer {
                 closed: AtomicBool::new(false),
                 stopping: tokio_util::sync::CancellationToken::new(),
                 tools_available: AtomicBool::new(false),
+                outbound_partial: AtomicBool::new(false),
                 next_id: AtomicU64::new(1),
                 #[cfg(test)]
                 written_bytes: std::sync::atomic::AtomicUsize::new(0),
@@ -416,7 +418,11 @@ impl Transport {
             };
             if result.is_err() || sender.is_closed() {
                 transport.closed.store(true, Ordering::Release);
-                if cancel.is_cancelled() && sent && !initialize {
+                if cancel.is_cancelled()
+                    && sent
+                    && !initialize
+                    && !transport.outbound_partial.load(Ordering::Acquire)
+                {
                     // This notification is best effort; it never attests that
                     // an external effect stopped or can safely be retried.
                     let _ = tokio::time::timeout(
@@ -461,6 +467,7 @@ impl Transport {
     async fn write_frame(&self, frame: &[u8]) -> Result<(), ToolError> {
         let mut stdin = self.stdin.lock().await;
         let stdin = stdin.as_mut().ok_or_else(|| failed("MCP input closed"))?;
+        self.outbound_partial.store(true, Ordering::Release);
         let mut offset = 0;
         while offset < frame.len() {
             let count = stdin
@@ -479,7 +486,9 @@ impl Transport {
         stdin
             .flush()
             .await
-            .map_err(|_| failed("MCP request flush failed; outcome uncertain"))
+            .map_err(|_| failed("MCP request flush failed; outcome uncertain"))?;
+        self.outbound_partial.store(false, Ordering::Release);
+        Ok(())
     }
     async fn receive(&self) -> Result<Value, ToolError> {
         let mut reader = self.stdout.lock().await;

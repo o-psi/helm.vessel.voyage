@@ -60,6 +60,12 @@ for line in sys.stdin:
         elif mode == 'gate':
             while not (root / 'release').exists(): time.sleep(.002)
             reply({'jsonrpc':'2.0','id':identifier,'result':{'content':[{'type':'text','text':'ok'}]}})
+        elif mode == 'peer_ping':
+            reply({'jsonrpc':'2.0','id':'p' * (1024 * 1024 - 100),'method':'ping'})
+            mark('peer_ping')
+            while not (root / 'release').exists(): time.sleep(.002)
+            mark('peer_input', sys.stdin.read())
+            break
         elif mode == 'hold':
             pass
         elif mode == 'partial':
@@ -356,6 +362,41 @@ async fn cancelled_partial_write_retires_without_appending_notification() {
     server.shutdown().await.unwrap();
     assert!(!directory.path().join("dispatched").exists());
     assert!(!directory.path().join("cancelled").exists());
+}
+
+#[tokio::test]
+async fn interrupted_reply_to_peer_request_is_not_followed_by_cancellation_bytes() {
+    let directory = tempfile::tempdir().unwrap();
+    let server = peer("peer_ping", directory.path());
+    server.initialize().await.unwrap();
+    let transport = server.transport.clone();
+    let task = tokio::spawn(async move { transport.request("tools/call", json!({})).await });
+    marker(&directory.path().join("peer_ping")).await;
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while server.transport.written_bytes.load(Ordering::Acquire) <= 1024 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert!(server.transport.outbound_partial.load(Ordering::Acquire));
+    assert!(server.transport.written_bytes.load(Ordering::Acquire) < MAX_FRAME_BYTES - 100);
+    task.abort();
+    let _ = task.await;
+    std::fs::write(directory.path().join("release"), "release").unwrap();
+    marker(&directory.path().join("peer_input")).await;
+    let bytes = std::fs::read(directory.path().join("peer_input")).unwrap();
+    assert!(
+        !bytes
+            .windows(b"notifications/cancelled".len())
+            .any(|part| part == b"notifications/cancelled")
+    );
+    assert!(
+        !bytes.ends_with(b"\n"),
+        "an incomplete reply must never have another frame appended"
+    );
+    server.shutdown().await.unwrap();
+    assert!(server.transport.closed.load(Ordering::Acquire));
 }
 
 fn context(directory: &std::path::Path, maximum: usize) -> ToolContext {
