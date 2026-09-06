@@ -54,12 +54,13 @@ fn current(context: &ToolContext, write: bool) -> Result<()> {
 
 async fn database<T: Send + 'static>(
     context: &ToolContext,
+    directory: &std::path::Path,
     write: bool,
     operation: impl FnOnce(&mut super::store::Store) -> Result<T> + Send + 'static,
 ) -> Result<T> {
     current(context, write)?;
     let cloned = context.clone();
-    let value = super::service::database(move |store| {
+    let value = super::service::database_at(directory.to_owned(), move |store| {
         current(&cloned, write)?;
         operation(store)
     })
@@ -72,6 +73,31 @@ pub(super) async fn execute(
     context: ToolContext,
     command: Command,
     scoped: Option<Owner>,
+) -> Result<CommandResult> {
+    execute_inner(
+        context,
+        command,
+        scoped,
+        super::store::Store::default_path(),
+    )
+    .await
+}
+
+#[cfg(test)]
+pub(super) async fn fixture(
+    context: ToolContext,
+    command: Command,
+    scoped: Option<Owner>,
+    directory: std::path::PathBuf,
+) -> Result<CommandResult> {
+    execute_inner(context, command, scoped, directory).await
+}
+
+async fn execute_inner(
+    context: ToolContext,
+    command: Command,
+    scoped: Option<Owner>,
+    directory: std::path::PathBuf,
 ) -> Result<CommandResult> {
     current(&context, false)?;
     let inspect = |id| {
@@ -86,29 +112,32 @@ pub(super) async fn execute(
     };
     let value = match command {
         Command::List { offset } => {
-            database(&context, false, move |store| {
+            database(&context, &directory, false, move |store| {
                 Ok(serde_json::to_value(store.admin_list(offset)?)?)
             })
             .await?
         }
         Command::Inspect { id } => {
-            serde_json::to_value(database(&context, false, inspect(id)).await?)?
+            serde_json::to_value(database(&context, &directory, false, inspect(id)).await?)?
         }
         Command::Audit => {
-            database(&context, false, move |store| {
+            database(&context, &directory, false, move |store| {
                 Ok(serde_json::to_value(store.audit()?)?)
             })
             .await?
         }
         Command::ClearAudit { digest } => {
-            let snapshot = database(&context, false, |store| store.audit()).await?;
+            let snapshot = database(&context, &directory, false, |store| store.audit()).await?;
             ensure!(
                 snapshot.digest == digest,
                 "GitHub audit changed; export its current snapshot"
             );
             confirm(&context, &serde_json::json!({"action":"clear local audit","digest":digest,
                 "entries":snapshot.entries.len(),"notice":"Keep the exported private evidence. This permanently removes local audit evidence; it never authorizes another remote send."})).await?;
-            let removed = database(&context, true, move |store| store.clear_audit(&digest)).await?;
+            let removed = database(&context, &directory, true, move |store| {
+                store.clear_audit(&digest)
+            })
+            .await?;
             serde_json::json!({"removed_audit_entries":removed})
         }
         command => {
@@ -118,7 +147,7 @@ pub(super) async fn execute(
                 | Command::Forget { id, digest } => (*id, digest.clone()),
                 _ => unreachable!(),
             };
-            let operation = database(&context, false, inspect(id)).await?;
+            let operation = database(&context, &directory, false, inspect(id)).await?;
             ensure!(
                 operation.digest == digest,
                 "GitHub operation changed; inspect the exact current record"
@@ -150,7 +179,7 @@ pub(super) async fn execute(
             confirm(&context,&serde_json::json!({"operation":operation,"disposition":note,
                 "action":match command { Command::Cancel { .. } => "cancel prepared record",Command::Dispose { .. } => "record uncertain disposition",_=>"forget terminal record after atomic audit" },
                 "notice":"Local maintenance does not establish that a request was unsent and never authorizes repetition."})).await?;
-            database(&context, true, move |store| match command {
+            database(&context, &directory, true, move |store| match command {
                 Command::Cancel { .. } => {
                     Ok(serde_json::to_value(store.cancel_exact(&operation)?)?)
                 }

@@ -24,7 +24,7 @@ pub(super) async fn database<T: Send + 'static>(
 ) -> Result<T> {
     database_at(Store::default_path(), work).await
 }
-async fn database_at<T: Send + 'static>(
+pub(super) async fn database_at<T: Send + 'static>(
     path: PathBuf,
     work: impl FnOnce(&mut Store) -> Result<T> + Send + 'static,
 ) -> Result<T> {
@@ -311,6 +311,10 @@ impl Service {
             .await?
             .json()?;
         let mut receipt = validate_receipt(&operation, &data)?;
+        ensure!(
+            receipt.id == remote_id,
+            "GitHub receipt identity differs from the requested candidate"
+        );
         ensure!(
             !super::value_has_secret(&serde_json::to_value(&receipt)?, &self.context.redactor),
             "GitHub exact receipt preview contains a configured secret"

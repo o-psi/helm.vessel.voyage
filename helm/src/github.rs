@@ -1,5 +1,7 @@
 //! Local GitHub context and exact attended publication.
 pub mod admin;
+#[cfg(test)]
+mod admin_fixture;
 pub mod approval;
 #[cfg(test)]
 mod approval_fixture;
@@ -10,6 +12,8 @@ pub mod context;
 mod context_fixture;
 pub mod logs;
 pub mod operator;
+#[cfg(test)]
+mod recovery_fixture;
 pub mod tool;
 
 /// Supported diagnostic projections for the explicitly delegated credential.
