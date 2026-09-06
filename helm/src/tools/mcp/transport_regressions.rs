@@ -33,9 +33,15 @@ for line in sys.stdin:
             reply({'jsonrpc':'2.0','id':identifier,'result':{'protocolVersion':'2099-01-01','capabilities':{},'serverInfo':{'name':'fixture','version':'1'}}})
         elif mode == 'init_missing':
             reply({'jsonrpc':'2.0','id':identifier,'result':{}})
+        elif mode.startswith('init_tools_'):
+            choices = {'bool': True, 'null': None, 'string': 'tools', 'array': []}
+            suffix = mode.removeprefix('init_tools_')
+            capabilities = {} if suffix == 'absent' else {'tools': choices[suffix]}
+            reply({'jsonrpc':'2.0','id':identifier,'result':{'protocolVersion':'2025-06-18','capabilities':capabilities,'serverInfo':{'name':'fixture','version':'1'}}})
         else:
             reply({'jsonrpc':'2.0','id':identifier,'result':{'protocolVersion':'2025-06-18','capabilities':{'tools':{}},'serverInfo':{'name':'fixture','version':'1'}}})
     elif method == 'tools/list':
+        mark('listed')
         reply({'jsonrpc':'2.0','id':identifier,'result':{'tools':[{'name':'echo','inputSchema':{'type':'object'}}]}})
     else:
         mark('dispatched', str(identifier))
@@ -113,6 +119,35 @@ async fn invalid_negotiation_stops_before_initialized() {
         assert!(result.is_err(), "accepted {mode}");
         assert!(!directory.path().join("initialized").exists());
     }
+}
+
+#[tokio::test]
+async fn present_malformed_tools_capability_is_refused_but_absent_is_supported() {
+    let mut failures = Vec::new();
+    for mode in [
+        "init_tools_bool",
+        "init_tools_null",
+        "init_tools_string",
+        "init_tools_array",
+        "init_tools_absent",
+    ] {
+        let directory = tempfile::tempdir().unwrap();
+        let server = peer(mode, directory.path());
+        let result = server.initialize().await;
+        let absent = mode == "init_tools_absent";
+        if result.is_ok() != absent {
+            failures.push(format!("{mode}: unexpected initialization outcome"));
+        }
+        if absent && result.is_ok() {
+            assert!(server.discover().await.unwrap().is_empty());
+            assert!(!directory.path().join("listed").exists());
+        }
+        server.shutdown().await.unwrap();
+        if directory.path().join("initialized").exists() != absent {
+            failures.push(format!("{mode}: incorrect initialized notification"));
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("; "));
 }
 
 #[tokio::test]
