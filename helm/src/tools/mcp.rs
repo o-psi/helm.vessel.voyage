@@ -154,6 +154,9 @@ impl McpServer {
         };
         if result.get("protocolVersion").and_then(Value::as_str) != Some("2025-06-18")
             || !result.get("capabilities").is_some_and(Value::is_object)
+            || result
+                .pointer("/capabilities/tools")
+                .is_some_and(|tools| !tools.is_object())
             || !result
                 .pointer("/serverInfo/name")
                 .is_some_and(Value::is_string)
