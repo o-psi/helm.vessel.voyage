@@ -198,4 +198,5 @@ mod terminals;
 mod todos;
 
 mod github;
+mod usage;
 mod routing;

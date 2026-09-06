@@ -515,6 +515,32 @@ impl Agent {
             .await
             .map_err(|error| AgentError::Inference(error.to_string()))
     }
+    pub async fn inference_history(
+        &self,
+        session: uuid::Uuid,
+        project_scope: bool,
+        query: crate::inference::history::Query,
+        cancel: CancellationToken,
+    ) -> Result<crate::inference::history::History, AgentError> {
+        self.check_current_policy()?;
+        let accounting = self
+            .inference
+            .as_ref()
+            .ok_or_else(|| AgentError::Inference("Inference accounting is unavailable".into()))?;
+        tokio::select! {biased; _=cancel.cancelled()=>return Err(AgentError::Cancelled), result=accounting.bind(session)=>result.map_err(|error|AgentError::Inference(error.to_string()))?};
+        self.check_current_policy()?;
+        let result = accounting
+            .history(session, project_scope, query, cancel.clone())
+            .await
+            .map_err(|error| AgentError::Inference(error.to_string()))?;
+        self.check_current_policy()?;
+        if cancel.is_cancelled() {
+            return Err(AgentError::Cancelled);
+        }
+        crate::inference::history::ensure_display_safe(&result, &self.context.redactor)
+            .map_err(|error| AgentError::Inference(error.to_string()))?;
+        Ok(result)
+    }
     async fn inference_admit(
         &self,
         reference: Option<&crate::completion::runtime::RunReference>,

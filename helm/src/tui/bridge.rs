@@ -26,6 +26,11 @@ pub enum UiEvent {
         request: uuid::Uuid,
         result: Result<crate::github::operator::CommandResult, String>,
     },
+    InferenceHistory {
+        session: uuid::Uuid,
+        request: uuid::Uuid,
+        result: Result<crate::inference::history::History, String>,
+    },
     InferenceStatus {
         session: uuid::Uuid,
         request: uuid::Uuid,

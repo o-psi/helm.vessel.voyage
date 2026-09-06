@@ -47,7 +47,7 @@ pub(super) async fn request_navigation(
     reference: String,
 ) -> Result<()> {
     anyhow::ensure!(
-        !app.is_running() && !app.github_panel.open,
+        !app.is_running() && !app.github_panel.open && !app.usage_panel.open,
         "finish or cancel active work before switching voyages"
     );
     app.session.draft.clone_from(&app.composer.text);
@@ -498,6 +498,29 @@ pub(super) async fn handle_command(
             }
         }
         "inference" => {
+            if let Some(arguments) = argument.trim().strip_prefix("history") {
+                if let (Some(agent), Some(tx)) = (agent, tx) {
+                    let words = parse_words(
+                        arguments,
+                        "/inference history --from UTC --until UTC [--group-by model]",
+                    )?;
+                    let (query, project_scope) = if words.is_empty() {
+                        (super::usage::default_query(), true)
+                    } else {
+                        let args = crate::inference::cli::HistoryArgs::parse_words(&words)?;
+                        anyhow::ensure!(
+                            args.session.is_none_or(|session| session == app.session.id),
+                            "history belongs to the active voyage; use CLI for another session"
+                        );
+                        (args.query()?, args.session.is_none())
+                    };
+                    super::usage::start(app, agent.clone(), tx.clone(), query, project_scope);
+                } else {
+                    app.status = "Historical usage needs an active local runtime".into();
+                }
+                return Ok(true);
+            }
+            app.usage_panel.close();
             app.inference_job = None;
             app.inference_request = None;
             if let (Some(agent), Some(tx)) = (agent, tx) {

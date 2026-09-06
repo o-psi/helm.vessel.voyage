@@ -61,6 +61,10 @@ pub(super) fn draw(frame: &mut ratatui::Frame<'_>, app: &App) {
         super::publication::draw(frame, area, approval, app.approval_scroll);
         return;
     }
+    if app.usage_panel.open && app.approval.is_none() && app.question.is_none() {
+        app.usage_panel.draw(frame, area);
+        return;
+    }
     if app.github_panel.open && app.approval.is_none() && app.question.is_none() {
         app.github_panel.draw(frame, area);
         return;

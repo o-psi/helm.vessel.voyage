@@ -38,6 +38,7 @@ use text::*;
 mod commands;
 mod github;
 mod publication;
+mod usage;
 mod workflows;
 use commands::*;
 
@@ -122,6 +123,7 @@ struct App {
     approval_scroll: usize,
     github_approval: Option<uuid::Uuid>,
     github_panel: github::Panel,
+    usage_panel: usage::Panel,
     question: Option<QuestionDialog>,
     show_sessions: bool,
     selected_session: usize,
@@ -260,6 +262,7 @@ impl App {
             approval_scroll: 0,
             github_approval: None,
             github_panel: github::Panel::default(),
+            usage_panel: usage::Panel::default(),
             question: None,
             show_sessions: false,
             selected_session: 0,
@@ -280,6 +283,7 @@ impl App {
         self.workflow_panel.close();
         self.voyage_panel.close();
         self.github_panel.close();
+        self.usage_panel.close();
         self.github_approval = None;
         if let Some(question) = self.question.take() {
             let _ = question
@@ -558,6 +562,15 @@ async fn handle_ui_event(
                     ),
                 };
                 app.github_panel.finished(display);
+            }
+        }
+        UiEvent::InferenceHistory {
+            session,
+            request,
+            result,
+        } => {
+            if session == app.session.id && app.usage_panel.matches(session, request) {
+                app.usage_panel.finished(result);
             }
         }
         UiEvent::InferenceStatus {
@@ -988,6 +1001,7 @@ enum InputOwner {
     Question,
     Approval,
     Github,
+    Usage,
     Attached,
     Help,
     Voyage,
@@ -1008,6 +1022,8 @@ fn input_owner(app: &App) -> InputOwner {
         InputOwner::Approval
     } else if app.github_panel.open {
         InputOwner::Github
+    } else if app.usage_panel.open {
+        InputOwner::Usage
     } else if app.terminal_panel.attached_terminal.is_some() {
         InputOwner::Attached
     } else if app.shortcut_help {
@@ -1095,6 +1111,7 @@ async fn handle_input_event(
                 InputOwner::Policy
                 | InputOwner::Approval
                 | InputOwner::Github
+                | InputOwner::Usage
                 | InputOwner::Help
                 | InputOwner::Terminals
                 | InputOwner::Sessions
@@ -1157,6 +1174,12 @@ async fn handle_key(
             app.status = if approved { "Approved" } else { "Denied" }.into();
         } else {
             app.approval = Some(approval);
+        }
+        return Ok(());
+    }
+    if owner == InputOwner::Usage {
+        if let Some((query, project_scope)) = app.usage_panel.key(key, app.display_area) {
+            usage::start(app, agent.clone(), tx.clone(), query, project_scope);
         }
         return Ok(());
     }
@@ -1581,6 +1604,19 @@ fn complete_selected_slash_command(app: &mut App) {
 }
 
 fn handle_mouse(mouse: MouseEvent, app: &mut App) {
+    if app.usage_panel.open && app.approval.is_none() && app.question.is_none() {
+        let key = match mouse.kind {
+            MouseEventKind::ScrollUp => Some(KeyCode::Up),
+            MouseEventKind::ScrollDown => Some(KeyCode::Down),
+            _ => None,
+        };
+        if let Some(code) = key {
+            let _ = app
+                .usage_panel
+                .key(KeyEvent::new(code, KeyModifiers::NONE), app.display_area);
+        }
+        return;
+    }
     if app.github_panel.open || app.approval.as_ref().is_some_and(publication::exact) {
         let code = match mouse.kind {
             MouseEventKind::ScrollUp => Some(KeyCode::Up),
@@ -1652,6 +1688,10 @@ async fn start_run_with_secrets(
     invocation: Option<crate::workflow::Invocation>,
     secrets: Option<crate::workflow::secrets::SecretInputs>,
 ) -> Result<bool> {
+    if app.usage_panel.open {
+        app.status = "Close the historical usage explorer before starting model work".into();
+        return Ok(false);
+    }
     if app.github_panel.open {
         app.status = "Close or cancel the GitHub operator action before starting model work".into();
         return Ok(false);
