@@ -322,3 +322,38 @@ fn history_replay_cannot_replace_a_newer_live_event_with_an_older_snapshot() {
     panel.apply_inspection(inspection);
     assert_eq!(panel.inspected_events.last().unwrap().sequence, 12);
 }
+
+#[test]
+fn initial_history_replay_preserves_newer_live_events() {
+    let id = AgentId(Uuid::new_v4());
+    let epoch = Uuid::new_v4();
+    let mut panel = SupervisorPanel {
+        supervisor_mode: Some(SupervisorMode::Inspect(id)),
+        ..Default::default()
+    };
+    let mut inspection = crate::supervision::AgentInspection {
+        agent: agent(id, None, "task"),
+        events: vec![],
+        transport_skipped: 0,
+        history: Some(crate::subagent::HistoryStatus {
+            cursor: crate::subagent::HistoryCursor {
+                epoch,
+                sequence: 10,
+            },
+            first_sequence: None,
+            evicted_through: 0,
+            notices: Default::default(),
+            durable: true,
+            cursor_gap: false,
+        }),
+    };
+    panel.append_event(SupervisionEvent {
+        sequence: 12,
+        timestamp: Utc::now(),
+        agent_id: id,
+        kind: SupervisionEventKind::Cancelled,
+    });
+    inspection.history.as_mut().unwrap().cursor.sequence = 11;
+    panel.apply_inspection(inspection);
+    assert_eq!(panel.inspected_events.last().unwrap().sequence, 12);
+}

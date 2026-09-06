@@ -79,9 +79,28 @@ impl SupervisorPanel {
         {
             return;
         }
+        // Live delivery can precede the first replay. Keep its newer events
+        // while establishing the initial history metadata for this agent.
+        let initial_live = if self.history_status.is_none() {
+            inspection.history.as_ref().map(|history| {
+                self.inspected_events
+                    .iter()
+                    .filter(|event| {
+                        event.agent_id == inspection.agent.id
+                            && event.sequence > history.cursor.sequence
+                    })
+                    .cloned()
+                    .collect::<Vec<_>>()
+            })
+        } else {
+            None
+        };
         self.inspected_agent = Some(inspection.agent);
         self.history_status = inspection.history;
         self.inspected_events = inspection.events;
+        if let Some(events) = initial_live {
+            self.inspected_events.extend(events);
+        }
         self.bound_events();
     }
 }
