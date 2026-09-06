@@ -273,16 +273,14 @@ pub async fn pending_prompt(
                                 }
                                 b"\x1b[H" | b"\x1b[1~" => cursor = 0,
                                 b"\x1b[F" | b"\x1b[4~" => cursor = pending.bytes.len(),
-                                b"\x1b[3~" => {
-                                    if cursor < pending.bytes.len() {
-                                        let mut end = cursor + 1;
-                                        while end < pending.bytes.len()
-                                            && (pending.bytes[end] & 0xc0) == 0x80
-                                        {
-                                            end += 1;
-                                        }
-                                        pending.bytes.drain(cursor..end);
+                                b"\x1b[3~" if cursor < pending.bytes.len() => {
+                                    let mut end = cursor + 1;
+                                    while end < pending.bytes.len()
+                                        && (pending.bytes[end] & 0xc0) == 0x80
+                                    {
+                                        end += 1;
                                     }
+                                    pending.bytes.drain(cursor..end);
                                 }
                                 _ => (),
                             }
