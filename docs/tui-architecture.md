@@ -13,31 +13,33 @@ interface reconnection or coordinator handoff.
 
 ## Ownership
 
-Paths below are relative to `helm/src/`.
+Paths below are relative to `helm/src/`. Source and test links open the development
+branch on GitHub; those files and the build commands require a source checkout.
+The other guide links remain available in full release archives.
 
 | Module | Responsibility |
 | --- | --- |
-| [tui_runtime.rs](../helm/src/tui_runtime.rs) | Binary frontend host: builds and retains workspace runtimes, acquires target session ownership during navigation, and coordinates shutdown before actual exit or CLI handoff |
-| [tui.rs](../helm/src/tui.rs) | `App`, event loop, run admission/cancellation, steering, title jobs, input ownership and cross-feature coordination |
-| [tui/bridge.rs](../helm/src/tui/bridge.rs) | Provider-neutral event channel, checkpoint messages, discovery results and approval/question response channels |
-| [tui/checkpoint.rs](../helm/src/tui/checkpoint.rs) | Run-bound canonical/partial/accepted checkpoint requests; UI-thread persistence before acknowledgement; usage and prefix validation |
-| [tui/lifecycle.rs](../helm/src/tui/lifecycle.rs) | Outer terminal acquisition/restoration, bracketed paste, mouse capture, keyboard enhancement flags and termination signals |
-| [tui/composer.rs](../helm/src/tui/composer.rs) | UTF-8 editing, cursor positioning and session-local prompt recall |
-| [tui/recent.rs](../helm/src/tui/recent.rs) | Responsive recent-conversation sidebar/drawer, selection, mouse navigation and guarded session switching |
-| [tui/palette.rs](../helm/src/tui/palette.rs) | Shared slash-command metadata, contextual suggestions and palette rendering |
-| [tui/questions.rs](../helm/src/tui/questions.rs) | Question-dialog state, bounded custom input and safe rendering |
-| [tui/models.rs](../helm/src/tui/models.rs) | Model discovery requests, filtering, manual selection and picker rendering |
-| [tui/supervisor.rs](../helm/src/tui/supervisor.rs) | Agent-panel state, inspection, messages/follow-ups, cancellation requests and rendering |
-| [tui/todos.rs](../helm/src/tui/todos.rs) | Todo-panel state, editing, store actions and rendering |
-| [tui/terminals.rs](../helm/src/tui/terminals.rs) | Terminal-panel state, direct PTY input, terminal-screen rendering and inventory refresh |
-| [tui/workflows.rs](../helm/src/tui/workflows.rs) | Workflow discovery/picker, validated forms, transient secret inputs, preview/trust and final preparation; hands prepared work to the common run path |
-| [tui/voyage_setup.rs](../helm/src/tui/voyage_setup.rs) | Saved configuration-draft library, local setup identity, transient Vessel discovery credentials, save/conflict handling and form coordination |
-| [tui/voyages.rs](../helm/src/tui/voyages.rs) | Configuration-draft form stages: name, purpose, Helm selection, coordinator selection and review; no execution |
-| [tui/tool_output.rs](../helm/src/tui/tool_output.rs) | Tool-specific headings, bounded multiline previews, full details and terminal-safe wrapping |
-| [tui/conversation.rs](../helm/src/tui/conversation.rs) | Transcript/activity presentation, Markdown theme and viewport anchoring |
-| [tui/render.rs](../helm/src/tui/render.rs) | Frame composition, conversation/question layout, overlay precedence, approvals and help; delegates recent-session rendering |
-| [tui/commands.rs](../helm/src/tui/commands.rs) | Session operations, panel entrypoints and explicit session-preserving CLI handoffs |
-| [tui/text.rs](../helm/src/tui/text.rs) | Shared terminal-safe text and layout helpers |
+| [tui_runtime.rs](https://github.com/o-psi/voyage/blob/main/helm/src/tui_runtime.rs) | Binary frontend host: builds and retains workspace runtimes, acquires target session ownership during navigation, and coordinates shutdown before actual exit or CLI handoff |
+| [tui.rs](https://github.com/o-psi/voyage/blob/main/helm/src/tui.rs) | `App`, event loop, run admission/cancellation, steering, title jobs, input ownership and cross-feature coordination |
+| [tui/bridge.rs](https://github.com/o-psi/voyage/blob/main/helm/src/tui/bridge.rs) | Provider-neutral event channel, checkpoint messages, discovery results and approval/question response channels |
+| [tui/checkpoint.rs](https://github.com/o-psi/voyage/blob/main/helm/src/tui/checkpoint.rs) | Run-bound canonical/partial/accepted checkpoint requests; UI-thread persistence before acknowledgement; usage and prefix validation |
+| [tui/lifecycle.rs](https://github.com/o-psi/voyage/blob/main/helm/src/tui/lifecycle.rs) | Outer terminal acquisition/restoration, bracketed paste, mouse capture, keyboard enhancement flags and termination signals |
+| [tui/composer.rs](https://github.com/o-psi/voyage/blob/main/helm/src/tui/composer.rs) | UTF-8 editing, cursor positioning and session-local prompt recall |
+| [tui/recent.rs](https://github.com/o-psi/voyage/blob/main/helm/src/tui/recent.rs) | Responsive recent-conversation sidebar/drawer, selection, mouse navigation and guarded session switching |
+| [tui/palette.rs](https://github.com/o-psi/voyage/blob/main/helm/src/tui/palette.rs) | Shared slash-command metadata, contextual suggestions and palette rendering |
+| [tui/questions.rs](https://github.com/o-psi/voyage/blob/main/helm/src/tui/questions.rs) | Question-dialog state, bounded custom input and safe rendering |
+| [tui/models.rs](https://github.com/o-psi/voyage/blob/main/helm/src/tui/models.rs) | Model discovery requests, filtering, manual selection and picker rendering |
+| [tui/supervisor.rs](https://github.com/o-psi/voyage/blob/main/helm/src/tui/supervisor.rs) | Agent-panel state, inspection, messages/follow-ups, cancellation requests and rendering |
+| [tui/todos.rs](https://github.com/o-psi/voyage/blob/main/helm/src/tui/todos.rs) | Todo-panel state, editing, store actions and rendering |
+| [tui/terminals.rs](https://github.com/o-psi/voyage/blob/main/helm/src/tui/terminals.rs) | Terminal-panel state, direct PTY input, terminal-screen rendering and inventory refresh |
+| [tui/workflows.rs](https://github.com/o-psi/voyage/blob/main/helm/src/tui/workflows.rs) | Workflow discovery/picker, validated forms, transient secret inputs, preview/trust and final preparation; hands prepared work to the common run path |
+| [tui/voyage_setup.rs](https://github.com/o-psi/voyage/blob/main/helm/src/tui/voyage_setup.rs) | Saved configuration-draft library, local setup identity, transient Vessel discovery credentials, save/conflict handling and form coordination |
+| [tui/voyages.rs](https://github.com/o-psi/voyage/blob/main/helm/src/tui/voyages.rs) | Configuration-draft form stages: name, purpose, Helm selection, coordinator selection and review; no execution |
+| [tui/tool_output.rs](https://github.com/o-psi/voyage/blob/main/helm/src/tui/tool_output.rs) | Tool-specific headings, bounded multiline previews, full details and terminal-safe wrapping |
+| [tui/conversation.rs](https://github.com/o-psi/voyage/blob/main/helm/src/tui/conversation.rs) | Transcript/activity presentation, Markdown theme and viewport anchoring |
+| [tui/render.rs](https://github.com/o-psi/voyage/blob/main/helm/src/tui/render.rs) | Frame composition, conversation/question layout, overlay precedence, approvals and help; delegates recent-session rendering |
+| [tui/commands.rs](https://github.com/o-psi/voyage/blob/main/helm/src/tui/commands.rs) | Session operations, panel entrypoints and explicit session-preserving CLI handoffs |
+| [tui/text.rs](https://github.com/o-psi/voyage/blob/main/helm/src/tui/text.rs) | Shared terminal-safe text and layout helpers |
 
 The binary's `tui_runtime` host owns execution resources independently of one
 `App` or model run. It retains an agent, event bridge/receiver, subagent runtime,
@@ -149,20 +151,20 @@ execution authority.
 
 ## Regression checks
 
-[Shared fixtures](../helm/src/tui/tests.rs) and the `tests/` modules cover commands,
+[Shared fixtures](https://github.com/o-psi/voyage/blob/main/helm/src/tui/tests.rs) and the `tests/` modules cover commands,
 composer, conversation, palette, questions, supervisor, terminals, todos and
 cross-module routing. Additional tests live with `recent`, `checkpoint`,
-`voyage_setup`, `voyages`, [workflow forms](../helm/src/tui/workflows_tests.rs) and
+`voyage_setup`, `voyages`, [workflow forms](https://github.com/o-psi/voyage/blob/main/helm/src/tui/workflows_tests.rs) and
 tool-output rendering.
 
 | Contract | Source assertions and fixtures |
 | --- | --- |
-| Shared key/paste ownership and hidden-draft isolation | [routing tests](../helm/src/tui/tests/routing.rs): `central_router_preserves_modal_and_panel_precedence`, `paste_owner_matrix_is_exclusive_during_idle_and_active_steering`, question/approval/PTY and workflow/voyage paste tests; [real PTY fixture](../tests/system/paste_routing.py) |
-| Question layout and exclusive input | [question tests](../helm/src/tui/tests/questions.rs), including underlying-view restoration and narrow rendering; [real PTY fixture](../tests/system/questions.py) |
-| Sidebar orientation, guarded navigation and mouse ownership | [recent tests](../helm/src/tui/recent.rs); [real voyage UI fixture](../tests/system/voyage_ui.py) |
-| Conversation scrolling and resize bounds | [conversation tests](../helm/src/tui/tests/conversation.rs) and question/layout tests |
-| Save-before-acknowledgement checkpoints | [checkpoint tests](../helm/src/tui/checkpoint.rs), including cancellation, closed channels, failed saves and mismatched canonical state |
-| Steering persistence and provider-boundary delivery | [routing/conversation tests](../helm/src/tui/tests/routing.rs); [offline steering fixture](../tests/system/steering.py) |
+| Shared key/paste ownership and hidden-draft isolation | [routing tests](https://github.com/o-psi/voyage/blob/main/helm/src/tui/tests/routing.rs): `central_router_preserves_modal_and_panel_precedence`, `paste_owner_matrix_is_exclusive_during_idle_and_active_steering`, question/approval/PTY and workflow/voyage paste tests; [real PTY fixture](https://github.com/o-psi/voyage/blob/main/tests/system/paste_routing.py) |
+| Question layout and exclusive input | [question tests](https://github.com/o-psi/voyage/blob/main/helm/src/tui/tests/questions.rs), including underlying-view restoration and narrow rendering; [real PTY fixture](https://github.com/o-psi/voyage/blob/main/tests/system/questions.py) |
+| Sidebar orientation, guarded navigation and mouse ownership | [recent tests](https://github.com/o-psi/voyage/blob/main/helm/src/tui/recent.rs); [real voyage UI fixture](https://github.com/o-psi/voyage/blob/main/tests/system/voyage_ui.py) |
+| Conversation scrolling and resize bounds | [conversation tests](https://github.com/o-psi/voyage/blob/main/helm/src/tui/tests/conversation.rs) and question/layout tests |
+| Save-before-acknowledgement checkpoints | [checkpoint tests](https://github.com/o-psi/voyage/blob/main/helm/src/tui/checkpoint.rs), including cancellation, closed channels, failed saves and mismatched canonical state |
+| Steering persistence and provider-boundary delivery | [routing/conversation tests](https://github.com/o-psi/voyage/blob/main/helm/src/tui/tests/routing.rs); [offline steering fixture](https://github.com/o-psi/voyage/blob/main/tests/system/steering.py) |
 
 Run from the repository root:
 
