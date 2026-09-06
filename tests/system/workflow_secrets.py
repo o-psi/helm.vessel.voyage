@@ -130,6 +130,21 @@ def cli_cases(root, port):
     def workflow(*args, **kw):
         return invoke('workflow', '--user-directory', str(workflows), *args, **kw)
 
+    def interrupted_by_policy(*args, **kw):
+        requests = len(Provider.requests)
+        saved = set(Provider.sessions.glob('*.json'))
+        result = invoke(*args, ok=False, **kw)
+        assert 'current system policy' in result.stderr, result.stderr
+        assert len(Provider.requests) == requests + 1, 'stale policy allowed another provider request'
+        added = set(Provider.sessions.glob('*.json')) - saved
+        assert len(added) == 1, added
+        session = json.loads(added.pop().read_text())
+        assert session['run_summaries'][-1]['phase'] == 'interrupted', session['run_summaries']
+        tool_results = [message['content'] for message in session['messages'] if message['role'] == 'tool']
+        assert any('denied' in text.lower() or 'policy' in text.lower() for text in tool_results), tool_results
+        assert not (root / 'value-digest').exists(), 'stale policy allowed a private effect'
+        return result
+
     source = ['--secret-env', 'target=FIXTURE_PRIVATE_SOURCE']
     preview = workflow('--json', 'preview', 'review-change', *source)
     assert 'HELM_WORKFLOW_TARGET' in preview.stdout and not Provider.requests
@@ -172,9 +187,8 @@ def cli_cases(root, port):
     if preview['requires_confirmation']:
         flags += ['--policy-confirm', preview['transition_digest']]
     Provider.before_tool = lambda: invoke('policy', 'delete', 'private-fresh', '--expected-revision', '1')
-    # Tool denial is a structured result; a later model reply can finish the run.
-    # Provider assertions require the denial, and the no-effect assertion is unchanged.
-    invoke(*flags, 'workflow', '--user-directory', str(workflows), 'run', 'review-change', *source, values={'FIXTURE_PRIVATE_SOURCE': values[0]})
+    # Persist the structured denial, then stop before another provider dispatch.
+    interrupted_by_policy(*flags, 'workflow', '--user-directory', str(workflows), 'run', 'review-change', *source, values={'FIXTURE_PRIVATE_SOURCE': values[0]})
     assert not (root / 'value-digest').exists()
     # Persistent defaults must constrain private bindings just like explicit profiles.
     defaults = root / 'defaults'
@@ -204,7 +218,7 @@ def cli_cases(root, port):
     # Even unchanged rules at a new defaults revision invalidate admitted private release.
     Provider.denied = True
     Provider.before_tool = lambda: set_default('private-default', 2)
-    workflow('run', 'review-change', *source, values={'FIXTURE_PRIVATE_SOURCE': values[0]})
+    interrupted_by_policy('workflow', '--user-directory', str(workflows), 'run', 'review-change', *source, values={'FIXTURE_PRIVATE_SOURCE': values[0]})
     assert not (root / 'value-digest').exists(), 'private shell released a secret under stale defaults'
     Provider.denied = False
     # Config display and exports are ordinary public artifacts, never secret containers.
