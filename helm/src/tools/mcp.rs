@@ -20,6 +20,9 @@ use tokio::{
     sync::Mutex,
 };
 
+#[cfg(all(test, unix))]
+mod transport_regressions;
+
 pub struct McpServer {
     name: String,
     transport: Arc<Transport>,
