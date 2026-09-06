@@ -9,6 +9,51 @@ use uuid::Uuid;
 
 const MAX_OPERATIONS: u64 = 512;
 const MAX_RECORD_BYTES: usize = 128 * 1024;
+const MAX_AUDIT: u64 = 1024;
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Audit {
+    pub id: Uuid,
+    pub digest: String,
+    pub owner: Owner,
+    pub object: super::repository::Object,
+    pub former_state: State,
+    pub receipt: Option<Receipt>,
+    pub disposition: Option<String>,
+    pub forgotten_at: DateTime<Utc>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct AuditSnapshot {
+    pub digest: String,
+    pub entries: Vec<Audit>,
+}
+
+fn audit_snapshot(connection: &Connection) -> Result<AuditSnapshot> {
+    use sha2::{Digest, Sha256};
+    schema(connection)?;
+    let count: u64 = connection.query_row("SELECT count(*) FROM audit", [], |row| row.get(0))?;
+    ensure!(count <= MAX_AUDIT, "GitHub audit exceeds capacity");
+    let mut statement = connection.prepare("SELECT id,digest,CASE WHEN length(CAST(data AS BLOB))<=4096 THEN data ELSE NULL END FROM audit ORDER BY sequence")?;
+    let mut rows = statement.query([])?;
+    let mut entries = Vec::new();
+    while let Some(row) = rows.next()? {
+        let id: String = row.get(0)?;
+        let digest: String = row.get(1)?;
+        let text: String = row.get(2)?;
+        let entry: Audit = serde_json::from_str(&text).map_err(|_| anyhow::anyhow!("GitHub audit is corrupt"))?;
+        ensure!(entry.id.to_string() == id && entry.digest == digest
+            && digest.len() == 64 && digest.bytes().all(|byte| byte.is_ascii_hexdigit())
+            && matches!(entry.former_state, State::Published | State::Cancelled | State::Disposed),
+            "GitHub audit identity is corrupt");
+        entry.owner.scope()?;
+        entry.object.validate()?;
+        entries.push(entry);
+    }
+    let digest = hex::encode(Sha256::digest(serde_json::to_vec(&entries)?));
+    Ok(AuditSnapshot { digest, entries })
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -80,6 +125,7 @@ pub struct Operation {
     pub actor: Actor,
     pub draft: Draft,
     pub observed_head: Option<String>,
+    pub observed_base: Option<super::context::Base>,
     pub state: State,
     pub created_at: DateTime<Utc>,
     pub expires_at: DateTime<Utc>,
@@ -116,6 +162,7 @@ fn decode(text: &str) -> Result<Operation> {
                 &operation.actor,
                 &operation.policy_digest,
                 operation.observed_head.as_deref(),
+                operation.observed_base.as_ref(),
                 &operation.owner
             )?,
         "GitHub operation binding is corrupt"
@@ -128,6 +175,20 @@ fn decode(text: &str) -> Result<Operation> {
         (operation.state == State::Published) == operation.receipt.is_some(),
         "GitHub operation receipt state is corrupt"
     );
+    ensure!((operation.state == State::Disposed) == operation.disposition.is_some(),
+        "GitHub operation disposition state is corrupt");
+    if let Some(note) = &operation.disposition {
+        ensure!(!note.trim().is_empty() && note.len() <= 1024, "GitHub operation disposition is corrupt");
+    }
+    if let Some(receipt) = &operation.receipt {
+        let marker = match operation.draft.action {
+            super::publication::Action::Comment { .. } => "issuecomment",
+            super::publication::Action::Review { .. } => "pullrequestreview",
+        };
+        ensure!(receipt.id > 0 && receipt.id <= i64::MAX as u64
+            && receipt.url == format!("{}#{marker}-{}",operation.draft.object.url(),receipt.id),
+            "GitHub operation receipt identity is corrupt");
+    }
     Ok(operation)
 }
 
@@ -155,7 +216,12 @@ impl Store {
         connection.busy_timeout(Duration::ZERO)?;
         #[cfg(windows)]
         crate::attachment::journal::storage::configure(&connection)?;
-        connection.execute_batch("PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON; PRAGMA temp_store=MEMORY; PRAGMA max_page_count=24576;")?;
+        connection.execute_batch("PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON; PRAGMA temp_store=MEMORY;")?;
+        let page_size: u64 = connection.query_row("PRAGMA page_size", [], |row| row.get(0))?;
+        ensure!((512..=65536).contains(&page_size), "GitHub store page size is unsupported");
+        let maximum_pages = 96 * 1024 * 1024 / page_size;
+        let actual_maximum: u64 = connection.query_row(&format!("PRAGMA max_page_count={maximum_pages}"), [], |row| row.get(0))?;
+        ensure!(actual_maximum <= maximum_pages, "GitHub store exceeds its physical capacity");
         let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         tx.execute_batch("CREATE TABLE IF NOT EXISTS github_schema(id INTEGER PRIMARY KEY CHECK(id=1), version INTEGER NOT NULL);")?;
         let version: Option<i64> = tx
@@ -166,13 +232,13 @@ impl Store {
         if let Some(version) = version {
             ensure!(version == 1, "unsupported GitHub operation schema");
             let operations: u64 = tx.query_row(
-                "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='operations'",
+                "SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN ('operations','audit')",
                 [],
                 |row| row.get(0),
             )?;
             ensure!(
-                operations == 1,
-                "GitHub operation table is missing; restore the private store"
+                operations == 2,
+                "GitHub operation or audit table is missing; restore the private store"
             );
         } else {
             let tables: u64 = tx.query_row(
@@ -184,6 +250,7 @@ impl Store {
             tx.execute("INSERT INTO github_schema VALUES(1,1)", [])?;
         }
         tx.execute_batch("CREATE TABLE IF NOT EXISTS operations(id TEXT PRIMARY KEY, digest TEXT NOT NULL, owner TEXT NOT NULL, state TEXT NOT NULL, data TEXT NOT NULL); CREATE INDEX IF NOT EXISTS operation_digest ON operations(digest);")?;
+        tx.execute_batch("CREATE TABLE IF NOT EXISTS audit(sequence INTEGER PRIMARY KEY, id TEXT NOT NULL, digest TEXT NOT NULL, data TEXT NOT NULL);")?;
         tx.commit()?;
         #[cfg(windows)]
         crate::attachment::journal::storage::verify(&private)?;
@@ -200,6 +267,7 @@ impl Store {
         actor: Actor,
         policy_digest: String,
         observed_head: Option<String>,
+        observed_base: Option<super::context::Base>,
         owner: Owner,
     ) -> Result<Operation> {
         let scope = owner.scope()?;
@@ -208,13 +276,14 @@ impl Store {
             &actor,
             &policy_digest,
             observed_head.as_deref(),
+            observed_base.as_ref(),
             &owner,
         )?;
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         schema(&tx)?;
-        let existing: Option<(String, String, String)> = tx.query_row("SELECT id,state,data FROM operations WHERE digest=?1 AND owner=?2 AND state NOT IN ('cancelled','disposed') ORDER BY rowid LIMIT 1", params![digest,scope], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?))).optional()?;
+        let existing: Option<(String, String, String)> = tx.query_row("SELECT id,state,CASE WHEN length(CAST(data AS BLOB))<=131072 THEN data ELSE NULL END FROM operations WHERE digest=?1 AND owner=?2 AND state NOT IN ('cancelled','disposed') ORDER BY rowid LIMIT 1", params![digest,scope], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?))).optional()?;
         if let Some((id, state, existing)) = existing {
             let operation = decode(&existing)?;
             ensure!(
@@ -230,6 +299,9 @@ impl Store {
             count < MAX_OPERATIONS,
             "GitHub operation capacity reached; inspect and forget terminal records explicitly"
         );
+        let audit_count: u64 = tx.query_row("SELECT count(*) FROM audit", [], |row| row.get(0))?;
+        ensure!(audit_count < MAX_AUDIT - MAX_OPERATIONS,
+            "GitHub audit admission capacity reached; export and explicitly maintain the audit before preparing more operations");
         let now = Utc::now();
         let operation = Operation {
             id: Uuid::new_v4(),
@@ -239,6 +311,7 @@ impl Store {
             actor,
             draft,
             observed_head,
+            observed_base,
             state: State::Prepared,
             created_at: now,
             expires_at: now + chrono::Duration::minutes(15),
@@ -258,7 +331,7 @@ impl Store {
     pub fn inspect(&self, id: Uuid, owner: &Owner) -> Result<Operation> {
         schema(&self.connection)?;
         let (digest, state, data): (String, String, String) = self.connection.query_row(
-            "SELECT digest,state,data FROM operations WHERE id=?1 AND owner=?2",
+            "SELECT digest,state,CASE WHEN length(CAST(data AS BLOB))<=131072 THEN data ELSE NULL END FROM operations WHERE id=?1 AND owner=?2",
             params![id.to_string(), owner.scope()?],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )?;
@@ -290,6 +363,40 @@ impl Store {
         ids.into_iter()
             .map(|id| self.inspect(Uuid::parse_str(&id)?, owner))
             .collect()
+    }
+
+    /// Global ownership bypass is confined to the attended operator adapter.
+    pub(super) fn admin_inspect(&self, id: Uuid) -> Result<Operation> {
+        schema(&self.connection)?;
+        let data: String = self.connection.query_row(
+            "SELECT CASE WHEN length(CAST(data AS BLOB))<=131072 THEN data ELSE NULL END FROM operations WHERE id=?1",
+            [id.to_string()], |row| row.get(0))?;
+        let operation = decode(&data)?;
+        self.inspect(id, &operation.owner)
+    }
+
+    pub(super) fn admin_list(&self, offset: u32) -> Result<Vec<Operation>> {
+        schema(&self.connection)?;
+        ensure!(offset <= MAX_OPERATIONS as u32, "GitHub operation offset exceeds limit");
+        let mut statement = self.connection.prepare("SELECT id FROM operations ORDER BY rowid DESC LIMIT 50 OFFSET ?1")?;
+        let ids = statement.query_map([offset], |row| row.get::<_,String>(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        ids.into_iter().map(|id| self.admin_inspect(Uuid::parse_str(&id)?)).collect()
+    }
+
+    pub(super) fn audit(&self) -> Result<AuditSnapshot> {
+        audit_snapshot(&self.connection)
+    }
+
+    /// The operator must export and confirm this exact snapshot first. This
+    /// removes local audit evidence, never authorizes a remote request retry.
+    pub(super) fn clear_audit(&mut self, expected: &str) -> Result<u64> {
+        let tx = self.connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let snapshot = audit_snapshot(&tx)?;
+        ensure!(snapshot.digest == expected, "GitHub audit changed; export the current snapshot before maintenance");
+        let removed = tx.execute("DELETE FROM audit", [])?;
+        tx.commit()?;
+        Ok(removed as u64)
     }
 
     /// Only call after the current exact attended approval and all revalidation.
@@ -356,17 +463,34 @@ impl Store {
         })
     }
     pub fn forget(&mut self, id: Uuid, digest: &str, owner: &Owner) -> Result<()> {
-        let operation = self.inspect(id, owner)?;
+        let tx = self.connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        schema(&tx)?;
+        let (indexed_digest, indexed_state, data): (String, String, String) = tx.query_row(
+            "SELECT digest,state,CASE WHEN length(CAST(data AS BLOB))<=131072 THEN data ELSE NULL END FROM operations WHERE id=?1 AND owner=?2",
+            params![id.to_string(),owner.scope()?], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?)))?;
+        let operation = decode(&data)?;
         ensure!(
-            operation.digest == digest
+            operation.id == id && operation.owner.scope()? == owner.scope()?
+                && indexed_digest == digest && indexed_state == state_name(&operation.state)
+                && operation.digest == digest
                 && matches!(
                     operation.state,
                     State::Published | State::Cancelled | State::Disposed
                 ),
             "only exact terminal GitHub records may be forgotten"
         );
-        let changed = self.connection.execute("DELETE FROM operations WHERE id=?1 AND digest=?2 AND state IN ('published','cancelled','disposed')", params![id.to_string(), digest])?;
+        let count: u64 = tx.query_row("SELECT count(*) FROM audit", [], |row| row.get(0))?;
+        ensure!(count < MAX_AUDIT, "GitHub audit is full; export and explicitly maintain it before forgetting records");
+        let audit = Audit { id, digest: digest.into(), owner: operation.owner,
+            object: operation.draft.object, former_state: operation.state,
+            receipt: operation.receipt, disposition: operation.disposition,
+            forgotten_at: Utc::now() };
+        let audit = serde_json::to_string(&audit)?;
+        ensure!(audit.len() <= 4096, "GitHub audit record exceeds limit");
+        tx.execute("INSERT INTO audit(id,digest,data) VALUES(?1,?2,?3)", params![id.to_string(),digest,audit])?;
+        let changed = tx.execute("DELETE FROM operations WHERE id=?1 AND digest=?2 AND owner=?3 AND state IN ('published','cancelled','disposed')", params![id.to_string(), digest,owner.scope()?])?;
         ensure!(changed == 1, "GitHub operation changed before forgetting");
+        tx.commit()?;
         Ok(())
     }
     fn transition(
@@ -381,7 +505,7 @@ impl Store {
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         schema(&tx)?;
         let (indexed_digest, indexed_state, data): (String, String, String) = tx.query_row(
-            "SELECT digest,state,data FROM operations WHERE id=?1 AND owner=?2",
+            "SELECT digest,state,CASE WHEN length(CAST(data AS BLOB))<=131072 THEN data ELSE NULL END FROM operations WHERE id=?1 AND owner=?2",
             params![id.to_string(), owner.scope()?],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )?;
@@ -410,6 +534,7 @@ fn operation_digest(
     actor: &Actor,
     policy_digest: &str,
     head: Option<&str>,
+    base: Option<&super::context::Base>,
     owner: &Owner,
 ) -> Result<String> {
     use sha2::{Digest, Sha256};
@@ -420,10 +545,13 @@ fn operation_digest(
     if let Some(head) = head {
         super::context::sha(&serde_json::Value::String(head.into()))?;
     }
+    ensure!(head.is_some() == base.is_some(), "GitHub operation base binding is missing or unexpected");
+    if let Some(base) = base { base.validate()?; }
     owner.scope()?;
     Ok(hex::encode(Sha256::digest(serde_json::to_vec(&(
         draft.digest(actor, policy_digest)?,
         head,
+        base,
         owner,
     ))?)))
 }
@@ -458,6 +586,50 @@ mod tests {
         (temp, store, owner, draft, actor)
     }
     #[test]
+    fn audit_failure_rolls_back_forget_and_success_records_no_body() {
+        let (_temp, mut store, owner, draft, actor) = fixture();
+        let operation = store.prepare(draft,actor,"policy".into(),None,None,owner.clone()).unwrap();
+        store.cancel(operation.id,&operation.digest,&owner).unwrap();
+        store.connection.execute_batch("CREATE TRIGGER deny_audit BEFORE INSERT ON audit BEGIN SELECT RAISE(ABORT,'injected audit failure'); END;").unwrap();
+        assert!(store.forget(operation.id,&operation.digest,&owner).is_err());
+        assert_eq!(store.inspect(operation.id,&owner).unwrap().state,State::Cancelled);
+        assert!(store.audit().unwrap().entries.is_empty());
+        store.connection.execute_batch("DROP TRIGGER deny_audit").unwrap();
+        store.forget(operation.id,&operation.digest,&owner).unwrap();
+        assert!(store.inspect(operation.id,&owner).is_err());
+        let snapshot = store.audit().unwrap();
+        assert_eq!(snapshot.entries.len(),1);
+        assert_eq!(snapshot.entries[0].digest,operation.digest);
+        assert!(!serde_json::to_string(&snapshot).unwrap().contains("Review this exact text"));
+        assert!(store.clear_audit("stale").is_err());
+        assert_eq!(store.audit().unwrap().entries.len(),1);
+        assert_eq!(store.clear_audit(&snapshot.digest).unwrap(),1);
+    }
+
+    #[test]
+    fn full_ordinary_audit_admission_preserves_terminal_maintenance_reserve() {
+        let (_temp, mut store, owner, draft, actor) = fixture();
+        let operation = store.prepare(draft.clone(),actor.clone(),"policy".into(),None,None,owner.clone()).unwrap();
+        store.cancel(operation.id,&operation.digest,&owner).unwrap();
+        let terminal = store.inspect(operation.id,&owner).unwrap();
+        let audit = serde_json::to_string(&Audit { id:terminal.id,digest:terminal.digest.clone(),owner:terminal.owner,
+            object:terminal.draft.object,former_state:terminal.state,receipt:None,disposition:None,forgotten_at:Utc::now() }).unwrap();
+        for _ in 0..(MAX_AUDIT-MAX_OPERATIONS) {
+            store.connection.execute("INSERT INTO audit(id,digest,data) VALUES(?1,?2,?3)",params![operation.id.to_string(),operation.digest,audit]).unwrap();
+        }
+        assert!(store.prepare(draft,actor,"policy".into(),None,None,owner.clone()).is_err());
+        store.forget(operation.id,&operation.digest,&owner).unwrap();
+        assert_eq!(store.audit().unwrap().entries.len(),(MAX_AUDIT-MAX_OPERATIONS+1) as usize);
+    }
+
+    #[test]
+    fn lost_audit_table_is_preserved_as_corruption_not_recreated() {
+        let (temp, store, _, _, _) = fixture();
+        store.connection.execute_batch("DROP TABLE audit").unwrap();
+        drop(store);
+        assert!(Store::open(temp.path().join("operations")).is_err());
+    }
+    #[test]
     fn sending_survives_reopen_and_never_replays_or_cancels_as_unsent() {
         let (temp, mut store, owner, draft, actor) = fixture();
         let operation = store
@@ -465,6 +637,7 @@ mod tests {
                 draft.clone(),
                 actor.clone(),
                 "policy".into(),
+                None,
                 None,
                 owner.clone(),
             )
@@ -483,7 +656,7 @@ mod tests {
             State::Sending
         );
         let existing = store
-            .prepare(draft, actor, "policy".into(), None, owner)
+            .prepare(draft, actor, "policy".into(), None, None, owner)
             .unwrap();
         assert_eq!(existing.id, operation.id);
         assert_eq!(existing.state, State::Sending);
@@ -496,6 +669,7 @@ mod tests {
                 draft.clone(),
                 actor.clone(),
                 "policy".into(),
+                None,
                 None,
                 owner.clone(),
             )
@@ -517,7 +691,7 @@ mod tests {
                 .is_err()
         );
         let independent = store
-            .prepare(draft, actor, "policy".into(), None, other)
+            .prepare(draft, actor, "policy".into(), None, None, other)
             .unwrap();
         assert_ne!(operation.id, independent.id);
         assert_ne!(operation.digest, independent.digest);
@@ -526,7 +700,7 @@ mod tests {
     fn expired_preparation_can_be_cancelled_but_not_sent() {
         let (_temp, mut store, owner, draft, actor) = fixture();
         let mut operation = store
-            .prepare(draft, actor, "policy".into(), None, owner.clone())
+            .prepare(draft, actor, "policy".into(), None, None, owner.clone())
             .unwrap();
         operation.created_at = Utc::now() - chrono::Duration::minutes(30);
         operation.expires_at = Utc::now() - chrono::Duration::minutes(15);
@@ -553,7 +727,7 @@ mod tests {
     fn future_or_missing_schema_does_not_reset_unknown_delivery() {
         let (temp, mut store, owner, draft, actor) = fixture();
         let operation = store
-            .prepare(draft, actor, "policy".into(), None, owner.clone())
+            .prepare(draft, actor, "policy".into(), None, None, owner.clone())
             .unwrap();
         store.begin_send(&operation).unwrap();
         store

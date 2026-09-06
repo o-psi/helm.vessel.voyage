@@ -75,6 +75,8 @@ pub struct Args {
 }
 #[derive(Clone, Debug, clap::Subcommand)]
 pub enum Command {
+    /// Attended local recovery across orphaned voyage/workspace records.
+    Admin { #[command(subcommand)] command: super::admin::Command },
     /// Show the explicitly delegated GitHub account (never the token).
     Auth,
     /// Inspect local remote candidates without choosing between forks.
@@ -84,6 +86,10 @@ pub enum Command {
     Continue { request: String },
     /// Return a reference for the owning idle voyage to save.
     Reference { url: String },
+    /// List references saved in the selected voyage (frontend-owned).
+    References,
+    /// Remove one saved reference without changing GitHub.
+    Unreference { url: String },
     /// Import selected attributed feedback as open local work.
     Feedback { #[command(flatten)] view: ViewArgs, #[arg(long)] id: Option<u64> },
     Prepare(PrepareArgs),
@@ -134,7 +140,7 @@ impl ViewArgs {
             SectionArg::Runs => Section::WorkflowRuns,
             SectionArg::Jobs => Section::Jobs { run: resource()? },
         };
-        let request = super::context::Read { object: Object::parse(&self.url)?, section, page: self.page, expected_head: self.head };
+        let request = super::context::Read { object: Object::parse(&self.url)?, section, page: self.page, expected_head: self.head, expected_base:None };
         request.validate()?;
         Ok(request)
     }
@@ -169,18 +175,34 @@ pub async fn execute(context: crate::tools::ToolContext, session_id: Option<uuid
     execute_args(context, session_id, args).await
 }
 
-pub async fn execute_args(context: crate::tools::ToolContext, session_id: Option<uuid::Uuid>, args: Args) -> Result<CommandResult> {
+pub async fn execute_args(mut context: crate::tools::ToolContext, session_id: Option<uuid::Uuid>, args: Args) -> Result<CommandResult> {
     use super::{publication::{Action, Draft, ReviewEvent}, service::Service};
+    if let Some(token) = context.environment.get("HELM_GITHUB_TOKEN") {
+        context.redactor = std::sync::Arc::new(context.redactor.with_additional(super::credential_forms(token)));
+    }
     context.policy.check_current()?;
     ensure!(!context.cancellation.is_cancelled(), "GitHub operator action cancelled");
     let mut result = CommandResult { display: String::new(), reference: None, feedback: None };
+    if let Command::Admin { command } = args.command {
+        return super::admin::execute(context,command,None).await;
+    }
+    if let Command::Dispose { id,digest,note } = args.command {
+        let owner = super::store::Owner::new(context.policy.workspace(),session_id,None)?;
+        return super::admin::execute(context,super::admin::Command::Dispose { id,digest,note },Some(owner)).await;
+    }
+    ensure!(!matches!(args.command,Command::References | Command::Unreference { .. }), "reference maintenance requires an owning voyage frontend");
     // Offline receipt administration does not require a usable GitHub token.
     if matches!(args.command, Command::Inspect { .. } | Command::List { .. } | Command::Cancel { .. } | Command::Forget { .. }) {
+        let write = matches!(args.command, Command::Cancel { .. } | Command::Forget { .. });
+        ensure!(!write || context.policy.access_mode() != crate::config::AccessMode::ReadOnly,
+            "GitHub journal maintenance is denied in read-only mode");
         let owner = super::store::Owner::new(context.policy.workspace(), session_id, None)?;
         let policy = context.policy.clone();
         let cancel = context.cancellation.clone();
         let value = super::service::database(move |store| {
             policy.check_current()?;
+            ensure!(!write || policy.access_mode() != crate::config::AccessMode::ReadOnly,
+                "GitHub journal maintenance is denied in read-only mode");
             ensure!(!cancel.is_cancelled(), "GitHub operator action cancelled");
             match args.command {
                 Command::Inspect { id } => Ok(serde_json::to_value(store.inspect(id, &owner)?)?),
@@ -209,7 +231,7 @@ pub async fn execute_args(context: crate::tools::ToolContext, session_id: Option
         }
         Command::Reference { url } => {
             ensure!(session_id.is_some(), "a GitHub reference needs an owning voyage");
-            let page = service.read(super::context::Read { object: Object::parse(&url)?, section: super::context::Section::Details, page: 1, expected_head: None }).await?;
+            let page = service.read(super::context::Read { object: Object::parse(&url)?, section: super::context::Section::Details, page: 1, expected_head: None, expected_base:None }).await?;
             let reference = Reference { object: page.object, head: page.head, fetched_at: page.fetched_at };
             reference.validate()?;
             result.reference = Some(reference.clone());
@@ -258,8 +280,8 @@ pub async fn execute_args(context: crate::tools::ToolContext, session_id: Option
         }
         Command::Publish { id, digest } => serde_json::to_value(service.publish(id, &digest).await?)?,
         Command::Reconcile { id, digest, remote_id } => serde_json::to_value(service.reconcile(id, &digest, remote_id).await?)?,
-        Command::Dispose { id, digest, note } => serde_json::to_value(service.dispose(id, &digest, note).await?)?,
-        Command::Remotes | Command::Inspect { .. } | Command::List { .. } | Command::Cancel { .. } | Command::Forget { .. } => unreachable!(),
+        Command::Admin { .. } | Command::Dispose { .. } => unreachable!(),
+        Command::Remotes | Command::Inspect { .. } | Command::List { .. } | Command::Cancel { .. } | Command::Forget { .. } | Command::References | Command::Unreference { .. } => unreachable!(),
     };
     result.display = service.project(&value, 2 * 1024 * 1024)?;
     context.policy.check_current()?;

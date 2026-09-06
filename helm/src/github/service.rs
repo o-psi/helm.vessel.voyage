@@ -59,9 +59,10 @@ pub struct Service {
     directory: PathBuf,
 }
 impl Service {
-    pub fn new(context: ToolContext, session: Option<Uuid>) -> Result<Self> {
+    pub fn new(mut context: ToolContext, session: Option<Uuid>) -> Result<Self> {
         context.policy.check_current()?;
         let token = context.environment.get("HELM_GITHUB_TOKEN").cloned().ok_or_else(|| anyhow::anyhow!("GitHub capability is unavailable; explicitly delegate HELM_GITHUB_TOKEN in inherited environment"))?;
+        context.redactor = Arc::new(context.redactor.with_additional(super::credential_forms(&token)));
         let reference = context
             .completion
             .as_ref()
@@ -216,10 +217,10 @@ impl Service {
         draft.validate()?;
         self.secret_free(&draft)?;
         let actor = self.actor().await?;
-        let head = self.validate_draft(&draft).await?;
+        let (head, base) = self.validate_draft(&draft).await?;
         let policy = self.context.policy.effective().digest().to_owned();
         let owner = self.owner.clone();
-        self.database(move |store| store.prepare(draft, actor, policy, head, owner))
+        self.database(move |store| store.prepare(draft, actor, policy, head, base, owner))
             .await
     }
     pub async fn inspect(&self, id: Uuid) -> Result<Operation> {
@@ -343,7 +344,7 @@ impl Service {
         self.current()?;
         Ok(())
     }
-    async fn validate_draft(&self, draft: &Draft) -> Result<Option<String>> {
+    async fn validate_draft(&self, draft: &Draft) -> Result<(Option<String>,Option<context::Base>)> {
         let detail =
             context::details(&self.client, &draft.object, &self.context.cancellation).await?;
         let head = if draft.object.kind == ObjectKind::PullRequest {
@@ -351,6 +352,7 @@ impl Service {
         } else {
             None
         };
+        let base = if head.is_some() { Some(context::base(&detail)?) } else { None };
         if let Action::Review {
             commit_id,
             comments,
@@ -410,8 +412,9 @@ impl Service {
                 context::sha(&current["head"]["sha"])? == *commit_id,
                 "pull request changed during inline validation"
             );
+            ensure!(Some(context::base(&current)?) == base, "pull request base changed during inline validation");
         }
-        Ok(head)
+        Ok((head,base))
     }
     fn mutation_allowed(&self) -> Result<()> {
         self.context.policy.check_current()?;
@@ -454,7 +457,7 @@ impl Service {
             "GitHub authenticated account changed"
         );
         ensure!(
-            operation.observed_head == self.validate_draft(&operation.draft).await?,
+            (operation.observed_head.clone(),operation.observed_base.clone()) == self.validate_draft(&operation.draft).await?,
             "GitHub object head changed since preparation"
         );
         let preview = exact_preview(&operation)?;
@@ -489,7 +492,7 @@ impl Service {
             "GitHub authenticated account changed after approval"
         );
         ensure!(
-            operation.observed_head == self.validate_draft(&operation.draft).await?,
+            (operation.observed_head.clone(),operation.observed_base.clone()) == self.validate_draft(&operation.draft).await?,
             "GitHub object head changed after approval"
         );
         self.mutation_allowed()?;
@@ -567,9 +570,13 @@ mod projection_tests {
 }
 
 fn exact_preview(operation: &Operation) -> Result<String> {
-    let text = serde_json::to_string_pretty(
-        &serde_json::json!({"host":"github.com","actor":operation.actor,"object":operation.draft.object.url(),"head":operation.observed_head,"request":operation.draft.body(),"digest":operation.digest,"expires_at":operation.expires_at,"notice":"Publishing sends this exact content to GitHub and may notify repository participants. Client revalidation cannot provide a server-side atomic head precondition."}),
-    )?;
+    json_preview(
+        &serde_json::json!({"host":"github.com","actor":operation.actor,"object":operation.draft.object.url(),"head":operation.observed_head,"base":operation.observed_base,"request":operation.draft.body(),"digest":operation.digest,"expires_at":operation.expires_at,"notice":"Publishing sends this exact content to GitHub and may notify repository participants. Client revalidation cannot provide a server-side atomic head/base precondition."}),
+    )
+}
+
+pub(super) fn json_preview(value: &Value) -> Result<String> {
+    let text = serde_json::to_string_pretty(value)?;
     // JSON quotes preserve newlines/controls. Escape invisible directional and
     // format characters which otherwise change the apparent approved content.
     Ok(text.chars().flat_map(|ch| {

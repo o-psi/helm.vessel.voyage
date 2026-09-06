@@ -49,6 +49,25 @@ pub struct Read {
     pub page: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expected_head: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_base: Option<Base>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct Base { pub sha: String, pub repository: u64, pub reference: String }
+impl Base {
+    pub fn validate(&self) -> Result<()> {
+        sha(&Value::String(self.sha.clone()))?;
+        positive(self.repository)?;
+        ensure!(!self.reference.is_empty() && self.reference.len() <= 1024 && !self.reference.chars().any(char::is_control), "invalid pull request base reference");
+        Ok(())
+    }
+}
+pub(super) fn base(detail: &Value) -> Result<Base> {
+    let base = Base { sha: sha(&detail["base"]["sha"])?, repository: detail["base"]["repo"]["id"].as_u64().ok_or_else(|| anyhow::anyhow!("pull request base repository identity is missing"))?, reference: detail["base"]["ref"].as_str().ok_or_else(|| anyhow::anyhow!("pull request base branch is missing"))?.into() };
+    base.validate()?;
+    Ok(base)
 }
 fn first_page() -> u32 {
     1
@@ -60,6 +79,7 @@ pub struct Page {
     pub section: Section,
     pub fetched_at: chrono::DateTime<chrono::Utc>,
     pub head: Option<String>,
+    pub base: Option<Base>,
     pub page: u32,
     pub next: Option<Read>,
     pub incomplete: Vec<String>,
@@ -94,6 +114,7 @@ impl Read {
             );
             sha(&Value::String(head.clone()))?;
         }
+        if let Some(base) = &self.expected_base { ensure!(self.object.kind == ObjectKind::PullRequest, "base continuation requires a pull request"); base.validate()?; }
         ensure!(
             self.page > 0 && self.page <= 1_000_000,
             "invalid GitHub page"
@@ -198,6 +219,7 @@ pub(super) async fn read(
     } else {
         None
     };
+    let observed_base = if request.object.kind == ObjectKind::PullRequest { Some(base(&detail)?) } else { None };
     ensure!(
         request
             .expected_head
@@ -205,11 +227,13 @@ pub(super) async fn read(
             .is_none_or(|expected| Some(expected) == head.as_ref()),
         "pull request continuation is stale; reload from its first page"
     );
+    ensure!(request.expected_base.as_ref().is_none_or(|expected| Some(expected) == observed_base.as_ref()), "pull request base changed; reload from its first page");
     let mut page = Page {
         object: request.object.clone(),
         section: request.section.clone(),
         fetched_at: chrono::Utc::now(),
         head: head.clone(),
+        base: observed_base.clone(),
         page: request.page,
         next: None,
         incomplete: Vec::new(),
@@ -296,7 +320,7 @@ pub(super) async fn read(
             cancel,
         )
         .await?;
-    let next = next_page(&response.headers, request.page)?;
+    let next = next_page(&response.headers, request.page, &path, &extra)?;
     let mut data = response.json()?;
     let total = data.get("total_count").and_then(Value::as_u64);
     let wrapper = match request.section {
@@ -325,7 +349,7 @@ pub(super) async fn read(
     if request.section == Section::Files {
         if detail["changed_files"]
             .as_u64()
-            .is_none_or(|count| count > 3000)
+            .is_none_or(|count| count >= 3000)
         {
             page.incomplete.push("GitHub exposes at most 3000 changed files; total file coverage is incomplete or unknown.".into());
         }
@@ -338,6 +362,11 @@ pub(super) async fn read(
                     .into(),
             );
         }
+        if entries.iter().filter(|file| file.get("patch").is_some()).any(|file| {
+            file["patch"].as_str().and_then(|patch| super::publication::parse_patch(patch).ok()).is_none_or(|parsed| file["additions"].as_u64() != Some(parsed.additions) || file["deletions"].as_u64() != Some(parsed.deletions))
+        }) {
+            page.incomplete.push("Some returned patches are malformed, truncated, or disagree with reported changed-line totals; complete diff coverage is not established.".into());
+        }
     }
     if let Some(next) = next {
         if (request.section != Section::Files || next <= 30)
@@ -346,6 +375,7 @@ pub(super) async fn read(
             page.next = Some(Read {
                 page: next,
                 expected_head: page.head.clone(),
+                expected_base: page.base.clone(),
                 ..request.clone()
             });
         }
@@ -355,6 +385,7 @@ pub(super) async fn read(
         if sha(&current["head"]["sha"])? != head {
             page.incomplete.push("Pull request head changed during observation; reload before reviewing or publishing.".into());
         }
+        if Some(base(&current)?) != observed_base { page.incomplete.push("Pull request base changed during observation; reload before reviewing or publishing.".into()); }
     }
     let mut nested = Vec::new();
     for entry in entries {
@@ -388,6 +419,7 @@ pub(super) async fn read(
                 section,
                 page: 1,
                 expected_head: page.head.clone(),
+                expected_base: page.base.clone(),
             });
         }
     }
@@ -450,6 +482,9 @@ async fn threads(
     } else {
         &data["data"]["node"]["pullRequest"]
     };
+    if let Section::ThreadComments { thread, .. } = &request.section {
+        ensure!(data["data"]["node"]["id"].as_str() == Some(thread), "GitHub returned a different review thread");
+    }
     ensure!(
         identity["url"]
             .as_str()
@@ -505,6 +540,7 @@ async fn threads(
         page.next = Some(Read {
             section,
             expected_head: page.head.clone(),
+            expected_base: page.base.clone(),
             ..request.clone()
         });
     }
@@ -531,6 +567,7 @@ async fn threads(
                     },
                     page: 1,
                     expected_head: page.head.clone(),
+                    expected_base: page.base.clone(),
                 });
             }
         }
@@ -541,10 +578,14 @@ async fn threads(
         );
     }
     page.data = serde_json::json!({"connection":connection,"nested_continuations":nested});
+    let current = details(client,&request.object,cancel).await?;
+    if Some(sha(&current["head"]["sha"])?) != page.head || Some(base(&current)?) != page.base {
+        page.incomplete.push("Pull request head or base changed during thread observation; reload before review.".into());
+    }
     Ok(page)
 }
 
-fn next_page(headers: &reqwest::header::HeaderMap, current: u32) -> Result<Option<u32>> {
+fn next_page(headers: &reqwest::header::HeaderMap, current: u32, expected_path: &str, extra: &str) -> Result<Option<u32>> {
     let Some(link) = headers.get(reqwest::header::LINK) else {
         return Ok(None);
     };
@@ -576,6 +617,15 @@ fn next_page(headers: &reqwest::header::HeaderMap, current: u32) -> Result<Optio
                 && url.fragment().is_none(),
             "GitHub returned unsupported pagination origin"
         );
+        let alias = url.path().strip_prefix("/repositories/").and_then(|path|path.split_once('/')).is_some_and(|(id,tail)| id.parse::<u64>().is_ok_and(|id|id>0) && tail == expected_path.split('/').skip(4).collect::<Vec<_>>().join("/"));
+        ensure!(url.path() == expected_path || alias, "GitHub pagination refers to a different resource");
+        // Numeric repository aliases are only hints: the next request is rebuilt
+        // from the validated owner/repository, never from this external URL.
+        let expected = reqwest::Url::parse(&format!("https://api.github.com{expected_path}?per_page=100&page={}{extra}",current + 1)).expect("validated operation pagination");
+        let expected_pairs = expected.query_pairs().map(|(key,value)|(key.into_owned(),value.into_owned())).collect::<std::collections::BTreeMap<_,_>>();
+        let actual_pairs = url.query_pairs().map(|(key,value)|(key.into_owned(),value.into_owned())).collect::<Vec<_>>();
+        let actual_unique = actual_pairs.iter().cloned().collect::<std::collections::BTreeMap<_,_>>();
+        ensure!(actual_pairs.len() == actual_unique.len() && actual_unique == expected_pairs, "GitHub pagination changed or skipped its query");
         let pages = url
             .query_pairs()
             .filter(|(key, _)| key == "page")
@@ -586,10 +636,28 @@ fn next_page(headers: &reqwest::header::HeaderMap, current: u32) -> Result<Optio
             .as_ref()
             .map_err(|_| anyhow::anyhow!("GitHub returned invalid page"))?;
         ensure!(
-            page > current && page <= 1_000_000,
+            page == current + 1 && page <= 1_000_000,
             "GitHub pagination does not advance"
         );
         next = Some(page);
     }
     Ok(next)
+}
+
+#[cfg(test)]
+mod pagination_tests {
+    use super::*;
+    #[test]
+    fn pagination_cannot_skip_pages_or_change_resource_or_query() {
+        let path = "/repos/o/r/pulls/1/files";
+        for value in ["<https://api.github.com/repos/o/r/pulls/1/files?per_page=100&page=99>; rel=\"next\"", "<https://api.github.com/repos/o/r/pulls/2/files?per_page=100&page=2>; rel=\"next\"", "<https://api.github.com/repos/o/r/pulls/1/files?per_page=1&page=2>; rel=\"next\""] {
+            let mut headers = reqwest::header::HeaderMap::new(); headers.insert(reqwest::header::LINK,value.parse().unwrap());
+            assert!(next_page(&headers,1,path,"").is_err());
+        }
+        let mut duplicated = reqwest::header::HeaderMap::new();
+        duplicated.insert(reqwest::header::LINK,"<https://api.github.com/repos/o/r/pulls/1/files?per_page=100&page=2&per_page=100>; rel=\"next\"".parse().unwrap());
+        assert!(next_page(&duplicated,1,path,"&filter=all").is_err());
+        let mut headers = reqwest::header::HeaderMap::new(); headers.insert(reqwest::header::LINK,"<https://api.github.com/repositories/123/pulls/1/files?per_page=100&page=2>; rel=\"next\"".parse().unwrap());
+        assert_eq!(next_page(&headers,1,path,"").unwrap(),Some(2));
+    }
 }

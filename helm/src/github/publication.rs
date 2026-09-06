@@ -172,66 +172,89 @@ impl Draft {
 /// Require every selected line to be present on the selected side of the diff.
 /// An omitted patch cannot be replaced with guessed source-file coordinates.
 pub(super) fn validate_inline(comment: &InlineComment, patch: &str) -> Result<()> {
+    let parsed = parse_patch(patch)?;
+    let present = match comment.side { Side::Left => &parsed.left, Side::Right => &parsed.right };
+    let start = comment.start_line.unwrap_or(comment.line);
+    ensure!(comment.line.saturating_sub(start) <= 10_000 && (start..=comment.line).all(|line| present.contains(&line)), "inline review coordinates are not fully present in the selected patch");
+    Ok(())
+}
+
+pub(super) struct ParsedPatch {
+    left: std::collections::BTreeSet<u32>,
+    right: std::collections::BTreeSet<u32>,
+    pub additions: u64,
+    pub deletions: u64,
+}
+pub(super) fn parse_patch(patch: &str) -> Result<ParsedPatch> {
     ensure!(patch.len() <= 2 * 1024 * 1024, "review patch exceeds limit");
-    let mut left = None;
-    let mut right = None;
-    let mut present = std::collections::BTreeSet::new();
+    let mut position: Option<(u32,u32,u32,u32)> = None;
+    let mut parsed = ParsedPatch { left: Default::default(), right: Default::default(), additions: 0, deletions: 0 };
+    let mut prior_end: Option<(u32,u32)> = None;
     for line in patch.lines() {
         if line.starts_with("@@ ") {
+            if let Some((left,right,old_remaining,new_remaining)) = position {
+                ensure!(old_remaining == 0 && new_remaining == 0, "review patch hunk is truncated");
+                prior_end = Some((left,right));
+            }
             let mut fields = line.split_whitespace();
             fields.next();
-            let start = |field: Option<&str>, marker| -> Result<u32> {
-                field
-                    .and_then(|field| field.strip_prefix(marker))
-                    .and_then(|field| field.split(',').next())
-                    .and_then(|field| field.parse().ok())
-                    .ok_or_else(|| anyhow::anyhow!("review patch hunk is malformed"))
+            let range = |field: Option<&str>, marker| -> Result<(u32,u32)> {
+                let field = field.and_then(|field| field.strip_prefix(marker)).ok_or_else(|| anyhow::anyhow!("review patch hunk is malformed"))?;
+                let (start,count) = field.split_once(',').unwrap_or((field,"1"));
+                let start: u32 = start.parse().map_err(|_| anyhow::anyhow!("review patch hunk is malformed"))?;
+                let count: u32 = count.parse().map_err(|_| anyhow::anyhow!("review patch hunk is malformed"))?;
+                ensure!((start > 0 || count == 0) && start.checked_add(count).is_some(), "review patch hunk range is invalid");
+                Ok((start,count))
             };
-            left = Some(start(fields.next(), '-')?);
-            right = Some(start(fields.next(), '+')?);
+            let (left,old_count) = range(fields.next(), '-')?;
+            let (right,new_count) = range(fields.next(), '+')?;
+            ensure!(fields.next() == Some("@@"), "review patch hunk header is incomplete");
+            ensure!(prior_end.is_none_or(|(old_end,new_end)| left >= old_end && right >= new_end), "review patch hunks overlap or regress");
+            position = Some((left,right,old_count,new_count));
             continue;
         }
-        let (Some(old), Some(new)) = (left.as_mut(), right.as_mut()) else {
-            continue;
+        let Some((old,new,old_remaining,new_remaining)) = position.as_mut() else { anyhow::bail!("review patch has content before its hunk header") };
+        let consume = |line: &mut u32, remaining: &mut u32| -> Result<()> {
+            ensure!(*remaining > 0, "review patch exceeds its declared hunk range");
+            *remaining -= 1;
+            *line = line.checked_add(1).ok_or_else(|| anyhow::anyhow!("review patch line overflow"))?;
+            Ok(())
         };
         match line.as_bytes().first() {
             Some(b' ') => {
-                present.insert(match comment.side {
-                    Side::Left => *old,
-                    Side::Right => *new,
-                });
-                *old = old
-                    .checked_add(1)
-                    .ok_or_else(|| anyhow::anyhow!("review patch line overflow"))?;
-                *new = new
-                    .checked_add(1)
-                    .ok_or_else(|| anyhow::anyhow!("review patch line overflow"))?;
+                parsed.left.insert(*old);
+                parsed.right.insert(*new);
+                consume(old,old_remaining)?;
+                consume(new,new_remaining)?;
             }
             Some(b'-') => {
-                if comment.side == Side::Left {
-                    present.insert(*old);
-                }
-                *old = old
-                    .checked_add(1)
-                    .ok_or_else(|| anyhow::anyhow!("review patch line overflow"))?;
+                parsed.left.insert(*old);
+                parsed.deletions += 1;
+                consume(old,old_remaining)?;
             }
             Some(b'+') => {
-                if comment.side == Side::Right {
-                    present.insert(*new);
-                }
-                *new = new
-                    .checked_add(1)
-                    .ok_or_else(|| anyhow::anyhow!("review patch line overflow"))?;
+                parsed.right.insert(*new);
+                parsed.additions += 1;
+                consume(new,new_remaining)?;
             }
-            Some(b'\\') => (),
+            Some(b'\\') if line == "\\ No newline at end of file" => (),
             _ => anyhow::bail!("review patch is incomplete or malformed"),
         }
     }
-    let start = comment.start_line.unwrap_or(comment.line);
-    ensure!(
-        comment.line.saturating_sub(start) <= 10_000
-            && (start..=comment.line).all(|line| present.contains(&line)),
-        "inline review coordinates are not fully present in the selected patch"
-    );
-    Ok(())
+    ensure!(position.is_some_and(|(_,_,left,right)| left == 0 && right == 0), "review patch has no complete hunk");
+    Ok(parsed)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn selected_coordinates_require_complete_exact_hunks() {
+        let comment = InlineComment { path:"a".into(), line:1, side:Side::Right, start_line:None, start_side:None, body:"x".into() };
+        for patch in ["@@ -1,1 +1,1 @@\n-a\n+b\n+phantom", "@@ -1,5 +1,5 @@\n a", "@@ -1 +1\n-a\n+b", "@@ -1 +1 @@\n-a\n+b\n@@ -1 +1 @@\n-a\n+b"] { assert!(validate_inline(&comment,patch).is_err(),"{patch}"); }
+        assert!(validate_inline(&comment,"@@ -1 +1 @@\n-a\n+b").is_ok());
+        assert!(validate_inline(&comment,"@@ -0,0 +1 @@\n+b").is_ok());
+        let left = InlineComment { side:Side::Left,..comment };
+        assert!(validate_inline(&left,"@@ -0,0 +1 @@\n+b").is_err());
+    }
 }
