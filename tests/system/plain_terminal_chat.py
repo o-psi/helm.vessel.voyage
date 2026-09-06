@@ -57,6 +57,21 @@ class Plain:
     def close(self):
         if self.process.poll() is None:os.killpg(self.process.pid,signal.SIGKILL);self.process.wait(timeout=5)
         os.close(self.master);os.close(self.slave)
+def run_piped(args,env,text):
+    """Bound both diagnostic storage and the lifetime of an actual CLI process."""
+    with tempfile.TemporaryFile() as output:
+        process=subprocess.Popen([str(HELM),*args],stdin=subprocess.PIPE,stdout=output,stderr=subprocess.STDOUT,env=env,start_new_session=True)
+        try:
+            process.stdin.write(text.encode());process.stdin.close();deadline=time.monotonic()+8
+            while process.poll() is None:
+                assert time.monotonic()<deadline,'piped Helm exceeded fixture deadline'
+                assert os.fstat(output.fileno()).st_size<=1024*1024,'piped Helm exceeded diagnostic cap'
+                time.sleep(.02)
+            output.seek(0);data=output.read(1024*1024+1);assert len(data)<=1024*1024
+            return process.returncode,data.decode(errors='replace')
+        finally:
+            if process.poll() is None:os.killpg(process.pid,signal.SIGKILL);process.wait(timeout=5)
+
 def main():
     state={'requests':[],'steps':{},'failures':[]}
     server=ThreadingHTTPServer(('127.0.0.1',0),Provider);server.state=state
@@ -73,15 +88,19 @@ def main():
                 offset=len(plain.output);plain.send('/terminal missing\n'+CANARY+'\n')
                 plain.wait('No queued prompt was submitted',offset);assert not state['requests']
                 plain.turn('start');pid=int((workspace/'terminal.pid').read_text());assert Path(f'/proc/{pid}').exists()
+                records=list((root/'data').glob('helm/sessions/*.json'));assert len(records)==1,records
+                session_id=records[0].stem;count=len(state['requests'])
+                status,notice=run_piped(['--config',str(config),'chat','--plain','--resume',session_id],env,'/terminal '+state['id']+'\n/exit\n')
+                assert status!=0 and 'session busy; another frontend owns execution' in notice,(status,notice)
+                assert len(state['requests'])==count and Path(f'/proc/{pid}').exists()
                 count=len(state['requests']);offset=len(plain.output)
                 plain.send('/terminal '+str(uuid.uuid4())+'\n'+CANARY+'\n')
                 plain.wait('No queued prompt was submitted',offset);assert len(state['requests'])==count
                 plain.command('/terminal live','Ctrl+T/Ctrl+] detach')
                 plain.command(f"printf '%s' '{CANARY}' > human.txt; printf SCREEN_READY",'SCREEN_READY')
-                offset=len(plain.output);plain.send('\x14inspect🧭\n');plain.wait('inspect🧭-done',offset)
+                offset=len(plain.output);plain.send('\x14inspect🧭\nother\nread-other\n');plain.wait('read-other-done',offset)
                 assert (workspace/'human.txt').read_text()==CANARY
                 assert Path(f'/proc/{pid}').exists(),'detach killed inner process'
-                plain.turn('other');plain.turn('read-other')
                 count=len(state['requests']);plain.command('/new PLAIN-B','new session: PLAIN-B')
                 plain.command('/terminals',state['id']);assert Path(f'/proc/{pid}').exists();assert len(state['requests'])==count
                 plain.command('/terminal '+state['id'],'Ctrl+T/Ctrl+] detach')
@@ -96,7 +115,11 @@ def main():
                     assert CANARY not in record.read_text(),'private input persisted canonically'
                 assert not state['failures'],state['failures']
                 assert len(state['requests'])==8,state['requests']
-                print('PASS actual plain chat ownership, privacy, exact suffix, unrelated capture, voyage switch, and cleanup',flush=True)
+                status,notice=run_piped(['--config',str(config),'chat','--plain','--resume',session_id],env,'/terminals\n/terminal '+state['id']+'\n/exit\n')
+                assert status==0 and notice.count('No live terminals')==2,(status,notice)
+                assert len(state['requests'])==8 and not Path(f'/proc/{pid}').exists()
+                assert not state['failures'],state['failures']
+                print('PASS actual plain chat lease, privacy, multiple exact suffix prompts, unrelated capture, voyage switch, cleanup and stale restart',flush=True)
             except BaseException:
                 destination=os.environ.get('HELM_PLAIN_TERMINAL_EVIDENCE')
                 if destination:
