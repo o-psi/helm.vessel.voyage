@@ -82,10 +82,11 @@ def titles() -> list[dict]:
 
 
 class Case:
-    def __init__(self, root: Path, helm: Path, port: int):
+    def __init__(self, root: Path, helm: Path, port: int, output_limit: int | None = None):
         self.root = root
         self.helm = helm
         self.config = root / "config.toml"
+        self.output_limit = output_limit
         self.config.write_text(f'''provider = "openai-chat"
 model = "{MAIN_MODEL}"
 api_key_env = "HELM_FIXTURE_KEY"
@@ -93,6 +94,9 @@ base_url = "http://127.0.0.1:{port}/v1"
 provider_retry_attempts = 1
 access = "read-only"
 ''', encoding="utf-8")
+        if output_limit is not None:
+            with self.config.open("a", encoding="utf-8") as configured:
+                configured.write(f"max_tokens = {output_limit}\n")
         self.env = os.environ.copy()
         self.env.update(HELM_FIXTURE_KEY="offline-fixture-key", HOME=str(root / "home"),
                         XDG_CONFIG_HOME=str(root / "config"), XDG_DATA_HOME=str(root / "data"))
@@ -136,10 +140,13 @@ access = "read-only"
         assert TITLE_MODEL not in json.dumps(saved["messages"]), saved
         assert len([m for m in saved["messages"] if m["role"] == "user"]) == turns, saved
         for request in Fixture.requests:
+            if self.output_limit is None:
+                assert not {"max_tokens", "max_completion_tokens", "max_output_tokens"} & request.keys(), request
+            else:
+                assert request["max_completion_tokens"] == self.output_limit, request
             if request["model"] == TITLE_MODEL:
                 assert not request.get("tools"), request
                 assert request.get("stream") is True, request
-                assert 0 < request["max_completion_tokens"] <= 256, request
                 assert len(json.dumps(request["messages"])) < 20000, request
             else:
                 assert request["model"] == MAIN_MODEL, request
@@ -155,9 +162,10 @@ def main() -> None:
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
-        for name in ["fibonacci", "missing", "failure", "no-save", "manual", "legacy"]:
+        for name in ["fibonacci", "explicit-output", "missing", "failure", "no-save", "manual", "legacy"]:
             with tempfile.TemporaryDirectory(prefix=f"helm-titles-{name}-") as temporary:
-                case = Case(Path(temporary), helm, server.server_port)
+                case = Case(Path(temporary), helm, server.server_port,
+                            output_limit=1024 if name == "explicit-output" else None)
                 if name == "fibonacci":
                     session = None
                     expected = 0
@@ -170,6 +178,10 @@ def main() -> None:
                         assert saved["title_state"]["completed_runs"] == turn, saved
                         case.assert_isolated(session, turn, expected)
                     assert Fixture.discovery_requests > 0
+                elif name == "explicit-output":
+                    session = case.run()
+                    assert len(titles()) == 1
+                    case.assert_isolated(session, 1, 1)
                 elif name == "missing":
                     Fixture.advertised = False
                     session = case.run()

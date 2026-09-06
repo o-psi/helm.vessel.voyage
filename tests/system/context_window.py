@@ -175,11 +175,15 @@ approval = "never"
         request = Fixture.requests[-1]
         assert request.get("max_tokens", request.get("max_completion_tokens", request.get("max_output_tokens"))) == 1234
         assert LARGE in json.dumps(request, ensure_ascii=False)
+        sessions = root / "data" / "helm" / "sessions"
+        before_plain = set(sessions.glob("*.json"))
         default_plain = subprocess.run([str(helm), "--config", str(config), "--workspace", str(root),
                                         "chat", "--plain"], input=LARGE + "\n/exit\n", cwd=root,
                                        env=env, capture_output=True, text=True, timeout=30, check=False)
         assert default_plain.returncode == 0 and RESULT in default_plain.stdout, default_plain.stderr
-        _, default_plain_saved = saved_session(default_plain)
+        plain_paths = set(sessions.glob("*.json")) - before_plain
+        assert len(plain_paths) == 1, plain_paths
+        default_plain_saved = json.loads(plain_paths.pop().read_text(encoding="utf-8"))
         assert default_plain_saved["messages"][0]["content"] == LARGE
         assert default_plain_saved["messages"][-1]["content"] == RESULT
         assert LARGE in json.dumps(Fixture.requests[-1], ensure_ascii=False)
