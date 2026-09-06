@@ -75,7 +75,11 @@ def run_no_turn_limit(helm: Path) -> None:
             obsolete = subprocess.run(command + ["--set", "max_turns=64", "config"],
                                       cwd=root, env=env, capture_output=True, text=True, timeout=5)
             assert obsolete.returncode != 0
-            assert "max_turns" in obsolete.stderr
+            # Diagnostic errors conceal configuration input, which can contain
+            # secrets. The unsupported override must still fail before display.
+            assert obsolete.stdout == ""
+            assert "configuration input or override is invalid or unavailable" in obsolete.stderr
+            assert "input details concealed" in obsolete.stderr
         print("no turn limit: ok (71 CLI cycles, tool history, legacy config, obsolete override)")
     finally:
         server.shutdown()
