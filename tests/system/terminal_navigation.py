@@ -72,6 +72,10 @@ class Tui:
                 try:self.output.extend(os.read(self.master,65536))
                 except OSError:pass
     def text(self,value):self.wait(lambda:value in rendered_screen(bytes(self.output),40,140),value)
+    def active(self,label):
+        # Recent lists every name before navigation; only the main header proves
+        # the target runtime and its terminal input mode are ready.
+        self.text('HELM  access: unrestricted · NAVIGATION-'+label)
     def send(self,value):os.write(self.master,value if isinstance(value,bytes) else value.encode())
     def turn(self,prompt):
         self.send(prompt+'\r');self.text(prompt+'-done');self.text('Completed ·')
@@ -139,10 +143,10 @@ for line in sys.stdin:
             ui=Tui([*common,'chat','--resume',ids['A']],env)
             pids={}
             try:
-                ui.text('NAVIGATION-A');ui.turn('start-A')
+                ui.active('A');ui.turn('start-A')
                 ui.wait(lambda:(a/'terminal.pid').exists(),'native terminal started')
                 pids['A']=int((a/'terminal.pid').read_text());original=identity(pids['A'])
-                ui.send('/resume '+ids['B']+'\r');ui.text('NAVIGATION-B')
+                ui.send('/resume '+ids['B']+'\r');ui.active('B')
                 assert identity(pids['A'])==original,'same-workspace navigation terminated/replaced PTY'
                 ui.turn('list-B')
                 # A competing target owner cannot release the current voyage or
@@ -162,18 +166,18 @@ for line in sys.stdin:
                     gate.unlink()
                 # Retry also proves the failed runtime released its workspace
                 # writer lease, and the current voyage kept its execution fence.
-                ui.send('/resume '+ids['C']+'\r');ui.text('NAVIGATION-C');ui.turn('list-C');ui.turn('foreign-C')
+                ui.send('/resume '+ids['C']+'\r');ui.active('C');ui.turn('list-C');ui.turn('foreign-C')
                 assert not (a/'foreign-effect').exists(),'foreign workspace controlled retained terminal'
                 ui.turn('start-C');ui.wait(lambda:(c/'terminal.pid').exists(),'second workspace native terminal')
                 pids['C']=int((c/'terminal.pid').read_text());other=identity(pids['C'])
                 assert identity(pids['A'])==original,'cross-workspace navigation destroyed inactive PTY'
-                ui.send('/resume '+ids['A']+'\r');ui.text('NAVIGATION-A');ui.turn('verify-A')
+                ui.send('/resume '+ids['A']+'\r');ui.active('A');ui.turn('verify-A')
                 ui.wait(lambda:(a/'terminal-state.txt').exists(),'retained shell state')
                 assert (a/'terminal-state.txt').read_text()==f"{pids['A']}|state-A|{a}"
                 assert identity(pids['A'])==original and identity(pids['C'])==other
-                ui.send('/resume '+ids['C']+'\r');ui.text('NAVIGATION-C')
+                ui.send('/resume '+ids['C']+'\r');ui.active('C')
                 policy('defaults','set','--global','--profile-directory',str(profiles),'restricted','--revision','1','--digest',selection['digest'],'--expected-revision','0')
-                ui.send('/resume '+ids['A']+'\r');ui.text('NAVIGATION-A')
+                ui.send('/resume '+ids['A']+'\r');ui.active('A')
                 before_requests=len(state['requests'])
                 ui.send('policy-must-not-dispatch\r');ui.text('Policy changed; restart or rebuild')
                 assert len(state['requests'])==before_requests,'inactive cached policy dispatched after revision changed'
