@@ -264,7 +264,17 @@ for line in sys.stdin:
         assert (len(requests), len(model_requests)) == (request_count, model_count)
         assert termios.tcgetattr(slave) == prior_mode
         assert not (work / 'mcp-started').exists()
-        assert all(refused not in path.read_text() for path in Path('/work/data').rglob('sessions/*.json'))
+        # Denied input stays recoverable as an unsent local draft; it must never
+        # become canonical conversation, a run record, or other session state.
+        retained_drafts = []
+        for path in Path('/work/data').rglob('sessions/*.json'):
+            record = json.loads(path.read_text())
+            draft = record.pop('draft', '')
+            if refused in draft:
+                assert draft == refused
+                retained_drafts.append(draft)
+            assert refused not in json.dumps(record, ensure_ascii=False), record
+        assert retained_drafts == [refused]
     finally:
         if child.poll() is None: child.kill(); child.wait()
         os.close(master)
