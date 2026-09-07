@@ -44,7 +44,9 @@ impl App {
             return Ok(false);
         }
         let Event::Key(key) = event else {
-            self.sidebar.focus = Focus::Composer;
+            if matches!(event, Event::Paste(_)) {
+                self.sidebar_composer();
+            }
             return Ok(false);
         };
         if key.code == KeyCode::F(9) {
@@ -53,11 +55,12 @@ impl App {
             }
             return Ok(true);
         }
-        if self.interactions.borrow().focused
-            || self
-                .selected
-                .and_then(|t| self.views.get(&t))
-                .is_some_and(|v| v.terminals.open || v.panel.is_some())
+        if self.sidebar.focus == Focus::Composer
+            && (self.interactions.borrow().focused
+                || self
+                    .selected
+                    .and_then(|t| self.views.get(&t))
+                    .is_some_and(|v| v.terminals.open || v.panel.is_some()))
         {
             return Ok(false);
         }
@@ -109,11 +112,11 @@ impl App {
                 Ok(true)
             }
             KeyCode::Enter | KeyCode::Esc if self.sidebar.focus != Focus::Composer => {
-                self.sidebar.focus = Focus::Composer;
+                self.sidebar_composer();
                 Ok(true)
             }
             KeyCode::Char(_) | KeyCode::Backspace | KeyCode::Delete => {
-                self.sidebar.focus = Focus::Composer;
+                self.sidebar_composer();
                 Ok(false)
             }
             _ => Ok(false),

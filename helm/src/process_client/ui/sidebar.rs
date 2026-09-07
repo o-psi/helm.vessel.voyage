@@ -68,11 +68,23 @@ impl App {
     fn sidebar_select(&mut self, target: Target) {
         self.selected = Some(target);
         self.sidebar.focus = Focus::Voyages;
+        self.interactions.borrow_mut().focused = false;
         if let Some(view) = self.views.get_mut(&target) {
             view.unread = false;
             view.terminals.clear_displayed();
         }
     }
+    fn sidebar_composer(&mut self) {
+        if self.sidebar.focus != Focus::Composer {
+            self.interactions.borrow_mut().focused = false;
+            if let Some(view) = self.selected.and_then(|target| self.views.get_mut(&target)) {
+                view.panel = None;
+                view.terminals.open = false;
+            }
+        }
+        self.sidebar.focus = Focus::Composer;
+    }
+
     fn open_actions(&mut self, target: Target) {
         self.sidebar.visible.set(None);
         self.sidebar.menu_hits.borrow_mut().clear();
