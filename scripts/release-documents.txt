@@ -18,6 +18,7 @@ docs/operations.md
 docs/process-access.md
 docs/quality.md
 docs/ux-readiness.md
+docs/design-lessons.md
 docs/releasing.md
 docs/runtime-contract.md
 docs/security.md

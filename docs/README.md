@@ -16,6 +16,7 @@ are not presented as usable commands.
 | [Security](security.md) | Authority, credentials, disclosure and terminal safety |
 | [Development](development.md) | Source layout, build commands and contribution workflow |
 | [UX readiness](ux-readiness.md) | Interaction inventory, known gaps and manual product acceptance gate |
+| [Design lessons](design-lessons.md) | Consolidated design principles from 13 terminal apps, source evidence and Helm design guidance |
 | [Quality](quality.md) | The remaining non-test checks and limits of their evidence |
 | [Releasing](releasing.md) | Archive contents, packaging and publication boundaries |
 | [Local Git](local-git.md) | GitHub and this workspace's Git wrapper |
