@@ -94,6 +94,13 @@ impl App {
             .text
             .clone();
         let command_text = draft.trim();
+        if command_text == "/archived" || command_text == "/voyages" {
+            self.show_archives(command_text == "/archived");
+            return Ok(());
+        }
+        if command_text == "/restore" && self.views[&target].process.archive.is_some() {
+            return self.restore_archive(target);
+        }
         if command_text == "/quit" {
             self.quit = true;
             return Ok(());

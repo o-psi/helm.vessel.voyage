@@ -204,5 +204,31 @@ pub(super) async fn execute(
             })
             .await?,
     )?;
+    let process = if let RuntimeCommand::Archive {
+        archived: false,
+        command_id,
+        ..
+    } = &command
+        && process.state == voyage_protocol::process::ProcessState::Stopped
+        && process.archive.is_some()
+    {
+        serde_json::from_value(
+            client
+                .request(VesselCommand::Restart {
+                    command_id: *command_id,
+                    session_id: session,
+                    incarnation: process.incarnation,
+                })
+                .await?,
+        )?
+    } else {
+        process
+    };
+    if let RuntimeCommand::Receipt { command_id } = &command
+        && let Some(archive) = &process.archive
+        && archive.receipt["command_id"].as_str() == Some(command_id.to_string().as_str())
+    {
+        return Ok(archive.receipt.clone());
+    }
     client.forward(session, process.incarnation, command).await
 }

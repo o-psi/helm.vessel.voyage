@@ -80,7 +80,13 @@ const COMMANDS: &[(&str, &str, &str)] = &[
         "Clear this conversation",
         "Type this voyage's full UUID to confirm clearing history",
     ),
-    ("archive", "Archive this voyage", ""),
+    (
+        "archive",
+        "Archive this voyage and release its process after cleanup",
+        "",
+    ),
+    ("archived", "Browse archived voyages", ""),
+    ("voyages", "Browse current voyages", ""),
     ("restore", "Restore this voyage", ""),
     (
         "delete",
@@ -274,7 +280,7 @@ impl App {
                 }
             }
             "compact" => {
-                for count in [0, 10, 20, 50, 100] {
+                for count in [1, 10, 20, 50, 100] {
                     options.push((count.to_string(), format!("Retain {count} recent messages")));
                 }
             }

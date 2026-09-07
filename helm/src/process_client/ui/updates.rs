@@ -77,9 +77,39 @@ impl App {
                         }
                         self.views.insert(target, view);
                     }
-                    if self.selected.is_none() {
-                        self.selected = Some(target);
+                    if let Some(archive) = self.views[&target].process.archive.clone() {
+                        let view = self.views.get_mut(&target).expect("catalogued view");
+                        if view.pending.as_ref().is_some_and(|p| {
+                            p.incarnation == view.process.incarnation
+                                && p.draft.trim() == "/archive"
+                                && archive.receipt["command_id"].as_str()
+                                    == Some(p.command_id.to_string().as_str())
+                        }) {
+                            if view
+                                .pending
+                                .as_ref()
+                                .is_some_and(|p| p.draft == view.draft.text)
+                            {
+                                view.draft.take();
+                            }
+                            view.pending = None;
+                            if let Err(error) = drafts::save(&self.clients[route], view) {
+                                self.status =
+                                    format!("Archive confirmed; draft persistence failed: {error}");
+                            }
+                        }
                     }
+                }
+                if self.selected.is_none() {
+                    let targets = self.ordered_targets();
+                    self.selected = targets
+                        .iter()
+                        .find(|t| {
+                            self.views[t].process.state
+                                == voyage_protocol::process::ProcessState::Live
+                        })
+                        .copied()
+                        .or_else(|| targets.first().copied());
                 }
             }
             Update::Snapshot {
@@ -136,7 +166,13 @@ impl App {
                     };
                     self.views
                         .entry(target)
+                        .and_modify(|view| {
+                            view.process = process.clone();
+                            view.snapshot = None;
+                            view.rendered.take();
+                        })
                         .or_insert_with(|| View::new(process));
+                    self.archives = false;
                     self.selected = Some(target);
                     self.status = format!("New voyage ready on {}", self.route_label(route));
                 }
@@ -189,8 +225,22 @@ impl App {
                         {
                             view.draft.take();
                         }
+                        if !rejected && let Some(archived) = value["archived"].as_bool() {
+                            if let Some(snapshot) = view.snapshot.as_mut() {
+                                snapshot.lifecycle["archived"] = archived.into();
+                            }
+                            view.rendered.take();
+                            if !archived {
+                                self.archives = false;
+                                self.selected = Some(target);
+                            }
+                        }
                         view.pending = None;
-                        self.status = super::presentation::receipt(&value);
+                        self.status = if value["archived"] == true {
+                            "Archived. Waiting for confirmed cleanup before releasing the process slot. F5 opens archives.".into()
+                        } else {
+                            super::presentation::receipt(&value)
+                        };
                     }
                     Err(error) => {
                         self.status = format!("{} · draft retained", safe(&error));
@@ -205,6 +255,13 @@ impl App {
                     self.status = format!("Draft persistence failed: {error}");
                 }
             }
+        }
+        if self.selected.is_some_and(|target| {
+            self.views
+                .get(&target)
+                .is_some_and(|v| v.archived() != self.archives && v.pending.is_none())
+        }) {
+            self.selected = self.ordered_targets().first().copied();
         }
     }
 }

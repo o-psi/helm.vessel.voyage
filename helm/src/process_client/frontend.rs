@@ -179,14 +179,27 @@ pub async fn chat(
     model_overridden: bool,
     configuration_explicit: bool,
 ) -> Result<()> {
-    let (client, process) = open(
+    let creating = reference.is_none();
+    let opened = open(
         &config,
         workspace,
         reference,
         model_overridden,
         configuration_explicit,
     )
-    .await?;
+    .await;
+    let (client, process) = match opened {
+        Ok(value) => value,
+        Err(error)
+            if !plain
+                && creating
+                && error.downcast_ref::<super::transport::Refusal>().is_some() =>
+        {
+            let client = local::connect(super::cli::default_directory(), true).await?;
+            return super::ui::run_with_notice(vec![client], None, Some(config), Some(format!("New voyage was refused: {error}. Select an existing voyage; /archive frees a slot after cleanup."))).await;
+        }
+        Err(error) => return Err(error),
+    };
     if plain {
         super::plain::chat(&client, process.session_id).await
     } else {

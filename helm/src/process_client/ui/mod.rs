@@ -1,5 +1,6 @@
 //! Multiplexed presentation; dropping this interface only drops observations.
 mod actions;
+mod archive;
 mod completion;
 mod controls;
 mod explore;
@@ -43,6 +44,7 @@ pub(super) struct App {
     status: String,
     quit: bool,
     help: bool,
+    archives: bool,
     help_scroll: u16,
     explore: Option<usize>,
     interactions: std::cell::RefCell<interactions::Review>,
@@ -77,6 +79,15 @@ pub async fn run_with_config(
     session: Option<uuid::Uuid>,
     new_chat_config: Option<crate::Config>,
 ) -> Result<()> {
+    run_with_notice(clients, session, new_chat_config, None).await
+}
+
+pub async fn run_with_notice(
+    clients: Vec<Client>,
+    session: Option<uuid::Uuid>,
+    new_chat_config: Option<crate::Config>,
+    notice: Option<String>,
+) -> Result<()> {
     anyhow::ensure!(
         io::stdin().is_terminal() && io::stdout().is_terminal(),
         "connected TUI needs a terminal; use connect list/new/inspect/submit for plain operation"
@@ -98,9 +109,12 @@ pub async fn run_with_config(
         views: BTreeMap::new(),
         selected: session.map(|session| Target { route: 0, session }),
         sender,
-        status: "Your workspace is ready. Start a conversation, or press F1 for help.".into(),
+        status: notice.unwrap_or_else(|| {
+            "Your workspace is ready. Start a conversation, or press F1 for help.".into()
+        }),
         quit: false,
         help: false,
+        archives: false,
         help_scroll: 0,
         explore: None,
         interactions: Default::default(),

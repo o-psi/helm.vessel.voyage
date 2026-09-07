@@ -21,6 +21,12 @@ fn inset(area: Rect, horizontal: u16, vertical: u16) -> Rect {
     area.inner(ratatui::layout::Margin::new(horizontal, vertical))
 }
 fn state(view: &super::state::View) -> &'static str {
+    if view.process.archive.is_some() {
+        return "Archived · stopped";
+    }
+    if view.archived() {
+        return "Archiving · cleanup pending";
+    }
     if view.error.is_some() {
         "Reconnecting"
     } else if view
@@ -132,7 +138,11 @@ pub fn draw(frame: &mut Frame<'_>, app: &App) {
                     String::new()
                 },
                 state(v),
-                v.terminals.summary()
+                if v.archived() {
+                    "History preserved".into()
+                } else {
+                    v.terminals.summary()
+                }
             )
         },
     );
@@ -182,9 +192,9 @@ pub fn draw(frame: &mut Frame<'_>, app: &App) {
         composer(frame, app, rows[3]);
     }
     let shortcuts = if main.width >= 80 {
-        "F1 Help   F2 Requests   F3 Console   F8 Explore   Tab Voyages   Ctrl+C Leave"
+        "F1 Help   F2 Requests   F3 Console   F5 Archives   Tab Voyages   Ctrl+C Leave"
     } else if main.width >= 60 {
-        "F1 Help  F2 Requests  F3 Console  F8 Explore  Tab Voyages"
+        "F1 Help  F2 Requests  F3 Console  F5 Archives  Tab Voyages"
     } else {
         "F1 Help F2 Review F3 Console F8 More"
     };
@@ -235,7 +245,14 @@ fn sidebar(frame: &mut Frame<'_>, app: &App, area: Rect) {
             Line::default(),
             Line::styled("Ctrl+N  New voyage", accent()),
             Line::default(),
-            Line::styled("Your voyages", muted()),
+            Line::styled(
+                if app.archives {
+                    "Archived voyages"
+                } else {
+                    "Your voyages · /archive"
+                },
+                muted(),
+            ),
         ]),
         rows[0],
     );
@@ -283,8 +300,8 @@ fn sidebar(frame: &mut Frame<'_>, app: &App, area: Rect) {
         &mut ListState::default().with_selected(index),
     );
     frame.render_widget(
-        Paragraph::new("Tab  Switch voyage\nF8   Explore").style(muted()),
-        rows[3],
+        Paragraph::new("Tab Switch · F5 Archives\nF8 Explore").style(muted()),
+        rows[2],
     );
 }
 
@@ -362,7 +379,15 @@ fn conversation(frame: &mut Frame<'_>, app: &App, area: Rect) {
     let mut text = Text::default();
 
     if let Some(view) = view {
-        if let Some(panel) = &view.panel {
+        if view.process.archive.is_some() {
+            text = presentation::wrap(
+                Text::raw(format!(
+                    "{}\n\nArchived. History is preserved and the process has stopped.\nType /restore to continue this voyage.\nF5 returns to current voyages.",
+                    safe(&view.title())
+                )),
+                width,
+            );
+        } else if let Some(panel) = &view.panel {
             text = super::panels::display(panel, width);
         } else {
             let mut cache = view.rendered.borrow_mut();

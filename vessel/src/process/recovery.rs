@@ -15,28 +15,44 @@ struct Stopped {
     session_id: Uuid,
     incarnation: Uuid,
     cleanup_observed: bool,
+    #[serde(default)]
+    archive: Option<ArchivedVoyage>,
 }
 
 pub fn clean_stop(directory: &Path, registration: &ProcessRegistration) -> bool {
-    let read = || -> Result<bool> {
-        let file = OpenOptions::new()
-            .read(true)
-            .custom_flags(libc::O_NOFOLLOW)
-            .open(directory.join("stopped.json"))?;
-        let metadata = file.metadata()?;
-        ensure!(
-            metadata.is_file()
-                && metadata.uid() == unsafe { libc::geteuid() }
-                && metadata.mode() & 0o077 == 0
-                && metadata.len() < 4096,
-            "invalid stop evidence"
-        );
-        let stopped: Stopped = serde_json::from_reader(file)?;
-        Ok(stopped.session_id == registration.session_id
+    stopped(directory, registration).is_ok()
+}
+
+pub(super) fn archived(
+    directory: &Path,
+    registration: &ProcessRegistration,
+) -> Option<ArchivedVoyage> {
+    stopped(directory, registration)
+        .ok()
+        .and_then(|s| s.archive)
+}
+
+fn stopped(directory: &Path, registration: &ProcessRegistration) -> Result<Stopped> {
+    let file = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(directory.join("stopped.json"))?;
+    let metadata = file.metadata()?;
+    ensure!(
+        metadata.is_file()
+            && metadata.uid() == unsafe { libc::geteuid() }
+            && metadata.mode() & 0o077 == 0
+            && metadata.len() < 4096,
+        "invalid stop evidence"
+    );
+    let stopped: Stopped = serde_json::from_reader(file)?;
+    ensure!(
+        stopped.session_id == registration.session_id
             && stopped.incarnation == registration.incarnation
-            && stopped.cleanup_observed)
-    };
-    read().unwrap_or(false)
+            && stopped.cleanup_observed,
+        "stop evidence identity or cleanup mismatch"
+    );
+    Ok(stopped)
 }
 
 impl Supervisor {

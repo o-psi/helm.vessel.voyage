@@ -245,8 +245,18 @@ pub struct ProcessRegistration {
     pub state: ProcessState,
 }
 
+/// Public summary emitted only alongside positively observed runtime cleanup.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ArchivedVoyage {
+    pub name: Option<String>,
+    pub revision: u64,
+    pub receipt: Value,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ProcessInfo {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub archive: Option<ArchivedVoyage>,
     pub session_id: Uuid,
     pub incarnation: Uuid,
     pub workspace: PathBuf,
@@ -255,6 +265,7 @@ pub struct ProcessInfo {
 impl From<&ProcessRegistration> for ProcessInfo {
     fn from(value: &ProcessRegistration) -> Self {
         Self {
+            archive: None,
             session_id: value.session_id,
             incarnation: value.incarnation,
             workspace: value.workspace.clone(),

@@ -32,6 +32,10 @@ Explicit Linux user-service installation is available. Native macOS/Windows proc
 supervision is unsupported. The Linux installer wizard installs versioned releases
 and manages upgrades, rollback and the local user service.
 
+Helm keeps the interface open when initial voyage creation is definitely refused,
+including a full Vessel, so existing voyages remain reachable. An uncertain start
+still reports its original identity rather than automatically retrying.
+
 The left-hand voyage list is newest-first by the latest timestamped conversation
 message, falling back to session creation time. Tab and Shift+Tab follow that
 same order; activity changes do not change the selected voyage. Legacy messages
@@ -69,6 +73,16 @@ Only positively observed cleanup releases run admission and host executor charge
 Snapshots and Helm show an authored startup-stage summary and distinguish a
 retryable failed run from unconfirmed cleanup; underlying diagnostics are excluded.
 Previously stranded runs still require explicit recovery.
+
+Archiving an idle voyage preserves its conversation and causes its runtime to
+shut down under the admission lock. Only positively observed cleanup releases
+Vessel capacity. A bounded archive summary and the archive receipt accompany the
+private stop evidence, so a fresh Helm can list the archived voyage without
+starting it. F5 or `/archived` opens Archives; `/restore` explicitly restarts its
+same session identity and clears the archive disposition. Restore can be refused
+when capacity is full; archived history remains intact. Unavailable or unclean
+owners remain fenced and consume capacity. Existing pre-upgrade runtime processes
+need a clean stop/restart to acquire the new archive shutdown behavior.
 
 Idle lifecycle commands support rename, next-turn model/configuration, branch,
 archive/restore, clear, compaction and confirmed deletion. Branches have new UUIDs

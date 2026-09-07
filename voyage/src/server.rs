@@ -56,6 +56,7 @@ struct State {
     active: Mutex<Option<ActiveRun>>,
     admission: Mutex<()>,
     shutdown: CancellationToken,
+    archive_receipt: Mutex<Option<serde_json::Value>>,
     outbound_task: Mutex<Option<tokio::task::JoinHandle<Result<()>>>>,
     outbound_status: Mutex<serde_json::Value>,
 }
@@ -186,6 +187,7 @@ pub async fn serve(args: ServeArgs) -> Result<()> {
             active: Mutex::new(None),
             admission: Mutex::new(()),
             shutdown: CancellationToken::new(),
+            archive_receipt: Mutex::new(None),
             outbound_task: Mutex::new(None),
             outbound_status: Mutex::new(serde_json::Value::Null),
         });

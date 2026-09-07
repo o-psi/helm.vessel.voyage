@@ -37,6 +37,10 @@ impl App {
                 }
                 return Ok(());
             }
+            if key.code == KeyCode::F(5) {
+                self.show_archives(!self.archives);
+                return Ok(());
+            }
             if key.code == KeyCode::F(4) {
                 if let Some(target) = self.selected {
                     if let Some(pending) = self.views.get(&target).and_then(|v| v.pending.clone()) {

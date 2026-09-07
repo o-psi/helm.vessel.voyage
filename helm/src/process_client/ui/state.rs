@@ -95,6 +95,13 @@ pub struct View {
 }
 
 impl View {
+    pub(super) fn archived(&self) -> bool {
+        self.process.archive.is_some()
+            || self
+                .snapshot
+                .as_ref()
+                .is_some_and(|s| s.lifecycle["archived"] == true)
+    }
     pub fn new(process: ProcessInfo) -> Self {
         Self {
             process,
@@ -112,7 +119,16 @@ impl View {
         }
     }
     pub fn title(&self) -> String {
-        let name = self.snapshot.as_ref().and_then(|s| s.name.as_deref());
+        let name = self
+            .snapshot
+            .as_ref()
+            .and_then(|s| s.name.as_deref())
+            .or_else(|| {
+                self.process
+                    .archive
+                    .as_ref()
+                    .and_then(|a| a.name.as_deref())
+            });
         if let Some(name) = name
             && !name
                 .strip_prefix("session-")
@@ -146,7 +162,12 @@ impl super::App {
     /// One activity order for both presentation and keyboard navigation. Unknown
     /// timestamps (older owners or unavailable snapshots) sort last, not as now.
     pub(super) fn ordered_targets(&self) -> Vec<Target> {
-        let mut targets: Vec<_> = self.views.keys().copied().collect();
+        let mut targets: Vec<_> = self
+            .views
+            .iter()
+            .filter(|(_, view)| view.archived() == self.archives)
+            .map(|(target, _)| *target)
+            .collect();
         targets.sort_by_key(|target| {
             let activity = self.views[target]
                 .snapshot

@@ -270,6 +270,7 @@ pub(super) async fn dispatch_admitted(
             let _admission = state.admission.lock().await;
             ensure!(!state.shutdown.is_cancelled(), "runtime stopping");
             let deleting = matches!(command, RuntimeCommand::Delete { .. });
+            let archiving = matches!(command, RuntimeCommand::Archive { archived: true, .. });
             ensure!(
                 state.active.lock().await.is_none(),
                 "lifecycle requires idle runtime"
@@ -298,6 +299,15 @@ pub(super) async fn dispatch_admitted(
             let result = state.owner.apply_lifecycle(command, configuration).await?;
             if deleting {
                 state.workflows.clear().await;
+            }
+            if archiving
+                && result["status"] != "rejected"
+                && state.owner.process_snapshot().await?["lifecycle"]["archived"] == true
+            {
+                *state.archive_receipt.lock().await = Some(result.clone());
+                // Admission remains locked: a racing restore/submit cannot start work.
+                // The listener drains this response before publishing cleanup evidence.
+                state.shutdown.cancel();
             }
             Ok(result)
         }

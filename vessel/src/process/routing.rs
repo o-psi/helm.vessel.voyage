@@ -73,5 +73,8 @@ pub async fn inspect(directory: &Path, registration: &ProcessRegistration) -> Pr
             _ => ProcessState::Unavailable,
         },
     };
+    if info.state == ProcessState::Stopped {
+        info.archive = super::recovery::archived(directory, registration);
+    }
     info
 }

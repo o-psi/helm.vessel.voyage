@@ -114,9 +114,25 @@ pub(super) async fn listen(directory: PathBuf, state: Arc<State>) -> Result<()> 
             .mode(0o600)
             .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
             .open(&candidate)?;
+        let archive = if snapshot["lifecycle"]["archived"] == true {
+            Some(voyage_protocol::process::ArchivedVoyage {
+                name: snapshot["name"].as_str().map(str::to_owned),
+                revision: snapshot["revision"]
+                    .as_u64()
+                    .context("archive revision missing")?,
+                receipt: state
+                    .archive_receipt
+                    .lock()
+                    .await
+                    .clone()
+                    .unwrap_or(serde_json::Value::Null),
+            })
+        } else {
+            None
+        };
         serde_json::to_writer(
             &mut file,
-            &serde_json::json!({"session_id":state.registration.session_id,"incarnation":state.registration.incarnation,"cleanup_observed":true}),
+            &serde_json::json!({"session_id":state.registration.session_id,"incarnation":state.registration.incarnation,"cleanup_observed":true,"archive":archive}),
         )?;
         file.flush()?;
         file.sync_all()?;
