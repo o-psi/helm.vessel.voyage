@@ -138,6 +138,10 @@ impl App {
     }
     pub(super) fn terminal_input(&mut self, event: &Event) -> Result<bool> {
         let Some(target) = self.selected else {
+            if matches!(event, Event::Key(key) if key.code == KeyCode::F(3)) {
+                self.status = "Start a voyage to see its programs. Ctrl+N creates one.".into();
+                return Ok(true);
+            }
             return Ok(false);
         };
         let Some(view) = self.views.get_mut(&target) else {
@@ -231,10 +235,8 @@ pub(super) fn draw(frame: &mut Frame<'_>, app: &App, area: Rect) {
     frame.render_widget(block, area);
     if inner.width < 30 || inner.height < 10 {
         frame.render_widget(
-            Paragraph::new(
-                "Enlarge to at least 32 columns and 12 rows to select a terminal safely.",
-            )
-            .wrap(Wrap { trim: false }),
+            Paragraph::new("Make this window larger to select a program. Esc returns to chat.")
+                .wrap(Wrap { trim: false }),
             inner,
         );
         return;
@@ -361,7 +363,9 @@ pub(super) fn draw(frame: &mut Frame<'_>, app: &App, area: Rect) {
     frame.render_widget(
         Paragraph::new(Text::from(vec![
             Line::styled(
-                if browser
+                if !browser.fresh() {
+                    "Waiting for programs..."
+                } else if browser
                     .inventory
                     .as_ref()
                     .and_then(|i| i.entries.iter().find(|e| Some(e.id) == browser.selected))

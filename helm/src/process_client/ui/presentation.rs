@@ -127,6 +127,10 @@ pub(super) fn run_state(state: &str) -> &'static str {
 
 pub(super) fn notice(value: &str) -> String {
     let lower = value.to_lowercase();
+    if lower.contains("deadline elapsed") || lower.contains("timed out") {
+        return "The connection is taking longer than expected. Your work may still be running."
+            .into();
+    }
     if lower.contains("identity mismatch") {
         return "This view changed before the action finished. Refresh and check its status."
             .into();

@@ -212,7 +212,7 @@ pub fn draw(frame: &mut Frame<'_>, app: &App) {
     } else if area.width >= 72 {
         "F1 Help  F2 Requests  F3 Terminals  F4 Status  Tab Voyages  Ctrl+C Leave"
     } else {
-        "F1 Help  F2 Review  F3 Programs  F4 Status"
+        "F1 Help F2 Review F3 Terminals F4 Status"
     };
     let mut footer = Text::from(Line::styled(shortcuts, Style::default().fg(Color::Cyan)));
     footer.lines.extend(
