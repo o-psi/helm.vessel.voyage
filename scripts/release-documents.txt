@@ -17,6 +17,7 @@ docs/local-git.md
 docs/operations.md
 docs/process-access.md
 docs/quality.md
+docs/ux-readiness.md
 docs/releasing.md
 docs/runtime-contract.md
 docs/security.md

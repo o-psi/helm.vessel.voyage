@@ -16,6 +16,24 @@ impl App {
                     _ => {}
                 }
             }
+            if key.code == KeyCode::F(1) {
+                self.help = !self.help;
+                self.help_scroll = 0;
+                return Ok(());
+            }
+            if self.help {
+                match key.code {
+                    KeyCode::Esc => self.help = false,
+                    KeyCode::PageUp | KeyCode::Up => {
+                        self.help_scroll = self.help_scroll.saturating_sub(10)
+                    }
+                    KeyCode::PageDown | KeyCode::Down => {
+                        self.help_scroll = self.help_scroll.saturating_add(10)
+                    }
+                    _ => {}
+                }
+                return Ok(());
+            }
             if matches!(key.code, KeyCode::Tab | KeyCode::BackTab) {
                 let keys: Vec<_> = self.views.keys().copied().collect();
                 if !keys.is_empty() {
@@ -36,13 +54,6 @@ impl App {
                 return Ok(());
             }
             if self.terminal_input(&event)? {
-                return Ok(());
-            }
-            if key.code == KeyCode::F(1) {
-                if let Some(view) = self.selected.and_then(|target| self.views.get_mut(&target)) {
-                    view.panel = Some(super::presentation::HELP.into());
-                    view.scroll = 0;
-                }
                 return Ok(());
             }
             if let Some(view) = self.selected.and_then(|target| self.views.get_mut(&target))
@@ -71,6 +82,9 @@ impl App {
             {
                 return self.send();
             }
+        }
+        if self.help {
+            return Ok(());
         }
         if !matches!(event, Event::Key(_))
             && (self.terminal_input(&event)? || self.interaction_input(&event)?)

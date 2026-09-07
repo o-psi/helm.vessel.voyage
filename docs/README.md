@@ -15,6 +15,7 @@ are not presented as usable commands.
 | [Process access](process-access.md) | Scoped grants, participant execution, signed owner transfer and recovery |
 | [Security](security.md) | Authority, credentials, disclosure and terminal safety |
 | [Development](development.md) | Source layout, build commands and contribution workflow |
+| [UX readiness](ux-readiness.md) | Interaction inventory, known gaps and manual product acceptance gate |
 | [Quality](quality.md) | The remaining non-test checks and limits of their evidence |
 | [Releasing](releasing.md) | Archive contents, packaging and publication boundaries |
 | [Local Git](local-git.md) | GitHub and this workspace's Git wrapper |

@@ -61,3 +61,12 @@ For documentation-only edits, verify claims against source/help, relative links 
 anchors, manifest membership, command examples and diffs. Verify archive layout when
 packaged guide paths change. Follow [release procedures](releasing.md) and report
 which checks actually ran, with their limits.
+
+## Product interaction acceptance
+
+Feature validation also needs the relevant journeys and adverse states in
+[UX readiness](ux-readiness.md). That manual inventory records functional evidence
+and product-owner review separately. A build/package pass is not a ship-ready UX
+verdict. The full interface audit remains open on
+[#14](https://github.com/o-psi/voyage/issues/14); a completed feature slice does not
+close it. No automated test suite is introduced by this acceptance document.

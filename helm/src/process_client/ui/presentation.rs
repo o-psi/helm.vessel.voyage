@@ -125,3 +125,9 @@ pub(super) fn operator_message(content: &str) -> Option<String> {
         fields(&value)
     ))
 }
+
+/// A complete structured result is metadata, not a JSON code example in prose.
+pub(super) fn structured_message(content: &str) -> Option<String> {
+    let value: Value = serde_json::from_str(content).ok()?;
+    (value.is_object() || value.is_array()).then(|| fields(&value))
+}

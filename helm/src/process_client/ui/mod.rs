@@ -38,6 +38,8 @@ pub(super) struct App {
     sender: mpsc::Sender<Update>,
     status: String,
     quit: bool,
+    help: bool,
+    help_scroll: u16,
     interactions: std::cell::RefCell<interactions::Review>,
     terminal_request: Option<(Target, uuid::Uuid, uuid::Uuid, uuid::Uuid)>,
 }
@@ -85,6 +87,8 @@ pub async fn run_selected(clients: Vec<Client>, session: Option<uuid::Uuid>) -> 
             "Connected views · Ctrl+N creates · Tab switches · Ctrl+C detaches without cancellation"
                 .into(),
         quit: false,
+        help: false,
+        help_scroll: 0,
         interactions: Default::default(),
         terminal_request: None,
     };

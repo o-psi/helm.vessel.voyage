@@ -28,6 +28,28 @@ pub fn draw(frame: &mut Frame<'_>, app: &App) {
         frame.render_widget(Paragraph::new(presentation::wrap(Text::raw("HELM\nEnlarge to at least 40 columns x 18 rows.\nCtrl+C detaches; voyages continue."), area.width)), area);
         return;
     }
+    if app.help {
+        super::interactions::draw(frame, app, Rect::default());
+        if let Some(view) = app.selected.and_then(|t| app.views.get(&t)) {
+            view.terminals.clear_displayed();
+        }
+        let text = presentation::wrap(Text::raw(presentation::HELP), area.width.saturating_sub(2));
+        let maximum = text
+            .lines
+            .len()
+            .saturating_sub(area.height.saturating_sub(2) as usize)
+            .min(u16::MAX as usize) as u16;
+        frame.render_widget(
+            Paragraph::new(text)
+                .scroll((app.help_scroll.min(maximum), 0))
+                .block(block(
+                    " HELM HELP / PageUp PageDown / Esc back ",
+                    Color::Cyan,
+                )),
+            area,
+        );
+        return;
+    }
     let rows = Layout::vertical([
         Constraint::Length(3),
         Constraint::Min(4),
@@ -263,7 +285,13 @@ fn conversation(frame: &mut Frame<'_>, app: &App, area: Rect) {
                                 })
                                 .add_modifier(Modifier::BOLD),
                         ));
-                        if let Some(operator) = presentation::operator_message(&message.content) {
+                        if let Some(operator) = presentation::operator_message(&message.content)
+                            .or_else(|| {
+                                (message.role == "assistant")
+                                    .then(|| presentation::structured_message(&message.content))
+                                    .flatten()
+                            })
+                        {
                             text.lines
                                 .extend(presentation::wrap(Text::raw(operator), width).lines);
                             text.lines.push(Line::default());

@@ -57,9 +57,8 @@ impl App {
             return Ok(());
         }
         if command_text == "/help" {
-            let view = self.views.get_mut(&target).expect("selected view");
-            view.panel = Some(super::presentation::HELP.into());
-            view.scroll = 0;
+            self.help = true;
+            self.help_scroll = 0;
             return Ok(());
         }
         if command_text == "/new" || command_text.starts_with("/new ") {
