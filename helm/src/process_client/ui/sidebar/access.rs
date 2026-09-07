@@ -7,7 +7,7 @@ use ratatui::{
     style::{Color, Style},
     widgets::Paragraph,
 };
-use voyage_protocol::process::RuntimeCommand;
+use voyage_protocol::vessel::VoyageCommand;
 
 const MODES: [(Action, &str, &str); 3] = [
     (
@@ -135,7 +135,7 @@ impl App {
         );
         let command_id = Uuid::new_v4();
         let access = MODES[menu.access_selected].1;
-        let command = RuntimeCommand::SetAccess {
+        let command = VoyageCommand::SetAccess {
             command_id,
             expected_revision: snapshot.revision,
             expires_at_ms: u64::try_from(

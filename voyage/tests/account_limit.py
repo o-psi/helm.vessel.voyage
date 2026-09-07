@@ -78,7 +78,7 @@ def main():
 
     def request(command):
         credential = json.loads((directory / "process-http.json").read_text())
-        req = urllib.request.Request(credential["endpoint"] + "/v3/process/command",
+        req = urllib.request.Request(credential["endpoint"] + "/v1/vessel/command",
             data=json.dumps({"protocol": 1, "command": command}).encode(),
             headers={"Authorization": "Bearer " + credential["token"], "Content-Type": "application/json"})
         with urllib.request.urlopen(req, timeout=20) as incoming:
@@ -87,9 +87,7 @@ def main():
         return value["result"]
 
     def command(value):
-        info = request({"op": "inspect", "session_id": session})
-        response = request({"op": "forward", "session_id": session,
-            "incarnation": info["incarnation"], "command": value})
+        response = request({**value, "session_id": session})
         assert response.get("error") is None, response
         return response["result"]
 

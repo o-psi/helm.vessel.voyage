@@ -234,14 +234,93 @@ command ID when retrying an uncertain response.
 
 ## Wire and retained state
 
-The Helm–Vessel v1 protocol uses JSON over HTTP(S), bounded to 4 MiB. Typed commands
-use `POST /v3/process/command`; durable invalidations use an SSE response from
-`POST /v3/process/events`. Local requests authenticate with the private service
-credential. Scoped HTTPS requests add the grant Bearer credential and
-`X-Voyage-Grant` UUID header. The framed Unix transport remains only between Vessel
-and each independent voyage runtime, plus a bounded pre-HTTP upgrade bridge.
-`outcome_unknown` distinguishes uncertain dispatch from definite initial refusal.
-Successful envelope receipt is not proof of run cleanup.
+The public Vessel service API uses JSON over HTTP(S), bounded to 4 MiB. Commands
+use `POST /v1/vessel/command`; durable invalidations use an SSE response from
+`POST /v1/vessel/events`. Both use `protocol: 1`, defined by `VESSEL_API_VERSION`
+independently of the private runtime's `PROCESS_PROTOCOL`. The public definitions
+are in `crates/voyage-protocol/src/vessel.rs`; private execution messages remain in
+`crates/voyage-protocol/src/process/`.
+
+Local requests authenticate with the private service credential. Scoped HTTPS
+requests add the grant Bearer credential and `X-Voyage-Grant` UUID header. SSH uses
+`vessel local-request --api-version 1` with bounded length-prefixed JSON. The private
+Vessel-to-voyage connection still uses length-prefixed JSON over an owned Unix
+socket, with runtime token and session/incarnation authentication.
+
+Public session operations are explicit top-level commands, not a `forward` envelope.
+For example, a submission is:
+
+```json
+{
+  "protocol": 1,
+  "command": {
+    "op": "submit",
+    "session_id": "11111111-1111-4111-8111-111111111111",
+    "command_id": "44444444-4444-4444-8444-444444444444",
+    "expected_revision": 0,
+    "expires_at_ms": 1800000000000,
+    "prompt": "Describe this workspace"
+  }
+}
+```
+
+Use the actual session revision and a current command deadline. Vessel selects the
+session's owner under lifecycle arbitration and resumes it only when permitted.
+Helm does not inspect and select a runtime before ordinary reads or submission.
+`execute_tool`, `terminal`, `cancel`, `steer` and `respond` additionally require the
+exact observed `incarnation`; stale or missing identities are refused. `stop` keeps
+its explicit lifecycle identity requirement. Session reads and new turns follow the
+current owner even if an optional old incarnation is supplied.
+
+The public operation list includes snapshot, history/message chunks, run output,
+events, receipts/resolution, submission, steering, cancellation, decisions, tools,
+workflows, terminal interaction and configuration/lifecycle controls. Management
+operations include catalogue, start, inspect, restart, stop, grants, participants
+and owner transfer. Private runtime initialization, health and relinquishment are
+not exposed through an arbitrary command tunnel. Adding an internal runtime command
+does not add a public operation: Vessel's explicit adapter and authorization mapping
+must be updated separately.
+
+A successful session response has this shape:
+
+```json
+{
+  "protocol": 1,
+  "result": {
+    "session_id": "11111111-1111-4111-8111-111111111111",
+    "incarnation": "22222222-2222-4222-8222-222222222222",
+    "result": { "status": "accepted" }
+  },
+  "error": null,
+  "outcome_unknown": false
+}
+```
+
+The operation result shown is illustrative; admission receipts also identify the
+command and run. There is no embedded `RuntimeResponse`, private protocol version,
+runtime token or runtime authorization binding. Errors and `outcome_unknown` appear
+only in the outer service response; authoritative rejection details remain in its
+`result`. A successful command response is not proof of completed execution or
+cleanup. Vessel never acknowledges admission before the runtime's durable receipt.
+Operation-specific result bodies remain JSON projections rather than fully typed
+schemas for every tool/control surface.
+
+SSE requests contain `protocol` and a list of `{session_id, incarnation, after}`
+subscriptions. The incarnation records the client's last observation; Vessel selects
+the current owner. Updates identify the observed owner. An owner transition sets
+`owner_changed` and requests snapshot recovery; cursors remain session-scoped.
+Retained-event gaps likewise require an authorized snapshot. Clients reconnect after
+transport/observation failures without resubmitting commands.
+
+This replaces the former `/v3/process/*` public tunnel. Upgrade Helm, the local
+Vessel supervisor and any scoped gateway together; restart the service to expose the
+new API. Old public endpoints and the pre-HTTP local socket fallback are not served.
+SSH explicitly requires the service API flag, so an older helper fails before
+accepting work. Already-running voyage processes retain private protocol v1 and do
+not need to be killed for the public API change. Pending Helm operation payloads
+retain their serialized names, command IDs, revisions and deadlines, so recovery
+continues to resolve the original command rather than replay it. Enrollment-relay
+wire protocols and transport-lease authority are separate and unchanged.
 
 Supervisor registrations and command IDs, grant hashes/credentials, accepted
 participant bindings/assignments, trusted Vessel keys, signed transfer preparations

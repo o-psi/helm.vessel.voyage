@@ -19,6 +19,9 @@ use tokio::{
 };
 use uuid::Uuid;
 use voyage_protocol::process::*;
+use voyage_protocol::vessel::{
+    MAX_VESSEL_BODY, VESSEL_API_VERSION, VoyageCommand, VoyageReply, VoyageRequest,
+};
 
 pub(super) struct Supervisor {
     pub(super) directory: PathBuf,
@@ -84,9 +87,9 @@ pub async fn serve(directory: PathBuf, binary: PathBuf) -> Result<()> {
         event_capacity: Arc::new(Semaphore::new(16)),
     };
     let app = Router::new()
-        .route("/v3/process/command", post(local_command))
-        .route("/v3/process/events", post(local_events))
-        .layer(axum::extract::DefaultBodyLimit::max(MAX_PROCESS_FRAME))
+        .route(voyage_protocol::vessel::COMMAND_PATH, post(local_command))
+        .route(voyage_protocol::vessel::EVENTS_PATH, post(local_events))
+        .layer(axum::extract::DefaultBodyLimit::max(MAX_VESSEL_BODY))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             local_boundary,
@@ -108,7 +111,7 @@ async fn local_events(
     State(state): State<HttpState>,
     Json(request): Json<VesselEventRequest>,
 ) -> Response {
-    if request.protocol != PROCESS_PROTOCOL
+    if request.protocol != VESSEL_API_VERSION
         || request.subscriptions.is_empty()
         || request.subscriptions.len() > 256
     {
@@ -165,35 +168,55 @@ async fn observe_local(
     subscription: VesselEventSubscription,
 ) -> (VesselEventSubscription, VesselEvent, bool) {
     let session_id = subscription.session_id;
-    let incarnation = subscription.incarnation;
     let response = supervisor
-        .handle(VesselCommand::Forward {
-            session_id,
-            incarnation,
-            command: RuntimeCommand::Events {
-                after: subscription.after,
-                limit: 128,
-                wait_ms: 10_000,
+        .voyage(
+            VoyageRequest {
+                session_id,
+                incarnation: None,
+                command: VoyageCommand::Events {
+                    after: subscription.after,
+                    limit: 128,
+                    wait_ms: 10_000,
+                },
             },
-        })
-        .await
-        .and_then(|value| Ok(serde_json::from_value::<RuntimeResponse>(value)?));
-    let (result, error, outcome_unknown, keep) = match response {
-        Ok(response) => {
-            let keep = response.error.is_none();
-            (
-                response.result,
-                response.error,
-                response.outcome_unknown,
-                keep,
-            )
+            None,
+        )
+        .await;
+    let response = super::api::response(response);
+    let mut subscription = subscription;
+    let old_incarnation = subscription.incarnation;
+    let (result, error, outcome_unknown, keep) = if let Some(error) = response.error {
+        (
+            response.result,
+            Some(error),
+            response.outcome_unknown,
+            false,
+        )
+    } else {
+        match serde_json::from_value::<VoyageReply>(response.result) {
+            Ok(reply) => {
+                subscription.incarnation = reply.incarnation;
+                let mut result = reply.result;
+                if reply.incarnation != old_incarnation {
+                    result["owner_changed"] = Value::Bool(true);
+                    result["replay_gap"] = Value::Bool(true);
+                    result["recovery"] = Value::String("snapshot".into());
+                }
+                (result, None, false, true)
+            }
+            Err(_) => (
+                Value::Null,
+                Some("invalid Vessel observation".into()),
+                false,
+                false,
+            ),
         }
-        Err(error) => (Value::Null, Some(error.to_string()), false, false),
     };
+    let incarnation = subscription.incarnation;
     (
         subscription,
         VesselEvent {
-            protocol: PROCESS_PROTOCOL,
+            protocol: VESSEL_API_VERSION,
             session_id,
             incarnation,
             result,
@@ -259,7 +282,7 @@ async fn local_command(
     State(state): State<HttpState>,
     Json(request): Json<VesselRequest>,
 ) -> Response {
-    if request.protocol != PROCESS_PROTOCOL {
+    if request.protocol != VESSEL_API_VERSION {
         return StatusCode::BAD_REQUEST.into_response();
     }
     let result = tokio::time::timeout(
@@ -271,20 +294,7 @@ async fn local_command(
         Err(anyhow::anyhow!("supervisor request deadline exceeded")
             .context(routing::OutcomeUnknown))
     });
-    let response = match result {
-        Ok(result) => VesselResponse {
-            protocol: PROCESS_PROTOCOL,
-            result,
-            error: None,
-            outcome_unknown: false,
-        },
-        Err(error) => VesselResponse {
-            protocol: PROCESS_PROTOCOL,
-            result: Value::Null,
-            outcome_unknown: error.downcast_ref::<routing::OutcomeUnknown>().is_some(),
-            error: Some(error.to_string()),
-        },
-    };
+    let response = super::api::response(result);
     Json(response).into_response()
 }
 
@@ -326,7 +336,7 @@ impl Supervisor {
             command @ VesselCommand::StartOutbound { .. } => self.start_outbound(command).await,
             command @ VesselCommand::ManagedImport { .. } => self.initialize_managed(command).await,
             VesselCommand::Capabilities => Ok(
-                json!({"protocol":PROCESS_PROTOCOL,"platform":std::env::consts::OS,"features":["catalogue","start","start_configured","inspect","forward","stop","restart","explicit_recovery","durable_receipts","history_paging","events","sse_events","decisions","lifecycle","branch","ordinary_import","managed_import","outbound_adapter","scoped_grants","revocation","participant_bindings","participant_assignments","signed_owner_transfer"],"max_frame_bytes":MAX_PROCESS_FRAME,"capacity":null,"max_connections":64}),
+                json!({"protocol":VESSEL_API_VERSION,"platform":std::env::consts::OS,"features":["catalogue","start","start_configured","inspect","voyage_operations","stop","restart","explicit_recovery","durable_receipts","history_paging","events","sse_events","decisions","lifecycle","branch","ordinary_import","managed_import","outbound_adapter","scoped_grants","revocation","participant_bindings","participant_assignments","signed_owner_transfer"],"max_frame_bytes":MAX_VESSEL_BODY,"capacity":null,"max_connections":64}),
             ),
             VesselCommand::Catalogue => {
                 let registrations: Vec<_> = self
@@ -384,26 +394,11 @@ impl Supervisor {
                     .await,
                 )?)
             }
-            VesselCommand::Forward {
-                session_id,
-                incarnation,
-                command,
-            } => {
-                ensure!(
-                    !matches!(command, RuntimeCommand::Stop),
-                    "use Vessel stop for lifecycle tracking"
-                );
-                Ok(serde_json::to_value(
-                    self.forward_resuming(session_id, incarnation, command, None)
-                        .await?,
-                )?)
-            }
+            VesselCommand::Voyage(request) => self.voyage(request, None).await,
             VesselCommand::Stop {
                 session_id,
                 incarnation,
-            } => Ok(serde_json::to_value(
-                self.stop(session_id, incarnation, None).await?,
-            )?),
+            } => super::api::reply(self.stop(session_id, incarnation, None).await?),
         }
     }
 

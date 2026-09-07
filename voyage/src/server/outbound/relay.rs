@@ -1,4 +1,5 @@
 //! Enrollment transport owner only: no journal owner, model, tools, or agent loop.
+use super::wake::wake;
 use super::{
     authority::features,
     proxy::{self, ContextData, Hello, Identity, Message},
@@ -135,33 +136,6 @@ pub async fn run(directory: PathBuf, binary: PathBuf) -> Result<()> {
     let _ = signal_task.await;
     std::fs::remove_file(endpoint)?;
     Ok(())
-}
-
-async fn wake(directory: &Path, session_id: uuid::Uuid) -> Result<()> {
-    let vessel = directory
-        .parent()
-        .and_then(Path::parent)
-        .context("outbound session directory missing supervisor")?;
-    tokio::time::timeout(Duration::from_secs(25), async {
-        let mut socket = UnixStream::connect(vessel.join("vessel.sock")).await?;
-        ensure!(
-            socket.peer_cred()?.uid() == unsafe { libc::geteuid() },
-            "supervisor peer mismatch"
-        );
-        write_frame(
-            &mut socket,
-            &process::VesselRequest {
-                protocol: process::PROCESS_PROTOCOL,
-                command: process::VesselCommand::Wake { session_id },
-            },
-        )
-        .await?;
-        let reply: process::VesselResponse = read_frame(&mut socket).await?;
-        ensure!(reply.error.is_none(), "outbound wake refused");
-        Ok::<_, anyhow::Error>(())
-    })
-    .await
-    .context("outbound wake timed out")?
 }
 
 async fn bridge(

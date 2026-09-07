@@ -1,7 +1,7 @@
 //! Operator panels read the active owner's real controls and keep their target.
 use super::{App, observe::Update, state::Target};
 use anyhow::{Context, Result, ensure};
-use voyage_protocol::process::RuntimeCommand;
+use voyage_protocol::vessel::VoyageCommand;
 
 impl App {
     pub(super) fn inspect_control(&mut self, target: Target, section: &str) -> Result<()> {
@@ -21,10 +21,10 @@ impl App {
         );
         tokio::spawn(async move {
             let result = client
-                .forward(
+                .voyage(
                     target.session,
                     incarnation,
-                    RuntimeCommand::Controls {
+                    VoyageCommand::Controls {
                         run_id,
                         section: section.clone(),
                     },
@@ -50,14 +50,14 @@ pub(super) fn mutation(
     command_id: uuid::Uuid,
     expected_revision: u64,
     expires_at_ms: u64,
-) -> Result<Option<RuntimeCommand>> {
+) -> Result<Option<VoyageCommand>> {
     Ok(if let Some(id) = text.strip_prefix("/clear ") {
         let confirm_session_id = id.parse()?;
         ensure!(
             confirm_session_id == view.process.session_id,
             "type /clear followed by this voyage's full UUID"
         );
-        Some(RuntimeCommand::Clear {
+        Some(VoyageCommand::Clear {
             command_id,
             expected_revision,
             expires_at_ms,
@@ -67,7 +67,7 @@ pub(super) fn mutation(
         let retain = retain
             .parse::<u32>()
             .context("use /compact NUMBER_OF_MESSAGES")?;
-        Some(RuntimeCommand::Compact {
+        Some(VoyageCommand::Compact {
             command_id,
             expected_revision,
             expires_at_ms,
@@ -79,14 +79,14 @@ pub(super) fn mutation(
             config_path.is_absolute(),
             "configuration path must be absolute on the executing host"
         );
-        Some(RuntimeCommand::Configure {
+        Some(VoyageCommand::Configure {
             command_id,
             expected_revision,
             expires_at_ms,
             config_path,
         })
     } else if text == "/archive" || text == "/restore" {
-        Some(RuntimeCommand::Archive {
+        Some(VoyageCommand::Archive {
             command_id,
             expected_revision,
             expires_at_ms,
@@ -98,7 +98,7 @@ pub(super) fn mutation(
             confirm_session_id == view.process.session_id,
             "type /delete followed by this voyage's full UUID to confirm history deletion"
         );
-        Some(RuntimeCommand::Delete {
+        Some(VoyageCommand::Delete {
             command_id,
             expected_revision,
             expires_at_ms,
@@ -116,7 +116,7 @@ pub(super) fn mutation(
             .filter(|r| r.active())
             .map(|r| r.run_id);
         Some(match run_id {
-            Some(run_id) => RuntimeCommand::ExecuteTool {
+            Some(run_id) => VoyageCommand::ExecuteTool {
                 command_id,
                 expected_revision,
                 expires_at_ms,
@@ -124,7 +124,7 @@ pub(super) fn mutation(
                 name: name.into(),
                 arguments,
             },
-            None => RuntimeCommand::OperatorTool {
+            None => VoyageCommand::OperatorTool {
                 command_id,
                 expected_revision,
                 expires_at_ms,

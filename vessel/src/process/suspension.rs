@@ -120,6 +120,17 @@ impl Supervisor {
         command: RuntimeCommand,
         authorization: Option<GrantBinding>,
     ) -> Result<RuntimeResponse> {
+        self.dispatch_session(session, Some(incarnation), command, authorization)
+            .await
+    }
+
+    pub(super) async fn dispatch_session(
+        &self,
+        session: Uuid,
+        expected_incarnation: Option<Uuid>,
+        command: RuntimeCommand,
+        authorization: Option<GrantBinding>,
+    ) -> Result<RuntimeResponse> {
         // A long-lived SSE observer must never hold the lifecycle lock and delay
         // admission, suspension or recovery. Events are read-only, bounded and
         // incarnation checked. A concurrent lifecycle transition can end this
@@ -132,9 +143,10 @@ impl Supervisor {
         {
             let registration = self.registration(session).await?;
             ensure!(
-                registration.incarnation == incarnation,
+                expected_incarnation.is_none_or(|expected| registration.incarnation == expected),
                 "stale runtime incarnation"
             );
+            let incarnation = registration.incarnation;
             let directory = registry::directory(&self.directory, session);
             if super::recovery::suspended(&directory, &registration) {
                 let read = || {
@@ -184,9 +196,10 @@ impl Supervisor {
         let _guard = lock.lock().await;
         let mut registration = self.registration(session).await?;
         ensure!(
-            registration.incarnation == incarnation,
+            expected_incarnation.is_none_or(|expected| registration.incarnation == expected),
             "stale runtime incarnation"
         );
+        let incarnation = registration.incarnation;
         let directory = registry::directory(&self.directory, session);
         let deadline = tokio::time::Instant::now() + Duration::from_secs(12);
         let mut resumed = false;

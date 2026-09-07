@@ -8,7 +8,7 @@ use crossterm::{
 use futures_util::StreamExt;
 use std::io::IsTerminal;
 use uuid::Uuid;
-use voyage_protocol::process::{ProcessInfo, RuntimeCommand, TerminalOperation, VesselCommand};
+use voyage_protocol::vessel::{ProcessInfo, TerminalAction, VesselCommand, VoyageCommand};
 
 struct Screen;
 impl Drop for Screen {
@@ -57,16 +57,16 @@ pub async fn attach_observed(
         process.incarnation == incarnation,
         "Voyage restarted; reopen the terminal browser before attaching"
     );
-    let command = |operation| RuntimeCommand::Terminal {
+    let command = |operation| VoyageCommand::Terminal {
         run_id,
         terminal_id,
         operation,
     };
     client
-        .forward(
+        .voyage(
             session_id,
             process.incarnation,
-            command(TerminalOperation::Attach),
+            command(TerminalAction::Attach),
         )
         .await?;
     terminal::enable_raw_mode()?;
@@ -78,10 +78,10 @@ pub async fn attach_observed(
     )?;
     let (columns, rows) = terminal::size()?;
     client
-        .forward(
+        .voyage(
             session_id,
             incarnation,
-            command(TerminalOperation::Resize {
+            command(TerminalAction::Resize {
                 columns: columns.clamp(1, 500),
                 rows: rows.saturating_sub(4).clamp(1, 500),
             }),
@@ -98,10 +98,10 @@ pub async fn attach_observed(
             Some(operation) => Some(operation),
             None => receiver.recv().await,
         } {
-            if let TerminalOperation::Write { bytes } = &mut operation {
+            if let TerminalAction::Write { bytes } = &mut operation {
                 while let Ok(next) = receiver.try_recv() {
                     match next {
-                        TerminalOperation::Write { bytes: more }
+                        TerminalAction::Write { bytes: more }
                             if bytes.len() + more.len() <= 65536 =>
                         {
                             bytes.extend(more)
@@ -115,10 +115,10 @@ pub async fn attach_observed(
             }
             // Sequential sends preserve private input ordering; never retry uncertain writes.
             worker_client
-                .forward(
+                .voyage(
                     session_id,
                     process.incarnation,
-                    RuntimeCommand::Terminal {
+                    VoyageCommand::Terminal {
                         run_id,
                         terminal_id,
                         operation,
@@ -137,13 +137,13 @@ pub async fn attach_observed(
         loop {
             tick.tick().await;
             let result = observer_client
-                .forward(
+                .voyage(
                     session_id,
                     process.incarnation,
-                    RuntimeCommand::Terminal {
+                    VoyageCommand::Terminal {
                         run_id,
                         terminal_id,
-                        operation: TerminalOperation::Snapshot,
+                        operation: TerminalAction::Snapshot,
                     },
                 )
                 .await
@@ -164,10 +164,10 @@ pub async fn attach_observed(
                         Event::Key(key) if key.kind != crossterm::event::KeyEventKind::Release => {
                             if key.modifiers.contains(KeyModifiers::CONTROL) && matches!(key.code,KeyCode::Char(']'|'5')) { break; }
                             let Some(bytes) = key_bytes(key.code, key.modifiers) else {continue};
-                            TerminalOperation::Write { bytes }
+                            TerminalAction::Write { bytes }
                         }
-                        Event::Paste(text) => { ensure!(text.len() <= 65536, "private paste exceeds 64 KiB"); TerminalOperation::Write {bytes:text.into_bytes()} }
-                        Event::Resize(columns, rows) => TerminalOperation::Resize {columns:columns.clamp(1,500), rows:rows.saturating_sub(4).clamp(1,500)},
+                        Event::Paste(text) => { ensure!(text.len() <= 65536, "private paste exceeds 64 KiB"); TerminalAction::Write {bytes:text.into_bytes()} }
+                        Event::Resize(columns, rows) => TerminalAction::Resize {columns:columns.clamp(1,500), rows:rows.saturating_sub(4).clamp(1,500)},
                         _ => continue,
                     };
                     sender.try_send(operation).context("private terminal input queue full; attachment stopped without replay")?;

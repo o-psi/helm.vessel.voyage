@@ -3,8 +3,8 @@ use anyhow::{Context, Result, ensure};
 use futures_util::StreamExt;
 use serde_json::Value;
 use uuid::Uuid;
-use voyage_protocol::process::{
-    ProcessInfo, RuntimeCommand, VesselCommand, VesselEvent, VesselEventSubscription,
+use voyage_protocol::vessel::{
+    ProcessInfo, VesselCommand, VesselEvent, VesselEventSubscription, VoyageCommand,
 };
 
 pub(super) struct Connection<'a> {
@@ -35,10 +35,10 @@ impl<'a> Connection<'a> {
             process,
         })
     }
-    pub async fn forward(&self, command: RuntimeCommand) -> Result<Value> {
+    pub async fn voyage(&self, command: VoyageCommand) -> Result<Value> {
         let (value, incarnation) = self
             .client
-            .forward_observed(
+            .voyage_observed(
                 self.process.session_id,
                 self.observed_incarnation.get(),
                 command,
@@ -48,7 +48,7 @@ impl<'a> Connection<'a> {
         Ok(value)
     }
     pub async fn snapshot(&self) -> Result<Value> {
-        self.forward(RuntimeCommand::Snapshot).await
+        self.voyage(VoyageCommand::Snapshot).await
     }
     pub async fn event_stream(
         &self,
@@ -73,8 +73,7 @@ impl<'a> Connection<'a> {
     ) -> Result<()> {
         let event = stream.next().await.context("Vessel event stream ended")??;
         ensure!(
-            event.session_id == self.process.session_id
-                && event.incarnation == self.observed_incarnation.get(),
+            event.session_id == self.process.session_id,
             "Vessel event stream identity mismatch"
         );
         if let Some(error) = event.error {
@@ -89,6 +88,7 @@ impl<'a> Connection<'a> {
                 crate::process_client::safe(&error)
             );
         }
+        self.observed_incarnation.set(event.incarnation);
         Ok(())
     }
     pub async fn wait_update(
@@ -145,7 +145,7 @@ impl<'a> Connection<'a> {
             Some("accepted" | "running" | "awaiting_decision" | "cancel_requested")
         );
         let command = if active && steer {
-            RuntimeCommand::Steer {
+            VoyageCommand::Steer {
                 command_id,
                 expected_revision,
                 expires_at_ms,
@@ -157,7 +157,7 @@ impl<'a> Connection<'a> {
                 !active,
                 "voyage already has an active run; use chat to steer it"
             );
-            RuntimeCommand::Submit {
+            VoyageCommand::Submit {
                 command_id,
                 expected_revision,
                 expires_at_ms,
@@ -168,7 +168,7 @@ impl<'a> Connection<'a> {
             "Voyage {} · command {command_id}; retrieve this exact receipt if delivery is lost",
             self.process.session_id
         );
-        let receipt = self.forward(command).await?;
+        let receipt = self.voyage(command).await?;
         ensure!(
             receipt["status"] != "rejected",
             "command rejected: {}",

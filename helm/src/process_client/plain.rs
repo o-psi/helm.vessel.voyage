@@ -9,7 +9,7 @@ use super::{safe, transport::Client};
 use anyhow::{Context, Result, ensure};
 use std::io::{IsTerminal, Write};
 use uuid::Uuid;
-use voyage_protocol::process::RuntimeCommand;
+use voyage_protocol::vessel::VoyageCommand;
 
 pub async fn run(
     client: &Client,
@@ -138,7 +138,7 @@ async fn command(
     let run_id =
         serde_json::from_value(snapshot["run"]["run_id"].clone()).context("no current run")?;
     let command = match name {
-        "/cancel" => RuntimeCommand::Cancel {
+        "/cancel" => VoyageCommand::Cancel {
             command_id,
             expected_revision,
             expires_at_ms,
@@ -174,7 +174,7 @@ async fn command(
                     "denied"
                 })
             };
-            RuntimeCommand::Respond {
+            VoyageCommand::Respond {
                 command_id,
                 expected_revision,
                 expires_at_ms,
@@ -188,7 +188,7 @@ async fn command(
         ),
     };
     eprintln!("Command {command_id}");
-    let receipt = connection.forward(command).await?;
+    let receipt = connection.voyage(command).await?;
     eprintln!("{}", safe(&receipt.to_string()));
     Ok(())
 }

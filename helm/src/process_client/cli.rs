@@ -166,7 +166,7 @@ pub enum ConnectedCommand {
         #[arg(long)]
         command_id: Uuid,
     },
-    /// Send one typed runtime command as JSON, including history, steering or decisions.
+    /// Send one typed public voyage operation as JSON, including history, steering or decisions.
     Request { session: Uuid, request: String },
 }
 

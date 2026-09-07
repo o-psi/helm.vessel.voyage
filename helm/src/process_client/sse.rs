@@ -2,7 +2,7 @@
 use anyhow::Result;
 use futures_util::{StreamExt, stream::BoxStream};
 use std::time::Duration;
-use voyage_protocol::process::{MAX_PROCESS_FRAME, PROCESS_PROTOCOL, VesselEvent};
+use voyage_protocol::vessel::{MAX_VESSEL_BODY, VESSEL_API_VERSION, VesselEvent};
 
 pub(super) fn decode(response: reqwest::Response) -> BoxStream<'static, Result<VesselEvent>> {
     Box::pin(async_stream::try_stream! {
@@ -32,7 +32,7 @@ pub(super) fn decode(response: reqwest::Response) -> BoxStream<'static, Result<V
             };
             let chunk = chunk.map_err(|_| anyhow::anyhow!("Vessel event stream interrupted"))?;
             check(
-                pending.len().saturating_add(chunk.len()) <= MAX_PROCESS_FRAME,
+                pending.len().saturating_add(chunk.len()) <= MAX_VESSEL_BODY,
                 "Vessel SSE event exceeds frame limit",
             )?;
             pending.extend_from_slice(&chunk);
@@ -58,7 +58,7 @@ pub(super) fn decode(response: reqwest::Response) -> BoxStream<'static, Result<V
                 check(kind == Some("update"), "unsupported Vessel SSE event")?;
                 let event: VesselEvent = serde_json::from_str(&data)
                     .map_err(|_| anyhow::anyhow!("invalid Vessel SSE event"))?;
-                check(event.protocol == PROCESS_PROTOCOL, "unsupported Vessel event protocol")?;
+                check(event.protocol == VESSEL_API_VERSION, "unsupported Vessel event protocol")?;
                 yield event;
             }
         }

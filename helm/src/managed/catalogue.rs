@@ -1,7 +1,7 @@
 //! Merge bounded metadata pages without exposing canonical transcript content.
 use super::*;
 use helm::process_client::transport::Client;
-use voyage_protocol::process::{ProcessInfo, RuntimeCommand, VesselCommand};
+use voyage_protocol::vessel::{ProcessInfo, VesselCommand, VoyageCommand};
 
 pub(super) async fn list(
     client: &Client,
@@ -37,7 +37,7 @@ pub(super) async fn list(
         if let Some(incarnation) = row.get("incarnation") {
             let incarnation = serde_json::from_value(incarnation.clone())?;
             match client
-                .forward(id, incarnation, RuntimeCommand::Snapshot)
+                .voyage(id, incarnation, VoyageCommand::Snapshot)
                 .await
             {
                 Ok(snapshot) => {

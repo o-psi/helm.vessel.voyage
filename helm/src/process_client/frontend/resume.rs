@@ -17,10 +17,10 @@ pub(super) async fn open(
             continue;
         }
         if let Ok(snapshot) = client
-            .forward(
+            .voyage(
                 process.session_id,
                 process.incarnation,
-                RuntimeCommand::Snapshot,
+                VoyageCommand::Snapshot,
             )
             .await
             && snapshot["name"].as_str() == Some(reference)
@@ -39,7 +39,7 @@ pub(super) async fn open(
                 "resume workspace differs from canonical owner"
             );
         }
-        if process.state == voyage_protocol::process::ProcessState::Stopped {
+        if process.state == voyage_protocol::vessel::ProcessState::Stopped {
             return Ok(serde_json::from_value(
                 client
                     .request(VesselCommand::Restart {
@@ -53,8 +53,8 @@ pub(super) async fn open(
         ensure!(
             matches!(
                 process.state,
-                voyage_protocol::process::ProcessState::Live
-                    | voyage_protocol::process::ProcessState::Suspended
+                voyage_protocol::vessel::ProcessState::Live
+                    | voyage_protocol::vessel::ProcessState::Suspended
             ),
             "owner unavailable or cleanup unconfirmed; inspect it before recovery"
         );

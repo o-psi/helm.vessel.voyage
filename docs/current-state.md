@@ -202,6 +202,14 @@ continuation, unsent drafts and private terminal input are excluded.
 
 ## Interfaces and controls
 
+Helm uses the independently versioned public Vessel API at `/v1/vessel/command`
+and `/v1/vessel/events`. Its explicit session operations are distinct from private
+runtime commands. Vessel selects owners under lifecycle arbitration, translates
+requests and normalizes responses; live-resource actions retain exact incarnation
+fences. Public SSE follows session owners and reports observed incarnation changes.
+The private runtime IPC remains protocol v1. See [process access](process-access.md#wire-and-retained-state)
+for wire examples and the coordinated Helm/Vessel gateway upgrade requirement.
+
 The connected TUI combines local HTTP, scoped HTTPS and SSH compatibility routes. It retains separate
 drafts, prompt navigation, scroll, pending command identities and observation
 cursors per voyage. Switching views does not redirect in-flight actions. Background

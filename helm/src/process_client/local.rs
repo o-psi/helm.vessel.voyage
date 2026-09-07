@@ -2,8 +2,8 @@
 use super::transport::Client;
 use anyhow::{Context, Result, ensure};
 use std::{io::Read, path::Path, time::Duration};
-use voyage_protocol::process::{
-    LocalAccessCredential, MAX_PROCESS_FRAME, PROCESS_PROTOCOL, VesselCommand, VesselEventRequest,
+use voyage_protocol::vessel::{
+    LocalAccessCredential, MAX_VESSEL_BODY, VESSEL_API_VERSION, VesselCommand, VesselEventRequest,
     VesselRequest, VesselResponse,
 };
 
@@ -118,18 +118,18 @@ pub(super) async fn exchange(
     directory: &Path,
     command: VesselCommand,
 ) -> Result<serde_json::Value> {
-    if !directory.join("process-http.json").try_exists()? {
-        return legacy_exchange(directory, command).await;
-    }
     let credential = credential(directory)?;
     let mut response = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .timeout(Duration::from_secs(15))
         .build()?
-        .post(endpoint(&credential, "/v3/process/command")?)
+        .post(endpoint(
+            &credential,
+            voyage_protocol::vessel::COMMAND_PATH,
+        )?)
         .bearer_auth(&credential.token)
         .json(&VesselRequest {
-            protocol: PROCESS_PROTOCOL,
+            protocol: VESSEL_API_VERSION,
             command,
         })
         .send()
@@ -147,7 +147,7 @@ pub(super) async fn exchange(
         anyhow::anyhow!("local Vessel response interrupted; command delivery may be unknown")
     })? {
         ensure!(
-            bytes.len().saturating_add(chunk.len()) <= MAX_PROCESS_FRAME,
+            bytes.len().saturating_add(chunk.len()) <= MAX_VESSEL_BODY,
             "local Vessel response exceeds frame limit"
         );
         bytes.extend_from_slice(&chunk);
@@ -156,42 +156,7 @@ pub(super) async fn exchange(
         anyhow::anyhow!("invalid local Vessel response; command delivery may be unknown")
     })?;
     ensure!(
-        reply.protocol == PROCESS_PROTOCOL,
-        "unsupported Vessel protocol"
-    );
-    if let Some(error) = reply.error {
-        if reply.outcome_unknown {
-            anyhow::bail!("Vessel command outcome unknown: {}", super::safe(&error));
-        }
-        return Err(
-            super::transport::Refusal(format!("Vessel refused: {}", super::safe(&error))).into(),
-        );
-    }
-    Ok(reply.result)
-}
-
-/// Upgrade bridge for a supervisor launched before the HTTP transport existed.
-async fn legacy_exchange(directory: &Path, command: VesselCommand) -> Result<serde_json::Value> {
-    use voyage_protocol::process::{read_frame, write_frame};
-    check_private_directory(directory)?;
-    let mut socket = tokio::net::UnixStream::connect(directory.join("vessel.sock"))
-        .await
-        .context("Vessel unavailable; accepted voyages may still be running")?;
-    ensure!(
-        socket.peer_cred()?.uid() == unsafe { libc::geteuid() },
-        "Vessel listener belongs to another user"
-    );
-    write_frame(
-        &mut socket,
-        &VesselRequest {
-            protocol: PROCESS_PROTOCOL,
-            command,
-        },
-    )
-    .await?;
-    let reply: VesselResponse = read_frame(&mut socket).await?;
-    ensure!(
-        reply.protocol == PROCESS_PROTOCOL,
+        reply.protocol == VESSEL_API_VERSION,
         "unsupported Vessel protocol"
     );
     if let Some(error) = reply.error {
@@ -208,14 +173,14 @@ async fn legacy_exchange(directory: &Path, command: VesselCommand) -> Result<ser
 pub(super) async fn events(
     directory: &Path,
     request: VesselEventRequest,
-) -> Result<futures_util::stream::BoxStream<'static, Result<voyage_protocol::process::VesselEvent>>>
+) -> Result<futures_util::stream::BoxStream<'static, Result<voyage_protocol::vessel::VesselEvent>>>
 {
     let credential = credential(directory)?;
     let response = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .connect_timeout(Duration::from_secs(8))
         .build()?
-        .post(endpoint(&credential, "/v3/process/events")?)
+        .post(endpoint(&credential, voyage_protocol::vessel::EVENTS_PATH)?)
         .header(reqwest::header::ACCEPT, "text/event-stream")
         .bearer_auth(&credential.token)
         .json(&request)

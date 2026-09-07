@@ -28,3 +28,6 @@ pub mod control;
 
 /// Versioned independent runtime and local supervisor transport.
 pub mod process;
+
+/// Public client-to-Vessel service contract.
+pub mod vessel;

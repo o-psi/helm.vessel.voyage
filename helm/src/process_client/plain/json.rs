@@ -1,5 +1,5 @@
 //! Bounded machine-readable observation; never resubmits an admitted command.
-use super::{RuntimeCommand, session::Connection};
+use super::{VoyageCommand, session::Connection};
 use anyhow::{Context, Result, ensure};
 use serde_json::json;
 use uuid::Uuid;
@@ -14,7 +14,7 @@ pub(super) async fn follow(connection: &Connection<'_>, run_id: Uuid) -> Result<
     let mut events = connection.event_stream(cursor).await?;
     loop {
         let output = connection
-            .forward(RuntimeCommand::RunOutput {
+            .voyage(VoyageCommand::RunOutput {
                 run_id,
                 offset,
                 limit: 65536,
@@ -53,7 +53,7 @@ pub(super) async fn follow(connection: &Connection<'_>, run_id: Uuid) -> Result<
             ensure!(state == "completed", "run ended with state {state}");
             return Ok(());
         }
-        let decisions = connection.forward(RuntimeCommand::Decisions).await?;
+        let decisions = connection.voyage(VoyageCommand::Decisions).await?;
         for decision in decisions.as_array().into_iter().flatten() {
             if decision["run_id"] == json!(run_id)
                 && let Some(id) = decision["decision_id"].as_str()

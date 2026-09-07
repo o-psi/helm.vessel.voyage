@@ -5,7 +5,7 @@ use super::super::{
 use super::now_ms;
 use anyhow::{Context, Result, ensure};
 use uuid::Uuid;
-use voyage_protocol::process::RuntimeCommand;
+use voyage_protocol::vessel::VoyageCommand;
 
 impl App {
     pub(super) fn respond_to_interaction(
@@ -41,7 +41,7 @@ impl App {
             "request expired; nothing sent"
         );
         let command_id = Uuid::new_v4();
-        let command = RuntimeCommand::Respond {
+        let command = VoyageCommand::Respond {
             command_id,
             expected_revision: snapshot.revision,
             expires_at_ms: decision.expires_at_ms.min(now_ms().saturating_add(60_000)),

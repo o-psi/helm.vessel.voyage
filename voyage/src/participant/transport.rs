@@ -1,6 +1,7 @@
 use anyhow::{Result, ensure};
 use std::{path::Path, time::Duration};
 use voyage_protocol::process::*;
+use voyage_protocol::vessel::{MAX_VESSEL_BODY, VESSEL_API_VERSION};
 
 pub(super) fn credential(path: &Path) -> Result<AccessCredential> {
     #[cfg(unix)]
@@ -64,13 +65,14 @@ pub(super) async fn request(
         .build()?;
     let mut response = client
         .post(format!(
-            "{}/v3/process/command",
-            credential.endpoint.trim_end_matches('/')
+            "{}{}",
+            credential.endpoint.trim_end_matches('/'),
+            voyage_protocol::vessel::COMMAND_PATH
         ))
         .bearer_auth(&credential.token)
         .header("x-voyage-grant", credential.grant_id.to_string())
         .json(&VesselRequest {
-            protocol: PROCESS_PROTOCOL,
+            protocol: VESSEL_API_VERSION,
             command,
         })
         .send()
@@ -83,14 +85,14 @@ pub(super) async fn request(
     let mut bytes = Vec::new();
     while let Some(chunk) = response.chunk().await? {
         ensure!(
-            bytes.len() + chunk.len() <= MAX_PROCESS_FRAME,
+            bytes.len() + chunk.len() <= MAX_VESSEL_BODY,
             "participant frame exceeds limit"
         );
         bytes.extend_from_slice(&chunk);
     }
     let response: VesselResponse = serde_json::from_slice(&bytes)?;
     ensure!(
-        response.protocol == PROCESS_PROTOCOL,
+        response.protocol == VESSEL_API_VERSION,
         "participant protocol mismatch"
     );
     Ok(response)

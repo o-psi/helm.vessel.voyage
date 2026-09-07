@@ -33,19 +33,19 @@ pub async fn run(
         } else {
             let input_id = Uuid::new_v4();
             client
-                .forward(
+                .voyage(
                     process.session_id,
                     process.incarnation,
-                    RuntimeCommand::WorkflowInputs { input_id, values },
+                    VoyageCommand::WorkflowInputs { input_id, values },
                 )
                 .await?;
             Some(input_id)
         };
         let snapshot = client
-            .forward(
+            .voyage(
                 process.session_id,
                 process.incarnation,
-                RuntimeCommand::Snapshot,
+                VoyageCommand::Snapshot,
             )
             .await?;
         let expected_revision = snapshot["revision"]
@@ -72,10 +72,10 @@ pub async fn run(
             invocation.id, process.session_id
         );
         let receipt = client
-            .forward(
+            .voyage(
                 process.session_id,
                 process.incarnation,
-                RuntimeCommand::WorkflowSubmit {
+                VoyageCommand::WorkflowSubmit {
                     command_id,
                     expected_revision,
                     expires_at_ms: deadline()?,

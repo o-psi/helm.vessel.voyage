@@ -6,7 +6,7 @@ use super::{
 };
 use anyhow::{Context, Result, ensure};
 use uuid::Uuid;
-use voyage_protocol::process::{ProcessInfo, ProcessState, RuntimeCommand, VesselCommand};
+use voyage_protocol::vessel::{ProcessInfo, ProcessState, VesselCommand, VoyageCommand};
 
 impl App {
     pub(super) fn show_archives(&mut self, archived: bool) {
@@ -68,17 +68,13 @@ impl App {
                     })
                     .await;
                 let snapshot = client
-                    .forward(
-                        target.session,
-                        process.incarnation,
-                        RuntimeCommand::Snapshot,
-                    )
+                    .voyage(target.session, process.incarnation, VoyageCommand::Snapshot)
                     .await?;
                 client
-                    .forward(
+                    .voyage(
                         target.session,
                         process.incarnation,
-                        RuntimeCommand::Archive {
+                        VoyageCommand::Archive {
                             command_id,
                             expected_revision: snapshot["revision"]
                                 .as_u64()

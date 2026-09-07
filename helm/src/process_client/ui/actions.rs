@@ -6,7 +6,7 @@ use super::{
 };
 use anyhow::{Context, Result, ensure};
 use uuid::Uuid;
-use voyage_protocol::process::RuntimeCommand;
+use voyage_protocol::vessel::VoyageCommand;
 
 impl App {
     pub fn send(&mut self) -> Result<()> {
@@ -203,7 +203,7 @@ impl App {
                 }
                 _ => unreachable!(),
             };
-            RuntimeCommand::Respond {
+            VoyageCommand::Respond {
                 command_id,
                 expected_revision,
                 expires_at_ms: expires_at_ms.min(decision.expires_at_ms),
@@ -212,14 +212,14 @@ impl App {
                 response,
             }
         } else if let Some(name) = command_text.strip_prefix("/rename ") {
-            RuntimeCommand::Rename {
+            VoyageCommand::Rename {
                 command_id,
                 expected_revision,
                 expires_at_ms,
                 name: name.into(),
             }
         } else if let Some(model) = command_text.strip_prefix("/model ") {
-            RuntimeCommand::SetModel {
+            VoyageCommand::SetModel {
                 command_id,
                 expected_revision,
                 expires_at_ms,
@@ -231,7 +231,7 @@ impl App {
                 .as_ref()
                 .filter(|run| run.active())
                 .context("no observed active run to cancel")?;
-            RuntimeCommand::Cancel {
+            VoyageCommand::Cancel {
                 command_id,
                 expected_revision,
                 expires_at_ms,
@@ -240,7 +240,7 @@ impl App {
         } else if command_text.starts_with('/') {
             anyhow::bail!("unknown command; /help lists connected controls");
         } else if let Some(run) = snapshot.run.as_ref().filter(|run| run.active()) {
-            RuntimeCommand::Steer {
+            VoyageCommand::Steer {
                 command_id,
                 expected_revision,
                 expires_at_ms,
@@ -248,7 +248,7 @@ impl App {
                 prompt: draft.clone(),
             }
         } else {
-            RuntimeCommand::Submit {
+            VoyageCommand::Submit {
                 command_id,
                 expected_revision,
                 expires_at_ms,
@@ -280,18 +280,18 @@ impl App {
         Ok(())
     }
 
-    pub(super) fn dispatch(&mut self, target: Target, command_id: Uuid, command: RuntimeCommand) {
+    pub(super) fn dispatch(&mut self, target: Target, command_id: Uuid, command: VoyageCommand) {
         let incarnation = self.views[&target].process.incarnation;
         let client = self.clients[target.route].clone();
         let sender = self.sender.clone();
         self.status = "Sending...".into();
         let resolving = matches!(
             command,
-            RuntimeCommand::Resolve { .. } | RuntimeCommand::Receipt { .. }
+            VoyageCommand::Resolve { .. } | VoyageCommand::Receipt { .. }
         );
         tokio::spawn(async move {
             let mut result = client
-                .forward(target.session, incarnation, command.clone())
+                .voyage(target.session, incarnation, command.clone())
                 .await;
             // Bounded status recovery only. Never replay the submitted mutation.
             if resolving {
@@ -304,7 +304,7 @@ impl App {
                     }
                     tokio::time::sleep(std::time::Duration::from_millis(750)).await;
                     result = client
-                        .forward(target.session, incarnation, command.clone())
+                        .voyage(target.session, incarnation, command.clone())
                         .await;
                 }
             }

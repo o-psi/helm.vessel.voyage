@@ -2,7 +2,7 @@ use super::composer::{Composer, PromptHistory};
 use serde::{Deserialize, Serialize};
 use std::time::Instant;
 use uuid::Uuid;
-use voyage_protocol::process::ProcessInfo;
+use voyage_protocol::vessel::ProcessInfo;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Target {
@@ -134,26 +134,26 @@ pub struct Pending {
     pub preserve_draft: bool,
     /// Exact public request retained before dispatch; never private input.
     #[serde(default)]
-    pub original: Option<Box<voyage_protocol::process::RuntimeCommand>>,
+    pub original: Option<Box<voyage_protocol::vessel::VoyageCommand>>,
     /// Vessel lifecycle operations have separate admission semantics.
     #[serde(default)]
     pub receipt_only: bool,
 }
 
 impl Pending {
-    pub fn resolution(&self) -> voyage_protocol::process::RuntimeCommand {
-        use voyage_protocol::process::RuntimeCommand;
+    pub fn resolution(&self) -> voyage_protocol::vessel::VoyageCommand {
+        use voyage_protocol::vessel::VoyageCommand;
         if self.receipt_only
             || (self.original.is_none()
                 && (self.draft.trim() == "/branch"
                     || self.draft.trim_start().starts_with("/branch ")
                     || self.draft.trim() == "/restore"))
         {
-            RuntimeCommand::Receipt {
+            VoyageCommand::Receipt {
                 command_id: self.command_id,
             }
         } else {
-            RuntimeCommand::Resolve {
+            VoyageCommand::Resolve {
                 command_id: self.command_id,
                 original: self.original.clone(),
             }

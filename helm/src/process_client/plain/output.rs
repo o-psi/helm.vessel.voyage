@@ -3,7 +3,7 @@ use crate::process_client::safe;
 use anyhow::{Context, Result, ensure};
 use std::io::Write;
 use uuid::Uuid;
-use voyage_protocol::process::RuntimeCommand;
+use voyage_protocol::vessel::VoyageCommand;
 
 pub(super) async fn drain(
     connection: &Connection<'_>,
@@ -13,7 +13,7 @@ pub(super) async fn drain(
     // A bounded batch leaves time for input even if a provider floods output.
     for _ in 0..8 {
         let value = connection
-            .forward(RuntimeCommand::RunOutput {
+            .voyage(VoyageCommand::RunOutput {
                 run_id,
                 offset: *offset,
                 limit: 65536,
@@ -64,7 +64,7 @@ pub(super) async fn follow(connection: &Connection<'_>, run_id: Uuid) -> Result<
             ensure!(state == "completed", "run ended with state {state}");
             return Ok(());
         }
-        let decisions = connection.forward(RuntimeCommand::Decisions).await?;
+        let decisions = connection.voyage(VoyageCommand::Decisions).await?;
         for decision in decisions.as_array().into_iter().flatten() {
             if let Some(id) = decision["decision_id"].as_str()
                 && shown.insert(id.to_owned())

@@ -27,3 +27,5 @@ mod transfer;
 mod participant;
 
 mod recover_command;
+
+mod api;

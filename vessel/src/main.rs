@@ -81,6 +81,9 @@ enum Command {
     LocalRequest {
         #[arg(long)]
         directory: PathBuf,
+        /// Require the public Vessel service API version before reading a request.
+        #[arg(long, default_value_t = voyage_protocol::vessel::VESSEL_API_VERSION)]
+        api_version: u32,
     },
     /// Serve authenticated loopback HTTP/SSE and supervise independent voyage processes.
     LocalServe {
@@ -153,7 +156,14 @@ async fn main() -> Result<()> {
             )
             .await;
         }
-        Some(Command::LocalRequest { directory }) => {
+        Some(Command::LocalRequest {
+            directory,
+            api_version,
+        }) => {
+            anyhow::ensure!(
+                *api_version == voyage_protocol::vessel::VESSEL_API_VERSION,
+                "unsupported Vessel API version"
+            );
             #[cfg(target_os = "linux")]
             return vessel::process::request(directory.clone()).await;
             #[cfg(not(target_os = "linux"))]
@@ -253,10 +263,10 @@ async fn main() -> Result<()> {
     };
     let app = Router::new()
         .route(
-            "/v3/process/command",
+            voyage_protocol::vessel::COMMAND_PATH,
             axum::routing::post(process_http::command)
                 .layer(axum::extract::DefaultBodyLimit::max(
-                    voyage_protocol::process::MAX_PROCESS_FRAME,
+                    voyage_protocol::vessel::MAX_VESSEL_BODY,
                 ))
                 .layer(middleware::from_fn_with_state(
                     state.clone(),
@@ -264,10 +274,10 @@ async fn main() -> Result<()> {
                 )),
         )
         .route(
-            "/v3/process/events",
+            voyage_protocol::vessel::EVENTS_PATH,
             axum::routing::post(process_http::events)
                 .layer(axum::extract::DefaultBodyLimit::max(
-                    voyage_protocol::process::MAX_PROCESS_FRAME,
+                    voyage_protocol::vessel::MAX_VESSEL_BODY,
                 ))
                 .layer(middleware::from_fn_with_state(
                     state.clone(),

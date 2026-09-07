@@ -6,18 +6,18 @@ pub(crate) async fn list_sessions() -> Result<()> {
     let client =
         helm::process_client::local::connect(helm::process_client::cli::default_directory(), true)
             .await?;
-    let processes: Vec<voyage_protocol::process::ProcessInfo> = serde_json::from_value(
+    let processes: Vec<voyage_protocol::vessel::ProcessInfo> = serde_json::from_value(
         client
-            .request(voyage_protocol::process::VesselCommand::Catalogue)
+            .request(voyage_protocol::vessel::VesselCommand::Catalogue)
             .await?,
     )?;
     let ids: std::collections::HashSet<_> = processes.iter().map(|p| p.session_id).collect();
     for process in processes {
         let snapshot = client
-            .forward(
+            .voyage(
                 process.session_id,
                 process.incarnation,
-                voyage_protocol::process::RuntimeCommand::Snapshot,
+                voyage_protocol::vessel::VoyageCommand::Snapshot,
             )
             .await;
         let name = snapshot

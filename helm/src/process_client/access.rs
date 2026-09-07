@@ -1,8 +1,8 @@
 //! Grant credentials are read from private files and never appear in arguments.
 use anyhow::{Context, Result, ensure};
 use std::{io::Read, path::Path};
-use voyage_protocol::process::{
-    AccessCredential, MAX_PROCESS_FRAME, PROCESS_PROTOCOL, VesselCommand, VesselEvent,
+use voyage_protocol::vessel::{
+    AccessCredential, MAX_VESSEL_BODY, VESSEL_API_VERSION, VesselCommand, VesselEvent,
     VesselEventRequest, VesselRequest, VesselResponse,
 };
 
@@ -54,7 +54,7 @@ pub(super) async fn exchange(path: &Path, command: VesselCommand) -> Result<serd
         endpoint.scheme() == "https" || (endpoint.scheme() == "http" && loopback),
         "grant transport requires HTTPS except literal loopback development"
     );
-    endpoint.set_path("/v3/process/command");
+    endpoint.set_path(voyage_protocol::vessel::COMMAND_PATH);
     let client = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .timeout(std::time::Duration::from_secs(15))
@@ -64,7 +64,7 @@ pub(super) async fn exchange(path: &Path, command: VesselCommand) -> Result<serd
         .bearer_auth(&credential.token)
         .header("x-voyage-grant", credential.grant_id.to_string())
         .json(&VesselRequest {
-            protocol: PROCESS_PROTOCOL,
+            protocol: VESSEL_API_VERSION,
             command,
         })
         .send()
@@ -80,7 +80,7 @@ pub(super) async fn exchange(path: &Path, command: VesselCommand) -> Result<serd
         anyhow::anyhow!("grant response interrupted; command delivery may be unknown")
     })? {
         ensure!(
-            bytes.len().saturating_add(chunk.len()) <= MAX_PROCESS_FRAME,
+            bytes.len().saturating_add(chunk.len()) <= MAX_VESSEL_BODY,
             "grant response exceeds frame limit"
         );
         bytes.extend_from_slice(&chunk);
@@ -88,7 +88,7 @@ pub(super) async fn exchange(path: &Path, command: VesselCommand) -> Result<serd
     let response: VesselResponse = serde_json::from_slice(&bytes)
         .map_err(|_| anyhow::anyhow!("invalid grant response; command delivery may be unknown"))?;
     ensure!(
-        response.protocol == PROCESS_PROTOCOL,
+        response.protocol == VESSEL_API_VERSION,
         "unsupported grant protocol"
     );
     if let Some(error) = response.error {
@@ -124,7 +124,7 @@ pub(super) async fn events(
         endpoint.scheme() == "https" || (endpoint.scheme() == "http" && loopback),
         "grant transport requires HTTPS except literal loopback development"
     );
-    endpoint.set_path("/v3/process/events");
+    endpoint.set_path(voyage_protocol::vessel::EVENTS_PATH);
     let response = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .connect_timeout(std::time::Duration::from_secs(8))

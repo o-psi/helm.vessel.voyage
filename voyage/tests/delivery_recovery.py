@@ -86,24 +86,32 @@ class Fixture:
                 return False
         wait_for(ready)
 
-    def request(self, command):
+    def request(self, command, allow_error=False):
         credential = json.loads((self.directory / "process-http.json").read_text())
-        req = urllib.request.Request(credential["endpoint"] + "/v3/process/command",
+        req = urllib.request.Request(credential["endpoint"] + "/v1/vessel/command",
             data=json.dumps({"protocol": 1, "command": command}).encode(),
             headers={"Authorization": "Bearer " + credential["token"], "Content-Type": "application/json"})
         with urllib.request.urlopen(req, timeout=20) as incoming:
             value = json.load(incoming)
+        if allow_error:
+            return value
         assert value.get("error") is None, value
         return value["result"]
 
     def command(self, session, command, allow_error=False):
-        info = self.request({"op": "inspect", "session_id": session})
-        response = self.request({"op": "forward", "session_id": session,
-            "incarnation": info["incarnation"], "command": command})
-        if allow_error:
+        exact = command["op"] in ("execute_tool", "terminal", "cancel", "steer", "respond")
+        identity = ({"incarnation": self.request({"op": "inspect", "session_id": session})["incarnation"]}
+                    if exact else {})
+        response = self.request({**command, "session_id": session, **identity}, allow_error=True)
+        if response.get("error"):
+            assert allow_error, response
             return response
-        assert response.get("error") is None, response
-        return response["result"]
+        reply = response["result"]
+        assert set(reply) == {"session_id", "incarnation", "result"}, reply
+        assert reply["session_id"] == session, reply
+        if allow_error:
+            return {"result": reply["result"], "error": None, "outcome_unknown": False}
+        return reply["result"]
 
     def session(self, approval=False):
         session = str(uuid.uuid4())
@@ -226,17 +234,15 @@ def scoped_resolution(fixture):
             "expires_at_ms": int(time.time() * 1000) + 60_000, "enrollment": None,
             "endpoint": "http://127.0.0.1"})
 
-    def forward(credential, command):
-        info = fixture.request({"op": "inspect", "session_id": session})
+    def scoped(credential, command):
         return fixture.request({"op": "granted", "grant_id": credential["grant_id"],
-            "token": credential["token"], "command": {"op": "forward", "session_id": session,
-            "incarnation": info["incarnation"], "command": command}})
+            "token": credential["token"], "command": {**command, "session_id": session}})
 
     def denied(credential, command):
         try:
-            response = forward(credential, command)
+            response = scoped(credential, command)
         except AssertionError:
-            return  # Supervisor rejected the scoped operation before forwarding.
+            return  # Supervisor rejected the scoped operation before dispatch.
         assert response.get("error"), response
 
     observer = grant(["observe", "history"])
@@ -244,7 +250,7 @@ def scoped_resolution(fixture):
     assert fixture.command(session, {"op": "receipt", "command_id": original["command_id"]})["status"] == "unknown"
     executor = grant(["observe", "history", "execute"])
     denied(executor, {"op": "resolve", "command_id": original["command_id"]})
-    resolved = forward(executor, resolve)
+    resolved = scoped(executor, resolve)
     assert resolved.get("error") is None and resolved["result"]["status"] == "not_admitted", resolved
     denied(grant(["observe", "history", "execute"]), resolve)
     fixture.request({"op": "revoke_grant", "command_id": str(uuid.uuid4()),

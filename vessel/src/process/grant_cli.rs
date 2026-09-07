@@ -88,7 +88,7 @@ pub async fn issue(args: GrantArgs) -> Result<()> {
             _ => None,
         };
         let request = VesselRequest {
-            protocol: PROCESS_PROTOCOL,
+            protocol: voyage_protocol::vessel::VESSEL_API_VERSION,
             command: VesselCommand::Grant {
                 command_id: Uuid::new_v4(),
                 grant_id: Uuid::new_v4(),
@@ -149,7 +149,7 @@ pub async fn revoke(
     let response = super::exchange::exchange(
         &directory,
         &VesselRequest {
-            protocol: PROCESS_PROTOCOL,
+            protocol: voyage_protocol::vessel::VESSEL_API_VERSION,
             command: VesselCommand::RevokeGrant {
                 command_id,
                 grant_id,

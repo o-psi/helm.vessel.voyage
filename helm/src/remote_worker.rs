@@ -7,7 +7,7 @@ use std::{
     path::{Path, PathBuf},
 };
 use uuid::Uuid;
-use voyage_protocol::process::{ProcessInfo, VesselCommand};
+use voyage_protocol::vessel::{ProcessInfo, VesselCommand};
 #[derive(clap::Args)]
 pub(super) struct Args {
     #[arg(long)]
@@ -110,7 +110,7 @@ pub(super) async fn run(args: Args, config: Config, workspace: Option<PathBuf>) 
         command
     };
     let mut process: ProcessInfo = serde_json::from_value(client.request(command).await?)?;
-    if process.state == voyage_protocol::process::ProcessState::Stopped {
+    if process.state == voyage_protocol::vessel::ProcessState::Stopped {
         process = serde_json::from_value(
             client
                 .request(VesselCommand::Restart {

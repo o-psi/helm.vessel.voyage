@@ -22,6 +22,8 @@ pub async fn outbound_observe(directory: PathBuf) -> Result<()> {
 #[cfg(unix)]
 mod relay;
 #[cfg(unix)]
+mod wake;
+#[cfg(unix)]
 pub async fn outbound_relay(directory: PathBuf, binary: Option<PathBuf>) -> Result<()> {
     relay::run(directory, binary.unwrap_or(std::env::current_exe()?)).await
 }

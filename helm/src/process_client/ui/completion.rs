@@ -9,7 +9,7 @@ use ratatui::{
     widgets::{Block, Borders, List, ListItem, ListState},
 };
 use uuid::Uuid;
-use voyage_protocol::process::RuntimeCommand;
+use voyage_protocol::vessel::VoyageCommand;
 
 const COMMANDS: &[(&str, &str, &str)] = &[
     ("help", "Show help", ""),
@@ -193,10 +193,10 @@ impl App {
         tokio::spawn(async move {
             let result = tokio::time::timeout(
                 std::time::Duration::from_secs(25),
-                client.forward(
+                client.voyage(
                     target.session,
                     incarnation,
-                    RuntimeCommand::Controls {
+                    VoyageCommand::Controls {
                         run_id,
                         section: section.into(),
                     },

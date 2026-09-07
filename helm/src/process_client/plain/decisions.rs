@@ -4,7 +4,7 @@ use crate::process_client::safe;
 use anyhow::{Context, Result, ensure};
 use serde_json::{Value, json};
 use uuid::Uuid;
-use voyage_protocol::process::RuntimeCommand;
+use voyage_protocol::vessel::VoyageCommand;
 
 pub(super) async fn follow(connection: &Connection<'_>, run_id: Uuid) -> Result<()> {
     let mut lines = input::lines();
@@ -26,7 +26,7 @@ pub(super) async fn follow(connection: &Connection<'_>, run_id: Uuid) -> Result<
             ensure!(state == "completed", "run ended with state {state}");
             return Ok(());
         }
-        let decisions = connection.forward(RuntimeCommand::Decisions).await?;
+        let decisions = connection.voyage(VoyageCommand::Decisions).await?;
         let next = decisions
             .as_array()
             .into_iter()
@@ -67,7 +67,7 @@ pub(super) async fn follow(connection: &Connection<'_>, run_id: Uuid) -> Result<
 async fn wait_update(
     connection: &Connection<'_>,
     events: &mut Option<
-        futures_util::stream::BoxStream<'static, Result<voyage_protocol::process::VesselEvent>>,
+        futures_util::stream::BoxStream<'static, Result<voyage_protocol::vessel::VesselEvent>>,
     >,
 ) -> Result<()> {
     connection.wait_update(events).await
@@ -105,7 +105,7 @@ async fn respond(connection: &Connection<'_>, shown: &Value, line: &str) -> Resu
     let command_id = Uuid::new_v4();
     eprintln!("Decision response command {command_id}");
     connection
-        .forward(RuntimeCommand::Respond {
+        .voyage(VoyageCommand::Respond {
             command_id,
             expected_revision: snapshot["revision"]
                 .as_u64()

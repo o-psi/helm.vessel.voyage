@@ -1,6 +1,7 @@
 use anyhow::{Result, ensure};
 use std::{path::PathBuf, time::Duration};
 use voyage_protocol::process::*;
+use voyage_protocol::vessel::{MAX_VESSEL_BODY, VESSEL_API_VERSION};
 
 /// Framed stdio bridge, suitable for an explicitly authenticated SSH account.
 pub async fn request(directory: PathBuf) -> Result<()> {
@@ -15,7 +16,7 @@ pub async fn request(directory: PathBuf) -> Result<()> {
         let mut prefix = [0u8; 4];
         read_bounded(&mut stdin, &mut prefix)?;
         let length = u32::from_be_bytes(prefix) as usize;
-        if length == 0 || length > MAX_PROCESS_FRAME {
+        if length == 0 || length > MAX_VESSEL_BODY {
             return Err(std::io::Error::other("invalid process frame length"));
         }
         let mut bytes = vec![0; length];
@@ -25,16 +26,16 @@ pub async fn request(directory: PathBuf) -> Result<()> {
     .await??;
     let request: VesselRequest = serde_json::from_slice(&bytes)?;
     ensure!(
-        request.protocol == PROCESS_PROTOCOL,
+        request.protocol == VESSEL_API_VERSION,
         "unsupported process protocol"
     );
     let response = super::exchange::exchange(&directory, &request).await?;
     ensure!(
-        response.protocol == PROCESS_PROTOCOL,
+        response.protocol == VESSEL_API_VERSION,
         "unsupported Vessel response protocol"
     );
     let bytes = serde_json::to_vec(&response)?;
-    ensure!(bytes.len() <= MAX_PROCESS_FRAME, "response frame too large");
+    ensure!(bytes.len() <= MAX_VESSEL_BODY, "response frame too large");
     tokio::task::spawn_blocking(move || {
         use std::io::Write;
         let mut stdout = std::io::stdout().lock();

@@ -2,9 +2,9 @@
 use anyhow::{Context, Result, ensure};
 use serde_json::Value;
 use std::{path::PathBuf, time::Duration};
-use voyage_protocol::process::{
-    PROCESS_PROTOCOL, ProcessInfo, RuntimeCommand, RuntimeResponse, VesselCommand, VesselEvent,
-    VesselEventRequest, VesselEventSubscription,
+use voyage_protocol::vessel::{
+    VESSEL_API_VERSION, VesselCommand, VesselEvent, VesselEventRequest, VesselEventSubscription,
+    VoyageCommand, VoyageReply, VoyageRequest,
 };
 
 #[derive(Clone, Debug)]
@@ -46,7 +46,7 @@ impl Client {
         subscriptions: Vec<VesselEventSubscription>,
     ) -> Result<futures_util::stream::BoxStream<'static, Result<VesselEvent>>> {
         let request = VesselEventRequest {
-            protocol: PROCESS_PROTOCOL,
+            protocol: VESSEL_API_VERSION,
             subscriptions,
         };
         if let Some(path) = &self.access_file {
@@ -86,68 +86,37 @@ impl Client {
         anyhow::bail!("private Vessel client transport is not implemented on this platform")
     }
 
-    pub async fn forward(
+    pub async fn voyage(
         &self,
         session_id: uuid::Uuid,
         incarnation: uuid::Uuid,
-        command: RuntimeCommand,
+        command: VoyageCommand,
     ) -> Result<Value> {
         Ok(self
-            .forward_observed(session_id, incarnation, command)
+            .voyage_observed(session_id, incarnation, command)
             .await?
             .0)
     }
 
-    pub(super) async fn forward_observed(
+    pub(super) async fn voyage_observed(
         &self,
         session_id: uuid::Uuid,
         incarnation: uuid::Uuid,
-        command: RuntimeCommand,
+        command: VoyageCommand,
     ) -> Result<(Value, uuid::Uuid)> {
-        // Session reads and new work follow clean resumes. Commands addressing a
-        // live resource or decision must retain the incarnation the caller saw.
-        let process: ProcessInfo =
-            serde_json::from_value(self.request(VesselCommand::Inspect { session_id }).await?)?;
-        ensure!(
-            process.session_id == session_id,
-            "process identity mismatch"
-        );
-        let exact_owner = matches!(
-            &command,
-            RuntimeCommand::ExecuteTool { .. }
-                | RuntimeCommand::Terminal { .. }
-                | RuntimeCommand::Cancel { .. }
-                | RuntimeCommand::Steer { .. }
-                | RuntimeCommand::Respond { .. }
-                | RuntimeCommand::Stop
-        );
-        if exact_owner && process.incarnation != incarnation {
-            return Err(
-                Refusal("Voyage changed; refresh before acting on its resources".into()).into(),
-            );
-        }
-        let incarnation = process.incarnation;
-        let reply: RuntimeResponse = serde_json::from_value(
-            self.request(VesselCommand::Forward {
+        let exact_owner = command.requires_incarnation();
+        let reply: VoyageReply = serde_json::from_value(
+            self.request(VesselCommand::Voyage(VoyageRequest {
                 session_id,
-                incarnation,
+                incarnation: exact_owner.then_some(incarnation),
                 command,
-            })
+            }))
             .await?,
         )?;
         ensure!(
-            reply.protocol == PROCESS_PROTOCOL
-                && reply.session_id == session_id
-                && (reply.incarnation == incarnation
-                    || (!exact_owner && reply.resumed_from == Some(incarnation))),
-            "runtime response identity mismatch"
+            reply.session_id == session_id && (!exact_owner || reply.incarnation == incarnation),
+            "Vessel response identity mismatch"
         );
-        if let Some(error) = reply.error {
-            if reply.outcome_unknown {
-                anyhow::bail!("Voyage command outcome unknown: {}", super::safe(&error));
-            }
-            return Err(Refusal(format!("Voyage refused: {}", super::safe(&error))).into());
-        }
         Ok((reply.result, reply.incarnation))
     }
 }

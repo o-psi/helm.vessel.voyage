@@ -8,7 +8,7 @@ use super::*;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use uuid::Uuid;
-use voyage_protocol::process::{ProcessInfo, RuntimeCommand, VesselCommand};
+use voyage_protocol::vessel::{ProcessInfo, VesselCommand, VoyageCommand};
 
 #[derive(Clone, Serialize, Deserialize)]
 pub(super) struct Saved {
@@ -24,7 +24,7 @@ pub(super) struct Saved {
     start_attempted: bool,
     process: Option<ProcessInfo>,
     turn: Uuid,
-    submit: Option<RuntimeCommand>,
+    submit: Option<VoyageCommand>,
     attempted: bool,
     finished: bool,
     receipt: Option<serde_json::Value>,

@@ -1,9 +1,9 @@
 //! Authenticated grant gateway. This adapter never upgrades enrollment to execution authority.
 use super::*;
 use axum::response::sse::{Event, KeepAlive, Sse};
-use voyage_protocol::process::{
-    PROCESS_PROTOCOL, RuntimeCommand, RuntimeResponse, VesselCommand, VesselEvent,
-    VesselEventRequest, VesselRequest, VesselResponse,
+use voyage_protocol::vessel::{
+    VESSEL_API_VERSION, VesselCommand, VesselEvent, VesselEventRequest, VesselRequest,
+    VesselResponse, VoyageCommand, VoyageReply, VoyageRequest,
 };
 
 static CAPACITY: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(64);
@@ -51,7 +51,7 @@ pub(super) async fn events(
     let Some(directory) = state.process_directory else {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     };
-    if request.protocol != PROCESS_PROTOCOL
+    if request.protocol != VESSEL_API_VERSION
         || request.subscriptions.len() != 1
         || headers.get_all("authorization").iter().count() != 1
         || headers.get_all("x-voyage-grant").iter().count() != 1
@@ -88,30 +88,39 @@ pub(super) async fn events(
             let response = vessel::process::exchange(
                 &directory,
                 &VesselRequest {
-                    protocol: PROCESS_PROTOCOL,
+                    protocol: VESSEL_API_VERSION,
                     command: VesselCommand::Granted {
                         grant_id,
                         token: token.clone(),
-                        command: Box::new(VesselCommand::Forward {
+                        command: Box::new(VesselCommand::Voyage(VoyageRequest {
                             session_id: subscription.session_id,
-                            incarnation: subscription.incarnation,
-                            command: RuntimeCommand::Events {
+                            incarnation: None,
+                            command: VoyageCommand::Events {
                                 after: subscription.after,
                                 limit: 128,
                                 // Re-enter the grant gateway between waits so expiry
                                 // and revocation stop publication at a bounded point.
                                 wait_ms: 0,
                             },
-                        }),
+                        })),
                     },
                 },
             )
             .await;
             let (result, error, outcome_unknown) = match response {
                 Ok(response) if response.error.is_none() => {
-                    match serde_json::from_value::<RuntimeResponse>(response.result) {
-                        Ok(runtime) => (runtime.result, runtime.error, runtime.outcome_unknown),
-                        Err(_) => (serde_json::Value::Null, Some("invalid runtime event response".into()), true),
+                    match serde_json::from_value::<VoyageReply>(response.result) {
+                        Ok(reply) => {
+                            let mut result = reply.result;
+                            if reply.incarnation != subscription.incarnation {
+                                result["owner_changed"] = serde_json::Value::Bool(true);
+                                result["replay_gap"] = serde_json::Value::Bool(true);
+                                result["recovery"] = serde_json::Value::String("snapshot".into());
+                                subscription.incarnation = reply.incarnation;
+                            }
+                            (result, None, false)
+                        },
+                        Err(_) => (serde_json::Value::Null, Some("invalid Vessel event response".into()), true),
                     }
                 }
                 Ok(response) => (response.result, response.error, response.outcome_unknown),
@@ -126,7 +135,7 @@ pub(super) async fn events(
                 || result.get("events").and_then(serde_json::Value::as_array).is_some_and(|events| !events.is_empty());
             if changed {
                 let event = VesselEvent {
-                    protocol: PROCESS_PROTOCOL,
+                    protocol: VESSEL_API_VERSION,
                     session_id: subscription.session_id,
                     incarnation: subscription.incarnation,
                     result,
@@ -161,7 +170,7 @@ pub(super) async fn command(
     let Some(directory) = state.process_directory else {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     };
-    if request.protocol != PROCESS_PROTOCOL
+    if request.protocol != VESSEL_API_VERSION
         || headers.get_all("authorization").iter().count() != 1
         || headers.get_all("x-voyage-grant").iter().count() != 1
     {
@@ -186,7 +195,7 @@ pub(super) async fn command(
     let response = match vessel::process::exchange(
         &directory,
         &VesselRequest {
-            protocol: PROCESS_PROTOCOL,
+            protocol: VESSEL_API_VERSION,
             command: VesselCommand::Granted {
                 grant_id,
                 token: token.to_owned(),
@@ -198,7 +207,7 @@ pub(super) async fn command(
     {
         Ok(response) => response,
         Err(_) => VesselResponse {
-            protocol: PROCESS_PROTOCOL,
+            protocol: VESSEL_API_VERSION,
             result: serde_json::Value::Null,
             error: Some("Vessel routing unavailable; command outcome unknown".into()),
             outcome_unknown: true,
@@ -208,7 +217,7 @@ pub(super) async fn command(
     let response = {
         let _ = (directory, token, grant_id);
         VesselResponse {
-            protocol: PROCESS_PROTOCOL,
+            protocol: VESSEL_API_VERSION,
             result: serde_json::Value::Null,
             error: Some("process gateway unsupported on this platform".into()),
             outcome_unknown: false,

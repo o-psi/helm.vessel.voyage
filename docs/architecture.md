@@ -33,6 +33,12 @@ Helm ── local Vessel ──── voyage A
 
 The lines are authenticated control and observation connections. They do not
 represent shared transcript ownership or permission to transfer provider secrets.
+Helm depends on Vessel's public service operations, not private runtime commands.
+Vessel resolves owners and exposes public results; its internal execution protocol
+is separately versioned. Live-resource requests preserve observed identity fences,
+and only the runtime can durably admit work. See [process access](process-access.md#wire-and-retained-state)
+for the implemented API and compatibility rules.
+
 Vessel owns supervision metadata; the voyage owns authoritative session state.
 A shared storage engine is possible only if it preserves these ownership fences.
 

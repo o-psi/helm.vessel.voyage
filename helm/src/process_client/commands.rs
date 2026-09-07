@@ -1,7 +1,7 @@
 use super::{cli::ConnectedCommand, transport::Client};
 use anyhow::{Context, Result, ensure};
 use uuid::Uuid;
-use voyage_protocol::process::{ProcessInfo, RuntimeCommand, VesselCommand};
+use voyage_protocol::vessel::{ProcessInfo, VesselCommand, VoyageCommand};
 
 pub(super) async fn execute(
     client: &Client,
@@ -105,7 +105,7 @@ pub(super) async fn execute(
             expires_at_ms,
         } => (
             session,
-            RuntimeCommand::Archive {
+            VoyageCommand::Archive {
                 command_id,
                 expected_revision,
                 expires_at_ms,
@@ -120,14 +120,14 @@ pub(super) async fn execute(
             expires_at_ms,
         } => (
             session,
-            RuntimeCommand::Delete {
+            VoyageCommand::Delete {
                 command_id,
                 expected_revision,
                 expires_at_ms,
                 confirm_session_id,
             },
         ),
-        ConnectedCommand::Inspect { session } => (session, RuntimeCommand::Snapshot),
+        ConnectedCommand::Inspect { session } => (session, VoyageCommand::Snapshot),
         ConnectedCommand::Submit {
             session,
             expected_revision,
@@ -136,7 +136,7 @@ pub(super) async fn execute(
             prompt,
         } => (
             session,
-            RuntimeCommand::Submit {
+            VoyageCommand::Submit {
                 command_id,
                 expected_revision,
                 expires_at_ms,
@@ -146,7 +146,7 @@ pub(super) async fn execute(
         ConnectedCommand::Receipt {
             session,
             command_id,
-        } => (session, RuntimeCommand::Receipt { command_id }),
+        } => (session, VoyageCommand::Receipt { command_id }),
         ConnectedCommand::Cancel {
             session,
             run,
@@ -155,7 +155,7 @@ pub(super) async fn execute(
             expires_at_ms,
         } => (
             session,
-            RuntimeCommand::Cancel {
+            VoyageCommand::Cancel {
                 command_id,
                 expected_revision,
                 expires_at_ms,
@@ -193,7 +193,7 @@ pub(super) async fn execute(
             );
             (
                 session,
-                serde_json::from_str(&request).context("invalid typed runtime command")?,
+                serde_json::from_str(&request).context("invalid public voyage operation")?,
             )
         }
     };
@@ -204,12 +204,12 @@ pub(super) async fn execute(
             })
             .await?,
     )?;
-    let process = if let RuntimeCommand::Archive {
+    let process = if let VoyageCommand::Archive {
         archived: false,
         command_id,
         ..
     } = &command
-        && process.state == voyage_protocol::process::ProcessState::Stopped
+        && process.state == voyage_protocol::vessel::ProcessState::Stopped
         && process.archive.is_some()
     {
         serde_json::from_value(
@@ -224,7 +224,7 @@ pub(super) async fn execute(
     } else {
         process
     };
-    if let RuntimeCommand::Receipt { command_id } = &command
+    if let VoyageCommand::Receipt { command_id } = &command
         && let Some(receipt) = process
             .archive
             .as_ref()
@@ -234,5 +234,5 @@ pub(super) async fn execute(
     {
         return Ok(receipt.clone());
     }
-    client.forward(session, process.incarnation, command).await
+    client.voyage(session, process.incarnation, command).await
 }

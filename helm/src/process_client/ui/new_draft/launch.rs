@@ -40,10 +40,10 @@ pub(super) async fn advance(
     let process = saved.process.as_ref().context("process missing")?;
     if saved.attempted {
         let receipt = client
-            .forward(
+            .voyage(
                 saved.id,
                 process.incarnation,
-                RuntimeCommand::Resolve {
+                VoyageCommand::Resolve {
                     command_id: saved.turn,
                     original: saved.submit.clone().map(Box::new),
                 },
@@ -59,13 +59,13 @@ pub(super) async fn advance(
     }
     if saved.submit.is_none() {
         let snapshot = client
-            .forward(saved.id, process.incarnation, RuntimeCommand::Snapshot)
+            .voyage(saved.id, process.incarnation, VoyageCommand::Snapshot)
             .await?;
         ensure!(
             snapshot["session_id"] == saved.id.to_string(),
             "snapshot identity mismatch"
         );
-        saved.submit = Some(RuntimeCommand::Submit {
+        saved.submit = Some(VoyageCommand::Submit {
             command_id: saved.turn,
             expected_revision: snapshot["revision"]
                 .as_u64()
@@ -78,7 +78,7 @@ pub(super) async fn advance(
     saved.attempted = true;
     storage::save(saved)?;
     let receipt = client
-        .forward(
+        .voyage(
             saved.id,
             process.incarnation,
             saved.submit.clone().context("first turn missing")?,

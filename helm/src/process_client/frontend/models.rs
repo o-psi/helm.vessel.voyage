@@ -7,10 +7,10 @@ pub async fn discover(
     let (client, process) = open(config, Some(workspace.to_owned()), None, false, true).await?;
     let result = async {
         let value = client
-            .forward(
+            .voyage(
                 process.session_id,
                 process.incarnation,
-                RuntimeCommand::Controls {
+                VoyageCommand::Controls {
                     run_id: None,
                     section: "models".into(),
                 },

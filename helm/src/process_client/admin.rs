@@ -5,7 +5,7 @@ use super::transport::Client;
 use anyhow::{Result, ensure};
 pub use args::AdminCommand;
 use serde_json::Value;
-use voyage_protocol::process::*;
+use voyage_protocol::vessel::*;
 
 pub(super) async fn execute(client: &Client, command: AdminCommand) -> Result<Value> {
     let command = match command {
@@ -64,10 +64,10 @@ pub(super) async fn execute(client: &Client, command: AdminCommand) -> Result<Va
                     .await?,
             )?;
             return client
-                .forward(
+                .voyage(
                     session,
                     info.incarnation,
-                    RuntimeCommand::AssignmentObserve {
+                    VoyageCommand::AssignmentObserve {
                         run_id: run,
                         assignment_id: assignment,
                         participant,

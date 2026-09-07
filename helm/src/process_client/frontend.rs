@@ -9,7 +9,7 @@ use super::{local, transport::Client};
 use anyhow::{Result, ensure};
 use std::path::PathBuf;
 use uuid::Uuid;
-use voyage_protocol::process::{ProcessInfo, RuntimeCommand, VesselCommand};
+use voyage_protocol::vessel::{ProcessInfo, VesselCommand, VoyageCommand};
 
 pub async fn open(
     config: &crate::Config,
@@ -42,10 +42,10 @@ pub async fn open(
     };
     if resuming && (configuration_explicit || model_overridden) {
         let snapshot = client
-            .forward(
+            .voyage(
                 process.session_id,
                 process.incarnation,
-                RuntimeCommand::Snapshot,
+                VoyageCommand::Snapshot,
             )
             .await?;
         let active = matches!(
@@ -72,10 +72,10 @@ pub async fn open(
                 .ok_or_else(|| anyhow::anyhow!("snapshot revision missing"))?;
             eprintln!("Configuration command {command_id}");
             client
-                .forward(
+                .voyage(
                     process.session_id,
                     process.incarnation,
-                    RuntimeCommand::Configure {
+                    VoyageCommand::Configure {
                         command_id,
                         expected_revision,
                         expires_at_ms: deadline()?,
@@ -108,10 +108,10 @@ pub async fn run(
     .await?;
     if no_save && was_resume {
         let snapshot = client
-            .forward(
+            .voyage(
                 process.session_id,
                 process.incarnation,
-                RuntimeCommand::Snapshot,
+                VoyageCommand::Snapshot,
             )
             .await?;
         process = serde_json::from_value(
@@ -134,10 +134,10 @@ pub async fn run(
         if no_save && was_resume && (model_overridden || configuration_explicit) {
             let mut selected = config.clone();
             let snapshot = client
-                .forward(
+                .voyage(
                     process.session_id,
                     process.incarnation,
-                    RuntimeCommand::Snapshot,
+                    VoyageCommand::Snapshot,
                 )
                 .await?;
             if !model_overridden {
@@ -148,10 +148,10 @@ pub async fn run(
             }
             let config_path = launch::persist(&selected, &process.workspace, &client.directory)?;
             client
-                .forward(
+                .voyage(
                     process.session_id,
                     process.incarnation,
-                    RuntimeCommand::Configure {
+                    VoyageCommand::Configure {
                         command_id: Uuid::new_v4(),
                         expected_revision: snapshot["revision"]
                             .as_u64()
@@ -227,10 +227,10 @@ pub(super) fn deadline() -> Result<u64> {
 
 async fn discard(client: &Client, process: &ProcessInfo) -> Result<()> {
     let snapshot = client
-        .forward(
+        .voyage(
             process.session_id,
             process.incarnation,
-            RuntimeCommand::Snapshot,
+            VoyageCommand::Snapshot,
         )
         .await?;
     let active = matches!(
@@ -247,10 +247,10 @@ async fn discard(client: &Client, process: &ProcessInfo) -> Result<()> {
             .as_u64()
             .ok_or_else(|| anyhow::anyhow!("snapshot revision missing"))?;
         client
-            .forward(
+            .voyage(
                 process.session_id,
                 process.incarnation,
-                RuntimeCommand::Delete {
+                VoyageCommand::Delete {
                     command_id: Uuid::new_v4(),
                     expected_revision,
                     expires_at_ms: deadline()?,

@@ -26,7 +26,9 @@ operator interfaces. Paths in backticks require the source checkout.
 | `helm/src/managed.rs`, `helm/src/remote_worker.rs` | Thin supervised managed and outbound-worker clients |
 | `vessel/src/process/` | Linux launch, private registry, routing and conservative stop/restart |
 | `vessel/src/main.rs` and HTTP/transport modules | Management, enrollment, scoped process gateway and compatibility relay |
-| `crates/voyage-protocol/src/process/` | Versioned bounded Helm–Vessel–voyage messages |
+| `crates/voyage-protocol/src/vessel.rs` | Public Vessel operations, service responses and SSE contract |
+| `crates/voyage-protocol/src/process/` | Private runtime IPC and shared identity/authority data |
+| `vessel/src/process/api.rs` | Public-to-private operation adapter and public response normalization |
 | `crates/voyage-storage/src/` | Native private-storage primitives |
 | `installer/src/service/` | Linux private installation and explicit service lifecycle |
 | `installer/src/install/` | Verified release manifests, atomic installation and rollback |

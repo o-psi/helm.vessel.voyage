@@ -12,10 +12,10 @@ pub async fn run(
     let (client, process) =
         open(&config, workspace, session, false, configuration_explicit).await?;
     let snapshot = client
-        .forward(
+        .voyage(
             process.session_id,
             process.incarnation,
-            RuntimeCommand::Snapshot,
+            VoyageCommand::Snapshot,
         )
         .await?;
     let command_id = Uuid::new_v4();
@@ -24,10 +24,10 @@ pub async fn run(
         process.session_id
     );
     let receipt = client
-        .forward(
+        .voyage(
             process.session_id,
             process.incarnation,
-            RuntimeCommand::Github {
+            VoyageCommand::Github {
                 command_id,
                 expected_revision: snapshot["revision"]
                     .as_u64()

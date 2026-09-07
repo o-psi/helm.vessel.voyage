@@ -5,7 +5,7 @@ use super::{
 };
 use anyhow::{Context, Result, ensure};
 use uuid::Uuid;
-use voyage_protocol::process::VesselCommand;
+use voyage_protocol::vessel::VesselCommand;
 
 impl App {
     pub(super) fn branch(

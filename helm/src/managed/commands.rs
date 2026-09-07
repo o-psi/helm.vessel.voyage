@@ -1,5 +1,5 @@
 use super::*;
-use voyage_protocol::process::{RuntimeCommand, VesselCommand};
+use voyage_protocol::vessel::{VesselCommand, VoyageCommand};
 
 pub(super) async fn run(
     args: Args,
@@ -20,7 +20,7 @@ pub(super) async fn run(
             let session_id = id.unwrap_or_else(Uuid::new_v4);
             let command_id = Uuid::new_v4();
             eprintln!("Starting managed voyage {session_id} · command {command_id}");
-            let process: voyage_protocol::process::ProcessInfo = serde_json::from_value(
+            let process: voyage_protocol::vessel::ProcessInfo = serde_json::from_value(
                 client
                     .request(VesselCommand::StartConfigured {
                         command_id,
@@ -31,14 +31,14 @@ pub(super) async fn run(
                     .await?,
             )?;
             let mut snapshot = client
-                .forward(session_id, process.incarnation, RuntimeCommand::Snapshot)
+                .voyage(session_id, process.incarnation, VoyageCommand::Snapshot)
                 .await?;
             if let Some(name) = name {
                 client
-                    .forward(
+                    .voyage(
                         session_id,
                         process.incarnation,
-                        RuntimeCommand::Rename {
+                        VoyageCommand::Rename {
                             command_id: Uuid::new_v4(),
                             expected_revision: revision(&snapshot)?,
                             expires_at_ms: connection::deadline()?,
@@ -47,7 +47,7 @@ pub(super) async fn run(
                     )
                     .await?;
                 snapshot = client
-                    .forward(session_id, process.incarnation, RuntimeCommand::Snapshot)
+                    .voyage(session_id, process.incarnation, VoyageCommand::Snapshot)
                     .await?;
             }
             snapshot["id"] = json!(session_id);
@@ -77,7 +77,7 @@ pub(super) async fn run(
             .await?;
             let process = connection::live(&client, process).await?;
             let snapshot = client
-                .forward(session, process.incarnation, RuntimeCommand::Snapshot)
+                .voyage(session, process.incarnation, VoyageCommand::Snapshot)
                 .await?;
             ensure!(
                 !model_overridden
@@ -92,10 +92,10 @@ pub(super) async fn run(
                 None => connection::deadline()?,
             };
             let receipt = client
-                .forward(
+                .voyage(
                     session,
                     process.incarnation,
-                    RuntimeCommand::Submit {
+                    VoyageCommand::Submit {
                         command_id,
                         expected_revision,
                         expires_at_ms,
@@ -127,13 +127,13 @@ pub(super) async fn run(
             let process =
                 connection::session(&client, &args.directory, session, None, None).await?;
             let snapshot = client
-                .forward(session, process.incarnation, RuntimeCommand::Snapshot)
+                .voyage(session, process.incarnation, VoyageCommand::Snapshot)
                 .await?;
             let receipt = client
-                .forward(
+                .voyage(
                     session,
                     process.incarnation,
-                    RuntimeCommand::Cancel {
+                    VoyageCommand::Cancel {
                         command_id: Uuid::new_v4(),
                         expected_revision: revision(&snapshot)?,
                         expires_at_ms: connection::deadline()?,
@@ -153,7 +153,7 @@ pub(super) async fn run(
             reconcile_tools,
             expected_revision,
         } => {
-            let catalogue: Vec<voyage_protocol::process::ProcessInfo> =
+            let catalogue: Vec<voyage_protocol::vessel::ProcessInfo> =
                 serde_json::from_value(client.request(VesselCommand::Catalogue).await?)?;
             if !catalogue
                 .iter()

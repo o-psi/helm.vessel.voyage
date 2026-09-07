@@ -1,6 +1,6 @@
 use super::*;
 use helm::process_client::{local, transport::Client};
-use voyage_protocol::process::{ProcessInfo, VesselCommand};
+use voyage_protocol::vessel::{ProcessInfo, VesselCommand};
 
 pub(super) async fn connect(directory: &std::path::Path) -> Result<Client> {
     ensure!(
@@ -60,7 +60,7 @@ pub(super) async fn session(
 }
 
 pub(super) async fn live(client: &Client, process: ProcessInfo) -> Result<ProcessInfo> {
-    if process.state == voyage_protocol::process::ProcessState::Stopped {
+    if process.state == voyage_protocol::vessel::ProcessState::Stopped {
         return Ok(serde_json::from_value(
             client
                 .request(VesselCommand::Restart {
@@ -74,8 +74,8 @@ pub(super) async fn live(client: &Client, process: ProcessInfo) -> Result<Proces
     ensure!(
         matches!(
             process.state,
-            voyage_protocol::process::ProcessState::Live
-                | voyage_protocol::process::ProcessState::Suspended
+            voyage_protocol::vessel::ProcessState::Live
+                | voyage_protocol::vessel::ProcessState::Suspended
         ),
         "managed owner unavailable; use explicit recover after observing its cleanup"
     );

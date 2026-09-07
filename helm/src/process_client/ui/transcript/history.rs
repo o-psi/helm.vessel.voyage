@@ -7,7 +7,7 @@ use super::super::{
 use crate::process_client::transport::Client;
 use anyhow::{Context, Result, ensure};
 use uuid::Uuid;
-use voyage_protocol::process::RuntimeCommand;
+use voyage_protocol::vessel::VoyageCommand;
 
 pub(super) async fn load(
     client: &Client,
@@ -26,10 +26,10 @@ pub(super) async fn load(
     let mut offset = from;
     while offset < total {
         let page = client
-            .forward(
+            .voyage(
                 target.session,
                 incarnation,
-                RuntimeCommand::History {
+                VoyageCommand::History {
                     offset: offset as u64,
                     limit: 128,
                     expected_revision: Some(revision),
@@ -54,10 +54,10 @@ pub(super) async fn load(
                 loop {
                     let cursor = encoded.len() as u64;
                     let chunk = client
-                        .forward(
+                        .voyage(
                             target.session,
                             incarnation,
-                            RuntimeCommand::MessageChunk {
+                            VoyageCommand::MessageChunk {
                                 index: offset as u64,
                                 offset: cursor,
                                 limit: 65536,
@@ -101,10 +101,10 @@ pub(super) async fn load(
     }
     // Close the revision fence even for an empty page/window.
     client
-        .forward(
+        .voyage(
             target.session,
             incarnation,
-            RuntimeCommand::History {
+            VoyageCommand::History {
                 offset: total as u64,
                 limit: 1,
                 expected_revision: Some(revision),
@@ -228,10 +228,10 @@ async fn live(
     while start + (text.len() as u64) < total {
         let offset = start + text.len() as u64;
         let chunk = client
-            .forward(
+            .voyage(
                 target.session,
                 incarnation,
-                RuntimeCommand::RunOutput {
+                VoyageCommand::RunOutput {
                     run_id,
                     offset,
                     limit: (total - offset).min(65536) as u32,

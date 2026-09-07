@@ -3,8 +3,8 @@ use super::transport::Refusal;
 use anyhow::{Context, Result, ensure};
 use serde_json::Value;
 use std::{path::Path, process::Stdio};
-use voyage_protocol::process::{
-    PROCESS_PROTOCOL, VesselCommand, VesselRequest, VesselResponse, read_frame, write_frame,
+use voyage_protocol::vessel::{
+    VESSEL_API_VERSION, VesselCommand, VesselRequest, VesselResponse, read_frame, write_frame,
 };
 
 pub async fn exchange(
@@ -46,7 +46,9 @@ pub async fn exchange(
             "--",
         ])
         .arg(destination)
-        .arg(format!("exec vessel local-request --directory {quoted}"))
+        .arg(format!(
+            "exec vessel local-request --api-version {VESSEL_API_VERSION} --directory {quoted}"
+        ))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -58,7 +60,7 @@ pub async fn exchange(
     write_frame(
         &mut input,
         &VesselRequest {
-            protocol: PROCESS_PROTOCOL,
+            protocol: VESSEL_API_VERSION,
             command,
         },
     )
@@ -70,7 +72,7 @@ pub async fn exchange(
         "SSH connection failed; delivery may be unknown"
     );
     ensure!(
-        reply.protocol == PROCESS_PROTOCOL,
+        reply.protocol == VESSEL_API_VERSION,
         "unsupported remote Vessel protocol"
     );
     if let Some(error) = reply.error {

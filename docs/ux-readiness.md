@@ -106,7 +106,7 @@ The current source anchors are:
 - [Connected CLI](https://github.com/o-psi/voyage/blob/main/helm/src/process_client/cli.rs),
   [administration](https://github.com/o-psi/voyage/blob/main/helm/src/process_client/admin/args.rs),
   [top-level CLI](https://github.com/o-psi/voyage/blob/main/helm/src/cli.rs), [installer](../installer/README.md).
-- [RuntimeCommand, TerminalOperation, ProcessState and VesselCommand](https://github.com/o-psi/voyage/blob/main/crates/voyage-protocol/src/process/types.rs).
+- [Public Vessel API](https://github.com/o-psi/voyage/blob/main/crates/voyage-protocol/src/vessel.rs) and [private runtime IPC](https://github.com/o-psi/voyage/blob/main/crates/voyage-protocol/src/process/types.rs).
 
 Runtime history/message/output commands map to J10/J11/J29; health, snapshots,
 events and decisions supply J06/J08/J14–J16. Submit/steer/receipt/cancel map to

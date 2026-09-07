@@ -7,7 +7,7 @@ use sha2::{Digest, Sha256};
 use std::{io::Write, path::PathBuf};
 
 // Include the immutable public command envelope and escaped draft text.
-const MAX_DRAFT_BYTES: usize = 2 * voyage_protocol::process::MAX_PROCESS_FRAME;
+const MAX_DRAFT_BYTES: usize = 2 * voyage_protocol::vessel::MAX_VESSEL_BODY;
 
 #[derive(Serialize, Deserialize)]
 struct Draft {

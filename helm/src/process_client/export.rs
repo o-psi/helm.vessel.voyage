@@ -4,7 +4,7 @@ use anyhow::{Context, Result, ensure};
 use serde_json::{Value, json};
 use std::{io::Write, path::Path};
 use uuid::Uuid;
-use voyage_protocol::process::{ProcessInfo, RuntimeCommand, VesselCommand};
+use voyage_protocol::vessel::{ProcessInfo, VesselCommand, VoyageCommand};
 
 pub async fn markdown(client: &Client, session: Uuid, destination: &Path) -> Result<Value> {
     let process: ProcessInfo = serde_json::from_value(
@@ -15,7 +15,7 @@ pub async fn markdown(client: &Client, session: Uuid, destination: &Path) -> Res
             .await?,
     )?;
     let snapshot = client
-        .forward(session, process.incarnation, RuntimeCommand::Snapshot)
+        .voyage(session, process.incarnation, VoyageCommand::Snapshot)
         .await?;
     let revision = snapshot["revision"]
         .as_u64()
@@ -38,10 +38,10 @@ pub async fn markdown(client: &Client, session: Uuid, destination: &Path) -> Res
         loop {
             let offset = encoded.len() as u64;
             let chunk = client
-                .forward(
+                .voyage(
                     session,
                     process.incarnation,
-                    RuntimeCommand::MessageChunk {
+                    VoyageCommand::MessageChunk {
                         index,
                         offset,
                         limit: 65536,
@@ -91,10 +91,10 @@ pub async fn markdown(client: &Client, session: Uuid, destination: &Path) -> Res
     }
     // Empty transcripts also receive a final revision check before publication.
     client
-        .forward(
+        .voyage(
             session,
             process.incarnation,
-            RuntimeCommand::History {
+            VoyageCommand::History {
                 offset: total,
                 limit: 1,
                 expected_revision: Some(revision),

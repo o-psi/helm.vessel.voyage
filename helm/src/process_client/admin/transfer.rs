@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::Path;
 use uuid::Uuid;
-use voyage_protocol::process::*;
+use voyage_protocol::vessel::*;
 
 #[derive(Serialize, Deserialize)]
 struct Journal {

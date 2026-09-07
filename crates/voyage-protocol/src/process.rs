@@ -13,3 +13,9 @@ mod transfer;
 pub use transfer::*;
 mod participation;
 pub use participation::*;
+
+// Executing-host management adapters also use the public service API.
+pub use crate::vessel::{
+    VesselCommand, VesselEvent, VesselEventRequest, VesselEventSubscription, VesselRequest,
+    VesselResponse,
+};

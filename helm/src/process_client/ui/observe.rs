@@ -8,9 +8,7 @@ use std::{
     time::{Duration, Instant},
 };
 use tokio::sync::{Semaphore, mpsc};
-use voyage_protocol::process::{
-    ProcessInfo, RuntimeCommand, VesselCommand, VesselEventSubscription,
-};
+use voyage_protocol::vessel::{ProcessInfo, VesselCommand, VesselEventSubscription, VoyageCommand};
 
 pub enum Update {
     FirstSend {
@@ -152,7 +150,7 @@ pub fn spawn(clients: &[Client], sender: mpsc::Sender<Update>) -> Vec<tokio::tas
                                 .iter()
                                 .filter(|process| {
                                     process.state
-                                        == voyage_protocol::process::ProcessState::Live
+                                        == voyage_protocol::vessel::ProcessState::Live
                                 })
                                 .filter_map(|process| {
                                     let key = (process.session_id, process.incarnation);
@@ -178,6 +176,10 @@ pub fn spawn(clients: &[Client], sender: mpsc::Sender<Update>) -> Vec<tokio::tas
                                                 let Some(event) = event else { break; };
                                                 match event {
                                                     Ok(event) => {
+                                                        if processes.iter().any(|process| process.session_id == event.session_id && process.incarnation != event.incarnation) {
+                                                            // Refresh the catalogue/snapshot on a service-reported owner transition.
+                                                            break;
+                                                        }
                                                         if let Some(error) = event.error {
                                                             let _ = sender.send(Update::RouteError {
                                                                 route,
@@ -263,11 +265,7 @@ async fn refresh(
         session: process.session_id,
     };
     let result = client
-        .forward(
-            target.session,
-            process.incarnation,
-            RuntimeCommand::Snapshot,
-        )
+        .voyage(target.session, process.incarnation, VoyageCommand::Snapshot)
         .await
         .and_then(|value| Ok(serde_json::from_value::<Snapshot>(value)?))
         .map_err(|error| error.to_string());
@@ -283,10 +281,10 @@ async fn refresh(
         })
         .await;
     let inventory = client
-        .forward(
+        .voyage(
             target.session,
             process.incarnation,
-            RuntimeCommand::Controls {
+            VoyageCommand::Controls {
                 run_id: None,
                 section: "terminals".into(),
             },
