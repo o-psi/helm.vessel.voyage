@@ -1,12 +1,13 @@
 # Helm website
 
-Laravel 13, Livewire 4 and free Flux UI 2 product landing page for
+Laravel 13, Livewire 4 and free Flux UI 2 product website for
 https://helm.vessel.voyage. Foleybridge.Software presents Helm, Vessel, and Voyage
 as a product suite for running coding agents across machines the user controls.
 Product copy leads with customer outcomes while accurately distinguishing current
 Linux behavior from planned web, mobile, and cross-voyage collaboration. The
-interface selector uses actual Livewire requests. This app does not connect to
-Vessels, execute agents, enroll users or collect email addresses.
+homepage is intentionally compact and links to focused `/helm`, `/vessel`, and
+`/voyage` product pages. This app does not connect to Vessels, execute agents,
+enroll users or collect email addresses.
 
 ## Development
 
@@ -90,6 +91,6 @@ Rollback application source and its matching assets together; database rollback
 requires the matching backup. Do not regenerate keys during recovery.
 
 Initial checks: production build and Laravel optimization, migrations, Composer
-validation/audit, origin HTTP/health, public HTTPS/assets, actual Livewire POSTs
-for terminal/web/mobile, environment-file denial and service health. These are
+validation/audit, origin HTTP/health, public HTTPS/assets, route-specific titles,
+descriptions and links, environment-file denial and service health. These are
 HTTP/runtime checks; no browser visual QA or agent execution was performed.
