@@ -119,6 +119,12 @@ pub struct Config {
     pub max_tokens: u32,
     pub context_window: usize,
     pub temperature: Option<f32>,
+    /// Omit for the provider default; explicit values are transport-validated.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<String>,
+    /// Requested service tier, not a claim of account entitlement.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub service_tier: Option<String>,
     pub provider_retry_attempts: usize,
     pub provider_retry_initial_ms: u64,
     pub provider_retry_max_ms: u64,
@@ -239,6 +245,16 @@ pub const CONFIG_OVERRIDE_SPECS: &[ConfigOverrideSpec] = &[
         key: "max_tokens",
         description: "Optional response token limit (0 uses provider defaults)",
         kind: ConfigValueKind::NonNegativeInteger,
+    },
+    ConfigOverrideSpec {
+        key: "reasoning_effort",
+        description: "Reasoning effort override (omit for provider default)",
+        kind: ConfigValueKind::Text,
+    },
+    ConfigOverrideSpec {
+        key: "service_tier",
+        description: "Service tier override (subject to endpoint and account support)",
+        kind: ConfigValueKind::Text,
     },
     ConfigOverrideSpec {
         key: "temperature",
@@ -409,6 +425,8 @@ impl Default for Config {
             max_tokens: 0,
             context_window: 0,
             temperature: None,
+            reasoning_effort: None,
+            service_tier: None,
             provider_retry_attempts: 4,
             provider_retry_initial_ms: 500,
             provider_retry_max_ms: 8000,
@@ -624,6 +642,7 @@ impl Config {
     }
 
     pub fn validate(&self) -> Result<()> {
+        crate::provider::validate_inference_settings(self)?;
         if !self.api_key_required {
             if !matches!(
                 self.provider,

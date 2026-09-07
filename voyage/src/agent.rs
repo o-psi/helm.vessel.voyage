@@ -338,6 +338,8 @@ pub struct Agent {
     completion_coordinator: Option<crate::completion::runtime::Coordinator>,
     completion_gate: Option<gate::GateResources>,
     temperature: Option<f32>,
+    reasoning_effort: Option<String>,
+    service_tier: Option<String>,
     retry: RetryPolicy,
     retry_jitter: Arc<dyn RetryJitter>,
 }
@@ -533,9 +535,22 @@ impl Agent {
             completion_coordinator: None,
             completion_gate: None,
             temperature,
+            reasoning_effort: None,
+            service_tier: None,
             retry: RetryPolicy::default(),
             retry_jitter: Arc::new(retry::RandomJitter),
         }
+    }
+
+    /// Applied at agent construction; request-boundary validation remains in the adapter.
+    pub fn with_inference_settings(
+        mut self,
+        reasoning_effort: Option<String>,
+        service_tier: Option<String>,
+    ) -> Self {
+        self.reasoning_effort = reasoning_effort;
+        self.service_tier = service_tier;
+        self
     }
 
     pub fn with_inference_accounting(
@@ -1202,6 +1217,8 @@ impl Agent {
                 messages,
                 tools: self.tools.definitions(),
                 temperature: self.temperature,
+                reasoning_effort: self.reasoning_effort.clone(),
+                service_tier: self.service_tier.clone(),
                 max_tokens: (self.max_tokens > 0).then_some(self.max_tokens),
             };
             let (response, permit) = gate::guarded(self.stream_with_retry(request, &cancel, checkpoint, &mut partial_output, context.completion.as_ref().map(|run| run.reference()).as_ref()), &cancel, deadline).await?
@@ -1453,6 +1470,17 @@ impl Agent {
         use futures_util::StreamExt;
         if cancel.is_cancelled() {
             return Err(AgentError::Cancelled);
+        }
+        {
+            let cache = self.model_cache.lock().await;
+            let known = cache
+                .as_ref()
+                .and_then(|(_, models)| models.iter().find(|model| model.id == request.model));
+            crate::provider::validate_model_effort(
+                &request.model,
+                request.reasoning_effort.as_deref(),
+                known,
+            )?;
         }
         // Project outgoing copies; previously stored canonical history is not
         // rewritten when the operator configures a new secret.

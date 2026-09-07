@@ -69,6 +69,7 @@ impl Provider for OpenAiResponsesProvider {
 }
 
 pub(crate) fn request_body(request: ModelRequest, stream: bool) -> Result<Value, ProviderError> {
+    super::inference::validate_request(&crate::config::ProviderKind::OpenaiResponses, &request)?;
     let instructions = request
         .messages
         .iter()
@@ -118,6 +119,12 @@ pub(crate) fn request_body(request: ModelRequest, stream: bool) -> Result<Value,
     }
     if let Some(max) = request.max_tokens {
         body["max_output_tokens"] = json!(max)
+    }
+    if let Some(effort) = request.reasoning_effort {
+        body["reasoning"] = json!({"effort": effort});
+    }
+    if let Some(tier) = request.service_tier {
+        body["service_tier"] = json!(tier);
     }
     if let Some(temperature) = request.temperature {
         body["temperature"] = json!(temperature)
