@@ -20,7 +20,6 @@ use uuid::Uuid;
 #[derive(Clone, Debug)]
 pub struct Coordinator {
     directory: PathBuf,
-    writer_directory: PathBuf,
     workspace: PathBuf,
     gate: Arc<AsyncMutex<()>>,
 }
@@ -35,7 +34,7 @@ impl Drop for CoordinationGuard {
     }
 }
 
-/// Exclusive lifetime of one cooperating subagent writer for this workspace.
+/// Exclusive lifetime of one writer for this coordinator's persistent agent tree.
 #[derive(Debug)]
 pub(crate) struct AgentWriterLease(File);
 impl Drop for AgentWriterLease {
@@ -91,24 +90,17 @@ impl Coordinator {
                 gate
             });
         Ok(Self {
-            writer_directory: directory.clone(),
             directory,
             workspace,
             gate,
         })
-    }
-    /// Keep per-session inventories while arbitrating workspace writers globally.
-    pub fn with_writer_directory(mut self, directory: PathBuf) -> Result<Self> {
-        let shared = Self::open(directory, &self.workspace)?;
-        self.writer_directory = shared.directory;
-        Ok(self)
     }
     #[cfg_attr(not(unix), allow(dead_code))]
     pub(crate) fn transfer_identity(&self) -> (&Path, &Path) {
         (&self.directory, &self.workspace)
     }
     pub(crate) fn acquire_agent_writer(&self) -> Result<AgentWriterLease> {
-        let path = self.writer_directory.join("agents.execution.lock");
+        let path = self.directory.join("agents.execution.lock");
         let mut options = OpenOptions::new();
         options.read(true).write(true).create(true).truncate(false);
         #[cfg(unix)]
@@ -133,7 +125,7 @@ impl Coordinator {
             );
         }
         file.try_lock().context(
-            "workspace subagent runtime is busy; another owner still holds its execution lease",
+            "session subagent runtime is busy; another owner still holds its execution lease",
         )?;
         Ok(AgentWriterLease(file))
     }

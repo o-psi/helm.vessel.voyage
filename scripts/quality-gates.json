@@ -33,6 +33,15 @@
     ]
   },
   {
+    "id": "concurrent-voyages",
+    "argv": [
+      "python3",
+      "tests/concurrent_voyages.py",
+      "--bin-dir",
+      "target/release"
+    ]
+  },
+  {
     "id": "package-full",
     "argv": [
       "./scripts/package-release",

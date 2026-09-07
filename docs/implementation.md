@@ -198,9 +198,11 @@ a duplicate session owner. Relevant work: #77, #78 and #79.
 ## Verification and delivery
 
 The previous automated tests and evaluation suite were removed by request. Do not
-recreate them during documentation work or interpret the remaining seven non-test
-[quality gates](quality.md) as behavioral coverage. The scenarios above guide delivery verification. Temporary offline manual probes
-exercise actual processes without recreating a repository test suite. Replacement
+recreate them during documentation work or interpret the seven non-test
+[quality gates](quality.md) as behavioral coverage. A separately requested targeted
+concurrent-voyage regression now adds an eighth gate. The scenarios above guide
+delivery verification. Temporary offline manual probes
+exercise actual processes without recreating a repository test suite. Broader
 automated coverage, approved live calls and native deployment evidence remain
 separate work.
 

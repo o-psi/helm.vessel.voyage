@@ -63,10 +63,11 @@ acceptance before implementation. Preserve concurrent edits and unfinished work.
 Update both transport ends and document negotiated compatibility when changing wire
 contracts. A library primitive is not a completed operator workflow.
 
-Automated tests and evaluation scenarios are absent. Do not claim a passing build
-establishes runtime behavior, security, platform portability or provider quality.
-Use [quality validation](quality.md) for the remaining gates, and record any actual
-manual or separately authorized behavioral validation precisely.
+The previous automated suites and evaluation scenarios were removed. The targeted
+concurrent-voyage regression now runs through the [quality gates](quality.md);
+broader suite recreation remains separate. Do not claim a passing build establishes
+runtime behavior, security, platform portability or provider quality. Record actual
+behavioral validation and its scope precisely.
 
 Documentation-only changes need source/command checks, local link and anchor
 validation, release-manifest verification and a clean diff. Do not introduce new

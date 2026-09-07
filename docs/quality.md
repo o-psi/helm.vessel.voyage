@@ -1,20 +1,22 @@
 # Validation
 
-The automated tests and evaluation scenarios have been removed at the operator's
-request and will be recreated later. **There is currently no automated regression
-coverage.** Historical passing runs do not establish coverage for today's source.
+The previous automated suites and evaluation scenarios were removed at the
+operator's request. Targeted Linux regression coverage now checks concurrent
+voyages in one workspace. Broader suite recreation remains separate; historical
+passing runs do not establish coverage for today's source.
 
 ## Available checks
 
-`scripts/quality-gates.json` defines seven non-test gates:
+`scripts/quality-gates.json` defines eight gates:
 
 1. Rust formatting.
 2. Strict workspace Clippy across targets and features.
 3. Locked optimized workspace build.
-4. Full archive packaging.
-5. Full archive checksum verification.
-6. Standalone installer packaging.
-7. Installer checksum verification.
+4. Concurrent voyage process regression.
+5. Full archive packaging.
+6. Full archive checksum verification.
+7. Standalone installer packaging.
+8. Installer checksum verification.
 
 Run them from a clean committed checkout:
 
@@ -28,10 +30,33 @@ utilities, archive tools and checksum utilities. It defaults to one compiler job
 `--jobs N` selects another bound. Do not run competing builds against the same
 output directory.
 
-A passing run establishes only these build, analysis and packaging results.
-Runtime behavior, security boundaries, native macOS/Windows operation, deployed
-services and live model quality need separate evidence. Live provider work requires
-an approved provider and budget. No skipped or unavailable check is a pass.
+A passing run establishes these build, analysis and packaging results plus the
+specific Linux behaviors below. Other runtime behavior, security boundaries,
+native macOS/Windows operation, deployed services and live model quality need
+separate evidence. Live provider work requires an approved provider and budget.
+No skipped or unavailable check is a pass.
+
+## Concurrent voyage regression
+
+From a source checkout, after building `vessel` and `voyage`, run:
+
+```sh
+python3 tests/concurrent_voyages.py --bin-dir target/release
+```
+
+The six cases start actual Vessel-supervised voyage processes with one shared
+workspace and host data root. A local HTTP fixture holds provider responses until
+both voyages reach inference, so sequential execution cannot pass. Coverage includes
+separate live PIDs and canonical histories; simultaneous first-run admission;
+duplicate command and competing session-owner exclusion; cancellation and a new
+turn while the peer keeps running; simultaneous delegated agents using file tools
+with isolated task/completion state; and brief versus persistent contention in the
+shared inference database without replay or lost attribution.
+
+The fixture uses only Python's standard library, synthetic credentials, isolated
+HOME/XDG directories and a loopback provider. It retains evidence under its printed
+`/tmp/vct-*` path and observes cleanup of its own runtime processes. These are
+automated offline Linux checks, not live-provider or native macOS/Windows evidence.
 
 ## Isolation and evidence
 

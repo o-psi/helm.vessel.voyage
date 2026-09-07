@@ -90,6 +90,12 @@ work remains blocked: preserve the session and use the explicit runtime recovery
 procedure after stopping and inspecting its exact owner. Restarting Helm or
 resending the original command does not clear this obligation.
 
+Separate voyages may run and delegate simultaneously in the same workspace.
+Their histories, tasks and subagent ownership are separate; each voyage still
+allows only one active root run. Workspace files remain shared, so coordinate edits
+to the same files or use separate workspaces for independent changes. Host resource
+limits and shared inference accounting apply across all voyages.
+
 ### Interactive terminals and passwords
 
 Press **F8 Explore** to choose a readable overview of tools, permissions, tasks,

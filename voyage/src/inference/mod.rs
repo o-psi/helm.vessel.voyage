@@ -296,7 +296,12 @@ impl Store {
         );
         drop(file);
         let mut connection = Connection::open(database)?;
-        connection.busy_timeout(Duration::ZERO)?;
+        // Independent voyage processes share this host accounting database.
+        // Let their short transactions serialize instead of failing otherwise
+        // successful concurrent inference. SQLite retries lock acquisition, not
+        // provider dispatch or an application operation with uncertain effects.
+        // Keep the wait below the accounting worker's ten-second deadline.
+        connection.busy_timeout(Duration::from_secs(2))?;
         #[cfg(windows)]
         crate::attachment::journal::storage::configure(&connection)?;
         connection.execute_batch(

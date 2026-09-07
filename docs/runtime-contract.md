@@ -30,6 +30,12 @@ Shared workspace writer arbitration and shared budget accounting must work acros
 voyage processes. When capacity is exhausted, fail or queue within documented
 bounds; do not wait indefinitely or silently switch workspaces.
 
+Persistent subagent ownership follows the session's agent tree and completion
+store. Binding two voyages to the same workspace must not create a run-lifetime
+exclusive lock between their independent stores. Shared-file operations and host
+accounting retain their own coordination; session concurrency does not make
+conflicting workspace edits safe.
+
 ## Persistence and observation
 
 The voyage owns canonical conversation text, checkpoints, tool-effect intent,

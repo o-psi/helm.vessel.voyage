@@ -200,11 +200,20 @@ to root and subordinate work. Application policy is not an OS sandbox. Execution
 configuration is loaded and revalidated on the executing host; routing cannot
 broaden it. External content remains untrusted.
 
-Todos, subagents, terminal inventories and completion accounting are session-scoped;
-cooperating workspace writers retain shared arbitration. Host accounting bounds
+Todos, subagents, terminal inventories and completion accounting are session-scoped.
+The subagent writer lease protects that session's persistent agent tree, so distinct
+voyages can execute and delegate concurrently in the same workspace. Writers of the
+same session state still coordinate through its completion lock and exclusive owner.
+Sharing a workspace does not isolate file edits; tools retain their existing policy,
+stale-content and Git conflict checks. Host accounting bounds
 executor slots to 64 and PTYs to 256 across voyage processes. Unknown process death
 retains charges until explicit reconciliation/attestation. Completion evidence is
 accounting, not proof that a claim is semantically true.
+
+The shared inference database waits up to two seconds for a competing SQLite
+writer, within the accounting worker's ten-second deadline. Persistent contention
+fails the operation; it never causes a provider request to be replayed. Dispatched
+attempts with unconfirmed accounting retain their unknown outcome.
 
 Root PTYs can persist between turns in one live voyage. Subagent and transient
 resources are cleaned at their run boundary. Retained terminals keep their original
