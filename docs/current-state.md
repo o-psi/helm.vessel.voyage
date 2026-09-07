@@ -37,7 +37,7 @@ message, falling back to session creation time. Tab and Shift+Tab follow that
 same order; activity changes do not change the selected voyage. Legacy messages
 without timestamps use the creation fallback until new messages arrive. Owners
 that do not expose timestamps, and voyages without snapshots, sort last with a
-stable identity tie-break. Renaming or polling alone does not advance activity.
+stable identity tie-break. Renaming, polling, or system compaction markers do not advance activity.
 
 ## Persistence, migration and lifecycle
 
