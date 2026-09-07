@@ -325,6 +325,15 @@ impl App {
             view.pending = None;
             return Err(error.context("cannot persist command identity; nothing sent"));
         }
+        if !view.draft.text.trim_start().starts_with('/') {
+            let mut transcript = view.transcript.borrow_mut();
+            transcript.delivery = Some(super::transcript::Delivery {
+                text: view.draft.text.clone(),
+                before: view.snapshot.as_ref().map_or(0, |s| s.total_messages),
+                label: "Sending…".into(),
+            });
+            transcript.dirty = true;
+        }
         self.dispatch(target, command_id, command);
         Ok(())
     }

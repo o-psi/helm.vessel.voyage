@@ -27,6 +27,9 @@ pub struct SteeringReceipt {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Message {
+    /// Trusted local operator attribution; never inferred from authored text.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub operator_name: Option<String>,
     /// Durable local message time; absent for legacy history.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub created_at: Option<chrono::DateTime<chrono::Utc>>,
@@ -50,6 +53,7 @@ pub struct Message {
 impl Message {
     pub fn new(role: Role, content: impl Into<String>) -> Self {
         Self {
+            operator_name: None,
             created_at: Some(chrono::Utc::now()),
             role,
             content: content.into(),
@@ -79,6 +83,7 @@ impl Message {
         success: bool,
     ) -> Self {
         Self {
+            operator_name: None,
             created_at: Some(chrono::Utc::now()),
             role: Role::Tool,
             content: content.into(),

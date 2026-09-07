@@ -109,7 +109,7 @@ pub(super) fn receipt(value: &Value) -> String {
     )
 }
 
-pub(super) const HELP: &str = "HELM / YOUR WORKSPACE\n\nMove around\n  Tab / Shift+Tab   Switch voyages\n  Up / Down         Navigate voyages with empty composer or sidebar focus\n  Right, Enter      Focus the sidebar ⋮ button and open Actions\n  F9                Open selected voyage Actions (also in narrow terminals)\n  Ctrl+N            Start a new voyage\n  F1                Help\n  F5                Switch between current and archived voyages\n  F8                Explore tools, tasks, models and permissions\n  Esc               Go back without losing your draft\n  PageUp / PageDown Scroll the current view\n\nTalk to the assistant\n  /                 Open command menu\n  Up / Down         Select command or argument while menu is open\n  Tab               Complete selection; Enter executes\n  Esc               Dismiss command menu\n  Enter             Send your message\n  Alt+Enter         Add a line\n  Up / Down         Recall an earlier message while editing a draft\n  F4                Check an unconfirmed message\n  /cancel           Ask the assistant to stop\n\nQuestions and permissions\n  F2                Review a question or permission request\n  F6 / F7           Previous / next request\n  Ctrl+A / Ctrl+D   Allow once / deny a permission request\n  Up / Down         Choose an answer\n  Enter             Send the selected or written answer\n  Ctrl+D            Skip a question\n\nPrograms and passwords\n  F3                Find your running programs\n  Up / Down         Choose a program\n  Enter             Open its private terminal\n  Ctrl+]            Return to Helm\n  Type passwords only in the private terminal.\n  A password prompt may show no characters while you type.\n\nSee what is happening\n  /todos            Tasks\n  /subagents        Agents working on your request\n  /tools            Available tools\n  /policy           Permissions\n  /access           Change access (Read only / Ask first / Unrestricted)\n  /workflows        Saved workflows\n  /models           Available models\n  /host_resources   Machine capacity\n\nOrganize your work\n  /rename A name    Name this voyage\n  /branch A name    Continue in a separate voyage\n  /archive          Preserve history and stop this idle voyage after cleanup\n  /archived         Browse archived voyages (F5)\n  /voyages          Return to current voyages\n  /restore          Restart and restore the selected archived voyage\n  /export PATH      Save your conversation as Markdown\n\nLeave\n  Ctrl+C / Ctrl+Q   Close Helm\n  Your voyages keep running when you leave.";
+pub(super) const HELP: &str = "HELM / YOUR WORKSPACE\n\nMove around\n  Tab / Shift+Tab   Switch voyages\n  Up / Down         Navigate voyages with empty composer or sidebar focus\n  Right, Enter      Focus the sidebar ⋮ button and open Actions\n  F9                Open selected voyage Actions (also in narrow terminals)\n  Ctrl+N            Start a new voyage\n  F1                Help\n  F5                Switch between current and archived voyages\n  F8                Explore tools, tasks, models and permissions\n  Esc               Go back without losing your draft\n  PageUp / PageDown Scroll the current view\n  Ctrl+Home         Load earlier messages\n  Ctrl+End          Return to latest output\n  Ctrl+F            Find in loaded messages; Enter next, Esc close\n  Ctrl+T            Expand or collapse tool activity\n\nTalk to the assistant\n  /                 Open command menu\n  Up / Down         Select command or argument while menu is open\n  Tab               Complete selection; Enter executes\n  Esc               Dismiss command menu\n  Enter             Send your message\n  Alt+Enter         Add a line\n  Up / Down         Recall an earlier message while editing a draft\n  F4                Check an unconfirmed message\n  /cancel           Ask the assistant to stop\n\nQuestions and permissions\n  F2                Review a question or permission request\n  F6 / F7           Previous / next request\n  Ctrl+A / Ctrl+D   Allow once / deny a permission request\n  Up / Down         Choose an answer\n  Enter             Send the selected or written answer\n  Ctrl+D            Skip a question\n\nPrograms and passwords\n  F3                Find your running programs\n  Up / Down         Choose a program\n  Enter             Open its private terminal\n  Ctrl+]            Return to Helm\n  Type passwords only in the private terminal.\n  A password prompt may show no characters while you type.\n\nSee what is happening\n  /todos            Tasks\n  /subagents        Agents working on your request\n  /tools            Available tools\n  /policy           Permissions\n  /access           Change access (Read only / Ask first / Unrestricted)\n  /workflows        Saved workflows\n  /models           Available models\n  /host_resources   Machine capacity\n\nOrganize your work\n  /rename A name    Name this voyage\n  /branch A name    Continue in a separate voyage\n  /archive          Preserve history and stop this idle voyage after cleanup\n  /archived         Browse archived voyages (F5)\n  /voyages          Return to current voyages\n  /restore          Restart and restore the selected archived voyage\n  /export PATH      Save your conversation as Markdown\n\nLeave\n  Ctrl+C / Ctrl+Q   Close Helm\n  Your voyages keep running when you leave.";
 
 pub(super) fn run_state(state: &str) -> &'static str {
     match state {
@@ -204,21 +204,26 @@ pub(super) fn operator_message(content: &str) -> Option<String> {
 }
 
 /// Stored operator results receive user-facing copy; canonical history is unchanged.
-pub(super) fn structured_message(content: &str) -> Option<String> {
-    if content
-        .strip_prefix("started PTY process ")
-        .is_some_and(|id| uuid::Uuid::parse_str(id.trim()).is_ok())
+pub(super) fn structured_message(content: &str, operator: &str) -> Option<String> {
+    if operator == "process"
+        && content
+            .strip_prefix("started PTY process ")
+            .is_some_and(|id| uuid::Uuid::parse_str(id.trim()).is_ok())
     {
         return Some("Terminal opened. Press F3 to view it.".into());
     }
     let value: Value = serde_json::from_str(content).ok()?;
     match value["status"].as_str() {
-        Some("selected" | "custom") if value["answer"].is_string() => Some(format!(
-            "Answer sent: {}",
-            safe(value["answer"].as_str().unwrap_or_default())
-        )),
-        Some("cancelled") => Some("Question skipped.".into()),
-        Some("unavailable") => Some("The question couldn't be shown.".into()),
+        Some("selected" | "custom") if operator == "questions" && value["answer"].is_string() => {
+            Some(format!(
+                "Answer sent: {}",
+                safe(value["answer"].as_str().unwrap_or_default())
+            ))
+        }
+        Some("cancelled") if operator == "questions" => Some("Question skipped.".into()),
+        Some("unavailable") if operator == "questions" => {
+            Some("The question couldn't be shown.".into())
+        }
         _ => (value.is_object() || value.is_array()).then(|| fields(&value)),
     }
 }

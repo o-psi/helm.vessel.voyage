@@ -10,14 +10,55 @@ pub struct Target {
     pub session: Uuid,
 }
 
-#[derive(Clone, Deserialize, PartialEq)]
+#[derive(Clone, Default, Deserialize, Serialize, PartialEq)]
 pub struct Message {
+    #[serde(default)]
+    pub message_index: usize,
+    #[serde(default)]
+    pub created_at: Option<chrono::DateTime<chrono::Utc>>,
+    #[serde(default)]
+    pub operator_name: Option<String>,
+    #[serde(default)]
+    pub tool_calls: Vec<ToolCall>,
+    #[serde(default)]
+    pub tool_call_id: Option<String>,
+    #[serde(default)]
+    pub tool_success: Option<bool>,
+    #[serde(default)]
+    pub steering: serde_json::Value,
+    #[serde(default)]
+    pub projection_truncated: bool,
     pub role: String,
     pub content: String,
 }
 
+#[derive(Clone, Deserialize, Serialize, PartialEq)]
+pub struct ToolCall {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub arguments: serde_json::Value,
+}
+#[derive(Clone, Deserialize, PartialEq)]
+pub struct Turn {
+    pub run_id: Uuid,
+    pub phase: String,
+    pub message_start: Option<usize>,
+    pub message_end: Option<usize>,
+}
+
 #[derive(Clone, Deserialize, PartialEq)]
 pub struct Run {
+    #[serde(default)]
+    pub message_start: Option<usize>,
+    #[serde(default)]
+    pub live_text: Option<String>,
+    #[serde(default)]
+    pub live_text_truncated: bool,
+    #[serde(default)]
+    pub live_text_offset: Option<u64>,
+    #[serde(default)]
+    pub partial_text_bytes: u64,
     pub run_id: Uuid,
     pub state: String,
     #[serde(default)]
@@ -39,6 +80,12 @@ impl Run {
 
 #[derive(Clone, Deserialize, PartialEq)]
 pub struct Snapshot {
+    #[serde(default)]
+    pub total_messages: usize,
+    #[serde(default)]
+    pub message_offset: usize,
+    #[serde(default)]
+    pub turns: Vec<Turn>,
     pub session_id: Uuid,
     pub revision: u64,
     #[serde(default)]
@@ -90,6 +137,7 @@ pub struct View {
     pub panel: Option<String>,
     pub terminals: super::terminals::Browser,
     pub scroll: u16,
+    pub transcript: std::cell::RefCell<super::transcript::State>,
     pub unread: bool,
     pub observed: Option<Instant>,
     pub error: Option<String>,
@@ -121,6 +169,7 @@ impl View {
             panel: None,
             terminals: Default::default(),
             scroll: 0,
+            transcript: Default::default(),
             unread: false,
             observed: None,
             error: None,

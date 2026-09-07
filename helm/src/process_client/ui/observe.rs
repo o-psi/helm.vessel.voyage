@@ -10,6 +10,20 @@ use tokio::sync::{Semaphore, mpsc};
 use voyage_protocol::process::{ProcessInfo, RuntimeCommand, VesselCommand};
 
 pub enum Update {
+    Live {
+        target: Target,
+        incarnation: uuid::Uuid,
+        run: uuid::Uuid,
+        offset: u64,
+        total: u64,
+        result: Result<String, String>,
+    },
+    History {
+        target: Target,
+        incarnation: uuid::Uuid,
+        revision: u64,
+        result: Result<Vec<super::state::Message>, String>,
+    },
     Completion {
         target: Target,
         incarnation: uuid::Uuid,

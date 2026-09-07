@@ -55,7 +55,11 @@ pub(in crate::process_client::ui) fn draw(frame: &mut Frame<'_>, app: &App, area
     if area.width < 16 || area.height < 10 {
         review.displayed = None;
         frame.render_widget(
-            Paragraph::new("Interactions pending · enlarge terminal to review"),
+            Paragraph::new(if review.focused {
+                "Enlarge the window to review this request safely."
+            } else {
+                "Waiting for you · F2 Review"
+            }),
             area,
         );
         return;
@@ -82,7 +86,7 @@ pub(in crate::process_client::ui) fn draw(frame: &mut Frame<'_>, app: &App, area
         .border_style(Style::default().fg(Color::Yellow));
     let inner = block.inner(area);
     frame.render_widget(block, area);
-    let footer_height = inner.height.min(if kind == "question" { 8 } else { 5 });
+    let footer_height = inner.height.min(if kind == "question" { 7 } else { 4 });
     let body = Rect {
         height: inner.height.saturating_sub(footer_height),
         ..inner
@@ -93,13 +97,21 @@ pub(in crate::process_client::ui) fn draw(frame: &mut Frame<'_>, app: &App, area
         .saturating_sub(now_ms())
         .div_ceil(1000);
     let mut text = Text::from(vec![
-        Line::from(format!("Machine: {}", app.route_label(target.route))),
-        Line::from(format!(
-            "Voyage: {} · {remaining}s left",
-            safe(&view.title())
-        )),
+        Line::from(format!("{remaining}s left to respond")),
         Line::default(),
     ]);
+    if let Some(prompt) = view.snapshot.as_ref().and_then(|s| {
+        s.messages
+            .iter()
+            .rev()
+            .find(|m| m.role == "user" && m.operator_name.is_none())
+    }) {
+        let context = safe(&prompt.content).chars().take(160).collect::<String>();
+        text.lines.extend(wrap_lines(
+            Text::raw(format!("Your request: {context}\n")),
+            body.width,
+        ));
+    }
     let answer = review
         .answers
         .entry((target, decision.decision_id))

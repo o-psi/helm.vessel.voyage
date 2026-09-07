@@ -65,6 +65,7 @@ pub(super) async fn submit(
     crate::policy::Policy::new(&config, saved.session.workspace.clone())?;
     let submitted_prompt = prompt.clone();
     let request = TurnAdmission {
+        operator_name: operator.as_ref().map(|(name, _)| name.clone()),
         command_id,
         machine_id: authorization.actor.installation_id,
         principal_id: authorization.actor.principal_id,

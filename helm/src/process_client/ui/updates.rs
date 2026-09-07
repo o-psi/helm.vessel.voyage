@@ -2,7 +2,77 @@ use super::*;
 
 impl App {
     pub(super) fn update(&mut self, update: Update) {
+        for view in self.views.values() {
+            view.transcript.borrow_mut().dirty = true;
+        }
         match update {
+            Update::Live {
+                target,
+                incarnation,
+                run,
+                offset,
+                total,
+                result,
+            } => {
+                if let Some(view) = self
+                    .views
+                    .get(&target)
+                    .filter(|v| v.process.incarnation == incarnation)
+                {
+                    view.transcript.borrow_mut().live_loading = false;
+                }
+                if let Some(view) = self
+                    .views
+                    .get_mut(&target)
+                    .filter(|v| v.process.incarnation == incarnation)
+                    && view
+                        .snapshot
+                        .as_ref()
+                        .and_then(|s| s.run.as_ref())
+                        .is_some_and(|r| {
+                            r.run_id == run
+                                && r.live_text_offset == Some(offset)
+                                && r.partial_text_bytes == total
+                        })
+                {
+                    let mut state = view.transcript.borrow_mut();
+                    match result {
+                        Ok(text) => state.live = Some((run, offset, total, text)),
+                        Err(error) => state.error = Some(error),
+                    }
+                }
+            }
+            Update::History {
+                target,
+                incarnation,
+                revision,
+                result,
+            } => {
+                if let Some(view) = self
+                    .views
+                    .get_mut(&target)
+                    .filter(|v| v.process.incarnation == incarnation)
+                {
+                    let mut state = view.transcript.borrow_mut();
+                    if state.attempted == Some(revision) {
+                        state.loading = false;
+                    }
+                    if view
+                        .snapshot
+                        .as_ref()
+                        .is_some_and(|s| s.revision == revision)
+                    {
+                        match result {
+                            Ok(messages) => {
+                                state.messages = messages;
+                                state.loaded_revision = Some(revision);
+                                state.error = None;
+                            }
+                            Err(error) => state.error = Some(error),
+                        }
+                    }
+                }
+            }
             Update::Completion {
                 target,
                 incarnation,
@@ -62,6 +132,7 @@ impl App {
                         if view.process.incarnation != process.incarnation {
                             view.snapshot = None;
                             view.terminals = Default::default();
+                            *view.transcript.borrow_mut() = Default::default();
                             view.rendered.take();
                             view.observed = None;
                             view.error = Some(
@@ -146,6 +217,37 @@ impl App {
                         view.unread |= changed && self.selected != Some(target);
                         if view.snapshot.as_ref() != Some(&snapshot) {
                             view.rendered.take();
+                        }
+                        {
+                            let mut transcript = view.transcript.borrow_mut();
+                            if view
+                                .snapshot
+                                .as_ref()
+                                .is_some_and(|old| old.total_messages > snapshot.total_messages)
+                            {
+                                *transcript = Default::default();
+                            }
+                            if transcript.delivery.as_ref().is_some_and(|d| {
+                                snapshot.messages.iter().any(|m| {
+                                    m.role == "user"
+                                        && m.message_index >= d.before
+                                        && m.content == d.text
+                                })
+                            }) {
+                                transcript.delivery = None;
+                            }
+                            transcript.observe_growth(view.snapshot.as_ref().is_some_and(|old| {
+                                snapshot.total_messages > old.total_messages
+                                    || snapshot.run.as_ref().is_some_and(|run| {
+                                        old.run.as_ref().is_some_and(|previous| {
+                                            previous.run_id == run.run_id
+                                                && run.partial_text_bytes
+                                                    > previous.partial_text_bytes
+                                        })
+                                    })
+                            }));
+                            transcript.merge_snapshot(&snapshot);
+                            transcript.dirty = true;
                         }
                         view.snapshot = Some(snapshot);
                         view.observed = Some(Instant::now());
@@ -241,6 +343,14 @@ impl App {
                                 self.selected = Some(target);
                             }
                         }
+                        if let Some(delivery) = &mut view.transcript.borrow_mut().delivery {
+                            delivery.label = if rejected {
+                                "Not accepted · Draft kept"
+                            } else {
+                                "Received · Waiting for saved conversation"
+                            }
+                            .into();
+                        }
                         view.pending = None;
                         self.status = if value["archived"] == true {
                             "Archived. Waiting for confirmed cleanup before releasing the process slot. F5 opens archives.".into()
@@ -249,6 +359,14 @@ impl App {
                         };
                     }
                     Err(error) => {
+                        if let Some(delivery) = &mut view.transcript.borrow_mut().delivery {
+                            delivery.label = if refused {
+                                "Not sent · Draft kept"
+                            } else {
+                                "Delivery unconfirmed · F4 checks status"
+                            }
+                            .into();
+                        }
                         self.status = format!("{} · draft retained", safe(&error));
                         if refused {
                             view.pending = None;

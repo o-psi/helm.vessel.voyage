@@ -137,7 +137,19 @@ browser lists observed state and host, selects with Up/Down, and attaches with
 Enter using the inventory's exact owning run and observed incarnation. Ctrl+]
 returns from private input to the saved conversation draft. Stale inventories
 cannot attach. F1 opens a scrollable guide; operator panels and command receipts
-render readable metadata, and tool payloads are excluded from the chat display.
+render readable metadata. Chat activity expands with Ctrl+T to show action names
+and outcomes; raw tool result payloads remain excluded. Authored JSON is preserved,
+and operator summarization requires explicit message metadata. Runtime projections
+include message times, bounded turn outcomes and a reconciled live suffix, so
+committed text is not repeated by the streaming preview. Managed execution reuses
+the admitted user message exactly, including its timestamp, at the first checkpoint.
+Ctrl+F searches loaded rows; PageUp/PageDown preserve a message-relative reading
+anchor across appends and resize, and Ctrl+End returns to latest. Ctrl+Home loads
+128 earlier messages. Oversized messages load automatically through revision-bound
+history and message chunks, bounded to 16,384 messages / 64 MiB per reading window.
+Archived views preserve cached history but cannot fetch from a stopped owner;
+restoration is required after reopening an uncached archive. Older owners without
+stream-boundary metadata show canonical text without a speculative live preview.
 F8 opens a keyboard chooser for existing read-only overviews without editing the
 draft. A quiet voyage rail, borderless conversation and compact composer adapt
 the supplied conversation-interface reference to terminal cells.

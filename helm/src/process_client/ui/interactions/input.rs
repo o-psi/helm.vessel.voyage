@@ -9,7 +9,22 @@ impl App {
         event: &Event,
     ) -> Result<bool> {
         let mut review = self.interactions.borrow_mut();
+        if review.displayed.is_none()
+            && matches!(event, Event::Key(key) if key.code == KeyCode::F(2) && key.kind == KeyEventKind::Press)
+            && review
+                .selected
+                .is_some_and(|(target, _)| self.selected == Some(target))
+        {
+            review.focused = true;
+            return Ok(true);
+        }
         let Some((target, decision_id)) = review.displayed else {
+            if matches!(event, Event::Key(key) if key.code == KeyCode::Esc && key.kind == KeyEventKind::Press)
+                && review.focused
+            {
+                review.focused = false;
+                return Ok(true);
+            }
             // Navigation must repaint before focused input can target the next request.
             return Ok(review.focused
                 && review

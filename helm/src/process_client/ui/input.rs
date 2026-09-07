@@ -2,6 +2,9 @@ use super::*;
 
 impl App {
     pub(super) fn input(&mut self, event: Event) -> Result<()> {
+        if self.transcript_input(&event) {
+            return Ok(());
+        }
         if matches!(event, Event::Resize(..)) {
             self.sidebar.hits.borrow_mut().clear();
             self.sidebar.visible.set(None);

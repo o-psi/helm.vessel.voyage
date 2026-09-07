@@ -4,7 +4,8 @@
 inventory and proposed manual acceptance gate, not a claim that every journey is
 implemented, exercised, or approved. [#14](https://github.com/o-psi/voyage/issues/14)
 tracks the complete interface; [#143](https://github.com/o-psi/voyage/issues/143)
-is the terminal and readable-presentation slice. Product-owner visual acceptance
+is the terminal and readable-presentation slice; [#150](https://github.com/o-psi/voyage/issues/150)
+tracks the chat-log reading pass. Product-owner visual acceptance
 remains pending. Passing the seven [quality gates](quality.md) cannot establish UX
 readiness. Historical observations are scoped in [implementation](implementation.md).
 
@@ -53,8 +54,8 @@ Every row still needs an explicit release decision and product-owner review.
 | J07 | Write, edit and recall a message | Composer, Enter, Alt+Enter, arrows, prompt history | Review: multiline cursor, graphemes, paste, limit errors and disk-write failure; input and display must remain aligned. |
 | J08 | Send a turn and follow its answer | Enter, `connect submit/run/chat`, `run` | Review: admission versus completion, streaming interruption, tool failure, provider refusal and first meaningful feedback. Live provider evidence is separate. |
 | J09 | Steer work already running | Enter during an active run | Review: queued/applied/not-applied explanation, operator-run refusal and last-moment completion races. |
-| J10 | Read conversation and code | Markdown view, PageUp/PageDown, mouse wheel | Review: tables, lists, code, long words, controls, CJK, combining text and streaming without unwanted scroll jumps. |
-| J11 | Read older or oversized history | Bounded conversation; `connect request` history/chunk/output operations | Gap: no TUI history pagination; truncation notices and `/export` do not replace reading history in place. |
+| J10 | Read conversation and code | Markdown view, Ctrl+T activity, Ctrl+F find, PageUp/PageDown, Ctrl+End | #150 adds faithful authored content, word wrapping, paragraph spacing, activity and anchored reading. Exact-build walkthrough and product-owner visual acceptance remain required. |
+| J11 | Read older or oversized history | Ctrl+Home earlier pages, automatic full-message loading, `/export` | #150 adds revision-bound TUI loading (16,384 messages / 64 MiB). Search is limited to loaded rows; uncached stopped archives require restoration. Larger-window and slow-route acceptance remain separate. |
 | J12 | Resolve uncertain submission | Retained pending draft, F4, `/receipt`, `connect receipt` | Review/gap: F4 checks the receipt without editing the draft; a guided pending-action view is still missing; no automatic uncertain-effect replay. |
 | J13 | Cancel work and see cleanup | `/cancel`, `connect cancel` | Review: requesting, still running, cleanup unresolved and actually stopped; second cancel and route loss. |
 | J14 | Review an execution approval | Interactions panel, Ctrl+A/Ctrl+D, `/approve`/`/deny` | Review: full scope, expiry, denial, unsupported kinds, stale identity, repeat keys and wrong-voyage protection. Prior #142 evidence is not current whole-product acceptance. |

@@ -8,6 +8,7 @@ mod export;
 mod input;
 mod interactions;
 mod lifecycle;
+mod transcript;
 mod updates;
 use crate::composer;
 mod drafts;
@@ -129,6 +130,7 @@ pub async fn run_with_notice(
     let result = async {
         while !app.quit {
             app.sync_completion();
+            app.refresh_transcript();
             tokio::select! {
                 _ = repaint.tick() => terminal.draw(|frame| render::draw(frame, &app)).map(|_| ())?,
                 event = events.next() => match event {

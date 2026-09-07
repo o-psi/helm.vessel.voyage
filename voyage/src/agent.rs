@@ -717,8 +717,17 @@ impl Agent {
         input: Option<SteeringReceiver>,
         scope: Option<crate::completion::runtime::RunHandle>,
     ) -> Result<AgentOutcome, AgentError> {
-        self.run_inner(history, prompt, cancel, input, None, None, scope, None)
-            .await
+        self.run_inner(
+            history,
+            Message::new(crate::model::Role::User, prompt),
+            cancel,
+            input,
+            None,
+            None,
+            scope,
+            None,
+        )
+        .await
     }
 
     pub fn with_context_window(mut self, limit: usize) -> Self {
@@ -955,8 +964,17 @@ impl Agent {
         cancel: CancellationToken,
         input: Option<SteeringReceiver>,
     ) -> Result<AgentOutcome, AgentError> {
-        self.run_inner(history, prompt, cancel, input, None, None, None, None)
-            .await
+        self.run_inner(
+            history,
+            Message::new(crate::model::Role::User, prompt),
+            cancel,
+            input,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
     }
 
     pub async fn run_checkpointed(
@@ -970,7 +988,7 @@ impl Agent {
     ) -> Result<AgentOutcome, AgentError> {
         self.run_inner(
             history,
-            prompt,
+            Message::new(crate::model::Role::User, prompt),
             cancel,
             input,
             Some(checkpoint),
@@ -993,7 +1011,14 @@ impl Agent {
         scope: Option<crate::completion::runtime::RunHandle>,
     ) -> Result<AgentOutcome, AgentError> {
         self.run_checkpointed_scoped_with_workflow_secrets(
-            history, prompt, cancel, input, checkpoint, model, scope, None,
+            history,
+            Message::new(crate::model::Role::User, prompt),
+            cancel,
+            input,
+            checkpoint,
+            model,
+            scope,
+            None,
         )
         .await
     }
@@ -1004,7 +1029,7 @@ impl Agent {
     pub async fn run_checkpointed_scoped_with_workflow_secrets(
         &self,
         history: Vec<Message>,
-        prompt: String,
+        prompt: Message,
         cancel: CancellationToken,
         input: Option<SteeringReceiver>,
         checkpoint: &dyn RunCheckpoint,
@@ -1029,7 +1054,7 @@ impl Agent {
     async fn run_inner(
         &self,
         mut history: Vec<Message>,
-        prompt: String,
+        prompt: Message,
         cancel: CancellationToken,
         mut input: Option<SteeringReceiver>,
         checkpoint: Option<&dyn RunCheckpoint>,
@@ -1088,7 +1113,7 @@ impl Agent {
             ));
         }
         history.retain(|message| message.role != crate::model::Role::System);
-        history.push(Message::new(crate::model::Role::User, prompt));
+        history.push(prompt);
         let mut usage = Usage::default();
         let mut turn = 0usize;
         let mut reconciliation: Option<String> = None;

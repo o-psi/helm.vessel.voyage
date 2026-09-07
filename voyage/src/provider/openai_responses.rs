@@ -562,6 +562,7 @@ fn finish(assembly: Assembly) -> Result<ModelResponse, ProviderError> {
         .collect::<Result<Vec<_>, _>>()?;
     Ok(ModelResponse {
         message: Message {
+            operator_name: None,
             created_at: Some(chrono::Utc::now()),
             role: Role::Assistant,
             content: assembly.content,

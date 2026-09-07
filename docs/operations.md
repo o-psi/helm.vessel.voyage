@@ -51,6 +51,25 @@ unconfirmed action without editing or resending the conversation draft. Authored
 code remains readable in conversation; stored operator results receive plain-language
 summaries without changing the saved history.
 
+Conversation messages keep their authored text, including JSON examples. Helm
+only summarizes explicitly identified operator actions. User messages, updates,
+answers and recorded run outcomes have distinct labels. Tool activity is compact;
+**Ctrl+T** expands action names and outcomes without dumping result payloads.
+
+**Ctrl+F** finds text in the loaded conversation; Enter advances to the next match
+and Esc closes search without changing your draft. PageUp/PageDown and the mouse
+wheel keep an earlier reading position anchored while output arrives. **Ctrl+End**
+returns to the latest output. **Ctrl+Home** loads 128 earlier messages and retries
+incomplete loading. Oversized messages load automatically from the same saved
+revision. Reading is bounded to 16,384 messages and 64 MiB of public history; use
+`/export PATH` for a complete larger transcript. Search covers the loaded section.
+
+On narrow screens a pending question keeps the conversation visible; F2 opens
+its full review with the latest user request for context. Esc returns to the
+conversation and saved draft. Archived conversations retain already loaded text;
+a stopped archive reopened without cached text must be restored before history
+can be read. Restore does not resume unfinished work automatically.
+
 A failed startup displays its stage (policy, accounting, subagents, tools or
 provider configuration). When cleanup completes, fix the indicated configuration
 or resource problem and submit a new message. When cleanup is unconfirmed, further
@@ -141,9 +160,9 @@ or observed cleanup. An unknown receipt does not authorize a different resubmiss
 A stop response can precede observed cleanup; inspect again. Never infer survival
 from a stored PID or force restart by removing registration/cleanup records.
 
-Snapshots bound message and partial-output size and mark truncation. Use the typed
-request command for paginated history or full message/output chunks rather than
-assuming the screen contains the full transcript:
+Snapshots bound message and partial-output size and mark truncation. Helm loads
+oversized messages and offers earlier history in place. The typed request command
+also provides paginated history and full message/output chunks:
 
 ```sh
 helm connect request SESSION_UUID '{"op":"history","offset":0,"limit":32,"expected_revision":null}'

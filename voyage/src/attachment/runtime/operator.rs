@@ -2,7 +2,7 @@
 use super::*;
 impl RunOwner {
     pub(crate) async fn start_operator(&mut self) -> Result<(), CheckpointError> {
-        let (mut history, prompt) = self.input.take().ok_or(CheckpointError)?;
+        let _input = self.input.take().ok_or(CheckpointError)?;
         self.steering_receiver.take();
         let authority = self.token.execution_authority.clone();
         self.storage(move |store| {
@@ -10,7 +10,11 @@ impl RunOwner {
                 authority.check()?;
             }
             store.journal.mark_running(&store.guard, store.run_id)?;
-            history.push(Message::new(crate::model::Role::User, prompt));
+            let history = store
+                .journal
+                .load_session(store.session_id)?
+                .session
+                .messages;
             store.journal.checkpoint_canonical(
                 &store.guard,
                 store.run_id,
@@ -67,10 +71,13 @@ impl RunOwner {
         let clean = lease.readiness.ready() && lease.readiness.incomplete == 0;
         self.storage(move |store| {
             let mut saved = store.journal.load_session(store.session_id)?;
-            saved
+            let mut message = Message::new(crate::model::Role::Assistant, text);
+            message.operator_name = saved
                 .session
                 .messages
-                .push(Message::new(crate::model::Role::Assistant, text));
+                .last()
+                .and_then(|m| m.operator_name.clone());
+            saved.session.messages.push(message);
             let run = store.journal.run(store.run_id)?;
             store.journal.checkpoint_canonical(
                 &store.guard,

@@ -13,7 +13,7 @@ pub(super) fn text_prefix(text: &str, limit: usize) -> (&str, bool) {
     (&text[..end], end < text.len())
 }
 pub(super) fn full(message: &Message) -> Value {
-    json!({"role":message.role,"content":message.content,"tool_calls":message.tool_calls,"tool_call_id":message.tool_call_id,"tool_success":message.tool_success,"steering":message.steering})
+    json!({"role":message.role,"content":message.content,"created_at":message.created_at,"operator_name":message.operator_name,"tool_calls":message.tool_calls,"tool_call_id":message.tool_call_id,"tool_success":message.tool_success,"steering":message.steering})
 }
 fn bounded(message: &Message, index: usize) -> Result<Value> {
     let mut value = full(message);
@@ -24,7 +24,7 @@ fn bounded(message: &Message, index: usize) -> Result<Value> {
     }
     let (content, truncated) = text_prefix(&message.content, 4096);
     Ok(
-        json!({"role":message.role,"content":content,"content_truncated":truncated,"content_bytes":message.content.len(),"tool_calls":[],"tool_calls_omitted":!message.tool_calls.is_empty(),"tool_success":message.tool_success,"message_index":index,"projection_truncated":true,"complete_message":"message_chunk"}),
+        json!({"role":message.role,"content":content,"created_at":message.created_at,"operator_name":message.operator_name,"content_truncated":truncated,"content_bytes":message.content.len(),"tool_calls":[],"tool_calls_omitted":!message.tool_calls.is_empty(),"tool_call_id":message.tool_call_id,"steering":message.steering,"tool_success":message.tool_success,"message_index":index,"projection_truncated":true,"complete_message":"message_chunk"}),
     )
 }
 pub(super) fn page(messages: &[Message], offset: usize, limit: usize) -> Result<Vec<Value>> {
@@ -72,4 +72,44 @@ pub(super) fn failure_summary(reason: Option<&str>) -> Option<&str> {
         Some("local runtime construction or output failed") => Some("Runtime startup failed."),
         _ => None,
     }
+}
+
+/// Run-owned ranges reconcile the provisional stream with saved assistant text.
+/// An ambiguous older history receives no speculative preview.
+pub(super) fn run(
+    session: &crate::session::Session,
+    run: &crate::attachment::journal::RunRecord,
+) -> Value {
+    let summary = session.run_summaries.iter().find(|s| s.run_id == run.id);
+    let committed = summary
+        .and_then(|s| s.message_start)
+        .filter(|start| *start <= session.messages.len())
+        .map(|start| {
+            session.messages[start..]
+                .iter()
+                .filter(|m| m.role == crate::model::Role::Assistant && m.operator_name.is_none())
+                .map(|m| m.content.as_str())
+                .collect::<String>()
+        });
+    let offset = committed.as_ref().and_then(|text| {
+        if run.partial_text.starts_with(text) {
+            Some(text.len())
+        } else if text.starts_with(&run.partial_text) {
+            Some(run.partial_text.len())
+        } else {
+            None
+        }
+    });
+    let live = offset.map(|start| &run.partial_text[start..]).unwrap_or("");
+    let (live, live_truncated) = text_prefix(live, 65536);
+    let (partial, truncated) = text_prefix(&run.partial_text, 65536);
+    json!({"run_id":run.id,"state":run.state,"failure_summary":failure_summary(run.terminal_reason.as_deref()),
+        "partial_text":partial,"partial_text_truncated":truncated,"partial_text_bytes":run.partial_text.len(),
+        "live_text":live,"live_text_truncated":live_truncated,"live_text_offset":offset,
+        "stream_reconciled":offset.is_some(),"message_start":summary.and_then(|s| s.message_start)})
+}
+pub(super) fn turns(session: &crate::session::Session) -> Vec<Value> {
+    session.run_summaries.iter().rev().take(1024).rev().map(|s| json!({
+        "run_id":s.run_id,"phase":s.phase,"message_start":s.message_start,"message_end":s.message_end
+    })).collect()
 }

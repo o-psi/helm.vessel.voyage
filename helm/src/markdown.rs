@@ -243,17 +243,14 @@ impl Renderer {
             Tag::Heading { level, .. } => {
                 self.flush_line(false);
                 let level = heading_number(level);
-                self.current.push(StyledText {
-                    text: format!("{} ", "#".repeat(level)),
-                    style: Style::default()
-                        .fg(self.options.theme.heading)
-                        .add_modifier(Modifier::BOLD),
-                });
-                self.push_style(
-                    Style::default()
-                        .fg(self.options.theme.heading)
-                        .add_modifier(Modifier::BOLD),
-                );
+                let style = Style::default()
+                    .fg(self.options.theme.heading)
+                    .add_modifier(if level <= 2 {
+                        Modifier::BOLD
+                    } else {
+                        Modifier::ITALIC
+                    });
+                self.push_style(style);
             }
             Tag::BlockQuote(_) => {
                 self.flush_line(false);
@@ -346,10 +343,16 @@ impl Renderer {
 
     fn end(&mut self, tag: TagEnd) {
         match tag {
-            TagEnd::Paragraph => self.flush_line(false),
+            TagEnd::Paragraph => {
+                self.flush_line(false);
+                if self.list_stack.is_empty() {
+                    self.blank_line();
+                }
+            }
             TagEnd::Heading(_) => {
                 self.pop_style();
                 self.flush_line(false);
+                self.blank_line();
             }
             TagEnd::BlockQuote(_) => {
                 self.flush_line(false);
@@ -360,10 +363,14 @@ impl Renderer {
                 self.flush_code_block();
                 self.code_block = false;
                 self.code_language = None;
+                self.blank_line();
             }
             TagEnd::List(_) => {
                 self.flush_line(false);
                 self.list_stack.pop();
+                if self.list_stack.is_empty() {
+                    self.blank_line();
+                }
             }
             TagEnd::Item => self.flush_line(false),
             TagEnd::Emphasis | TagEnd::Strong | TagEnd::Strikethrough => self.pop_style(),
@@ -509,6 +516,14 @@ impl Renderer {
         }
     }
 
+    fn blank_line(&mut self) {
+        if self.lines.len() < self.options.max_output_lines
+            && self.lines.last().is_some_and(|l| !l.spans.is_empty())
+        {
+            self.lines.push(Line::default());
+        }
+    }
+
     fn flush_line(&mut self, preserve_empty: bool) {
         if self.current.is_empty() && !preserve_empty {
             return;
@@ -528,8 +543,28 @@ impl Renderer {
             .max_output_lines
             .saturating_sub(self.lines.len())
             .max(1);
-        let (wrapped, wrapping_truncated) =
-            wrap_fragments(&content, self.options.width, self.code_block, remaining);
+        let prefix: String = content.iter().map(|p| p.text.as_str()).collect();
+        let trimmed = prefix.trim_start();
+        let marker = if trimmed.starts_with("• ") {
+            2
+        } else {
+            trimmed
+                .find(". ")
+                .filter(|&i| i > 0 && trimmed[..i].chars().all(|c| c.is_ascii_digit()))
+                .map_or(0, |i| i + 2)
+        };
+        let indent = if !self.list_stack.is_empty() && marker > 0 {
+            prefix.len() - trimmed.len() + marker
+        } else {
+            0
+        };
+        let (wrapped, wrapping_truncated) = wrap_fragments(
+            &content,
+            self.options.width,
+            self.code_block,
+            remaining,
+            indent,
+        );
         self.truncated |= wrapping_truncated;
         for line in wrapped {
             if self.lines.len() >= self.options.max_output_lines {
@@ -708,44 +743,95 @@ fn wrap_fragments(
     width: usize,
     preserve_whitespace: bool,
     max_lines: usize,
+    indent: usize,
 ) -> (Vec<Vec<StyledText>>, bool) {
+    let width = width.max(1);
+    let indent = indent.min(width.saturating_sub(1));
     let mut lines = vec![Vec::<StyledText>::new()];
     let mut used = 0usize;
     let mut truncated = false;
-    'parts: for part in parts {
-        for grapheme in part.text.graphemes(true) {
-            if grapheme == "\n" {
-                if lines.len() >= max_lines {
-                    truncated = true;
-                    break 'parts;
-                }
-                lines.push(Vec::new());
-                used = 0;
+    let mut units = parts
+        .iter()
+        .flat_map(|part| part.text.graphemes(true).map(move |g| (g, part.style)))
+        .peekable();
+    while let Some((g, style)) = units.next() {
+        // Look ahead only one display-width, even for a very large word.
+        let mut word = vec![(g, style)];
+        let mut word_width = g.width();
+        if !preserve_whitespace && !g.chars().all(char::is_whitespace) {
+            while word_width <= width
+                && units
+                    .peek()
+                    .is_some_and(|(next, _)| !next.chars().all(char::is_whitespace))
+            {
+                let next = units.next().expect("peeked grapheme");
+                word_width += next.0.width();
+                word.push(next);
+            }
+        }
+        if g == "\n"
+            || (!preserve_whitespace
+                && used > indent
+                && word_width + used > width
+                && !g.chars().all(char::is_whitespace))
+        {
+            if lines.len() >= max_lines {
+                truncated = true;
+                break;
+            }
+            let continuation = if preserve_whitespace { 0 } else { indent };
+            lines.push(if continuation > 0 {
+                vec![StyledText {
+                    text: " ".repeat(continuation),
+                    style: Style::default(),
+                }]
+            } else {
+                Vec::new()
+            });
+            used = continuation;
+            if g == "\n" {
                 continue;
             }
-            let grapheme_width = UnicodeWidthStr::width(grapheme);
-            if used > 0 && grapheme_width > 0 && used.saturating_add(grapheme_width) > width {
+        }
+        for &(grapheme, style) in &word {
+            let size = grapheme.width();
+            if used > 0 && used + size > width {
                 if lines.len() >= max_lines {
                     truncated = true;
-                    break 'parts;
+                    break;
                 }
-                lines.push(Vec::new());
-                used = 0;
+                let continuation = if preserve_whitespace { 0 } else { indent };
+                lines.push(if continuation > 0 {
+                    vec![StyledText {
+                        text: " ".repeat(continuation),
+                        style: Style::default(),
+                    }]
+                } else {
+                    Vec::new()
+                });
+                used = continuation;
             }
-            if !preserve_whitespace && used == 0 && grapheme.chars().all(char::is_whitespace) {
+            if !preserve_whitespace
+                && lines.len() > 1
+                && used <= indent
+                && grapheme.chars().all(char::is_whitespace)
+            {
                 continue;
             }
             if let Some(last) = lines.last_mut().and_then(|line| line.last_mut())
-                && last.style == part.style
+                && last.style == style
             {
                 last.text.push_str(grapheme);
             } else {
-                lines.last_mut().expect("line exists").push(StyledText {
+                lines.last_mut().unwrap().push(StyledText {
                     text: grapheme.to_owned(),
-                    style: part.style,
+                    style,
                 });
             }
-            used = used.saturating_add(grapheme_width);
+            used += size;
+        }
+        if truncated {
+            break;
         }
     }
     (lines, truncated)
@@ -769,4 +855,30 @@ fn sanitize(value: &str) -> String {
         }
     }
     output
+}
+
+/// Word-aware plain text wrapping with original styles, for transcript notices.
+pub fn wrap_text(text: Text<'_>, width: usize) -> Text<'static> {
+    let mut output = Vec::new();
+    for line in text.lines {
+        let parts = line
+            .spans
+            .into_iter()
+            .map(|s| StyledText {
+                text: s.content.into_owned(),
+                style: s.style,
+            })
+            .collect::<Vec<_>>();
+        let (lines, _) = wrap_fragments(&parts, width.max(1), false, DEFAULT_MAX_OUTPUT_LINES, 0);
+        output.extend(lines.into_iter().map(|parts| {
+            Line::from(
+                parts
+                    .into_iter()
+                    .map(|p| Span::styled(p.text, p.style))
+                    .collect::<Vec<_>>(),
+            )
+            .style(line.style)
+        }));
+    }
+    Text::from(output)
 }

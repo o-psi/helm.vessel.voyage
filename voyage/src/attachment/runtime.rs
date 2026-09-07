@@ -637,7 +637,7 @@ impl RunOwner {
         let external_input = input.is_some();
         drop(input);
         let input = self.steering_receiver.take();
-        let (history, prompt) = self.input.take().ok_or(CheckpointError)?;
+        let (_history, prompt) = self.input.take().ok_or(CheckpointError)?;
         let workflow_bindings = self.workflow_bindings.take();
         let result = if cancel.is_cancelled() {
             Err(AgentError::Cancelled)
@@ -673,10 +673,17 @@ impl RunOwner {
                     })
                     .await?;
                 }
+                // Admission already saved this message. Reuse its exact timestamp
+                // and trusted metadata instead of recreating accepted history.
+                let mut history = session.messages;
+                let accepted = history.pop().ok_or(CheckpointError)?;
+                if accepted.role != crate::model::Role::User || accepted.content != prompt {
+                    return Err(CheckpointError.into());
+                }
                 agent
                     .run_checkpointed_scoped_with_workflow_secrets(
                         history,
-                        prompt,
+                        accepted,
                         cancel.clone(),
                         input,
                         self,

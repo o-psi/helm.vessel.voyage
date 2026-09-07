@@ -145,6 +145,9 @@ pub struct VersionedSession {
 /// expiry is checked again here immediately before durable admission.
 #[derive(Serialize)]
 pub struct TurnAdmission {
+    // Presentation metadata must not change the established command digest.
+    #[serde(skip_serializing)]
+    pub operator_name: Option<String>,
     pub command_id: Uuid,
     pub machine_id: Uuid,
     pub principal_id: Uuid,
@@ -629,10 +632,9 @@ impl Journal {
             current.revision == request.expected_revision,
             "stale session revision"
         );
-        current
-            .session
-            .messages
-            .push(Message::new(Role::User, &request.prompt));
+        let mut message = Message::new(Role::User, &request.prompt);
+        message.operator_name = request.operator_name.clone();
+        current.session.messages.push(message);
         update_session(&tx, &current)?;
         let run = RunRecord {
             id: Uuid::new_v4(),
@@ -1062,10 +1064,13 @@ impl Journal {
             "final answer already checkpointed"
         );
         if let Some(text) = final_text {
-            current
+            let mut message = Message::new(Role::Assistant, text);
+            message.operator_name = current
                 .session
                 .messages
-                .push(Message::new(Role::Assistant, text));
+                .last()
+                .and_then(|m| m.operator_name.clone());
+            current.session.messages.push(message);
         }
         if state == RunState::Interrupted {
             for terminal in &mut current.session.terminals {

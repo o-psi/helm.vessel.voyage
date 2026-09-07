@@ -1,8 +1,5 @@
 use super::{App, presentation};
-use crate::{
-    markdown::{self, RenderOptions},
-    process_client::safe,
-};
+use crate::process_client::safe;
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
@@ -96,6 +93,7 @@ pub fn draw(frame: &mut Frame<'_>, app: &App) {
     let main = inset(columns[1], if area.width >= 72 { 2 } else { 1 }, 0);
     let terminals_open = view.is_some_and(|v| v.terminals.open);
     let panel_open = view.is_some_and(|v| v.panel.is_some());
+    let reviewing = app.interactions.borrow().focused;
     let overlay = terminals_open || panel_open;
     let status = presentation::notice(&app.status);
     let status = if status.starts_with("Your workspace is ready.")
@@ -109,8 +107,12 @@ pub fn draw(frame: &mut Frame<'_>, app: &App) {
     let rows = Layout::vertical([
         Constraint::Length(3),
         Constraint::Min(4),
-        Constraint::Length(app.completion_height()),
-        Constraint::Length(if overlay { 1 } else { 6 }),
+        Constraint::Length(if reviewing {
+            0
+        } else {
+            app.completion_height()
+        }),
+        Constraint::Length(if overlay || reviewing { 1 } else { 6 }),
         Constraint::Length(if status.is_empty() { 1 } else { 3 }),
     ])
     .split(main);
@@ -171,7 +173,11 @@ pub fn draw(frame: &mut Frame<'_>, app: &App) {
         } else if rows[1].width >= 100 {
             [Constraint::Percentage(60), Constraint::Percentage(40)]
         } else {
-            [Constraint::Min(0), Constraint::Length(17)]
+            if app.interactions.borrow().focused {
+                [Constraint::Length(0), Constraint::Percentage(100)]
+            } else {
+                [Constraint::Min(4), Constraint::Length(2)]
+            }
         })
         .split(rows[1]);
     if terminals_open {
@@ -179,8 +185,10 @@ pub fn draw(frame: &mut Frame<'_>, app: &App) {
     } else {
         conversation(frame, app, content[0]);
     }
-    app.draw_completion(frame, rows[2]);
-    if overlay {
+    if !reviewing {
+        app.draw_completion(frame, rows[2]);
+    }
+    if overlay || reviewing {
         frame.render_widget(
             Paragraph::new(if rows[3].width >= 40 {
                 "Esc  Back to conversation · Draft saved"
@@ -198,7 +206,7 @@ pub fn draw(frame: &mut Frame<'_>, app: &App) {
     } else if main.width >= 60 {
         "F1 Help  F2 Requests  F3 Console  F5 Archives  F9 Actions"
     } else {
-        "F1 Help F2 Review F3 Console F9 Actions"
+        "F1 Help F2 Review F3 Console F9 Menu"
     };
     frame.render_widget(
         Paragraph::new({
@@ -407,186 +415,5 @@ fn composer(frame: &mut Frame<'_>, app: &App, area: Rect) {
     }
 }
 fn conversation(frame: &mut Frame<'_>, app: &App, area: Rect) {
-    let view = app.selected.and_then(|key| app.views.get(&key));
-    let area = inset(area, 1, 1);
-    let area = if area.width > 100 {
-        Rect::new(area.x + (area.width - 100) / 2, area.y, 100, area.height)
-    } else {
-        area
-    };
-    let width = area.width;
-    let mut text = Text::default();
-
-    if let Some(view) = view {
-        if view.process.archive.is_some() {
-            text = presentation::wrap(
-                Text::raw(format!(
-                    "{}\n\nArchived. History is preserved and the process has stopped.\nType /restore to continue this voyage.\nF5 returns to current voyages.",
-                    safe(&view.title())
-                )),
-                width,
-            );
-        } else if let Some(panel) = &view.panel {
-            text = super::panels::display(panel, width);
-        } else {
-            let mut cache = view.rendered.borrow_mut();
-            if let Some((_, cached)) = cache.as_ref().filter(|(w, _)| *w == width) {
-                text = cached.clone();
-            } else {
-                if let Some(snapshot) = &view.snapshot {
-                    if snapshot.lifecycle["deleted"] == true {
-                        text.lines
-                            .push(Line::from("This conversation has been deleted."));
-                    } else if snapshot.lifecycle["archived"] == true {
-                        text.lines.push(Line::from(
-                            "Archived. Use /restore to continue this conversation.",
-                        ));
-                    }
-                    if snapshot.messages.is_empty() {
-                        text.lines.extend([
-                            Line::styled(
-                                "Start a conversation",
-                                Style::default()
-                                    .fg(Color::Cyan)
-                                    .add_modifier(Modifier::BOLD),
-                            ),
-                            Line::from("Describe what you want to do in the message box below."),
-                            Line::from(
-                                "F1 shows commands. F3 opens interactive program terminals.",
-                            ),
-                        ]);
-                    }
-                    if snapshot.history_truncated || snapshot.messages.len() > 400 {
-                        text.lines.push(Line::from(
-                            "Showing recent messages. Export the conversation to keep a complete copy.",
-                        ));
-                    }
-                    for message in snapshot
-                        .messages
-                        .iter()
-                        .skip(snapshot.messages.len().saturating_sub(400))
-                        .filter(|m| {
-                            matches!(m.role.as_str(), "user" | "assistant") && !m.content.is_empty()
-                        })
-                    {
-                        text.lines.push(Line::styled(
-                            if message.role == "user" {
-                                "You"
-                            } else {
-                                "Assistant"
-                            },
-                            Style::default()
-                                .fg(if message.role == "user" {
-                                    Color::Cyan
-                                } else {
-                                    Color::Reset
-                                })
-                                .add_modifier(Modifier::BOLD),
-                        ));
-                        if let Some(operator) = presentation::operator_message(&message.content)
-                            .or_else(|| {
-                                (message.role == "assistant")
-                                    .then(|| presentation::structured_message(&message.content))
-                                    .flatten()
-                            })
-                        {
-                            text.lines
-                                .extend(presentation::wrap(Text::raw(operator), width).lines);
-                            text.lines.push(Line::default());
-                            continue;
-                        }
-                        text.lines.extend(
-                            markdown::render_markdown(
-                                &message.content,
-                                RenderOptions {
-                                    width: usize::from(width),
-                                    max_output_lines: 2000,
-                                    ..RenderOptions::default()
-                                },
-                            )
-                            .lines,
-                        );
-                        text.lines.push(Line::default());
-                        if text.lines.len() > 20_000 {
-                            text.lines.drain(..text.lines.len() - 20_000);
-                        }
-                    }
-                    if let Some(run) = &snapshot.run
-                        && run.state != "completed"
-                    {
-                        text.lines.push(Line::styled(
-                            presentation::run_state(&run.state),
-                            Style::default().fg(Color::Yellow),
-                        ));
-                        if let Some(reason) = &run.failure_summary {
-                            text.lines
-                                .extend(presentation::wrap(Text::raw(safe(reason)), width).lines);
-                        }
-                        if snapshot.pending_cleanup_run.is_some() {
-                            text.lines.extend(presentation::wrap(Text::raw(
-                                "Cleanup is unconfirmed. Further work is blocked until the runtime is recovered; retrying this message will not repair it."
-                            ), width).lines);
-                        } else if run.failure_summary.is_some() {
-                            text.lines.extend(presentation::wrap(Text::raw(
-                                "Cleanup completed. Check the startup configuration or resource availability, then send a new message to retry."
-                            ), width).lines);
-                        }
-                        if run.partial_text_truncated {
-                            text.lines
-                                .push(Line::from("Showing the latest part of the response."));
-                        }
-                        if !run.partial_text.is_empty() {
-                            text.lines.extend(
-                                markdown::render_markdown(
-                                    &run.partial_text,
-                                    RenderOptions {
-                                        width: usize::from(width),
-                                        ..RenderOptions::default()
-                                    },
-                                )
-                                .lines,
-                            );
-                        }
-                    }
-                } else {
-                    text.lines.push(Line::from("Connecting to your voyage..."));
-                }
-                text = presentation::wrap(text, width);
-                *cache = Some((width, text.clone()));
-            }
-            if let Some(error) = &view.error {
-                text.lines.extend(
-                    presentation::wrap(
-                        Text::styled(
-                            presentation::notice(error),
-                            Style::default().fg(Color::Yellow),
-                        ),
-                        width,
-                    )
-                    .lines,
-                );
-            }
-        }
-    } else {
-        text = presentation::wrap(
-            Text::raw(
-                "Welcome to Helm\n\nCtrl+N creates a voyage in the current workspace.\nEach voyage keeps running when you disconnect.\n\nF1 Help / F3 Terminals",
-            ),
-            width,
-        );
-    }
-    let height = area.height as usize;
-    let maximum = text
-        .lines
-        .len()
-        .saturating_sub(height)
-        .min(u16::MAX as usize) as u16;
-    let scroll = view.map_or(0, |v| v.scroll).min(maximum);
-    let offset = if view.is_some_and(|v| v.panel.is_some()) {
-        scroll
-    } else {
-        maximum.saturating_sub(scroll)
-    };
-
-    frame.render_widget(Paragraph::new(text).scroll((offset, 0)), area);
+    super::transcript::draw(frame, app, area);
 }
