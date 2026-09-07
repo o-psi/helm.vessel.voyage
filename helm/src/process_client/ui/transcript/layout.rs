@@ -234,7 +234,11 @@ fn build(view: &View, state: &State, width: u16) -> Vec<Row> {
         note(
             &mut out,
             Key::Notice,
-            "Earlier messages available · Ctrl+Home loads more",
+            if view.archived() {
+                "Restore this voyage to load earlier messages."
+            } else {
+                "Earlier messages available · Ctrl+Home loads more"
+            },
             width,
         );
     }
@@ -242,7 +246,11 @@ fn build(view: &View, state: &State, width: u16) -> Vec<Row> {
         note(
             &mut out,
             Key::Notice,
-            "Start a conversation\n\nDescribe what you want to do below.",
+            if view.archived() {
+                "This archived conversation has no messages."
+            } else {
+                "Start a conversation\n\nDescribe what you want to do below."
+            },
             width,
         );
     }
@@ -300,7 +308,11 @@ fn build(view: &View, state: &State, width: u16) -> Vec<Row> {
                 note(
                     &mut out,
                     key.clone(),
-                    "This message is incomplete · Loading full text; Ctrl+Home retries",
+                    if view.archived() {
+                        "Restore this voyage to load the rest of this message."
+                    } else {
+                        "This message is incomplete · Loading full text; Ctrl+Home retries"
+                    },
                     width,
                 );
             }
@@ -410,7 +422,7 @@ fn build(view: &View, state: &State, width: u16) -> Vec<Row> {
             );
         }
     }
-    if state.loading {
+    if state.loading && !view.archived() {
         note(&mut out, Key::Notice, "Loading conversation…", width);
     }
     if let Some(error) = &state.error {
