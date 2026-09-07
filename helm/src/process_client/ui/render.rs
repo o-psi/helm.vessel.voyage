@@ -41,6 +41,7 @@ fn state(view: &super::state::View) -> &'static str {
 }
 
 pub fn draw(frame: &mut Frame<'_>, app: &App) {
+    app.sync_interactions();
     app.sidebar.hits.borrow_mut().clear();
     app.sidebar.visible.set(None);
     let area = frame.area();
@@ -131,7 +132,7 @@ pub fn draw(frame: &mut Frame<'_>, app: &App) {
     let detail = view.map_or_else(
         || "Ctrl+N  Start a voyage".into(),
         |v| {
-            if rows[0].width < 60 {
+            if reviewing || rows[0].width < 60 {
                 return format!("{host} · {}", state(v));
             }
             format!(
@@ -158,10 +159,7 @@ pub fn draw(frame: &mut Frame<'_>, app: &App) {
         ),
         rows[0],
     );
-    let has_interactions = !overlay
-        && view
-            .and_then(|v| v.snapshot.as_ref())
-            .is_some_and(|s| !s.decisions.is_empty());
+    let has_interactions = reviewing;
     let content = Layout::default()
         .direction(if rows[1].width >= 100 {
             Direction::Horizontal
@@ -170,14 +168,8 @@ pub fn draw(frame: &mut Frame<'_>, app: &App) {
         })
         .constraints(if !has_interactions {
             [Constraint::Percentage(100), Constraint::Length(0)]
-        } else if rows[1].width >= 100 {
-            [Constraint::Percentage(60), Constraint::Percentage(40)]
         } else {
-            if app.interactions.borrow().focused {
-                [Constraint::Length(0), Constraint::Percentage(100)]
-            } else {
-                [Constraint::Min(4), Constraint::Length(2)]
-            }
+            [Constraint::Length(0), Constraint::Percentage(100)]
         })
         .split(rows[1]);
     if terminals_open {
@@ -190,7 +182,9 @@ pub fn draw(frame: &mut Frame<'_>, app: &App) {
     }
     if overlay || reviewing {
         frame.render_widget(
-            Paragraph::new(if rows[3].width >= 40 {
+            Paragraph::new(if reviewing {
+                "Your conversation draft is saved."
+            } else if rows[3].width >= 40 {
                 "Esc  Back to conversation · Draft saved"
             } else {
                 "Esc Back · Draft saved"
@@ -201,12 +195,14 @@ pub fn draw(frame: &mut Frame<'_>, app: &App) {
     } else {
         composer(frame, app, rows[3]);
     }
-    let shortcuts = if main.width >= 80 {
-        "F1 Help   F2 Requests   F3 Console   F5 Archives   F9 Actions   Ctrl+C Leave"
+    let shortcuts = if reviewing {
+        "Ctrl+C Leave"
+    } else if main.width >= 80 {
+        "F1 Help   F3 Console   F5 Archives   F9 Actions   Ctrl+C Leave"
     } else if main.width >= 60 {
-        "F1 Help  F2 Requests  F3 Console  F5 Archives  F9 Actions"
+        "F1 Help  F3 Console  F5 Archives  F9 Actions"
     } else {
-        "F1 Help F2 Review F3 Console F9 Menu"
+        "F1 Help F3 Console F9 Menu"
     };
     frame.render_widget(
         Paragraph::new({

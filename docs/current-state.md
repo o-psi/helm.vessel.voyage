@@ -125,9 +125,10 @@ output observe the same owner. Reconnect never resubmits a turn or terminal inpu
 Approvals and questions are durable requests bound to session, incarnation, run,
 principal, revision and deadline. Responses require current authority. Waiting is
 bounded by policy and at most 120 seconds; silence never authorizes an effect.
-The connected TUI presents all pending approvals and questions in a right-hand
-interaction panel, with request navigation, explicit approve/deny shortcuts,
-question options and custom answers, and preserved composer drafts.
+The connected TUI opens selected-voyage approvals and questions automatically,
+with highlighted choices, Up/Down selection, Enter confirmation and Esc to deny
+or skip. Custom answers use an explicit editor; conversation drafts are preserved.
+Left/Right navigates simultaneous requests and PageUp/PageDown reads long details.
 Steering is durable and delivered at a supported safe model boundary. Operator
 runs do not accept steering. Native providers remain distinct from the optional
 compatibility provider and its narrower capabilities.

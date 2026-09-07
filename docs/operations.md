@@ -64,9 +64,9 @@ incomplete loading. Oversized messages load automatically from the same saved
 revision. Reading is bounded to 16,384 messages and 64 MiB of public history; use
 `/export PATH` for a complete larger transcript. Search covers the loaded section.
 
-On narrow screens a pending question keeps the conversation visible; F2 opens
-its full review with the latest user request for context. Esc returns to the
-conversation and saved draft. Archived conversations retain already loaded text;
+Pending questions and approvals open automatically in the conversation area,
+with the first choice highlighted and the conversation draft preserved.
+Archived conversations retain already loaded text;
 a stopped archive reopened without cached text must be restored before history
 can be read. Restore does not resume unfinished work automatically.
 
@@ -109,21 +109,21 @@ resize message rather than permitting an unseen terminal selection.
 
 ### Approvals and questions
 
-All pending runtime interactions appear in the right-hand panel, including approvals
-and questions. Narrow terminals stack it below the conversation. The panel shows
-the request count, executing host, details and time remaining. F6/F7 moves between
-requests; F2 focuses the panel and PageUp/PageDown scrolls its details. Esc returns
-to the composer. Tab switches voyages; background decisions show a `!` in the list.
+Questions and approvals for the selected voyage open ready for keyboard input.
+Use Up/Down to choose and Enter to confirm. Questions start on the first offered
+answer; select “Write a custom answer…” and press Enter to open the answer editor.
+Enter sends your written answer; Esc returns from the editor to the choices.
+Esc from the choices skips a question or denies an approval. Approvals offer
+“Deny” (selected initially) and “Allow once.” No focus shortcut is required.
 
-For approvals, Ctrl+A approves the displayed request once and Ctrl+D denies it.
-For questions, focus the panel with F2, use Up/Down to choose an offered answer or
-type a custom answer, then Enter to send. Ctrl+D skips a focused question. Each
-pending question retains its own answer draft while navigating in the current UI.
+Left/Right switches between simultaneous requests. PageUp/PageDown scrolls long
+request details; changing choices brings the selection back into view. Background
+decisions appear in the voyage list. Each question retains its answer draft while
+navigating requests in the current UI.
 Question responses are model input, never execution approval. Pasting text only
 edits a draft; it does not send an answer or authorize an action. The main composer
 remains separate and responses preserve its draft. Uncertain response delivery
-retains its command identity; return to the composer and use `/receipt` to resolve
-it. Unknown future interaction kinds remain visible without response controls.
+retains its command identity; use F4 to check an unconfirmed response. Unknown future interaction kinds remain visible without response controls.
 
 `/approve DECISION_UUID` and `/deny DECISION_UUID` answer
 an exact approval; `/answer DECISION_UUID text` answers a model question. There is

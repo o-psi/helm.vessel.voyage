@@ -2,6 +2,12 @@ use super::*;
 
 impl App {
     pub(super) fn input(&mut self, event: Event) -> Result<()> {
+        self.sync_interactions();
+        let global = matches!(&event, Event::Key(key) if key.code == KeyCode::F(4) || (key.modifiers.contains(KeyModifiers::CONTROL) && matches!(key.code, KeyCode::Char('c' | 'q'))));
+        if self.interactions.borrow().focused && !global {
+            self.interaction_input(&event)?;
+            return Ok(());
+        }
         if self.transcript_input(&event) {
             return Ok(());
         }

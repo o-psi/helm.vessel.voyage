@@ -9,163 +9,176 @@ impl App {
         event: &Event,
     ) -> Result<bool> {
         let mut review = self.interactions.borrow_mut();
-        if review.displayed.is_none()
-            && matches!(event, Event::Key(key) if key.code == KeyCode::F(2) && key.kind == KeyEventKind::Press)
-            && review
-                .selected
-                .is_some_and(|(target, _)| self.selected == Some(target))
-        {
-            review.focused = true;
+        if !review.focused {
+            return Ok(false);
+        }
+        if matches!(event, Event::Resize(..)) {
+            review.follow_selection = true;
             return Ok(true);
         }
         let Some((target, decision_id)) = review.displayed else {
-            if matches!(event, Event::Key(key) if key.code == KeyCode::Esc && key.kind == KeyEventKind::Press)
-                && review.focused
-            {
-                review.focused = false;
-                return Ok(true);
-            }
-            // Navigation must repaint before focused input can target the next request.
-            return Ok(review.focused
-                && review
-                    .selected
-                    .is_some_and(|(target, _)| self.selected == Some(target)));
+            return Ok(true);
         };
         if self.selected != Some(target) {
-            return Ok(false);
+            return Ok(true);
         }
-        let snapshot = self
-            .views
-            .get(&target)
-            .and_then(|view| view.snapshot.as_ref())
-            .context("waiting for interaction snapshot")?;
+        let view = self.views.get(&target).context("request unavailable")?;
+        let snapshot = view.snapshot.as_ref().context("waiting for request")?;
         let Some(decision) = snapshot
             .decisions
             .iter()
-            .find(|decision| decision.decision_id == decision_id)
+            .find(|d| d.decision_id == decision_id)
         else {
-            // Do not send keystrokes intended for a resolved question into the main composer.
-            return Ok(review.focused);
+            return Ok(true);
         };
+        // An unconfirmed response cannot be replaced by another action.
+        if view.pending.is_some() || decision.expires_at_ms <= super::now_ms() {
+            return Ok(true);
+        }
         let kind = decision.request["kind"].as_str().unwrap_or("");
         if let Event::Paste(text) = event {
-            if review.focused && kind == "question" {
-                let answer = review.answers.entry((target, decision_id)).or_default();
+            let answer = review.answers.entry((target, decision_id)).or_default();
+            if kind == "question" && answer.editing {
                 let text: String = super::super::safe(text)
                     .chars()
-                    .filter(|ch| !ch.is_control())
+                    .filter(|c| !c.is_control())
                     .collect();
                 ensure!(
-                    answer.text.text.len().saturating_add(text.len()) <= 4096,
-                    "answer limit is 4096 bytes"
+                    answer.text.text.len() + text.len() <= 4096,
+                    "Answer is too long."
                 );
-                answer.option = None;
                 answer.text.insert_str(&text);
-                return Ok(true);
             }
-            return Ok(false);
+            return Ok(true);
         }
         let Event::Key(key) = event else {
-            return Ok(false);
+            return Ok(true);
         };
-        let control = key.modifiers == KeyModifiers::CONTROL;
         if key.kind != KeyEventKind::Press {
-            return Ok(review.focused || (control && matches!(key.code, KeyCode::Char('a' | 'd'))));
+            return Ok(true);
         }
+        let editing = review
+            .answers
+            .get(&(target, decision_id))
+            .is_some_and(|a| a.editing);
+        if !editing
+            && matches!(key.code, KeyCode::Left | KeyCode::Right)
+            && snapshot.decisions.len() > 1
+        {
+            let index = snapshot
+                .decisions
+                .iter()
+                .position(|d| d.decision_id == decision_id)
+                .unwrap_or(0);
+            let next = if key.code == KeyCode::Left {
+                (index + snapshot.decisions.len() - 1) % snapshot.decisions.len()
+            } else {
+                (index + 1) % snapshot.decisions.len()
+            };
+            review.selected = Some((target, snapshot.decisions[next].decision_id));
+            review.displayed = None;
+            review.scroll = 0;
+            review.follow_selection = true;
+            return Ok(true);
+        }
+        if matches!(key.code, KeyCode::PageUp | KeyCode::PageDown) {
+            review.scroll = if key.code == KeyCode::PageUp {
+                review.scroll.saturating_sub(5)
+            } else {
+                review.scroll.saturating_add(5)
+            };
+            review.follow_selection = false;
+            return Ok(true);
+        }
+        if !matches!(kind, "question" | "approval") {
+            return Ok(true);
+        }
+        let options = if kind == "question" {
+            decision.request["question"]["options"]
+                .as_array()
+                .context("Question choices unavailable")?
+                .len()
+        } else {
+            2
+        };
+        let answer = review.answers.entry((target, decision_id)).or_default();
+        let mut response = None;
         match key.code {
-            KeyCode::F(2) => review.focused = !review.focused,
-            KeyCode::Esc if review.focused => review.focused = false,
-            KeyCode::F(6) | KeyCode::F(7) => {
-                let index = snapshot
-                    .decisions
-                    .iter()
-                    .position(|decision| decision.decision_id == decision_id)
-                    .unwrap_or(0);
-                let next = if key.code == KeyCode::F(6) {
-                    (index + snapshot.decisions.len() - 1) % snapshot.decisions.len()
+            KeyCode::Esc if answer.editing => {
+                answer.editing = false;
+                review.follow_selection = true;
+            }
+            KeyCode::Esc => {
+                response = Some(if kind == "approval" {
+                    json!("denied")
                 } else {
-                    (index + 1) % snapshot.decisions.len()
+                    json!({"status":"cancelled"})
+                })
+            }
+            KeyCode::Up | KeyCode::Down if !answer.editing => {
+                let count = options + usize::from(kind == "question");
+                let index = answer.option.unwrap_or(options).min(count - 1);
+                let next = if key.code == KeyCode::Up {
+                    (index + count - 1) % count
+                } else {
+                    (index + 1) % count
                 };
-                review.selected = Some((target, snapshot.decisions[next].decision_id));
-                review.displayed = None;
-                review.scroll = 0;
+                answer.option = (next < options).then_some(next);
+                review.follow_selection = true;
             }
-            KeyCode::PageUp if review.focused => review.scroll = review.scroll.saturating_sub(10),
-            KeyCode::PageDown if review.focused => review.scroll = review.scroll.saturating_add(10),
-            KeyCode::Char('a' | 'd') if control && kind == "approval" => {
-                let response = json!(if key.code == KeyCode::Char('a') {
-                    "approved"
+            KeyCode::Enter if key.modifiers.is_empty() => {
+                response = if kind == "approval" {
+                    Some(json!(if answer.option == Some(1) {
+                        "approved"
+                    } else {
+                        "denied"
+                    }))
+                } else if let Some(index) = answer.option {
+                    Some(
+                        json!({"status":"selected","index":index,"answer":decision.request["question"]["options"][index]}),
+                    )
+                } else if !answer.editing {
+                    answer.editing = true;
+                    review.follow_selection = true;
+                    None
+                } else if answer.text.text.trim().is_empty() {
+                    None
                 } else {
-                    "denied"
-                });
-                drop(review);
-                self.respond_to_interaction(target, decision_id, response)?;
+                    Some(json!({"status":"custom","answer":answer.text.text}))
+                };
             }
-            KeyCode::Char('d') if control && kind == "question" && review.focused => {
-                drop(review);
-                self.respond_to_interaction(target, decision_id, json!({"status":"cancelled"}))?;
+            KeyCode::Char(ch)
+                if answer.editing
+                    && !key
+                        .modifiers
+                        .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+            {
+                ensure!(
+                    answer.text.text.len() + ch.len_utf8() <= 4096 && !ch.is_control(),
+                    "Answer is too long."
+                );
+                answer.text.insert(ch);
             }
-            _ if review.focused && kind == "question" => {
-                let options = decision.request["question"]["options"]
-                    .as_array()
-                    .context("question options unavailable")?;
-                let answer = review.answers.entry((target, decision_id)).or_default();
-                match key.code {
-                    KeyCode::Up | KeyCode::Down => {
-                        let index = answer.option.unwrap_or(options.len());
-                        let next = if key.code == KeyCode::Up {
-                            (index + options.len()) % (options.len() + 1)
-                        } else {
-                            (index + 1) % (options.len() + 1)
-                        };
-                        answer.option = (next < options.len()).then_some(next);
-                    }
-                    KeyCode::Enter if key.modifiers.is_empty() => {
-                        let response = if let Some(index) = answer.option {
-                            json!({"status":"selected","index":index,"answer":options[index]})
-                        } else {
-                            json!({"status":"custom","answer":answer.text.text})
-                        };
-                        drop(review);
-                        self.respond_to_interaction(target, decision_id, response)?;
-                    }
-                    KeyCode::Char(ch)
-                        if !key
-                            .modifiers
-                            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
-                    {
-                        ensure!(
-                            answer.text.text.len() + ch.len_utf8() <= 4096 && !ch.is_control(),
-                            "answer limit is 4096 bytes without control characters"
-                        );
-                        answer.option = None;
-                        answer.text.insert(ch);
-                    }
-                    KeyCode::Backspace => {
-                        answer.option = None;
-                        answer.text.backspace();
-                    }
-                    KeyCode::Delete => {
-                        answer.option = None;
-                        answer.text.delete();
-                    }
-                    KeyCode::Home => answer.text.line_start(),
-                    KeyCode::End => answer.text.line_end(),
-                    KeyCode::Left => {
-                        answer.text.cursor = answer.text.text[..answer.text.cursor]
-                            .char_indices()
-                            .next_back()
-                            .map_or(0, |(index, _)| index)
-                    }
-                    KeyCode::Right => {
-                        if let Some(ch) = answer.text.text[answer.text.cursor..].chars().next() {
-                            answer.text.cursor += ch.len_utf8();
-                        }
-                    }
-                    _ => {}
+            KeyCode::Backspace if answer.editing => answer.text.backspace(),
+            KeyCode::Delete if answer.editing => answer.text.delete(),
+            KeyCode::Home if answer.editing => answer.text.line_start(),
+            KeyCode::End if answer.editing => answer.text.line_end(),
+            KeyCode::Left if answer.editing => {
+                answer.text.cursor = answer.text.text[..answer.text.cursor]
+                    .char_indices()
+                    .next_back()
+                    .map_or(0, |(index, _)| index)
+            }
+            KeyCode::Right if answer.editing => {
+                if let Some(ch) = answer.text.text[answer.text.cursor..].chars().next() {
+                    answer.text.cursor += ch.len_utf8();
                 }
             }
-            _ => return Ok(false),
+            _ => {}
+        }
+        if let Some(response) = response {
+            drop(review);
+            self.respond_to_interaction(target, decision_id, response)?;
         }
         Ok(true)
     }

@@ -2,7 +2,6 @@
 mod input;
 mod render;
 mod response;
-mod wrap;
 use super::{composer::Composer, state::Target};
 use anyhow::{Result, ensure};
 pub(super) use render::draw;
@@ -10,10 +9,19 @@ use std::collections::BTreeMap;
 use uuid::Uuid;
 
 type Identity = (Target, Uuid);
-#[derive(Default)]
 struct AnswerDraft {
     text: Composer,
     option: Option<usize>,
+    editing: bool,
+}
+impl Default for AnswerDraft {
+    fn default() -> Self {
+        Self {
+            text: Composer::default(),
+            option: Some(0),
+            editing: false,
+        }
+    }
 }
 #[derive(Default)]
 pub(super) struct Review {
@@ -22,6 +30,7 @@ pub(super) struct Review {
     selected: Option<Identity>,
     pub(super) focused: bool,
     scroll: u16,
+    follow_selection: bool,
     answers: BTreeMap<Identity, AnswerDraft>,
 }
 fn now_ms() -> u64 {
@@ -63,4 +72,35 @@ fn validate_response(request: &serde_json::Value, response: &serde_json::Value) 
         _ => anyhow::bail!("this runtime interaction kind is not supported by this Helm"),
     }
     Ok(())
+}
+
+impl super::App {
+    pub(super) fn sync_interactions(&self) {
+        let mut review = self.interactions.borrow_mut();
+        let next = self.selected.and_then(|target| {
+            let view = self.views.get(&target)?;
+            if self.help
+                || self.explore.is_some()
+                || self.sidebar.menu.is_some()
+                || view.panel.is_some()
+                || view.terminals.open
+            {
+                return None;
+            }
+            let snapshot = view.snapshot.as_ref()?;
+            let decision = snapshot
+                .decisions
+                .iter()
+                .find(|d| review.selected == Some((target, d.decision_id)))
+                .or_else(|| snapshot.decisions.first())?;
+            Some((target, decision.decision_id))
+        });
+        if review.selected != next {
+            review.selected = next;
+            review.displayed = None;
+            review.scroll = 0;
+            review.follow_selection = true;
+        }
+        review.focused = next.is_some();
+    }
 }
