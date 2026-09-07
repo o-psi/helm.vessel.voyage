@@ -330,9 +330,12 @@ fn sidebar(frame: &mut Frame<'_>, app: &App, area: Rect) {
             .pointer
             .is_some_and(|point| button.contains(point));
         if !over_button {
-            frame
-                .buffer_mut()
-                .set_style(area, app.hover_style(area, false));
+            // A wrapped row includes padding; underlining it draws horizontal rules.
+            frame.buffer_mut().set_style(
+                area,
+                app.hover_style(area, false)
+                    .remove_modifier(Modifier::UNDERLINED),
+            );
         }
         frame.render_widget(
             Paragraph::new(" ⋮ ").style(
