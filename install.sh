@@ -1,60 +1,116 @@
 #!/bin/sh
-# Downloads the standalone Voyage setup preview; setup actions are mocked.
+# Bootstrap a complete, pinned Voyage release, then run its installer.
 set -eu
 fail() { printf 'Voyage installer: %s\n' "$*" >&2; exit 1; }
-if ! ( : </dev/tty >/dev/tty ) 2>/dev/null; then
-    fail 'an interactive terminal is required; run this command in a terminal.'
-fi
-if [ -n "${VOYAGE_INSTALLER_BIN:-}" ]; then
-    case "$VOYAGE_INSTALLER_BIN" in /*) ;; *) VOYAGE_INSTALLER_BIN="$PWD/$VOYAGE_INSTALLER_BIN" ;; esac
-    [ -f "$VOYAGE_INSTALLER_BIN" ] && [ -x "$VOYAGE_INSTALLER_BIN" ] || fail 'VOYAGE_INSTALLER_BIN must name an executable file.'
-    exec "$VOYAGE_INSTALLER_BIN" </dev/tty >/dev/tty 2>/dev/tty
-fi
 case "$(uname -s)/$(uname -m)" in
     Linux/x86_64) target=x86_64-unknown-linux-gnu ;;
-    Darwin/x86_64) target=x86_64-apple-darwin ;;
-    Darwin/arm64|Darwin/aarch64) target=aarch64-apple-darwin ;;
-    *) fail 'unsupported platform; use a locally built voyage-installer with VOYAGE_INSTALLER_BIN.' ;;
+    Linux/aarch64|Linux/arm64) target=aarch64-unknown-linux-gnu ;;
+    *) fail 'installation currently supports Linux with a systemd user manager only.' ;;
 esac
-for utility in curl gzip mktemp chmod; do
+if [ "$#" -eq 0 ] && ! ( : </dev/tty >/dev/tty ) 2>/dev/null; then
+    fail 'the wizard needs an interactive terminal; use install --dry-run or install --start for explicit command-line installation.'
+fi
+launch() {
+    if [ "$#" -eq 1 ]; then
+        "$1" </dev/tty >/dev/tty 2>/dev/tty
+    else
+        "$@"
+    fi
+}
+if [ -n "${VOYAGE_RELEASE_DIR:-}" ]; then
+    case "$VOYAGE_RELEASE_DIR" in /*) release_dir=$VOYAGE_RELEASE_DIR ;; *) release_dir="$PWD/$VOYAGE_RELEASE_DIR" ;; esac
+    [ ! -d "$release_dir/bin" ] || release_dir="$release_dir/bin"
+    launch "$release_dir/voyage-installer" "$@"
+    exit "$?"
+fi
+if [ -n "${VOYAGE_INSTALLER_BIN:-}" ]; then
+    case "$VOYAGE_INSTALLER_BIN" in /*) installer=$VOYAGE_INSTALLER_BIN ;; *) installer="$PWD/$VOYAGE_INSTALLER_BIN" ;; esac
+    [ -f "$installer" ] && [ -x "$installer" ] || fail 'VOYAGE_INSTALLER_BIN must name an executable file.'
+    launch "$installer" "$@"
+    exit "$?"
+fi
+for utility in curl python3; do
     command -v "$utility" >/dev/null 2>&1 || fail "required utility missing: $utility"
 done
-if command -v sha256sum >/dev/null 2>&1; then
-    hash_tool=sha256sum
-elif command -v shasum >/dev/null 2>&1; then
-    hash_tool=shasum
-else
-    fail 'SHA-256 verification requires sha256sum or shasum.'
-fi
-version=${VOYAGE_INSTALLER_VERSION:-latest}
-case "$version" in ''|.|..|*[!A-Za-z0-9._-]*) fail 'invalid VOYAGE_INSTALLER_VERSION.' ;; esac
-base=https://github.com/o-psi/voyage/releases
-if [ "$version" = latest ]; then base="$base/latest/download"; else base="$base/download/$version"; fi
-asset="voyage-installer-$target.gz"
+fetch() {
+    curl --proto '=https' --proto-redir '=https' --tlsv1.2 --fail --location --silent --show-error \
+        --connect-timeout 10 --max-time 300 --max-filesize "${3:-536870912}" --output "$2" "$1"
+}
 umask 077
-tmp=$(mktemp -d "${TMPDIR:-/tmp}/voyage-installer.XXXXXXXX") || fail 'cannot create temporary directory.'
+# The install engine rejects writable/symlinked ancestors. Never extract under /tmp.
+tmp=$(python3 - <<'PY'
+import os, pathlib, stat, tempfile
+home = pathlib.Path.home()
+cache = home / '.cache' / 'voyage'
+for path in reversed((cache, *cache.parents)):
+    if not path.exists():
+        path.mkdir(mode=0o700)
+    st = path.lstat()
+    if not stat.S_ISDIR(st.st_mode) or st.st_uid not in (0, os.getuid()) or st.st_mode & 0o022:
+        raise SystemExit(f'Unsafe bootstrap directory: {path}')
+print(tempfile.mkdtemp(prefix='install-', dir=cache))
+PY
+) || fail 'cannot create a safe bootstrap directory.'
 trap 'rm -rf "$tmp"' 0
 trap 'exit 130' INT
 trap 'exit 143' TERM
 trap 'exit 129' HUP
-fetch() {
-    curl --proto '=https' --proto-redir '=https' --tlsv1.2 --fail --location --silent --show-error \
-        --connect-timeout 10 --max-time 120 --output "$2" "$1"
-}
-printf 'Downloading Voyage setup preview (%s)…\n' "$target" >&2
-fetch "$base/$asset.sha256" "$tmp/checksum" || fail 'checksum download failed; installer assets may not be published yet. Use VOYAGE_INSTALLER_BIN for a local preview.'
-fetch "$base/$asset" "$tmp/$asset" || fail 'installer download failed.'
-manifest=$(cat "$tmp/checksum")
-digest=${manifest%% *}
-case "$digest" in ''|*[!0-9a-fA-F]*) fail 'invalid checksum manifest.' ;; esac
-[ "${#digest}" -eq 64 ] && [ "$manifest" = "$digest  $asset" ] || fail 'invalid checksum manifest.'
-if [ "$hash_tool" = sha256sum ]; then
-    actual=$(sha256sum "$tmp/$asset")
-else
-    actual=$(shasum -a 256 "$tmp/$asset")
+version=${VOYAGE_VERSION:-${VOYAGE_INSTALLER_VERSION:-latest}}
+if [ "$version" = latest ]; then
+    fetch 'https://api.github.com/repos/o-psi/voyage/releases/latest' "$tmp/latest.json" 1048576 || fail 'no published release is available; set VOYAGE_RELEASE_DIR to an extracted full release or local build.'
+    version=$(python3 - "$tmp/latest.json" <<'PY'
+import json, sys
+with open(sys.argv[1]) as stream:
+    print(json.load(stream)['tag_name'])
+PY
+    ) || fail 'invalid latest-release response.'
 fi
-actual=${actual%% *}
-[ "$actual" = "$digest" ] || fail 'installer checksum mismatch.'
-gzip -dc "$tmp/$asset" > "$tmp/voyage-installer" || fail 'installer decompression failed.'
-chmod 700 "$tmp/voyage-installer"
-"$tmp/voyage-installer" </dev/tty >/dev/tty 2>/dev/tty
+case "$version" in ''|.|..|*[!A-Za-z0-9._-]*) fail 'invalid VOYAGE_VERSION.' ;; esac
+asset="voyage-$version-$target.tar.gz"
+base="https://github.com/o-psi/voyage/releases/download/$version"
+printf 'Downloading Voyage %s (%s)…\n' "$version" "$target" >&2
+fetch "$base/$asset.sha256" "$tmp/checksum" 4096 || fail 'release checksum unavailable; check the published version and platform.'
+fetch "$base/$asset" "$tmp/$asset" || fail 'full release download failed.'
+python3 - "$tmp" "$asset" <<'PY'
+import hashlib, pathlib, re, shutil, sys, tarfile
+base, asset = pathlib.Path(sys.argv[1]), sys.argv[2]
+manifest = (base / 'checksum').read_text().strip()
+match = re.fullmatch(r'([0-9a-fA-F]{64})  ' + re.escape(asset), manifest)
+if not match:
+    raise SystemExit('Invalid release checksum manifest')
+with (base / asset).open('rb') as stream:
+    actual = hashlib.file_digest(stream, 'sha256').hexdigest()
+if actual != match[1].lower():
+    raise SystemExit('Release checksum mismatch')
+root = asset.removesuffix('.tar.gz')
+seen, size = set(), 0
+with tarfile.open(base / asset, 'r:gz') as archive:
+    members = []
+    for member in archive:
+        members.append(member)
+        if len(members) > 4096:
+            raise SystemExit('Release has too many entries')
+        path = pathlib.PurePosixPath(member.name)
+        if (not path.parts or path.parts[0] != root or path.is_absolute()
+                or '..' in path.parts or member.name in seen
+                or any(ord(c) < 32 or ord(c) == 127 for c in member.name)
+                or not (member.isdir() or member.isfile())):
+            raise SystemExit('Unsafe release archive entry')
+        seen.add(member.name)
+        size += member.size
+        if size > 1073741824:
+            raise SystemExit('Release exceeds extraction limit')
+    for member in members:
+        output = base / member.name
+        if member.isdir():
+            output.mkdir(parents=True, exist_ok=True, mode=0o700)
+        else:
+            output.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+            with archive.extractfile(member) as source, output.open('xb') as destination:
+                shutil.copyfileobj(source, destination)
+            output.chmod(0o700 if output.parent == base / root / 'bin' else 0o600)
+for name in ('helm', 'vessel', 'voyage', 'voyage-installer'):
+    if not (base / root / 'bin' / name).is_file():
+        raise SystemExit(f'Release is missing {name}')
+PY
+launch "$tmp/${asset%.tar.gz}/bin/voyage-installer" "$@"

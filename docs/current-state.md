@@ -27,7 +27,8 @@ are not evidence of survival. Restart requires positive stopped or explicit reco
 evidence. Unavailable owners are fenced; uncertain tools are never automatically
 replayed. Stopping a supervisor leaves independent voyage processes running.
 Explicit Linux user-service installation is available. Native macOS/Windows process
-supervision is unsupported; the interactive installer wizard remains simulated.
+supervision is unsupported. The Linux installer wizard installs versioned releases
+and manages upgrades, rollback and the local user service.
 
 ## Persistence, migration and lifecycle
 

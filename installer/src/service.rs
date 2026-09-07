@@ -1,11 +1,17 @@
 use anyhow::{Result, bail};
 
 #[cfg(target_os = "linux")]
+mod command;
+#[cfg(target_os = "linux")]
 mod files;
 #[cfg(target_os = "linux")]
 mod lifecycle;
 #[cfg(target_os = "linux")]
+mod readiness;
+#[cfg(target_os = "linux")]
 mod systemd;
+#[cfg(target_os = "linux")]
+mod unit;
 
 pub fn manage(command: &str, args: &[String]) -> Result<()> {
     if !args.is_empty() {
@@ -20,31 +26,19 @@ pub fn manage(command: &str, args: &[String]) -> Result<()> {
     }
 }
 
-pub fn install(args: &[String]) -> Result<()> {
-    let mut binary_directory = None;
-    let mut start = false;
-    let mut dry_run = false;
-    let mut args = args.iter();
-    while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "--bin-dir" if binary_directory.is_none() => {
-                binary_directory =
-                    Some(args.next().ok_or_else(|| {
-                        anyhow::anyhow!("--bin-dir requires an absolute directory")
-                    })?);
-            }
-            "--start" if !start => start = true,
-            "--dry-run" if !dry_run => dry_run = true,
-            _ => bail!("Unknown or repeated service argument: {arg}"),
-        }
-    }
-    let directory = binary_directory
-        .ok_or_else(|| anyhow::anyhow!("Service installation requires --bin-dir"))?;
-    #[cfg(target_os = "linux")]
-    return systemd::install(std::path::Path::new(directory), start, dry_run);
-    #[cfg(not(target_os = "linux"))]
-    {
-        let _ = (directory, start, dry_run);
-        bail!("Service installation is supported only on Linux with systemd user services")
-    }
+#[cfg(target_os = "linux")]
+pub fn preview(bin: &std::path::Path, start: bool) -> Result<String> {
+    systemd::preview(bin, start)
+}
+#[cfg(target_os = "linux")]
+pub fn configure(bin: &std::path::Path, start: bool, dry_run: bool) -> Result<()> {
+    systemd::configure(bin, start, dry_run)
+}
+#[cfg(not(target_os = "linux"))]
+pub fn preview(_bin: &std::path::Path, _start: bool) -> Result<String> {
+    bail!("Service management requires Linux systemd user services")
+}
+#[cfg(not(target_os = "linux"))]
+pub fn configure(_bin: &std::path::Path, _start: bool, _dry_run: bool) -> Result<()> {
+    bail!("Service management requires Linux systemd user services")
 }

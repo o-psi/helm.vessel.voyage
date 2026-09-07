@@ -14,6 +14,12 @@ try {
   $content = Join-Path $stage $archive
   New-Item "$content/bin", "$content/share/man/man1", "$content/share/completions" -ItemType Directory -Force | Out-Null
   Copy-Item "target/$Target/release/helm.exe", "target/$Target/release/vessel.exe", "target/$Target/release/voyage.exe", "target/$Target/release/voyage-installer.exe" "$content/bin"
+  $binaries = @{}
+  foreach ($binary in @('helm', 'vessel', 'voyage', 'voyage-installer')) {
+    $binaries[$binary] = @{ sha256 = (Get-FileHash "$content/bin/$binary.exe" -Algorithm SHA256).Hash.ToLower() }
+  }
+  $manifest = @{ schema_version = 1; version = $Version; target = $Target; binaries = $binaries } | ConvertTo-Json -Depth 4
+  [IO.File]::WriteAllText((Join-Path $content 'release.json'), $manifest + "`n", [Text.UTF8Encoding]::new($false))
   foreach ($binary in @('helm', 'vessel', 'voyage')) {
     & "target/$Target/release/$binary.exe" manpage | Out-File -Encoding utf8 "$content/share/man/man1/$binary.1"
     if ($LASTEXITCODE -ne 0) { throw "$binary manpage failed" }

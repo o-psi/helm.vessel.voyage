@@ -3398,8 +3398,10 @@ dependencies = [
  "crossterm",
  "libc",
  "ratatui",
+ "serde",
+ "serde_json",
+ "sha2",
  "signal-hook",
- "url",
 ]
 
 [[package]]

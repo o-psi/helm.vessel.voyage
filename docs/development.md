@@ -29,7 +29,8 @@ operator interfaces. Paths in backticks require the source checkout.
 | `crates/voyage-protocol/src/process/` | Versioned bounded Helm–Vessel–voyage messages |
 | `crates/voyage-storage/src/` | Native private-storage primitives |
 | `installer/src/service/` | Linux private installation and explicit service lifecycle |
-| `installer/src/flow.rs` | Simulated interactive setup wizard |
+| `installer/src/install/` | Verified release manifests, atomic installation and rollback |
+| `installer/src/cli.rs`, `flow.rs`, `ui.rs` | Installer arguments, review/apply planning and interactive UI |
 
 `helm/src/lib.rs` re-exports shared configuration/presentation types; executable
 session construction and canonical mutation remain in voyage. New code is split

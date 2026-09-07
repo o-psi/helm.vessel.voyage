@@ -30,8 +30,8 @@ Those limits are explicit rather than alternate embedded execution fallbacks.
 | 5. Remote lifecycle | Host-private scoped grants and HTTP gateway; current rights/workspace/epoch/revocation checks; branch, archive/restore, confirmed clear/delete, compaction and next-turn model/configuration. Credentials remain on the execution host. |
 | 6. Participants and owner moves | Explicit receiver bindings, bounded disclosed context, distinct subordinate sessions, immutable assignment/result/cleanup obligations, cancellation tombstones and idle reconciliation. Pinned signing identities, destination readiness, permanent source fencing and verified checkpoint courier implement explicit owner movement without timeout takeover. |
 
-The interactive installer wizard remains simulated and the browser execution
-console remains deferred, as required by the product scope. Native process-service
+The Linux installer now has real review/apply, upgrade and rollback paths; the
+browser execution console remains deferred. Native process-service
 paths outside Linux fail explicitly. The outbound enrollment compatibility route
 retains its narrower grant/lease semantics inside a supervised voyage.
 
@@ -62,7 +62,7 @@ session executor. Shared code must not become competing session ownership.
 | `helm/src/managed.rs`, `helm/src/remote_worker.rs`, execution entrypoints in `helm/src/main.rs`; relay paths in `vessel/src/attachment_transport.rs` | **Reuse internals, replace entrypoints and topology** with the voyage executable and Vessel routing. Retire the dedicated Helm worker and direct in-process chat execution once equivalent supported workflows are connected. | All session execution runs in voyage processes; Helm clients reach them through Vessel. |
 | `vessel/src/` management, enrollment and transport code | **Keep and adapt** applicable authentication, grants and transport machinery; **build** process launch, discovery, incarnation tracking, health, stop and recovery in `vessel/`. | Vessel supervises and exposes independent voyage processes without hosting their agent loops or canonical transcripts. |
 | `crates/voyage-protocol/`, `crates/voyage-storage/` | **Keep shared primitives** and evolve contracts at both ends. Share wire types and private-storage mechanisms, not live executors or competing session writers. | Each process uses primitives within its authority; canonical checkpoint writes remain voyage-owned. |
-| Workspace manifests, `installer/` and release scripts | **Extend** build, packaging and service setup for the voyage binary and Vessel supervision. The wizard remains mocked; explicit Linux service CLI provisioning now exists, with deployment evidence still required. | Provision distinct executables and supported service lifetimes; starting Helm must not become the voyage lifetime boundary. |
+| Workspace manifests, `installer/` and release scripts | **Extend** build, packaging and service setup for the voyage binary and Vessel supervision. Linux installation, upgrades, rollback and service provisioning are implemented; reboot/logout and non-Linux deployment evidence remain separate. | Provision distinct executables and supported service lifetimes; starting Helm must not become the voyage lifetime boundary. |
 
 This is an ownership migration, not a blanket directory rename or a second copy of
 the executor. Mixed modules must be split along these boundaries. Retire replaced

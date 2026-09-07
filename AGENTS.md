@@ -78,8 +78,8 @@ The Rust workspace currently contains `helm/`, `vessel/`, `voyage/`, `installer/
 `crates/voyage-protocol/` and `crates/voyage-storage/`. See
 [docs/development.md](docs/development.md) for code boundaries and
 [docs/implementation.md](docs/implementation.md) for target delivery order.
-Check both ends when changing wire contracts. Installer CLI supports explicit Linux
-user-service provisioning; its interactive wizard is still mocked.
+Check both ends when changing wire contracts. The installer supports Linux
+versioned installation, upgrades, rollback and user-service provisioning.
 Native private-storage changes require platform-specific security verification.
 
 Use normal Git in ordinary clones. In this workspace `.git` is reserved; use

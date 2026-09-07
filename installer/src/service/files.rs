@@ -59,39 +59,89 @@ pub fn executable(path: &Path, uid: u32) -> Result<()> {
     Ok(())
 }
 
-pub fn copy_executable(source: &Path, destination: &Path) -> Result<()> {
-    let mut input = OpenOptions::new()
-        .read(true)
-        .custom_flags(libc::O_NOFOLLOW)
-        .open(source)?;
-    let mut output = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o700)
-        .open(destination)?;
-    std::io::copy(&mut input, &mut output)?;
-    output.sync_all()?;
-    Ok(())
-}
-
-pub fn write_new(path: &Path, content: &str) -> Result<()> {
+/// Atomically exchange reviewed content; displaced files remain recoverable backups.
+pub(super) fn replace(path: &Path, content: &str, expected: Option<&str>) -> Result<()> {
     let parent = path.parent().context("Unit path has no parent")?;
-    let temporary = parent.join(format!(".voyage-unit-{}", std::process::id()));
+    let temporary = temporary(parent, "backup")?;
     let mut output = OpenOptions::new()
         .write(true)
         .create_new(true)
         .mode(0o600)
         .open(&temporary)?;
-    let result = (|| -> Result<()> {
-        output.write_all(content.as_bytes())?;
-        output.sync_all()?;
-        // Publish a complete unit without replacing concurrent installation.
-        fs::hard_link(&temporary, path)?;
-        File::open(parent)?.sync_all()?;
-        Ok(())
-    })();
-    let cleanup = fs::remove_file(&temporary);
-    result?;
-    cleanup?;
+    output.write_all(content.as_bytes())?;
+    output.sync_all()?;
+    if let Some(expected) = expected {
+        rename(&temporary, path, libc::RENAME_EXCHANGE)?;
+        let displaced = read(&temporary);
+        if displaced.as_deref().ok() != Some(expected) {
+            // Restore the displaced user edit. Keep the other inode as evidence,
+            // including any edit made concurrently after our initial exchange.
+            rename(&temporary, path, libc::RENAME_EXCHANGE)?;
+            File::open(parent)?.sync_all()?;
+            bail!(
+                "Service unit changed concurrently; restored its contents and retained {}",
+                temporary.display()
+            );
+        }
+    } else if let Err(error) = rename(&temporary, path, libc::RENAME_NOREPLACE) {
+        let _ = fs::remove_file(&temporary);
+        return Err(error.context("Service unit appeared concurrently; refusing replacement"));
+    }
+    File::open(parent)?.sync_all()?;
+    Ok(())
+}
+pub(super) fn remove_reviewed(path: &Path, expected: &str) -> Result<()> {
+    let parent = path.parent().context("Unit path has no parent")?;
+    let backup = temporary(parent, "removed")?;
+    rename(path, &backup, libc::RENAME_NOREPLACE)?;
+    if read(&backup)?.as_str() != expected {
+        let restored = rename(&backup, path, libc::RENAME_NOREPLACE);
+        bail!(
+            "Service unit changed concurrently; preserved {} (restoration: {})",
+            backup.display(),
+            restored.is_ok()
+        );
+    }
+    File::open(parent)?.sync_all()?;
+    Ok(())
+}
+fn temporary(parent: &Path, kind: &str) -> Result<std::path::PathBuf> {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_nanos();
+    Ok(parent.join(format!(
+        ".voyage-unit-{kind}-{}-{stamp}",
+        std::process::id()
+    )))
+}
+fn read(path: &Path) -> Result<String> {
+    use std::io::Read;
+    let file = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .open(path)?;
+    let meta = file.metadata()?;
+    if !meta.is_file() || meta.len() > 16384 {
+        bail!("Unsafe displaced service unit")
+    }
+    let mut value = String::new();
+    file.take(16385).read_to_string(&mut value)?;
+    Ok(value)
+}
+fn rename(from: &Path, to: &Path, flags: u32) -> Result<()> {
+    let from = std::ffi::CString::new(from.as_os_str().as_encoded_bytes())?;
+    let to = std::ffi::CString::new(to.as_os_str().as_encoded_bytes())?;
+    if unsafe {
+        libc::renameat2(
+            libc::AT_FDCWD,
+            from.as_ptr(),
+            libc::AT_FDCWD,
+            to.as_ptr(),
+            flags,
+        )
+    } != 0
+    {
+        return Err(std::io::Error::last_os_error().into());
+    }
     Ok(())
 }

@@ -1,122 +1,226 @@
-use super::files;
-use anyhow::{Context, Result, bail};
+//! Transactional managed-unit upgrades. Session owners never join supervisor cleanup.
+use super::{command, files, readiness, unit};
+use anyhow::{Context, Result, ensure};
 use std::{
     fs,
+    os::unix::fs::OpenOptionsExt,
     path::Path,
-    process::Command,
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant},
 };
-
-const BINARIES: [&str; 3] = ["helm", "vessel", "voyage"];
-const UNIT: &str = "voyage-vessel.service";
-
-fn quoted(path: &Path) -> Result<String> {
-    let value = path.to_str().context("Service paths must be valid UTF-8")?;
-    if value.chars().any(char::is_control) {
-        bail!("Service paths must not contain control characters");
+struct Plan {
+    layout: unit::Layout,
+    content: String,
+    previous: Option<String>,
+    active: bool,
+    enabled: bool,
+    start: bool,
+    invocation: String,
+    restart: bool,
+    rollback: Option<String>,
+}
+fn plan(bin: &Path, start: bool) -> Result<Plan> {
+    let layout = unit::Layout::discover()?;
+    files::check_path(bin, layout.uid)?;
+    let content = unit::render(bin, &layout.state)?;
+    let previous = unit::existing(&layout)?;
+    unit::check_effective(&layout)?;
+    let active = command::query("ActiveState")?;
+    ensure!(
+        matches!(active.as_str(), "active" | "inactive" | "failed"),
+        "Service is transitioning; inspect it and retry after the pending operation"
+    );
+    ensure!(
+        active != "active" || previous.is_some(),
+        "Active service has no recognized owned unit"
+    );
+    let enabled = command::query("UnitFileState")?;
+    ensure!(
+        matches!(enabled.as_str(), "enabled" | "disabled" | "" | "not-found"),
+        "Refusing unexpected systemd enablement state: {enabled}"
+    );
+    let mut rollback = previous.clone();
+    let mut restart = active == "active" && previous.as_deref() != Some(&content);
+    if active == "active" {
+        let pid: u32 = command::query("MainPID")?
+            .parse()
+            .context("Active supervisor PID unavailable")?;
+        ensure!(pid > 1, "Invalid active supervisor identity");
+        let executable = fs::read_link(format!("/proc/{pid}/exe"))
+            .context("Cannot inspect active supervisor executable")?;
+        ensure!(
+            executable.file_name().is_some_and(|name| name == "vessel"),
+            "Active unit does not execute a recognized Vessel binary"
+        );
+        files::executable(&executable, layout.uid)?;
+        if executable != bin.join("vessel") {
+            restart = true;
+            rollback = Some(unit::render(
+                executable
+                    .parent()
+                    .context("Active supervisor path missing")?,
+                &layout.state,
+            )?);
+        }
     }
+    Ok(Plan {
+        layout,
+        content,
+        previous,
+        active: active == "active",
+        enabled: enabled == "enabled",
+        start,
+        invocation: command::query("InvocationID")?,
+        restart,
+        rollback,
+    })
+}
+pub(super) fn preview(bin: &Path, start: bool) -> Result<String> {
+    let plan = plan(bin, start)?;
     Ok(format!(
-        "\"{}\"",
-        value
-            .replace('\\', "\\\\")
-            .replace('"', "\\\"")
-            .replace('%', "%%")
+        "{}\nUnit: {}\nPrivate state: {}\nActivation: {}\nIndependent voyage owners are preserved; supervisor replacement does not restart voyages.",
+        plan.content,
+        plan.layout.unit.display(),
+        plan.layout.state.display(),
+        if plan.start {
+            "enable and start/restart"
+        } else if plan.active {
+            "preserve active state by restarting supervisor"
+        } else {
+            "leave inactive; manual activation"
+        }
     ))
 }
-
-pub fn install(source: &Path, start: bool, dry_run: bool) -> Result<()> {
-    // No privilege elevation: installation and execution have the caller's identity.
-    let uid = unsafe { libc::geteuid() };
-    if uid == 0 || uid != unsafe { libc::getuid() } {
-        bail!("Run service installation as the ordinary executing user, without sudo");
-    }
-    let home = std::env::var_os("HOME").context("HOME is required")?;
-    let home = Path::new(&home);
-    files::check_path(home, uid)?;
-    files::check_path(source, uid)?;
-    for name in BINARIES {
-        files::executable(&source.join(name), uid)?;
-    }
-    let state = home.join(".local/state/voyage/vessel");
-    let units = home.join(".config/systemd/user");
-    let unit_path = units.join(UNIT);
-    let stamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
-    let release = home.join(format!(
-        ".local/share/voyage/releases/{stamp}-{}",
-        std::process::id()
-    ));
-    for path in [&state, &units, &release, &unit_path] {
-        files::check_path(path, uid)?;
-    }
-    if unit_path.exists() {
-        bail!(
-            "{} already exists; preserve it and use an explicit reviewed upgrade",
-            unit_path.display()
-        );
-    }
-    let content = format!(
-        "[Unit]\nDescription=Voyage Vessel session supervisor\n\n[Service]\nType=simple\nExecStart=:{} local-serve --directory {} --voyage-binary {} --capacity 16\nWorkingDirectory=%h\nUMask=0077\nRestart=on-failure\nRestartSec=2\nKillMode=process\nTimeoutStopSec=30\nStandardInput=null\nStandardOutput=journal\nStandardError=journal\n\n[Install]\nWantedBy=default.target\n",
-        quoted(&release.join("vessel"))?,
-        quoted(&state)?,
-        quoted(&release.join("voyage"))?
-    );
+pub(super) fn configure(bin: &Path, start: bool, dry_run: bool) -> Result<()> {
     if dry_run {
-        println!("{content}");
-        println!(
-            "Unit: {}\nPrivate state: {}\nActivation requested: {start}",
-            unit_path.display(),
-            state.display()
-        );
+        println!("{}", preview(bin, start)?);
         return Ok(());
     }
-    files::directory(&state, uid, true)?;
-    files::directory(&units, uid, false)?;
-    files::directory(&release, uid, true)?;
-    let result = (|| -> Result<()> {
-        for name in BINARIES {
-            files::copy_executable(&source.join(name), &release.join(name))?;
+    let layout = unit::Layout::discover()?;
+    files::directory(&layout.units, layout.uid, false)?;
+    let lock = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .open(layout.units.join(".voyage-service.lock"))?;
+    lock.try_lock()
+        .context("Another service installation is active")?;
+    let plan = plan(bin, start)?;
+    for name in ["helm", "vessel", "voyage"] {
+        files::executable(&bin.join(name), plan.layout.uid)?;
+    }
+    if let Some(previous) = &plan.previous {
+        let old = unit::recognized(previous, &plan.layout.state)?;
+        files::executable(&old.join("vessel"), plan.layout.uid)?;
+        files::executable(&old.join("voyage"), plan.layout.uid)?;
+    }
+    let prior = if plan.active {
+        readiness::catalogue(bin,&plan.layout.state).context("New release cannot communicate with existing independent owners; explicit compatibility migration required")?
+    } else {
+        if plan.layout.state.join("vessel.sock").exists()
+            && readiness::catalogue(bin, &plan.layout.state).is_ok()
+        {
+            anyhow::bail!(
+                "A Vessel is already running outside this service; stop that supervisor explicitly before adopting its state"
+            )
         }
-        files::write_new(&unit_path, &content)?;
+        Vec::new()
+    };
+    files::directory(&plan.layout.state, plan.layout.uid, true)?;
+    let changed = plan.previous.as_deref() != Some(&plan.content);
+    if changed {
+        files::replace(&plan.layout.unit, &plan.content, plan.previous.as_deref())?;
+    }
+    let applied = (|| -> Result<()> {
+        command::systemctl(&["daemon-reload"])?;
+        unit::check_effective(&plan.layout)?;
+        if plan.start {
+            command::systemctl(&["enable", unit::NAME])?;
+        }
+        if plan.start || plan.active {
+            if plan.restart {
+                command::systemctl(&["--no-block", "restart", unit::NAME])?;
+            } else if !plan.active {
+                command::systemctl(&["--no-block", "start", unit::NAME])?;
+            }
+            readiness::wait(
+                bin,
+                &plan.layout.state,
+                &prior,
+                plan.restart.then_some(plan.invocation.as_str()),
+            )?;
+        }
         Ok(())
     })();
-    if let Err(error) = result {
-        // Retain the release whenever a published unit may reference it.
-        if !unit_path.exists() {
-            let _ = fs::remove_dir_all(&release);
+    if let Err(error) = applied {
+        if let Err(rollback) = restore(&plan, &prior) {
+            return Err(error.context(format!("Service activation failed and rollback could not be confirmed: {rollback}; unit/data/releases retained for inspection")));
         }
-        return Err(error.context("Installation failed; existing data is preserved"));
+        return Err(error.context("Service activation failed; previous unit and activation state restored, voyage owners preserved"));
     }
     println!(
-        "Installed {}\nBinaries: {}\nState: {}",
-        unit_path.display(),
-        release.display(),
-        state.display()
-    );
-    if start {
-        systemctl(&["daemon-reload"])?;
-        systemctl(&["enable", "--now", UNIT])?;
-        systemctl(&["is-active", "--quiet", UNIT])?;
-        println!(
-            "Vessel service is active. User-service lifetime follows the user manager; boot/logout persistence requires separately configured lingering."
-        );
-    } else {
-        println!(
-            "Activate with: systemctl --user daemon-reload && systemctl --user enable --now {UNIT}"
-        );
-    }
-    println!(
-        "Stop the supervisor with: systemctl --user stop {UNIT}\nVoyage processes survive supervisor stop; stop individual voyages through Vessel first when draining work."
+        "Service unit: {}\nPrivate state: {}\nSupervisor: {}",
+        plan.layout.unit.display(),
+        plan.layout.state.display(),
+        if plan.start || plan.active {
+            "active; authenticated endpoint ready"
+        } else {
+            "inactive; not started"
+        }
     );
     Ok(())
 }
-
-fn systemctl(args: &[&str]) -> Result<()> {
-    let status = Command::new("systemctl").arg("--user").args(args).status()
-        .context("Service files are installed, but systemctl could not run; inspect the user manager and retry activation")?;
-    if !status.success() {
-        bail!(
-            "Service files are installed, but systemctl {args:?} failed ({status}); inspect journalctl --user -u {UNIT} and retry activation"
-        );
+fn restore(plan: &Plan, prior: &[serde_json::Value]) -> Result<()> {
+    ensure!(
+        fs::read_to_string(&plan.layout.unit)? == plan.content,
+        "Refusing rollback over independently changed unit contents"
+    );
+    unit::check_effective(&plan.layout)?;
+    if matches!(
+        command::query("ActiveState")?.as_str(),
+        "active" | "activating" | "deactivating"
+    ) {
+        command::systemctl(&["--no-block", "stop", unit::NAME])?;
+        wait_inactive()?;
+    }
+    if !plan.enabled {
+        command::systemctl(&["disable", unit::NAME])?;
+    }
+    match &plan.rollback {
+        Some(previous) => files::replace(&plan.layout.unit, previous, Some(&plan.content))?,
+        None => {
+            files::remove_reviewed(&plan.layout.unit, &plan.content)?;
+        }
+    }
+    command::systemctl(&["daemon-reload"])?;
+    if plan.enabled {
+        command::systemctl(&["enable", unit::NAME])?;
+    }
+    if plan.active {
+        command::systemctl(&["--no-block", "start", unit::NAME])?;
+        let old = unit::recognized(
+            plan.rollback.as_deref().context("previous unit missing")?,
+            &plan.layout.state,
+        )?;
+        readiness::wait(&old, &plan.layout.state, prior, None)?;
     }
     Ok(())
+}
+pub(super) fn wait_inactive() -> Result<()> {
+    let deadline = Instant::now() + Duration::from_secs(15);
+    loop {
+        if matches!(
+            command::query("ActiveState")?.as_str(),
+            "inactive" | "failed"
+        ) {
+            return Ok(());
+        }
+        ensure!(
+            Instant::now() < deadline,
+            "Supervisor stop remains unconfirmed; independent owners are preserved"
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    }
 }

@@ -19,6 +19,18 @@ mkdir -p "$stage/$archive/bin" "$stage/$archive/share/man/man1" \
   "$stage/$archive/share/bash-completion/completions" "$stage/$archive/share/zsh/site-functions" \
   "$stage/$archive/share/fish/vendor_completions.d"
 install -m 755 "$target_dir/helm" "$target_dir/vessel" "$target_dir/voyage" "$target_dir/voyage-installer" "$stage/$archive/bin/"
+python3 - "$stage/$archive" "$version" "${target:-$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m)}" <<'PY'
+import hashlib, json, pathlib, sys
+root = pathlib.Path(sys.argv[1])
+binaries = {}
+for name in ('helm', 'vessel', 'voyage', 'voyage-installer'):
+    with (root / 'bin' / name).open('rb') as stream:
+        binaries[name] = {'sha256': hashlib.file_digest(stream, 'sha256').hexdigest()}
+(root / 'release.json').write_text(json.dumps({
+    'schema_version': 1, 'version': sys.argv[2], 'target': sys.argv[3],
+    'binaries': binaries,
+}, indent=2) + '\n')
+PY
 for binary in helm vessel voyage; do
   "$target_dir/$binary" manpage > "$stage/$archive/share/man/man1/$binary.1"
   "$target_dir/$binary" completions bash > "$stage/$archive/share/bash-completion/completions/$binary"

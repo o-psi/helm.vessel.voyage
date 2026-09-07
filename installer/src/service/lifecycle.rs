@@ -1,80 +1,47 @@
-use super::files;
-use anyhow::{Context, Result, bail};
-use std::{fs, path::Path, process::Command};
-
-const UNIT: &str = "voyage-vessel.service";
-
-fn query(property: &str) -> Result<String> {
-    let output = Command::new("systemctl")
-        .args(["--user", "show", UNIT, "--value", "--property", property])
-        .output()?;
-    if !output.status.success() {
-        bail!("Cannot query the systemd user manager");
-    }
-    Ok(String::from_utf8(output.stdout)?.trim().to_owned())
-}
-
-fn run(args: &[&str]) -> Result<()> {
-    let status = Command::new("systemctl")
-        .arg("--user")
-        .args(args)
-        .status()?;
-    if !status.success() {
-        bail!(
-            "systemctl {args:?} failed ({status}); service files and runtime state are preserved"
-        );
-    }
-    Ok(())
-}
-
-pub fn manage(command: &str) -> Result<()> {
-    let uid = unsafe { libc::geteuid() };
-    if uid == 0 || uid != unsafe { libc::getuid() } {
-        bail!("Run service management as the ordinary executing user, without sudo");
-    }
-    let home = std::env::var_os("HOME").context("HOME is required")?;
-    let path = Path::new(&home).join(".config/systemd/user").join(UNIT);
-    files::check_path(&path, uid)?;
-    if command == "service-status" {
+use super::{command, files, systemd, unit};
+use anyhow::{Result, ensure};
+pub fn manage(operation: &str) -> Result<()> {
+    let layout = unit::Layout::discover()?;
+    let previous = unit::existing(&layout)?;
+    if operation == "service-status" {
         println!(
-            "Vessel supervisor: {}\nPID: {}\nUnit: {}",
-            query("ActiveState")?,
-            query("MainPID")?,
-            path.display()
+            "Vessel supervisor: {}\nPID: {}\nUnit: {}\nState directory: {}",
+            command::query("ActiveState")?,
+            command::query("MainPID")?,
+            layout.unit.display(),
+            layout.state.display()
         );
-        println!(
-            "Individual voyage health is available through Vessel; supervisor state does not establish voyage survival."
-        );
+        println!("Individual voyage liveness requires authenticated runtime inspection.");
         return Ok(());
     }
-    let content = fs::read_to_string(&path).context("No installed Voyage service unit")?;
-    if !content.contains("Description=Voyage Vessel session supervisor\n") {
-        bail!("Refusing to manage an unrecognized service unit");
-    }
-    match command {
+    ensure!(
+        previous.is_some(),
+        "No recognized installed Voyage service unit"
+    );
+    unit::check_effective(&layout)?;
+    match operation {
         "service-stop" => {
-            if query("KillMode")? != "process" {
-                bail!(
-                    "Refusing stop: effective KillMode must be process to preserve voyages; inspect service overrides"
-                );
-            }
-            run(&["stop", UNIT])?;
-            println!(
-                "Supervisor stopped. Voyage processes and their state are preserved; restart Vessel to reconnect."
-            );
+            command::systemctl(&["--no-block", "stop", unit::NAME])?;
+            systemd::wait_inactive()?;
+            println!("Supervisor stopped; independent voyages and their state are preserved.");
         }
         "service-uninstall" => {
-            if !matches!(query("ActiveState")?.as_str(), "inactive" | "failed") {
-                bail!("Stop the supervisor with voyage-installer service-stop before uninstalling");
-            }
-            run(&["disable", UNIT])?;
-            fs::remove_file(&path)?;
-            run(&["daemon-reload"])?;
+            ensure!(
+                matches!(
+                    command::query("ActiveState")?.as_str(),
+                    "inactive" | "failed"
+                ),
+                "Stop the supervisor before uninstalling its service"
+            );
+            command::systemctl(&["disable", unit::NAME])?;
+            files::check_path(&layout.unit, layout.uid)?;
+            files::remove_reviewed(&layout.unit, previous.as_deref().unwrap_or_default())?;
+            command::systemctl(&["daemon-reload"])?;
             println!(
-                "Service unit removed. Versioned binaries, configuration, credentials and voyage data are retained. Surviving voyage processes are not stopped."
+                "Service unit removed. Versioned binaries, credentials, configuration and voyage state retained."
             );
         }
-        _ => bail!("Unknown service operation"),
-    }
+        _ => anyhow::bail!("Unknown service operation"),
+    };
     Ok(())
 }

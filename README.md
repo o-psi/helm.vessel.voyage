@@ -47,8 +47,13 @@ Configure a provider before starting chat; see [configuration](docs/configuratio
 From an extracted full archive, use `./bin/helm` or `.\bin\helm.exe`. Keep its guide
 and configuration directories together. Linux connected mode needs `vessel` and
 `voyage` beside `helm`; it can start an absent local Vessel. The
-[installer](installer/README.md) also provides explicit Linux user-service setup;
-its interactive wizard remains a simulation.
+[installer](installer/README.md) provides a real Linux installation wizard,
+versioned upgrades and rollback, and user-service setup.
+
+To review and install a built release on Linux, run
+`./target/release/voyage-installer`. For later releases, use the new release's
+installer with `upgrade --start`; `voyage-installer status` shows the installed
+and rollback versions.
 
 ## Documentation
 

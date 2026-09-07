@@ -1,8 +1,8 @@
 # Packaging and releases
 
 Voyage is developing its first release. The current packagers distribute `helm`,
-`vessel`, the independent `voyage` runtime, and `voyage-installer`. Architecture
-cutover and platform deployment remain incomplete; see the
+`vessel`, the independent `voyage` runtime, and `voyage-installer`. The supported
+Linux architecture cutover is implemented; platform/deployment limits are recorded in the
 [implementation ledger](implementation.md).
 
 ## Build and package
@@ -16,7 +16,8 @@ cargo build --workspace --release --locked
 (cd dist && sha256sum -c *.sha256)
 ```
 
-The Unix full packager uses `target/release`, or `target/TARGET/release` when the
+The Unix full packager requires Python 3.11 or later for release metadata and uses
+`target/release`, or `target/TARGET/release` when the
 `TARGET` environment variable explicitly selects a platform build. The Windows
 packager is `scripts/package-release.ps1`; inspect its declared parameters before
 running it for a platform build. Do not infer native Windows execution from an
@@ -29,12 +30,13 @@ for both full packagers. All listed paths must exist; reject unsafe/symlinked pa
 and keep relative links within the extracted archive valid. Unlisted local notes
 and credentials must never enter the archive.
 
-The standalone installer package contains the installer program, without the three
-runtime binaries. `install.sh` requires its assets to be published before download
-works and opens the simulated wizard. Explicit Linux service installation requires
-local full-release binaries and the `install-user-service` command; see
-[installer operations](../installer/README.md). Native service activation, reboot
-and logout persistence still require actual deployment evidence.
+The full archive includes a versioned `release.json` with its label, platform and
+all four executable hashes. The standalone installer package contains only the
+installer and requires local full-release binaries via `--bin-dir`. `install.sh`
+downloads a complete pinned release and opens its real installation wizard; its
+assets must be published first. Local builds can be installed before publication.
+See [installation, upgrade and rollback](../installer/README.md). Reboot/logout
+persistence and non-Linux deployment still require actual native evidence.
 
 ## Artifact integrity
 
