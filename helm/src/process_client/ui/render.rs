@@ -412,7 +412,7 @@ fn conversation(frame: &mut Frame<'_>, app: &App, area: Rect) {
                                 .fg(if message.role == "user" {
                                     Color::Cyan
                                 } else {
-                                    Color::White
+                                    Color::Reset
                                 })
                                 .add_modifier(Modifier::BOLD),
                         ));
