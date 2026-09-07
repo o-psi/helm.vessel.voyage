@@ -117,7 +117,18 @@ pub(super) fn configure(bin: &Path, start: bool, dry_run: bool) -> Result<()> {
         files::executable(&old.join("voyage"), plan.layout.uid)?;
     }
     let prior = if plan.active {
-        readiness::catalogue(bin,&plan.layout.state).context("New release cannot communicate with existing independent owners; explicit compatibility migration required")?
+        // The replacement's public API may differ from the running service's.
+        // Observe the old service with its own trusted helper before replacement;
+        // readiness::wait below verifies the new service and retained owners.
+        let active_bin = unit::recognized(
+            plan.rollback
+                .as_deref()
+                .context("Active service unit missing")?,
+            &plan.layout.state,
+        )?;
+        readiness::catalogue(&active_bin, &plan.layout.state).context(
+            "Cannot inspect the active Vessel with its current helper; upgrade left unchanged",
+        )?
     } else {
         if (plan.layout.state.join("process-http.json").exists()
             || plan.layout.state.join("vessel.sock").exists())

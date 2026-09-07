@@ -164,6 +164,12 @@ windows still need reopening to use the new Helm binary. Pre-existing runtimes
 from releases without turn suspension require one explicit clean restart to adopt
 this behavior.
 
+For an active-service upgrade, the installer reads the existing catalogue through
+the running release's trusted Vessel helper before replacement. After restart it
+uses the new helper to verify readiness and preservation of previously live owner
+identities. This permits a public API cutover without requiring the new client to
+speak the retired service API; failed readiness retains the existing rollback path.
+
 `KillMode=process` preserves independent voyages across supervisor restart.
 Overrides that could kill descendants are refused. The installer never enables
 lingering or elevates privileges. Service lifetime follows the systemd user manager;
