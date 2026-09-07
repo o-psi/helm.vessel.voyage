@@ -50,6 +50,56 @@ applies. `helm config` conceals secret bindings. `helm doctor` checks configurat
 and dependencies without contacting a model. `helm models` queries the configured
 provider/account and therefore requires the relevant credentials and network access.
 
+## Next-turn inference controls
+
+The composer exposes model, thinking, and service selectors. `/model`, `/thinking`,
+and `/service` open the corresponding picker; a value selects it directly:
+
+```text
+/model MODEL_ID
+/thinking high
+/service priority
+/thinking default
+/service default
+```
+
+`default` clears that override; it is not an alias for medium thinking or paid
+priority. Explicit launch fields are `reasoning_effort` and `service_tier`:
+
+```toml
+reasoning_effort = "high"
+service_tier = "priority"
+```
+
+Omit either field for provider-default behavior. Responses, ChatGPT OAuth, and
+compatible Chat Completions encode the overrides. Anthropic and the optional
+Codex compatibility bridge currently reject explicit overrides rather than ignore
+them. Transport choices are not a guarantee of model support, account entitlement,
+price, availability, or the service tier actually delivered. Advertised model
+reasoning levels narrow choices when metadata is available; unknown metadata does
+not prove support. An endpoint can still reject a request. Priority may cost more.
+Automatic title requests use a separate utility model and its provider defaults.
+
+Selections on an unsent new-voyage draft stay local until creation. For an existing
+voyage, Helm submits one atomic `set_inference` replacement of model and both
+optional overrides, using the observed session revision, an immutable command ID,
+and a deadline. A concurrent checkpoint or another client can cause a revision
+conflict. Refresh and make an explicit new selection, not a blind stale retry.
+
+Vessel durably binds the intent before forwarding it; Voyage validates and journals
+the effective configuration and the applied or rejected outcome. Only an applied
+Voyage receipt means the update took effect. An uncertain delivery is resolved by
+its existing command identity, never automatically replayed as new work. Vessel's
+intent record is not an offline delivery queue or a second source of effective
+settings. Settings mutation requires executing-account owner authority.
+
+A running turn keeps its original settings for the entire tool loop. Accepted
+changes govern the next admitted turn, including after suspension or restart.
+Model switches do not modify an active turn's provider replay; the replay reset
+happens atomically at the next admission. Existing child agents retain their
+construction-time settings. Snapshots distinguish next-turn requested settings
+from the active turn's frozen settings. Rejections preserve effective settings.
+
 ## Providers and authentication
 
 | Provider value | Transport and credentials |

@@ -67,6 +67,8 @@ pub(crate) fn request(
             Message::new(Role::User, serde_json::to_string(&excerpt).ok()?),
         ],
         tools: Vec::new(),
+        reasoning_effort: None,
+        service_tier: None,
         temperature: None,
         max_tokens: None,
     })

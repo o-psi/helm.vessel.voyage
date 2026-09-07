@@ -105,7 +105,8 @@ async fn configure_inner(
         _ => unreachable!(),
     };
     bootstrap::limit_participant(&mut config, &state.registration)?;
-    crate::provider::validate_inference_settings(&config)?;
+    let known = state.controls.known_model(&config).await;
+    crate::provider::validate_inference_settings_with_model(&config, known.as_ref())?;
     if let RuntimeCommand::SetAccess { access, .. } = &command {
         ensure!(
             config.access_mode().to_string() == *access,

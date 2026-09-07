@@ -365,6 +365,9 @@ impl ManagedSessionOwner {
             if admission.duplicate {
                 return Ok(Admission::Existing(admission.run));
             }
+            // Admission may atomically consume a deferred next-turn model.
+            // Bind the run owner to that committed model, not the pre-admission copy.
+            let model = journal.load_session(request.session_id)?.session.model;
             let run_id = admission.run.id;
             let mut token = TurnToken::new(run_id);
             token.execution_authority = authority;
@@ -379,7 +382,7 @@ impl ManagedSessionOwner {
                 token,
                 run_id,
                 workspace,
-                model: session.model,
+                model,
                 input: Some((session.messages, request.prompt)),
                 steering_sender,
                 steering_receiver: Some(steering_receiver),

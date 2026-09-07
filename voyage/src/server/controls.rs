@@ -25,6 +25,7 @@ pub struct LiveControls {
     retained: Arc<RwLock<Option<retained::Retained>>>,
     active: RwLock<Option<Active>>,
     inventory: RwLock<Option<Value>>,
+    model_catalog: RwLock<Option<(crate::ProviderKind, Vec<crate::provider::ModelInfo>)>>,
 }
 impl LiveControls {
     pub(crate) async fn open(
@@ -119,10 +120,33 @@ impl LiveControls {
         config: &crate::Config,
         workspace: &std::path::Path,
     ) -> Result<Value> {
-        if self.active.read().await.is_some() {
-            return self.inspect(run, section).await;
+        let result = if self.active.read().await.is_some() {
+            self.inspect(run, section).await?
+        } else {
+            idle::inspect(self, section, config, workspace).await?
+        };
+        if section == "models" {
+            let models = serde_json::from_value(result["value"].clone())?;
+            *self.model_catalog.write().await = Some((config.provider.clone(), models));
         }
-        idle::inspect(self, section, config, workspace).await
+        Ok(result)
+    }
+    /// Discovery is optional; an absent catalog is unknown, not unsupported.
+    pub(crate) async fn known_model(
+        &self,
+        config: &crate::Config,
+    ) -> Option<crate::provider::ModelInfo> {
+        self.model_catalog
+            .read()
+            .await
+            .as_ref()
+            .filter(|(provider, _)| provider == &config.provider)
+            .and_then(|(_, models)| {
+                models
+                    .iter()
+                    .find(|model| model.id == config.model)
+                    .cloned()
+            })
     }
     pub(crate) async fn execute(
         &self,

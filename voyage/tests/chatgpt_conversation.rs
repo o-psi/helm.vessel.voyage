@@ -33,6 +33,8 @@ async fn three_message_chatgpt_conversation() {
             model: model.clone(),
             messages: history.clone(),
             tools: vec![],
+            reasoning_effort: None,
+            service_tier: None,
             temperature: None,
             max_tokens: None,
         };
