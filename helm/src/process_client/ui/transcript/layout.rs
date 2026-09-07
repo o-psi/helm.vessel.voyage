@@ -48,6 +48,16 @@ pub(super) fn note(output: &mut Vec<Row>, key: Key, text: impl Into<String>, wid
         markdown::wrap_text(Text::styled(text.into(), muted()), width.into()),
     );
 }
+// Keep entry boundaries readable without leading or duplicate blank rows.
+// The upcoming heading's key leaves body-text reading anchors unchanged.
+fn entry_gap(output: &mut Vec<Row>, key: Key) {
+    if output
+        .last()
+        .is_some_and(|row| !row.line.to_string().trim().is_empty())
+    {
+        rows(output, key, Text::from(Line::default()));
+    }
+}
 fn body(text: &str, width: u16) -> Text<'static> {
     // Authored JSON is content, never a receipt inferred from its keys.
     let source = if serde_json::from_str::<serde_json::Value>(text)
@@ -166,6 +176,7 @@ fn build(view: &View, state: &State, width: u16) -> Vec<Row> {
                 .created_at
                 .map(|t| format!("  {}", t.with_timezone(&chrono::Local).format("%H:%M")))
                 .unwrap_or_default();
+            entry_gap(&mut out, Key::MessageHeading(message.message_index));
             rows(
                 &mut out,
                 Key::MessageHeading(message.message_index),
@@ -258,6 +269,7 @@ fn build(view: &View, state: &State, width: u16) -> Vec<Row> {
             m.role == "user" && m.message_index >= delivery.before && m.content == delivery.text
         });
         if !saved {
+            entry_gap(&mut out, Key::Pending);
             note(
                 &mut out,
                 Key::Pending,
@@ -271,6 +283,7 @@ fn build(view: &View, state: &State, width: u16) -> Vec<Row> {
         && !pending.preserve_draft
         && !pending.draft.starts_with('/')
     {
+        entry_gap(&mut out, Key::Pending);
         note(
             &mut out,
             Key::Pending,
@@ -282,6 +295,7 @@ fn build(view: &View, state: &State, width: u16) -> Vec<Row> {
         && (run.state != "completed" || run.live_text.as_ref().is_some_and(|text| !text.is_empty()))
     {
         let key = Key::Live(run.run_id);
+        entry_gap(&mut out, key.clone());
         note(
             &mut out,
             key.clone(),
