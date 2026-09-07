@@ -179,7 +179,8 @@ pub(in crate::process_client::ui) fn draw(frame: &mut Frame<'_>, app: &App, area
     } else {
         match kind {
             "approval" => "Ctrl+A Approve once · Ctrl+D Deny",
-            "question" => "F2 then Enter sends · Ctrl+D skips",
+            "question" if review.focused => "Enter sends · Ctrl+D skips question",
+            "question" => "F2 to answer this question",
             _ => "No supported response",
         }
     };
@@ -202,7 +203,7 @@ pub(in crate::process_client::ui) fn draw(frame: &mut Frame<'_>, app: &App, area
     frame.render_widget(
         Paragraph::new(format!(
             "{controls}\nF2 focus · F6/F7 prev/next\nPgUp/PgDn scroll · Esc composer{}",
-            if kind == "question" {
+            if kind == "question" && review.focused {
                 "\nUp/Down choose · type custom answer"
             } else {
                 ""
