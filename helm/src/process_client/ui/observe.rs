@@ -1,7 +1,11 @@
 //! Slow observers cannot block the terminal input loop or another Vessel.
 use super::state::{Snapshot, Target};
 use crate::process_client::transport::Client;
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 use tokio::sync::{Semaphore, mpsc};
 use voyage_protocol::process::{ProcessInfo, RuntimeCommand, VesselCommand};
 
@@ -10,6 +14,7 @@ pub enum Update {
         target: Target,
         incarnation: uuid::Uuid,
         result: Result<super::terminals::Inventory, String>,
+        observed: Instant,
     },
     Control {
         target: Target,
@@ -147,6 +152,7 @@ pub fn spawn(clients: &[Client], sender: mpsc::Sender<Update>) -> Vec<tokio::tas
                                             target,
                                             incarnation: process.incarnation,
                                             result: inventory,
+                                            observed: Instant::now(),
                                         })
                                         .await;
                                 });

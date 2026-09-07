@@ -7,7 +7,7 @@ use ratatui::{
     layout::{Constraint, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Text},
-    widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap},
+    widgets::{List, ListItem, ListState, Paragraph, Wrap},
 };
 use serde::Deserialize;
 use std::{
@@ -60,7 +60,7 @@ impl Browser {
     pub fn clear_displayed(&self) {
         self.displayed.set(None);
     }
-    pub fn update(&mut self, result: Result<Inventory, String>) {
+    pub fn update(&mut self, result: Result<Inventory, String>, observed: Instant) {
         match result {
             Ok(inventory) => {
                 if self.inventory.as_ref().and_then(|i| i.run_id) != inventory.run_id {
@@ -75,7 +75,7 @@ impl Browser {
                     self.displayed.set(None);
                 }
                 self.inventory = Some(inventory);
-                self.observed = Some(Instant::now());
+                self.observed = Some(observed);
                 self.error = None;
             }
             Err(error) => {
@@ -102,10 +102,25 @@ impl Browser {
         let running = entries.iter().filter(|e| e.running()).count();
         match entries.iter().find(|e| e.running()) {
             Some(entry) => format!(
-                "Terminals: {running} running | {} | F3 open",
+                "{running} {} running · {} · F3 Console",
+                if running == 1 { "program" } else { "programs" },
                 safe(&entry.title)
             ),
-            None => format!("Terminals: {} | F3 browse", entries.len()),
+            None => {
+                if entries.is_empty() {
+                    "F3 Console".into()
+                } else {
+                    format!(
+                        "{} {} · F3 Console",
+                        entries.len(),
+                        if entries.len() == 1 {
+                            "finished program"
+                        } else {
+                            "finished programs"
+                        }
+                    )
+                }
+            }
         }
     }
 }
@@ -223,17 +238,8 @@ pub(super) fn draw(frame: &mut Frame<'_>, app: &App, area: Rect) {
     };
     let browser = &view.terminals;
     browser.displayed.set(None);
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title(if area.width >= 64 {
-            " TERMINALS / Up Down select / Enter attach / Esc back "
-        } else {
-            " TERMINALS / Enter open / Esc back "
-        })
-        .border_style(Style::default().fg(Color::Cyan));
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
-    if inner.width < 30 || inner.height < 10 {
+    let inner = area.inner(ratatui::layout::Margin::new(1, 1));
+    if inner.width < 30 || inner.height < 8 {
         frame.render_widget(
             Paragraph::new("Make this window larger to select a program. Esc returns to chat.")
                 .wrap(Wrap { trim: false }),
@@ -242,18 +248,19 @@ pub(super) fn draw(frame: &mut Frame<'_>, app: &App, area: Rect) {
         return;
     }
     let areas = Layout::vertical([
-        Constraint::Length(2),
-        Constraint::Min(4),
+        Constraint::Length(3),
+        Constraint::Min(2),
         Constraint::Length(4),
     ])
     .split(inner);
     frame.render_widget(
-        Paragraph::new(format!(
-            "Voyage: {}\nMachine: {}",
-            safe(&view.title()),
-            app.route_label(target.route)
-        ))
-        .wrap(Wrap { trim: false }),
+        Paragraph::new(vec![
+            Line::styled("Console", Style::default().add_modifier(Modifier::BOLD)),
+            Line::styled(
+                "Choose a program to use directly.",
+                Style::default().fg(Color::DarkGray),
+            ),
+        ]),
         areas[0],
     );
     let entries = browser
@@ -262,22 +269,21 @@ pub(super) fn draw(frame: &mut Frame<'_>, app: &App, area: Rect) {
         .map(|i| i.entries.as_slice())
         .unwrap_or(&[]);
     if !browser.fresh() {
-        frame.render_widget(
-            Paragraph::new(format!(
-                "Programs unavailable\n{}\nPlease wait for the connection to refresh.",
-                browser.error.as_deref().unwrap_or("Reconnecting...")
-            ))
-            .wrap(Wrap { trim: false }),
-            areas[1],
-        );
+        frame.render_widget(Paragraph::new("Reconnecting to your programs...\nYou can return to the conversation while you wait.").wrap(Wrap { trim: false }), areas[1]);
     } else if entries.is_empty() {
-        frame.render_widget(Paragraph::new("No programs to open yet.\n\nInteractive programs appear here when your work starts one. You can keep chatting while you wait.").wrap(Wrap { trim: false }), areas[1]);
+        frame.render_widget(Paragraph::new("No programs to open yet.\nInteractive programs appear here when your work starts one.").wrap(Wrap { trim: false }), areas[1]);
     } else {
         let index = entries
             .iter()
             .position(|e| Some(e.id) == browser.selected)
             .unwrap_or(0);
-        let items: Vec<_> = entries
+        let panes = Layout::horizontal(if areas[1].width >= 90 {
+            [Constraint::Percentage(42), Constraint::Percentage(58)]
+        } else {
+            [Constraint::Percentage(100), Constraint::Length(0)]
+        })
+        .split(areas[1]);
+        let items = entries
             .iter()
             .map(|entry| {
                 ListItem::new(vec![
@@ -285,28 +291,15 @@ pub(super) fn draw(frame: &mut Frame<'_>, app: &App, area: Rect) {
                         safe(&entry.title),
                         Style::default().add_modifier(Modifier::BOLD),
                     ),
-                    Line::styled(
-                        format!("  {}", entry.state()),
-                        Style::default().fg(if entry.running() {
-                            Color::Green
-                        } else {
-                            Color::DarkGray
-                        }),
-                    ),
+                    Line::styled(entry.state(), Style::default().fg(Color::DarkGray)),
+                    Line::default(),
                 ])
             })
-            .collect();
-        let panes = Layout::horizontal(if areas[1].width >= 90 {
-            [Constraint::Percentage(35), Constraint::Percentage(65)]
-        } else {
-            [Constraint::Percentage(100), Constraint::Length(0)]
-        })
-        .split(areas[1]);
+            .collect::<Vec<_>>();
         frame.render_stateful_widget(
             List::new(items)
-                .block(Block::default().borders(Borders::ALL).title(" PROGRAMS "))
                 .highlight_symbol("> ")
-                .highlight_style(Style::default().bg(Color::Rgb(30, 51, 59)).fg(Color::White)),
+                .highlight_style(Style::default().fg(Color::Cyan)),
             panes[0],
             &mut ListState::default().with_selected(Some(index)),
         );
@@ -315,42 +308,27 @@ pub(super) fn draw(frame: &mut Frame<'_>, app: &App, area: Rect) {
             let detail = Text::from(vec![
                 Line::styled(
                     safe(&entry.title),
-                    Style::default()
-                        .fg(Color::Cyan)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Line::from(format!("State: {}", entry.state())),
-                Line::from(format!("Machine: {}", app.route_label(target.route))),
-                Line::default(),
-                Line::styled(
-                    "HOW TO USE THIS CONSOLE",
                     Style::default().add_modifier(Modifier::BOLD),
                 ),
-                Line::from(if entry.running() {
-                    "1. Press Enter to open the selected program."
-                } else {
-                    "This terminal has ended; select a running program."
-                }),
-                Line::from("2. Type directly into its private terminal."),
-                Line::from("3. Press Ctrl+] to return to this browser."),
-                Line::default(),
-                Line::styled("PRIVACY", Style::default().fg(Color::Yellow)),
-                Line::from("Once opened here, this terminal stays private."),
-                Line::from("The assistant can no longer read its input or output."),
-                Line::from("Check progress here. Your message draft is kept safe."),
-            ]);
-            frame.render_widget(
-                Paragraph::new(super::presentation::wrap(
-                    detail,
-                    panes[1].width.saturating_sub(2),
-                ))
-                .block(
-                    Block::default()
-                        .borders(Borders::ALL)
-                        .title(" SELECTED PROGRAM "),
+                Line::styled(
+                    app.route_label(target.route),
+                    Style::default().fg(Color::DarkGray),
                 ),
-                panes[1],
-            );
+                Line::default(),
+                Line::from(if entry.running() {
+                    "Press Enter to open this program."
+                } else {
+                    "This program has ended."
+                }),
+                Line::default(),
+                Line::from(
+                    "Opening it makes its input and output private. The assistant can no longer read this terminal.",
+                ),
+                Line::default(),
+                Line::from("Ctrl+] brings you back. Your work keeps running."),
+            ]);
+            let pane = panes[1].inner(ratatui::layout::Margin::new(2, 0));
+            frame.render_widget(Paragraph::new(detail).wrap(Wrap { trim: false }), pane);
         }
         if let Some(run) = browser.inventory.as_ref().and_then(|i| i.run_id)
             && entries[index].running()
@@ -360,30 +338,27 @@ pub(super) fn draw(frame: &mut Frame<'_>, app: &App, area: Rect) {
                 .set(Some((view.process.incarnation, run, entries[index].id)));
         }
     }
+    let action = if !browser.fresh() {
+        "Waiting for connection"
+    } else if entries
+        .iter()
+        .any(|e| Some(e.id) == browser.selected && e.running())
+    {
+        "Up/Down Choose   Enter Open private console"
+    } else {
+        "Up/Down Choose   No running program selected"
+    };
     frame.render_widget(
-        Paragraph::new(Text::from(vec![
-            Line::styled(
-                if !browser.fresh() {
-                    "Waiting for programs..."
-                } else if browser
-                    .inventory
-                    .as_ref()
-                    .and_then(|i| i.entries.iter().find(|e| Some(e.id) == browser.selected))
-                    .is_some_and(|e| e.running())
-                {
-                    "ENTER opens a PRIVATE terminal"
-                } else {
-                    "Select a running terminal"
-                },
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Line::from("Private input goes to the program."),
-            Line::from("Passwords may be invisible."),
-            Line::from("Ctrl+] returns; work continues."),
-        ]))
-        .wrap(Wrap { trim: false }),
+        Paragraph::new(super::presentation::wrap(
+            Text::from(vec![
+                Line::styled(action, Style::default().fg(Color::Cyan)),
+                Line::styled(
+                    "Private after opening. Passwords may be hidden.",
+                    Style::default().fg(Color::DarkGray),
+                ),
+            ]),
+            areas[2].width,
+        )),
         areas[2],
     );
 }

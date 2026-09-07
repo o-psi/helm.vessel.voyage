@@ -16,6 +16,9 @@ impl App {
                     _ => {}
                 }
             }
+            if self.explore_input(key)? {
+                return Ok(());
+            }
             if key.code == KeyCode::F(1) {
                 self.help = !self.help;
                 self.help_scroll = 0;
@@ -99,7 +102,7 @@ impl App {
                 return self.send();
             }
         }
-        if self.help {
+        if self.help || self.explore.is_some() {
             return Ok(());
         }
         if !matches!(event, Event::Key(_))

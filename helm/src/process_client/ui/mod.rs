@@ -1,6 +1,7 @@
 //! Multiplexed presentation; dropping this interface only drops observations.
 mod actions;
 mod controls;
+mod explore;
 mod export;
 mod input;
 mod interactions;
@@ -41,6 +42,7 @@ pub(super) struct App {
     quit: bool,
     help: bool,
     help_scroll: u16,
+    explore: Option<usize>,
     interactions: std::cell::RefCell<interactions::Review>,
     terminal_request: Option<(Target, uuid::Uuid, uuid::Uuid, uuid::Uuid)>,
 }
@@ -88,6 +90,7 @@ pub async fn run_selected(clients: Vec<Client>, session: Option<uuid::Uuid>) -> 
         quit: false,
         help: false,
         help_scroll: 0,
+        explore: None,
         interactions: Default::default(),
         terminal_request: None,
     };

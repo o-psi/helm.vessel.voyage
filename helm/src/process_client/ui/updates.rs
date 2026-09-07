@@ -7,13 +7,14 @@ impl App {
                 target,
                 incarnation,
                 result,
+                observed,
             } => {
                 if let Some(view) = self
                     .views
                     .get_mut(&target)
                     .filter(|v| v.process.incarnation == incarnation)
                 {
-                    view.terminals.update(result);
+                    view.terminals.update(result, observed);
                 }
             }
             Update::Control {

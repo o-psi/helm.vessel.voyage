@@ -86,6 +86,9 @@ Enter using the inventory's exact owning run and observed incarnation. Ctrl+]
 returns from private input to the saved conversation draft. Stale inventories
 cannot attach. F1 opens a scrollable guide; operator panels and command receipts
 render readable metadata, and tool payloads are excluded from the chat display.
+F8 opens a keyboard chooser for existing read-only overviews without editing the
+draft. A quiet voyage rail, borderless conversation and compact composer adapt
+the supplied conversation-interface reference to terminal cells.
 F4 checks an unresolved receipt without resending work or editing the draft.
 Ordinary screens use names and plain-language summaries rather than runtime
 identifiers and schemas. Console rendering preserves blank/wide cells and uses
