@@ -248,14 +248,7 @@ fn conversation(frame: &mut Frame<'_>, app: &App, area: Rect) {
     if let Some(view) = view {
         if let Some(panel) = &view.panel {
             title = " OVERVIEW / PageUp PageDown / Esc back ".into();
-            text = markdown::render_markdown(
-                panel,
-                RenderOptions {
-                    width: usize::from(width),
-                    max_output_lines: 2000,
-                    ..RenderOptions::default()
-                },
-            );
+            text = super::panels::display(panel, width);
         } else {
             let mut cache = view.rendered.borrow_mut();
             if let Some((_, cached)) = cache.as_ref().filter(|(w, _)| *w == width) {

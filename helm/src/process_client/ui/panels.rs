@@ -20,7 +20,7 @@ fn entries(value: &Value) -> Vec<&Value> {
     }
 }
 fn item(output: &mut String, title: &str, detail: &str) {
-    output.push_str(&format!("## {}\n\n{}\n\n", safe(title), safe(detail)));
+    output.push_str(&format!("## {}\n{}\n\n", safe(title), safe(detail)));
 }
 
 pub(super) fn render(section: &str, envelope: &Value) -> String {
@@ -32,16 +32,45 @@ pub(super) fn render(section: &str, envelope: &Value) -> String {
             let tools = value.get("inventory").unwrap_or(value);
             for tool in entries(tools).into_iter().take(256) {
                 let name = text(tool, "name");
-                let description = match name.as_str() {
-                    "shell" => "Run a one-off command.",
-                    "process" => "Run interactive programs. Open their consoles with F3.",
-                    "questions" => "Ask you a question with choices or a written answer.",
-                    "todo" => "Keep track of tasks, progress and anything blocking your work.",
-                    _ => tool["description"]
-                        .as_str()
-                        .unwrap_or("Available to this voyage."),
+                let (title, description) = match name.as_str() {
+                    "shell" => ("Run a command", "Run a one-off command for your task."),
+                    "process" => (
+                        "Interactive programs",
+                        "Open programs that need input. Find their terminals with F3.",
+                    ),
+                    "questions" => (
+                        "Ask a question",
+                        "Offer you choices or ask for a written answer.",
+                    ),
+                    "todo" => (
+                        "Tasks",
+                        "Keep track of tasks, progress and anything blocking your work.",
+                    ),
+                    "subagent" => (
+                        "Delegate work",
+                        "Let additional agents help with parts of your request.",
+                    ),
+                    "completion" => (
+                        "Work checklist",
+                        "Keep track of unfinished work before wrapping up.",
+                    ),
+                    "list_directory" => (
+                        "Browse folders",
+                        "See the files and folders available to this voyage.",
+                    ),
+                    "read_file" => ("Read files", "Read files needed for your request."),
+                    "write_file" => (
+                        "Write files",
+                        "Create or update files within this voyage's permissions.",
+                    ),
+                    "apply_patch" => ("Edit files", "Apply changes to existing files."),
+                    "search_files" => (
+                        "Search files",
+                        "Find matching files and text in your workspace.",
+                    ),
+                    _ => (name.as_str(), "An additional tool enabled for this voyage."),
                 };
-                item(&mut output, &label(&name), description);
+                item(&mut output, title, description);
             }
             if entries(tools).is_empty() {
                 output.push_str("No tools available yet. The list refreshes when a run starts.\n");
@@ -176,4 +205,46 @@ pub(super) fn render(section: &str, envelope: &Value) -> String {
         }
     }
     output
+}
+
+/// Overview typography is UI, not a Markdown source view.
+pub(super) fn display(content: &str, width: u16) -> ratatui::text::Text<'static> {
+    use ratatui::{
+        style::{Color, Modifier, Style},
+        text::{Line, Text},
+    };
+    use unicode_segmentation::UnicodeSegmentation;
+    use unicode_width::UnicodeWidthStr;
+    let width = usize::from(width.max(1));
+    let mut lines = Vec::new();
+    for source in content.lines() {
+        let heading = source
+            .strip_prefix("## ")
+            .or_else(|| source.strip_prefix("# "));
+        let style = if heading.is_some() {
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+        };
+        let source = heading.unwrap_or(source);
+        let mut line = String::new();
+        for word in source.split_whitespace() {
+            if !line.is_empty() && line.width() + 1 + word.width() > width {
+                lines.push(Line::styled(std::mem::take(&mut line), style));
+            }
+            if !line.is_empty() {
+                line.push(' ');
+            }
+            for grapheme in word.graphemes(true) {
+                if !line.is_empty() && line.width() + grapheme.width() > width {
+                    lines.push(Line::styled(std::mem::take(&mut line), style));
+                }
+                line.push_str(grapheme);
+            }
+        }
+        lines.push(Line::styled(line, style));
+    }
+    Text::from(lines)
 }

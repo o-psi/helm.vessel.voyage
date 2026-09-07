@@ -239,6 +239,11 @@ fn draw_screen(
         style::{Color, Style},
         widgets::Paragraph,
     };
+    let host = if host == "local" {
+        "This computer"
+    } else {
+        host
+    };
     display.draw(|frame| {
         let area = frame.area();
         let (columns, rows) = (area.width, area.height);

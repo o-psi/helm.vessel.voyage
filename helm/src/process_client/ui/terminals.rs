@@ -247,7 +247,7 @@ pub(super) fn draw(frame: &mut Frame<'_>, app: &App, area: Rect) {
     .split(inner);
     frame.render_widget(
         Paragraph::new(format!(
-            "Voyage: {}\nHost: {}",
+            "Voyage: {}\nMachine: {}",
             safe(&view.title()),
             app.route_label(target.route)
         ))
@@ -318,7 +318,7 @@ pub(super) fn draw(frame: &mut Frame<'_>, app: &App, area: Rect) {
                         .add_modifier(Modifier::BOLD),
                 ),
                 Line::from(format!("State: {}", entry.state())),
-                Line::from(format!("Host: {}", app.route_label(target.route))),
+                Line::from(format!("Machine: {}", app.route_label(target.route))),
                 Line::default(),
                 Line::styled(
                     "HOW TO USE THIS CONSOLE",

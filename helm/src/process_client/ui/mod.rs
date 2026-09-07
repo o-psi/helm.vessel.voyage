@@ -127,6 +127,11 @@ pub async fn run_selected(clients: Vec<Client>, session: Option<uuid::Uuid>) -> 
 
 impl App {
     fn route_label(&self, route: usize) -> String {
-        self.clients[route].label()
+        let label = self.clients[route].label();
+        if label == "local" {
+            "This computer".into()
+        } else {
+            label
+        }
     }
 }

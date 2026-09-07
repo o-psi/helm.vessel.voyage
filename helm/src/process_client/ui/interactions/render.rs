@@ -93,7 +93,7 @@ pub(in crate::process_client::ui) fn draw(frame: &mut Frame<'_>, app: &App, area
         .saturating_sub(now_ms())
         .div_ceil(1000);
     let mut text = Text::from(vec![
-        Line::from(format!("Host: {}", app.route_label(target.route))),
+        Line::from(format!("Machine: {}", app.route_label(target.route))),
         Line::from(format!(
             "Voyage: {} · {remaining}s left",
             safe(&view.title())

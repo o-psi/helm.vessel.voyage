@@ -30,8 +30,18 @@ impl App {
                         Ok(value) => {
                             view.panel = Some(safe(&value));
                             view.scroll = 0;
+                            if self.selected == Some(target) {
+                                self.status =
+                                    "Overview ready. Esc returns to your conversation.".into();
+                            }
                         }
-                        Err(error) => view.error = Some(safe(&error)),
+                        Err(error) => {
+                            view.error = Some(safe(&error));
+                            if self.selected == Some(target) {
+                                self.status =
+                                    "Couldn't open this overview. Please try again.".into();
+                            }
+                        }
                     }
                 }
             }
