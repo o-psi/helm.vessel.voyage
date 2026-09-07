@@ -14,7 +14,7 @@ impl App {
         tokio::spawn(async move {
             let result = crate::process_client::export::markdown(&client, target.session, &path)
                 .await
-                .and_then(|value| Ok(serde_json::to_string_pretty(&value)?))
+                .map(|value| format!("Export complete\n\n{}", super::presentation::fields(&value)))
                 .map_err(|error| error.to_string());
             let _ = sender
                 .send(Update::Control {

@@ -42,6 +42,37 @@ to detach. `/new /absolute/workspace`, `/use SESSION_UUID`, `/rename NAME`,
 voyage. Ordinary text submits a turn when idle and steers the exact observed run
 when active. A refused or uncertain command retains its draft; inspect `/receipt`
 before sending again. Switching views does not cancel or redirect outstanding work.
+F1 opens a scrollable keyboard guide. PageUp/PageDown scroll the current view;
+Esc returns from details to the preserved conversation draft. The footer always
+shows **F3 Terminals**, including on layouts without the voyage sidebar. Operator
+inventories and receipts use readable fields; tool payloads stay out of chat.
+
+### Interactive terminals and passwords
+
+Press **F3** (or type `/terminals`) to open the selected voyage's terminal browser.
+Use Up/Down to select a named running terminal and **Enter** to attach. No UUID
+copying is needed. The browser shows the executing host and observed program state;
+"running" does not imply that a program needs input or that an update completed.
+Empty inventories and unavailable or stale observations have explicit messages.
+Attachment is disabled until a fresh observation identifies the terminal's owner.
+
+The **PRIVATE TERMINAL** screen sends keyboard input directly to that program.
+Enter passwords only there; programs commonly hide password characters. **Ctrl+]**
+returns to Helm and its saved draft. In that screen Ctrl+C interrupts the program,
+not Helm. Detaching leaves the terminal running. Human attachment permanently
+switches that terminal to private capture; subsequent terminal output and human
+input are excluded from model history. Inspect progress in the private terminal.
+
+Helm observes terminal metadata without attaching or executing a tool. It uses the
+inventory's owning run, including retained terminals after a run completes, and
+rejects stale runtime incarnations. Console rows preserve blank cells, wide text
+and combining characters, resize on attachment, and show the program cursor. Helm
+uses standard terminal text and borders rather than requiring an icon font; actual
+font coverage still depends on the user's terminal. Very small windows show a
+resize message rather than permitting an unseen terminal selection.
+
+### Approvals and questions
+
 All pending runtime interactions appear in the right-hand panel, including approvals
 and questions. Narrow terminals stack it below the conversation. The panel shows
 the request count, executing host, details and time remaining. F6/F7 moves between
@@ -63,8 +94,8 @@ an exact approval; `/answer DECISION_UUID text` answers a model question. There 
 no approve-all operation. Responses are tied to the observed decision, run,
 incarnation and revision, and an expired request cannot authorize an action.
 Decision waits are bounded; leaving an unanswered prompt is not approval.
-`/tools`, `/policy`, `/todos`, `/subagents`, `/terminals`, `/workflows` and `/models`
-inspect runtime controls; `/conversation` returns to history. `/tool NAME JSON`
+`/tools`, `/policy`, `/todos`, `/subagents`, `/workflows` and `/models`
+inspect runtime controls; Esc returns to history. `/tool NAME JSON`
 executes a real authorized tool, using an operator run when idle. `/terminal UUID`
 opens a separate private attachment (Ctrl+] detaches). `/configure /absolute/host/file`
 applies trusted host settings while idle. `/branch [name]`, `/archive`, `/restore`,

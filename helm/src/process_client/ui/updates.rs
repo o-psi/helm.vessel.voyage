@@ -3,6 +3,19 @@ use super::*;
 impl App {
     pub(super) fn update(&mut self, update: Update) {
         match update {
+            Update::Terminals {
+                target,
+                incarnation,
+                result,
+            } => {
+                if let Some(view) = self
+                    .views
+                    .get_mut(&target)
+                    .filter(|v| v.process.incarnation == incarnation)
+                {
+                    view.terminals.update(result);
+                }
+            }
             Update::Control {
                 target,
                 incarnation,
@@ -31,6 +44,7 @@ impl App {
                     if let Some(view) = self.views.get_mut(&target) {
                         if view.process.incarnation != process.incarnation {
                             view.snapshot = None;
+                            view.terminals = Default::default();
                             view.rendered.take();
                             view.observed = None;
                             view.error = Some(
@@ -163,7 +177,7 @@ impl App {
                             view.draft.take();
                         }
                         view.pending = None;
-                        self.status = format!("Command {command_id}: {}", safe(&value.to_string()));
+                        self.status = super::presentation::receipt(&value);
                     }
                     Err(error) => {
                         self.status = format!("{} · draft retained", safe(&error));

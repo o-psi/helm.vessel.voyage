@@ -115,7 +115,7 @@ pub(in crate::process_client::ui) fn draw(frame: &mut Frame<'_>, app: &App, area
                 let value = value
                     .as_str()
                     .map(str::to_owned)
-                    .unwrap_or_else(|| value.to_string());
+                    .unwrap_or_else(|| super::super::presentation::fields(value));
                 text.extend(Text::raw(format!("{label}: {}\n\n", safe(&value))));
             }
         }
@@ -150,7 +150,9 @@ pub(in crate::process_client::ui) fn draw(frame: &mut Frame<'_>, app: &App, area
                 if answer.option.is_none() { ">" } else { " " }
             )));
         }
-        _ => text.extend(Text::raw(safe(&decision.request.to_string()))),
+        _ => text.extend(Text::raw(super::super::presentation::fields(
+            &decision.request,
+        ))),
     }
     let answer_text = safe(&answer.text.text);
     let answer_column = unicode_width::UnicodeWidthStr::width(

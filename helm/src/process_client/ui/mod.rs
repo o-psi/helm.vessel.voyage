@@ -9,8 +9,10 @@ mod updates;
 use crate::composer;
 mod drafts;
 mod observe;
+mod presentation;
 mod render;
 mod state;
+mod terminals;
 
 use crate::process_client::{safe, transport::Client};
 use anyhow::{Context, Result};
@@ -37,7 +39,7 @@ pub(super) struct App {
     status: String,
     quit: bool,
     interactions: std::cell::RefCell<interactions::Review>,
-    terminal_request: Option<(Target, uuid::Uuid, uuid::Uuid)>,
+    terminal_request: Option<(Target, uuid::Uuid, uuid::Uuid, uuid::Uuid)>,
 }
 
 struct Screen;
@@ -47,6 +49,7 @@ impl Drop for Screen {
         let _ = execute!(
             io::stdout(),
             crossterm::event::DisableBracketedPaste,
+            crossterm::event::DisableMouseCapture,
             terminal::LeaveAlternateScreen,
             crossterm::cursor::Show
         );
@@ -67,7 +70,8 @@ pub async fn run_selected(clients: Vec<Client>, session: Option<uuid::Uuid>) -> 
     execute!(
         io::stdout(),
         terminal::EnterAlternateScreen,
-        crossterm::event::EnableBracketedPaste
+        crossterm::event::EnableBracketedPaste,
+        crossterm::event::EnableMouseCapture
     )?;
     let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
     let (sender, mut receiver) = mpsc::channel(64);
@@ -97,11 +101,15 @@ pub async fn run_selected(clients: Vec<Client>, session: Option<uuid::Uuid>) -> 
                 },
                 update = receiver.recv() => if let Some(update) = update { app.update(update); },
             }
-            if let Some((target,run,terminal_id))=app.terminal_request.take() {
-                let result=super::terminal::attach(&app.clients[target.route],target.session,run,terminal_id).await;
+            if let Some((target,incarnation,run,terminal_id))=app.terminal_request.take() {
+                execute!(io::stdout(),crossterm::event::DisableMouseCapture)?;
+                drop(events);
+                let result=super::terminal::attach_observed(&app.clients[target.route],target.session,incarnation,run,terminal_id).await;
                 terminal::enable_raw_mode()?;
-                execute!(io::stdout(),terminal::EnterAlternateScreen,crossterm::event::EnableBracketedPaste)?;
-                terminal.clear()?;
+                execute!(io::stdout(),terminal::EnterAlternateScreen,crossterm::event::EnableBracketedPaste,crossterm::event::EnableMouseCapture)?;
+                let (width,height) = terminal::size()?;
+                terminal.resize(ratatui::layout::Rect::new(0,0,width,height))?;
+                events = EventStream::new();
                 app.status=match result {Ok(())=>"Private terminal detached; voyage remains active".into(),Err(error)=>safe(&error.to_string())};
             }
         }

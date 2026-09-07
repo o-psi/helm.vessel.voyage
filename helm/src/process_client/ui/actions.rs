@@ -57,7 +57,9 @@ impl App {
             return Ok(());
         }
         if command_text == "/help" {
-            self.status = "Tab switches · Ctrl+N creates · F2 interactions · F6/F7 requests · /new [absolute-workspace] · /use UUID · /rename NAME · /model NAME · /cancel · /approve UUID · /deny UUID · /answer UUID text · /receipt · /tools /policy /todos /subagents /terminals /terminal UUID /workflows · /tool NAME JSON · /configure /host/path · /branch [name] /archive /restore /delete UUID · /clear UUID · /compact N · /export PATH · Up/Down recall · /conversation · /quit".into();
+            let view = self.views.get_mut(&target).expect("selected view");
+            view.panel = Some(super::presentation::HELP.into());
+            view.scroll = 0;
             return Ok(());
         }
         if command_text == "/new" || command_text.starts_with("/new ") {
@@ -84,13 +86,7 @@ impl App {
         }
         if let Some(id) = command_text.strip_prefix("/terminal ") {
             let terminal_id = id.parse()?;
-            let run = self.views[&target]
-                .snapshot
-                .as_ref()
-                .and_then(|s| s.run.as_ref())
-                .context("no observed terminal run")?
-                .run_id;
-            self.terminal_request = Some((target, run, terminal_id));
+            self.request_terminal(target, terminal_id)?;
             return Ok(());
         }
         if command_text == "/branch" || command_text.starts_with("/branch ") {
@@ -99,13 +95,20 @@ impl App {
                 command_text.strip_prefix("/branch ").map(str::to_owned),
             );
         }
+        if command_text == "/terminals" || command_text == "/terminal" {
+            self.views
+                .get_mut(&target)
+                .expect("selected view")
+                .terminals
+                .open = true;
+            return Ok(());
+        }
         if matches!(
             command_text,
             "/tools"
                 | "/policy"
                 | "/todos"
                 | "/subagents"
-                | "/terminals"
                 | "/workflows"
                 | "/models"
                 | "/host_resources"

@@ -80,6 +80,14 @@ Steering is durable and delivered at a supported safe model boundary. Operator
 runs do not accept steering. Native providers remain distinct from the optional
 compatibility provider and its narrower capabilities.
 
+Helm exposes named interactive terminals through the persistent F3 action. The
+browser lists observed state and host, selects with Up/Down, and attaches with
+Enter using the inventory's exact owning run and observed incarnation. Ctrl+]
+returns from private input to the saved conversation draft. Stale inventories
+cannot attach. F1 opens a scrollable guide; operator panels and command receipts
+render readable metadata, and tool payloads are excluded from the chat display.
+Console rendering preserves blank/wide cells and uses the runtime's cursor.
+
 Tools, policy, todos, subagents, terminals, workflows and model metadata have runtime
 controls. Operator tool calls use the real authorized registry and admitted run
 resources, including approval and completion accounting, without inventing a model

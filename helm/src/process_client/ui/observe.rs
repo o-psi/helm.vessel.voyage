@@ -6,6 +6,11 @@ use tokio::sync::{Semaphore, mpsc};
 use voyage_protocol::process::{ProcessInfo, RuntimeCommand, VesselCommand};
 
 pub enum Update {
+    Terminals {
+        target: Target,
+        incarnation: uuid::Uuid,
+        result: Result<super::terminals::Inventory, String>,
+    },
     Control {
         target: Target,
         incarnation: uuid::Uuid,
@@ -123,6 +128,25 @@ pub fn spawn(clients: &[Client], sender: mpsc::Sender<Update>) -> Vec<tokio::tas
                                             target,
                                             incarnation: process.incarnation,
                                             result: Box::new(result),
+                                        })
+                                        .await;
+                                    let inventory = client
+                                        .forward(
+                                            target.session,
+                                            process.incarnation,
+                                            RuntimeCommand::Controls {
+                                                run_id: None,
+                                                section: "terminals".into(),
+                                            },
+                                        )
+                                        .await
+                                        .and_then(|value| Ok(serde_json::from_value(value)?))
+                                        .map_err(|error| error.to_string());
+                                    let _ = sender
+                                        .send(Update::Terminals {
+                                            target,
+                                            incarnation: process.incarnation,
+                                            result: inventory,
                                         })
                                         .await;
                                 });

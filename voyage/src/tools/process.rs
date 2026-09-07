@@ -692,7 +692,12 @@ impl InteractiveTerminals for ProcessTool {
                         screen
                             .cell(row, col)
                             .map_or_else(TerminalCell::default, |cell| TerminalCell {
-                                text: cell.contents(),
+                                text: if cell.is_wide_continuation() {
+                                    String::new()
+                                } else {
+                                    let text = cell.contents();
+                                    if text.is_empty() { " ".into() } else { text }
+                                },
                                 foreground: color(cell.fgcolor()),
                                 background: color(cell.bgcolor()),
                                 bold: cell.bold(),

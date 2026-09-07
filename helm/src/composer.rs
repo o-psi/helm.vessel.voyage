@@ -1,6 +1,7 @@
 //! UTF-8 composer editing and prompt history, independent of the application.
 
-use unicode_width::UnicodeWidthChar;
+use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::UnicodeWidthStr;
 
 #[derive(Clone, Default)]
 pub(super) struct Composer {
@@ -122,22 +123,22 @@ pub(super) fn cursor_position(text: &str, width: u16) -> (u16, u16) {
     let width = width.max(1);
     let mut row = 0_u16;
     let mut column = 0_u16;
-    for character in text.chars() {
-        if character == '\n' {
+    for grapheme in text.graphemes(true) {
+        if grapheme == "\n" {
             row = row.saturating_add(1);
             column = 0;
             continue;
         }
-        let character_width = character.width().unwrap_or(0) as u16;
-        if column.saturating_add(character_width) > width {
+        let size = grapheme.width() as u16;
+        if column.saturating_add(size) > width {
             row = row.saturating_add(1);
             column = 0;
         }
-        column = column.saturating_add(character_width);
-        if column == width {
-            row = row.saturating_add(1);
-            column = 0;
-        }
+        column = column.saturating_add(size);
     }
-    (row, column)
+    if column == width {
+        (row.saturating_add(1), 0)
+    } else {
+        (row, column)
+    }
 }

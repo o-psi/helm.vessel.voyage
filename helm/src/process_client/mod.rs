@@ -12,7 +12,8 @@ pub fn safe(value: &str) -> String {
             (!ch.is_control() || matches!(ch, '\n' | '\t'))
                 && !matches!(ch, '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')
         })
-        .collect()
+        .collect::<String>()
+        .replace('\t', "    ")
 }
 
 pub mod plain;

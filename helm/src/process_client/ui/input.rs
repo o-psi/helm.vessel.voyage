@@ -29,7 +29,35 @@ impl App {
                         (index + 1) % keys.len()
                     };
                     self.selected = Some(keys[next]);
-                    self.views.get_mut(&keys[next]).expect("known view").unread = false;
+                    let view = self.views.get_mut(&keys[next]).expect("known view");
+                    view.unread = false;
+                    view.terminals.clear_displayed();
+                }
+                return Ok(());
+            }
+            if self.terminal_input(&event)? {
+                return Ok(());
+            }
+            if key.code == KeyCode::F(1) {
+                if let Some(view) = self.selected.and_then(|target| self.views.get_mut(&target)) {
+                    view.panel = Some(super::presentation::HELP.into());
+                    view.scroll = 0;
+                }
+                return Ok(());
+            }
+            if let Some(view) = self.selected.and_then(|target| self.views.get_mut(&target))
+                && view.panel.is_some()
+            {
+                match key.code {
+                    KeyCode::Esc => {
+                        view.panel = None;
+                        view.scroll = 0;
+                    }
+                    KeyCode::PageUp | KeyCode::Up => view.scroll = view.scroll.saturating_sub(10),
+                    KeyCode::PageDown | KeyCode::Down => {
+                        view.scroll = view.scroll.saturating_add(10)
+                    }
+                    _ => {}
                 }
                 return Ok(());
             }
@@ -44,7 +72,9 @@ impl App {
                 return self.send();
             }
         }
-        if !matches!(event, Event::Key(_)) && self.interaction_input(&event)? {
+        if !matches!(event, Event::Key(_))
+            && (self.terminal_input(&event)? || self.interaction_input(&event)?)
+        {
             return Ok(());
         }
         let Some(target) = self.selected else {
@@ -54,6 +84,9 @@ impl App {
             .views
             .get_mut(&target)
             .context("selected voyage unavailable")?;
+        if view.panel.is_some() {
+            return Ok(());
+        }
         match event {
             Event::Paste(text) => {
                 let text = safe(&text);
@@ -95,6 +128,15 @@ impl App {
                 KeyCode::Down => view.history.navigate(&mut view.draft, false),
                 KeyCode::PageUp => view.scroll = view.scroll.saturating_add(10),
                 KeyCode::PageDown => view.scroll = view.scroll.saturating_sub(10),
+                _ => return Ok(()),
+            },
+            Event::Mouse(mouse) => match mouse.kind {
+                crossterm::event::MouseEventKind::ScrollUp => {
+                    view.scroll = view.scroll.saturating_add(3)
+                }
+                crossterm::event::MouseEventKind::ScrollDown => {
+                    view.scroll = view.scroll.saturating_sub(3)
+                }
                 _ => return Ok(()),
             },
             _ => return Ok(()),

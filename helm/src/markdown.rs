@@ -753,13 +753,20 @@ fn wrap_fragments(
 
 /// Remove terminal controls, C0/C1 controls and invisible bidi formatting.
 fn sanitize(value: &str) -> String {
-    value
-        .chars()
-        .map(|character| match character {
-            '\n' | '\t' => character,
-            '\u{0000}'..='\u{001f}' | '\u{007f}'..='\u{009f}' => '�',
-            '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}' => '�',
-            _ => character,
-        })
-        .collect()
+    let mut output = String::new();
+    for character in value.chars() {
+        match character {
+            '\n' => output.push(character),
+            '\t' => output.push_str("    "),
+            '\u{0000}'..='\u{001f}'
+            | '\u{007f}'..='\u{009f}'
+            | '\u{202a}'..='\u{202e}'
+            | '\u{2066}'..='\u{2069}' => {
+                use std::fmt::Write;
+                let _ = write!(output, "[U+{:04X}]", character as u32);
+            }
+            _ => output.push(character),
+        }
+    }
+    output
 }

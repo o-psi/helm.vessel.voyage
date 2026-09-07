@@ -24,7 +24,7 @@ impl App {
                     RuntimeCommand::Controls { run_id, section },
                 )
                 .await
-                .and_then(|value| Ok(serde_json::to_string_pretty(&value)?))
+                .map(|value| super::presentation::fields(&value))
                 .map_err(|error| error.to_string());
             let _ = sender
                 .send(Update::Control {
