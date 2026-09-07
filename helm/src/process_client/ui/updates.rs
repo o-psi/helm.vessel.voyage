@@ -198,6 +198,9 @@ impl App {
                 incarnation,
                 result,
             } => {
+                let recovering_route = self
+                    .status
+                    .starts_with(&format!("{} unavailable:", self.route_label(target.route)));
                 let Some(view) = self
                     .views
                     .get_mut(&target)
@@ -256,6 +259,9 @@ impl App {
                         view.snapshot = Some(snapshot);
                         view.observed = Some(Instant::now());
                         view.error = None;
+                        if recovering_route && self.selected == Some(target) {
+                            self.status = "Connected. Voyage state refreshed.".into();
+                        }
                     }
                     Ok(_) => view.error = Some("Snapshot identity mismatch".into()),
                     Err(error) => view.error = Some(error),

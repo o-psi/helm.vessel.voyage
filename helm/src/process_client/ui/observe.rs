@@ -226,6 +226,11 @@ pub fn spawn(clients: &[Client], sender: mpsc::Sender<Update>) -> Vec<tokio::tas
                                     tokio::time::sleep(Duration::from_millis(750)).await;
                                 }
                             }
+                            // A stream can end while its owner is suspending, after
+                            // the final journal update but before we receive it.
+                            // Re-establish snapshots before subscribing again,
+                            // including owners that are no longer live.
+                            cursors.clear();
                         }
                         Err(error) => {
                             if sender
