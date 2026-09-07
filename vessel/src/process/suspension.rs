@@ -191,6 +191,23 @@ impl Supervisor {
         let deadline = tokio::time::Instant::now() + Duration::from_secs(12);
         let mut resumed = false;
         loop {
+            if matches!(command, RuntimeCommand::Resolve { .. })
+                && !directory.join("runtime.sock").exists()
+                && registration.state != ProcessState::Relinquished
+                && super::recovery::clean_stop(&directory, &registration)
+            {
+                // An upgraded supervisor must resolve old saved deliveries even
+                // when the retired executable predates Resolve. The current
+                // one-shot runtime takes the existing execution/startup fences;
+                // it never starts an agent or changes the incarnation.
+                let mut observer = registration.clone();
+                observer.executable = Some(self.binary.clone());
+                let mut response = observe(&directory, &observer, command, authorization).await?;
+                if resumed {
+                    response.resumed_from = Some(incarnation);
+                }
+                return Ok(response);
+            }
             if !directory.join("runtime.sock").exists()
                 && !super::recovery::clean_stop(&directory, &registration)
                 && registration.state != ProcessState::Relinquished

@@ -115,7 +115,9 @@ This focused Linux process check uses isolated HOME/XDG directories and a local
 synthetic provider. It verifies event polling overlapping idle suspension and
 submission, a lost acceptance response, exact duplicate admission, durable
 non-admission and late-request refusal across suspension and Vessel restart,
-identity/payload conflicts, and distinct approval expiry/refusal/cancellation.
+identity/payload conflicts, scoped resolution rights and caller binding, cleanly
+stopped owner resolution without restart, and distinct approval
+expiry/refusal/cancellation.
 Evidence is retained under the printed `/tmp/vdr-*` directory. Cleanup succeeds only
 after fixture-owned processes disappear and matching durable cleanup evidence is
 observed. This is not a live-provider, native macOS/Windows, or full TUI check.

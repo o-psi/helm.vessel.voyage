@@ -197,6 +197,23 @@ class Fixture:
             (self.root / "results.json").write_text(json.dumps(self.results, indent=2))
 
 
+def stopped_resolution(fixture):
+    session = fixture.session()
+    original = fixture.submit(session, "never dispatched before explicit stop")
+    info = fixture.request({"op": "inspect", "session_id": session})
+    fixture.request({"op": "stop", "session_id": session, "incarnation": info["incarnation"]})
+    wait_for(lambda: fixture.request({"op": "inspect", "session_id": session})["state"] == "stopped")
+    directory = fixture.directory / "sessions" / session
+    before = json.loads((directory / "registration.json").read_text())
+    resolve = {"op": "resolve", "command_id": original["command_id"], "original": original}
+    receipt = fixture.command(session, resolve)
+    assert receipt["status"] == "not_admitted", receipt
+    assert fixture.command(session, resolve) == receipt
+    assert json.loads((directory / "registration.json").read_text()) == before
+    assert not (directory / "runtime.sock").exists()
+    fixture.record("stopped-owner-resolution-without-restart", receipt)
+
+
 def scoped_resolution(fixture):
     session = fixture.session()
     original = fixture.submit(session, "scoped never dispatched")
@@ -247,6 +264,7 @@ def main():
     try:
         fixture.start()
         scoped_resolution(fixture)
+        stopped_resolution(fixture)
         session = fixture.session()
         absent = fixture.submit(session, "never dispatched")
         resolve = {"op": "resolve", "command_id": absent["command_id"], "original": absent}

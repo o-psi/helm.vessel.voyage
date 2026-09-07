@@ -252,8 +252,11 @@ ID cannot subsequently execute. `not_admitted` restores an editable draft; confi
 admission clears pending delivery. Transport failures and older owners without
 `resolve` leave the original pending, rather than treating a failed status check
 as a refused submission. Legacy payload-free pending commands can be resolved with
-local host authority; scoped clients need the original public request. Vessel branch
-and stopped-archive restart workflows keep their separate receipt-only recovery.
+local host authority; scoped clients need the original public request. After a
+supervisor upgrade, suspended or cleanly stopped resolution uses the updated
+one-shot runtime under the saved session fence, even if the retired executable
+predates `resolve`; it does not restart an agent or change the incarnation. Vessel
+branch and stopped-archive restart workflows keep their separate receipt-only recovery.
 Private terminal input and workflow secret inputs never enter these envelopes.
 
 The runtime's event long polls do not hold the dispatch gate. Idle suspension runs

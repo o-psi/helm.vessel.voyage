@@ -55,7 +55,14 @@ async fn observe(directory: &std::path::Path, request: &RuntimeRequest) -> Resul
     }
     let registration = super::transport::registration(&directory)?;
     authenticate(&registration, request)?;
-    check_suspended(&directory, &registration)?;
+    let check_retirement = || {
+        check_retired(
+            &directory,
+            &registration,
+            !matches!(request.command, RuntimeCommand::Resolve { .. }),
+        )
+    };
+    check_retirement()?;
     // Read existing attribution directly: observation must not initialize an identity.
     #[derive(serde::Deserialize)]
     #[serde(deny_unknown_fields)]
@@ -69,7 +76,7 @@ async fn observe(directory: &std::path::Path, request: &RuntimeRequest) -> Resul
     ensure!(identity.version == 1, "unsupported actor identity");
     super::authorization::authorize_parts(identity.actor, &registration, request, &directory)?;
     let owner = open_owner(directory.join("journal"), registration.session_id).await?;
-    check_suspended(&directory, &registration)?;
+    check_retirement()?;
     let value = match &request.command {
         RuntimeCommand::Resolve {
             command_id,
@@ -99,7 +106,7 @@ async fn observe(directory: &std::path::Path, request: &RuntimeRequest) -> Resul
     };
     // Re-read authority immediately before releasing the fenced result.
     authenticate(&super::transport::registration(&directory)?, request)?;
-    check_suspended(&directory, &registration)?;
+    check_retirement()?;
     super::authorization::authorize_parts(identity.actor, &registration, request, &directory)?;
     Ok(value)
 }
@@ -148,6 +155,20 @@ pub(super) fn check_suspended(
     directory: &std::path::Path,
     registration: &ProcessRegistration,
 ) -> Result<()> {
+    check_retired(directory, registration, true)
+}
+
+#[cfg(unix)]
+fn check_retired(
+    directory: &std::path::Path,
+    registration: &ProcessRegistration,
+    require_suspension: bool,
+) -> Result<()> {
+    ensure!(
+        require_suspension
+            || registration.state != voyage_protocol::process::ProcessState::Relinquished,
+        "source ownership has been relinquished"
+    );
     ensure!(
         matches!(std::fs::symlink_metadata(directory.join("runtime.sock")),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound),
@@ -160,8 +181,8 @@ pub(super) fn check_suspended(
         evidence["session_id"] == registration.session_id.to_string()
             && evidence["incarnation"] == registration.incarnation.to_string()
             && evidence["cleanup_observed"] == true
-            && evidence["suspended"] == true,
-        "clean suspension evidence missing"
+            && (!require_suspension || evidence["suspended"] == true),
+        "clean retirement evidence missing"
     );
     Ok(())
 }
