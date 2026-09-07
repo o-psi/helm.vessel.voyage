@@ -12,11 +12,7 @@ use ratatui::{
 
 const ITEMS: [(&str, &str, &str); 7] = [
     ("Available tools", "What this voyage can do", "tools"),
-    (
-        "Permissions",
-        "How this voyage may use your computer",
-        "policy",
-    ),
+    ("Permissions", "What this voyage may do", "policy"),
     ("Tasks", "Progress and remaining work", "todos"),
     (
         "Delegated work",
@@ -28,11 +24,7 @@ const ITEMS: [(&str, &str, &str); 7] = [
         "Available reusable workflows",
         "workflows",
     ),
-    (
-        "Models",
-        "Available models and the current selection",
-        "models",
-    ),
+    ("Models", "Available and selected models", "models"),
     ("This machine", "Available capacity", "host_resources"),
 ];
 
@@ -125,7 +117,7 @@ pub(super) fn draw(frame: &mut Frame<'_>, app: &App, area: Rect) {
         &mut ListState::default().with_selected(app.explore),
     );
     frame.render_widget(
-        Paragraph::new("Up/Down choose   Enter open   Esc back").block(
+        Paragraph::new("Up/Down Choose  Enter Open  Esc Back").block(
             Block::default()
                 .borders(Borders::TOP)
                 .border_style(Style::default().fg(Color::DarkGray)),

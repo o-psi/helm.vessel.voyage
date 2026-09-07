@@ -120,6 +120,9 @@ pub fn draw(frame: &mut Frame<'_>, app: &App) {
     let detail = view.map_or_else(
         || "Ctrl+N  Start a voyage".into(),
         |v| {
+            if rows[0].width < 60 {
+                return format!("{host} · {}", state(v));
+            }
             format!(
                 "{}{}   {}",
                 if rows[0].width < 70 {
@@ -165,7 +168,12 @@ pub fn draw(frame: &mut Frame<'_>, app: &App) {
     }
     if overlay {
         frame.render_widget(
-            Paragraph::new("Esc  Back to conversation · Draft saved").style(muted()),
+            Paragraph::new(if rows[2].width >= 40 {
+                "Esc  Back to conversation · Draft saved"
+            } else {
+                "Esc Back · Draft saved"
+            })
+            .style(muted()),
             rows[2],
         );
     } else {
@@ -176,7 +184,7 @@ pub fn draw(frame: &mut Frame<'_>, app: &App) {
     } else if main.width >= 60 {
         "F1 Help  F2 Requests  F3 Console  F8 Explore  Tab Voyages"
     } else {
-        "F1 Help  F2 Review  F3 Console  F8 More"
+        "F1 Help F2 Review F3 Console F8 More"
     };
     frame.render_widget(
         Paragraph::new({
