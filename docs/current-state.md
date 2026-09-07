@@ -47,6 +47,8 @@ without timestamps use the creation fallback until new messages arrive. Owners
 that do not expose timestamps, and voyages without snapshots, sort last with a
 stable identity tie-break. Renaming, polling, or system compaction markers do not advance activity.
 
+Muted horizontal rules separate sidebar voyages in both current and archived lists,
+using the existing padding row without increasing entry height.
 Each sidebar voyage has a clickable **⋮** Actions button. Mouse hover highlights
 voyage rows, their separate Actions buttons, enabled action-menu entries and
 access-mode choices with a contrasting background, without changing keyboard

@@ -353,6 +353,17 @@ fn sidebar(frame: &mut Frame<'_>, app: &App, area: Rect) {
             ),
             button,
         );
+        if index + 1 < targets.len() {
+            // Reuse the padding row without changing list or hit geometry. Draw
+            // after selection/hover so the rule stays muted across the full row.
+            frame.render_widget(
+                Block::default()
+                    .borders(Borders::TOP)
+                    .style(Style::reset())
+                    .border_style(muted()),
+                Rect::new(rows[1].x, y + height - 1, rows[1].width, 1),
+            );
+        }
         app.sidebar.hits.borrow_mut().push(super::sidebar::Hit {
             area,
             button,
