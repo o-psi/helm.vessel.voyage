@@ -1,13 +1,13 @@
 use anyhow::Result;
 use std::path::PathBuf;
 #[cfg(target_os = "linux")]
-mod files;
+pub(crate) mod files;
 #[cfg(target_os = "linux")]
 mod layout;
 #[cfg(target_os = "linux")]
 mod links;
 #[cfg(target_os = "linux")]
-mod release;
+pub(crate) mod release;
 #[cfg(target_os = "linux")]
 mod status;
 #[cfg(target_os = "linux")]

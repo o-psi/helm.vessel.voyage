@@ -13,10 +13,7 @@ use ratatui::{
 };
 use std::{
     io::{self, IsTerminal},
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    },
+    sync::atomic::Ordering,
     time::Duration,
 };
 
@@ -47,15 +44,8 @@ pub fn review(mut options: Options) -> Result<Option<(Options, Vec<String>)>> {
         io::stdin().is_terminal() && io::stdout().is_terminal(),
         "noninteractive installation requires an explicit install, upgrade or rollback action; use --help"
     );
-    let cancelled = Arc::new(AtomicBool::new(false));
-    #[cfg(unix)]
-    for signal in [
-        signal_hook::consts::SIGINT,
-        signal_hook::consts::SIGTERM,
-        signal_hook::consts::SIGHUP,
-    ] {
-        signal_hook::flag::register(signal, cancelled.clone())?;
-    }
+    let cancellation = crate::source::Cancellation::new()?;
+    let cancelled = &cancellation.flag;
     let old_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         restore();
@@ -65,9 +55,10 @@ pub fn review(mut options: Options) -> Result<Option<(Options, Vec<String>)>> {
     terminal::enable_raw_mode()?;
     execute!(io::stdout(), EnterAlternateScreen)?;
     let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
-    let mut selected = 0usize;
-    let mut review: Option<Vec<String>> = None;
-    let mut planning: Option<std::sync::mpsc::Receiver<Result<Vec<String>, String>>> = None;
+    let mut selected = usize::from(options.dev);
+    let fixed_local_source = options.local_source;
+    let mut review: Option<crate::planning::Review> = None;
+    let mut planning: Option<crate::planning::Task> = None;
     let mut error: Option<String> = None;
     let mut scroll = 0u16;
     loop {
@@ -75,7 +66,7 @@ pub fn review(mut options: Options) -> Result<Option<(Options, Vec<String>)>> {
             return Ok(None);
         }
         if let Some(pending) = &planning {
-            match pending.try_recv() {
+            match pending.receive.try_recv() {
                 Ok(result) => {
                     planning = None;
                     match result {
@@ -102,12 +93,12 @@ pub fn review(mut options: Options) -> Result<Option<(Options, Vec<String>)>> {
             }
             let regions = Layout::vertical([Constraint::Length(3), Constraint::Min(1), Constraint::Length(4)]).margin(1).split(area);
             frame.render_widget(Paragraph::new("VOYAGE / INSTALLATION\nHelm interface · Vessel supervisor · Voyage runtime").style(Style::default().fg(Color::Cyan)), regions[0]);
-            let content = if planning.is_some() { "Verifying release and service state…\n\nCtrl+C or Esc cancels. No installation changes are being applied.".into() } else if let Some(lines) = &review { lines.join("\n\n") } else {
+            let content = if planning.is_some() { "Preparing pinned source and verifying service state…\nDownloads/builds may take several minutes.\n\nCtrl+C or Esc cancels. No installation changes are being applied.".into() } else if let Some((_, lines)) = &review { lines.join("\n\n") } else {
                 let actions = ["Install", "Upgrade", "Rollback to previous release"];
-                format!("{}\n\nSource: {}\n\n[s] Service start: {}\n[r] Replace unmanaged binaries with retained backups: {}\n\nProvider credentials and configuration stay on this machine.", actions.iter().enumerate().map(|(i,a)| format!("{} {a}", if i == selected { "›" } else { " " })).collect::<Vec<_>>().join("\n"), options.bin_dir.display(), options.start, options.replace_existing)
+                format!("{}\n\nSource: {}\n\n[d] Upgrade development main: toggle when Upgrade is selected\n[s] Service start: {}\n[r] Replace unmanaged binaries with retained backups: {}\n\nProvider credentials and configuration stay on this machine.", actions.iter().enumerate().map(|(i,a)| format!("{} {a}", if i == selected { "›" } else { " " })).collect::<Vec<_>>().join("\n"), { let mut display = options.clone(); display.action = Some([Action::Install, Action::Upgrade, Action::Rollback][selected]); display.source_label() }, options.start, options.replace_existing)
             };
             frame.render_widget(Paragraph::new(safe(&content)).block(Block::default().borders(Borders::TOP).title(if review.is_some() { " Review actual plan " } else { " Choose action " })).wrap(Wrap { trim: false }).scroll((scroll,0)), regions[1]);
-            let hint = if review.is_some() { "Enter: apply reviewed plan · Esc: change · PgUp/PgDn: scroll · Ctrl+C: cancel" } else { "↑↓: choose · Enter: review · s/r: toggle · Esc/Ctrl+C: cancel" };
+            let hint = if review.is_some() { "Enter: apply reviewed plan · Esc: change · PgUp/PgDn: scroll · Ctrl+C: cancel" } else { "↑↓: choose · Enter: review · d/s/r: toggle · Esc/Ctrl+C: cancel" };
             frame.render_widget(Paragraph::new(safe(&format!("{}\n{}", error.as_deref().unwrap_or(""), hint))).wrap(Wrap { trim: false }), regions[2]);
         })?;
         if !event::poll(Duration::from_millis(100))? {
@@ -142,16 +133,25 @@ pub fn review(mut options: Options) -> Result<Option<(Options, Vec<String>)>> {
             }
             KeyCode::Esc => return Ok(None),
             KeyCode::Enter if review.is_some() => {
-                return Ok(Some((options, review.take().expect("review present"))));
+                return Ok(review.take());
             }
             KeyCode::Enter => {
-                options.action =
+                let mut selected_options = options.clone();
+                selected_options.action =
                     Some([Action::Install, Action::Upgrade, Action::Rollback][selected]);
-                planning = Some(crate::planning::start(options.clone()));
+                selected_options.dev &= selected == 1;
+                if selected == 2 {
+                    selected_options.local_source = false;
+                    selected_options.replace_existing = false;
+                }
+                planning = Some(crate::planning::start(selected_options));
                 error = None;
             }
             KeyCode::Up if review.is_none() => selected = selected.saturating_sub(1),
             KeyCode::Down if review.is_none() => selected = (selected + 1).min(2),
+            KeyCode::Char('d') if review.is_none() && selected == 1 && !fixed_local_source => {
+                options.dev = !options.dev;
+            }
             KeyCode::Char('s') if review.is_none() => options.start = !options.start,
             KeyCode::Char('r') if review.is_none() => {
                 options.replace_existing = !options.replace_existing

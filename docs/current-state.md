@@ -66,7 +66,12 @@ registration retention bound, transfer receipt safeguards, connection bounds and
 runtime host resource limits still apply.
 Explicit Linux user-service installation is available. Native macOS/Windows process
 supervision is unsupported. The Linux installer wizard installs versioned releases
-and manages upgrades, rollback and the local user service.
+and manages upgrades, rollback and the local user service. Upgrade resolves the
+latest published GitHub release by default; explicit `--dev` fetches and builds a
+pinned main commit, while `--bin-dir` selects local binaries. Preparation retains
+one verified artifact through review/apply and bounds network/build work and
+cancellation cleanup. Missing published releases never fall back to main. See
+[installation](../installer/README.md) for prerequisites, trust and restart limits.
 
 Helm keeps the interface open when initial voyage creation is definitely refused,
 including admission refused by older Vessels, so existing voyages remain reachable.
