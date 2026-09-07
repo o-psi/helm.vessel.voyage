@@ -35,8 +35,7 @@ fn state(view: &super::state::View) -> &'static str {
     } else {
         view.snapshot
             .as_ref()
-            .and_then(|s| s.run.as_ref())
-            .map_or("Ready", |r| presentation::run_state(&r.state))
+            .map_or("Ready", presentation::voyage_state)
     }
 }
 

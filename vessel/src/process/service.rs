@@ -13,6 +13,7 @@ pub(super) struct Supervisor {
     pub(super) directory: PathBuf,
     pub(super) binary: PathBuf,
     pub(super) assignment_locks: Mutex<HashMap<Uuid, Arc<Mutex<()>>>>,
+    pub(super) lifecycle_locks: Mutex<HashMap<Uuid, Arc<Mutex<()>>>>,
     pub(super) registrations: Mutex<HashMap<Uuid, ProcessRegistration>>,
 }
 
@@ -51,6 +52,7 @@ pub async fn serve(directory: PathBuf, binary: PathBuf) -> Result<()> {
         binary,
         registrations: Mutex::new(registrations),
         assignment_locks: Mutex::new(HashMap::new()),
+        lifecycle_locks: Mutex::new(HashMap::new()),
     });
     let connections = Arc::new(Semaphore::new(64));
     let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
@@ -115,6 +117,7 @@ pub async fn serve(directory: PathBuf, binary: PathBuf) -> Result<()> {
 impl Supervisor {
     pub(super) async fn handle(&self, command: VesselCommand) -> Result<Value> {
         match command {
+            VesselCommand::Wake { session_id } => self.wake(session_id).await,
             command @ (VesselCommand::AcceptParticipant { .. }
             | VesselCommand::RemoveParticipant { .. }) => self.participant_admin(command).await,
             VesselCommand::Assign { .. }
@@ -216,47 +219,17 @@ impl Supervisor {
                     !matches!(command, RuntimeCommand::Stop),
                     "use Vessel stop for lifecycle tracking"
                 );
-                let registration = self.registration(session_id).await?;
-                ensure!(
-                    registration.incarnation == incarnation,
-                    "stale runtime incarnation"
-                );
                 Ok(serde_json::to_value(
-                    routing::forward(
-                        &registry::directory(&self.directory, session_id),
-                        &registration,
-                        command,
-                    )
-                    .await?,
+                    self.forward_resuming(session_id, incarnation, command, None)
+                        .await?,
                 )?)
             }
             VesselCommand::Stop {
                 session_id,
                 incarnation,
-            } => {
-                let mut registrations = self.registrations.lock().await;
-                let mut registration = registrations
-                    .get(&session_id)
-                    .cloned()
-                    .ok_or_else(|| anyhow::anyhow!("unknown session"))?;
-                ensure!(
-                    registration.incarnation == incarnation,
-                    "stale runtime incarnation"
-                );
-                let directory = registry::directory(&self.directory, session_id);
-                ensure!(
-                    registration.state != ProcessState::Relinquished,
-                    "source ownership has been permanently relinquished"
-                );
-                registration.state = ProcessState::CleanupUnconfirmed;
-                registry::save(&directory, &registration)?;
-                registrations.insert(session_id, registration.clone());
-                drop(registrations);
-                let response =
-                    routing::forward(&directory, &registration, RuntimeCommand::Stop).await?;
-                // A stop receipt alone is not proof of descendant cleanup.
-                Ok(serde_json::to_value(response)?)
-            }
+            } => Ok(serde_json::to_value(
+                self.stop(session_id, incarnation, None).await?,
+            )?),
         }
     }
 

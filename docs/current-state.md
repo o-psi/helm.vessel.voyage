@@ -91,7 +91,17 @@ options. The menu lists the current process-client controls, not retired command
 
 ## Persistence, migration and lifecycle
 
-Each voyage holds its exclusive session fence through idle time and cleanup.
+Each active voyage holds its exclusive session fence through turn execution and
+cleanup. After a terminal turn and positively observed cleanup, the process exits
+with an internal suspended disposition. The next submission automatically starts
+a new incarnation with the same session UUID, saved configuration and canonical
+history, using the current Vessel runtime binary. Helm labels successful completion
+Finished for 24 hours after its durable completion timestamp, then Settled. Failed,
+cancelled and cleanup-pending outcomes remain distinct. Bounded one-shot helpers
+serve suspended observations without waking an executor. Initialization and
+management-only processes retire after a short idle grace; volatile private workflow
+preparation retains its existing bounded lifetime. Root terminals close before
+suspension; terminal metadata does not imply a live process across turns.
 Canonical SQLite history, command bindings, streamed checkpoints, decisions,
 steering and cleanup obligations survive interface disconnect. Exact command
 retries retain their original outcome, including definite rejections. A changed
@@ -221,10 +231,10 @@ writer, within the accounting worker's ten-second deadline. Persistent contentio
 fails the operation; it never causes a provider request to be replayed. Dispatched
 attempts with unconfirmed accounting retain their unknown outcome.
 
-Root PTYs can persist between turns in one live voyage. Subagent and transient
-resources are cleaned at their run boundary. Retained terminals keep their original
-policy checks; revocation closes the manager. Model/configuration transitions and
-lifecycle operations observe required cleanup. A separate private human terminal
+Root PTYs remain available during their turn and close before the voyage suspends.
+Subagent and transient resources are cleaned at their run boundary. Terminals keep
+their original policy checks; revocation closes the manager. Model/configuration
+transitions and lifecycle operations observe required cleanup. A separate private human terminal
 channel binds exact run and terminal identity; its writes are never journalled or
 replayed. Saved terminal records do not resurrect processes after restart.
 
@@ -244,9 +254,12 @@ stops before the destination verifies the checkpoint and activates a new generat
 A private courier journal makes exact retries reviewable. Reservations do not
 permit timeout takeover. Providers, credentials and live process state do not move.
 
-`helm remote-worker` now activates a supervised outbound voyage and exits. Its
-legacy enrollment relay executes inside that voyage with the original lease/grant
-contract: transport authority loss cancels work. This differs from an ordinary
+`helm remote-worker` activates a supervised outbound voyage and exits. A separate
+transport-only relay retains the enrollment connection without owning the canonical
+session or an agent loop. Turns wake independent voyage workers; fenced one-shot
+helpers serve suspended remote observations. Private IPC carries the current,
+bounded transport lease into each worker: authority loss cancels work and cleanup
+must be observed before suspension. This differs from an ordinary
 Helm interface disconnect, which does not cancel. Local consent withdrawal and
 legacy recovery run through the voyage executable. Enrollment alone does not share
 an existing session. The Vessel web page remains a status page; a browser execution

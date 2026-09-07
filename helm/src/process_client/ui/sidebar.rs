@@ -194,8 +194,11 @@ impl App {
         if view.archived() {
             return Some("Restore this voyage first");
         }
-        if view.process.state != voyage_protocol::process::ProcessState::Live
-            || view.error.is_some()
+        if !matches!(
+            view.process.state,
+            voyage_protocol::process::ProcessState::Live
+                | voyage_protocol::process::ProcessState::Suspended
+        ) || view.error.is_some()
         {
             return Some("Voyage is unavailable");
         }

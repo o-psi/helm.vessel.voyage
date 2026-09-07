@@ -49,8 +49,17 @@ pub(super) async fn listen(directory: PathBuf, state: Arc<State>) -> Result<()> 
     let capacity = Arc::new(tokio::sync::Semaphore::new(16));
     let mut clients = tokio::task::JoinSet::new();
     let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+    let mut idle = tokio::time::interval_at(
+        tokio::time::Instant::now() + std::time::Duration::from_secs(2),
+        std::time::Duration::from_secs(2),
+    );
     loop {
         tokio::select! {
+            _=idle.tick() => {
+                if !matches!(state.registration.initialize, Some(voyage_protocol::process::RuntimeInitialization::Outbound { .. })) {
+                    let _ = super::suspension::suspend(&state).await;
+                }
+            },
             _=state.shutdown.cancelled()=>break,
             _=tokio::signal::ctrl_c()=>{state.shutdown.cancel();break},
             _=terminate.recv()=>{state.shutdown.cancel();break},
@@ -139,7 +148,7 @@ pub(super) async fn listen(directory: PathBuf, state: Arc<State>) -> Result<()> 
         };
         serde_json::to_writer(
             &mut file,
-            &serde_json::json!({"session_id":state.registration.session_id,"incarnation":state.registration.incarnation,"cleanup_observed":true,"archive":archive,"deletion":deletion}),
+            &serde_json::json!({"session_id":state.registration.session_id,"incarnation":state.registration.incarnation,"cleanup_observed":true,"suspended":state.suspend_requested.load(std::sync::atomic::Ordering::Acquire),"archive":archive,"deletion":deletion}),
         )?;
         file.flush()?;
         file.sync_all()?;
@@ -163,7 +172,17 @@ async fn respond(mut socket: UnixStream, state: Arc<State>, directory: PathBuf) 
         "runtime authentication rejected"
     );
     let authorization = super::authorization::authorize(&state, &request, &directory)?;
-    let result = commands::dispatch(&state, request.command.clone(), authorization).await;
+    let requests = state.requests.read().await;
+    let suspending = state.shutdown.is_cancelled()
+        && state
+            .suspend_requested
+            .load(std::sync::atomic::Ordering::Acquire);
+    let result = if suspending {
+        Ok(serde_json::json!({"status":"suspending","not_dispatched":true}))
+    } else {
+        commands::dispatch(&state, request.command.clone(), authorization).await
+    };
+    drop(requests);
     let rejected = result
         .as_ref()
         .err()
@@ -174,6 +193,7 @@ async fn respond(mut socket: UnixStream, state: Arc<State>, directory: PathBuf) 
         outcome_unknown: result.is_err() && rejected.is_none(),
         session_id: state.registration.session_id,
         incarnation: state.registration.incarnation,
+        resumed_from: None,
         result: result
             .as_ref()
             .cloned()

@@ -189,6 +189,25 @@ pub enum RuntimeCommand {
     Stop,
 }
 
+impl RuntimeCommand {
+    /// Pure session observations served without waking a cleanly suspended runtime.
+    pub fn observes_suspended(&self) -> bool {
+        matches!(
+            self,
+            Self::Health
+                | Self::Stop
+                | Self::Snapshot
+                | Self::History { .. }
+                | Self::MessageChunk { .. }
+                | Self::RunOutput { .. }
+                | Self::Receipt { .. }
+                | Self::Events { .. }
+                | Self::Decisions
+                | Self::Controls { .. }
+        )
+    }
+}
+
 /// Private human terminal traffic is never journalled or replayed.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
@@ -216,6 +235,9 @@ pub struct RuntimeResponse {
     pub protocol: u32,
     pub session_id: Uuid,
     pub incarnation: Uuid,
+    /// An automatic clean resume may replace the requested runtime incarnation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resumed_from: Option<Uuid>,
     pub result: Value,
     pub error: Option<String>,
     /// True means a mutation may have been admitted; retrieve its durable receipt.
@@ -228,6 +250,7 @@ pub struct RuntimeResponse {
 pub enum ProcessState {
     Starting,
     Live,
+    Suspended,
     Unavailable,
     Stopped,
     CleanupUnconfirmed,
@@ -236,6 +259,8 @@ pub enum ProcessState {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ProcessRegistration {
+    #[serde(default)]
+    pub executable: Option<PathBuf>,
     pub protocol: u32,
     pub session_id: Uuid,
     pub incarnation: Uuid,
@@ -286,6 +311,10 @@ impl From<&ProcessRegistration> for ProcessInfo {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 pub enum VesselCommand {
+    /// Local transport relays may wake only a positively suspended owner.
+    Wake {
+        session_id: Uuid,
+    },
     Recover {
         command_id: Uuid,
         session_id: Uuid,

@@ -9,6 +9,7 @@ mod client;
 pub use client::request;
 
 mod recovery;
+mod suspension;
 
 mod start;
 

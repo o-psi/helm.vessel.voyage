@@ -104,6 +104,7 @@ impl Supervisor {
         for registration in registrations.values_mut() {
             let directory = registry::directory(&self.directory, registration.session_id);
             if registration.state != ProcessState::Relinquished
+                && !super::recovery::suspended(&directory, registration)
                 && !directory.join("runtime.sock").exists()
                 && (super::recovery::clean_stop(&directory, registration)
                     || super::recover_command::restart_permitted(&directory, registration))
@@ -115,6 +116,7 @@ impl Supervisor {
         let directory = registry::directory(&self.directory, session_id);
         registry::private_directory(&directory)?;
         let registration = ProcessRegistration {
+            executable: Some(self.binary.clone()),
             protocol: PROCESS_PROTOCOL,
             session_id,
             incarnation: Uuid::new_v4(),

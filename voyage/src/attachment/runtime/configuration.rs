@@ -1,5 +1,27 @@
 use super::*;
 impl ManagedSessionOwner {
+    pub(crate) async fn retain_initial_configuration(
+        &self,
+        config: &crate::Config,
+        workspace: &std::path::Path,
+    ) -> anyhow::Result<()> {
+        if self.saved_configuration().await?.is_some() {
+            return Ok(());
+        }
+        let settings = serde_json::to_string(&crate::launch_config::LaunchConfig::capture(
+            config, workspace,
+        )?)?;
+        let shared = self.store.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut store = shared
+                .lock()
+                .map_err(|_| anyhow::anyhow!("owner poisoned"))?;
+            let Store { journal, guard, .. } = &mut *store;
+            journal.retain_initial_configuration(guard, settings)
+        })
+        .await?
+    }
+
     pub(crate) async fn saved_configuration(&self) -> anyhow::Result<Option<String>> {
         let shared = self.store.clone();
         tokio::task::spawn_blocking(move || {

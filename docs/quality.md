@@ -44,14 +44,20 @@ From a source checkout, after building `vessel` and `voyage`, run:
 python3 tests/concurrent_voyages.py --bin-dir target/release
 ```
 
-The six cases start actual Vessel-supervised voyage processes with one shared
+The eleven cases start actual Vessel-supervised voyage processes with one shared
 workspace and host data root. A local HTTP fixture holds provider responses until
 both voyages reach inference, so sequential execution cannot pass. Coverage includes
 separate live PIDs and canonical histories; simultaneous first-run admission;
 duplicate command and competing session-owner exclusion; cancellation and a new
 turn while the peer keeps running; simultaneous delegated agents using file tools
 with isolated task/completion state; and brief versus persistent contention in the
-shared inference database without replay or lost attribution.
+shared inference database without replay or lost attribution. Additional cases verify
+completed turn suspension, history/receipt observations without waking the executor, fresh
+next-turn incarnations with canonical history and deduplication, and refusal to
+automatically wake without positive suspension evidence. Default-start configuration
+is retained even when the original configuration file disappears between turns.
+A supervisor restart selects its updated executable path for the next turn, and
+simultaneous submissions against one suspended incarnation admit only one owner.
 
 The fixture uses only Python's standard library, synthetic credentials, isolated
 HOME/XDG directories and a loopback provider. It retains evidence under its printed

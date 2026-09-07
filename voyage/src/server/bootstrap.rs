@@ -18,7 +18,10 @@ pub(super) async fn initialize(
     };
     match initialization {
         initialization @ RuntimeInitialization::Outbound { .. } => {
-            super::outbound::initialize(directory, registration, workspace, initialization)?
+            #[cfg(unix)]
+            super::outbound::initialize(directory, registration, workspace, initialization)?;
+            #[cfg(not(unix))]
+            anyhow::bail!("outbound process transport unsupported on this platform");
         }
         RuntimeInitialization::ManagedImport {
             transfer_id,

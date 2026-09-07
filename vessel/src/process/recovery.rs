@@ -16,6 +16,8 @@ struct Stopped {
     incarnation: Uuid,
     cleanup_observed: bool,
     #[serde(default)]
+    suspended: bool,
+    #[serde(default)]
     archive: Option<ArchivedVoyage>,
     #[serde(default)]
     deletion: Option<serde_json::Value>,
@@ -23,6 +25,16 @@ struct Stopped {
 
 pub fn clean_stop(directory: &Path, registration: &ProcessRegistration) -> bool {
     stopped(directory, registration).is_ok()
+}
+pub(super) fn suspended(directory: &Path, registration: &ProcessRegistration) -> bool {
+    matches!(std::fs::symlink_metadata(directory.join("runtime.sock")),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound)
+        && !matches!(
+            registration.state,
+            ProcessState::Relinquished | ProcessState::Stopped
+        )
+        && stopped(directory, registration)
+            .is_ok_and(|s| s.suspended && s.archive.is_none() && s.deletion.is_none())
 }
 
 pub(super) fn archived(
@@ -51,6 +63,7 @@ fn stopped(directory: &Path, registration: &ProcessRegistration) -> Result<Stopp
     let metadata = file.metadata()?;
     ensure!(
         metadata.is_file()
+            && metadata.nlink() == 1
             && metadata.uid() == unsafe { libc::geteuid() }
             && metadata.mode() & 0o077 == 0
             && metadata.len() < 4096,
@@ -66,6 +79,34 @@ fn stopped(directory: &Path, registration: &ProcessRegistration) -> Result<Stopp
     Ok(stopped)
 }
 
+// Observers hold this file only while reading a suspended session. Acquire it
+// before the global registrations mutex so other sessions keep making progress.
+async fn startup_gate(directory: &Path) -> Result<std::fs::File> {
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .open(directory.join("startup.lock"))?;
+    let metadata = file.metadata()?;
+    ensure!(
+        metadata.is_file()
+            && metadata.nlink() == 1
+            && metadata.uid() == unsafe { libc::geteuid() }
+            && metadata.mode() & 0o077 == 0,
+        "unsafe runtime startup lock"
+    );
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        match file.try_lock() {
+            Ok(()) => return Ok(file),
+            Err(std::fs::TryLockError::WouldBlock) if tokio::time::Instant::now() < deadline => {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+            Err(error) => return Err(anyhow::anyhow!("runtime startup owned: {error}")),
+        }
+    }
+}
+
 impl Supervisor {
     pub(super) async fn restart(
         &self,
@@ -74,6 +115,8 @@ impl Supervisor {
         incarnation: Uuid,
     ) -> Result<serde_json::Value> {
         ensure!(!command_id.is_nil(), "command ID must be nonnil");
+        let directory = registry::directory(&self.directory, session_id);
+        let startup = startup_gate(&directory).await?;
         let mut registrations = self.registrations.lock().await;
         let registration = registrations
             .get(&session_id)
@@ -115,13 +158,15 @@ impl Supervisor {
             registration.incarnation == incarnation,
             "stale runtime incarnation"
         );
-        let directory = registry::directory(&self.directory, session_id);
         ensure!(
-            routing::inspect(&directory, registration).await.state == ProcessState::Stopped
-                || super::recover_command::restart_permitted(&directory, registration),
+            matches!(
+                routing::inspect(&directory, registration).await.state,
+                ProcessState::Stopped | ProcessState::Suspended
+            ) || super::recover_command::restart_permitted(&directory, registration),
             "restart requires positively observed clean runtime stop; unavailable is not stopped"
         );
         let mut next = registration.clone();
+        next.executable = Some(self.binary.clone());
         next.incarnation = Uuid::new_v4();
         next.command_id = command_id;
         next.restart_from = Some(incarnation);
@@ -133,6 +178,8 @@ impl Supervisor {
             .map_err(|error| error.context(routing::OutcomeUnknown))?;
         registrations.insert(session_id, next.clone());
         drop(registrations);
+        // A fresh owner takes the same gate itself; never carry this lock into launch.
+        drop(startup);
         super::launch::launch(&self.binary, &directory, &next)
             .map_err(|error| error.context(routing::OutcomeUnknown))?;
         let observed = tokio::time::timeout(std::time::Duration::from_secs(10), async {

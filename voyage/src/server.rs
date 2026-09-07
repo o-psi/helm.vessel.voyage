@@ -20,8 +20,13 @@ mod decisions;
 mod dispatch;
 mod github;
 mod observations;
+#[cfg(unix)]
 mod outbound;
+#[cfg(unix)]
+pub use outbound::{outbound_observe, outbound_relay};
 mod submission;
+pub mod suspended;
+mod suspension;
 mod transfer;
 #[cfg(unix)]
 mod transport;
@@ -55,6 +60,8 @@ struct State {
     registration: ProcessRegistration,
     active: Mutex<Option<ActiveRun>>,
     admission: Mutex<()>,
+    requests: tokio::sync::RwLock<()>,
+    suspend_requested: std::sync::atomic::AtomicBool,
     shutdown: CancellationToken,
     archive_receipt: Mutex<Option<serde_json::Value>>,
     outbound_task: Mutex<Option<tokio::task::JoinHandle<Result<()>>>>,
@@ -91,9 +98,29 @@ pub async fn serve(args: ServeArgs) -> Result<()> {
         );
         let startup =
             crate::attachment::journal::open_private_file(&directory.join("startup.lock"))?;
-        startup
-            .try_lock()
-            .context("runtime startup already owned")?;
+        let startup_deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            match startup.try_lock() {
+                Ok(()) => break,
+                Err(std::fs::TryLockError::WouldBlock)
+                    if tokio::time::Instant::now() < startup_deadline =>
+                {
+                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                }
+                Err(error) => {
+                    return Err(anyhow::anyhow!("runtime startup already owned: {error}"));
+                }
+            }
+        }
+        let current = transport::registration(&directory)?;
+        ensure!(
+            current.session_id == registration.session_id
+                && current.incarnation == registration.incarnation
+                && current.token == registration.token
+                && current.workspace == registration.workspace
+                && current.config_path == registration.config_path,
+            "runtime registration changed during startup"
+        );
         let prepared: Result<_> = async {
             let workspace = args.workspace.canonicalize()?;
             let initial =
@@ -151,7 +178,7 @@ pub async fn serve(args: ServeArgs) -> Result<()> {
             Err(error) => return Err(error),
         }
         drop(journal);
-        let owner = ManagedSessionOwner::open(journal_dir, args.session).await?;
+        let owner = suspended::open_owner(journal_dir, args.session).await?;
         drop(startup);
         // A new lifetime must establish its own shutdown evidence, even when an
         // operator explicitly starts the same incarnation outside the supervisor.
@@ -175,6 +202,9 @@ pub async fn serve(args: ServeArgs) -> Result<()> {
             None => config,
         };
         bootstrap::limit_participant(&mut config, &registration)?;
+        owner
+            .retain_initial_configuration(&config, &registration.workspace)
+            .await?;
         crate::build::set_resource_root(directory.join("resources"))?;
         let state = Arc::new(State {
             directory: directory.clone(),
@@ -186,6 +216,8 @@ pub async fn serve(args: ServeArgs) -> Result<()> {
             registration,
             active: Mutex::new(None),
             admission: Mutex::new(()),
+            requests: tokio::sync::RwLock::new(()),
+            suspend_requested: std::sync::atomic::AtomicBool::new(false),
             shutdown: CancellationToken::new(),
             archive_receipt: Mutex::new(None),
             outbound_task: Mutex::new(None),
@@ -199,6 +231,9 @@ pub async fn serve(args: ServeArgs) -> Result<()> {
             let relay = state.clone();
             *state.outbound_task.lock().await = Some(tokio::spawn(async move {
                 let result = outbound::run(relay.clone()).await;
+                if result.is_err() {
+                    relay.shutdown.cancel();
+                }
                 *relay.outbound_status.lock().await = if result.is_ok() {
                     serde_json::json!({"state":"stopped","grant":"inactive"})
                 } else {

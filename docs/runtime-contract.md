@@ -8,8 +8,10 @@ verification and unsupported platforms.
 ## Ownership and admission
 
 A Vessel supervises one independent voyage process for each executing session.
-The voyage process holds an exclusive session execution fence through idle time,
-run callbacks and owned cleanup. All clients, including plain/one-shot
+The voyage process holds an exclusive session execution fence through run callbacks
+and owned cleanup. A terminal turn may suspend only after cleanup is observed,
+private preparation is resolved, and all session resources have been closed.
+Suspension releases the process and fence, preserving the session and journal. All clients, including plain/one-shot
 frontends, reach that same owner through Vessel. The selected Helm view has no
 write authority over the canonical store.
 
@@ -65,11 +67,20 @@ Report separate dimensions:
 | Run | Accepted, running, awaiting decision, completed, incomplete, cancelled, failed, interrupted |
 | Command delivery | Accepted, applied, rejected, unknown |
 | Cleanup | Pending, observed, operator-attested, unconfirmed |
-| Runtime | Live authenticated incarnation, stopped, unavailable, ownership conflict |
+| Runtime | Live authenticated incarnation, cleanly suspended, stopped, unavailable, ownership conflict |
 
 An unavailable connection cannot establish a stopped runtime. A final answer cannot
 establish resource cleanup. Operator attestation must remain distinct from observed
 cleanup and retain its provenance.
+
+Clean suspension has exact-incarnation durable evidence and no runtime endpoint.
+Vessel resumes only that state automatically, with a new incarnation; unavailable
+or explicitly stopped owners still require explicit recovery/restart. A command
+that was positively refused before dispatch during suspension can cross that
+transition; an uncertain external effect is never automatically retried. Bounded
+one-shot observers read suspended history and receipts under the session fence
+without an agent loop. Runtime policy and scoped grants are checked on the
+executing machine for resumed work and again before releasing observations.
 
 ## Decisions and terminal interaction
 
@@ -91,6 +102,9 @@ only the controlled terminal-screen renderer interprets terminal output. Keep
 provider/subprocess diagnostics out of the TUI's display stream.
 
 ## Completion, cancellation and recovery
+
+Root terminals close before turn suspension; they have no implied lifetime between
+turns. Terminal metadata and canonical history remain durable.
 
 Register subagents, managed commands, terminals and completion obligations before
 they become independently active. Finishing a model turn is not proof that all

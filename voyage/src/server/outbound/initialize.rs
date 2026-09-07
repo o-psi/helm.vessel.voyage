@@ -6,24 +6,20 @@ pub(crate) fn initialize(
     initialization: &RuntimeInitialization,
 ) -> Result<()> {
     let RuntimeInitialization::Outbound {
-        enrollment_directory,
-        origin,
-        allow_insecure_loopback,
         source_directory,
         expected_revision,
+        ..
     } = initialization
     else {
         bail!("not outbound")
     };
     let actor = LocalActorStore::open(&directory.join("identity"))?.identity()?;
-    let client =
-        EnrollmentClient::open_existing(enrollment_directory, origin, *allow_insecure_loopback)?;
-    let inspection = client.inspection();
+    let identity = proxy::identity(directory)?;
     let binding = RemoteBinding {
-        origin: client.origin().into(),
-        machine_id: inspection.machine_id,
-        owner_id: inspection.owner_id.context("enrollment inactive")?,
-        epoch: inspection.epoch,
+        origin: identity.origin,
+        machine_id: identity.machine_id,
+        owner_id: identity.owner_id,
+        epoch: identity.epoch,
         local_installation_id: actor.installation_id,
         local_principal_id: actor.principal_id,
     };

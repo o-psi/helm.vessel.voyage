@@ -72,7 +72,11 @@ pub(super) async fn live(client: &Client, process: ProcessInfo) -> Result<Proces
         )?);
     }
     ensure!(
-        process.state == voyage_protocol::process::ProcessState::Live,
+        matches!(
+            process.state,
+            voyage_protocol::process::ProcessState::Live
+                | voyage_protocol::process::ProcessState::Suspended
+        ),
         "managed owner unavailable; use explicit recover after observing its cleanup"
     );
     Ok(process)

@@ -95,6 +95,9 @@ pub(super) async fn submit(
         }
         drop(run);
         *state.active.lock().await = None;
+        if let Err(error) = super::suspension::suspend(&state).await {
+            tracing::warn!("voyage suspension blocked: {error}");
+        }
     });
     Ok(json!({"command_id":command_id,"run_id":run_id,"status":"accepted","state":"accepted"}))
 }

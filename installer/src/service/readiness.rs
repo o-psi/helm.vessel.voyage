@@ -70,8 +70,8 @@ pub(super) fn wait(
                         .iter()
                         .any(|now| now["session_id"] == previous["session_id"]
                             && now["incarnation"] == previous["incarnation"]
-                            && now["state"] == "live"),
-                    "A previously live voyage did not confirm its original incarnation after supervisor upgrade; no voyage restart was attempted"
+                            && matches!(now["state"].as_str(), Some("live" | "suspended"))),
+                    "A previously live voyage did not confirm its original incarnation live or cleanly suspended after supervisor upgrade; no voyage restart was attempted"
                 );
             }
             return Ok(());
