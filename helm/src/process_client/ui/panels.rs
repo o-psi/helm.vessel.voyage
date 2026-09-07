@@ -155,7 +155,9 @@ pub(super) fn render(section: &str, envelope: &Value) -> String {
             }
         }
         "policy" => {
-            output.push_str("# Permissions\n\n");
+            output.push_str(
+                "# Permissions\n\nUse /access or Voyage Actions → Access to change the mode.\n\n",
+            );
             let rules = value.get("rules").unwrap_or(value);
             let access = text(rules, "access");
             let description = match access.as_str() {

@@ -39,12 +39,18 @@ impl Journal {
         now: i64,
     ) -> Result<Value> {
         self.saved_configuration(guard)?;
-        let RuntimeCommand::Configure {
+        let (RuntimeCommand::Configure {
             command_id,
             expected_revision,
             expires_at_ms,
             ..
-        } = &command
+        }
+        | RuntimeCommand::SetAccess {
+            command_id,
+            expected_revision,
+            expires_at_ms,
+            ..
+        }) = &command
         else {
             anyhow::bail!("not configure")
         };

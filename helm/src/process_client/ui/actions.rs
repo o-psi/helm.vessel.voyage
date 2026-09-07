@@ -103,6 +103,9 @@ impl App {
         preserve_draft: bool,
     ) -> Result<()> {
         let command_text = draft.trim();
+        if command_text == "/access" || command_text.starts_with("/access ") {
+            return self.open_access(target, command_text.strip_prefix("/access "));
+        }
         if command_text == "/archived" || command_text == "/voyages" {
             self.show_archives(command_text == "/archived");
             return Ok(());

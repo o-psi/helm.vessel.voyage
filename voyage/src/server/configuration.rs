@@ -9,12 +9,16 @@ pub(super) async fn configure(
         authorization.grant.is_none(),
         "configuration requires executing-account owner authority"
     );
-    let RuntimeCommand::Configure {
+    let (RuntimeCommand::Configure {
         command_id,
-        config_path,
         expected_revision,
         ..
-    } = &command
+    }
+    | RuntimeCommand::SetAccess {
+        command_id,
+        expected_revision,
+        ..
+    }) = &command
     else {
         anyhow::bail!("not configure")
     };
@@ -26,12 +30,60 @@ pub(super) async fn configure(
     if let Some(receipt) = state.owner.process_receipt(*command_id).await? {
         return Ok(receipt);
     }
-    ensure!(
-        config_path.is_absolute(),
-        "configuration path must be absolute"
-    );
-    let mut config = bootstrap::load_config(Some(config_path), &state.registration.workspace)?;
+    let mut config = match &command {
+        RuntimeCommand::Configure { config_path, .. } => {
+            ensure!(
+                config_path.is_absolute(),
+                "configuration path must be absolute"
+            );
+            bootstrap::load_config(Some(config_path), &state.registration.workspace)?
+        }
+        RuntimeCommand::SetAccess { access, .. } => {
+            let mut config = state.config.read().await.clone();
+            let mode = match access.as_str() {
+                "read-only" => crate::config::AccessMode::ReadOnly,
+                "approval" => crate::config::AccessMode::Approval,
+                "unrestricted" => crate::config::AccessMode::Unrestricted,
+                _ => anyhow::bail!("use read-only, approval or unrestricted"),
+            };
+            // Validate existing sources before applying the one explicit override.
+            crate::runtime_policy::RuntimePolicy::resolve(&config, &state.registration.workspace)?;
+            config.model = state.owner.snapshot().await?.session.model.clone();
+            config.access = Some(mode);
+            config.policy_explicit.access = Some(mode);
+            if let Some(selection) = config.policy_profile.take() {
+                let mut request = selection.request().clone();
+                request.explicit.access = Some(mode);
+                let preview = crate::policy_profile::selection::Selection::preview(
+                    &config,
+                    &state.registration.workspace,
+                    &request,
+                )?;
+                // Owner's confirmed command changes only access; other profile fields stay bound.
+                config.policy_profile = Some(crate::policy_profile::selection::Selection::bind(
+                    &config,
+                    &state.registration.workspace,
+                    request,
+                    Some(&preview.transition_digest),
+                )?);
+            }
+            config
+        }
+        _ => unreachable!(),
+    };
     bootstrap::limit_participant(&mut config, &state.registration)?;
+    if let RuntimeCommand::SetAccess { access, .. } = &command {
+        ensure!(
+            config.access_mode().to_string() == *access,
+            "requested access exceeds parent policy"
+        );
+        let effective =
+            crate::runtime_policy::RuntimePolicy::resolve(&config, &state.registration.workspace)?;
+        ensure!(
+            serde_json::to_value(effective.policy().access_mode())? == *access,
+            "requested access is restricted by the executing machine or parent policy"
+        );
+    }
     let secrets = crate::build::redactor(&config);
     crate::provider::validate_models_for_display(
         &[crate::provider::ModelInfo::minimal(config.model.clone())],

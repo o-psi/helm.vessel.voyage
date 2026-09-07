@@ -209,3 +209,17 @@ Declarative extensions, repository onboarding, configuration drafts and local
 credential enrollment retain their explicit operator workflows. See
 [operations](operations.md), [configuration](configuration.md) and
 [security](security.md) for usage and authority boundaries.
+
+Voyage Actions also includes **Access**: Read only, Ask first, or Unrestricted.
+`/access` opens the same chooser; `/access read-only`, `/access approval` and
+`/access unrestricted` open a confirmation for that mode. Slash completion offers
+all three. The chooser shows effective access and preserves the composer draft.
+Changes require an idle live voyage, executing-account owner authority, and observed
+cleanup; retained terminals close first. The runtime changes only access in its
+private durable configuration, preserving the current model, credentials and other
+policy settings across restart. System and participant limits still apply; requests
+above those limits are refused. Named profiles retain their bound selection and
+receive an explicit access override. Defaults that require a fresh workspace
+activation must still be previewed and activated through the policy defaults
+workflow; the chooser does not silently activate them. Unrestricted does not remove
+folder limits, blocked commands or administrator policy.

@@ -124,6 +124,12 @@ impl App {
     }
 
     fn action_menu_input(&mut self, menu: &mut Menu, event: &Event) -> Result<bool> {
+        if matches!(
+            menu.editor,
+            Some(Action::Access | Action::ReadOnly | Action::Approval | Action::Unrestricted)
+        ) {
+            return self.access_input(menu, event);
+        }
         let actions = menu.actions.clone();
         if let Event::Mouse(mouse) = event {
             if mouse.kind == MouseEventKind::Down(MouseButton::Left) && menu.editor.is_none() {
@@ -262,6 +268,9 @@ impl App {
                     (menu.selected.min(actions.len() - 1) + actions.len() - 1) % actions.len()
             }
             KeyCode::Down => menu.selected = (menu.selected + 1) % actions.len(),
+            KeyCode::Right if actions[menu.selected.min(actions.len() - 1)] == Action::Access => {
+                return self.activate_action(menu, Action::Access);
+            }
             KeyCode::Enter => {
                 return self.activate_action(menu, actions[menu.selected.min(actions.len() - 1)]);
             }
@@ -274,6 +283,11 @@ impl App {
             anyhow::bail!(reason);
         }
         match action {
+            Action::Access => {
+                self.begin_access(menu);
+                Ok(false)
+            }
+            Action::ReadOnly | Action::Approval | Action::Unrestricted => unreachable!(),
             Action::Rename | Action::Branch | Action::Delete | Action::Details => {
                 self.sidebar.visible.set(None);
                 menu.editor = Some(action);

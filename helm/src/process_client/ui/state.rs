@@ -49,6 +49,8 @@ pub struct Snapshot {
     pub observation_cursor: Option<u64>,
     pub name: Option<String>,
     pub model: String,
+    #[serde(default)]
+    pub access: Option<String>,
     pub messages: Vec<Message>,
     pub run: Option<Run>,
     #[serde(default)]

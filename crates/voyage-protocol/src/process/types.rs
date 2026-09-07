@@ -42,6 +42,12 @@ pub enum RuntimeCommand {
         expires_at_ms: u64,
         words: Vec<String>,
     },
+    SetAccess {
+        command_id: Uuid,
+        expected_revision: u64,
+        expires_at_ms: u64,
+        access: String,
+    },
     Configure {
         command_id: Uuid,
         expected_revision: u64,

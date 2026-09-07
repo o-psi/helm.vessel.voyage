@@ -1,4 +1,5 @@
 //! Displayed sidebar identities and a modal action editor, independent of composer drafts.
+mod access;
 mod input;
 mod menu;
 use super::{App, state::Target};
@@ -15,6 +16,10 @@ pub(super) enum Focus {
 }
 #[derive(Clone, Copy, PartialEq)]
 pub(super) enum Action {
+    Access,
+    ReadOnly,
+    Approval,
+    Unrestricted,
     Rename,
     Archive,
     Restore,
@@ -26,6 +31,10 @@ pub(super) enum Action {
 impl Action {
     fn label(self) -> &'static str {
         match self {
+            Self::Access => "Access →",
+            Self::ReadOnly => "Read only",
+            Self::Approval => "Ask first",
+            Self::Unrestricted => "Unrestricted",
             Self::Rename => "Rename",
             Self::Archive => "Archive",
             Self::Restore => "Restore",
@@ -41,6 +50,7 @@ pub(super) struct Menu {
     incarnation: Uuid,
     run: Option<Uuid>,
     selected: usize,
+    access_selected: usize,
     actions: Vec<Action>,
     scroll: u16,
     editor: Option<Action>,
@@ -100,6 +110,7 @@ impl App {
                 .and_then(|s| s.run.as_ref())
                 .map(|r| r.run_id),
             selected: 0,
+            access_selected: 0,
             actions: self.sidebar_actions(target),
             scroll: 0,
             editor: None,
@@ -118,6 +129,7 @@ impl App {
                 Action::Archive
             },
             Action::Branch,
+            Action::Access,
         ];
         if self
             .views
@@ -140,6 +152,9 @@ impl App {
         }
         if action == Action::Details {
             return None;
+        }
+        if action == Action::Access && self.clients[menu.target.route].access_file.is_some() {
+            return Some("Access changes require executing-account owner authority");
         }
         if view.pending.is_some() {
             return Some("Check the pending action with F4 first");

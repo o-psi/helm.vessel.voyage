@@ -37,7 +37,7 @@ pub(super) async fn dispatch_admitted(
         command @ RuntimeCommand::Github { .. } => {
             super::github::submit(state, authorization, command).await
         }
-        command @ RuntimeCommand::Configure { .. } => {
+        command @ (RuntimeCommand::Configure { .. } | RuntimeCommand::SetAccess { .. }) => {
             super::configuration::configure(state, command, authorization).await
         }
         RuntimeCommand::WorkflowInputs { input_id, values } => {
@@ -145,6 +145,13 @@ pub(super) async fn dispatch_admitted(
         }
         RuntimeCommand::Snapshot => {
             let mut snapshot = state.owner.process_snapshot().await?;
+            snapshot["access"] = crate::runtime_policy::RuntimePolicy::resolve(
+                &*state.config.read().await,
+                &state.registration.workspace,
+            )
+            .ok()
+            .and_then(|p| serde_json::to_value(p.policy().access_mode()).ok())
+            .unwrap_or(serde_json::Value::Null);
             snapshot["outbound"] = state.outbound_status.lock().await.clone();
             snapshot["decisions"] = state
                 .owner

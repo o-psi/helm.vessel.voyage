@@ -46,7 +46,12 @@ impl App {
             inner.width,
             inner.height.saturating_sub(5),
         );
-        if let Some(action) = menu.editor {
+        if matches!(
+            menu.editor,
+            Some(Action::Access | Action::ReadOnly | Action::Approval | Action::Unrestricted)
+        ) {
+            self.draw_access(frame, menu, body);
+        } else if let Some(action) = menu.editor {
             let text=match action {
                 Action::Details => view.map_or_else(|| "Voyage no longer available".into(), |v| {
                     let run = v.snapshot.as_ref().map_or("Unavailable", |s| s.run.as_ref().map_or("Idle", |r| super::super::presentation::run_state(&r.state)));
@@ -127,7 +132,9 @@ impl App {
             }
         }
         let hint = if menu.error.is_empty() {
-            if menu.editor == Some(Action::Details) {
+            if menu.editor == Some(Action::Access) {
+                "↑↓ select · Enter review · Esc back"
+            } else if menu.editor == Some(Action::Details) {
                 "↑↓ scroll · Enter close · Esc back"
             } else if menu.editor.is_some() {
                 "Enter confirm · Esc back · Draft preserved"

@@ -46,6 +46,7 @@ pub(super) async fn dispatch(
                     | RuntimeCommand::OperatorTool { .. }
                     | RuntimeCommand::ExecuteTool { .. }
                     | RuntimeCommand::Github { .. }
+                    | RuntimeCommand::SetAccess { .. }
                     | RuntimeCommand::Configure { .. }
                     | RuntimeCommand::SetModel { .. }
                     | RuntimeCommand::Clear { .. }
@@ -60,6 +61,7 @@ pub(super) async fn dispatch(
         | RuntimeCommand::Compact { command_id, .. }
         | RuntimeCommand::OperatorTool { command_id, .. }
         | RuntimeCommand::Github { command_id, .. }
+        | RuntimeCommand::SetAccess { command_id, .. }
         | RuntimeCommand::Configure { command_id, .. }
         | RuntimeCommand::Relinquish { command_id, .. }
         | RuntimeCommand::WorkflowSubmit { command_id, .. }

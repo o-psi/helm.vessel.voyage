@@ -43,6 +43,11 @@ const COMMANDS: &[(&str, &str, &str)] = &[
         "Choose a tool, then type JSON arguments",
     ),
     ("policy", "Show permissions", ""),
+    (
+        "access",
+        "Change voyage access",
+        "Choose an access mode; Enter reviews the change",
+    ),
     ("todos", "Show tasks", ""),
     ("subagents", "Show delegated work", ""),
     ("workflows", "Show saved workflows", ""),
@@ -259,6 +264,11 @@ impl App {
         let view = &self.views[&target];
         let mut options = Vec::new();
         match command {
+            "access" => options.extend([
+                ("read-only".into(), "Read only".into()),
+                ("approval".into(), "Ask first".into()),
+                ("unrestricted".into(), "Unrestricted".into()),
+            ]),
             "use" => {
                 for key in self.ordered_targets() {
                     if self
