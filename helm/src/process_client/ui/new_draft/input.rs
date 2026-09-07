@@ -183,6 +183,7 @@ impl App {
                     "unrestricted" => crate::config::AccessMode::Unrestricted,
                     _ => anyhow::bail!("use /access read-only, approval or unrestricted"),
                 });
+                draft.saved.explicit.access = config.access;
             } else if let Some(workspace) = text.strip_prefix("/workspace ") {
                 let path = PathBuf::from(workspace);
                 anyhow::ensure!(

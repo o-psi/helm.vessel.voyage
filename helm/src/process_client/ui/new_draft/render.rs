@@ -27,15 +27,17 @@ impl App {
         } else {
             "Draft · starts when you send"
         };
-        let model = draft
-            .saved
-            .config
-            .as_ref()
-            .map_or("Executing-host model", |c| c.model.as_str());
+        let model = safe(
+            draft
+                .saved
+                .config
+                .as_ref()
+                .map_or("Executing-host model", |c| c.model.as_str()),
+        );
         frame.render_widget(
             Paragraph::new(format!(
                 "New voyage · {}\n{state}\n{} · {model}",
-                self.route_label(draft.route),
+                safe(&self.route_label(draft.route)),
                 safe(&draft.saved.workspace.display().to_string())
             ))
             .block(Block::default().borders(Borders::BOTTOM)),
@@ -47,12 +49,14 @@ impl App {
             .title(" First message ");
         let body = block.inner(rows[2]);
         frame.render_widget(block, rows[2]);
-        let (row, col) =
-            composer::cursor_position(&draft.composer.text[..draft.composer.cursor], body.width);
+        let (row, col) = composer::cursor_position(
+            &safe(&draft.composer.text[..draft.composer.cursor]),
+            body.width,
+        );
         let scroll = row.saturating_sub(body.height.saturating_sub(1));
         frame.render_widget(
             Paragraph::new(presentation::wrap(
-                Text::raw(&draft.composer.text),
+                Text::raw(safe(&draft.composer.text)),
                 body.width,
             ))
             .scroll((scroll, 0)),

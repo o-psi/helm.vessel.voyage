@@ -49,7 +49,12 @@ fn lock(root: &Path, id: Uuid) -> Result<Option<File>> {
 pub(super) fn save(saved: &Saved) -> Result<()> {
     let root = root()?;
     let mut file = tempfile::NamedTempFile::new_in(&root)?;
-    file.write_all(&serde_json::to_vec(saved)?)?;
+    let bytes = serde_json::to_vec(saved)?;
+    ensure!(
+        bytes.len() <= 1024 * 1024,
+        "new-voyage draft exceeds private storage limit"
+    );
+    file.write_all(&bytes)?;
     file.as_file().sync_all()?;
     file.persist(root.join(format!("{}.json", saved.id)))?;
     #[cfg(unix)]
@@ -75,7 +80,7 @@ pub(super) fn recover(clients: &[Client]) -> Result<BTreeMap<Uuid, Draft>> {
     let root = root()?;
     let routes = clients.iter().map(route).collect::<Result<Vec<_>>>()?;
     let mut drafts = BTreeMap::new();
-    for entry in std::fs::read_dir(&root)?.take(4096) {
+    for entry in std::fs::read_dir(&root)? {
         let path = entry?.path();
         if path.extension().is_none_or(|x| x != "json") {
             continue;
@@ -102,6 +107,10 @@ pub(super) fn recover(clients: &[Client]) -> Result<BTreeMap<Uuid, Draft>> {
         if saved.finished {
             continue;
         }
+        ensure!(
+            drafts.len() < 4096,
+            "too many local drafts to recover; archive draft files before continuing"
+        );
         let Some(route) = routes.iter().position(|r| r == &saved.route) else {
             continue;
         };
