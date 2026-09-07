@@ -42,6 +42,10 @@ pub struct Snapshot {
     pub session_id: Uuid,
     pub revision: u64,
     #[serde(default)]
+    pub created_at: Option<chrono::DateTime<chrono::Utc>>,
+    #[serde(default)]
+    pub last_message_at: Option<chrono::DateTime<chrono::Utc>>,
+    #[serde(default)]
     pub observation_cursor: Option<u64>,
     pub name: Option<String>,
     pub model: String,
@@ -135,5 +139,21 @@ impl View {
             })
             .filter(|title| !title.is_empty())
             .unwrap_or_else(|| "New voyage".into())
+    }
+}
+
+impl super::App {
+    /// One activity order for both presentation and keyboard navigation. Unknown
+    /// timestamps (older owners or unavailable snapshots) sort last, not as now.
+    pub(super) fn ordered_targets(&self) -> Vec<Target> {
+        let mut targets: Vec<_> = self.views.keys().copied().collect();
+        targets.sort_by_key(|target| {
+            let activity = self.views[target]
+                .snapshot
+                .as_ref()
+                .and_then(|snapshot| snapshot.last_message_at.or(snapshot.created_at));
+            (std::cmp::Reverse(activity), *target)
+        });
+        targets
     }
 }

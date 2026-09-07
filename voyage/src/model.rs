@@ -27,6 +27,9 @@ pub struct SteeringReceipt {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Message {
+    /// Durable local message time; absent for legacy history.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<chrono::DateTime<chrono::Utc>>,
     pub role: Role,
     pub content: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -47,6 +50,7 @@ pub struct Message {
 impl Message {
     pub fn new(role: Role, content: impl Into<String>) -> Self {
         Self {
+            created_at: Some(chrono::Utc::now()),
             role,
             content: content.into(),
             tool_call_id: None,
@@ -75,6 +79,7 @@ impl Message {
         success: bool,
     ) -> Self {
         Self {
+            created_at: Some(chrono::Utc::now()),
             role: Role::Tool,
             content: content.into(),
             tool_call_id: Some(call_id.into()),

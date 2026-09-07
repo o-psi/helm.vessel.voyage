@@ -250,6 +250,7 @@ fn finish_stream(assembly: StreamAssembly) -> Result<ModelResponse, ProviderErro
         .collect::<Result<Vec<_>, ProviderError>>()?;
     Ok(ModelResponse {
         message: Message {
+            created_at: Some(chrono::Utc::now()),
             role: Role::Assistant,
             content: assembly.content,
             tool_call_id: None,
@@ -393,6 +394,7 @@ fn decode_response(value: Value) -> Result<ModelResponse, ProviderError> {
     };
     Ok(ModelResponse {
         message: Message {
+            created_at: Some(chrono::Utc::now()),
             role: Role::Assistant,
             content,
             tool_call_id: None,

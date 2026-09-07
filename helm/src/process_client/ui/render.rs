@@ -237,10 +237,11 @@ fn sidebar(frame: &mut Frame<'_>, app: &App, area: Rect) {
         ]),
         rows[0],
     );
-    let entries = app
-        .views
+    let targets = app.ordered_targets();
+    let entries = targets
         .iter()
-        .map(|(target, view)| {
+        .map(|target| {
+            let view = &app.views[target];
             let mut title = presentation::wrap(
                 Text::raw(safe(&view.title())),
                 rows[1].width.saturating_sub(2),
@@ -271,7 +272,7 @@ fn sidebar(frame: &mut Frame<'_>, app: &App, area: Rect) {
             ListItem::new(lines)
         })
         .collect::<Vec<_>>();
-    let index = app.views.keys().position(|t| Some(*t) == app.selected);
+    let index = targets.iter().position(|t| Some(*t) == app.selected);
     frame.render_stateful_widget(
         List::new(entries)
             .highlight_symbol("> ")

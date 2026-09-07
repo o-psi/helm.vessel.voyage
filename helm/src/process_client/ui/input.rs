@@ -54,7 +54,7 @@ impl App {
                 return Ok(());
             }
             if matches!(key.code, KeyCode::Tab | KeyCode::BackTab) {
-                let keys: Vec<_> = self.views.keys().copied().collect();
+                let keys = self.ordered_targets();
                 if !keys.is_empty() {
                     let index = self
                         .selected
