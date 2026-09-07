@@ -3,6 +3,12 @@ use super::*;
 impl App {
     pub(super) fn update(&mut self, update: Update) {
         match update {
+            Update::Completion {
+                target,
+                incarnation,
+                section,
+                value,
+            } => self.completion_update(target, incarnation, section, value),
             Update::Terminals {
                 target,
                 incarnation,

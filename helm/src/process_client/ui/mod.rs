@@ -1,5 +1,6 @@
 //! Multiplexed presentation; dropping this interface only drops observations.
 mod actions;
+mod completion;
 mod controls;
 mod explore;
 mod export;
@@ -45,6 +46,7 @@ pub(super) struct App {
     help_scroll: u16,
     explore: Option<usize>,
     interactions: std::cell::RefCell<interactions::Review>,
+    completion: completion::Completion,
     terminal_request: Option<(Target, uuid::Uuid, uuid::Uuid, uuid::Uuid)>,
 }
 
@@ -103,11 +105,13 @@ pub async fn run_with_config(
         explore: None,
         interactions: Default::default(),
         terminal_request: None,
+        completion: Default::default(),
     };
     let mut events = EventStream::new();
     let mut repaint = tokio::time::interval(Duration::from_millis(100));
     let result = async {
         while !app.quit {
+            app.sync_completion();
             tokio::select! {
                 _ = repaint.tick() => terminal.draw(|frame| render::draw(frame, &app)).map(|_| ())?,
                 event = events.next() => match event {

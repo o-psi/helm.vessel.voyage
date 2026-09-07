@@ -39,6 +39,16 @@ without timestamps use the creation fallback until new messages arrive. Owners
 that do not expose timestamps, and voyages without snapshots, sort last with a
 stable identity tie-break. Renaming, polling, or system compaction markers do not advance activity.
 
+Typing `/` in the Helm composer opens a filtered command menu above the input.
+Up/Down select and Tab completes a command, then shows contextual arguments.
+Enter dispatches the typed command; Escape dismisses completion, restoring normal
+Tab voyage navigation. Model, tool and terminal options come from the selected
+owner; pending decisions and voyage choices come from observed state. Local paths
+have bounded filesystem suggestions; remote paths and free-form names, answers
+and JSON arguments show input guidance. Clear/delete confirmations must still be
+typed explicitly. Unavailable metadata shows a retry hint rather than invented
+options. The menu lists the current process-client controls, not retired commands.
+
 ## Persistence, migration and lifecycle
 
 Each voyage holds its exclusive session fence through idle time and cleanup.

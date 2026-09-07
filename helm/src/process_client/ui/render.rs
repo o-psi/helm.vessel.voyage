@@ -101,6 +101,7 @@ pub fn draw(frame: &mut Frame<'_>, app: &App) {
     let rows = Layout::vertical([
         Constraint::Length(3),
         Constraint::Min(4),
+        Constraint::Length(app.completion_height()),
         Constraint::Length(if overlay { 1 } else { 6 }),
         Constraint::Length(if status.is_empty() { 1 } else { 3 }),
     ])
@@ -166,18 +167,19 @@ pub fn draw(frame: &mut Frame<'_>, app: &App) {
     } else {
         conversation(frame, app, content[0]);
     }
+    app.draw_completion(frame, rows[2]);
     if overlay {
         frame.render_widget(
-            Paragraph::new(if rows[2].width >= 40 {
+            Paragraph::new(if rows[3].width >= 40 {
                 "Esc  Back to conversation · Draft saved"
             } else {
                 "Esc Back · Draft saved"
             })
             .style(muted()),
-            rows[2],
+            rows[3],
         );
     } else {
-        composer(frame, app, rows[2]);
+        composer(frame, app, rows[3]);
     }
     let shortcuts = if main.width >= 80 {
         "F1 Help   F2 Requests   F3 Console   F8 Explore   Tab Voyages   Ctrl+C Leave"
@@ -190,10 +192,10 @@ pub fn draw(frame: &mut Frame<'_>, app: &App) {
         Paragraph::new({
             let mut text = Text::from(Line::styled(shortcuts, muted()));
             text.lines
-                .extend(presentation::wrap(Text::raw(status), rows[3].width).lines);
+                .extend(presentation::wrap(Text::raw(status), rows[4].width).lines);
             text
         }),
-        rows[3],
+        rows[4],
     );
     super::interactions::draw(
         frame,
@@ -282,7 +284,7 @@ fn sidebar(frame: &mut Frame<'_>, app: &App, area: Rect) {
     );
     frame.render_widget(
         Paragraph::new("Tab  Switch voyage\nF8   Explore").style(muted()),
-        rows[2],
+        rows[3],
     );
 }
 
@@ -326,7 +328,7 @@ fn composer(frame: &mut Frame<'_>, app: &App, area: Rect) {
     let hint = if pending {
         "Not confirmed yet · F4 Check status"
     } else if area.width >= 60 {
-        "Enter Send · Alt+Enter New line"
+        "/ Commands · Enter Send · Alt+Enter New line"
     } else {
         "Enter Send"
     };

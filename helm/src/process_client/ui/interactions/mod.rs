@@ -20,7 +20,7 @@ pub(super) struct Review {
     // Only the last rendered identity can receive a response.
     displayed: Option<Identity>,
     selected: Option<Identity>,
-    focused: bool,
+    pub(super) focused: bool,
     scroll: u16,
     answers: BTreeMap<Identity, AnswerDraft>,
 }

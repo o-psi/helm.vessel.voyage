@@ -10,6 +10,12 @@ use tokio::sync::{Semaphore, mpsc};
 use voyage_protocol::process::{ProcessInfo, RuntimeCommand, VesselCommand};
 
 pub enum Update {
+    Completion {
+        target: Target,
+        incarnation: uuid::Uuid,
+        section: &'static str,
+        value: Option<serde_json::Value>,
+    },
     Terminals {
         target: Target,
         incarnation: uuid::Uuid,

@@ -53,6 +53,9 @@ impl App {
                 }
                 return Ok(());
             }
+            if self.completion_input(key)? {
+                return Ok(());
+            }
             if matches!(key.code, KeyCode::Tab | KeyCode::BackTab) {
                 let keys = self.ordered_targets();
                 if !keys.is_empty() {
