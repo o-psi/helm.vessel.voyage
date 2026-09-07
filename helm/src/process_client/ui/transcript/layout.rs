@@ -49,8 +49,8 @@ pub(super) fn note(output: &mut Vec<Row>, key: Key, text: impl Into<String>, wid
     );
 }
 // Keep entry boundaries readable without leading or duplicate blank rows.
-// The upcoming heading's key leaves body-text reading anchors unchanged.
-fn entry_gap(output: &mut Vec<Row>, key: Key) {
+// Blank rows add no text offset, preserving content reading anchors.
+pub(super) fn entry_gap(output: &mut Vec<Row>, key: Key) {
     if output
         .last()
         .is_some_and(|row| !row.line.to_string().trim().is_empty())

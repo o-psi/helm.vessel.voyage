@@ -48,9 +48,10 @@ that do not expose timestamps, and voyages without snapshots, sort last with a
 stable identity tie-break. Renaming, polling, or system compaction markers do not advance activity.
 
 The conversation log keeps one blank row before saved message headings, pending
-delivery and live response blocks when preceding content is not already blank.
-This separates chats from activity and turn receipts without extra leading space
-or changes to saved message text.
+delivery, live response blocks, tool activity groups and individual visible tool
+calls when preceding content is not already blank. Expanded groups use the same
+spacing; wrapped lines within a call stay together. This separates chats and
+activity without extra leading space or changes to saved message text.
 
 Muted horizontal rules separate sidebar voyages in both current and archived lists,
 using the existing padding row without increasing entry height.

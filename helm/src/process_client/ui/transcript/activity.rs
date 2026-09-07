@@ -141,6 +141,8 @@ pub(super) fn flush(
     let accordion = entries.len() > 3;
     let expanded = state.expanded.get(&id).copied().unwrap_or(state.details);
     if accordion {
+        // Keep the gap outside the clickable accordion heading.
+        super::layout::entry_gap(output, Key::Activity(id));
         let outcome = if failures > 0 {
             format!(" · {failures} failed")
         } else {
@@ -190,6 +192,7 @@ pub(super) fn flush(
                     usize::from(width).saturating_mul(2).saturating_sub(24),
                 )),
             ]));
+            super::layout::entry_gap(output, Key::Activity(id));
             super::layout::rows(
                 output,
                 Key::Activity(id),
