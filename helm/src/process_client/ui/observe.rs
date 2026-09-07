@@ -89,7 +89,7 @@ pub fn spawn(clients: &[Client], sender: mpsc::Sender<Update>) -> Vec<tokio::tas
                             }
                             let mut jobs = tokio::task::JoinSet::new();
                             for process in processes.into_iter().take(256) {
-                                if process.archive.is_some() {
+                                if process.archive.is_some() || process.deletion.is_some() {
                                     continue;
                                 }
                                 let Ok(permit) = limit.clone().acquire_owned().await else {

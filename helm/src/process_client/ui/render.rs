@@ -44,6 +44,8 @@ fn state(view: &super::state::View) -> &'static str {
 }
 
 pub fn draw(frame: &mut Frame<'_>, app: &App) {
+    app.sidebar.hits.borrow_mut().clear();
+    app.sidebar.visible.set(None);
     let area = frame.area();
     let view = app.selected.and_then(|key| app.views.get(&key));
     if area.width < 40 || area.height < 18 {
@@ -192,11 +194,11 @@ pub fn draw(frame: &mut Frame<'_>, app: &App) {
         composer(frame, app, rows[3]);
     }
     let shortcuts = if main.width >= 80 {
-        "F1 Help   F2 Requests   F3 Console   F5 Archives   Tab Voyages   Ctrl+C Leave"
+        "F1 Help   F2 Requests   F3 Console   F5 Archives   F9 Actions   Ctrl+C Leave"
     } else if main.width >= 60 {
-        "F1 Help  F2 Requests  F3 Console  F5 Archives  Tab Voyages"
+        "F1 Help  F2 Requests  F3 Console  F5 Archives  F9 Actions"
     } else {
-        "F1 Help F2 Review F3 Console F8 More"
+        "F1 Help F2 Review F3 Console F9 Actions"
     };
     frame.render_widget(
         Paragraph::new({
@@ -216,6 +218,7 @@ pub fn draw(frame: &mut Frame<'_>, app: &App) {
             Rect::default()
         },
     );
+    app.draw_actions(frame);
 }
 
 fn sidebar(frame: &mut Frame<'_>, app: &App, area: Rect) {
@@ -249,7 +252,7 @@ fn sidebar(frame: &mut Frame<'_>, app: &App, area: Rect) {
                 if app.archives {
                     "Archived voyages"
                 } else {
-                    "Your voyages · /archive"
+                    "Your voyages"
                 },
                 muted(),
             ),
@@ -257,13 +260,18 @@ fn sidebar(frame: &mut Frame<'_>, app: &App, area: Rect) {
         rows[0],
     );
     let targets = app.ordered_targets();
+    let mut heights = Vec::new();
+    let list_area = Rect {
+        width: rows[1].width.saturating_sub(3),
+        ..rows[1]
+    };
     let entries = targets
         .iter()
         .map(|target| {
             let view = &app.views[target];
             let mut title = presentation::wrap(
                 Text::raw(safe(&view.title())),
-                rows[1].width.saturating_sub(2),
+                list_area.width.saturating_sub(2),
             )
             .lines;
             if title.len() > 2 {
@@ -272,7 +280,7 @@ fn sidebar(frame: &mut Frame<'_>, app: &App, area: Rect) {
                     let value = last.to_string();
                     let mut value = value
                         .chars()
-                        .take(rows[1].width.saturating_sub(5) as usize)
+                        .take(list_area.width.saturating_sub(5) as usize)
                         .collect::<String>();
                     value.push_str("...");
                     *last = Line::from(value);
@@ -288,19 +296,48 @@ fn sidebar(frame: &mut Frame<'_>, app: &App, area: Rect) {
             )];
             lines.extend(title);
             lines.push(Line::default());
+            heights.push(lines.len() as u16);
             ListItem::new(lines)
         })
         .collect::<Vec<_>>();
     let index = targets.iter().position(|t| Some(*t) == app.selected);
+    let mut list_state = ListState::default().with_selected(index);
     frame.render_stateful_widget(
         List::new(entries)
             .highlight_symbol("> ")
             .highlight_style(accent().add_modifier(Modifier::BOLD)),
-        rows[1],
-        &mut ListState::default().with_selected(index),
+        list_area,
+        &mut list_state,
     );
+    let mut y = rows[1].y;
+    for (index, target) in targets.iter().enumerate().skip(list_state.offset()) {
+        if y >= rows[1].bottom() {
+            break;
+        }
+        let height = heights[index].min(rows[1].bottom() - y);
+        let button = Rect::new(list_area.right(), y, 3, height.min(2));
+        frame.render_widget(
+            Paragraph::new(" ⋮ ").style(
+                if app.selected == Some(*target)
+                    && app.sidebar.focus == super::sidebar::Focus::Button
+                {
+                    Style::default().fg(Color::Black).bg(Color::Cyan)
+                } else {
+                    accent()
+                },
+            ),
+            button,
+        );
+        app.sidebar.hits.borrow_mut().push(super::sidebar::Hit {
+            area: Rect::new(rows[1].x, y, rows[1].width, height),
+            button,
+            target: *target,
+            incarnation: app.views[target].process.incarnation,
+        });
+        y = y.saturating_add(height);
+    }
     frame.render_widget(
-        Paragraph::new("Tab Switch · F5 Archives\nF8 Explore").style(muted()),
+        Paragraph::new("↑↓ Voyages · → Actions\nF5 Archives · F9 Actions").style(muted()),
         rows[2],
     );
 }
@@ -359,6 +396,8 @@ fn composer(frame: &mut Frame<'_>, app: &App, area: Rect) {
         Rect::new(inner.x, inner.bottom().saturating_sub(1), inner.width, 1),
     );
     if let Some((row, column)) = cursor
+        && app.sidebar.menu.is_none()
+        && app.sidebar.focus == super::sidebar::Focus::Composer
         && body.height > 0
     {
         frame.set_cursor_position((

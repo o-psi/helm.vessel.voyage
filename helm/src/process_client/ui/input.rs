@@ -2,8 +2,15 @@ use super::*;
 
 impl App {
     pub(super) fn input(&mut self, event: Event) -> Result<()> {
+        if matches!(event, Event::Resize(..)) {
+            self.sidebar.hits.borrow_mut().clear();
+            self.sidebar.visible.set(None);
+        }
         if let Event::Key(key) = &event {
             if key.kind == crossterm::event::KeyEventKind::Release {
+                return Ok(());
+            }
+            if self.sidebar.menu.is_some() && self.sidebar_input(&event)? {
                 return Ok(());
             }
             if key.modifiers.contains(KeyModifiers::CONTROL) {
@@ -15,6 +22,9 @@ impl App {
                     KeyCode::Char('n') => return self.create(None),
                     _ => {}
                 }
+            }
+            if self.sidebar_input(&event)? {
+                return Ok(());
             }
             if self.explore_input(key)? {
                 return Ok(());
@@ -73,6 +83,7 @@ impl App {
                         (index + 1) % keys.len()
                     };
                     self.selected = Some(keys[next]);
+                    self.sidebar.focus = sidebar::Focus::Voyages;
                     let view = self.views.get_mut(&keys[next]).expect("known view");
                     view.unread = false;
                     view.terminals.clear_displayed();
@@ -108,6 +119,9 @@ impl App {
             {
                 return self.send();
             }
+        }
+        if !matches!(event, Event::Key(_)) && self.sidebar_input(&event)? {
+            return Ok(());
         }
         if self.help || self.explore.is_some() {
             return Ok(());

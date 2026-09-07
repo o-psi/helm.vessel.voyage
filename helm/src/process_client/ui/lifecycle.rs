@@ -8,7 +8,12 @@ use uuid::Uuid;
 use voyage_protocol::process::VesselCommand;
 
 impl App {
-    pub(super) fn branch(&mut self, target: Target, name: Option<String>) -> Result<()> {
+    pub(super) fn branch(
+        &mut self,
+        target: Target,
+        name: Option<String>,
+        preserve_draft: bool,
+    ) -> Result<()> {
         let view = self
             .views
             .get_mut(&target)
@@ -30,7 +35,7 @@ impl App {
             command_id,
             incarnation,
             draft: view.draft.text.clone(),
-            preserve_draft: false,
+            preserve_draft,
         });
         if let Err(error) = drafts::save(&self.clients[target.route], view) {
             view.pending = None;

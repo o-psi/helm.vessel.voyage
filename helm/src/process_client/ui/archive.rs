@@ -20,7 +20,7 @@ impl App {
         .into();
     }
 
-    pub(super) fn restore_archive(&mut self, target: Target) -> Result<()> {
+    pub(super) fn restore_archive(&mut self, target: Target, preserve_draft: bool) -> Result<()> {
         let view = self
             .views
             .get_mut(&target)
@@ -39,7 +39,7 @@ impl App {
             command_id,
             incarnation,
             draft: view.draft.text.clone(),
-            preserve_draft: false,
+            preserve_draft,
         });
         if let Err(error) = drafts::save(&self.clients[target.route], view) {
             view.pending = None;

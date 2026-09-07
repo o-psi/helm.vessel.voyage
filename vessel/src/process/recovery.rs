@@ -17,6 +17,8 @@ struct Stopped {
     cleanup_observed: bool,
     #[serde(default)]
     archive: Option<ArchivedVoyage>,
+    #[serde(default)]
+    deletion: Option<serde_json::Value>,
 }
 
 pub fn clean_stop(directory: &Path, registration: &ProcessRegistration) -> bool {
@@ -30,6 +32,15 @@ pub(super) fn archived(
     stopped(directory, registration)
         .ok()
         .and_then(|s| s.archive)
+}
+
+pub(super) fn deletion(
+    directory: &Path,
+    registration: &ProcessRegistration,
+) -> Option<serde_json::Value> {
+    stopped(directory, registration)
+        .ok()
+        .and_then(|s| s.deletion)
 }
 
 fn stopped(directory: &Path, registration: &ProcessRegistration) -> Result<Stopped> {

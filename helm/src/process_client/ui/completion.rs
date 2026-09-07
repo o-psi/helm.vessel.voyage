@@ -124,7 +124,9 @@ struct Menu {
 impl App {
     fn completion_text(&self) -> Option<&str> {
         let view = self.views.get(&self.selected?)?;
-        if self.help
+        if self.sidebar.menu.is_some()
+            || self.sidebar.focus != super::sidebar::Focus::Composer
+            || self.help
             || self.explore.is_some()
             || view.panel.is_some()
             || view.terminals.open

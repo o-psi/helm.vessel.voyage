@@ -15,6 +15,7 @@ mod observe;
 mod panels;
 mod presentation;
 mod render;
+mod sidebar;
 mod state;
 mod terminals;
 
@@ -49,6 +50,7 @@ pub(super) struct App {
     explore: Option<usize>,
     interactions: std::cell::RefCell<interactions::Review>,
     completion: completion::Completion,
+    sidebar: sidebar::Sidebar,
     terminal_request: Option<(Target, uuid::Uuid, uuid::Uuid, uuid::Uuid)>,
 }
 
@@ -120,6 +122,7 @@ pub async fn run_with_notice(
         interactions: Default::default(),
         terminal_request: None,
         completion: Default::default(),
+        sidebar: Default::default(),
     };
     let mut events = EventStream::new();
     let mut repaint = tokio::time::interval(Duration::from_millis(100));

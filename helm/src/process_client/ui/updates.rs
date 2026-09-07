@@ -77,25 +77,31 @@ impl App {
                         }
                         self.views.insert(target, view);
                     }
-                    if let Some(archive) = self.views[&target].process.archive.clone() {
+                    if let Some(receipt) = self.views[&target]
+                        .process
+                        .archive
+                        .as_ref()
+                        .map(|a| a.receipt.clone())
+                        .or_else(|| self.views[&target].process.deletion.clone())
+                    {
                         let view = self.views.get_mut(&target).expect("catalogued view");
                         if view.pending.as_ref().is_some_and(|p| {
                             p.incarnation == view.process.incarnation
-                                && p.draft.trim() == "/archive"
-                                && archive.receipt["command_id"].as_str()
+                                && receipt["command_id"].as_str()
                                     == Some(p.command_id.to_string().as_str())
                         }) {
                             if view
                                 .pending
                                 .as_ref()
-                                .is_some_and(|p| p.draft == view.draft.text)
+                                .is_some_and(|p| !p.preserve_draft && p.draft == view.draft.text)
                             {
                                 view.draft.take();
                             }
                             view.pending = None;
                             if let Err(error) = drafts::save(&self.clients[route], view) {
-                                self.status =
-                                    format!("Archive confirmed; draft persistence failed: {error}");
+                                self.status = format!(
+                                    "Lifecycle action confirmed; draft persistence failed: {error}"
+                                );
                             }
                         }
                     }
@@ -257,9 +263,9 @@ impl App {
             }
         }
         if self.selected.is_some_and(|target| {
-            self.views
-                .get(&target)
-                .is_some_and(|v| v.archived() != self.archives && v.pending.is_none())
+            self.views.get(&target).is_some_and(|v| {
+                (v.deleted() || v.archived() != self.archives) && v.pending.is_none()
+            })
         }) {
             self.selected = self.ordered_targets().first().copied();
         }

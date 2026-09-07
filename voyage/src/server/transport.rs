@@ -114,7 +114,9 @@ pub(super) async fn listen(directory: PathBuf, state: Arc<State>) -> Result<()> 
             .mode(0o600)
             .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
             .open(&candidate)?;
-        let archive = if snapshot["lifecycle"]["archived"] == true {
+        let archive = if snapshot["lifecycle"]["archived"] == true
+            && snapshot["lifecycle"]["deleted"] != true
+        {
             Some(voyage_protocol::process::ArchivedVoyage {
                 name: snapshot["name"].as_str().map(str::to_owned),
                 revision: snapshot["revision"]
@@ -130,9 +132,14 @@ pub(super) async fn listen(directory: PathBuf, state: Arc<State>) -> Result<()> 
         } else {
             None
         };
+        let deletion = if snapshot["lifecycle"]["deleted"] == true {
+            state.archive_receipt.lock().await.clone()
+        } else {
+            None
+        };
         serde_json::to_writer(
             &mut file,
-            &serde_json::json!({"session_id":state.registration.session_id,"incarnation":state.registration.incarnation,"cleanup_observed":true,"archive":archive}),
+            &serde_json::json!({"session_id":state.registration.session_id,"incarnation":state.registration.incarnation,"cleanup_observed":true,"archive":archive,"deletion":deletion}),
         )?;
         file.flush()?;
         file.sync_all()?;

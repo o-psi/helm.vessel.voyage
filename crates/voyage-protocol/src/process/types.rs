@@ -257,6 +257,8 @@ pub struct ArchivedVoyage {
 pub struct ProcessInfo {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub archive: Option<ArchivedVoyage>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deletion: Option<Value>,
     pub session_id: Uuid,
     pub incarnation: Uuid,
     pub workspace: PathBuf,
@@ -266,6 +268,7 @@ impl From<&ProcessRegistration> for ProcessInfo {
     fn from(value: &ProcessRegistration) -> Self {
         Self {
             archive: None,
+            deletion: None,
             session_id: value.session_id,
             incarnation: value.incarnation,
             workspace: value.workspace.clone(),

@@ -75,6 +75,7 @@ pub async fn inspect(directory: &Path, registration: &ProcessRegistration) -> Pr
     };
     if info.state == ProcessState::Stopped {
         info.archive = super::recovery::archived(directory, registration);
+        info.deletion = super::recovery::deletion(directory, registration);
     }
     info
 }

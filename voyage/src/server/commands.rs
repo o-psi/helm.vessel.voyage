@@ -300,9 +300,11 @@ pub(super) async fn dispatch_admitted(
             if deleting {
                 state.workflows.clear().await;
             }
-            if archiving
+            if (archiving || deleting)
                 && result["status"] != "rejected"
-                && state.owner.process_snapshot().await?["lifecycle"]["archived"] == true
+                && state.owner.process_snapshot().await?["lifecycle"]
+                    [if deleting { "deleted" } else { "archived" }]
+                    == true
             {
                 *state.archive_receipt.lock().await = Some(result.clone());
                 // Admission remains locked: a racing restore/submit cannot start work.

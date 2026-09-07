@@ -93,13 +93,22 @@ impl App {
             .draft
             .text
             .clone();
+        self.command_for(target, draft, false)
+    }
+
+    pub(super) fn command_for(
+        &mut self,
+        target: Target,
+        draft: String,
+        preserve_draft: bool,
+    ) -> Result<()> {
         let command_text = draft.trim();
         if command_text == "/archived" || command_text == "/voyages" {
             self.show_archives(command_text == "/archived");
             return Ok(());
         }
         if command_text == "/restore" && self.views[&target].process.archive.is_some() {
-            return self.restore_archive(target);
+            return self.restore_archive(target, preserve_draft);
         }
         if command_text == "/quit" {
             self.quit = true;
@@ -141,6 +150,7 @@ impl App {
             return self.branch(
                 target,
                 command_text.strip_prefix("/branch ").map(str::to_owned),
+                preserve_draft,
             );
         }
         if command_text == "/terminals" || command_text == "/terminal" {
@@ -306,7 +316,7 @@ impl App {
             command_id,
             incarnation: view.process.incarnation,
             draft,
-            preserve_draft: false,
+            preserve_draft,
         });
         if let Err(error) = drafts::save(&self.clients[target.route], view) {
             view.pending = None;

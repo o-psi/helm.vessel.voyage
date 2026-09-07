@@ -225,10 +225,14 @@ pub(super) async fn execute(
         process
     };
     if let RuntimeCommand::Receipt { command_id } = &command
-        && let Some(archive) = &process.archive
-        && archive.receipt["command_id"].as_str() == Some(command_id.to_string().as_str())
+        && let Some(receipt) = process
+            .archive
+            .as_ref()
+            .map(|a| &a.receipt)
+            .or(process.deletion.as_ref())
+        && receipt["command_id"].as_str() == Some(command_id.to_string().as_str())
     {
-        return Ok(archive.receipt.clone());
+        return Ok(receipt.clone());
     }
     client.forward(session, process.incarnation, command).await
 }

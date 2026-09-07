@@ -43,6 +43,19 @@ without timestamps use the creation fallback until new messages arrive. Owners
 that do not expose timestamps, and voyages without snapshots, sort last with a
 stable identity tie-break. Renaming, polling, or system compaction markers do not advance activity.
 
+Each sidebar voyage has a clickable **⋮** Actions button. With an empty composer
+or sidebar focus, Up/Down navigate voyages; Right focuses the button and Enter
+opens its submenu. Left/Escape back out, typing focuses the composer, and F9 opens
+Actions even when the narrow layout hides the sidebar. The menu offers Rename,
+Archive/Restore, Branch, Cancel for an observed active run, Details, and separated
+Delete; Export is intentionally absent. Disabled actions explain their state
+requirements. Rename/branch input and typed DELETE confirmation are separate from
+the saved composer draft. Menus retain their target/incarnation and deletion
+confirmation checks that the observed history revision has not changed. Archived
+voyages must be restored before rename, branch or delete. Successful deletion
+shuts down the runtime, retains its receipt with cleanup evidence, and removes
+the tombstone from Helm's voyage lists without reusing its identity.
+
 Typing `/` in the Helm composer opens a filtered command menu above the input.
 Up/Down select and Tab completes a command, then shows contextual arguments.
 Enter dispatches the typed command; Escape dismisses completion, restoring normal

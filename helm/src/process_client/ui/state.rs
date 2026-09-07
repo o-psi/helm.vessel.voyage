@@ -95,6 +95,13 @@ pub struct View {
 }
 
 impl View {
+    pub(super) fn deleted(&self) -> bool {
+        self.process.deletion.is_some()
+            || self
+                .snapshot
+                .as_ref()
+                .is_some_and(|s| s.lifecycle["deleted"] == true)
+    }
     pub(super) fn archived(&self) -> bool {
         self.process.archive.is_some()
             || self
@@ -165,7 +172,7 @@ impl super::App {
         let mut targets: Vec<_> = self
             .views
             .iter()
-            .filter(|(_, view)| view.archived() == self.archives)
+            .filter(|(_, view)| !view.deleted() && view.archived() == self.archives)
             .map(|(target, _)| *target)
             .collect();
         targets.sort_by_key(|target| {
