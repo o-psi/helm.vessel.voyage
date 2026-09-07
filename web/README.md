@@ -1,9 +1,11 @@
 # Helm website
 
-Laravel 13, Livewire 4 and free Flux UI 2 landing page for
-https://helm.vessel.voyage. Helm is the public-facing product; Vessel supervises
-independent Voyage runtimes. The interface selector uses actual Livewire requests.
-Web/mobile execution interfaces remain planned. This app does not connect to
+Laravel 13, Livewire 4 and free Flux UI 2 product landing page for
+https://helm.vessel.voyage. Foleybridge.Software presents Helm, Vessel, and Voyage
+as a product suite for running coding agents across machines the user controls.
+Product copy leads with customer outcomes while accurately distinguishing current
+Linux behavior from planned web, mobile, and cross-voyage collaboration. The
+interface selector uses actual Livewire requests. This app does not connect to
 Vessels, execute agents, enroll users or collect email addresses.
 
 ## Development
