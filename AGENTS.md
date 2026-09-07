@@ -88,3 +88,35 @@ Use normal Git in ordinary clones. In this workspace `.git` is reserved; use
 Never reset, clean, force-push, stage unrelated files or overwrite concurrent edits
 implicitly. Keep validation local rather than duplicating it in hosted CI.
 Preserve existing release artifacts and follow [docs/releasing.md](docs/releasing.md).
+
+## Rust build efficiency
+
+- During iteration, prefer `cargo check -p helm --locked` (substitute the affected
+  package, or repeat `-p` for multiple packages). Plain Cargo commands at the
+  workspace root select all members. Check affected consumers of shared crates and
+  both ends of protocol changes. Use `cargo build -p helm --locked` when a runnable
+  binary is needed; checks alone do not verify code generation or runtime behavior.
+- Reuse the checkout's existing `target/` and keep toolchain, features and flags
+  consistent to preserve cached work. Keep development incremental compilation
+  enabled. Coordinate builds; do not launch competing builds or create a fresh
+  per-task target directory merely to bypass a Cargo lock. Respect the quality
+  runner's checkout and output-directory requirements in [docs/quality.md](docs/quality.md).
+- Use development builds for iteration. Reserve optimized builds and the full
+  quality runner for changes requiring that evidence. Ordinary Cargo defaults to
+  the logical CPU count, but `scripts/check-quality` defaults to one compiler job;
+  use `./scripts/check-quality --jobs 8`, for example, when CPU and available memory
+  support it. Reduce concurrency if memory pressure or competing work warrants it.
+- Investigate slow builds with `cargo build -p helm --locked --timings` and its
+  `target/cargo-timings/cargo-timing.html` report. Measure representative rebuilds
+  before and after tuning. Verify the active linker before changing it; keep
+  optional linker/cache tools portable and scoped to machines that have them.
+  Reduced development debug information trades debugger detail for less generated
+  data. `sccache` can reuse eligible dependency compilations, but cannot cache
+  incrementally compiled crates; do not disable incremental compilation blindly.
+  Preserve release optimization settings unless changing them is in scope.
+- Do not run `cargo clean` routinely or delete caches based only on their size.
+  Cleaning forces recompilation; inspect disk pressure and identify obsolete
+  artifacts before any authorized cleanup. Preserve release artifacts and evidence.
+- Documentation-only changes need the documentation checks described above, not
+  Rust compilation. Run the checks required by the changed surface once; repeat
+  only after relevant edits, failures or new evidence warrants it.
