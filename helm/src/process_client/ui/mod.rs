@@ -63,6 +63,7 @@ impl Drop for Screen {
             io::stdout(),
             crossterm::event::DisableBracketedPaste,
             crossterm::event::DisableMouseCapture,
+            crossterm::event::DisableFocusChange,
             terminal::LeaveAlternateScreen,
             crossterm::cursor::Show
         );
@@ -101,7 +102,8 @@ pub async fn run_with_notice(
         io::stdout(),
         terminal::EnterAlternateScreen,
         crossterm::event::EnableBracketedPaste,
-        crossterm::event::EnableMouseCapture
+        crossterm::event::EnableMouseCapture,
+        crossterm::event::EnableFocusChange
     )?;
     let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
     let (sender, mut receiver) = mpsc::channel(64);
@@ -141,11 +143,12 @@ pub async fn run_with_notice(
                 update = receiver.recv() => if let Some(update) = update { app.update(update); },
             }
             if let Some((target,incarnation,run,terminal_id))=app.terminal_request.take() {
-                execute!(io::stdout(),crossterm::event::DisableMouseCapture)?;
+                app.sidebar.pointer = None;
+                execute!(io::stdout(),crossterm::event::DisableMouseCapture,crossterm::event::DisableFocusChange)?;
                 drop(events);
                 let result=super::terminal::attach_observed(&app.clients[target.route],target.session,incarnation,run,terminal_id).await;
                 terminal::enable_raw_mode()?;
-                execute!(io::stdout(),terminal::EnterAlternateScreen,crossterm::event::EnableBracketedPaste,crossterm::event::EnableMouseCapture)?;
+                execute!(io::stdout(),terminal::EnterAlternateScreen,crossterm::event::EnableBracketedPaste,crossterm::event::EnableMouseCapture,crossterm::event::EnableFocusChange)?;
                 let (width,height) = terminal::size()?;
                 terminal.resize(ratatui::layout::Rect::new(0,0,width,height))?;
                 events = EventStream::new();

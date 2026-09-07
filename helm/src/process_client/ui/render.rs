@@ -320,20 +320,34 @@ fn sidebar(frame: &mut Frame<'_>, app: &App, area: Rect) {
         }
         let height = heights[index].min(rows[1].bottom() - y);
         let button = Rect::new(list_area.right(), y, 3, height.min(2));
+        let area = Rect::new(rows[1].x, y, rows[1].width, height);
+        let over_button = app
+            .sidebar
+            .pointer
+            .is_some_and(|point| button.contains(point));
+        if !over_button {
+            frame
+                .buffer_mut()
+                .set_style(area, app.hover_style(area, false));
+        }
         frame.render_widget(
             Paragraph::new(" ⋮ ").style(
-                if app.selected == Some(*target)
+                (if app.selected == Some(*target)
                     && app.sidebar.focus == super::sidebar::Focus::Button
                 {
-                    Style::default().fg(Color::Black).bg(Color::Cyan)
+                    Style::default()
+                        .fg(Color::Black)
+                        .bg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD)
                 } else {
                     accent()
-                },
+                })
+                .patch(app.hover_style(button, false)),
             ),
             button,
         );
         app.sidebar.hits.borrow_mut().push(super::sidebar::Hit {
-            area: Rect::new(rows[1].x, y, rows[1].width, height),
+            area,
             button,
             target: *target,
             incarnation: app.views[target].process.incarnation,

@@ -68,6 +68,7 @@ pub(super) struct Hit {
 #[derive(Default)]
 pub(super) struct Sidebar {
     pub focus: Focus,
+    pub pointer: Option<ratatui::layout::Position>,
     pub hits: std::cell::RefCell<Vec<Hit>>,
     pub menu: Option<Menu>,
     // Cleared every frame and bound to the exact menu target and incarnation.
@@ -75,6 +76,34 @@ pub(super) struct Sidebar {
     menu_hits: std::cell::RefCell<Vec<(Rect, Target, Uuid, usize)>>,
 }
 impl App {
+    // Resolve against current geometry; hover never changes keyboard selection.
+    pub(super) fn hover_style(&self, area: Rect, modal: bool) -> ratatui::style::Style {
+        use ratatui::style::{Color, Modifier, Style};
+        let searching = self
+            .selected
+            .and_then(|t| self.views.get(&t))
+            .is_some_and(|v| {
+                v.transcript.borrow().search.is_some() && v.panel.is_none() && !v.terminals.open
+            });
+        if !self.help
+            && self.explore.is_none()
+            && !self.interactions.borrow().focused
+            && self.sidebar.menu.is_some() == modal
+            && (modal || !searching)
+            && self
+                .sidebar
+                .pointer
+                .is_some_and(|point| area.contains(point))
+        {
+            Style::default()
+                .fg(Color::White)
+                .bg(Color::DarkGray)
+                .add_modifier(Modifier::UNDERLINED)
+        } else {
+            Style::default()
+        }
+    }
+
     fn sidebar_select(&mut self, target: Target) {
         self.selected = Some(target);
         self.sidebar.focus = Focus::Voyages;

@@ -2,6 +2,16 @@ use super::*;
 
 impl App {
     pub(super) fn input(&mut self, event: Event) -> Result<()> {
+        match &event {
+            Event::Mouse(mouse) => self.sidebar.pointer = Some((mouse.column, mouse.row).into()),
+            Event::FocusLost => self.sidebar.pointer = None,
+            _ => {}
+        }
+        // Motion remains passive even while a modal owns input.
+        if matches!(&event, Event::Mouse(mouse) if mouse.kind == crossterm::event::MouseEventKind::Moved)
+        {
+            return Ok(());
+        }
         self.sync_interactions();
         let global = matches!(&event, Event::Key(key) if key.code == KeyCode::F(4) || (key.modifiers.contains(KeyModifiers::CONTROL) && matches!(key.code, KeyCode::Char('c' | 'q'))));
         if self.interactions.borrow().focused && !global {

@@ -189,11 +189,19 @@ impl App {
                         if selected { "> " } else { "  " },
                         action.label()
                     ))
-                    .style(Style::default().fg(if selected {
-                        Color::Cyan
-                    } else {
-                        Color::Reset
-                    })),
+                    .style(
+                        Style::default()
+                            .fg(if selected { Color::Cyan } else { Color::Reset })
+                            .patch(
+                                if self.sidebar.visible.get()
+                                    == Some((menu.target, menu.incarnation, menu.editor))
+                                {
+                                    self.hover_style(row, true)
+                                } else {
+                                    Style::default()
+                                },
+                            ),
+                    ),
                     row,
                 );
                 self.sidebar.menu_hits.borrow_mut().push((

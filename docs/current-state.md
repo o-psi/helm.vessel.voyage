@@ -43,7 +43,13 @@ without timestamps use the creation fallback until new messages arrive. Owners
 that do not expose timestamps, and voyages without snapshots, sort last with a
 stable identity tie-break. Renaming, polling, or system compaction markers do not advance activity.
 
-Each sidebar voyage has a clickable **⋮** Actions button. With an empty composer
+Each sidebar voyage has a clickable **⋮** Actions button. Mouse hover highlights
+voyage rows, their separate Actions buttons, enabled action-menu entries and
+access-mode choices with a contrasting background and underline, without changing
+keyboard focus or selection. Hover uses the current rendered rectangles and is
+suppressed behind modal input; disabled actions retain their explanatory styling.
+Mouse-motion reporting requires a supporting terminal. Pointer state clears on
+reported terminal focus loss and private-terminal handoff. With an empty composer
 or sidebar focus, Up/Down navigate voyages; Right focuses the button and Enter
 opens its submenu. Left/Escape back out, typing focuses the composer, and F9 opens
 Actions even when the narrow layout hides the sidebar. The menu offers Rename,

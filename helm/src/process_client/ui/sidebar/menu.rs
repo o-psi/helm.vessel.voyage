@@ -121,7 +121,19 @@ impl App {
                 } else {
                     Color::Reset
                 };
-                frame.render_widget(Paragraph::new(line).style(Style::default().fg(color)), row);
+                let style = if reason.is_none() {
+                    Style::default()
+                        .fg(color)
+                        .patch(self.hover_style(row, true))
+                } else {
+                    Style::default().fg(color)
+                };
+                let style = if *action == Action::Delete && reason.is_none() {
+                    style.fg(Color::Red)
+                } else {
+                    style
+                };
+                frame.render_widget(Paragraph::new(line).style(style), row);
                 self.sidebar.menu_hits.borrow_mut().push((
                     row,
                     menu.target,
