@@ -67,6 +67,8 @@ pub struct Pending {
     pub command_id: Uuid,
     pub incarnation: Uuid,
     pub draft: String,
+    #[serde(default)]
+    pub preserve_draft: bool,
 }
 
 pub struct View {

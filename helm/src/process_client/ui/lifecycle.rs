@@ -30,6 +30,7 @@ impl App {
             command_id,
             incarnation,
             draft: view.draft.text.clone(),
+            preserve_draft: false,
         });
         if let Err(error) = drafts::save(&self.clients[target.route], view) {
             view.pending = None;

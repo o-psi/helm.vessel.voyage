@@ -152,10 +152,14 @@ impl App {
                                     value["original_status"].as_str(),
                                     Some("rejected" | "not_admitted")
                                 ));
-                        if !rejected && !pending.draft.trim_start().starts_with('/') {
+                        if !rejected
+                            && !pending.preserve_draft
+                            && !pending.draft.trim_start().starts_with('/')
+                        {
                             view.history.record(&pending.draft);
                         }
-                        if !rejected && view.draft.text == pending.draft {
+                        if !rejected && !pending.preserve_draft && view.draft.text == pending.draft
+                        {
                             view.draft.take();
                         }
                         view.pending = None;

@@ -33,6 +33,9 @@ impl App {
                 }
                 return Ok(());
             }
+            if self.approval_input(&event)? {
+                return Ok(());
+            }
             if key.code == KeyCode::Enter
                 && !key
                     .modifiers
@@ -40,6 +43,9 @@ impl App {
             {
                 return self.send();
             }
+        }
+        if !matches!(event, Event::Key(_)) && self.approval_input(&event)? {
+            return Ok(());
         }
         let Some(target) = self.selected else {
             return Ok(());

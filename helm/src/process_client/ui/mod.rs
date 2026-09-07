@@ -1,5 +1,6 @@
 //! Multiplexed presentation; dropping this interface only drops observations.
 mod actions;
+mod approval;
 mod controls;
 mod export;
 mod input;
@@ -35,6 +36,7 @@ pub(super) struct App {
     sender: mpsc::Sender<Update>,
     status: String,
     quit: bool,
+    approval: std::cell::RefCell<approval::Review>,
     terminal_request: Option<(Target, uuid::Uuid, uuid::Uuid)>,
 }
 
@@ -79,6 +81,7 @@ pub async fn run_selected(clients: Vec<Client>, session: Option<uuid::Uuid>) -> 
             "Connected views · Ctrl+N creates · Tab switches · Ctrl+C detaches without cancellation"
                 .into(),
         quit: false,
+        approval: Default::default(),
         terminal_request: None,
     };
     let mut events = EventStream::new();

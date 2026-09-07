@@ -255,6 +255,7 @@ impl App {
             command_id,
             incarnation: view.process.incarnation,
             draft,
+            preserve_draft: false,
         });
         if let Err(error) = drafts::save(&self.clients[target.route], view) {
             view.pending = None;
@@ -264,7 +265,7 @@ impl App {
         Ok(())
     }
 
-    fn dispatch(&mut self, target: Target, command_id: Uuid, command: RuntimeCommand) {
+    pub(super) fn dispatch(&mut self, target: Target, command_id: Uuid, command: RuntimeCommand) {
         let incarnation = self.views[&target].process.incarnation;
         let client = self.clients[target.route].clone();
         let sender = self.sender.clone();

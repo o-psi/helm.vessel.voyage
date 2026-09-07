@@ -42,8 +42,15 @@ to detach. `/new /absolute/workspace`, `/use SESSION_UUID`, `/rename NAME`,
 voyage. Ordinary text submits a turn when idle and steers the exact observed run
 when active. A refused or uncertain command retains its draft; inspect `/receipt`
 before sending again. Switching views does not cancel or redirect outstanding work.
-Pending decisions show their request in the selected view and a `!` in the
-background voyage list. `/approve DECISION_UUID` and `/deny DECISION_UUID` answer
+Pending approvals open a right-hand review panel showing the host, exact request,
+action, target, reason and remaining time. Narrow terminals stack it below the
+conversation. Ctrl+A approves once; Ctrl+D denies. F2 focuses the panel for
+PageUp/PageDown scrolling; Esc returns scrolling to the conversation. The composer
+remains available and approval responses preserve its draft. Enter and pasted text
+do not consent. Tab switches voyages; background decisions show a `!` in the list.
+Uncertain response delivery retains its command identity; use `/receipt` to resolve
+it. Model questions remain separate conversation requests.
+`/approve DECISION_UUID` and `/deny DECISION_UUID` answer
 an exact approval; `/answer DECISION_UUID text` answers a model question. There is
 no approve-all operation. Responses are tied to the observed decision, run,
 incarnation and revision, and an expired request cannot authorize an action.

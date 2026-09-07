@@ -73,6 +73,8 @@ output observe the same owner. Reconnect never resubmits a turn or terminal inpu
 Approvals and questions are durable requests bound to session, incarnation, run,
 principal, revision and deadline. Responses require current authority. Waiting is
 bounded by policy and at most 120 seconds; silence never authorizes an effect.
+The connected TUI opens an approval review panel with explicit approve/deny
+shortcuts, scrollable request details and preserved composer drafts.
 Steering is durable and delivered at a supported safe model boundary. Operator
 runs do not accept steering. Native providers remain distinct from the optional
 compatibility provider and its narrower capabilities.

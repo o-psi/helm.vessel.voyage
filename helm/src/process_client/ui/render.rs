@@ -76,11 +76,34 @@ pub fn draw(frame: &mut Frame<'_>, app: &App) {
         );
     }
     let view = app.selected.and_then(|key| app.views.get(&key));
+    let has_approval = view
+        .and_then(|view| view.snapshot.as_ref())
+        .is_some_and(|snapshot| {
+            snapshot
+                .decisions
+                .iter()
+                .any(|decision| decision.request["kind"] == "approval")
+        });
+    let content = if has_approval {
+        Layout::default()
+            .direction(if columns[1].width >= 90 {
+                Direction::Horizontal
+            } else {
+                Direction::Vertical
+            })
+            .constraints([Constraint::Percentage(55), Constraint::Percentage(45)])
+            .split(columns[1])
+    } else {
+        Layout::default()
+            .constraints([Constraint::Percentage(100), Constraint::Length(0)])
+            .split(columns[1])
+    };
+    let conversation = content[0];
     let mut text = Text::default();
     let mut title = "No voyage selected · Ctrl+N creates one".to_owned();
     if let Some(view) = view {
         title = format!("{} · {}", safe(&view.title()), view.process.session_id);
-        let width = columns[1].width;
+        let width = conversation.width;
         let mut cache = view.rendered.borrow_mut();
         if let Some((_, cached)) = cache
             .as_ref()
@@ -135,6 +158,9 @@ pub fn draw(frame: &mut Frame<'_>, app: &App) {
                     }
                 }
                 for decision in &snapshot.decisions {
+                    if decision.request["kind"] == "approval" {
+                        continue;
+                    }
                     text.lines.push(Line::styled(
                         format!(
                             "Decision {} (deadline {}):",
@@ -144,8 +170,7 @@ pub fn draw(frame: &mut Frame<'_>, app: &App) {
                     ));
                     text.lines
                         .push(Line::from(safe(&decision.request.to_string())));
-                    text.lines
-                        .push(Line::from("/approve UUID · /deny UUID · /answer UUID text"));
+                    text.lines.push(Line::from("/answer UUID text"));
                 }
                 if let Some(run) = &snapshot.run {
                     text.lines.push(Line::from(format!(
@@ -197,14 +222,14 @@ pub fn draw(frame: &mut Frame<'_>, app: &App) {
     let automatic = text
         .lines
         .len()
-        .saturating_sub(rows[0].height.saturating_sub(2) as usize)
+        .saturating_sub(conversation.height.saturating_sub(2) as usize)
         .min(u16::MAX as usize) as u16;
     frame.render_widget(
         Paragraph::new(text)
             .wrap(Wrap { trim: false })
             .scroll((automatic.saturating_sub(scroll), 0))
             .block(Block::default().borders(Borders::ALL).title(title)),
-        columns[1],
+        conversation,
     );
     let draft = view.map_or("", |v| v.draft.text.as_str());
     let pending = view.is_some_and(|v| v.pending.is_some());
@@ -214,7 +239,7 @@ pub fn draw(frame: &mut Frame<'_>, app: &App) {
             .block(Block::default().borders(Borders::ALL).title(if pending {
                 "Delivery pending or unknown · /receipt resolves"
             } else {
-                "Enter sends · Alt+Enter newline · /help"
+                "Enter sends · Alt+Enter newline · F2 approval · /help"
             })),
         rows[1],
     );
@@ -238,4 +263,5 @@ pub fn draw(frame: &mut Frame<'_>, app: &App) {
                 .min(rows[1].bottom().saturating_sub(2)),
         ));
     }
+    super::approval::draw(frame, app, content[1]);
 }
