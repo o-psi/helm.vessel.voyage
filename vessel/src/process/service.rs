@@ -12,16 +12,11 @@ use voyage_protocol::process::*;
 pub(super) struct Supervisor {
     pub(super) directory: PathBuf,
     pub(super) binary: PathBuf,
-    pub(super) capacity: usize,
     pub(super) assignment_locks: Mutex<HashMap<Uuid, Arc<Mutex<()>>>>,
     pub(super) registrations: Mutex<HashMap<Uuid, ProcessRegistration>>,
 }
 
-pub async fn serve(directory: PathBuf, binary: PathBuf, capacity: usize) -> Result<()> {
-    ensure!(
-        (1..=256).contains(&capacity),
-        "capacity must be between 1 and 256"
-    );
+pub async fn serve(directory: PathBuf, binary: PathBuf) -> Result<()> {
     registry::private_directory(&directory)?;
     let _lock = registry::lock(&directory)?;
     super::identity::public(&directory)?;
@@ -54,7 +49,6 @@ pub async fn serve(directory: PathBuf, binary: PathBuf, capacity: usize) -> Resu
     let supervisor = Arc::new(Supervisor {
         directory,
         binary,
-        capacity,
         registrations: Mutex::new(registrations),
         assignment_locks: Mutex::new(HashMap::new()),
     });
@@ -155,7 +149,7 @@ impl Supervisor {
             command @ VesselCommand::StartOutbound { .. } => self.start_outbound(command).await,
             command @ VesselCommand::ManagedImport { .. } => self.initialize_managed(command).await,
             VesselCommand::Capabilities => Ok(
-                json!({"protocol":PROCESS_PROTOCOL,"platform":std::env::consts::OS,"features":["catalogue","start","start_configured","inspect","forward","stop","restart","explicit_recovery","durable_receipts","history_paging","events","decisions","lifecycle","branch","ordinary_import","managed_import","outbound_adapter","scoped_grants","revocation","participant_bindings","participant_assignments","signed_owner_transfer"],"max_frame_bytes":MAX_PROCESS_FRAME,"capacity":self.capacity,"max_connections":64}),
+                json!({"protocol":PROCESS_PROTOCOL,"platform":std::env::consts::OS,"features":["catalogue","start","start_configured","inspect","forward","stop","restart","explicit_recovery","durable_receipts","history_paging","events","decisions","lifecycle","branch","ordinary_import","managed_import","outbound_adapter","scoped_grants","revocation","participant_bindings","participant_assignments","signed_owner_transfer"],"max_frame_bytes":MAX_PROCESS_FRAME,"capacity":null,"max_connections":64}),
             ),
             VesselCommand::Catalogue => {
                 let registrations: Vec<_> = self

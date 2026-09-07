@@ -60,18 +60,7 @@ impl Supervisor {
             *expires_at_ms > now && *expires_at_ms - now <= 1800000,
             "preparation deadline must be within thirty minutes"
         );
-        ensure!(
-            registrations
-                .values()
-                .filter(|item| !matches!(
-                    item.state,
-                    ProcessState::Stopped | ProcessState::Relinquished
-                ))
-                .count()
-                + self.reserved_transfers(None)?
-                < self.capacity,
-            "destination process capacity exhausted"
-        );
+        self.check_transfer_retention()?;
         let workspace = std::fs::canonicalize(workspace)?;
         ensure!(workspace.is_dir(), "destination workspace missing");
         if let Some(config) = config_path {

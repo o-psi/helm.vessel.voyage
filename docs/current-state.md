@@ -23,18 +23,22 @@ private credential files scoped to one session, principal, workspace, rights,
 revision and expiry. Enrollment-bound grants also verify the current machine epoch.
 Provider credentials are never copied between Vessels by these transports.
 
-Vessel retains private supervision metadata, serializes starts, enforces capacity,
+Vessel retains private supervision metadata, serializes starts,
 checks exact session/incarnation health and refuses stale endpoints. Stored PIDs
 are not evidence of survival. Restart requires positive stopped or explicit recovery
 evidence. Unavailable owners are fenced; uncertain tools are never automatically
 replayed. Stopping a supervisor leaves independent voyage processes running.
+Vessel has no concurrent voyage-count cap. The legacy `local-serve --capacity`
+option is accepted but ignored; capabilities report `capacity: null`. The 4,096
+registration retention bound, transfer receipt safeguards, connection bounds and
+runtime host resource limits still apply.
 Explicit Linux user-service installation is available. Native macOS/Windows process
 supervision is unsupported. The Linux installer wizard installs versioned releases
 and manages upgrades, rollback and the local user service.
 
 Helm keeps the interface open when initial voyage creation is definitely refused,
-including a full Vessel, so existing voyages remain reachable. An uncertain start
-still reports its original identity rather than automatically retrying.
+including admission refused by older Vessels, so existing voyages remain reachable.
+An uncertain start still reports its original identity rather than automatically retrying.
 
 The left-hand voyage list is newest-first by the latest timestamped conversation
 message, falling back to session creation time. Tab and Shift+Tab follow that

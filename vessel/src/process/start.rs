@@ -111,22 +111,7 @@ impl Supervisor {
                 registration.state = ProcessState::Stopped;
             }
         }
-        // Unavailable owners retain capacity: neither a timeout nor a PID proves cleanup.
-        ensure!(
-            registrations
-                .values()
-                .filter(|item| !matches!(
-                    item.state,
-                    ProcessState::Stopped | ProcessState::Relinquished
-                ))
-                .count()
-                + self.reserved_transfers(match &initialize {
-                    Some(RuntimeInitialization::Transfer { transfer_id, .. }) => Some(*transfer_id),
-                    _ => None,
-                })?
-                < self.capacity,
-            "Vessel process capacity exhausted"
-        );
+        self.check_transfer_retention()?;
         let directory = registry::directory(&self.directory, session_id);
         registry::private_directory(&directory)?;
         let registration = ProcessRegistration {

@@ -121,21 +121,6 @@ impl Supervisor {
                 || super::recover_command::restart_permitted(&directory, registration),
             "restart requires positively observed clean runtime stop; unavailable is not stopped"
         );
-        let occupied = registrations
-            .values()
-            .filter(|entry| {
-                let path = registry::directory(&self.directory, entry.session_id);
-                entry.session_id != session_id
-                    && entry.state != ProcessState::Relinquished
-                    && (path.join("runtime.sock").exists()
-                        || (!clean_stop(&path, entry)
-                            && !super::recover_command::restart_permitted(&path, entry)))
-            })
-            .count();
-        ensure!(
-            occupied < self.capacity,
-            "Vessel process capacity exhausted"
-        );
         let mut next = registration.clone();
         next.incarnation = Uuid::new_v4();
         next.command_id = command_id;

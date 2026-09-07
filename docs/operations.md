@@ -32,9 +32,14 @@ can also be started explicitly:
 
 ```sh
 vessel local-serve --directory /absolute/private-vessel \
-  --voyage-binary /absolute/bin/voyage --capacity 16
+  --voyage-binary /absolute/bin/voyage
 helm connect --directory /absolute/private-vessel
 ```
+
+Vessel does not cap concurrent voyage count. Existing `local-serve --capacity N`
+arguments are accepted but ignored. New service units omit that legacy option;
+the installer recognizes both templates during upgrades. Runtime resource limits
+and supervisor record-retention safeguards still apply.
 
 The connected TUI uses Ctrl+N to create, Tab/Shift+Tab to switch, and Ctrl+C/Ctrl+Q
 to detach. `/new /absolute/workspace`, `/use SESSION_UUID`, `/rename NAME`,

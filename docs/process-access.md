@@ -20,7 +20,7 @@ existing enrollment listener behind a local HTTPS proxy:
 
 ```sh
 vessel local-serve --directory /home/alice/.local/state/voyage/vessel \
-  --voyage-binary /home/alice/.local/bin/voyage --capacity 16
+  --voyage-binary /home/alice/.local/bin/voyage
 
 # Set VESSEL_OPERATOR_TOKEN through the service's private environment.
 vessel --bind 127.0.0.1:8080 \

@@ -7,7 +7,7 @@ interfaces. Helm connects only to local or remote Vessels; each Voyage runtime o
 
 Vessel now has a Linux process supervisor: `local-serve` launches and exposes
 independent voyage executables through an owned private Unix socket. It verifies
-runtime identity, serializes competing starts, enforces capacity and supports
+runtime identity, serializes competing starts and supports
 explicit stop/restart. `local-request` is its framed stdin/stdout adapter for SSH.
 These account-authorized operations are separate from the existing HTTP management,
 enrollment, presence and opt-in outbound compatibility relay. The separate scoped
@@ -21,7 +21,7 @@ From the repository root:
 ```sh
 cargo build --workspace --locked
 ./target/debug/vessel local-serve --directory /absolute/private-vessel \
-  --voyage-binary "$PWD/target/debug/voyage" --capacity 16
+  --voyage-binary "$PWD/target/debug/voyage"
 # Separate HTTP management/gateway service:
 ./target/debug/vessel --bind 127.0.0.1:9480 --database vessel.db
 ```

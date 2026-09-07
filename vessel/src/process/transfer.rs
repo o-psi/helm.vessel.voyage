@@ -51,12 +51,11 @@ impl Supervisor {
             _ => anyhow::bail!("unsupported transfer operation"),
         }
     }
-    pub(super) fn reserved_transfers(&self, except: Option<Uuid>) -> Result<usize> {
+    pub(super) fn check_transfer_retention(&self) -> Result<()> {
         let root = self.directory.join("transfers");
         if !root.exists() {
-            return Ok(0);
+            return Ok(());
         }
-        let mut reserved = 0;
         let mut retained = 0;
         for entry in std::fs::read_dir(root)?.take(4097) {
             retained += 1;
@@ -64,15 +63,12 @@ impl Supervisor {
             if !path.exists() {
                 continue;
             }
-            let prepared: Prepared = store::load(&path)?;
-            if !prepared.activated && Some(prepared.preparation.payload.transfer_id) != except {
-                reserved += 1;
-            }
+            let _: Prepared = store::load(&path)?;
         }
         ensure!(
             retained <= 4096,
             "transfer receipt retention capacity exceeded"
         );
-        Ok(reserved)
+        Ok(())
     }
 }

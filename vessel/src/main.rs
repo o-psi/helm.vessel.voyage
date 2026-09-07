@@ -88,8 +88,9 @@ enum Command {
         directory: PathBuf,
         #[arg(long)]
         voyage_binary: Option<PathBuf>,
-        #[arg(long, default_value_t = 16)]
-        capacity: usize,
+        /// Deprecated compatibility option; voyage count is no longer capped.
+        #[arg(long, hide = true)]
+        capacity: Option<usize>,
     },
     /// Generate a shell completion script on stdout.
     Completions {
@@ -161,14 +162,14 @@ async fn main() -> Result<()> {
         Some(Command::LocalServe {
             directory,
             voyage_binary,
-            capacity,
+            capacity: _,
         }) => {
             #[cfg(target_os = "linux")]
             {
                 let binary = voyage_binary
                     .clone()
                     .unwrap_or(std::env::current_exe()?.with_file_name("voyage"));
-                return vessel::process::serve(directory.clone(), binary, *capacity).await;
+                return vessel::process::serve(directory.clone(), binary).await;
             }
             #[cfg(not(target_os = "linux"))]
             anyhow::bail!(

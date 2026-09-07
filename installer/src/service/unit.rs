@@ -65,7 +65,7 @@ fn quote(path: &Path) -> Result<String> {
 }
 pub(super) fn render(bin: &Path, state: &Path) -> Result<String> {
     Ok(format!(
-        "[Unit]\nDescription=Voyage Vessel session supervisor\n\n[Service]\nType=simple\nExecStart=:{} local-serve --directory {} --voyage-binary {} --capacity 16\nWorkingDirectory=%h\nUMask=0077\nRestart=on-failure\nRestartSec=2\nKillMode=process\nTimeoutStopSec=30\nStandardInput=null\nStandardOutput=journal\nStandardError=journal\n\n[Install]\nWantedBy=default.target\n",
+        "[Unit]\nDescription=Voyage Vessel session supervisor\n\n[Service]\nType=simple\nExecStart=:{} local-serve --directory {} --voyage-binary {}\nWorkingDirectory=%h\nUMask=0077\nRestart=on-failure\nRestartSec=2\nKillMode=process\nTimeoutStopSec=30\nStandardInput=null\nStandardOutput=journal\nStandardError=journal\n\n[Install]\nWantedBy=default.target\n",
         quote(&bin.join("vessel"))?,
         quote(state)?,
         quote(&bin.join("voyage"))?
@@ -111,11 +111,14 @@ pub(super) fn recognized(content: &str, state: &Path) -> Result<PathBuf> {
     )?;
     let bin = vessel.parent().context("service binary parent missing")?;
     ensure!(
-        rest == " --capacity 16"
+        (rest.is_empty() || rest == " --capacity 16")
             && vessel.file_name().is_some_and(|n| n == "vessel")
             && voyage == bin.join("voyage")
             && saved_state == state
-            && render(bin, state)? == content,
+            && (render(bin, state)? == content
+                || render(bin, state)?
+                    .replace("\nWorkingDirectory=", " --capacity 16\nWorkingDirectory=")
+                    == content),
         "Refusing unrecognized service edits or a different state directory"
     );
     Ok(bin.to_owned())
