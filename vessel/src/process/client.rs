@@ -1,6 +1,5 @@
 use anyhow::{Result, ensure};
 use std::{path::PathBuf, time::Duration};
-use tokio::net::UnixStream;
 use voyage_protocol::process::*;
 
 /// Framed stdio bridge, suitable for an explicitly authenticated SSH account.
@@ -29,16 +28,7 @@ pub async fn request(directory: PathBuf) -> Result<()> {
         request.protocol == PROCESS_PROTOCOL,
         "unsupported process protocol"
     );
-    let response: VesselResponse = tokio::time::timeout(Duration::from_secs(30), async {
-        let mut stream = UnixStream::connect(directory.join("vessel.sock")).await?;
-        ensure!(
-            stream.peer_cred()?.uid() == unsafe { libc::geteuid() },
-            "Vessel peer uid mismatch"
-        );
-        write_frame(&mut stream, &request).await?;
-        Ok::<_, anyhow::Error>(read_frame(&mut stream).await?)
-    })
-    .await??;
+    let response = super::exchange::exchange(&directory, &request).await?;
     ensure!(
         response.protocol == PROCESS_PROTOCOL,
         "unsupported Vessel response protocol"
