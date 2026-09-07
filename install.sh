@@ -7,33 +7,65 @@ case "$(uname -s)/$(uname -m)" in
     Linux/aarch64|Linux/arm64) target=aarch64-unknown-linux-gnu ;;
     *) fail 'installation currently supports Linux with a systemd user manager only.' ;;
 esac
-if [ "$#" -eq 0 ] && ! ( : </dev/tty >/dev/tty ) 2>/dev/null; then
+wizard=1
+local_source=0
+dev=0
+rollback=0
+source_free=0
+expect_bin=0
+for argument in "$@"; do
+    if [ "$expect_bin" -eq 1 ]; then
+        expect_bin=0
+        continue
+    fi
+    case "$argument" in
+        install|upgrade) wizard=0 ;;
+        rollback) wizard=0; rollback=1 ;;
+        --bin-dir) local_source=1; expect_bin=1 ;;
+        --help|-h|--version|status|service-status|service-stop|service-uninstall) wizard=0; source_free=1 ;;
+        install-user-service) wizard=0; source_free=1 ;;
+        --dev) dev=1 ;;
+    esac
+done
+[ "$dev/$local_source" != 1/1 ] || fail "--dev conflicts with --bin-dir."
+if [ "$wizard" -eq 1 ] && ! ( : </dev/tty >/dev/tty ) 2>/dev/null; then
     fail 'the wizard needs an interactive terminal; use install --dry-run or install --start for explicit command-line installation.'
 fi
 launch() {
-    if [ "$#" -eq 1 ]; then
-        "$1" </dev/tty >/dev/tty 2>/dev/tty
+    if [ "$wizard" -eq 1 ]; then
+        "$@" </dev/tty >/dev/tty 2>/dev/tty
     else
         "$@"
     fi
 }
+launch_local() {
+    selected_installer=$1
+    selected_bin=$2
+    shift 2
+    if [ "$rollback/$dev/$local_source/$source_free" = 0/0/0/0 ]; then
+        launch "$selected_installer" --bin-dir "$selected_bin" "$@"
+    else
+        launch "$selected_installer" "$@"
+    fi
+}
 if [ -n "${VOYAGE_RELEASE_DIR:-}" ]; then
+    [ "$dev" -eq 0 ] || fail "VOYAGE_RELEASE_DIR conflicts with --dev."
     case "$VOYAGE_RELEASE_DIR" in /*) release_dir=$VOYAGE_RELEASE_DIR ;; *) release_dir="$PWD/$VOYAGE_RELEASE_DIR" ;; esac
     [ ! -d "$release_dir/bin" ] || release_dir="$release_dir/bin"
-    launch "$release_dir/voyage-installer" "$@"
+    launch_local "$release_dir/voyage-installer" "$release_dir" "$@"
     exit "$?"
 fi
 if [ -n "${VOYAGE_INSTALLER_BIN:-}" ]; then
     case "$VOYAGE_INSTALLER_BIN" in /*) installer=$VOYAGE_INSTALLER_BIN ;; *) installer="$PWD/$VOYAGE_INSTALLER_BIN" ;; esac
     [ -f "$installer" ] && [ -x "$installer" ] || fail 'VOYAGE_INSTALLER_BIN must name an executable file.'
-    launch "$installer" "$@"
+    launch_local "$installer" "$(dirname -- "$installer")" "$@"
     exit "$?"
 fi
 for utility in curl python3; do
     command -v "$utility" >/dev/null 2>&1 || fail "required utility missing: $utility"
 done
 fetch() {
-    curl --proto '=https' --proto-redir '=https' --tlsv1.2 --fail --location --silent --show-error \
+    curl --disable --proto '=https' --proto-redir '=https' --tlsv1.2 --fail --location --silent --show-error \
         --connect-timeout 10 --max-time 300 --max-filesize "${3:-536870912}" --output "$2" "$1"
 }
 umask 077
@@ -71,8 +103,8 @@ base="https://github.com/o-psi/voyage/releases/download/$version"
 printf 'Downloading Voyage %s (%s)…\n' "$version" "$target" >&2
 fetch "$base/$asset.sha256" "$tmp/checksum" 4096 || fail 'release checksum unavailable; check the published version and platform.'
 fetch "$base/$asset" "$tmp/$asset" || fail 'full release download failed.'
-python3 - "$tmp" "$asset" <<'PY'
-import hashlib, pathlib, re, shutil, sys, tarfile
+python3 - "$tmp" "$asset" "$version" "$target" <<'PY'
+import hashlib, json, pathlib, re, shutil, sys, tarfile
 base, asset = pathlib.Path(sys.argv[1]), sys.argv[2]
 manifest = (base / 'checksum').read_text().strip()
 match = re.fullmatch(r'([0-9a-fA-F]{64})  ' + re.escape(asset), manifest)
@@ -92,11 +124,11 @@ with tarfile.open(base / asset, 'r:gz') as archive:
             raise SystemExit('Release has too many entries')
         path = pathlib.PurePosixPath(member.name)
         if (not path.parts or path.parts[0] != root or path.is_absolute()
-                or '..' in path.parts or member.name in seen
+                or '..' in path.parts or str(path) in seen or member.size < 0
                 or any(ord(c) < 32 or ord(c) == 127 for c in member.name)
                 or not (member.isdir() or member.isfile())):
             raise SystemExit('Unsafe release archive entry')
-        seen.add(member.name)
+        seen.add(str(path))
         size += member.size
         if size > 1073741824:
             raise SystemExit('Release exceeds extraction limit')
@@ -109,8 +141,21 @@ with tarfile.open(base / asset, 'r:gz') as archive:
             with archive.extractfile(member) as source, output.open('xb') as destination:
                 shutil.copyfileobj(source, destination)
             output.chmod(0o700 if output.parent == base / root / 'bin' else 0o600)
-for name in ('helm', 'vessel', 'voyage', 'voyage-installer'):
-    if not (base / root / 'bin' / name).is_file():
+metadata = base / root / 'release.json'
+if not metadata.is_file() or metadata.stat().st_size > 65536:
+    raise SystemExit('Release manifest missing or oversized')
+release = json.loads(metadata.read_text())
+names = ('helm', 'vessel', 'voyage', 'voyage-installer')
+if (release.get('schema_version') != 1 or release.get('version') != sys.argv[3]
+        or release.get('target') != sys.argv[4] or set(release.get('binaries', {})) != set(names)):
+    raise SystemExit('Release manifest identity/platform mismatch')
+for name in names:
+    binary = base / root / 'bin' / name
+    if not binary.is_file():
         raise SystemExit(f'Release is missing {name}')
+    with binary.open('rb') as stream:
+        actual = hashlib.file_digest(stream, 'sha256').hexdigest()
+    if release['binaries'][name].get('sha256') != actual:
+        raise SystemExit(f'Release binary checksum mismatch: {name}')
 PY
-launch "$tmp/${asset%.tar.gz}/bin/voyage-installer" "$@"
+launch_local "$tmp/${asset%.tar.gz}/bin/voyage-installer" "$tmp/${asset%.tar.gz}/bin" "$@"

@@ -32,7 +32,9 @@ and credentials must never enter the archive.
 
 The full archive includes a versioned `release.json` with its label, platform and
 all four executable hashes. The standalone installer package contains only the
-installer and requires local full-release binaries via `--bin-dir`. `install.sh`
+installer. It can resolve a published full release with `upgrade`, build GitHub
+main with explicit `upgrade --dev`, or use local full-release binaries via
+`--bin-dir`. `install.sh`
 downloads a complete pinned release and opens its real installation wizard; its
 assets must be published first. Local builds can be installed before publication.
 See [installation, upgrade and rollback](../installer/README.md). Reboot/logout

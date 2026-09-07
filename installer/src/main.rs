@@ -3,6 +3,7 @@ mod flow;
 mod install;
 mod planning;
 mod service;
+mod source;
 mod ui;
 
 use anyhow::{Context, Result};
@@ -42,7 +43,7 @@ fn run() -> Result<bool> {
         args[0] = "install".into();
     }
     let options = cli::Options::parse(&args)?;
-    let (options, reviewed) = if options.action.is_none() {
+    let (mut options, reviewed) = if options.action.is_none() {
         let Some((options, reviewed)) = ui::review(options)? else {
             println!("Installation cancelled.");
             return Ok(true);
@@ -51,6 +52,17 @@ fn run() -> Result<bool> {
     } else {
         (options, None)
     };
+    let cancellation = source::Cancellation::new()?;
+    if reviewed.is_none() {
+        println!("Source: {}", options.source_label());
+        println!(
+            "Preparing source for review; downloads/builds may take several minutes. Ctrl+C cancels."
+        );
+        options.prepare(&cancellation.flag)?;
+    }
+    if cancellation.flag.load(std::sync::atomic::Ordering::Relaxed) {
+        return Ok(true);
+    }
     // Serialize the entire publication/service/rollback operation, after TTY restoration.
     let _operation = if options.dry_run {
         None
@@ -76,6 +88,15 @@ fn run() -> Result<bool> {
         println!("Dry run complete; no installation changes applied.");
         return Ok(false);
     }
+    if cancellation.flag.load(std::sync::atomic::Ordering::Relaxed) {
+        return Ok(true);
+    }
+    if !plan.changed && options.action == Some(cli::Action::Upgrade) {
+        println!(
+            "Already current: {}. No binary release change is needed; checking service configuration.",
+            plan.release
+        );
+    }
     let report = flow::execute(&options, false)?;
     if let Err(error) = service::configure(&report.release_dir.join("bin"), options.start, false) {
         if report.changed && report.current_release.is_some() {
@@ -93,10 +114,16 @@ fn run() -> Result<bool> {
         report.release
     );
     println!("Executables: {}", report.bin_dir.display());
+    println!("Close and relaunch Helm to use the installed build. Existing voyages keep running.");
     Ok(false)
 }
 fn main() {
-    match run() {
+    let outcome = run();
+    if let Err(error) = source::cleanup_result() {
+        eprintln!("Installer: {error:#}");
+        std::process::exit(1);
+    }
+    match outcome {
         Ok(true) => std::process::exit(130),
         Ok(false) => {}
         Err(error) => {

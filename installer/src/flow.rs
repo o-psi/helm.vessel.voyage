@@ -9,6 +9,13 @@ pub fn plan(options: &Options) -> Result<install::Report> {
     execute(options, true)
 }
 pub fn execute(options: &Options, dry_run: bool) -> Result<install::Report> {
+    options.validate()?;
+    anyhow::ensure!(
+        options.action != Some(Action::Upgrade)
+            || options.local_source
+            || options.prepared.is_some(),
+        "Upgrade source must be resolved before installation"
+    );
     match options
         .action
         .context("an installation action is required")?
@@ -23,6 +30,7 @@ pub fn execute(options: &Options, dry_run: bool) -> Result<install::Report> {
 }
 pub fn describe(report: &install::Report, options: &Options) -> Vec<String> {
     let mut lines = vec![
+        format!("Source: {}", options.source_label()),
         format!(
             "{} release: {}",
             options.action.map_or("Selected", Action::label),
