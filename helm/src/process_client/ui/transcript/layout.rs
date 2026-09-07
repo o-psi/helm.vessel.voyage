@@ -343,7 +343,7 @@ fn build(view: &View, state: &State, width: u16) -> Vec<Row> {
                 note(
                     &mut out,
                     Key::Turn(turn.run_id),
-                    format!("{label}\n"),
+                    format!("{label}\n\n"),
                     width,
                 );
             }
