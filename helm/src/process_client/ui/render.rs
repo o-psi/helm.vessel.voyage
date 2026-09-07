@@ -318,7 +318,11 @@ fn sidebar(frame: &mut Frame<'_>, app: &App, area: Rect) {
         if y >= rows[1].bottom() {
             break;
         }
-        let height = heights[index].min(rows[1].bottom() - y);
+        // List excludes entries that do not fit; never expose phantom hits.
+        let height = heights[index];
+        if height > rows[1].bottom() - y {
+            break;
+        }
         let button = Rect::new(list_area.right(), y, 3, height.min(2));
         let area = Rect::new(rows[1].x, y, rows[1].width, height);
         let over_button = app
