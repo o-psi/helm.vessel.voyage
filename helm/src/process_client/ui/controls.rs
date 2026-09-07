@@ -15,16 +15,22 @@ impl App {
         let client = self.clients[target.route].clone();
         let sender = self.sender.clone();
         let section = section.to_owned();
-        self.status = format!("Loading {section} for {}", target.session);
+        self.status = format!(
+            "Loading {}...",
+            super::presentation::label(&section).to_lowercase()
+        );
         tokio::spawn(async move {
             let result = client
                 .forward(
                     target.session,
                     incarnation,
-                    RuntimeCommand::Controls { run_id, section },
+                    RuntimeCommand::Controls {
+                        run_id,
+                        section: section.clone(),
+                    },
                 )
                 .await
-                .map(|value| super::presentation::fields(&value))
+                .map(|value| super::panels::render(&section, &value))
                 .map_err(|error| error.to_string());
             let _ = sender
                 .send(Update::Control {

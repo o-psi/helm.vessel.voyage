@@ -23,9 +23,7 @@ impl App {
         );
         let session_id = Uuid::new_v4();
         let command_id = Uuid::new_v4();
-        self.status = format!(
-            "Starting {session_id}; if delivery is lost, inspect this identity before retrying"
-        );
+        self.status = format!("Starting a new voyage on {}...", self.route_label(route));
         let sender = self.sender.clone();
         tokio::spawn(async move {
             let result = client
@@ -36,13 +34,34 @@ impl App {
                 })
                 .await
                 .and_then(|value| Ok(serde_json::from_value(value)?))
-                .map_err(|error| format!("Create {session_id}: {error}"));
+                .map_err(|error| format!("Could not start the voyage: {error}"));
             let _ = sender.send(Update::Created { route, result }).await;
         });
         Ok(())
     }
 
     pub fn send(&mut self) -> Result<()> {
+        let original = self.selected.and_then(|target| {
+            self.views
+                .get(&target)
+                .map(|view| (target, view.draft.text.clone()))
+        });
+        self.send_command()?;
+        if let Some((target, draft)) = original
+            && draft.trim_start().starts_with('/')
+            && let Some(view) = self.views.get_mut(&target)
+            && view.pending.is_none()
+            && view.draft.text == draft
+        {
+            view.history.record(&draft);
+            view.draft.take();
+            drafts::save(&self.clients[target.route], view)
+                .context("The command ran, but the cleared draft could not be saved")?;
+        }
+        Ok(())
+    }
+
+    fn send_command(&mut self) -> Result<()> {
         let target = self.selected.context("create or select a voyage first")?;
         let draft = self
             .views
@@ -271,7 +290,7 @@ impl App {
         let incarnation = self.views[&target].process.incarnation;
         let client = self.clients[target.route].clone();
         let sender = self.sender.clone();
-        self.status = format!("Sending command {command_id}");
+        self.status = "Sending...".into();
         tokio::spawn(async move {
             let result = client.forward(target.session, incarnation, command).await;
             let _ = sender

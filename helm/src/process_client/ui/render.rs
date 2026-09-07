@@ -51,7 +51,7 @@ pub fn draw(frame: &mut Frame<'_>, app: &App) {
         return;
     }
     let rows = Layout::vertical([
-        Constraint::Length(3),
+        Constraint::Length(4),
         Constraint::Min(4),
         Constraint::Length(5),
         Constraint::Length(3),
@@ -73,8 +73,23 @@ pub fn draw(frame: &mut Frame<'_>, app: &App) {
                 .snapshot
                 .as_ref()
                 .and_then(|s| s.run.as_ref())
-                .map_or("Ready".into(), |r| presentation::label(&r.state));
-            format!("{} | {} | {}", safe(model), state, v.terminals.summary())
+                .map_or("Ready", |r| presentation::run_state(&r.state));
+            let state = if v.error.is_some() {
+                "Needs attention"
+            } else if v.snapshot.as_ref().is_some_and(|s| !s.decisions.is_empty()) {
+                "Waiting for you"
+            } else {
+                state
+            };
+            let host = app
+                .selected
+                .map_or_else(String::new, |t| app.route_label(t.route));
+            format!(
+                "{state} | {} | {}\n{}",
+                safe(model),
+                safe(&host),
+                v.terminals.summary()
+            )
         },
     );
     frame.render_widget(
@@ -98,7 +113,7 @@ pub fn draw(frame: &mut Frame<'_>, app: &App) {
                     .as_ref()
                     .is_some_and(|s| !s.decisions.is_empty())
                 {
-                    "ACTION NEEDED"
+                    "Needs you"
                 } else if view
                     .snapshot
                     .as_ref()
@@ -161,7 +176,7 @@ pub fn draw(frame: &mut Frame<'_>, app: &App) {
     let composer_title = if terminals_open || panel_open {
         " DRAFT SAVED / Esc returns to chat "
     } else if pending {
-        " DELIVERY UNRESOLVED / /receipt "
+        " NOT CONFIRMED YET / F4 check status "
     } else {
         " MESSAGE / Enter send / Alt+Enter newline "
     };
@@ -192,15 +207,17 @@ pub fn draw(frame: &mut Frame<'_>, app: &App) {
             )),
         rows[2],
     );
-    let shortcuts = if area.width >= 90 {
-        "F1 Help    F2 Interactions    F3 Terminals    Tab Voyages    Ctrl+N New    Ctrl+C Detach"
+    let shortcuts = if area.width >= 110 {
+        "F1 Help    F2 Questions & approvals    F3 Terminals    F4 Check status    Tab Voyages    Ctrl+C Leave"
+    } else if area.width >= 72 {
+        "F1 Help  F2 Requests  F3 Terminals  F4 Status  Tab Voyages  Ctrl+C Leave"
     } else {
-        "F1 Help | F2 Requests | F3 Terminals | Tab Voyages"
+        "F1 Help  F2 Review  F3 Programs  F4 Status"
     };
     let mut footer = Text::from(Line::styled(shortcuts, Style::default().fg(Color::Cyan)));
-    footer
-        .lines
-        .extend(presentation::wrap(Text::raw(safe(&app.status)), rows[3].width).lines);
+    footer.lines.extend(
+        presentation::wrap(Text::raw(presentation::notice(&app.status)), rows[3].width).lines,
+    );
     frame.render_widget(Paragraph::new(footer), rows[3]);
     if !terminals_open
         && !panel_open
@@ -230,8 +247,15 @@ fn conversation(frame: &mut Frame<'_>, app: &App, area: Rect) {
     let mut title = " CONVERSATION ".to_owned();
     if let Some(view) = view {
         if let Some(panel) = &view.panel {
-            title = " DETAILS / PageUp PageDown scroll / Esc back ".into();
-            text = presentation::wrap(Text::raw(panel.clone()), width);
+            title = " OVERVIEW / PageUp PageDown / Esc back ".into();
+            text = markdown::render_markdown(
+                panel,
+                RenderOptions {
+                    width: usize::from(width),
+                    max_output_lines: 2000,
+                    ..RenderOptions::default()
+                },
+            );
         } else {
             let mut cache = view.rendered.borrow_mut();
             if let Some((_, cached)) = cache.as_ref().filter(|(w, _)| *w == width) {
@@ -239,10 +263,12 @@ fn conversation(frame: &mut Frame<'_>, app: &App, area: Rect) {
             } else {
                 if let Some(snapshot) = &view.snapshot {
                     if snapshot.lifecycle["deleted"] == true {
-                        text.lines.push(Line::from("Deleted - history purged"));
-                    } else if snapshot.lifecycle["archived"] == true {
                         text.lines
-                            .push(Line::from("Archived - /restore before sending"));
+                            .push(Line::from("This conversation has been deleted."));
+                    } else if snapshot.lifecycle["archived"] == true {
+                        text.lines.push(Line::from(
+                            "Archived. Use /restore to continue this conversation.",
+                        ));
                     }
                     if snapshot.messages.is_empty() {
                         text.lines.extend([
@@ -260,7 +286,7 @@ fn conversation(frame: &mut Frame<'_>, app: &App, area: Rect) {
                     }
                     if snapshot.history_truncated || snapshot.messages.len() > 400 {
                         text.lines.push(Line::from(
-                            "[Showing recent history; /export PATH saves the full conversation]",
+                            "Showing recent messages. Export the conversation to keep a complete copy.",
                         ));
                     }
                     for message in snapshot
@@ -317,11 +343,12 @@ fn conversation(frame: &mut Frame<'_>, app: &App, area: Rect) {
                         && run.state != "completed"
                     {
                         text.lines.push(Line::styled(
-                            presentation::label(&run.state),
+                            presentation::run_state(&run.state),
                             Style::default().fg(Color::Yellow),
                         ));
                         if run.partial_text_truncated {
-                            text.lines.push(Line::from("[Recent partial output shown]"));
+                            text.lines
+                                .push(Line::from("Showing the latest part of the response."));
                         }
                         if !run.partial_text.is_empty() {
                             text.lines.extend(
@@ -337,8 +364,7 @@ fn conversation(frame: &mut Frame<'_>, app: &App, area: Rect) {
                         }
                     }
                 } else {
-                    text.lines
-                        .push(Line::from("Connecting to the voyage owner..."));
+                    text.lines.push(Line::from("Connecting to your voyage..."));
                 }
                 text = presentation::wrap(text, width);
                 *cache = Some((width, text.clone()));
@@ -346,7 +372,10 @@ fn conversation(frame: &mut Frame<'_>, app: &App, area: Rect) {
             if let Some(error) = &view.error {
                 text.lines.extend(
                     presentation::wrap(
-                        Text::styled(safe(error), Style::default().fg(Color::Yellow)),
+                        Text::styled(
+                            presentation::notice(error),
+                            Style::default().fg(Color::Yellow),
+                        ),
                         width,
                     )
                     .lines,

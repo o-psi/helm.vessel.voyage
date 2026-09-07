@@ -29,11 +29,12 @@ impl Entry {
         }
         if let Some(exited) = self.state.get("exited") {
             return match exited["code"].as_i64() {
-                Some(code) => format!("Exited (code {code})"),
-                None => "Exited (code unavailable)".into(),
+                Some(0) => "Finished".into(),
+                Some(_) => "Stopped with an error".into(),
+                None => "Stopped".into(),
             };
         }
-        "Unknown state".into()
+        "Status unavailable".into()
     }
     fn running(&self) -> bool {
         self.state == "running"
@@ -91,7 +92,7 @@ impl Browser {
     }
     pub fn summary(&self) -> String {
         if !self.fresh() {
-            return "Terminals: checking / unavailable".into();
+            return "Checking programs...".into();
         }
         let entries = self
             .inventory
@@ -115,23 +116,23 @@ impl App {
         let browser = &view.terminals;
         ensure!(
             browser.fresh(),
-            "Terminal inventory unavailable or stale; wait for reconnection"
+            "Programs are reconnecting. Please wait before opening one."
         );
         let inventory = browser
             .inventory
             .as_ref()
-            .context("Waiting for terminal inventory")?;
+            .context("Finding your programs...")?;
         let entry = inventory
             .entries
             .iter()
             .find(|e| e.id == terminal_id)
-            .context("Terminal no longer available")?;
+            .context("This program is no longer available")?;
         ensure!(
             entry.running(),
             "Terminal is {}; select a running terminal",
             entry.state()
         );
-        let run = inventory.run_id.context("Terminal owner unavailable")?;
+        let run = inventory.run_id.context("This program is unavailable")?;
         self.terminal_request = Some((target, view.process.incarnation, run, terminal_id));
         Ok(())
     }
@@ -202,7 +203,7 @@ impl App {
                 ensure!(
                     incarnation == view.process.incarnation
                         && browser.inventory.as_ref().and_then(|i| i.run_id) == Some(run),
-                    "Terminal ownership changed; review again"
+                    "This program reconnected. Select it again before opening."
                 );
                 self.request_terminal(target, id)?;
             }
@@ -261,17 +262,14 @@ pub(super) fn draw(frame: &mut Frame<'_>, app: &App, area: Rect) {
     if !browser.fresh() {
         frame.render_widget(
             Paragraph::new(format!(
-                "Terminal inventory unavailable\n{}\nAttachment disabled until refreshed.",
-                browser
-                    .error
-                    .as_deref()
-                    .unwrap_or("Waiting for current owner observation...")
+                "Programs unavailable\n{}\nPlease wait for the connection to refresh.",
+                browser.error.as_deref().unwrap_or("Reconnecting...")
             ))
             .wrap(Wrap { trim: false }),
             areas[1],
         );
     } else if entries.is_empty() {
-        frame.render_widget(Paragraph::new("No terminals in this voyage.\n\nInteractive programs appear here when the runtime opens a terminal. Ordinary shell commands do not create an attachable console.").wrap(Wrap { trim: false }), areas[1]);
+        frame.render_widget(Paragraph::new("No programs to open yet.\n\nInteractive programs appear here when your work starts one. You can keep chatting while you wait.").wrap(Wrap { trim: false }), areas[1]);
     } else {
         let index = entries
             .iter()
@@ -306,7 +304,7 @@ pub(super) fn draw(frame: &mut Frame<'_>, app: &App, area: Rect) {
             List::new(items)
                 .block(Block::default().borders(Borders::ALL).title(" PROGRAMS "))
                 .highlight_symbol("> ")
-                .highlight_style(Style::default().bg(Color::DarkGray)),
+                .highlight_style(Style::default().bg(Color::Rgb(30, 51, 59)).fg(Color::White)),
             panes[0],
             &mut ListState::default().with_selected(Some(index)),
         );
@@ -321,10 +319,6 @@ pub(super) fn draw(frame: &mut Frame<'_>, app: &App, area: Rect) {
                 ),
                 Line::from(format!("State: {}", entry.state())),
                 Line::from(format!("Host: {}", app.route_label(target.route))),
-                Line::from(format!(
-                    "Workspace: {}",
-                    safe(&view.process.workspace.display().to_string())
-                )),
                 Line::default(),
                 Line::styled(
                     "HOW TO USE THIS CONSOLE",
@@ -339,9 +333,9 @@ pub(super) fn draw(frame: &mut Frame<'_>, app: &App, area: Rect) {
                 Line::from("3. Press Ctrl+] to return to this browser."),
                 Line::default(),
                 Line::styled("PRIVACY", Style::default().fg(Color::Yellow)),
-                Line::from("Attaching permanently stops model capture for this terminal."),
-                Line::from("The assistant cannot read subsequent terminal output."),
-                Line::from("Check progress here; your chat draft stays separate."),
+                Line::from("Once opened here, this terminal stays private."),
+                Line::from("The assistant can no longer read its input or output."),
+                Line::from("Check progress here. Your message draft is kept safe."),
             ]);
             frame.render_widget(
                 Paragraph::new(super::presentation::wrap(

@@ -86,7 +86,10 @@ Enter using the inventory's exact owning run and observed incarnation. Ctrl+]
 returns from private input to the saved conversation draft. Stale inventories
 cannot attach. F1 opens a scrollable guide; operator panels and command receipts
 render readable metadata, and tool payloads are excluded from the chat display.
-Console rendering preserves blank/wide cells and uses the runtime's cursor.
+F4 checks an unresolved receipt without resending work or editing the draft.
+Ordinary screens use names and plain-language summaries rather than runtime
+identifiers and schemas. Console rendering preserves blank/wide cells and uses
+the runtime's cursor; a supplied program title appears in its private header.
 
 Tools, policy, todos, subagents, terminals, workflows and model metadata have runtime
 controls. Operator tool calls use the real authorized registry and admitted run

@@ -45,7 +45,11 @@ before sending again. Switching views does not cancel or redirect outstanding wo
 F1 opens a scrollable keyboard guide. PageUp/PageDown scroll the current view;
 Esc returns from details to the preserved conversation draft. The footer always
 shows **F3 Terminals**, including on layouts without the voyage sidebar. Operator
-inventories and receipts use readable fields; tool payloads stay out of chat.
+overviews use task-specific summaries; runtime identifiers, schemas and wire
+receipts are kept out of the ordinary screens. F4 checks the status of an
+unconfirmed action without editing or resending the conversation draft. Authored
+code remains readable in conversation; stored operator results receive plain-language
+summaries without changing the saved history.
 
 ### Interactive terminals and passwords
 

@@ -34,7 +34,7 @@ pub(super) async fn execute(
     policy.check_execution_authority()?;
     Ok(match snapshot {
         Some(screen) => {
-            json!({"terminal_id":id,"run_id":run,"revision":screen.revision,"state":screen.state,"cursor":screen.cursor,"rows":screen.cells.iter().map(|row|row.iter().map(|cell|cell.text.as_str()).collect::<String>()).collect::<Vec<_>>(),"privacy":"human_only"})
+            json!({"terminal_id":id,"run_id":run,"title":screen.title,"revision":screen.revision,"state":screen.state,"cursor":screen.cursor,"rows":screen.cells.iter().map(|row|row.iter().map(|cell|cell.text.as_str()).collect::<String>()).collect::<Vec<_>>(),"privacy":"human_only"})
         }
         None => json!({"terminal_id":id,"run_id":run,"accepted":true,"replay":"never"}),
     })

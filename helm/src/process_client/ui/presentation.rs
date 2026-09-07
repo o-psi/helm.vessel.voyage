@@ -23,6 +23,24 @@ pub(super) fn fields(value: &Value) -> String {
         match value {
             Value::Object(values) => {
                 for (key, value) in values {
+                    if matches!(
+                        key.as_str(),
+                        "session_id"
+                            | "run_id"
+                            | "command_id"
+                            | "decision_id"
+                            | "incarnation"
+                            | "revision"
+                            | "generation"
+                            | "digest"
+                            | "schema"
+                            | "schema_version"
+                            | "input_schema"
+                            | "provider_state"
+                            | "observation_cursor"
+                    ) {
+                        continue;
+                    }
                     if lines.len() >= 1500 {
                         break;
                     }
@@ -72,18 +90,66 @@ fn scalar(value: &Value) -> String {
 }
 
 pub(super) fn receipt(value: &Value) -> String {
-    let status = value["status"].as_str().unwrap_or("received");
+    let status = match value["status"].as_str().unwrap_or("received") {
+        "accepted" => "Request received. Waiting for the result.",
+        "applied" => "Update confirmed.",
+        "completed" => "Done.",
+        "rejected" | "not_admitted" => "The request wasn't accepted. Your draft is saved.",
+        "unknown" => "Not confirmed yet. Press F4 to check its status.",
+        "failed" => "The request couldn't be completed.",
+        _ => "Status updated.",
+    };
     let detail = value
         .get("detail")
         .or_else(|| value.get("reason"))
         .and_then(Value::as_str);
-    match detail {
-        Some(detail) => format!("{}: {}", label(status), safe(detail)),
-        None => format!("Command {}", label(status).to_lowercase()),
+    detail.map_or_else(
+        || status.into(),
+        |detail| format!("{status} {}", notice(detail)),
+    )
+}
+
+pub(super) const HELP: &str = "HELM / YOUR WORKSPACE\n\nMove around\n  Tab / Shift+Tab   Switch voyages\n  Ctrl+N            Start a new voyage\n  F1                Help\n  Esc               Go back without losing your draft\n  PageUp / PageDown Scroll the current view\n\nTalk to the assistant\n  Enter             Send your message\n  Alt+Enter         Add a line\n  Up / Down         Recall an earlier message\n  F4                Check an unconfirmed message\n  /cancel           Ask the assistant to stop\n\nQuestions and permissions\n  F2                Review a question or permission request\n  F6 / F7           Previous / next request\n  Ctrl+A / Ctrl+D   Allow once / deny a permission request\n  Up / Down         Choose an answer\n  Enter             Send the selected or written answer\n  Ctrl+D            Skip a question\n\nPrograms and passwords\n  F3                Find your running programs\n  Up / Down         Choose a program\n  Enter             Open its private terminal\n  Ctrl+]            Return to Helm\n  Type passwords only in the private terminal.\n  A password prompt may show no characters while you type.\n\nSee what is happening\n  /todos            Tasks\n  /subagents        Agents working on your request\n  /tools            Available tools\n  /policy           Permissions\n  /workflows        Saved workflows\n  /models           Available models\n  /host_resources   Machine capacity\n\nOrganize your work\n  /rename A name    Name this voyage\n  /branch A name    Continue in a separate voyage\n  /archive          Put this voyage away\n  /restore          Bring it back\n  /export PATH      Save your conversation as Markdown\n\nLeave\n  Ctrl+C / Ctrl+Q   Close Helm\n  Your voyages keep running when you leave.";
+
+pub(super) fn run_state(state: &str) -> &'static str {
+    match state {
+        "accepted" => "Starting",
+        "running" => "Working",
+        "awaiting_decision" => "Waiting for you",
+        "cancel_requested" => "Stopping",
+        "completed" => "Ready",
+        "failed" => "Needs attention",
+        "cancelled" => "Stopped",
+        "interrupted" => "Interrupted",
+        _ => "Needs attention",
     }
 }
 
-pub(super) const HELP: &str = "HELM / KEYBOARD GUIDE\n\nNavigate\n  Tab / Shift+Tab   Switch voyages\n  Ctrl+N            Create a voyage\n  F1                Open this guide\n  Esc               Return to conversation\n  PageUp / PageDown Scroll the current view\n\nTerminals and passwords\n  F3                Open the terminal browser\n  Up / Down         Select a named terminal\n  Enter             Attach to the selected terminal\n  Ctrl+]            Leave private terminal and return to Helm\n  Only type passwords after entering the private terminal.\n  A running terminal may be busy or waiting; Helm does not guess.\n\nApprovals and questions\n  F2                Focus interactions\n  F6 / F7           Previous / next request\n  Ctrl+A / Ctrl+D   Approve once / deny approval\n  Up / Down         Select an answer in a focused question\n  Enter             Send focused answer\n  Ctrl+D            Skip focused question\n\nConversation\n  Enter             Send message or steer active work\n  Alt+Enter         New line\n  Up / Down         Recall prompts\n  /cancel           Request cancellation\n  /receipt          Resolve uncertain delivery\n\nInspect\n  /tools  /policy  /todos  /subagents\n  /workflows  /models  /host_resources\n  /terminals        Open terminal browser\n  /conversation     Return to chat\n\nManage\n  /new [absolute-workspace]  /use UUID\n  /rename NAME  /model NAME  /configure /host/path\n  /branch [name]  /archive  /restore\n  /compact N  /clear UUID  /delete UUID\n  /export PATH      Save conversation as Markdown\n  /tool NAME JSON   Advanced operator tool command\n  /approve UUID  /deny UUID  /answer UUID text\n\nLeave\n  Ctrl+C / Ctrl+Q / /quit  Detach Helm\n  Disconnecting Helm does not cancel voyage work.";
+pub(super) fn notice(value: &str) -> String {
+    let lower = value.to_lowercase();
+    if lower.contains("identity mismatch") {
+        return "This view changed before the action finished. Refresh and check its status."
+            .into();
+    }
+    if lower.contains("revision conflict") {
+        return "This voyage changed. Review the latest view before trying again.".into();
+    }
+    if lower.contains("incarnation") || lower.contains("stale control") {
+        return "The voyage reconnected. Refresh before trying again.".into();
+    }
+    safe(value)
+        .split_whitespace()
+        .map(|word| {
+            let token = word.trim_matches(|ch: char| !ch.is_ascii_hexdigit() && ch != '-');
+            if uuid::Uuid::parse_str(token).is_ok() {
+                "this request".to_owned()
+            } else {
+                word.to_owned()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
 
 /// Wrap by display cells before measuring scroll offsets, preserving span styles.
 pub(super) fn wrap(text: ratatui::text::Text<'_>, width: u16) -> ratatui::text::Text<'static> {
@@ -119,15 +185,36 @@ pub(super) fn wrap(text: ratatui::text::Text<'_>, width: u16) -> ratatui::text::
 pub(super) fn operator_message(content: &str) -> Option<String> {
     let (name, arguments) = content.strip_prefix("Operator tool ")?.split_once(": ")?;
     let value: Value = serde_json::from_str(arguments).ok()?;
-    Some(format!(
-        "Operator action: {}\n\n{}",
-        safe(name),
-        fields(&value)
-    ))
+    Some(match name {
+        "process" if value["action"] == "start" => format!(
+            "Open a terminal: {}",
+            safe(value["name"].as_str().unwrap_or("Interactive program"))
+        ),
+        "questions" => safe(value["question"].as_str().unwrap_or("Ask a question")),
+        "shell" => format!(
+            "Run a command\n\n{}",
+            safe(value["command"].as_str().unwrap_or_default())
+        ),
+        _ => format!("{}\n\n{}", label(name), fields(&value)),
+    })
 }
 
-/// A complete structured result is metadata, not a JSON code example in prose.
+/// Stored operator results receive user-facing copy; canonical history is unchanged.
 pub(super) fn structured_message(content: &str) -> Option<String> {
+    if content
+        .strip_prefix("started PTY process ")
+        .is_some_and(|id| uuid::Uuid::parse_str(id.trim()).is_ok())
+    {
+        return Some("Terminal opened. Press F3 to view it.".into());
+    }
     let value: Value = serde_json::from_str(content).ok()?;
-    (value.is_object() || value.is_array()).then(|| fields(&value))
+    match value["status"].as_str() {
+        Some("selected" | "custom") if value["answer"].is_string() => Some(format!(
+            "Answer sent: {}",
+            safe(value["answer"].as_str().unwrap_or_default())
+        )),
+        Some("cancelled") => Some("Question skipped.".into()),
+        Some("unavailable") => Some("The question couldn't be shown.".into()),
+        _ => (value.is_object() || value.is_array()).then(|| fields(&value)),
+    }
 }

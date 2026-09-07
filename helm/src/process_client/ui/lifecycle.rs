@@ -36,9 +36,7 @@ impl App {
             view.pending = None;
             return Err(error.context("cannot persist branch identity; nothing sent"));
         }
-        self.status = format!(
-            "Branch {branch_id} · command {command_id}; inspect these identities after lost delivery"
-        );
+        self.status = "Creating a separate voyage...".into();
         let client = self.clients[target.route].clone();
         let sender = self.sender.clone();
         tokio::spawn(async move {

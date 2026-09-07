@@ -150,9 +150,9 @@ pub(in crate::process_client::ui) fn draw(frame: &mut Frame<'_>, app: &App, area
                 if answer.option.is_none() { ">" } else { " " }
             )));
         }
-        _ => text.extend(Text::raw(super::super::presentation::fields(
-            &decision.request,
-        ))),
+        _ => text.extend(Text::raw(
+            "This request needs a newer version of Helm. It can't be answered here.",
+        )),
     }
     let answer_text = safe(&answer.text.text);
     let answer_column = unicode_width::UnicodeWidthStr::width(
@@ -163,10 +163,6 @@ pub(in crate::process_client::ui) fn draw(frame: &mut Frame<'_>, app: &App, area
         .and_then(|option| decision.request["question"]["options"].get(option))
         .and_then(|value| value.as_str())
         .map(safe);
-    text.extend(Text::raw(format!(
-        "\nSession: {}\nRun: {}\nRequest: {}",
-        target.session, decision.run_id, decision.decision_id
-    )));
     let lines = wrap_lines(text, body.width);
     let maximum = lines
         .len()
@@ -175,9 +171,9 @@ pub(in crate::process_client::ui) fn draw(frame: &mut Frame<'_>, app: &App, area
     review.scroll = review.scroll.min(maximum);
     frame.render_widget(Paragraph::new(lines).scroll((review.scroll, 0)), body);
     let controls = if view.pending.is_some() {
-        "Delivery pending/unknown · /receipt"
+        "Not confirmed yet · F4 check status"
     } else if remaining == 0 {
-        "Expired · response disabled"
+        "This request has expired"
     } else {
         match kind {
             "approval" => "Ctrl+A Approve once · Ctrl+D Deny",

@@ -12,7 +12,10 @@ readiness. Historical observations are scoped in [implementation](implementation
 
 A journey starts with a user intention and ends with an understandable outcome or
 an actionable recovery path. A command handler or successful API response alone
-is not a usable journey. The user must be able to discover the action, identify its
+is not a usable journey. This checklist is internal to development and review.
+The product should expose user intentions, names, choices and outcomes rather than
+UUIDs, revisions, protocol fields, schemas or a diagnostic checklist. Engineering
+details belong in explicit developer diagnostics, not the everyday interface. The user must be able to discover the action, identify its
 target, understand where input goes, observe progress, and recover without copying
 implementation identifiers or guessing whether an effect happened.
 
@@ -44,7 +47,7 @@ Every row still needs an explicit release decision and product-owner review.
 | J01 | Start Helm and understand background work | `helm`, `helm chat`, `helm connect` | Review: first launch, missing Vessel, launch failure, empty catalogue and independent runtime lifetime. |
 | J02 | Connect to the intended machine | `connect --directory`, SSH and scoped-access options | Gap: no in-TUI connection chooser/editor; distinguish connecting, denied and unavailable. |
 | J03 | Configure a provider and sign in | `auth`, `config`, `doctor`, `local-provider`, startup flags | Gap: CLI onboarding; credential expiry, billing distinctions, wrong host and retry need an integrated journey. |
-| J04 | Create a voyage in a workspace | Ctrl+N, `/new [absolute-workspace]`, `connect new` | Review: remote paths, launch progress and lost start response. Creation identity currently appears in status; recovery is not a guided durable creation view. |
+| J04 | Create a voyage in a workspace | Ctrl+N, `/new [absolute-workspace]`, `connect new` | Review: remote paths, launch progress and lost start response. Recovery is not a guided durable creation view. |
 | J05 | Find, resume and switch voyages | Tab/Shift+Tab, `/use UUID`, `sessions`, `chat --resume` | Gap: sidebar hides below 110 columns, no searchable picker; UUID selection is an expert path. Verify background decisions and separate drafts. |
 | J06 | Understand host, model, run and observation state | Header, voyage list, snapshot errors | Review: stale/offline versus idle, stopped versus completed, duplicate routes, long names and many voyages. |
 | J07 | Write, edit and recall a message | Composer, Enter, Alt+Enter, arrows, prompt history | Review: multiline cursor, graphemes, paste, limit errors and disk-write failure; input and display must remain aligned. |
@@ -52,7 +55,7 @@ Every row still needs an explicit release decision and product-owner review.
 | J09 | Steer work already running | Enter during an active run | Review: queued/applied/not-applied explanation, operator-run refusal and last-moment completion races. |
 | J10 | Read conversation and code | Markdown view, PageUp/PageDown, mouse wheel | Review: tables, lists, code, long words, controls, CJK, combining text and streaming without unwanted scroll jumps. |
 | J11 | Read older or oversized history | Bounded conversation; `connect request` history/chunk/output operations | Gap: no TUI history pagination; truncation notices and `/export` do not replace reading history in place. |
-| J12 | Resolve uncertain submission | Retained pending draft, `/receipt`, `connect receipt` | Gap: guided pending-action view and actionable retry/inspect controls; no automatic uncertain-effect replay. |
+| J12 | Resolve uncertain submission | Retained pending draft, F4, `/receipt`, `connect receipt` | Review/gap: F4 checks the receipt without editing the draft; a guided pending-action view is still missing; no automatic uncertain-effect replay. |
 | J13 | Cancel work and see cleanup | `/cancel`, `connect cancel` | Review: requesting, still running, cleanup unresolved and actually stopped; second cancel and route loss. |
 | J14 | Review an execution approval | Interactions panel, Ctrl+A/Ctrl+D, `/approve`/`/deny` | Review: full scope, expiry, denial, unsupported kinds, stale identity, repeat keys and wrong-voyage protection. Prior #142 evidence is not current whole-product acceptance. |
 | J15 | Answer or skip a model question | F2, options/custom editor, Enter, Ctrl+D | Partial evidence #143: real operator question, option response and preserved composer. Custom/paste/navigation/expiry matrix still needs exact-build acceptance. |

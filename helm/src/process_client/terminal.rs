@@ -244,7 +244,11 @@ fn draw_screen(
         let (columns, rows) = (area.width, area.height);
         frame.render_widget(
             Paragraph::new(clipped(
-                &format!("PRIVATE TERMINAL / {} / Ctrl+] returns to Helm", safe(host)),
+                &format!(
+                    "{} / PRIVATE TERMINAL / {}",
+                    safe(screen["title"].as_str().unwrap_or("Program")),
+                    safe(host)
+                ),
                 columns,
             ))
             .style(Style::default().fg(Color::Cyan)),
@@ -253,7 +257,7 @@ fn draw_screen(
         if rows > 1 {
             frame.render_widget(
                 Paragraph::new(clipped(
-                    "Keyboard goes to this program. Passwords may be invisible.",
+                    "Type here to use this program. Ctrl+] returns to Helm.",
                     columns,
                 )),
                 Rect::new(0, 1, columns, 1),
@@ -274,11 +278,13 @@ fn draw_screen(
         let state = if let Some(state) = screen["state"].as_str() {
             state.to_owned()
         } else if let Some(exit) = screen["state"].get("exited") {
-            exit["code"]
-                .as_i64()
-                .map_or("exited; code unavailable".into(), |code| {
-                    format!("exited with code {code}")
-                })
+            exit["code"].as_i64().map_or("stopped".into(), |code| {
+                if code == 0 {
+                    "finished".into()
+                } else {
+                    "stopped with an error".into()
+                }
+            })
         } else {
             "unknown".into()
         };

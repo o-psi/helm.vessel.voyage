@@ -48,7 +48,7 @@ impl App {
                             view.rendered.take();
                             view.observed = None;
                             view.error = Some(
-                                "Runtime incarnation changed; pending effects are not replayed"
+                                "The voyage reconnected. Check any unconfirmed action before trying again."
                                     .into(),
                             );
                         }
@@ -121,11 +121,7 @@ impl App {
                         .entry(target)
                         .or_insert_with(|| View::new(process));
                     self.selected = Some(target);
-                    self.status = format!(
-                        "Voyage {} started on {}",
-                        target.session,
-                        self.route_label(route)
-                    );
+                    self.status = format!("New voyage ready on {}", self.route_label(route));
                 }
                 Err(error) => self.status = safe(&error),
             },
@@ -146,9 +142,9 @@ impl App {
                     Ok(value) => {
                         if value.get("status").and_then(|status| status.as_str()) == Some("unknown")
                         {
-                            self.status = format!(
-                                "Command {command_id} outcome is unknown; draft retained, no automatic retry"
-                            );
+                            self.status =
+                                "Not confirmed yet. Your draft is saved. Press F4 to check again."
+                                    .into();
                             return;
                         }
                         if value
@@ -156,7 +152,7 @@ impl App {
                             .and_then(|id| id.as_str())
                             .is_some_and(|id| id != command_id.to_string())
                         {
-                            self.status = "Receipt identity mismatch; draft retained".into();
+                            self.status = "The response could not be matched. Your draft is saved; press F4 to check.".into();
                             return;
                         }
                         let rejected = value.get("status").and_then(|status| status.as_str())

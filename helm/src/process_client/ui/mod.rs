@@ -9,6 +9,7 @@ mod updates;
 use crate::composer;
 mod drafts;
 mod observe;
+mod panels;
 mod presentation;
 mod render;
 mod state;
@@ -83,9 +84,7 @@ pub async fn run_selected(clients: Vec<Client>, session: Option<uuid::Uuid>) -> 
         views: BTreeMap::new(),
         selected: session.map(|session| Target { route: 0, session }),
         sender,
-        status:
-            "Connected views · Ctrl+N creates · Tab switches · Ctrl+C detaches without cancellation"
-                .into(),
+        status: "Your workspace is ready. Start a conversation, or press F1 for help.".into(),
         quit: false,
         help: false,
         help_scroll: 0,
@@ -114,7 +113,7 @@ pub async fn run_selected(clients: Vec<Client>, session: Option<uuid::Uuid>) -> 
                 let (width,height) = terminal::size()?;
                 terminal.resize(ratatui::layout::Rect::new(0,0,width,height))?;
                 events = EventStream::new();
-                app.status=match result {Ok(())=>"Private terminal detached; voyage remains active".into(),Err(error)=>safe(&error.to_string())};
+                app.status=match result {Ok(())=>"Back in Helm. Your program can keep running.".into(),Err(error)=>safe(&error.to_string())};
             }
         }
         for (target, view) in &app.views { drafts::save(&app.clients[target.route], view)?; }

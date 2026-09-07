@@ -34,6 +34,22 @@ impl App {
                 }
                 return Ok(());
             }
+            if key.code == KeyCode::F(4) {
+                if let Some(target) = self.selected {
+                    if let Some(pending) = self.views.get(&target).and_then(|v| v.pending.clone()) {
+                        self.dispatch(
+                            target,
+                            pending.command_id,
+                            voyage_protocol::process::RuntimeCommand::Receipt {
+                                command_id: pending.command_id,
+                            },
+                        );
+                    } else {
+                        self.status = "All sent messages are accounted for.".into();
+                    }
+                }
+                return Ok(());
+            }
             if matches!(key.code, KeyCode::Tab | KeyCode::BackTab) {
                 let keys: Vec<_> = self.views.keys().copied().collect();
                 if !keys.is_empty() {

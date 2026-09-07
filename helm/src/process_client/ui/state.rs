@@ -104,9 +104,32 @@ impl View {
         }
     }
     pub fn title(&self) -> String {
+        let name = self.snapshot.as_ref().and_then(|s| s.name.as_deref());
+        if let Some(name) = name
+            && !name
+                .strip_prefix("session-")
+                .is_some_and(|suffix| suffix.chars().all(|ch| ch.is_ascii_hexdigit()))
+        {
+            return name.to_owned();
+        }
         self.snapshot
             .as_ref()
-            .and_then(|s| s.name.clone())
-            .unwrap_or_else(|| self.process.session_id.to_string()[..8].to_string())
+            .and_then(|s| {
+                s.messages
+                    .iter()
+                    .find(|m| m.role == "user" && !m.content.starts_with("Operator tool "))
+            })
+            .map(|m| {
+                m.content
+                    .lines()
+                    .next()
+                    .unwrap_or_default()
+                    .split_whitespace()
+                    .take(7)
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            })
+            .filter(|title| !title.is_empty())
+            .unwrap_or_else(|| "New voyage".into())
     }
 }
