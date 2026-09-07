@@ -171,7 +171,7 @@ fn activity(
             note(
                 output,
                 key.clone(),
-                format!("  {status} · {}", safe(title)),
+                format!("  {status} · {}", presentation::label(title)),
                 width,
             );
             // Only intentional public action targets, never tool result payloads.
@@ -277,7 +277,7 @@ fn build(view: &View, state: &State, width: u16) -> Vec<Row> {
                 .unwrap_or_default();
             rows(
                 &mut out,
-                key.clone(),
+                Key::MessageHeading(message.message_index),
                 Text::from(Line::styled(
                     format!("{label}{time}"),
                     heading().fg(if message.role == "user" {
@@ -375,13 +375,15 @@ fn build(view: &View, state: &State, width: u16) -> Vec<Row> {
         );
     }
     if let Some(run) = &snapshot.run
-        && run.state != "completed"
+        && (run.state != "completed" || run.live_text.as_ref().is_some_and(|text| !text.is_empty()))
     {
         let key = Key::Live(run.run_id);
         note(
             &mut out,
             key.clone(),
-            if run.active() && !snapshot.decisions.is_empty() {
+            if run.state == "completed" {
+                "Finishing response…"
+            } else if run.active() && !snapshot.decisions.is_empty() {
                 "Waiting for you"
             } else {
                 presentation::run_state(&run.state)
@@ -400,7 +402,13 @@ fn build(view: &View, state: &State, width: u16) -> Vec<Row> {
         if let Some(text) = loaded.or(run.live_text.as_ref())
             && !text.is_empty()
         {
-            rows(&mut out, key.clone(), body(text, width));
+            // The next canonical assistant message occupies this index. Keep
+            // its reading anchor when the live suffix becomes saved text.
+            rows(
+                &mut out,
+                Key::Message(snapshot.total_messages),
+                body(text, width),
+            );
         }
         if run.live_text_truncated && loaded.is_none() {
             note(

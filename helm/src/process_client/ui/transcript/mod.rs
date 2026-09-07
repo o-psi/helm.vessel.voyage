@@ -8,6 +8,7 @@ use ratatui::text::Line;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum Key {
     Message(usize),
+    MessageHeading(usize),
     Activity(usize),
     Turn(uuid::Uuid),
     Live(uuid::Uuid),
