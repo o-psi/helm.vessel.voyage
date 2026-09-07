@@ -632,6 +632,11 @@ impl Journal {
             current.revision == request.expected_revision,
             "stale session revision"
         );
+        // Apply a deferred model only at turn admission, after revision and active-run
+        // checks. Active checkpoints must keep their original provider replay intact.
+        if let Some(model) = current.session.pending_model.take() {
+            current.session.switch_model(model)?;
+        }
         let mut message = Message::new(Role::User, &request.prompt);
         message.operator_name = request.operator_name.clone();
         current.session.messages.push(message);

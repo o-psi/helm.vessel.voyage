@@ -243,6 +243,21 @@ pub(super) fn runtime(command: VoyageCommand) -> Result<RuntimeCommand> {
             expires_at_ms,
             name,
         },
+        VoyageCommand::SetInference {
+            command_id,
+            expected_revision,
+            expires_at_ms,
+            model,
+            reasoning_effort,
+            service_tier,
+        } => RuntimeCommand::SetInference {
+            command_id,
+            expected_revision,
+            expires_at_ms,
+            model,
+            reasoning_effort,
+            service_tier,
+        },
         VoyageCommand::SetModel {
             command_id,
             expected_revision,
@@ -441,7 +456,9 @@ pub(super) fn required_right(command: &VoyageCommand) -> Option<ProcessRight> {
         | VoyageCommand::Archive { .. }
         | VoyageCommand::Delete { .. } => Some(ProcessRight::Lifecycle),
         VoyageCommand::Terminal { .. } => Some(ProcessRight::Terminal),
-        VoyageCommand::Configure { .. } | VoyageCommand::SetAccess { .. } => None,
+        VoyageCommand::Configure { .. }
+        | VoyageCommand::SetAccess { .. }
+        | VoyageCommand::SetInference { .. } => None,
         _ => None,
     }
 }

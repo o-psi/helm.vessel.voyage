@@ -114,7 +114,9 @@ pub fn required_process_right(command: &RuntimeCommand) -> Option<ProcessRight> 
         | RuntimeCommand::Delete { .. }
         | RuntimeCommand::Stop => Some(ProcessRight::Lifecycle),
         RuntimeCommand::Terminal { .. } => Some(ProcessRight::Terminal),
-        RuntimeCommand::Configure { .. } | RuntimeCommand::SetAccess { .. } => None,
+        RuntimeCommand::Configure { .. }
+        | RuntimeCommand::SetAccess { .. }
+        | RuntimeCommand::SetInference { .. } => None,
         _ => None,
     }
 }

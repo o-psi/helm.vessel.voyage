@@ -65,6 +65,7 @@ pub(super) async fn submit(
     let cancel = CancellationToken::new();
     *state.active.lock().await = Some(ActiveRun {
         id: run_id,
+        inference: super::configuration::inference_snapshot(&config),
         cancel: cancel.clone(),
         steering: None,
     });

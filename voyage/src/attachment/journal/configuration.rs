@@ -60,6 +60,12 @@ impl Journal {
             expires_at_ms,
             ..
         }
+        | RuntimeCommand::SetInference {
+            command_id,
+            expected_revision,
+            expires_at_ms,
+            ..
+        }
         | RuntimeCommand::SetAccess {
             command_id,
             expected_revision,
@@ -100,8 +106,9 @@ impl Journal {
             |r| r.get(0),
         )?;
         let access_only = matches!(&command, RuntimeCommand::SetAccess { .. });
+        let inference_only = matches!(&command, RuntimeCommand::SetInference { .. });
         ensure!(
-            (access_only && active > 0)
+            ((access_only || inference_only) && active > 0)
                 || (active == 0
                     && super::catalogue::pending_cleanup(&tx, guard.session_id)?.is_none()),
             "configuration requires idle voyage and observed cleanup"
@@ -113,7 +120,12 @@ impl Journal {
         );
         if access_only {
             ensure!(
-                saved.session.model == model,
+                saved
+                    .session
+                    .pending_model
+                    .as_ref()
+                    .unwrap_or(&saved.session.model)
+                    == &model,
                 "access change cannot switch model"
             );
             // Changing mode is not approval for a previously displayed effect.
@@ -122,7 +134,10 @@ impl Journal {
                 "UPDATE process_decisions SET response='\"invalidated\"' WHERE response IS NULL AND json_extract(request, '$.kind')='approval' AND run_id IN (SELECT id FROM runs WHERE session_id=?1 AND active=1)",
                 [guard.session_id.to_string()],
             )?;
+        } else if inference_only && active > 0 {
+            saved.session.pending_model = (saved.session.model != model).then_some(model);
         } else {
+            saved.session.pending_model = None;
             saved.session.switch_model(model)?;
         }
         saved.revision = saved.revision.checked_add(1).context("revision overflow")?;
@@ -136,7 +151,7 @@ impl Journal {
             ],
         )?;
         tx.execute("INSERT INTO process_configuration VALUES(?1,?2) ON CONFLICT(session_id) DO UPDATE SET settings=excluded.settings",params![guard.session_id.to_string(),settings])?;
-        let receipt = json!({"command_id":command_id,"status":"applied","revision":saved.revision});
+        let receipt = json!({"command_id":command_id,"status":"applied","revision":saved.revision,"apply_at":if inference_only {"next_turn"} else {"immediate"}});
         tx.execute(
             "INSERT INTO process_commands VALUES(?1,?2,?3)",
             params![

@@ -154,6 +154,15 @@ pub enum RuntimeCommand {
         expires_at_ms: u64,
         name: String,
     },
+    /// Atomically replace next-turn inference overrides. Null means provider default.
+    SetInference {
+        command_id: Uuid,
+        expected_revision: u64,
+        expires_at_ms: u64,
+        model: String,
+        reasoning_effort: Option<String>,
+        service_tier: Option<String>,
+    },
     SetModel {
         command_id: Uuid,
         expected_revision: u64,
@@ -213,6 +222,7 @@ impl RuntimeCommand {
             | Self::Steer { command_id, .. }
             | Self::Rename { command_id, .. }
             | Self::SetModel { command_id, .. }
+            | Self::SetInference { command_id, .. }
             | Self::Respond { command_id, .. }
             | Self::Archive { command_id, .. }
             | Self::Delete { command_id, .. }

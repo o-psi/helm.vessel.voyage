@@ -161,6 +161,7 @@ impl Journal {
                 match command {
                     RuntimeCommand::Rename { name, .. } => saved.session.set_name(name.clone()),
                     RuntimeCommand::SetModel { model, .. } => {
+                        saved.session.pending_model = None;
                         saved.session.switch_model(model.clone())?;
                     }
                     _ => unreachable!(),

@@ -47,7 +47,9 @@ pub(super) async fn dispatch_admitted(
         command @ RuntimeCommand::Github { .. } => {
             super::github::submit(state, authorization, command).await
         }
-        command @ (RuntimeCommand::Configure { .. } | RuntimeCommand::SetAccess { .. }) => {
+        command @ (RuntimeCommand::Configure { .. }
+        | RuntimeCommand::SetAccess { .. }
+        | RuntimeCommand::SetInference { .. }) => {
             super::configuration::configure(state, command, authorization).await
         }
         RuntimeCommand::WorkflowInputs { input_id, values } => {
@@ -117,6 +119,7 @@ pub(super) async fn dispatch_admitted(
                 "steer",
                 "rename",
                 "set_model",
+                "set_inference",
                 "set_access",
                 "decisions",
                 "respond",
@@ -147,6 +150,7 @@ pub(super) async fn dispatch_admitted(
                             | "set_model"
                             | "set_access"
                             | "operator_tool"
+                            | "set_inference"
                             | "configure"
                             | "workflow_submit"
                     )
@@ -157,7 +161,19 @@ pub(super) async fn dispatch_admitted(
             )
         }
         RuntimeCommand::Snapshot => {
+            // Serialize with settings publication so revision and values describe one state.
+            let _admission = state.admission.lock().await;
             let mut snapshot = state.owner.process_snapshot().await?;
+            let mut inference_config = state.config.read().await.clone();
+            let saved = state.owner.snapshot().await?.session;
+            inference_config.model = saved.pending_model.unwrap_or(saved.model);
+            snapshot["inference"] = super::configuration::inference_snapshot(&inference_config);
+            let active = state.active.lock().await;
+            snapshot["inference_next_turn"] = json!(active.is_some());
+            snapshot["inference_current"] = active
+                .as_ref()
+                .map_or(Value::Null, |run| run.inference.clone());
+            drop(active);
             snapshot["access"] = crate::runtime_policy::RuntimePolicy::resolve(
                 &*state.config.read().await,
                 &state.registration.workspace,
@@ -251,6 +267,9 @@ pub(super) async fn dispatch_admitted(
             let _admission = state.admission.lock().await;
             ensure!(!state.shutdown.is_cancelled(), "runtime stopping");
             if let RuntimeCommand::SetModel { model, .. } = &command {
+                let mut candidate = state.config.read().await.clone();
+                candidate.model = model.clone();
+                crate::provider::validate_inference_settings(&candidate)?;
                 ensure!(
                     state.active.lock().await.is_none(),
                     "model change requires idle runtime"
@@ -306,7 +325,10 @@ pub(super) async fn dispatch_admitted(
                     return Ok(receipt);
                 }
                 let mut config = state.config.read().await.clone();
-                config.model = state.owner.snapshot().await?.session.model;
+                {
+                    let session = state.owner.snapshot().await?.session;
+                    config.model = session.pending_model.unwrap_or(session.model);
+                }
                 Some(serde_json::to_string(
                     &crate::launch_config::LaunchConfig::capture(
                         &config,
@@ -340,7 +362,10 @@ pub(super) async fn dispatch_admitted(
                 None
             };
             let mut config = state.config.read().await.clone();
-            config.model = state.owner.snapshot().await?.session.model;
+            {
+                let session = state.owner.snapshot().await?.session;
+                config.model = session.pending_model.unwrap_or(session.model);
+            }
             state
                 .controls
                 .inspect_or_idle(run_id, &section, &config, &state.registration.workspace)

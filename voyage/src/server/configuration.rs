@@ -23,6 +23,11 @@ async fn configure_inner(
         expected_revision,
         ..
     }
+    | RuntimeCommand::SetInference {
+        command_id,
+        expected_revision,
+        ..
+    }
     | RuntimeCommand::SetAccess {
         command_id,
         expected_revision,
@@ -32,10 +37,11 @@ async fn configure_inner(
         anyhow::bail!("not configure")
     };
     let access_only = matches!(&command, RuntimeCommand::SetAccess { .. });
+    let inference_only = matches!(&command, RuntimeCommand::SetInference { .. });
     let _admission = state.admission.lock().await;
     let active = state.active.lock().await.is_some();
     ensure!(
-        !state.shutdown.is_cancelled() && (access_only || !active),
+        !state.shutdown.is_cancelled() && (access_only || inference_only || !active),
         "configuration requires idle runtime"
     );
     if let Some(receipt) = state.owner.process_receipt(*command_id).await? {
@@ -49,6 +55,19 @@ async fn configure_inner(
             );
             bootstrap::load_config(Some(config_path), &state.registration.workspace)?
         }
+        RuntimeCommand::SetInference {
+            model,
+            reasoning_effort,
+            service_tier,
+            ..
+        } => {
+            let mut config = state.config.read().await.clone();
+            config.model = model.clone();
+            config.reasoning_effort = reasoning_effort.clone();
+            config.service_tier = service_tier.clone();
+            crate::provider::validate_inference_settings(&config)?;
+            config
+        }
         RuntimeCommand::SetAccess { access, .. } => {
             let mut config = state.config.read().await.clone();
             let mode = match access.as_str() {
@@ -59,7 +78,10 @@ async fn configure_inner(
             };
             // Validate existing sources before applying the one explicit override.
             crate::runtime_policy::RuntimePolicy::resolve(&config, &state.registration.workspace)?;
-            config.model = state.owner.snapshot().await?.session.model.clone();
+            {
+                let session = state.owner.snapshot().await?.session;
+                config.model = session.pending_model.unwrap_or(session.model);
+            }
             config.access = Some(mode);
             config.policy_explicit.access = Some(mode);
             if let Some(selection) = config.policy_profile.take() {
@@ -83,6 +105,7 @@ async fn configure_inner(
         _ => unreachable!(),
     };
     bootstrap::limit_participant(&mut config, &state.registration)?;
+    crate::provider::validate_inference_settings(&config)?;
     if let RuntimeCommand::SetAccess { access, .. } = &command {
         ensure!(
             config.access_mode().to_string() == *access,
@@ -126,7 +149,7 @@ async fn configure_inner(
         state.owner.snapshot().await?.revision == *expected_revision,
         "session revision conflict"
     );
-    if !active && !launch.matches_config(&*state.config.read().await)? {
+    if !inference_only && !active && !launch.matches_config(&*state.config.read().await)? {
         state
             .controls
             .close_for_command(&state.owner, &command)
@@ -143,9 +166,25 @@ async fn configure_inner(
         .await?;
     // Publish only after durable acceptance. Stale approvals fail closed.
     if let Some(live) = &current.live_access {
-        live.update(effective_access);
+        if !inference_only {
+            live.update(effective_access);
+        }
         config.live_access = Some(live.clone());
     }
     *current = config;
     Ok(receipt)
+}
+
+/// Public, non-secret settings projection. These are requested values, not proof of
+/// an account entitlement or of the tier ultimately delivered by a provider.
+pub(super) fn inference_snapshot(config: &Config) -> serde_json::Value {
+    let (reasoning_efforts, service_tiers) = crate::provider::inference_capabilities(config);
+    serde_json::json!({
+        "model": config.model,
+        "reasoning_effort": config.reasoning_effort,
+        "service_tier": config.service_tier,
+        "provider": config.provider,
+        "reasoning_efforts": reasoning_efforts,
+        "service_tiers": service_tiers,
+    })
 }
