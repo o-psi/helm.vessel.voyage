@@ -37,10 +37,10 @@ into current runtime instructions. Browser console work remains deferred.
    substantial independent task clearly benefits from parallel work.
 3. Verify the actual change. The automated tests and evaluations have been removed
    at the user's request; their recreation is separate work. Do not claim regression
-   coverage or create replacements as part of documentation cleanup. Run appropriate
-   existing checks, and `./scripts/check-quality` from a clean committed checkout
-   for feature delivery. Documentation-only edits need source, command, path, link,
-   manifest and diff checks. See [docs/quality.md](docs/quality.md).
+   coverage or create replacements as part of documentation cleanup. Run checks
+   appropriate to the changed surface and scope. Documentation-only edits need
+   source, command, path, link, manifest and diff checks. See
+   [docs/quality.md](docs/quality.md).
 4. Unless the user says otherwise, commit completed changes, fetch and integrate
    into local `main`, and push normally to GitHub `origin/main`. This publication is
    authorized. Preserve unrelated history/work and verify local/remote `main` match.
