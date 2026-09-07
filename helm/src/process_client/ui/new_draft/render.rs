@@ -23,7 +23,7 @@ impl App {
         let state = if draft.busy {
             "Starting / checking…"
         } else if draft.saved.start.is_some() {
-            "First send pending · F4 checks its outcome"
+            "First send pending · Recovering automatically"
         } else {
             "Draft · starts when you send"
         };
@@ -70,7 +70,7 @@ impl App {
         }
         frame.render_widget(
             Paragraph::new(format!(
-                "{}\nEnter Send · Alt+Enter New line · F4 Check · Ctrl+C Leave",
+                "{}\nEnter Send · Alt+Enter New line · Ctrl+C Leave",
                 safe(&self.status)
             ))
             .style(Style::default().fg(Color::Cyan))

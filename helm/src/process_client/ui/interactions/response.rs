@@ -20,7 +20,7 @@ impl App {
             .context("reviewed voyage unavailable")?;
         ensure!(
             view.pending.is_none(),
-            "resolve pending delivery with /receipt before responding"
+            "Waiting for delivery confirmation; Helm checks automatically"
         );
         let snapshot = view
             .snapshot

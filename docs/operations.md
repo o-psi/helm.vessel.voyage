@@ -45,14 +45,14 @@ The connected TUI uses Ctrl+N to create, Tab/Shift+Tab to switch, and Ctrl+C/Ctr
 to detach. `/new /absolute/workspace`, `/use SESSION_UUID`, `/rename NAME`,
 `/model MODEL`, `/cancel`, `/receipt`, `/help` and `/quit` address the selected
 voyage. Ordinary text submits a turn when idle and steers the exact observed run
-when active. A refused or uncertain command retains its draft; inspect `/receipt`
-before sending again. Switching views does not cancel or redirect outstanding work.
+when active. A refused or uncertain command retains its draft; Helm checks uncertain delivery
+automatically before allowing another send. Switching views does not cancel or redirect outstanding work.
 F1 opens a scrollable keyboard guide. PageUp/PageDown scroll the current view;
 Esc returns from details to the preserved conversation draft. The footer always
 shows **F3 Console**, including on layouts without the voyage sidebar. Operator
 overviews use task-specific summaries; runtime identifiers, schemas and wire
-receipts are kept out of the ordinary screens. F4 checks the status of an
-unconfirmed action without editing or resending the conversation draft. Authored
+receipts are kept out of the ordinary screens. Helm checks the status of an
+unconfirmed action automatically without editing or resending the conversation draft. Authored
 code remains readable in conversation; stored operator results receive plain-language
 summaries without changing the saved history.
 
@@ -142,7 +142,7 @@ navigating requests in the current UI.
 Question responses are model input, never execution approval. Pasting text only
 edits a draft; it does not send an answer or authorize an action. The main composer
 remains separate and responses preserve its draft. Uncertain response delivery
-retains its command identity; use F4 to check an unconfirmed response. Unknown future interaction kinds remain visible without response controls.
+retains its command identity; Helm automatically checks an unconfirmed response. Unknown future interaction kinds remain visible without response controls.
 
 `/approve DECISION_UUID` and `/deny DECISION_UUID` answer
 an exact approval; `/answer DECISION_UUID text` answers a model question. There is
@@ -178,10 +178,12 @@ helm connect restart SESSION_UUID --incarnation INCARNATION_UUID --command-id RE
 Deadlines are Unix milliseconds, not durations. Revisions and run/incarnation IDs
 come from current inspection. A receipt records admission, not successful execution
 or observed cleanup. An unknown receipt does not authorize a different resubmission.
-In Helm, F4 or `/receipt` resolves an ordinary pending send without repeating it:
+In Helm, automatic recovery resolves an ordinary pending send without repeating it
+(`/receipt` is also available as an optional diagnostic):
 a saved receipt confirms delivery, or the runtime durably prevents that command ID
 from being admitted and returns your editable draft. Send the draft again only after
-that definitive result. Status checks are bounded; an unavailable or older owner
+that definitive result. Status checks are bounded and non-overlapping, with a five-second pause before
+checking unresolved outcomes again; an unavailable or older owner
 leaves the original identity saved. The CLI `connect receipt` remains a read-only
 lookup and does not close an unadmitted command ID.
 A stop response can precede observed cleanup; inspect again. Never infer survival

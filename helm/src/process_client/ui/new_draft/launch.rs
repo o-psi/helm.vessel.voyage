@@ -5,7 +5,6 @@ use anyhow::ensure;
 pub(super) async fn advance(
     client: &Client,
     saved: &mut Saved,
-    check_only: bool,
 ) -> Result<Option<serde_json::Value>> {
     if let Some(receipt) = &saved.receipt {
         return Ok(Some(receipt.clone()));
@@ -53,8 +52,6 @@ pub(super) async fn advance(
             return retain_receipt(saved, receipt);
         }
         // An unresolved original is never resent, even on an explicit retry.
-        return Ok(None);
-    } else if check_only {
         return Ok(None);
     }
     if saved.submit.is_none() {

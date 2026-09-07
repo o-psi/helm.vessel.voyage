@@ -185,7 +185,7 @@ pub(in crate::process_client::ui) fn draw(frame: &mut Frame<'_>, app: &App, area
     review.scroll = scroll.min(u16::MAX as usize) as u16;
     frame.render_widget(Paragraph::new(lines).scroll((review.scroll, 0)), body);
     let controls = if view.pending.is_some() {
-        "Sending answer… F4 checks an unconfirmed response".to_owned()
+        "Sending answer… Unconfirmed responses are checked automatically".to_owned()
     } else if remaining == 0 {
         "This request has expired. Nothing will be sent.".into()
     } else if editing {

@@ -46,6 +46,7 @@ impl App {
         self.status = "Creating a separate voyage...".into();
         let client = self.clients[target.route].clone();
         let sender = self.sender.clone();
+        self.command_checks.insert((target, command_id), None);
         tokio::spawn(async move {
             let result = client
                 .request(VesselCommand::Branch {

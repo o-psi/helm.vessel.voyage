@@ -441,7 +441,7 @@ fn composer(frame: &mut Frame<'_>, app: &App, area: Rect) {
         .and_then(|v| v.snapshot.as_ref())
         .map_or("Choose a voyage", |s| s.model.as_str());
     let hint = if pending {
-        "Not confirmed yet · F4 Check status"
+        "Not confirmed yet · Checking automatically"
     } else if area.width >= 60 {
         "/ Commands · Enter Send · Alt+Enter New line"
     } else {
