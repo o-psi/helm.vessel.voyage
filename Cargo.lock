@@ -3342,6 +3342,7 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "uuid",
+ "voyage",
  "voyage-protocol",
  "voyage-storage",
 ]

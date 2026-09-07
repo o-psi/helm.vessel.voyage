@@ -15,7 +15,6 @@ mod diagnostics;
 mod logging;
 mod workflow_input;
 use attachment_ui::{attachment_connect, attachment_interrupt, attachment_notice};
-use auth::auth;
 use catalogue::list_sessions;
 use cli::*;
 use diagnostics::{doctor, list_models, print_config};
@@ -445,7 +444,6 @@ async fn main() -> Result<()> {
             }),
         Command::Models { json } => list_models(&config, cli.workspace, json).await,
         Command::Doctor => doctor(&config, cli.workspace).await,
-        Command::Auth { command } => auth(command, &config).await,
         Command::Attachment(_) | Command::LocalProvider { .. } => {
             unreachable!("handled before runtime initialization")
         }

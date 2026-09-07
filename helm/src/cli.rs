@@ -109,11 +109,6 @@ pub(crate) enum Command {
     RemoteConsent(remote_consent::Args),
     /// Manage dedicated Vessel enrollment; no worker is started.
     Attachment(helm::attachment::cli::AttachmentArgs),
-    /// Manage Helm's native ChatGPT subscription credentials.
-    Auth {
-        #[command(subcommand)]
-        command: AuthCommand,
-    },
     Run {
         #[arg(required = true)]
         prompt: Vec<String>,
@@ -161,23 +156,4 @@ pub(crate) struct GithubArgs {
     pub(crate) session: Option<String>,
     #[command(flatten)]
     pub(crate) args: helm::github::operator::Args,
-}
-
-#[derive(Subcommand)]
-pub(crate) enum AuthCommand {
-    Status,
-    Login {
-        /// Use the headless device-code flow instead of browser callback login.
-        #[arg(long)]
-        device: bool,
-    },
-    Logout,
-    ImportCodex {
-        /// Codex auth.json to import; defaults to ~/.codex/auth.json.
-        #[arg(long)]
-        path: Option<PathBuf>,
-        /// Replace existing Helm credentials.
-        #[arg(long)]
-        force: bool,
-    },
 }

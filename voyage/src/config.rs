@@ -60,7 +60,7 @@ impl ProviderKind {
             Self::ChatGptOauth => ProviderProfile {
                 id: "chatgpt-oauth",
                 access: ProviderAccess::NativeChatgptOauth,
-                credential: "Helm-managed ChatGPT OAuth tokens; run `helm auth login`",
+                credential: "Vessel-managed ChatGPT OAuth tokens; run `vessel auth login`",
                 billing: "Uses the authenticated ChatGPT subscription and its plan limits",
                 compatibility_bridge: false,
             },

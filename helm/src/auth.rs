@@ -1,23 +1,8 @@
-//! Local credential enrollment; credentials stay on this machine.
-use crate::cli::AuthCommand;
+//! Read-only local credential diagnostics; enrollment belongs to Vessel.
 use anyhow::Result;
-use helm::Config;
 pub(crate) fn chatgpt_token_store() -> Result<helm::provider::ChatGptTokenStore> {
     Ok(helm::provider::ChatGptTokenStore::new(
         helm::provider::ChatGptTokenStore::default_path()?,
-    ))
-}
-
-pub(crate) fn chatgpt_provider(config: &Config) -> Result<helm::provider::ChatGptOauthProvider> {
-    let mut endpoints = helm::provider::OAuthEndpoints::default();
-    if let Some(base) = config.chatgpt_base_url.as_deref() {
-        let base = base.trim_end_matches('/');
-        endpoints.responses = format!("{base}/responses");
-        endpoints.models = format!("{base}/models");
-    }
-    Ok(helm::provider::ChatGptOauthProvider::from_store(
-        chatgpt_token_store()?,
-        endpoints,
     ))
 }
 
@@ -27,78 +12,4 @@ pub(crate) fn token_status_json(status: &helm::provider::TokenStatus) -> serde_j
         "expires_at": status.expires_at,
         "refreshable": status.refreshable,
     })
-}
-
-pub(crate) async fn auth(command: AuthCommand, config: &Config) -> Result<()> {
-    let store = chatgpt_token_store()?;
-    match command {
-        AuthCommand::Status => {
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&token_status_json(&store.status().await?))?
-            );
-        }
-        AuthCommand::Logout => {
-            store.clear().await?;
-            println!("ChatGPT credentials removed");
-        }
-        AuthCommand::ImportCodex { path, force } => {
-            match path {
-                Some(path) => store.import_codex(&path, force).await?,
-                None => store.import_default_codex(force).await?,
-            };
-            println!("Imported ChatGPT credentials");
-        }
-        AuthCommand::Login { device } => {
-            let provider = chatgpt_provider(config)?;
-            if device {
-                let authorization = provider.begin_device().await?;
-                eprintln!(
-                    "Open {} and enter code {}",
-                    authorization.verification_uri, authorization.user_code
-                );
-                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(600);
-                loop {
-                    match provider.poll_device(&authorization).await {
-                        Ok(_) => {
-                            println!("Signed in with ChatGPT");
-                            break;
-                        }
-                        Err(helm::provider::ProviderError::Unavailable(_))
-                            if std::time::Instant::now() < deadline =>
-                        {
-                            tokio::time::sleep(std::time::Duration::from_secs(
-                                authorization.interval.max(1),
-                            ))
-                            .await;
-                        }
-                        Err(error) => return Err(error.into()),
-                    }
-                }
-            } else {
-                provider
-                    .login_browser(std::time::Duration::from_secs(600), |url| {
-                        eprintln!("Open this URL to sign in:\n{url}");
-                        try_open_browser(url);
-                    })
-                    .await?;
-                println!("Signed in with ChatGPT");
-            }
-        }
-    }
-    Ok(())
-}
-
-pub(crate) fn try_open_browser(url: &str) {
-    #[cfg(target_os = "windows")]
-    let result = std::process::Command::new("rundll32")
-        .args(["url.dll,FileProtocolHandler", url])
-        .spawn();
-    #[cfg(target_os = "macos")]
-    let result = std::process::Command::new("open").arg(url).spawn();
-    #[cfg(all(unix, not(target_os = "macos")))]
-    let result = std::process::Command::new("xdg-open").arg(url).spawn();
-    if let Err(error) = result {
-        eprintln!("Could not open a browser automatically: {error}");
-    }
 }

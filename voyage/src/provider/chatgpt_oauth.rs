@@ -209,11 +209,15 @@ impl TokenStore {
         Self { path }
     }
 
+    // Retain the legacy path so Vessel auth and Voyage execution share existing
+    // credentials without migration or resurrecting logged-out tokens.
     pub fn default_path() -> Result<PathBuf, ProviderError> {
         dirs::data_local_dir()
             .map(|root| root.join("helm").join("chatgpt-oauth.json"))
             .ok_or_else(|| {
-                ProviderError::Authentication("cannot resolve Helm data directory".into())
+                ProviderError::Authentication(
+                    "cannot resolve local credential data directory".into(),
+                )
             })
     }
 
@@ -285,7 +289,7 @@ impl TokenStore {
     ) -> Result<OAuthTokens, ProviderError> {
         if !overwrite && self.load().await?.is_some() {
             return Err(ProviderError::Authentication(
-                "Helm ChatGPT credentials already exist".into(),
+                "Local ChatGPT credentials already exist".into(),
             ));
         }
         let document: Value =
@@ -446,11 +450,11 @@ impl ChatGptOAuth {
             Err(error) => Err(error),
         };
         let (status, message) = if result.is_ok() {
-            ("200 OK", "Helm is signed in. You may close this window.")
+            ("200 OK", "Vessel is signed in. You may close this window.")
         } else {
             (
                 "400 Bad Request",
-                "Helm could not complete sign-in. Return to the terminal.",
+                "Vessel could not complete sign-in. Return to the terminal.",
             )
         };
         let response = format!(

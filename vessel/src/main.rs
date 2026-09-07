@@ -1,3 +1,4 @@
+mod auth;
 mod coordination_http;
 mod enrollment_inspection_http;
 mod process_http;
@@ -62,6 +63,11 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Manage provider credentials for this local executing account (not Vessel enrollment).
+    Auth {
+        #[command(subcommand)]
+        command: auth::AuthCommand,
+    },
     /// Issue an explicit scoped credential through the local supervisor.
     #[cfg(target_os = "linux")]
     ProcessGrant(vessel::process::grant_cli::GrantArgs),
@@ -139,6 +145,7 @@ async fn main() -> Result<()> {
             .init(),
     }
     match &cli.command {
+        Some(Command::Auth { command }) => return auth::auth(command).await,
         #[cfg(target_os = "linux")]
         Some(Command::ProcessGrant(_)) => {}
         #[cfg(target_os = "linux")]

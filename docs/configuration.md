@@ -56,7 +56,7 @@ provider/account and therefore requires the relevant credentials and network acc
 | --- | --- |
 | `openai-responses` | Native Responses; API key from `api_key_env`. |
 | `openai-chat` | Native compatible Chat Completions; endpoint-defined API credentials. |
-| `chatgpt-oauth` | Native experimental subscription transport; Helm-managed OAuth tokens. |
+| `chatgpt-oauth` | Native experimental subscription transport; Vessel-managed OAuth tokens. |
 | `anthropic` | Native Messages; normally `ANTHROPIC_API_KEY`. |
 | `codex-compatibility` | Optional external `codex app-server` bridge using its sign-in. |
 
@@ -82,18 +82,30 @@ require explicit configuration; inspect `helm local-provider --help` for discove
 probe and config-generation commands before changing endpoints.
 
 ```sh
-helm auth login
-helm auth login --device
-helm auth status
-helm auth import-codex
-helm auth logout
+vessel auth login
+vessel auth login --device
+vessel auth status
+vessel auth import-codex
+vessel auth logout
 ```
 
 Choose browser login or device login, not both for one authentication attempt.
 Import explicitly reads an existing Codex credential file; it does not run Codex.
 Use `import-codex --path /absolute/auth.json` for another source and `--force` only
-to replace existing Helm credentials. OAuth tokens live in the platform local-data
-directory's `helm/chatgpt-oauth.json`. Subscription transport uses an internal
+to replace existing local ChatGPT credentials. OAuth tokens live in the platform local-data
+directory's `helm/chatgpt-oauth.json`. This legacy path is intentionally retained
+so existing logins remain usable without copying or re-importing credentials.
+Run `vessel auth` on the execution host as the account running Voyage; it is a
+local command and does not authenticate a remote Vessel from Helm. For a headless
+host, use `vessel auth login --device`. Provider credentials are separate from
+Vessel attachment/enrollment credentials. Helm only exposes read-only local
+credential diagnostics; Voyage loads and refreshes tokens on the executing host.
+`helm auth` is no longer supported; update scripts to call `vessel auth`.
+Status reports cached credentials, not a live provider validation. Logout removes
+the cache but does not revoke tokens already cached by running Voyages; stop those
+processes when changing accounts or logging out.
+
+Subscription transport uses an internal
 product endpoint and remains experimental. Never copy tokens into sessions,
 project configuration, command arguments or Vessel enrollment.
 
