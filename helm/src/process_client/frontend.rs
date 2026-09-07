@@ -172,13 +172,21 @@ pub async fn run(
 }
 
 pub async fn chat(
-    config: crate::Config,
+    mut config: crate::Config,
     workspace: Option<PathBuf>,
     reference: Option<String>,
     plain: bool,
     model_overridden: bool,
     configuration_explicit: bool,
 ) -> Result<()> {
+    if reference.is_none() {
+        config.workspace = Some(config.resolve_workspace(workspace)?);
+        let client = local::connect(super::cli::default_directory(), true).await?;
+        if plain {
+            return super::plain::chat_new(&client, config).await;
+        }
+        return super::ui::run_with_config(vec![client], None, Some(config)).await;
+    }
     let creating = reference.is_none();
     let opened = open(
         &config,

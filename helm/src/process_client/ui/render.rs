@@ -44,6 +44,7 @@ pub fn draw(frame: &mut Frame<'_>, app: &App) {
     app.sync_interactions();
     app.sidebar.hits.borrow_mut().clear();
     app.sidebar.visible.set(None);
+    app.draft_hits.borrow_mut().clear();
     let area = frame.area();
     let view = app.selected.and_then(|key| app.views.get(&key));
     if area.width < 40 || area.height < 18 {
@@ -90,6 +91,10 @@ pub fn draw(frame: &mut Frame<'_>, app: &App) {
     .split(area);
     if columns[0].width > 0 {
         sidebar(frame, app, columns[0]);
+    }
+    if app.active_draft.is_some() {
+        app.draw_new_draft(frame, columns[1]);
+        return;
     }
     let main = inset(columns[1], if area.width >= 72 { 2 } else { 1 }, 0);
     let terminals_open = view.is_some_and(|v| v.terminals.open);
@@ -241,7 +246,7 @@ fn sidebar(frame: &mut Frame<'_>, app: &App, area: Rect) {
         1,
     );
     let rows = Layout::vertical([
-        Constraint::Length(5),
+        Constraint::Length(5 + app.new_drafts.len().min(4) as u16),
         Constraint::Min(1),
         Constraint::Length(2),
     ])
@@ -252,16 +257,31 @@ fn sidebar(frame: &mut Frame<'_>, app: &App, area: Rect) {
             Line::default(),
             Line::styled("Ctrl+N  New voyage", accent()),
             Line::default(),
-            Line::styled(
-                if app.archives {
-                    "Archived voyages"
-                } else {
-                    "Your voyages"
-                },
-                muted(),
-            ),
         ]),
         rows[0],
+    );
+    app.draw_draft_links(
+        frame,
+        Rect::new(
+            rows[0].x,
+            rows[0].y + 3,
+            rows[0].width,
+            app.new_drafts.len().min(4) as u16,
+        ),
+    );
+    frame.render_widget(
+        Paragraph::new(if app.archives {
+            "Archived voyages"
+        } else {
+            "Your voyages"
+        })
+        .style(muted()),
+        Rect::new(
+            rows[0].x,
+            rows[0].bottom().saturating_sub(1),
+            rows[0].width,
+            1,
+        ),
     );
     let targets = app.ordered_targets();
     let mut heights = Vec::new();

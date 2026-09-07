@@ -148,6 +148,14 @@ apply. `provider_retry_attempts`, `provider_retry_initial_ms` and
 
 ## Storage and diagnostics
 
+Helm stores private new-voyage drafts in `helm-new-drafts/` beside its default
+Vessel directory (normally `~/.local/state/voyage/helm-new-drafts` on Linux).
+These files contain local launch settings, composer text and any pending first-send
+identities; they are not canonical sessions. Draft locks keep concurrent Helm
+windows independent. Untouched blank drafts are not saved. Open interactive Helm
+to recover a saved first send and press F4 to check its outcome before retrying.
+Keep these files private alongside the existing `helm-views/` interface drafts.
+
 The platform local-data directory's `helm` child is the ordinary data root,
 normally `~/.local/share/helm` on Linux. Legacy JSON import sources are under `sessions/`;
 TUI diagnostics append to `logs/helm.log`. Non-TUI diagnostics go to stderr.

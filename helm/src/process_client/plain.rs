@@ -37,12 +37,48 @@ pub async fn follow(client: &Client, session: Uuid, run: Uuid) -> Result<()> {
 }
 
 pub async fn chat(client: &Client, session: Uuid) -> Result<()> {
+    chat_with_input(client, session, input::lines()).await
+}
+
+pub async fn chat_new(client: &Client, config: crate::Config) -> Result<()> {
+    let mut input = input::lines();
+    eprintln!(
+        "New voyage draft. Send a message to start; /quit or EOF leaves without creating a voyage."
+    );
+    loop {
+        let line = tokio::select! {
+            _ = tokio::signal::ctrl_c() => return Ok(()),
+            line = input.recv() => line,
+        };
+        let Some(line) = line else { return Ok(()) };
+        let line = line?;
+        if line.trim() == "/quit" {
+            return Ok(());
+        }
+        if line.trim().is_empty() {
+            continue;
+        }
+        if line.trim_start().starts_with('/') {
+            eprintln!(
+                "Send a message to start, or /quit. Choose launch settings with Helm CLI options."
+            );
+            continue;
+        }
+        let process = super::ui::start_plain(client, config, line).await?;
+        return chat_with_input(client, process.session_id, input).await;
+    }
+}
+
+async fn chat_with_input(
+    client: &Client,
+    session: Uuid,
+    mut input: tokio::sync::mpsc::Receiver<Result<String>>,
+) -> Result<()> {
     let connection = session::Connection::open(client, session).await?;
     let interactive = std::io::stdin().is_terminal();
     eprintln!(
         "Voyage {session}. /cancel, /approve ID, /deny ID, /answer ID text, /quit. Input during a run steers it. EOF detaches."
     );
-    let mut input = input::lines();
     let mut run = None;
     let mut offset = 0;
     let mut decisions = std::collections::BTreeSet::new();

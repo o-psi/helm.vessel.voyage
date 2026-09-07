@@ -6,6 +6,7 @@ impl App {
             view.transcript.borrow_mut().dirty = true;
         }
         match update {
+            Update::FirstSend { saved, result } => self.first_send_update(*saved, result),
             Update::Live {
                 target,
                 incarnation,
@@ -124,6 +125,9 @@ impl App {
             }
             Update::Catalogue { route, processes } => {
                 for process in processes.into_iter().take(256) {
+                    if self.new_drafts.contains_key(&process.session_id) {
+                        continue;
+                    }
                     let target = Target {
                         route,
                         session: process.session_id,
@@ -177,7 +181,7 @@ impl App {
                         }
                     }
                 }
-                if self.selected.is_none() {
+                if self.selected.is_none() && self.active_draft.is_none() {
                     let targets = self.ordered_targets();
                     self.selected = targets
                         .iter()

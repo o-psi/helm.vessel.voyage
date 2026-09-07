@@ -10,6 +10,10 @@ use tokio::sync::{Semaphore, mpsc};
 use voyage_protocol::process::{ProcessInfo, RuntimeCommand, VesselCommand};
 
 pub enum Update {
+    FirstSend {
+        saved: Box<super::new_draft::Saved>,
+        result: Result<Option<serde_json::Value>, String>,
+    },
     Live {
         target: Target,
         incarnation: uuid::Uuid,

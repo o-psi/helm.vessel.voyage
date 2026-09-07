@@ -7,6 +7,38 @@ records delivery evidence and its limits.
 
 ## Process ownership
 
+Ordinary Helm chat opens a private local draft. Opening and closing the interface,
+editing its first message, or pressing Ctrl+N does not create a session or launch
+a voyage process. Blank Ctrl+N requests reuse the window's blank draft for that
+route/workspace. Drafts appear separately above the voyage list; Tab switches
+out of a draft, and clicking its row returns to it. Nonempty drafts and changed
+settings survive interface exit. Concurrent Helm windows lock individual drafts
+and do not take over each other's first sends. Plain chat also waits for a first
+nonempty message; EOF and `/quit` before that create no voyage.
+
+In a draft, `/model NAME`, `/access read-only|approval|unrestricted`, and
+`/workspace /absolute/path` edit local launch settings; `/discard` discards a draft
+only before first send. Remote drafts use executing-host configuration and need
+an explicit absolute workspace with `/new /absolute/path`. Session-scoped grant
+connections cannot create another voyage. Explicit `connect new`, resume and
+branch retain their existing intentional session semantics.
+
+First send saves stable session, start and turn command identities locally before
+requesting Vessel creation, then saves the exact revision-bound submission before
+sending it. This uses the existing deduplicated start and submit protocol; the two
+steps are not a cross-process atomic transaction. An interruption between them can
+leave an owner with no admitted turn, attached to the recoverable first-send draft.
+F4 checks the original creation/turn outcome; Enter explicitly continues or retries
+the same request. Helm never automatically sends an uncertain turn again or creates
+a replacement session. Pending text/settings are frozen until the outcome resolves.
+Definite initial creation refusal preserves an editable draft; definite first-turn
+refusal preserves its text on the created voyage. Recovery retains pinned policy
+selection and explicit overrides, which are revalidated before local launch.
+
+The on-disk registration's `starting` field is initial metadata, not a current
+health reading: Vessel derives live state using authenticated runtime inspection.
+Existing empty or unavailable voyages are not removed by draft handling.
+
 Helm chat, one-shot runs, connected clients, workflows, managed sessions and the
 outbound worker adapter use **Helm → Vessel → voyage**. Vessel launches a separate
 long-lived process for each session. Only that voyage constructs the executor,

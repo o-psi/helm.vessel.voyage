@@ -12,6 +12,8 @@ mod transcript;
 mod updates;
 use crate::composer;
 mod drafts;
+mod new_draft;
+pub(super) use new_draft::start_plain;
 mod observe;
 mod panels;
 mod presentation;
@@ -42,6 +44,9 @@ pub(super) struct App {
     new_chat_config: Option<crate::Config>,
     views: BTreeMap<Target, View>,
     selected: Option<Target>,
+    new_drafts: BTreeMap<uuid::Uuid, new_draft::Draft>,
+    active_draft: Option<uuid::Uuid>,
+    draft_hits: std::cell::RefCell<Vec<(ratatui::layout::Rect, uuid::Uuid)>>,
     sender: mpsc::Sender<Update>,
     status: String,
     quit: bool,
@@ -113,6 +118,9 @@ pub async fn run_with_notice(
         new_chat_config,
         views: BTreeMap::new(),
         selected: session.map(|session| Target { route: 0, session }),
+        new_drafts: BTreeMap::new(),
+        active_draft: None,
+        draft_hits: Default::default(),
         sender,
         status: notice.unwrap_or_else(|| {
             "Your workspace is ready. Start a conversation, or press F1 for help.".into()
@@ -127,6 +135,20 @@ pub async fn run_with_notice(
         completion: Default::default(),
         sidebar: Default::default(),
     };
+    app.recover_new_drafts()?;
+    if session.is_none() && app.new_chat_config.is_some() {
+        if let Some(id) = app.new_drafts.keys().next().copied() {
+            app.select_draft(id);
+            app.status = "Recovered your local draft. Pending first sends require F4 to check their outcome.".into();
+        } else {
+            let workspace = app
+                .new_chat_config
+                .as_ref()
+                .expect("chat config")
+                .resolve_workspace(None)?;
+            app.create(Some(workspace.to_str().context("workspace is not UTF-8")?))?;
+        }
+    }
     let mut events = EventStream::new();
     let mut repaint = tokio::time::interval(Duration::from_millis(100));
     let result = async {

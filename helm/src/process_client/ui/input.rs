@@ -13,6 +13,9 @@ impl App {
             return Ok(());
         }
         self.sync_interactions();
+        if self.new_draft_input(&event)? {
+            return Ok(());
+        }
         let global = matches!(&event, Event::Key(key) if key.code == KeyCode::F(4) || (key.modifiers.contains(KeyModifiers::CONTROL) && matches!(key.code, KeyCode::Char('c' | 'q'))));
         if self.interactions.borrow().focused && !global {
             self.interaction_input(&event)?;

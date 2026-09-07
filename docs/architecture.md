@@ -74,6 +74,13 @@ hosted. Selecting a voyage connects to its existing owner rather than launching 
 second session executor. Concurrent create/open requests must converge on the same
 selected identity or return an explicit conflict.
 
+Before first send, a new-voyage proposal is a Helm-local configuration/composer
+draft with no execution ownership. Opening Helm alone does not allocate a voyage
+process. First send durably records its proposed identities and hands creation and
+turn admission to Vessel and the independent voyage runtime. An uncertain handoff
+retains those identities and text for explicit recovery. Existing-session resume
+and branches with inherited conversation are separate intentional operations.
+
 ## Vessels participating in a voyage
 
 Vessels may join a voyage under user-controlled scope and locally accepted grants.
