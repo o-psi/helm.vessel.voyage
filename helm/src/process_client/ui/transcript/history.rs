@@ -168,20 +168,26 @@ impl App {
             .iter()
             .any(|m| m.projection_truncated && m.role != "tool")
             || state.requested_from.is_some();
-        if !needs
-            || state.loading
-            || state.attempted == Some(snapshot.revision)
-            || state.loaded_revision == Some(snapshot.revision)
-        {
-            return;
-        }
         let revision = snapshot.revision;
         let from = state
             .requested_from
             .unwrap_or(snapshot.message_offset)
             .min(snapshot.message_offset);
+        let covered = state.loaded_revision == Some(revision)
+            && state
+                .messages
+                .first()
+                .is_none_or(|message| message.message_index <= from);
+        if !needs
+            || state.loading
+            || covered
+            || (state.attempted == Some(revision) && state.attempted_from == Some(from))
+        {
+            return;
+        }
         state.requested_from = Some(from);
         state.attempted = Some(revision);
+        state.attempted_from = Some(from);
         state.loading = true;
         state.error = None;
         let total = snapshot.total_messages;

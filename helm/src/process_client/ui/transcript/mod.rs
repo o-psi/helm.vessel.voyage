@@ -37,6 +37,7 @@ pub(in crate::process_client::ui) struct State {
     pub details: bool,
     pub requested_from: Option<usize>,
     pub attempted: Option<u64>,
+    pub attempted_from: Option<usize>,
     pub loaded_revision: Option<u64>,
     pub messages: Vec<Message>,
     pub loading: bool,
