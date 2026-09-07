@@ -63,6 +63,14 @@ pub struct AccessCredential {
     pub token: String,
 }
 
+/// Private discovery record for the account-local Vessel HTTP listener.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LocalAccessCredential {
+    pub endpoint: String,
+    pub token: String,
+}
+
 #[allow(unreachable_patterns)]
 pub fn required_process_right(command: &RuntimeCommand) -> Option<ProcessRight> {
     match command {

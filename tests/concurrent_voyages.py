@@ -10,14 +10,25 @@ import os
 from pathlib import Path
 import signal
 import shutil
+import socket
 import subprocess
 import sqlite3
 import sys
 import time
 import threading
 import unittest
+import urllib.error
+import urllib.request
 
 from voyage_fixture import Fixture, wait_for
+
+
+def gateway_ready(origin):
+    try:
+        with urllib.request.urlopen(origin + "/health", timeout=1) as response:
+            return response.status == 200
+    except (OSError, urllib.error.URLError):
+        return False
 
 
 class ConcurrentVoyages(unittest.TestCase):
@@ -106,6 +117,164 @@ class ConcurrentVoyages(unittest.TestCase):
         self.assertEqual(fixture.active_reservations(), {})
         self.assertEqual(fixture.provider.count("must-not-run"), 0)
         self.assertEqual(fixture.provider.errors, [])
+
+    def test_http_sse_stream_delivers_durable_invalidation(self):
+        fixture = self.fixture
+        snapshot = fixture.snapshot(self.a)
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            incoming = pool.submit(
+                fixture.next_event, self.a, snapshot["observation_cursor"])
+            started = time.monotonic()
+            turn = fixture.submit(self.a, "sse-update")
+            self.assertLess(time.monotonic() - started, 5,
+                            "SSE observation blocked turn admission")
+            event = incoming.result(timeout=20)
+        # Starting work can resume a suspended owner with a fresh incarnation.
+        # The old stream ends explicitly; reconnecting from the unchanged durable
+        # cursor must then deliver the admitted update without replaying the turn.
+        if event["error"] == "stale runtime incarnation":
+            event = fixture.next_event(
+                self.a, snapshot["observation_cursor"])
+        self.assertIsNone(event["error"], event)
+        self.assertFalse(event["outcome_unknown"], event)
+        self.assertTrue(event["result"]["events"], event)
+        self.assertGreater(
+            event["result"]["cursor"], snapshot["observation_cursor"])
+        turn[0].set()
+        fixture.finished(self.a)
+        self.suspended(self.a)
+        self.assertEqual(fixture.provider.count("sse-update"), 1)
+
+    def test_local_http_requires_private_bearer_and_rejects_browser_origin(self):
+        fixture = self.fixture
+        path = fixture.directory / "process-http.json"
+        self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+        self.assertFalse((fixture.directory / "vessel.sock").exists())
+        credential = json.loads(path.read_text())
+        body = json.dumps({"protocol": 1, "command": {
+            "op": "capabilities"}}).encode()
+
+        def rejected(token, origin=None):
+            headers = {"Authorization": "Bearer " + token,
+                       "Content-Type": "application/json"}
+            if origin is not None:
+                headers["Origin"] = origin
+            request = urllib.request.Request(
+                credential["endpoint"] + "/v3/process/command",
+                data=body, headers=headers, method="POST")
+            with self.assertRaises(urllib.error.HTTPError) as failure:
+                urllib.request.urlopen(request, timeout=5)
+            code = failure.exception.code
+            failure.exception.close()
+            return code
+
+        self.assertEqual(rejected("0" * 64), 401)
+        self.assertEqual(rejected(credential["token"], "https://example.invalid"), 403)
+
+    def test_helm_run_follows_sse_through_terminal_suspension(self):
+        fixture = self.fixture
+        gate = fixture.provider.hold("helm-sse-follow")
+        process = subprocess.Popen(
+            [str(fixture.bin_dir / "helm"), "connect", "--directory",
+             str(fixture.directory), "run", self.a, "helm-sse-follow"],
+            env=fixture.env, cwd=fixture.workspace, stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        def stop_helm():
+            if process.poll() is None:
+                process.kill()
+                process.wait(timeout=5)
+        self.addCleanup(stop_helm)
+        wait_for(lambda: fixture.provider.count("helm-sse-follow") == 1,
+                 "Helm run provider dispatch")
+        gate.set()
+        stdout, stderr = process.communicate(timeout=20)
+        self.assertEqual(process.returncode, 0, stderr)
+        self.assertIn("answer:helm-sse-follow", stdout)
+        self.assertIn("completed", stderr)
+        self.suspended(self.a)
+        self.assertEqual(fixture.provider.count("helm-sse-follow"), 1)
+
+    def test_scoped_http_gateway_streams_sse_and_rechecks_grant(self):
+        fixture = self.fixture
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as reserved:
+            reserved.bind(("127.0.0.1", 0))
+            port = reserved.getsockname()[1]
+        origin = f"http://127.0.0.1:{port}"
+        gateway_env = fixture.env | {"VESSEL_OPERATOR_TOKEN": "x" * 32}
+        gateway = subprocess.Popen(
+            [str(fixture.bin_dir / "vessel"), "--bind", f"127.0.0.1:{port}",
+             "--database", str(fixture.root / "gateway.sqlite3"),
+             "--attachment-directory", str(fixture.root / "enrollment"),
+             "--process-directory", str(fixture.directory),
+             "--public-origin", origin, "--allow-insecure-loopback"],
+            env=gateway_env, cwd=fixture.workspace, stdin=subprocess.DEVNULL,
+            stdout=fixture.log, stderr=fixture.log)
+        def stop_gateway():
+            if gateway.poll() is None:
+                gateway.terminate()
+                try:
+                    gateway.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    gateway.kill()
+                    gateway.wait(timeout=5)
+        self.addCleanup(stop_gateway)
+        wait_for(lambda: gateway.poll() is None and gateway_ready(origin),
+                 "scoped HTTP gateway")
+
+        access_directory = fixture.root / "access"
+        access_directory.mkdir(mode=0o700)
+        access = access_directory / "session.json"
+        issued = subprocess.run(
+            [str(fixture.bin_dir / "vessel"), "process-grant",
+             "--directory", str(fixture.directory), "--output", str(access),
+             "--session", self.a, "--principal",
+             "55555555-5555-4555-8555-555555555555",
+             "--workspace", str(fixture.workspace), "--endpoint", origin,
+             "--rights", "observe,history,cancel"],
+            env=fixture.env, cwd=fixture.workspace, capture_output=True,
+            text=True, timeout=10)
+        self.assertEqual(issued.returncode, 0, issued.stderr)
+        listed = subprocess.run(
+            [str(fixture.bin_dir / "helm"), "connect", "--access-file",
+             str(access), "list"], env=fixture.env, cwd=fixture.workspace,
+            capture_output=True, text=True, timeout=10)
+        self.assertEqual(listed.returncode, 0, listed.stderr)
+        self.assertEqual([item["session_id"] for item in json.loads(listed.stdout)],
+                         [self.a])
+
+        turn = fixture.submit(self.a, "remote-sse")
+        fixture.reached_provider(self.a, "remote-sse")
+        snapshot = fixture.snapshot(self.a)
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            incoming = pool.submit(
+                fixture.next_event, self.a, snapshot["observation_cursor"], access)
+            fixture.command(
+                self.a, fixture.mutation(self.a, "cancel", run_id=turn[2]))
+            event = incoming.result(timeout=20)
+        self.assertIsNone(event["error"], event)
+        self.assertTrue(event["result"]["events"], event)
+        fixture.finished(self.a, "cancelled")
+        self.assertEqual(fixture.provider.count("remote-sse"), 1)
+        grant = json.loads(access.read_text())
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            denied = pool.submit(
+                fixture.next_event, self.a, event["result"]["cursor"], access)
+            revoked = subprocess.run(
+                [str(fixture.bin_dir / "vessel"), "process-revoke",
+                 "--directory", str(fixture.directory), "--grant",
+                 grant["grant_id"], "--expected-revision", "1",
+                 "--command-id", "66666666-6666-4666-8666-666666666666"],
+                env=fixture.env, cwd=fixture.workspace, capture_output=True,
+                text=True, timeout=10)
+            self.assertEqual(revoked.returncode, 0, revoked.stderr)
+            denied_event = denied.result(timeout=20)
+        self.assertIsNotNone(denied_event["error"], denied_event)
+        refused = subprocess.run(
+            [str(fixture.bin_dir / "helm"), "connect", "--access-file",
+             str(access), "list"], env=fixture.env, cwd=fixture.workspace,
+            capture_output=True, text=True, timeout=10)
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertIn("revoked", refused.stderr)
 
     def suspended(self, session):
         fixture = self.fixture

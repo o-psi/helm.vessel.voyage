@@ -37,7 +37,7 @@ impl Supervisor {
                 self.observe_assignment(&grant, assignment_id, true).await
             }
             VesselCommand::Capabilities => Ok(
-                json!({"protocol":PROCESS_PROTOCOL,"vessel_id":crate::process::identity::public(&self.directory)?.vessel_id,"principal_id":grant.principal_id,"session_id":grant.session_id,"grant_revision":grant.revision,"rights":grant.rights,"expires_at_ms":grant.expires_at_ms,"features":["scoped_catalogue","forward","grant_revocation"]}),
+                json!({"protocol":PROCESS_PROTOCOL,"vessel_id":crate::process::identity::public(&self.directory)?.vessel_id,"principal_id":grant.principal_id,"session_id":grant.session_id,"grant_revision":grant.revision,"rights":grant.rights,"expires_at_ms":grant.expires_at_ms,"features":["scoped_catalogue","forward","sse_events","grant_revocation"]}),
             ),
             VesselCommand::Catalogue => {
                 has(ProcessRight::Observe)?;

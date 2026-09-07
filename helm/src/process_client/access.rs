@@ -2,8 +2,8 @@
 use anyhow::{Context, Result, ensure};
 use std::{io::Read, path::Path};
 use voyage_protocol::process::{
-    AccessCredential, MAX_PROCESS_FRAME, PROCESS_PROTOCOL, VesselCommand, VesselRequest,
-    VesselResponse,
+    AccessCredential, MAX_PROCESS_FRAME, PROCESS_PROTOCOL, VesselCommand, VesselEvent,
+    VesselEventRequest, VesselRequest, VesselResponse,
 };
 
 fn credential(path: &Path) -> Result<AccessCredential> {
@@ -100,4 +100,42 @@ pub(super) async fn exchange(path: &Path, command: VesselCommand) -> Result<serd
         );
     }
     Ok(response.result)
+}
+
+pub(super) async fn events(
+    path: &Path,
+    request: VesselEventRequest,
+) -> Result<futures_util::stream::BoxStream<'static, Result<VesselEvent>>> {
+    let credential = credential(path)?;
+    let mut endpoint = reqwest::Url::parse(&credential.endpoint)
+        .map_err(|_| anyhow::anyhow!("invalid grant endpoint"))?;
+    ensure!(
+        endpoint.username().is_empty()
+            && endpoint.password().is_none()
+            && endpoint.query().is_none()
+            && endpoint.fragment().is_none(),
+        "grant endpoint must not contain credentials, query or fragment"
+    );
+    let loopback = endpoint.host_str().is_some_and(|host| {
+        host.parse::<std::net::IpAddr>()
+            .is_ok_and(|ip| ip.is_loopback())
+    });
+    ensure!(
+        endpoint.scheme() == "https" || (endpoint.scheme() == "http" && loopback),
+        "grant transport requires HTTPS except literal loopback development"
+    );
+    endpoint.set_path("/v3/process/events");
+    let response = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .connect_timeout(std::time::Duration::from_secs(8))
+        .build()?
+        .post(endpoint)
+        .header(reqwest::header::ACCEPT, "text/event-stream")
+        .bearer_auth(&credential.token)
+        .header("x-voyage-grant", credential.grant_id.to_string())
+        .json(&request)
+        .send()
+        .await
+        .map_err(|_| anyhow::anyhow!("grant event connection failed"))?;
+    Ok(super::sse::decode(response))
 }

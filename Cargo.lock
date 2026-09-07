@@ -3320,6 +3320,7 @@ name = "vessel"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-stream",
  "axum",
  "base64",
  "clap",
@@ -3328,11 +3329,13 @@ dependencies = [
  "futures-util",
  "libc",
  "log",
+ "reqwest",
  "ring",
  "rusqlite",
  "serde",
  "serde_json",
  "sha2",
+ "subtle",
  "tokio",
  "tokio-util",
  "tracing",

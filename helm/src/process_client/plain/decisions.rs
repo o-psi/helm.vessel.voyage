@@ -10,24 +10,50 @@ pub(super) async fn follow(connection: &Connection<'_>, run_id: Uuid) -> Result<
     let mut lines = input::lines();
     let mut offset = 0;
     let mut shown = None::<Value>;
-    let mut tick = tokio::time::interval(std::time::Duration::from_millis(250));
+    let snapshot = connection.snapshot().await?;
+    let cursor = snapshot["observation_cursor"]
+        .as_u64()
+        .context("snapshot observation cursor missing")?;
+    let mut events = connection.event_stream(cursor).await?;
     loop {
-        tokio::select! {
-            _=tick.tick()=>{
-                let state=output::drain(connection,run_id,&mut offset).await?;
-                if !matches!(state.as_str(),"accepted"|"running"|"awaiting_decision"|"cancel_requested") {
-                    println!();eprintln!("Run {run_id}: {state}");ensure!(state=="completed","run ended with state {state}");return Ok(());
-                }
-                let decisions=connection.forward(RuntimeCommand::Decisions).await?;
-                let next=decisions.as_array().into_iter().flatten().find(|d|d["run_id"]==json!(run_id));
-                if shown.as_ref().map(|v|&v["decision_id"]) != next.map(|v|&v["decision_id"]) {
-                    shown=next.cloned();
-                    if let Some(decision)=&shown {
-                        eprintln!("\nDecision {}: {}",decision["decision_id"],safe(&decision["request"].to_string()));
-                        eprintln!("{}",if decision["request"]["kind"]=="approval" {"Approve? Type yes or no."} else {"Enter your answer or the option number."});
+        let state = output::drain(connection, run_id, &mut offset).await?;
+        if !matches!(
+            state.as_str(),
+            "accepted" | "running" | "awaiting_decision" | "cancel_requested"
+        ) {
+            println!();
+            eprintln!("Run {run_id}: {state}");
+            ensure!(state == "completed", "run ended with state {state}");
+            return Ok(());
+        }
+        let decisions = connection.forward(RuntimeCommand::Decisions).await?;
+        let next = decisions
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|decision| decision["run_id"] == json!(run_id));
+        if shown.as_ref().map(|value| &value["decision_id"])
+            != next.map(|value| &value["decision_id"])
+        {
+            shown = next.cloned();
+            if let Some(decision) = &shown {
+                eprintln!(
+                    "\nDecision {}: {}",
+                    decision["decision_id"],
+                    safe(&decision["request"].to_string())
+                );
+                eprintln!(
+                    "{}",
+                    if decision["request"]["kind"] == "approval" {
+                        "Approve? Type yes or no."
+                    } else {
+                        "Enter your answer or the option number."
                     }
-                }
+                );
             }
+        }
+        tokio::select! {
+            result=wait_update(connection,&mut events)=>result?,
             line=lines.recv()=>{
                 let Some(line)=line else { eprintln!("Input closed; voyage continues. Decisions expire at their runtime deadlines.");return output::follow(connection,run_id).await; };
                 let line=line?;
@@ -36,6 +62,15 @@ pub(super) async fn follow(connection: &Connection<'_>, run_id: Uuid) -> Result<
             }
         }
     }
+}
+
+async fn wait_update(
+    connection: &Connection<'_>,
+    events: &mut Option<
+        futures_util::stream::BoxStream<'static, Result<voyage_protocol::process::VesselEvent>>,
+    >,
+) -> Result<()> {
+    connection.wait_update(events).await
 }
 
 async fn respond(connection: &Connection<'_>, shown: &Value, line: &str) -> Result<()> {

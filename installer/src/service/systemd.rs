@@ -119,7 +119,8 @@ pub(super) fn configure(bin: &Path, start: bool, dry_run: bool) -> Result<()> {
     let prior = if plan.active {
         readiness::catalogue(bin,&plan.layout.state).context("New release cannot communicate with existing independent owners; explicit compatibility migration required")?
     } else {
-        if plan.layout.state.join("vessel.sock").exists()
+        if (plan.layout.state.join("process-http.json").exists()
+            || plan.layout.state.join("vessel.sock").exists())
             && readiness::catalogue(bin, &plan.layout.state).is_ok()
         {
             anyhow::bail!(

@@ -195,7 +195,7 @@ its data chunks form a public message JSON projection. `run_output` requires an
 exact `run_id`, byte `offset` and `limit`. Follow returned `next_offset` values;
 never split a UTF-8 character or treat partial assistant output as accepted history.
 
-## SSH-account remote voyages
+## SSH-account compatibility route
 
 Start a Linux Vessel on the remote machine and put `vessel` on that account's PATH.
 Configure SSH authentication and known-host verification independently. The SSH
@@ -216,7 +216,8 @@ absolute path on the remote machine.
 SSH-account authority is broad local-account authority; this is not enrolled
 per-session grant delegation or participant-Vessel execution. The provider and its
 credentials remain on the remote executing machine. Snapshot polling/reconnect does
-not replay work, and SSH loss does not request runtime cancellation.
+not replay work, and SSH loss does not request runtime cancellation. This adapter
+does not carry SSE; use a scoped HTTPS credential for streamed remote updates.
 
 ## Ordinary local work and migration
 

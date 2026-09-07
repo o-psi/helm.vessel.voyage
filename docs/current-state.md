@@ -56,11 +56,17 @@ loop. New local voyages created inside ordinary chat preserve its startup
 configuration through the private host handoff; explicit connect and remote
 creation use executing-host configuration. Closing Helm detaches; it does not cancel accepted work.
 
-Linux local discovery starts an absent supervisor from companion binaries. Local
-Unix connections verify account ownership and peer credentials. SSH routes use an
-explicit remote account and its private Vessel directory. HTTPS grant routes use
-private credential files scoped to one session, principal, workspace, rights,
-revision and expiry. Enrollment-bound grants also verify the current machine epoch.
+Linux local discovery starts an absent supervisor from companion binaries. The
+supervisor binds an ephemeral literal-loopback HTTP endpoint and atomically publishes
+its bearer credential in the owned private Vessel directory. Helm validates that
+directory, credential file and endpoint before every request. Commands use bounded
+POST requests. The connected TUI and plain/run followers receive durable
+invalidations over authenticated SSE and fetch canonical snapshots/output only when
+notified; stream reconnect uses the last snapshot cursor and never resubmits work.
+Scoped remote routes use HTTPS and private credential files bound to one session,
+principal, workspace, rights, revision and expiry. The SSH account adapter remains a
+compatibility path and relays to the same local HTTP endpoint. Enrollment-bound
+grants also verify the current machine epoch.
 Provider credentials are never copied between Vessels by these transports.
 
 Vessel retains private supervision metadata, serializes starts,
@@ -188,7 +194,7 @@ continuation, unsent drafts and private terminal input are excluded.
 
 ## Interfaces and controls
 
-The connected TUI combines local, SSH and scoped-grant routes. It retains separate
+The connected TUI combines local HTTP, scoped HTTPS and SSH compatibility routes. It retains separate
 drafts, prompt navigation, scroll, pending command identities and observation
 cursors per voyage. Switching views does not redirect in-flight actions. Background
 voyages show unread state and pending decisions; slow remote observation runs

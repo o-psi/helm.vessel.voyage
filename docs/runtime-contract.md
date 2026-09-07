@@ -153,18 +153,25 @@ operations remain additional work beyond multiplexing independent voyages.
 
 ## Implemented process transport
 
-Protocol version 1 uses length-prefixed JSON with a maximum 4 MiB frame on private
-Unix sockets. Vessel accepts at most 64 concurrent local connections and 1–256
-configured process slots (default 16). Request tokens and process-registration
-files are private account data; public health alone never proves authority. An
-unsupported protocol version is refused before dispatch.
+Protocol version 1 uses bounded JSON over HTTP(S) between Helm and Vessel, with a
+maximum 4 MiB request, response or SSE event. The local Vessel binds ephemeral
+literal-loopback HTTP and accepts at most 64 concurrent authenticated commands plus
+16 bounded multiplexed SSE clients. Scoped remote grants use HTTPS except an
+explicitly enabled literal-loopback development origin. Request tokens and
+process-registration files are private account data; public health alone never
+proves authority. An unsupported protocol version is refused before dispatch.
 
 `VesselRequest` routes catalogue, exact process lifecycle, scoped grants and
 `Forward {session_id, incarnation, command}`. A runtime request adds the host-private
 runtime token and optional validated grant binding. Both layers return separate
 `result`, `error` and `outcome_unknown` fields. Definite pre-admission rejection may
 be durably retained; unknown delivery must not be converted into a fresh mutation.
-See [process access](process-access.md) for authenticated HTTP and SSH routing.
+SSE streams versioned, session/incarnation-bound invalidation batches for up to 256
+subscriptions. They send keepalives, preserve runtime event cursors and terminate on
+authorization or routing failure. Canonical text remains in snapshots/history/output;
+stream reconnection never dispatches or retries a command. See
+[process access](process-access.md) for authenticated local HTTP, scoped HTTPS and
+the SSH compatibility adapter.
 
 `Events {after, limit, wait_ms}` returns metadata-only `public-v1` invalidations,
 ordered cursors, `replay_gap`, `has_more` and `latest_cursor`. Limits are 1–128 events,

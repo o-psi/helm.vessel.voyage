@@ -7,10 +7,10 @@ use uuid::Uuid;
 
 #[derive(Args)]
 pub struct ConnectArgs {
-    /// Private local Vessel state directory.
+    /// Private local Vessel state directory containing HTTP discovery credentials.
     #[arg(long)]
     pub directory: Option<PathBuf>,
-    /// Explicit SSH account; remote authority is this account's local authority.
+    /// Compatibility SSH account route; remote authority is this account's local authority.
     #[arg(long, requires = "remote_directory")]
     pub ssh: Vec<String>,
     /// Absolute private Vessel directory on the SSH host.
@@ -22,7 +22,7 @@ pub struct ConnectArgs {
     /// Connect without starting an absent local Vessel.
     #[arg(long)]
     pub no_start: bool,
-    /// Private JSON credential for one explicitly granted remote voyage.
+    /// Private HTTPS credential for one explicitly granted remote voyage.
     #[arg(long)]
     pub access_file: Vec<PathBuf>,
     #[command(subcommand)]

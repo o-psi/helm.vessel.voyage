@@ -44,7 +44,7 @@ From a source checkout, after building `vessel` and `voyage`, run:
 python3 tests/concurrent_voyages.py --bin-dir target/release
 ```
 
-The eleven cases start actual Vessel-supervised voyage processes with one shared
+The fifteen cases start actual Vessel-supervised voyage processes with one shared
 workspace and host data root. A local HTTP fixture holds provider responses until
 both voyages reach inference, so sequential execution cannot pass. Coverage includes
 separate live PIDs and canonical histories; simultaneous first-run admission;
@@ -60,6 +60,13 @@ supervisor-catalogued voyage name. Default-start configuration is retained even
 when the original configuration file disappears between turns.
 A supervisor restart selects its updated executable path for the next turn, and
 simultaneous submissions against one suspended incarnation admit only one owner.
+The local process endpoint is authenticated loopback HTTP rather than a public or
+Unix-socket Helm route: checks cover private discovery credentials, rejected bearer
+and browser-Origin requests, durable SSE invalidation/reconnect, and an actual Helm
+run following SSE through terminal suspension without replay. A scoped loopback
+gateway fixture exercises the same route used behind HTTPS, including grant-bound
+catalogue/SSE access, revocation and stream termination. This does not establish a
+deployed TLS proxy or public-network result.
 
 The fixture uses only Python's standard library, synthetic credentials, isolated
 HOME/XDG directories and a loopback provider. It retains evidence under its printed

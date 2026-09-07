@@ -53,12 +53,16 @@ claim retention guarantees for backups or external copies that are not enforced.
 
 ## Connected account authority
 
-The Linux process route authenticates local OS-user peers and private endpoint
-ownership. Vessel forwards with a session/incarnation-bound runtime secret; it does
-not keep the canonical transcript. SSH invokes the remote account's local Vessel
-adapter with noninteractive authentication and agent forwarding disabled. This
-provides the remote account's local authority, not enrolled per-session grants.
-Do not expose its private socket as an unauthenticated network service.
+The Linux process route authenticates a private per-service bearer token and accepts
+it only on a literal-loopback HTTP listener. The discovery record must remain an
+owned private regular file under the owned private Vessel directory. Browser Origin
+requests, redirects and non-loopback endpoints are rejected. SSE subscriptions are
+bounded and carry only durable invalidations; canonical history requires its
+separate right. Vessel forwards with a session/incarnation-bound runtime secret and
+does not keep the canonical transcript. The SSH compatibility adapter invokes the
+remote account's local client with noninteractive authentication and agent
+forwarding disabled. This provides the remote account's local authority, not an
+enrolled per-session grant.
 
 Pending runtime decisions have exact targeting, durable receipts, single-response
 semantics and bounded expiry. Local policy remains the execution ceiling. Scoped process grants bind principal, workspace, session, rights, revision and

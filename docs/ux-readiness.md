@@ -46,7 +46,7 @@ Every row still needs an explicit release decision and product-owner review.
 | ID | User intention | Current entrypoint | Readiness / missing acceptance |
 | --- | --- | --- | --- |
 | J01 | Start Helm and understand background work | `helm`, `helm chat`, `helm connect` | Review: first launch, missing Vessel, launch failure, empty catalogue and independent runtime lifetime. |
-| J02 | Connect to the intended machine | `connect --directory`, SSH and scoped-access options | Gap: no in-TUI connection chooser/editor; distinguish connecting, denied and unavailable. |
+| J02 | Connect to the intended machine | `connect --directory` local HTTP, scoped HTTPS and SSH compatibility options | Gap: no in-TUI connection chooser/editor; distinguish connecting, denied and unavailable. |
 | J03 | Configure a provider and sign in | `auth`, `config`, `doctor`, `local-provider`, startup flags | Gap: CLI onboarding; credential expiry, billing distinctions, wrong host and retry need an integrated journey. |
 | J04 | Create a voyage in a workspace | Ctrl+N, `/new [absolute-workspace]`, `connect new` | Review: remote paths, launch progress and lost start response. Recovery is not a guided durable creation view. |
 | J05 | Find, resume and switch voyages | Tab/Shift+Tab, `/use UUID`, `sessions`, `chat --resume` | Gap: sidebar hides below 110 columns, no searchable picker; UUID selection is an expert path. Verify background decisions and separate drafts. |
@@ -144,7 +144,7 @@ Exercise these view/input families:
 | Size | 80x24 baseline; 120x32 and 180x48 wide; 40x18 constrained; shrink below supported size and expand again. Essential controls must remain visible or the action must be disabled with a useful resize message. |
 | Content | Empty, one item, many items; long names/paths; multiline input; long unbroken strings; tables/code; CJK and combining graphemes; terminal controls; structured payloads. |
 | Input | Keyboard-only discovery and return paths, focus indicators, paste without submission, repeat keys without accidental consent, PageUp/PageDown, wheel scrolling where advertised. |
-| Environment | Color and NO_COLOR; standard fonts without private-use icons; local/SSH/scoped routes as promised; actual native platforms separately. |
+| Environment | Color and NO_COLOR; standard fonts without private-use icons; local HTTP/scoped HTTPS and SSH compatibility routes as promised; actual native platforms separately. |
 | Concurrency | Multiple voyages and requests, background completion, changing inventory, disconnected host, permission changes, stale selection. |
 
 A mocked screenshot can help design a missing state; label it **design only**.

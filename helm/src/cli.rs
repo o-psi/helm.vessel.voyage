@@ -87,7 +87,7 @@ pub(crate) enum LogFormat {
 }
 #[derive(Subcommand)]
 pub(crate) enum Command {
-    /// Connect to independent voyages through local, SSH or scoped-grant Vessels.
+    /// Connect through local HTTP or scoped HTTPS; SSH remains a compatibility route.
     Connect(helm::process_client::cli::ConnectArgs),
     /// Inspect GitHub context and publish only after exact attended review.
     Github(GithubArgs),

@@ -48,6 +48,11 @@ pub(super) async fn drain(
 pub(super) async fn follow(connection: &Connection<'_>, run_id: Uuid) -> Result<()> {
     let mut offset = 0;
     let mut shown = std::collections::BTreeSet::new();
+    let snapshot = connection.snapshot().await?;
+    let cursor = snapshot["observation_cursor"]
+        .as_u64()
+        .context("snapshot observation cursor missing")?;
+    let mut events = connection.event_stream(cursor).await?;
     loop {
         let state = drain(connection, run_id, &mut offset).await?;
         if !matches!(
@@ -70,6 +75,6 @@ pub(super) async fn follow(connection: &Connection<'_>, run_id: Uuid) -> Result<
                 );
             }
         }
-        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        connection.wait_update(&mut events).await?;
     }
 }

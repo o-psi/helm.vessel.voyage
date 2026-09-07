@@ -9,14 +9,18 @@ See [operations](operations.md) for ordinary connected sessions and
 
 ## Scoped remote access
 
-A local account can use its private Vessel socket. SSH access delegates the remote
-account's authority, not an enrolled session grant. A grant credential instead binds
-one principal, session UUID, canonical workspace, explicit rights and expiration.
+A local account uses a private bearer credential to its Vessel's literal-loopback
+HTTP endpoint. The credential is published as `process-http.json` in the owned 0700
+Vessel directory, is never placed in command arguments, and changes on service
+start. Commands use bounded POST requests. Helm opens an authenticated SSE response
+for durable invalidations, then retrieves canonical snapshots and output through
+ordinary commands. A grant credential for remote HTTPS access instead binds one
+principal, session UUID, canonical workspace, explicit rights and expiration.
 Enrollment alone never grants process execution. An optional machine/epoch binding
 also checks the existing enrollment database at admission and execution dispatch.
 
-Run the private service before enabling the HTTP gateway. The gateway uses the
-existing enrollment listener behind a local HTTPS proxy:
+Run the private loopback HTTP service before enabling the scoped HTTPS gateway. The
+gateway uses the existing enrollment listener behind a local HTTPS proxy:
 
 ```sh
 vessel local-serve --directory /home/alice/.local/state/voyage/vessel \
@@ -32,7 +36,13 @@ vessel --bind 127.0.0.1:8080 \
 Only literal loopback development origins can use HTTP, with
 `--allow-insecure-loopback`. The listener still binds a literal loopback address.
 The gateway validates an optional browser Origin against the configured origin,
-limits frames and concurrent requests, and returns `Cache-Control: no-store`.
+limits frames, SSE subscriptions and concurrent requests, and returns
+`Cache-Control: no-store`. SSE carries bounded metadata-only invalidations and
+keepalives. A slow or disconnected Helm cannot block canonical writes; it reconnects
+from a durable cursor and uses a snapshot after a retained-event gap. Stream loss
+does not imply cancellation and never causes command replay. WebSockets are not used
+for control or observation; private bidirectional PTY attachment remains a separate
+transport concern.
 
 Issue a credential on the executing host. Replace all example UUIDs with the actual
 session and independently selected principal identities. The credential output must
@@ -224,11 +234,14 @@ command ID when retrying an uncertain response.
 
 ## Wire and retained state
 
-The local v1 protocol uses a four-byte big-endian length and JSON payload, bounded
-to 4 MiB, over an owned private Unix socket. The HTTP adapter accepts the same typed
-`VesselRequest` at `POST /v3/process/command`, with Bearer authentication and the
-`X-Voyage-Grant` UUID header. `outcome_unknown` distinguishes uncertain dispatch from
-definite initial refusal. Successful envelope receipt is not proof of run cleanup.
+The Helm–Vessel v1 protocol uses JSON over HTTP(S), bounded to 4 MiB. Typed commands
+use `POST /v3/process/command`; durable invalidations use an SSE response from
+`POST /v3/process/events`. Local requests authenticate with the private service
+credential. Scoped HTTPS requests add the grant Bearer credential and
+`X-Voyage-Grant` UUID header. The framed Unix transport remains only between Vessel
+and each independent voyage runtime, plus a bounded pre-HTTP upgrade bridge.
+`outcome_unknown` distinguishes uncertain dispatch from definite initial refusal.
+Successful envelope receipt is not proof of run cleanup.
 
 Supervisor registrations and command IDs, grant hashes/credentials, accepted
 participant bindings/assignments, trusted Vessel keys, signed transfer preparations

@@ -1,8 +1,11 @@
 use crate::process_client::transport::Client;
 use anyhow::{Context, Result, ensure};
+use futures_util::StreamExt;
 use serde_json::Value;
 use uuid::Uuid;
-use voyage_protocol::process::{ProcessInfo, RuntimeCommand, VesselCommand};
+use voyage_protocol::process::{
+    ProcessInfo, RuntimeCommand, VesselCommand, VesselEvent, VesselEventSubscription,
+};
 
 pub(super) struct Connection<'a> {
     pub client: &'a Client,
@@ -46,6 +49,68 @@ impl<'a> Connection<'a> {
     }
     pub async fn snapshot(&self) -> Result<Value> {
         self.forward(RuntimeCommand::Snapshot).await
+    }
+    pub async fn event_stream(
+        &self,
+        after: u64,
+    ) -> Result<Option<futures_util::stream::BoxStream<'static, Result<VesselEvent>>>> {
+        if !self.client.supports_events().await {
+            return Ok(None);
+        }
+        Ok(Some(
+            self.client
+                .events(vec![VesselEventSubscription {
+                    session_id: self.process.session_id,
+                    incarnation: self.observed_incarnation.get(),
+                    after,
+                }])
+                .await?,
+        ))
+    }
+    async fn wait_event(
+        &self,
+        stream: &mut futures_util::stream::BoxStream<'static, Result<VesselEvent>>,
+    ) -> Result<()> {
+        let event = stream.next().await.context("Vessel event stream ended")??;
+        ensure!(
+            event.session_id == self.process.session_id
+                && event.incarnation == self.observed_incarnation.get(),
+            "Vessel event stream identity mismatch"
+        );
+        if let Some(error) = event.error {
+            if event.outcome_unknown {
+                anyhow::bail!(
+                    "Vessel event stream outcome unknown: {}",
+                    crate::process_client::safe(&error)
+                );
+            }
+            anyhow::bail!(
+                "Vessel event stream refused: {}",
+                crate::process_client::safe(&error)
+            );
+        }
+        Ok(())
+    }
+    pub async fn wait_update(
+        &self,
+        stream: &mut Option<futures_util::stream::BoxStream<'static, Result<VesselEvent>>>,
+    ) -> Result<()> {
+        let Some(events) = stream else {
+            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+            return Ok(());
+        };
+        if self.wait_event(events).await.is_ok() {
+            return Ok(());
+        }
+        // A completed turn may suspend immediately after committing its final
+        // invalidation. Refreshing is observational and updates the incarnation;
+        // reconnect from that snapshot cursor without repeating any command.
+        let snapshot = self.snapshot().await?;
+        let cursor = snapshot["observation_cursor"]
+            .as_u64()
+            .context("snapshot observation cursor missing")?;
+        *stream = self.event_stream(cursor).await?;
+        Ok(())
     }
     pub async fn submit(&self, command_id: Option<Uuid>, prompt: String) -> Result<Uuid> {
         let snapshot = self.snapshot().await?;

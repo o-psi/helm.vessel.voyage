@@ -1,13 +1,16 @@
 //! Slow observers cannot block the terminal input loop or another Vessel.
 use super::state::{Snapshot, Target};
 use crate::process_client::transport::Client;
+use futures_util::StreamExt;
 use std::{
     collections::HashMap,
     sync::Arc,
     time::{Duration, Instant},
 };
 use tokio::sync::{Semaphore, mpsc};
-use voyage_protocol::process::{ProcessInfo, RuntimeCommand, VesselCommand};
+use voyage_protocol::process::{
+    ProcessInfo, RuntimeCommand, VesselCommand, VesselEventSubscription,
+};
 
 pub enum Update {
     FirstSend {
@@ -78,19 +81,16 @@ pub fn spawn(clients: &[Client], sender: mpsc::Sender<Update>) -> Vec<tokio::tas
         .map(|(route, client)| {
             let sender = sender.clone();
             tokio::spawn(async move {
-                let limit = Arc::new(Semaphore::new(8));
-                let cursors = Arc::new(tokio::sync::Mutex::new(HashMap::<
-                    (uuid::Uuid, uuid::Uuid),
-                    u64,
-                >::new()));
+                let mut cursors = HashMap::<(uuid::Uuid, uuid::Uuid), u64>::new();
                 loop {
+                    let streaming = client.supports_events().await;
                     let result = client
                         .request(VesselCommand::Catalogue)
                         .await
                         .and_then(|value| Ok(serde_json::from_value::<Vec<ProcessInfo>>(value)?));
                     match result {
                         Ok(processes) => {
-                            cursors.lock().await.retain(|(id, incarnation), _| {
+                            cursors.retain(|(id, incarnation), _| {
                                 processes
                                     .iter()
                                     .any(|p| p.session_id == *id && p.incarnation == *incarnation)
@@ -105,86 +105,127 @@ pub fn spawn(clients: &[Client], sender: mpsc::Sender<Update>) -> Vec<tokio::tas
                             {
                                 break;
                             }
-                            let mut jobs = tokio::task::JoinSet::new();
-                            for process in processes.into_iter().take(256) {
-                                if process.archive.is_some() || process.deletion.is_some() {
-                                    continue;
+                            let processes = processes
+                                .into_iter()
+                                .filter(|process| {
+                                    process.archive.is_none() && process.deletion.is_none()
+                                })
+                                .take(256)
+                                .collect::<Vec<_>>();
+                            let limit = Arc::new(Semaphore::new(8));
+                            let mut initial = tokio::task::JoinSet::new();
+                            for process in &processes {
+                                let key = (process.session_id, process.incarnation);
+                                if !cursors.contains_key(&key) {
+                                    let client = client.clone();
+                                    let process = process.clone();
+                                    let sender = sender.clone();
+                                    let limit = limit.clone();
+                                    initial.spawn(async move {
+                                        let Ok(_permit) = limit.acquire_owned().await else {
+                                            return (key, None);
+                                        };
+                                        (key, refresh(&client, route, &process, &sender).await)
+                                    });
                                 }
-                                let Ok(permit) = limit.clone().acquire_owned().await else {
-                                    break;
-                                };
-                                let client = client.clone();
-                                let cursors = cursors.clone();
-                                let sender = sender.clone();
-                                jobs.spawn(async move {
-                                    let _permit = permit;
-                                    let target = Target {
-                                        route,
-                                        session: process.session_id,
-                                    };
-                                    let key = (process.session_id, process.incarnation);
-                                    let after = cursors.lock().await.get(&key).copied();
-                                    if let Some(after) = after {
-                                        // Events are durable invalidations. A gap or unsupported
-                                        // capability is recovered by the snapshot below, never replay.
-                                        let _ = client
-                                            .forward(
-                                                target.session,
-                                                process.incarnation,
-                                                RuntimeCommand::Events {
-                                                    after,
-                                                    limit: 128,
-                                                    wait_ms: 0,
-                                                },
-                                            )
-                                            .await;
-                                    }
-                                    let result = client
-                                        .forward(
-                                            target.session,
-                                            process.incarnation,
-                                            RuntimeCommand::Snapshot,
-                                        )
-                                        .await
-                                        .and_then(|value| {
-                                            Ok(serde_json::from_value::<Snapshot>(value)?)
-                                        })
-                                        .map_err(|error| error.to_string());
-                                    if let Ok(snapshot) = &result
-                                        && let Some(cursor) = snapshot.observation_cursor
-                                    {
-                                        cursors.lock().await.insert(key, cursor);
-                                    }
-                                    let _ = sender
-                                        .send(Update::Snapshot {
-                                            target,
-                                            incarnation: process.incarnation,
-                                            result: Box::new(result),
-                                        })
-                                        .await;
-                                    let inventory = client
-                                        .forward(
-                                            target.session,
-                                            process.incarnation,
-                                            RuntimeCommand::Controls {
-                                                run_id: None,
-                                                section: "terminals".into(),
-                                            },
-                                        )
-                                        .await
-                                        .and_then(|value| Ok(serde_json::from_value(value)?))
-                                        .map_err(|error| error.to_string());
-                                    let _ = sender
-                                        .send(Update::Terminals {
-                                            target,
-                                            incarnation: process.incarnation,
-                                            result: inventory,
-                                            observed: Instant::now(),
-                                        })
-                                        .await;
-                                });
                             }
-                            while jobs.join_next().await.is_some() {}
+                            while let Some(result) = initial.join_next().await {
+                                if let Ok((key, Some(cursor))) = result {
+                                    cursors.insert(key, cursor);
+                                }
+                            }
+                            if !streaming {
+                                for process in &processes {
+                                    if let Some(cursor) =
+                                        refresh(&client, route, process, &sender).await
+                                    {
+                                        cursors.insert(
+                                            (process.session_id, process.incarnation),
+                                            cursor,
+                                        );
+                                    }
+                                }
+                                tokio::time::sleep(Duration::from_millis(750)).await;
+                                continue;
+                            }
+                            let subscriptions = processes
+                                .iter()
+                                .filter(|process| {
+                                    process.state
+                                        == voyage_protocol::process::ProcessState::Live
+                                })
+                                .filter_map(|process| {
+                                    let key = (process.session_id, process.incarnation);
+                                    cursors.get(&key).map(|after| VesselEventSubscription {
+                                        session_id: process.session_id,
+                                        incarnation: process.incarnation,
+                                        after: *after,
+                                    })
+                                })
+                                .collect::<Vec<_>>();
+                            if subscriptions.is_empty() {
+                                tokio::time::sleep(Duration::from_secs(2)).await;
+                                continue;
+                            }
+                            match client.events(subscriptions).await {
+                                Ok(mut events) => {
+                                    let refresh_catalogue = tokio::time::sleep(Duration::from_secs(5));
+                                    tokio::pin!(refresh_catalogue);
+                                    loop {
+                                        tokio::select! {
+                                            _ = &mut refresh_catalogue => break,
+                                            event = events.next() => {
+                                                let Some(event) = event else { break; };
+                                                match event {
+                                                    Ok(event) => {
+                                                        if let Some(error) = event.error {
+                                                            let _ = sender.send(Update::RouteError {
+                                                                route,
+                                                                error: crate::process_client::safe(&error),
+                                                            }).await;
+                                                            break;
+                                                        }
+                                                        if let Some(process) = processes.iter().find(|process| {
+                                                            process.session_id == event.session_id
+                                                                && process.incarnation == event.incarnation
+                                                        }) && let Some(cursor) = refresh(
+                                                                &client,
+                                                                route,
+                                                                process,
+                                                                &sender,
+                                                            ).await {
+                                                            cursors.insert(
+                                                                (process.session_id, process.incarnation),
+                                                                cursor,
+                                                            );
+                                                        }
+                                                    }
+                                                    Err(error) => {
+                                                        let _ = sender.send(Update::RouteError {
+                                                            route,
+                                                            error: error.to_string(),
+                                                        }).await;
+                                                        break;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                Err(error) => {
+                                    if sender
+                                        .send(Update::RouteError {
+                                            route,
+                                            error: error.to_string(),
+                                        })
+                                        .await
+                                        .is_err()
+                                    {
+                                        break;
+                                    }
+                                    tokio::time::sleep(Duration::from_millis(750)).await;
+                                }
+                            }
                         }
                         Err(error) => {
                             if sender
@@ -197,11 +238,64 @@ pub fn spawn(clients: &[Client], sender: mpsc::Sender<Update>) -> Vec<tokio::tas
                             {
                                 break;
                             }
+                            tokio::time::sleep(Duration::from_millis(750)).await;
                         }
                     }
-                    tokio::time::sleep(Duration::from_millis(750)).await;
                 }
             })
         })
         .collect()
+}
+
+async fn refresh(
+    client: &Client,
+    route: usize,
+    process: &ProcessInfo,
+    sender: &mpsc::Sender<Update>,
+) -> Option<u64> {
+    let target = Target {
+        route,
+        session: process.session_id,
+    };
+    let result = client
+        .forward(
+            target.session,
+            process.incarnation,
+            RuntimeCommand::Snapshot,
+        )
+        .await
+        .and_then(|value| Ok(serde_json::from_value::<Snapshot>(value)?))
+        .map_err(|error| error.to_string());
+    let cursor = result
+        .as_ref()
+        .ok()
+        .and_then(|snapshot| snapshot.observation_cursor);
+    let _ = sender
+        .send(Update::Snapshot {
+            target,
+            incarnation: process.incarnation,
+            result: Box::new(result),
+        })
+        .await;
+    let inventory = client
+        .forward(
+            target.session,
+            process.incarnation,
+            RuntimeCommand::Controls {
+                run_id: None,
+                section: "terminals".into(),
+            },
+        )
+        .await
+        .and_then(|value| Ok(serde_json::from_value(value)?))
+        .map_err(|error| error.to_string());
+    let _ = sender
+        .send(Update::Terminals {
+            target,
+            incarnation: process.incarnation,
+            result: inventory,
+            observed: Instant::now(),
+        })
+        .await;
+    cursor
 }

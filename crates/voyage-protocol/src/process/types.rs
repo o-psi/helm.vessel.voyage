@@ -1,9 +1,35 @@
-//! Private process transport. Filesystem/peer authentication is required separately.
+//! Private process transport. HTTP adapter authentication is required separately.
 use super::{EnrollmentIdentity, GrantBinding, ProcessRight};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::PathBuf;
 use uuid::Uuid;
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VesselEventSubscription {
+    pub session_id: Uuid,
+    pub incarnation: Uuid,
+    pub after: u64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VesselEventRequest {
+    pub protocol: u32,
+    pub subscriptions: Vec<VesselEventSubscription>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VesselEvent {
+    pub protocol: u32,
+    pub session_id: Uuid,
+    pub incarnation: Uuid,
+    pub result: Value,
+    pub error: Option<String>,
+    pub outcome_unknown: bool,
+}
 
 pub const PROCESS_PROTOCOL: u32 = 1;
 pub const MAX_PROCESS_FRAME: usize = 4 * 1024 * 1024;

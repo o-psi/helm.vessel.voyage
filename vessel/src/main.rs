@@ -82,7 +82,7 @@ enum Command {
         #[arg(long)]
         directory: PathBuf,
     },
-    /// Serve a private local catalogue and supervise independent voyage processes.
+    /// Serve authenticated loopback HTTP/SSE and supervise independent voyage processes.
     LocalServe {
         #[arg(long)]
         directory: PathBuf,
@@ -255,6 +255,17 @@ async fn main() -> Result<()> {
         .route(
             "/v3/process/command",
             axum::routing::post(process_http::command)
+                .layer(axum::extract::DefaultBodyLimit::max(
+                    voyage_protocol::process::MAX_PROCESS_FRAME,
+                ))
+                .layer(middleware::from_fn_with_state(
+                    state.clone(),
+                    process_http::boundary,
+                )),
+        )
+        .route(
+            "/v3/process/events",
+            axum::routing::post(process_http::events)
                 .layer(axum::extract::DefaultBodyLimit::max(
                     voyage_protocol::process::MAX_PROCESS_FRAME,
                 ))

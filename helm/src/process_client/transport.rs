@@ -3,8 +3,8 @@ use anyhow::{Context, Result, ensure};
 use serde_json::Value;
 use std::{path::PathBuf, time::Duration};
 use voyage_protocol::process::{
-    PROCESS_PROTOCOL, ProcessInfo, RuntimeCommand, RuntimeResponse, VesselCommand, VesselRequest,
-    VesselResponse, read_frame, write_frame,
+    PROCESS_PROTOCOL, ProcessInfo, RuntimeCommand, RuntimeResponse, VesselCommand, VesselEvent,
+    VesselEventRequest, VesselEventSubscription,
 };
 
 #[derive(Clone, Debug)]
@@ -41,6 +41,35 @@ impl Client {
             .context("Vessel response deadline elapsed; command delivery may be unknown")?
     }
 
+    pub async fn events(
+        &self,
+        subscriptions: Vec<VesselEventSubscription>,
+    ) -> Result<futures_util::stream::BoxStream<'static, Result<VesselEvent>>> {
+        let request = VesselEventRequest {
+            protocol: PROCESS_PROTOCOL,
+            subscriptions,
+        };
+        if let Some(path) = &self.access_file {
+            return super::access::events(path, request).await;
+        }
+        ensure!(
+            self.ssh.is_none(),
+            "SSE is unavailable through the SSH compatibility route"
+        );
+        super::local::events(&self.directory, request).await
+    }
+
+    pub async fn supports_events(&self) -> bool {
+        if self.ssh.is_some() {
+            return false;
+        }
+        self.request(VesselCommand::Capabilities)
+            .await
+            .ok()
+            .and_then(|value| value.get("features").and_then(Value::as_array).cloned())
+            .is_some_and(|features| features.iter().any(|feature| feature == "sse_events"))
+    }
+
     #[cfg(unix)]
     async fn exchange(&self, command: VesselCommand) -> Result<Value> {
         if let Some(path) = &self.access_file {
@@ -49,35 +78,7 @@ impl Client {
         if let Some(destination) = &self.ssh {
             return super::ssh::exchange(destination, &self.directory, command).await;
         }
-        super::local::check_private_directory(&self.directory)?;
-        let mut socket = tokio::net::UnixStream::connect(self.directory.join("vessel.sock"))
-            .await
-            .context("Vessel unavailable; accepted voyages may still be running")?;
-        // Filesystem permissions alone do not authenticate a substituted listener.
-        ensure!(
-            socket.peer_cred()?.uid() == unsafe { libc::geteuid() },
-            "Vessel listener belongs to another user"
-        );
-        write_frame(
-            &mut socket,
-            &VesselRequest {
-                protocol: PROCESS_PROTOCOL,
-                command,
-            },
-        )
-        .await?;
-        let reply: VesselResponse = read_frame(&mut socket).await?;
-        ensure!(
-            reply.protocol == PROCESS_PROTOCOL,
-            "unsupported Vessel protocol"
-        );
-        if let Some(error) = reply.error {
-            if reply.outcome_unknown {
-                anyhow::bail!("Vessel command outcome unknown: {}", super::safe(&error));
-            }
-            return Err(Refusal(format!("Vessel refused: {}", super::safe(&error))).into());
-        }
-        Ok(reply.result)
+        super::local::exchange(&self.directory, command).await
     }
 
     #[cfg(not(unix))]

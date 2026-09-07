@@ -120,6 +120,66 @@ impl Supervisor {
         command: RuntimeCommand,
         authorization: Option<GrantBinding>,
     ) -> Result<RuntimeResponse> {
+        // A long-lived SSE observer must never hold the lifecycle lock and delay
+        // admission, suspension or recovery. Events are read-only, bounded and
+        // incarnation checked. A concurrent lifecycle transition can end this
+        // observation; Helm reconnects from its unchanged durable cursor.
+        if let RuntimeCommand::Events {
+            after,
+            limit,
+            wait_ms,
+        } = command
+        {
+            let registration = self.registration(session).await?;
+            ensure!(
+                registration.incarnation == incarnation,
+                "stale runtime incarnation"
+            );
+            let directory = registry::directory(&self.directory, session);
+            if super::recovery::suspended(&directory, &registration) {
+                let read = || {
+                    observe(
+                        &directory,
+                        &registration,
+                        RuntimeCommand::Events {
+                            after,
+                            limit,
+                            wait_ms: 0,
+                        },
+                        authorization.clone(),
+                    )
+                };
+                let response = read().await?;
+                if wait_ms > 0
+                    && response.error.is_none()
+                    && response.result["replay_gap"] != true
+                    && response.result["events"]
+                        .as_array()
+                        .is_some_and(Vec::is_empty)
+                {
+                    tokio::time::sleep(Duration::from_millis(u64::from(wait_ms))).await;
+                    let current = self.registration(session).await?;
+                    ensure!(
+                        current.incarnation == incarnation
+                            && super::recovery::suspended(&directory, &current),
+                        "runtime changed during event observation"
+                    );
+                    return read().await;
+                }
+                return Ok(response);
+            }
+            return routing::forward_authorized(
+                &directory,
+                &registration,
+                RuntimeCommand::Events {
+                    after,
+                    limit,
+                    wait_ms,
+                },
+                authorization,
+            )
+            .await;
+        }
         let lock = self.lifecycle_lock(session).await?;
         let _guard = lock.lock().await;
         let mut registration = self.registration(session).await?;

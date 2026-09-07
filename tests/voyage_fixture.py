@@ -6,14 +6,14 @@ import json
 import os
 from pathlib import Path
 import signal
-import socket
 import sqlite3
-import struct
 import subprocess
 import tempfile
 import threading
 import time
 import uuid
+import urllib.error
+import urllib.request
 
 
 def wait_for(observe, description, timeout=15):
@@ -117,7 +117,7 @@ class ProviderHandler(http.server.BaseHTTPRequestHandler):
 
 class Fixture:
     def __init__(self, bin_dir):
-        # Short paths also leave room for the per-session Unix socket name.
+        # Short paths leave room for each Vessel-to-voyage runtime socket name.
         self.root = Path(tempfile.mkdtemp(prefix="vct-", dir="/tmp"))
         self.workspace = self.root / "workspace"
         self.directory = self.root / "v"
@@ -162,7 +162,7 @@ class Fixture:
             try:
                 self.request({"op": "capabilities"})
                 return True
-            except (FileNotFoundError, ConnectionRefusedError):
+            except (FileNotFoundError, ConnectionRefusedError, urllib.error.URLError):
                 return False
         wait_for(ready, "Vessel readiness")
 
@@ -174,23 +174,58 @@ class Fixture:
 
     def request(self, command, *, envelope=False):
         payload = json.dumps({"protocol": 1, "command": command}).encode()
-        with socket.socket(socket.AF_UNIX) as client:
-            client.settimeout(30)
-            client.connect(str(self.directory / "vessel.sock"))
-            client.sendall(struct.pack("!I", len(payload)) + payload)
-            with client.makefile("rb") as incoming:
-                header = incoming.read(4)
-                assert len(header) == 4, "truncated Vessel frame header"
-                size, = struct.unpack("!I", header)
-                assert 0 < size <= 4 * 1024 * 1024, "invalid Vessel frame length"
-                payload = incoming.read(size)
-                assert len(payload) == size, "truncated Vessel response"
+        credential = json.loads((self.directory / "process-http.json").read_text())
+        request = urllib.request.Request(
+            credential["endpoint"] + "/v3/process/command", data=payload,
+            headers={"Authorization": "Bearer " + credential["token"],
+                     "Content-Type": "application/json"}, method="POST")
+        with urllib.request.urlopen(request, timeout=30) as incoming:
+            assert incoming.status == 200, incoming.status
+            payload = incoming.read(4 * 1024 * 1024 + 1)
+            assert 0 < len(payload) <= 4 * 1024 * 1024, "invalid Vessel response length"
         response = json.loads(payload)
         assert response["protocol"] == 1, response
         if envelope:
             return response
         assert response.get("error") is None, response
         return response["result"]
+
+    def next_event(self, session, after, credential_path=None):
+        info = self.request({"op": "inspect", "session_id": session})
+        incarnation = info["incarnation"]
+        payload = json.dumps({"protocol": 1, "subscriptions": [{
+            "session_id": session, "incarnation": incarnation,
+            "after": after}]}).encode()
+        credential = json.loads((credential_path or (
+            self.directory / "process-http.json")).read_text())
+        headers = {"Authorization": "Bearer " + credential["token"],
+                   "Content-Type": "application/json",
+                   "Accept": "text/event-stream"}
+        if "grant_id" in credential:
+            headers["X-Voyage-Grant"] = credential["grant_id"]
+        request = urllib.request.Request(
+            credential["endpoint"] + "/v3/process/events", data=payload,
+            headers=headers, method="POST")
+        with urllib.request.urlopen(request, timeout=20) as incoming:
+            assert incoming.status == 200, incoming.status
+            assert incoming.headers.get_content_type() == "text/event-stream"
+            data = []
+            total = 0
+            while True:
+                line = incoming.readline()
+                assert line, "SSE stream ended before an update"
+                total += len(line)
+                assert total <= 4 * 1024 * 1024, "SSE event exceeds limit"
+                if line in (b"\n", b"\r\n"):
+                    if data:
+                        event = json.loads(b"\n".join(data))
+                        assert event["protocol"] == 1, event
+                        assert event["session_id"] == session, event
+                        assert event["incarnation"] == incarnation, event
+                        return event
+                    continue
+                if line.startswith(b"data:"):
+                    data.append(line[5:].lstrip().rstrip(b"\r\n"))
 
     def new(self, configured=True):
         session = str(uuid.uuid4())

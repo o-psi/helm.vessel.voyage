@@ -144,9 +144,9 @@ The installer provisions `voyage-vessel.service` as a systemd user service. Its
 unit uses an immutable release and the private Vessel state directory used by
 Helm (`$XDG_STATE_HOME/voyage/vessel`, default `~/.local/state/voyage/vessel`).
 The unit lives in `$XDG_CONFIG_HOME/systemd/user`, default `~/.config/systemd/user`.
-These paths must be absolute, owned and safe; the state path must fit Linux's
-Unix socket length limit. `--start` enables and starts the service, then checks the actual local
-endpoint. `--no-start` leaves an inactive service inactive; an already active
+These paths must be absolute, owned and safe. `--start` enables and starts the
+service, then checks the actual authenticated loopback HTTP endpoint. `--no-start`
+leaves an inactive service inactive; an already active
 managed service is updated while preserving its active state. Provider readiness
 requires separate verification.
 
