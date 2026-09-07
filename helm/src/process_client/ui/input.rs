@@ -33,7 +33,7 @@ impl App {
                 }
                 return Ok(());
             }
-            if self.approval_input(&event)? {
+            if self.interaction_input(&event)? {
                 return Ok(());
             }
             if key.code == KeyCode::Enter
@@ -44,7 +44,7 @@ impl App {
                 return self.send();
             }
         }
-        if !matches!(event, Event::Key(_)) && self.approval_input(&event)? {
+        if !matches!(event, Event::Key(_)) && self.interaction_input(&event)? {
             return Ok(());
         }
         let Some(target) = self.selected else {

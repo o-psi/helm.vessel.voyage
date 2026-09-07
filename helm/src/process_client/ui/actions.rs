@@ -57,7 +57,7 @@ impl App {
             return Ok(());
         }
         if command_text == "/help" {
-            self.status = "Tab switches · Ctrl+N creates · /new [absolute-workspace] · /use UUID · /rename NAME · /model NAME · /cancel · /approve UUID · /deny UUID · /answer UUID text · /receipt · /tools /policy /todos /subagents /terminals /terminal UUID /workflows · /tool NAME JSON · /configure /host/path · /branch [name] /archive /restore /delete UUID · /clear UUID · /compact N · /export PATH · Up/Down recall · /conversation · /quit".into();
+            self.status = "Tab switches · Ctrl+N creates · F2 interactions · F6/F7 requests · /new [absolute-workspace] · /use UUID · /rename NAME · /model NAME · /cancel · /approve UUID · /deny UUID · /answer UUID text · /receipt · /tools /policy /todos /subagents /terminals /terminal UUID /workflows · /tool NAME JSON · /configure /host/path · /branch [name] /archive /restore /delete UUID · /clear UUID · /compact N · /export PATH · Up/Down recall · /conversation · /quit".into();
             return Ok(());
         }
         if command_text == "/new" || command_text.starts_with("/new ") {

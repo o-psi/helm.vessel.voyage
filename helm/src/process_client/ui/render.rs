@@ -76,22 +76,21 @@ pub fn draw(frame: &mut Frame<'_>, app: &App) {
         );
     }
     let view = app.selected.and_then(|key| app.views.get(&key));
-    let has_approval = view
+    let has_interactions = view
         .and_then(|view| view.snapshot.as_ref())
-        .is_some_and(|snapshot| {
-            snapshot
-                .decisions
-                .iter()
-                .any(|decision| decision.request["kind"] == "approval")
-        });
-    let content = if has_approval {
+        .is_some_and(|snapshot| !snapshot.decisions.is_empty());
+    let content = if has_interactions {
         Layout::default()
             .direction(if columns[1].width >= 90 {
                 Direction::Horizontal
             } else {
                 Direction::Vertical
             })
-            .constraints([Constraint::Percentage(55), Constraint::Percentage(45)])
+            .constraints(if columns[1].width >= 90 {
+                [Constraint::Percentage(55), Constraint::Percentage(45)]
+            } else {
+                [Constraint::Min(3), Constraint::Length(17)]
+            })
             .split(columns[1])
     } else {
         Layout::default()
@@ -156,21 +155,6 @@ pub fn draw(frame: &mut Frame<'_>, app: &App) {
                     if text.lines.len() > 20_000 {
                         text.lines.drain(..text.lines.len() - 20_000);
                     }
-                }
-                for decision in &snapshot.decisions {
-                    if decision.request["kind"] == "approval" {
-                        continue;
-                    }
-                    text.lines.push(Line::styled(
-                        format!(
-                            "Decision {} (deadline {}):",
-                            decision.decision_id, decision.expires_at_ms
-                        ),
-                        Style::default().fg(Color::Yellow),
-                    ));
-                    text.lines
-                        .push(Line::from(safe(&decision.request.to_string())));
-                    text.lines.push(Line::from("/answer UUID text"));
                 }
                 if let Some(run) = &snapshot.run {
                     text.lines.push(Line::from(format!(
@@ -239,7 +223,7 @@ pub fn draw(frame: &mut Frame<'_>, app: &App) {
             .block(Block::default().borders(Borders::ALL).title(if pending {
                 "Delivery pending or unknown · /receipt resolves"
             } else {
-                "Enter sends · Alt+Enter newline · F2 approval · /help"
+                "Enter sends · Alt+Enter newline · F2 interactions · /help"
             })),
         rows[1],
     );
@@ -263,5 +247,5 @@ pub fn draw(frame: &mut Frame<'_>, app: &App) {
                 .min(rows[1].bottom().saturating_sub(2)),
         ));
     }
-    super::approval::draw(frame, app, content[1]);
+    super::interactions::draw(frame, app, content[1]);
 }

@@ -42,14 +42,22 @@ to detach. `/new /absolute/workspace`, `/use SESSION_UUID`, `/rename NAME`,
 voyage. Ordinary text submits a turn when idle and steers the exact observed run
 when active. A refused or uncertain command retains its draft; inspect `/receipt`
 before sending again. Switching views does not cancel or redirect outstanding work.
-Pending approvals open a right-hand review panel showing the host, exact request,
-action, target, reason and remaining time. Narrow terminals stack it below the
-conversation. Ctrl+A approves once; Ctrl+D denies. F2 focuses the panel for
-PageUp/PageDown scrolling; Esc returns scrolling to the conversation. The composer
-remains available and approval responses preserve its draft. Enter and pasted text
-do not consent. Tab switches voyages; background decisions show a `!` in the list.
-Uncertain response delivery retains its command identity; use `/receipt` to resolve
-it. Model questions remain separate conversation requests.
+All pending runtime interactions appear in the right-hand panel, including approvals
+and questions. Narrow terminals stack it below the conversation. The panel shows
+the request count, executing host, details and time remaining. F6/F7 moves between
+requests; F2 focuses the panel and PageUp/PageDown scrolls its details. Esc returns
+to the composer. Tab switches voyages; background decisions show a `!` in the list.
+
+For approvals, Ctrl+A approves the displayed request once and Ctrl+D denies it.
+For questions, focus the panel with F2, use Up/Down to choose an offered answer or
+type a custom answer, then Enter to send. Ctrl+D skips a focused question. Each
+pending question retains its own answer draft while navigating in the current UI.
+Question responses are model input, never execution approval. Pasting text only
+edits a draft; it does not send an answer or authorize an action. The main composer
+remains separate and responses preserve its draft. Uncertain response delivery
+retains its command identity; return to the composer and use `/receipt` to resolve
+it. Unknown future interaction kinds remain visible without response controls.
+
 `/approve DECISION_UUID` and `/deny DECISION_UUID` answer
 an exact approval; `/answer DECISION_UUID text` answers a model question. There is
 no approve-all operation. Responses are tied to the observed decision, run,
