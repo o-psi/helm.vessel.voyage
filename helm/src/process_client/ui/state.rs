@@ -41,6 +41,10 @@ pub struct ToolCall {
 }
 #[derive(Clone, Deserialize, PartialEq)]
 pub struct Turn {
+    #[serde(default)]
+    pub started_at: Option<chrono::DateTime<chrono::Utc>>,
+    #[serde(default)]
+    pub finished_at: Option<chrono::DateTime<chrono::Utc>>,
     pub run_id: Uuid,
     pub phase: String,
     pub message_start: Option<usize>,

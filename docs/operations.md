@@ -53,8 +53,16 @@ summaries without changing the saved history.
 
 Conversation messages keep their authored text, including JSON examples. Helm
 only summarizes explicitly identified operator actions. User messages, updates,
-answers and recorded run outcomes have distinct labels. Tool activity is compact;
-**Ctrl+T** expands action names and outcomes without dumping result payloads.
+answers and recorded run outcomes have distinct labels. Up to three consecutive
+tool calls show compact action details and outcomes directly: commands, paths,
+search terms and edit sizes. Four or more calls form one accordion; click its
+header to expand that group, or use **Ctrl+T** to expand/collapse all groups.
+Narrative updates and turn boundaries separate groups. Raw result payloads,
+program input and environment values stay out of the activity view.
+
+Completed, interrupted and incomplete turns end with a separator. New runtimes
+record start and finish timestamps and show elapsed time there. Older histories
+without recorded timing show the outcome without inventing a duration.
 
 **Ctrl+F** finds text in the loaded conversation; Enter advances to the next match
 and Esc closes search without changing your draft. PageUp/PageDown and the mouse

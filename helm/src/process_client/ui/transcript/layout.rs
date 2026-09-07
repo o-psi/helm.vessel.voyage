@@ -1,7 +1,4 @@
-use super::super::{
-    App, presentation,
-    state::{Snapshot, View},
-};
+use super::super::{App, presentation, state::View};
 use super::*;
 use crate::{
     markdown::{self, RenderOptions},
@@ -21,7 +18,7 @@ fn muted() -> Style {
 fn heading() -> Style {
     Style::default().add_modifier(Modifier::BOLD)
 }
-fn rows(output: &mut Vec<Row>, key: Key, text: Text<'static>) {
+pub(super) fn rows(output: &mut Vec<Row>, key: Key, text: Text<'static>) {
     let mut offset = output.last().filter(|r| r.key == key).map_or(0, |r| {
         r.offset
             + r.line
@@ -44,7 +41,7 @@ fn rows(output: &mut Vec<Row>, key: Key, text: Text<'static>) {
         offset += size;
     }
 }
-fn note(output: &mut Vec<Row>, key: Key, text: impl Into<String>, width: u16) {
+pub(super) fn note(output: &mut Vec<Row>, key: Key, text: impl Into<String>, width: u16) {
     rows(
         output,
         key,
@@ -79,116 +76,6 @@ fn body(text: &str, width: u16) -> Text<'static> {
         rendered.lines.pop();
     }
     rendered
-}
-fn action_failed(name: &str, result: &Message) -> bool {
-    if result.tool_success == Some(false) {
-        return true;
-    }
-    // The shell tool's envelope distinguishes successful delivery from a
-    // nonzero command exit; its output begins after this runtime-owned line.
-    name == "shell"
-        && result
-            .content
-            .lines()
-            .next()
-            .and_then(|line| line.strip_prefix("exit: "))
-            .is_some_and(|code| code != "0")
-}
-fn activity(
-    output: &mut Vec<Row>,
-    message: &Message,
-    messages: &[Message],
-    snapshot: &Snapshot,
-    details: bool,
-    width: u16,
-) {
-    if message.tool_calls.is_empty() {
-        return;
-    }
-    let mut finished = 0;
-    let mut failed = 0;
-    for call in &message.tool_calls {
-        if let Some(result) = messages
-            .iter()
-            .find(|m| m.tool_call_id.as_deref() == Some(&call.id))
-        {
-            finished += 1;
-            failed += usize::from(action_failed(&call.name, result));
-        }
-    }
-    let active = snapshot.run.as_ref().is_some_and(|r| {
-        r.active()
-            && r.message_start
-                .is_some_and(|start| message.message_index >= start)
-    });
-    let total = message.tool_calls.len();
-    let label = if finished < total {
-        if active {
-            format!("Working · {finished}/{total} tool results")
-        } else {
-            format!("Activity · {finished}/{total} results recorded")
-        }
-    } else if failed > 0 {
-        format!("Activity · {total} tools · {failed} failed")
-    } else {
-        format!(
-            "Activity · {total} {} finished",
-            if total == 1 { "tool" } else { "tools" }
-        )
-    };
-    let key = Key::Activity(message.message_index);
-    note(
-        output,
-        key.clone(),
-        format!("{} {label}", if details { "−" } else { "+" }),
-        width,
-    );
-    if details {
-        for call in &message.tool_calls {
-            let result = messages
-                .iter()
-                .find(|m| m.tool_call_id.as_deref() == Some(&call.id));
-            let status = match result {
-                Some(result) if action_failed(&call.name, result) => "Failed",
-                Some(result) if result.tool_success == Some(true) => "Done",
-                Some(_) => "Result received",
-                None if active => "Waiting",
-                None => "No result recorded",
-            };
-            let title = match call.name.as_str() {
-                "shell" => "Run command",
-                "read_file" => "Read file",
-                "write_file" => "Write file",
-                "apply_patch" => "Edit files",
-                "search" => "Search",
-                "list_directory" => "Browse folders",
-                "process" => "Interactive program",
-                "questions" => "Ask a question",
-                "todo" => "Update tasks",
-                "subagent" => "Delegate work",
-                _ => &call.name,
-            };
-            note(
-                output,
-                key.clone(),
-                format!("  {status} · {}", presentation::label(title)),
-                width,
-            );
-            // Only intentional public action targets, never tool result payloads.
-            let target = if call.name == "shell" {
-                call.arguments["command"].as_str()
-            } else if call.name == "process" {
-                call.arguments["name"].as_str()
-            } else {
-                call.arguments["path"].as_str()
-            };
-            if let Some(target) = target {
-                let text: String = safe(target).chars().take(240).collect();
-                note(output, key.clone(), format!("    {text}"), width);
-            }
-        }
-    }
-    note(output, key, "", width);
 }
 fn build(view: &View, state: &State, width: u16) -> Vec<Row> {
     let mut out = Vec::new();
@@ -254,7 +141,11 @@ fn build(view: &View, state: &State, width: u16) -> Vec<Row> {
             width,
         );
     }
+    let mut calls = Vec::new();
     for message in messages {
+        if matches!(message.role.as_str(), "user" | "assistant") && !message.content.is_empty() {
+            super::activity::flush(&mut out, &mut calls, messages, snapshot, state, width);
+        }
         if matches!(message.role.as_str(), "user" | "assistant") && !message.content.is_empty() {
             let key = Key::Message(message.message_index);
             let final_answer = snapshot.turns.iter().any(|t| {
@@ -325,14 +216,26 @@ fn build(view: &View, state: &State, width: u16) -> Vec<Row> {
                 };
                 note(&mut out, key.clone(), label, width);
             }
-            note(&mut out, key, "", width);
+            let ends_turn = snapshot.turns.iter().any(|t| {
+                t.message_end == Some(message.message_index + 1)
+                    && matches!(t.phase.as_str(), "completed" | "incomplete" | "interrupted")
+            });
+            if message.tool_calls.is_empty() && !ends_turn {
+                note(&mut out, key, "", width);
+            }
         }
-        activity(&mut out, message, messages, snapshot, state.details, width);
+        calls.extend(
+            message
+                .tool_calls
+                .iter()
+                .map(|call| (message.message_index, call)),
+        );
         for turn in snapshot
             .turns
             .iter()
             .filter(|t| t.message_end == Some(message.message_index + 1))
         {
+            super::activity::flush(&mut out, &mut calls, messages, snapshot, state, width);
             let label = match turn.phase.as_str() {
                 "completed" => Some("Completed"),
                 "incomplete" => Some("Work ended with unfinished items"),
@@ -343,12 +246,13 @@ fn build(view: &View, state: &State, width: u16) -> Vec<Row> {
                 note(
                     &mut out,
                     Key::Turn(turn.run_id),
-                    format!("{label}\n\n"),
+                    super::activity::separator(turn, label, width),
                     width,
                 );
             }
         }
     }
+    super::activity::flush(&mut out, &mut calls, messages, snapshot, state, width);
     if let Some(delivery) = &state.delivery {
         let saved = messages.iter().any(|m| {
             m.role == "user" && m.message_index >= delivery.before && m.content == delivery.text
@@ -519,13 +423,26 @@ pub(in crate::process_client::ui) fn draw(frame: &mut Frame<'_>, app: &App, area
         }
     }
     let query = state.query.to_lowercase();
+    state.hits.clear();
     let visible = state
         .rows
         .iter()
         .skip(top)
         .take(height)
-        .map(|row| {
-            let line = row.line.clone();
+        .enumerate()
+        .map(|(y, row)| {
+            let mut line = row.line.clone();
+            if matches!(row.key, Key::ActivityHeader(_)) {
+                let rect = Rect::new(area.x, area.y + y as u16, area.width, 1);
+                if app.sidebar.pointer.is_some_and(|p| rect.contains(p)) {
+                    line = line.style(
+                        Style::default()
+                            .bg(Color::DarkGray)
+                            .fg(Color::White)
+                            .add_modifier(Modifier::UNDERLINED),
+                    );
+                }
+            }
             if !query.is_empty() && line.to_string().to_lowercase().contains(&query) {
                 line.style(Style::default().bg(Color::DarkGray).fg(Color::White))
             } else {
@@ -533,6 +450,20 @@ pub(in crate::process_client::ui) fn draw(frame: &mut Frame<'_>, app: &App, area
             }
         })
         .collect::<Vec<_>>();
+    state.hits = state
+        .rows
+        .iter()
+        .skip(top)
+        .take(height)
+        .enumerate()
+        .filter_map(|(y, row)| {
+            if let Key::ActivityHeader(id) = row.key {
+                Some((Rect::new(area.x, area.y + y as u16, area.width, 1), id))
+            } else {
+                None
+            }
+        })
+        .collect();
     frame.render_widget(
         Paragraph::new(Text::from(visible)),
         Rect {

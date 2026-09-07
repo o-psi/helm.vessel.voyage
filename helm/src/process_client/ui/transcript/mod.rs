@@ -1,4 +1,5 @@
 //! A readable projection of canonical messages, activity and provisional output.
+mod activity;
 mod history;
 mod input;
 mod layout;
@@ -10,6 +11,7 @@ pub(super) enum Key {
     Message(usize),
     MessageHeading(usize),
     Activity(usize),
+    ActivityHeader(usize),
     Turn(uuid::Uuid),
     Live(uuid::Uuid),
     Pending,
@@ -36,6 +38,8 @@ pub(in crate::process_client::ui) struct State {
     anchor: Option<Anchor>,
     new_output: bool,
     pub details: bool,
+    expanded: std::collections::BTreeMap<usize, bool>,
+    hits: Vec<(ratatui::layout::Rect, usize)>,
     pub requested_from: Option<usize>,
     pub attempted: Option<u64>,
     pub attempted_from: Option<usize>,

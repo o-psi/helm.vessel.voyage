@@ -23,6 +23,9 @@ impl App {
             return false;
         }
         let mut state = view.transcript.borrow_mut();
+        if matches!(event, Event::Resize(..)) {
+            state.hits.clear();
+        }
         if state.search.is_some() {
             match event {
                 Event::Key(key) => match key.code {
@@ -67,6 +70,14 @@ impl App {
             Event::Key(key) if key.modifiers.contains(KeyModifiers::CONTROL) => match key.code {
                 KeyCode::Char('t') => {
                     state.details = !state.details;
+                    state.expanded.clear();
+                    if !state.details
+                        && let Some(anchor) = &mut state.anchor
+                        && let super::Key::Activity(id) = anchor.key
+                    {
+                        anchor.key = super::Key::ActivityHeader(id);
+                        anchor.offset = 0;
+                    }
                     state.dirty = true;
                 }
                 KeyCode::Char('f') => {
@@ -94,6 +105,21 @@ impl App {
                 _ => return false,
             },
             Event::Mouse(mouse) => match mouse.kind {
+                MouseEventKind::Down(crossterm::event::MouseButton::Left) => {
+                    let hit = state
+                        .hits
+                        .iter()
+                        .find(|(rect, _)| rect.contains((mouse.column, mouse.row).into()))
+                        .map(|(_, id)| *id);
+                    let Some(id) = hit else {
+                        return false;
+                    };
+                    let expanded = state.expanded.get(&id).copied().unwrap_or(state.details);
+                    state.expanded.insert(id, !expanded);
+                    let top = state.top;
+                    state.remember(top);
+                    state.dirty = true;
+                }
                 MouseEventKind::ScrollUp => {
                     older = state.top == 0;
                     state.scroll(true, 3);

@@ -144,8 +144,10 @@ browser lists observed state and host, selects with Up/Down, and attaches with
 Enter using the inventory's exact owning run and observed incarnation. Ctrl+]
 returns from private input to the saved conversation draft. Stale inventories
 cannot attach. F1 opens a scrollable guide; operator panels and command receipts
-render readable metadata. Chat activity expands with Ctrl+T to show action names
-and outcomes; raw tool result payloads remain excluded. Authored JSON is preserved,
+render readable metadata. Chat shows compact public tool targets and outcomes directly for up to three
+consecutive calls. Longer sequences use independently clickable accordions, with
+Ctrl+T controlling all groups; raw result payloads remain excluded. Turn separators
+show elapsed time when the runtime recorded start and finish timestamps. Authored JSON is preserved,
 and operator summarization requires explicit message metadata. Runtime projections
 include message times, bounded turn outcomes and a reconciled live suffix, so
 committed text is not repeated by the streaming preview. Managed execution reuses

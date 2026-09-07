@@ -13,6 +13,10 @@ pub struct RunSummary {
     /// Half-open canonical message range; absent when compacted or ambiguous.
     pub message_start: Option<usize>,
     pub message_end: Option<usize>,
+    #[serde(default)]
+    pub started_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub finished_at: Option<DateTime<Utc>>,
     pub message_fingerprints: Vec<String>,
     #[serde(default)]
     pub partial_output: String,
@@ -32,6 +36,8 @@ impl Session {
         let start = self.messages.len().saturating_sub(1);
         self.run_summaries.push(RunSummary {
             run_id,
+            started_at: Some(Utc::now()),
+            finished_at: None,
             phase: CompletionPhase::Provisional,
             detail: None,
             readiness: None,
@@ -60,6 +66,14 @@ impl Session {
         detail: Option<String>,
     ) {
         if let Some(summary) = self.run_summaries.last_mut() {
+            if matches!(
+                phase,
+                CompletionPhase::Completed
+                    | CompletionPhase::Incomplete
+                    | CompletionPhase::Interrupted
+            ) {
+                summary.finished_at.get_or_insert_with(Utc::now);
+            }
             summary.phase = phase;
             summary.readiness = readiness;
             summary.detail =

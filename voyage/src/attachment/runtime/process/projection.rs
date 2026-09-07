@@ -110,6 +110,6 @@ pub(super) fn run(
 }
 pub(super) fn turns(session: &crate::session::Session) -> Vec<Value> {
     session.run_summaries.iter().rev().take(1024).rev().map(|s| json!({
-        "run_id":s.run_id,"phase":s.phase,"message_start":s.message_start,"message_end":s.message_end
+        "run_id":s.run_id,"phase":s.phase,"message_start":s.message_start,"message_end":s.message_end,"started_at":s.started_at,"finished_at":s.finished_at
     })).collect()
 }
