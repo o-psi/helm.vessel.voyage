@@ -164,11 +164,21 @@ pub async fn execute_admitted_with_controls(
     .await
     {
         Ok(resources) => resources,
-        Err(_) => {
-            let actual = run.fail_before_execution().await?;
+        Err(failure) => {
+            let reason = format!("Runtime startup failed during {}.", failure.stage);
+            let actual = run.fail_before_execution_reason(&reason).await?;
+            let retained = match &controls {
+                Some(controls) => controls.shutdown_retained(owner).await.is_ok(),
+                None => true,
+            };
+            let observed = failure.cleanup_observed && retained;
+            if observed {
+                host_reservation.release_observed()?;
+                run.confirm_local_cleanup_observed().await?;
+            }
             return Ok(ManagedExecution {
                 actual,
-                cleanup_observed: false,
+                cleanup_observed: observed,
                 construction_failed: true,
             });
         }

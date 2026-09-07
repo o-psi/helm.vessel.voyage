@@ -51,6 +51,13 @@ unconfirmed action without editing or resending the conversation draft. Authored
 code remains readable in conversation; stored operator results receive plain-language
 summaries without changing the saved history.
 
+A failed startup displays its stage (policy, accounting, subagents, tools or
+provider configuration). When cleanup completes, fix the indicated configuration
+or resource problem and submit a new message. When cleanup is unconfirmed, further
+work remains blocked: preserve the session and use the explicit runtime recovery
+procedure after stopping and inspecting its exact owner. Restarting Helm or
+resending the original command does not clear this obligation.
+
 ### Interactive terminals and passwords
 
 Press **F8 Explore** to choose a readable overview of tools, permissions, tasks,

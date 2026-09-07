@@ -35,6 +35,7 @@ use tokio::sync::mpsc;
 
 pub(super) struct App {
     clients: Vec<Client>,
+    new_chat_config: Option<crate::Config>,
     views: BTreeMap<Target, View>,
     selected: Option<Target>,
     sender: mpsc::Sender<Update>,
@@ -66,6 +67,14 @@ pub async fn run(clients: Vec<Client>) -> Result<()> {
 }
 
 pub async fn run_selected(clients: Vec<Client>, session: Option<uuid::Uuid>) -> Result<()> {
+    run_with_config(clients, session, None).await
+}
+
+pub async fn run_with_config(
+    clients: Vec<Client>,
+    session: Option<uuid::Uuid>,
+    new_chat_config: Option<crate::Config>,
+) -> Result<()> {
     anyhow::ensure!(
         io::stdin().is_terminal() && io::stdout().is_terminal(),
         "connected TUI needs a terminal; use connect list/new/inspect/submit for plain operation"
@@ -83,6 +92,7 @@ pub async fn run_selected(clients: Vec<Client>, session: Option<uuid::Uuid>) -> 
     let jobs = observe::spawn(&clients, sender.clone());
     let mut app = App {
         clients,
+        new_chat_config,
         views: BTreeMap::new(),
         selected: session.map(|session| Target { route: 0, session }),
         sender,

@@ -23,6 +23,8 @@ pub struct Run {
     #[serde(default)]
     pub partial_text: String,
     #[serde(default)]
+    pub failure_summary: Option<String>,
+    #[serde(default)]
     pub partial_text_truncated: bool,
 }
 
@@ -45,6 +47,8 @@ pub struct Snapshot {
     pub model: String,
     pub messages: Vec<Message>,
     pub run: Option<Run>,
+    #[serde(default)]
+    pub pending_cleanup_run: Option<Uuid>,
     #[serde(default)]
     pub decisions: Vec<Decision>,
     #[serde(default)]

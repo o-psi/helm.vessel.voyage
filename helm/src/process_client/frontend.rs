@@ -190,7 +190,7 @@ pub async fn chat(
     if plain {
         super::plain::chat(&client, process.session_id).await
     } else {
-        super::ui::run_selected(vec![client], Some(process.session_id)).await
+        super::ui::run_with_config(vec![client], Some(process.session_id), Some(config)).await
     }
 }
 

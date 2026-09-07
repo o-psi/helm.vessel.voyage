@@ -35,6 +35,11 @@ pub struct BuildResources {
     pub extra_tool: Option<Arc<dyn crate::tools::Tool>>,
     pub terminal_manager: Option<crate::tools::ProcessTool>,
 }
+pub struct BuildFailure {
+    pub stage: &'static str,
+    pub cleanup_observed: bool,
+}
+
 pub async fn build_authorized_agent_bundle(
     config: &Config,
     workspace: PathBuf,
@@ -43,109 +48,139 @@ pub async fn build_authorized_agent_bundle(
     authority: Option<Arc<dyn crate::policy::ExecutionAuthority>>,
     decision_approver: Option<Arc<dyn Approver>>,
     retained: BuildResources,
-) -> Result<ManagedAgent> {
-    let BuildResources {
-        extra_tool,
-        terminal_manager,
-    } = retained;
-    if let Some(authority) = &authority {
-        authority.check()?;
-    }
-    let resolved = crate::runtime_policy::RuntimePolicy::resolve(config, &workspace)?;
-    let config = resolved.config();
-    let mut policy = resolved.policy().clone();
-    if let Some(authority) = authority {
-        policy = policy.with_execution_authority(authority);
-    }
-    policy.check_execution_authority()?;
-    let policy = Arc::new(policy);
+) -> std::result::Result<ManagedAgent, BuildFailure> {
+    // Keep observers outside the fallible assembly so partially built resources
+    // remain available for positive cleanup observation.
+    let managed_resources = Arc::new(ManagedResources::default());
+    let mut runtime: Option<Arc<SubagentRuntime>> = None;
+    let mut stage = "runtime policy";
+    let result: Result<ManagedAgent> = async {
+        let BuildResources {
+            extra_tool,
+            terminal_manager,
+        } = retained;
+        if let Some(authority) = &authority {
+            authority.check()?;
+        }
+        let resolved = crate::runtime_policy::RuntimePolicy::resolve(config, &workspace)?;
+        let config = resolved.config();
+        let mut policy = resolved.policy().clone();
+        if let Some(authority) = authority {
+            policy = policy.with_execution_authority(authority);
+        }
+        policy.check_execution_authority()?;
+        let policy = Arc::new(policy);
 
-    let interactive = decision_approver.is_some();
-    let approver: Arc<dyn Approver> = if let Some(approver) = decision_approver {
-        approver
-    } else if attended {
-        Arc::new(UnattendedApprover { allow: false })
-    } else {
-        Arc::new(UnattendedApprover {
-            allow: config.unattended_approval == UnattendedApprovalMode::Allow,
-        })
-    };
-    let context = ToolContext {
-        github: crate::github::Credential::from_config(config),
-        completion: None,
-        policy,
-        approver,
-        timeout: config.timeout(),
-        max_output_bytes: config.max_output_bytes,
-        environment: tool_environment(config),
-        cancellation: tokio_util::sync::CancellationToken::new(),
-        execution_id: uuid::Uuid::new_v4(),
-        interaction: if attended || interactive {
-            InteractionMode::Attended
+        let interactive = decision_approver.is_some();
+        let approver: Arc<dyn Approver> = if let Some(approver) = decision_approver {
+            approver
+        } else if attended {
+            Arc::new(UnattendedApprover { allow: false })
         } else {
-            InteractionMode::Unattended
-        },
-        redactor: redactor(config),
-    };
-    let accounting =
-        crate::inference::runtime::Accounting::root(&workspace, &config.provider_profile()).await?;
-    let managed_resources = sink.as_ref().map(|_| Arc::new(ManagedResources::default()));
-    let subagents = build_subagents_managed(
-        config,
-        &workspace,
-        context.policy.clone(),
-        managed_resources.clone(),
-    )
-    .await?;
-    let gate_runtime = subagents.runtime.clone();
-    let gate_todos = subagents.todos.store();
-    let gate_agents = gate_runtime.store().expect("persistent runtime");
-    context.policy.check_execution_authority()?;
-    let mut tools = build_tools(
-        config,
-        Some(subagents.tool),
-        Some(subagents.todos),
-        Some(subagents.completion_tool),
-        managed_resources.as_deref(),
-        &context.policy,
-    )
-    .await?;
-    if let Some(tool) = extra_tool {
-        tools.register_arc(tool)?;
+            Arc::new(UnattendedApprover {
+                allow: config.unattended_approval == UnattendedApprovalMode::Allow,
+            })
+        };
+        let context = ToolContext {
+            github: crate::github::Credential::from_config(config),
+            completion: None,
+            policy,
+            approver,
+            timeout: config.timeout(),
+            max_output_bytes: config.max_output_bytes,
+            environment: tool_environment(config),
+            cancellation: tokio_util::sync::CancellationToken::new(),
+            execution_id: uuid::Uuid::new_v4(),
+            interaction: if attended || interactive {
+                InteractionMode::Attended
+            } else {
+                InteractionMode::Unattended
+            },
+            redactor: redactor(config),
+        };
+        stage = "inference accounting";
+        let accounting =
+            crate::inference::runtime::Accounting::root(&workspace, &config.provider_profile())
+                .await?;
+        stage = "subagent initialization";
+        let subagents = build_subagents_managed(
+            config,
+            &workspace,
+            context.policy.clone(),
+            Some(managed_resources.clone()),
+        )
+        .await?;
+        runtime = Some(subagents.runtime.clone());
+        let gate_runtime = subagents.runtime.clone();
+        let gate_todos = subagents.todos.store();
+        let gate_agents = gate_runtime.store().expect("persistent runtime");
+        context.policy.check_execution_authority()?;
+        stage = "tool initialization";
+        let mut tools = build_tools(
+            config,
+            Some(subagents.tool),
+            Some(subagents.todos),
+            Some(subagents.completion_tool),
+            Some(managed_resources.as_ref()),
+            &context.policy,
+        )
+        .await?;
+        if let Some(tool) = extra_tool {
+            tools.register_arc(tool)?;
+        }
+        if let Some(manager) = terminal_manager {
+            tools.reuse_terminals(manager);
+        }
+        managed_resources.register(&mut tools)?;
+        let retained_runtime = gate_runtime.clone();
+        context.policy.check_execution_authority()?;
+        stage = "provider configuration";
+        let agent = Agent::new(
+            provider::from_config(config, context.policy.workspace().to_owned())?,
+            tools,
+            context,
+            sink.unwrap_or_else(|| Arc::new(SilentEvents)),
+            config.model.clone(),
+            config.system_prompt.clone(),
+            config.max_tokens,
+            config.temperature,
+        )
+        .with_inference_accounting(accounting)
+        .with_completion_coordinator(subagents.coordinator)
+        .with_completion_gate(gate_todos, gate_agents, gate_runtime)
+        .with_context_window(config.context_window)
+        .with_model_mirror(subagents.model)
+        .with_retry_policy(RetryPolicy {
+            max_attempts: config.provider_retry_attempts,
+            initial_delay: std::time::Duration::from_millis(config.provider_retry_initial_ms),
+            max_delay: std::time::Duration::from_millis(config.provider_retry_max_ms),
+        });
+        Ok(ManagedAgent {
+            agent: Arc::new(agent),
+            subagents: retained_runtime,
+            resources: Some(managed_resources.clone()),
+        })
     }
-    if let Some(manager) = terminal_manager {
-        tools.reuse_terminals(manager);
+    .await;
+    match result {
+        Ok(agent) => Ok(agent),
+        Err(_) => {
+            let children = match runtime {
+                Some(runtime) => {
+                    tokio::time::timeout(std::time::Duration::from_secs(15), runtime.shutdown())
+                        .await
+                        .is_ok()
+                }
+                None => true,
+            };
+            let resources = managed_resources.shutdown_observed(true).await.is_ok();
+            let compatibility = provider::shutdown_compatibility().await.is_ok();
+            Err(BuildFailure {
+                stage,
+                cleanup_observed: children && resources && compatibility,
+            })
+        }
     }
-    if let Some(resources) = &managed_resources {
-        resources.register(&mut tools)?;
-    }
-    let retained_runtime = gate_runtime.clone();
-    context.policy.check_execution_authority()?;
-    let agent = Agent::new(
-        provider::from_config(config, context.policy.workspace().to_owned())?,
-        tools,
-        context,
-        sink.unwrap_or_else(|| Arc::new(SilentEvents)),
-        config.model.clone(),
-        config.system_prompt.clone(),
-        config.max_tokens,
-        config.temperature,
-    )
-    .with_inference_accounting(accounting)
-    .with_completion_coordinator(subagents.coordinator)
-    .with_completion_gate(gate_todos, gate_agents, gate_runtime)
-    .with_context_window(config.context_window)
-    .with_model_mirror(subagents.model)
-    .with_retry_policy(RetryPolicy {
-        max_attempts: config.provider_retry_attempts,
-        initial_delay: std::time::Duration::from_millis(config.provider_retry_initial_ms),
-        max_delay: std::time::Duration::from_millis(config.provider_retry_max_ms),
-    });
-    Ok(ManagedAgent {
-        agent: Arc::new(agent),
-        subagents: retained_runtime,
-        resources: managed_resources,
-    })
 }
 
 pub fn tool_environment(config: &Config) -> std::collections::BTreeMap<String, String> {

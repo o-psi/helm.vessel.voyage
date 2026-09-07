@@ -451,6 +451,19 @@ fn conversation(frame: &mut Frame<'_>, app: &App, area: Rect) {
                             presentation::run_state(&run.state),
                             Style::default().fg(Color::Yellow),
                         ));
+                        if let Some(reason) = &run.failure_summary {
+                            text.lines
+                                .extend(presentation::wrap(Text::raw(safe(reason)), width).lines);
+                        }
+                        if snapshot.pending_cleanup_run.is_some() {
+                            text.lines.extend(presentation::wrap(Text::raw(
+                                "Cleanup is unconfirmed. Further work is blocked until the runtime is recovered; retrying this message will not repair it."
+                            ), width).lines);
+                        } else if run.failure_summary.is_some() {
+                            text.lines.extend(presentation::wrap(Text::raw(
+                                "Cleanup completed. Check the startup configuration or resource availability, then send a new message to retry."
+                            ), width).lines);
+                        }
                         if run.partial_text_truncated {
                             text.lines
                                 .push(Line::from("Showing the latest part of the response."));

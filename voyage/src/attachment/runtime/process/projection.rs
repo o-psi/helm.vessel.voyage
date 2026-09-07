@@ -58,3 +58,18 @@ pub(super) fn recent(messages: &[Message]) -> Result<(Vec<Value>, usize)> {
     output.reverse();
     Ok((output, offset))
 }
+
+/// Only authored startup labels cross this surface, never underlying diagnostics.
+pub(super) fn failure_summary(reason: Option<&str>) -> Option<&str> {
+    match reason {
+        Some(
+            reason @ ("Runtime startup failed during runtime policy."
+            | "Runtime startup failed during inference accounting."
+            | "Runtime startup failed during subagent initialization."
+            | "Runtime startup failed during tool initialization."
+            | "Runtime startup failed during provider configuration."),
+        ) => Some(reason),
+        Some("local runtime construction or output failed") => Some("Runtime startup failed."),
+        _ => None,
+    }
+}

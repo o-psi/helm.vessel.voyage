@@ -593,14 +593,22 @@ impl RunOwner {
     }
     /// Finalize a construction/output failure before execution; never dispatch this owner later.
     pub async fn fail_before_execution(&mut self) -> Result<RunRecord, CheckpointError> {
+        self.fail_before_execution_reason("local runtime construction or output failed")
+            .await
+    }
+    pub(crate) async fn fail_before_execution_reason(
+        &mut self,
+        reason: &str,
+    ) -> Result<RunRecord, CheckpointError> {
+        let reason = reason.to_owned();
         self.input.take().ok_or(CheckpointError)?;
         self.steering_receiver.take();
-        self.storage(|store| {
+        self.storage(move |store| {
             store.journal.finish(
                 &store.guard,
                 store.run_id,
                 RunState::Failed,
-                Some("local runtime construction or output failed"),
+                Some(&reason),
                 None,
             )
         })

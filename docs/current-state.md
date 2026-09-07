@@ -12,7 +12,9 @@ outbound worker adapter use **Helm → Vessel → voyage**. Vessel launches a se
 long-lived process for each session. Only that voyage constructs the executor,
 loads execution-host credentials, admits turns and writes canonical checkpoints.
 Helm links shared configuration and presentation types but has no embedded agent
-loop. Closing Helm detaches; it does not cancel accepted work.
+loop. New local voyages created inside ordinary chat preserve its startup
+configuration through the private host handoff; explicit connect and remote
+creation use executing-host configuration. Closing Helm detaches; it does not cancel accepted work.
 
 Linux local discovery starts an absent supervisor from companion binaries. Local
 Unix connections verify account ownership and peer credentials. SSH routes use an
@@ -44,6 +46,12 @@ execution. Legacy shared managed journals migrate the selected session, receipts
 and actor identity into a dedicated owner; unrelated sessions remain untouched.
 Abandoned legacy work has an explicit voyage maintenance recovery path. Import
 publication failures retain provenance and never fall back to a writable old copy.
+
+Agent-construction failures retain resource observers and attempt bounded cleanup.
+Only positively observed cleanup releases run admission and host executor charges.
+Snapshots and Helm show an authored startup-stage summary and distinguish a
+retryable failed run from unconfirmed cleanup; underlying diagnostics are excluded.
+Previously stranded runs still require explicit recovery.
 
 Idle lifecycle commands support rename, next-turn model/configuration, branch,
 archive/restore, clear, compaction and confirmed deletion. Branches have new UUIDs

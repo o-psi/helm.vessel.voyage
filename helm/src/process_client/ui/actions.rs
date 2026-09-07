@@ -23,15 +23,38 @@ impl App {
         );
         let session_id = Uuid::new_v4();
         let command_id = Uuid::new_v4();
+        let command = if client.is_local() {
+            if let Some(config) = &self.new_chat_config {
+                let config_path = crate::process_client::frontend::launch::persist(
+                    config,
+                    &workspace,
+                    &client.directory,
+                )?;
+                VesselCommand::StartConfigured {
+                    command_id,
+                    session_id,
+                    workspace,
+                    config_path,
+                }
+            } else {
+                VesselCommand::Start {
+                    command_id,
+                    session_id,
+                    workspace,
+                }
+            }
+        } else {
+            VesselCommand::Start {
+                command_id,
+                session_id,
+                workspace,
+            }
+        };
         self.status = format!("Starting a new voyage on {}...", self.route_label(route));
         let sender = self.sender.clone();
         tokio::spawn(async move {
             let result = client
-                .request(VesselCommand::Start {
-                    command_id,
-                    session_id,
-                    workspace,
-                })
+                .request(command)
                 .await
                 .and_then(|value| Ok(serde_json::from_value(value)?))
                 .map_err(|error| format!("Could not start the voyage: {error}"));
