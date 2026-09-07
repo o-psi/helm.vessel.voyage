@@ -106,6 +106,7 @@ pub(super) async fn dispatch_admitted(
                 "steer",
                 "rename",
                 "set_model",
+                "set_access",
                 "decisions",
                 "respond",
                 "archive",
@@ -133,6 +134,7 @@ pub(super) async fn dispatch_admitted(
                         "submit"
                             | "steer"
                             | "set_model"
+                            | "set_access"
                             | "operator_tool"
                             | "configure"
                             | "workflow_submit"
