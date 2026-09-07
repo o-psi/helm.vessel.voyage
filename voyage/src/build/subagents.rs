@@ -102,6 +102,9 @@ impl SubagentExecutor for CliSubagentExecutor {
         )
         .map_err(|error| error.to_string())?;
         config.workspace = Some(workspace);
+        // Resolve this request beneath its immediate parent, not merely the root
+        // executor snapshot. The captured cap also survives later root upgrades.
+        config.access = Some(context.policy.access);
         config.allow_read = context.policy.readable_roots.clone();
         config.allow_write = context.policy.writable_roots.clone();
         config.max_tokens = context
@@ -139,6 +142,7 @@ impl SubagentExecutor for CliSubagentExecutor {
         });
         let child_budget = context.budget.clone();
         let mut child_policy = context.policy.clone();
+        child_policy.limit_access(tool_context.policy.access_mode());
         child_policy.budget = child_budget.clone();
         child_policy.readable_roots = config.allow_read.clone();
         child_policy.writable_roots = config.allow_write.clone();
@@ -256,6 +260,9 @@ pub async fn build_subagents_managed(
         max_terminals: config.terminal_max_count.min(u32::MAX as usize) as u32,
     };
     let policy = AgentPolicy {
+        // The live root policy clamps each spawn; do not pin root delegation to
+        // its initial access mode when the operator may update it mid-run.
+        access: AccessMode::Unrestricted,
         readable_roots: std::iter::once(workspace.to_path_buf())
             .chain(config.allow_read.clone())
             .collect(),

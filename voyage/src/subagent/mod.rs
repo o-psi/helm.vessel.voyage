@@ -95,15 +95,39 @@ impl AgentBudget {
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AgentPolicy {
+    /// Captured immediate-parent access ceiling; legacy records fail closed.
+    #[serde(default = "legacy_access_ceiling")]
+    pub access: crate::config::AccessMode,
     pub readable_roots: Vec<PathBuf>,
     pub writable_roots: Vec<PathBuf>,
     pub allowed_tools: BTreeSet<String>,
     pub approval: ApprovalPolicy,
     pub budget: AgentBudget,
 }
+fn legacy_access_ceiling() -> crate::config::AccessMode {
+    crate::config::AccessMode::ReadOnly
+}
 impl AgentPolicy {
+    pub(crate) fn limit_access(&mut self, mode: crate::config::AccessMode) {
+        self.access = Self::restrict_access(self.access, mode);
+    }
+    fn restrict_access(
+        a: crate::config::AccessMode,
+        b: crate::config::AccessMode,
+    ) -> crate::config::AccessMode {
+        use crate::config::AccessMode::*;
+        match (a, b) {
+            (ReadOnly, _) | (_, ReadOnly) => ReadOnly,
+            (Approval, _) | (_, Approval) => Approval,
+            _ => Unrestricted,
+        }
+    }
     /// A child can only reduce its parent's authority and resources.
     pub fn validate_child(&self, child: &Self) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            Self::restrict_access(self.access, child.access) == child.access,
+            "child access exceeds parent policy"
+        );
         anyhow::ensure!(
             child.allowed_tools.is_subset(&self.allowed_tools),
             "child tool set exceeds parent policy"
