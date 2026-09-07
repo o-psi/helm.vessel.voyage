@@ -54,9 +54,9 @@ impl App {
         } else if let Some(action) = menu.editor {
             let text=match action {
                 Action::Details => view.map_or_else(|| "Voyage no longer available".into(), |v| {
-                    let run = v.snapshot.as_ref().map_or("Unavailable", |s| s.run.as_ref().map_or("Idle", |r| super::super::presentation::run_state(&r.state)));
+                    let state = v.snapshot.as_ref().map_or("Unavailable", super::super::presentation::voyage_state);
                     let cleanup = if v.process.state == voyage_protocol::process::ProcessState::Stopped { "Confirmed stopped" } else { v.snapshot.as_ref().map_or("Unknown", |s| if s.pending_cleanup_run.is_some() { "Unconfirmed run cleanup" } else { "No pending run cleanup" }) };
-                    format!("Vessel: {}\nWorkspace: {}\nModel: {}\nProcess: {:?}\nRun: {run}\nArchived: {}\nCleanup: {cleanup}\nPending command: {}\nVoyage: {}\n{}", self.route_label(menu.target.route), v.process.workspace.display(), v.snapshot.as_ref().map_or("Unavailable", |s| s.model.as_str()), v.process.state, v.archived(), v.pending.is_some(), menu.target.session, v.error.as_deref().map(super::super::presentation::notice).unwrap_or_default())
+                    format!("Vessel: {}\nWorkspace: {}\nModel: {}\nState: {state}\nArchived: {}\nCleanup: {cleanup}\nPending command: {}\nVoyage: {}\n{}", self.route_label(menu.target.route), v.process.workspace.display(), v.snapshot.as_ref().map_or("Unavailable", |s| s.model.as_str()), v.archived(), v.pending.is_some(), menu.target.session, v.error.as_deref().map(super::super::presentation::notice).unwrap_or_default())
                 }),
                 Action::Rename=>"Rename voyage\nEnter a new name:".into(),
                 Action::Branch=>"Branch conversation\nOptional name for the new voyage:".into(),

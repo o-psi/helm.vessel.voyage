@@ -109,7 +109,33 @@ pub(super) fn receipt(value: &Value) -> String {
     )
 }
 
-pub(super) const HELP: &str = "HELM / YOUR WORKSPACE\n\nMove around\n  Tab / Shift+Tab   Switch voyages\n  Up / Down         Navigate voyages with empty composer or sidebar focus\n  Right, Enter      Focus the sidebar ⋮ button and open Actions\n  F9                Open selected voyage Actions (also in narrow terminals)\n  Ctrl+N            Start a new voyage\n  F1                Help\n  F5                Switch between current and archived voyages\n  F8                Explore tools, tasks, models and permissions\n  Esc               Go back without losing your draft\n  PageUp / PageDown Scroll the current view\n  Ctrl+Home         Load earlier messages\n  Ctrl+End          Return to latest output\n  Ctrl+F            Find in loaded messages; Enter next, Esc close\n  Ctrl+T            Expand or collapse activity groups\n\nTalk to the assistant\n  /                 Open command menu\n  Up / Down         Select command or argument while menu is open\n  Tab               Complete selection; Enter executes\n  Esc               Dismiss command menu\n  Enter             Send your message\n  Alt+Enter         Add a line\n  Up / Down         Recall an earlier message while editing a draft\n  F4                Check an unconfirmed message\n  /cancel           Ask the assistant to stop\n\nQuestions and permissions\n  Requests open ready for your response.\n  Up / Down         Choose an answer or permission decision\n  Enter             Confirm selection; open or send a custom answer\n  Esc               Skip question / deny permission; leave custom editor\n  Left / Right      Previous / next request\n  PageUp / PageDown Read request details\n\nPrograms and passwords\n  F3                Find your running programs\n  Up / Down         Choose a program\n  Enter             Open its private terminal\n  Ctrl+]            Return to Helm\n  Type passwords only in the private terminal.\n  A password prompt may show no characters while you type.\n\nSee what is happening\n  /todos            Tasks\n  /subagents        Agents working on your request\n  /tools            Available tools\n  /policy           Permissions\n  /access           Change access (Read only / Ask first / Unrestricted)\n  /workflows        Saved workflows\n  /models           Available models\n  /host_resources   Machine capacity\n\nOrganize your work\n  /rename A name    Name this voyage\n  /branch A name    Continue in a separate voyage\n  /archive          Preserve history and stop this idle voyage after cleanup\n  /archived         Browse archived voyages (F5)\n  /voyages          Return to current voyages\n  /restore          Restart and restore the selected archived voyage\n  /export PATH      Save your conversation as Markdown\n\nLeave\n  Ctrl+C / Ctrl+Q   Close Helm\n  Your voyages keep running when you leave.";
+pub(super) const HELP: &str = "HELM / YOUR WORKSPACE\n\nMove around\n  Tab / Shift+Tab   Switch voyages\n  Up / Down         Navigate voyages with empty composer or sidebar focus\n  Right, Enter      Focus the sidebar ⋮ button and open Actions\n  F9                Open selected voyage Actions (also in narrow terminals)\n  Ctrl+N            Start a new voyage\n  F1                Help\n  F5                Switch between current and archived voyages\n  F8                Explore tools, tasks, models and permissions\n  Esc               Go back without losing your draft\n  PageUp / PageDown Scroll the current view\n  Ctrl+Home         Load earlier messages\n  Ctrl+End          Return to latest output\n  Ctrl+F            Find in loaded messages; Enter next, Esc close\n  Ctrl+T            Expand or collapse activity groups\n\nTalk to the assistant\n  /                 Open command menu\n  Up / Down         Select command or argument while menu is open\n  Tab               Complete selection; Enter executes\n  Esc               Dismiss command menu\n  Enter             Send your message\n  Alt+Enter         Add a line\n  Up / Down         Recall an earlier message while editing a draft\n  F4                Check an unconfirmed message\n  /cancel           Ask the assistant to stop\n\nQuestions and permissions\n  Requests open ready for your response.\n  Up / Down         Choose an answer or permission decision\n  Enter             Confirm selection; open or send a custom answer\n  Esc               Skip question / deny permission; leave custom editor\n  Left / Right      Previous / next request\n  PageUp / PageDown Read request details\n\nPrograms and passwords\n  F3                Find your running programs\n  Up / Down         Choose a program\n  Enter             Open its private terminal\n  Ctrl+]            Return to Helm\n  Type passwords only in the private terminal.\n  A password prompt may show no characters while you type.\n\nSee what is happening\n  /todos            Tasks\n  /subagents        Agents working on your request\n  /tools            Available tools\n  /policy           Permissions\n  /access           Change access (Read only / Ask first / Unrestricted)\n  /workflows        Saved workflows\n  /models           Available models\n  /host_resources   Machine capacity\n\nOrganize your work\n  /rename A name    Name this voyage\n  /branch A name    Continue in a separate voyage\n  /archive          Preserve history and stop this idle voyage after cleanup\n  /archived         Browse archived voyages (F5)\n  /voyages          Return to current voyages\n  /restore          Restart and restore the selected archived voyage\n  /export PATH      Save your conversation as Markdown\n\nLeave\n  Ctrl+C / Ctrl+Q   Close Helm\n  Active turns keep running when you leave. Finished voyages resume when you send again.";
+
+/// Recency is derived from the durable turn completion, never observation time.
+/// Failure/cancellation and outstanding cleanup retain their own visible state.
+pub(super) fn voyage_state(snapshot: &super::state::Snapshot) -> &'static str {
+    if snapshot.pending_cleanup_run.is_some()
+        && snapshot.run.as_ref().is_none_or(|run| !run.active())
+    {
+        return "Cleanup pending";
+    }
+    let Some(run) = &snapshot.run else {
+        return "Ready";
+    };
+    if run.state == "completed"
+        && snapshot
+            .turns
+            .iter()
+            .rev()
+            .find(|turn| turn.run_id == run.run_id)
+            .and_then(|turn| turn.finished_at)
+            .is_some_and(|finished| chrono::Utc::now() - finished >= chrono::Duration::hours(24))
+    {
+        "Settled"
+    } else {
+        run_state(&run.state)
+    }
+}
 
 pub(super) fn run_state(state: &str) -> &'static str {
     match state {
@@ -117,7 +143,7 @@ pub(super) fn run_state(state: &str) -> &'static str {
         "running" => "Working",
         "awaiting_decision" => "Waiting for you",
         "cancel_requested" => "Stopping",
-        "completed" => "Ready",
+        "completed" => "Finished",
         "failed" => "Needs attention",
         "cancelled" => "Stopped",
         "interrupted" => "Interrupted",

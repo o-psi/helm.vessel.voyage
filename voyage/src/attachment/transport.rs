@@ -79,6 +79,16 @@ impl std::fmt::Debug for ConnectionLease {
     }
 }
 impl ConnectionLease {
+    /// Conservative remaining transport authority for a local IPC observer.
+    pub(crate) fn remaining(&self) -> Duration {
+        if self.closed.is_cancelled() {
+            return Duration::ZERO;
+        }
+        self.deadline
+            .lock()
+            .map(|deadline| deadline.saturating_duration_since(Instant::now()))
+            .unwrap_or(Duration::ZERO)
+    }
     pub fn context(&self) -> &ConnectionContext {
         &self.context
     }

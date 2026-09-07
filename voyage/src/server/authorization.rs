@@ -1,5 +1,5 @@
 //! Current host-private grants are checked at admission and every execution dispatch.
-use super::{LocalActor, State};
+use super::{LocalActor, ProcessRegistration, State};
 use anyhow::{Result, ensure};
 use std::{
     path::{Path, PathBuf},
@@ -38,16 +38,25 @@ pub(super) fn authorize(
     request: &RuntimeRequest,
     directory: &Path,
 ) -> Result<Authorization> {
+    authorize_parts(state.actor, &state.registration, request, directory)
+}
+
+pub(super) fn authorize_parts(
+    actor: LocalActor,
+    registration: &ProcessRegistration,
+    request: &RuntimeRequest,
+    directory: &Path,
+) -> Result<Authorization> {
     let Some(binding) = &request.authorization else {
         return Ok(Authorization {
             authority: None,
-            actor: state.actor,
+            actor,
             grant: None,
         });
     };
     ensure!(
         directory.file_name().and_then(|v| v.to_str())
-            == Some(state.registration.session_id.to_string().as_str()),
+            == Some(registration.session_id.to_string().as_str()),
         "grant runtime directory mismatch"
     );
     let sessions = directory
@@ -63,9 +72,9 @@ pub(super) fn authorize(
     let path = root
         .join("access/grants")
         .join(format!("{}.json", binding.grant_id));
-    let grant = read_current(&path, binding, state.registration.session_id)?;
+    let grant = read_current(&path, binding, registration.session_id)?;
     ensure!(
-        grant.workspace == state.registration.workspace,
+        grant.workspace == registration.workspace,
         "session grant workspace mismatch"
     );
     let right = required_process_right(&request.command)
@@ -89,13 +98,13 @@ pub(super) fn authorize(
             "participant cancellation requires cancel grant"
         );
     }
-    let mut actor = state.actor;
+    let mut actor = actor;
     actor.principal_id = grant.principal_id;
     Ok(Authorization {
         authority: Some(Arc::new(GrantAuthority {
             path,
             binding: binding.clone(),
-            session: state.registration.session_id,
+            session: registration.session_id,
         })),
         actor,
         grant: Some(binding.clone()),

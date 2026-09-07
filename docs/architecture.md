@@ -17,7 +17,7 @@ commands and observations, and reports process health and resource capacity.
 A local Vessel and a remote Vessel have the same role. Local versus remote is
 relative to the Helm connection, not a different product or session type.
 
-**Voyage is the execution runtime. One session has one independent `voyage`
+**Voyage is the execution runtime. An active session has one independent `voyage`
 process.** That process owns the conversation, agent loop, provider transport,
 tool registry, decisions, run admission, canonical persistence and cleanup. It
 is separate from Helm, Vessel and every other session's runtime process. Vessel
@@ -90,7 +90,7 @@ its canonical conversation into an independently writable session.
 
 Multiplexing many voyages across Vessels and delegating work across several
 Vessels inside one voyage are different capabilities. The former needs one runtime
-process per session; the latter additionally needs durable assignment, disclosure
+process per active session; the latter additionally needs durable assignment, disclosure
 and cancellation contracts. Any participant-side worker is subordinate to its
 assignment and cannot become a second canonical session owner.
 
@@ -106,7 +106,12 @@ Do not silently invent a central mandatory Vessel or automatic owner failover.
 Switching the selected voyage only changes the view and input target. Voyages
 continue concurrently under per-voyage and machine-wide limits. Helm disconnect or
 crash detaches the interface; it does not cancel accepted work. A completed run
-leaves the voyage available for another turn.
+leaves the saved voyage available for another turn. After terminal state and observed
+cleanup, its execution process exits. The next turn restores the same session in
+a fresh incarnation using Vessel's current runtime binary. Helm shows successfully
+completed voyages as Finished for 24 hours, then Settled; suspension is an internal
+process state, not a user-facing task outcome. Brief initialization and management
+work also runs in independently fenced processes.
 
 Vessel shutdown is an explicit service-lifecycle operation. It must enumerate owned
 voyage processes and apply a visible drain or stop policy. A Vessel crash creates

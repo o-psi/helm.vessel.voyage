@@ -11,6 +11,14 @@ impl std::fmt::Display for OutcomeUnknown {
     }
 }
 impl std::error::Error for OutcomeUnknown {}
+#[derive(Debug)]
+pub(super) struct NotConnected;
+impl std::fmt::Display for NotConnected {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "runtime connection not established")
+    }
+}
+impl std::error::Error for NotConnected {}
 
 pub async fn forward(
     directory: &Path,
@@ -25,8 +33,13 @@ pub(super) async fn forward_authorized(
     command: RuntimeCommand,
     authorization: Option<GrantBinding>,
 ) -> Result<RuntimeResponse> {
+    if super::recovery::suspended(directory, registration) && command.observes_suspended() {
+        return super::suspension::observe(directory, registration, command, authorization).await;
+    }
     let result = tokio::time::timeout(Duration::from_secs(15), async {
-        let mut stream = UnixStream::connect(directory.join("runtime.sock")).await?;
+        let mut stream = UnixStream::connect(directory.join("runtime.sock"))
+            .await
+            .map_err(|error| anyhow::Error::from(error).context(NotConnected))?;
         ensure!(
             stream.peer_cred()?.uid() == unsafe { libc::geteuid() },
             "runtime peer uid mismatch"
@@ -60,6 +73,10 @@ pub(super) async fn forward_authorized(
 
 pub async fn inspect(directory: &Path, registration: &ProcessRegistration) -> ProcessInfo {
     let mut info = ProcessInfo::from(registration);
+    if super::recovery::suspended(directory, registration) {
+        info.state = ProcessState::Suspended;
+        return info;
+    }
     info.state = match forward(directory, registration, RuntimeCommand::Health).await {
         Ok(response) if response.error.is_none() => ProcessState::Live,
         _ if registration.state == ProcessState::Relinquished => ProcessState::Relinquished,

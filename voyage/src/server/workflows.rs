@@ -28,6 +28,13 @@ pub(super) struct Workflows {
     prepared: Arc<Mutex<PreparedEntries>>,
 }
 impl Workflows {
+    pub async fn pending(&self) -> bool {
+        let mut inputs = self.inputs.lock().await;
+        inputs.retain(|_, entry| entry.deadline > Instant::now());
+        let mut prepared = self.prepared.lock().await;
+        prepared.retain(|_, (_, deadline, _)| *deadline > Instant::now());
+        !inputs.is_empty() || !prepared.is_empty()
+    }
     pub async fn discard(&self, actor: Uuid, command: Uuid, input: Option<Uuid>) {
         let mut prepared = self.prepared.lock().await;
         if prepared

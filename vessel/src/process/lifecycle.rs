@@ -1,5 +1,5 @@
 //! Lifecycle orchestration passes private initialization provenance, never transcripts.
-use super::{registry, routing, service::Supervisor};
+use super::{registry, service::Supervisor};
 use anyhow::{Context, Result, ensure};
 use serde_json::Value;
 use voyage_protocol::process::*;
@@ -104,18 +104,20 @@ impl Supervisor {
         );
         drop(registrations);
         let source_directory = registry::directory(&self.directory, *session_id);
-        let frozen = routing::forward(
-            &source_directory,
-            &source,
-            RuntimeCommand::Branch {
-                command_id: *command_id,
-                expected_revision: *expected_revision,
-                expires_at_ms: *expires_at_ms,
-                branch_id: *branch_id,
-                name: name.clone(),
-            },
-        )
-        .await?;
+        let frozen = self
+            .forward_resuming(
+                *session_id,
+                *incarnation,
+                RuntimeCommand::Branch {
+                    command_id: *command_id,
+                    expected_revision: *expected_revision,
+                    expires_at_ms: *expires_at_ms,
+                    branch_id: *branch_id,
+                    name: name.clone(),
+                },
+                None,
+            )
+            .await?;
         ensure!(
             frozen.error.is_none(),
             "branch snapshot refused: {}",

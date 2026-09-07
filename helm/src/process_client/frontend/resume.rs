@@ -51,7 +51,11 @@ pub(super) async fn open(
             )?);
         }
         ensure!(
-            process.state == voyage_protocol::process::ProcessState::Live,
+            matches!(
+                process.state,
+                voyage_protocol::process::ProcessState::Live
+                    | voyage_protocol::process::ProcessState::Suspended
+            ),
             "owner unavailable or cleanup unconfirmed; inspect it before recovery"
         );
         return Ok(process);

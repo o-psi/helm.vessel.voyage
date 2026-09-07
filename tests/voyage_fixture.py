@@ -122,6 +122,7 @@ class Fixture:
         self.workspace = self.root / "workspace"
         self.directory = self.root / "v"
         self.binary = bin_dir / "voyage"
+        self.binaries = {self.binary}
         self.sessions = {}
         self.pids = {}
         self.supervisor = None
@@ -150,16 +151,28 @@ class Fixture:
         self.bin_dir = bin_dir
 
     def start(self):
+        self.binaries.add(self.binary)
         self.supervisor = subprocess.Popen(
             [str(self.bin_dir / "vessel"), "local-serve", "--directory",
              str(self.directory), "--voyage-binary", str(self.binary)],
             env=self.env, cwd=self.workspace, stdin=subprocess.DEVNULL,
             stdout=self.log, stderr=self.log, start_new_session=True)
-        wait_for(lambda: (self.directory / "vessel.sock").exists(), "Vessel socket")
-        assert self.supervisor.poll() is None, "Vessel exited during startup"
-        self.request({"op": "capabilities"})
+        def ready():
+            assert self.supervisor.poll() is None, "Vessel exited during startup"
+            try:
+                self.request({"op": "capabilities"})
+                return True
+            except (FileNotFoundError, ConnectionRefusedError):
+                return False
+        wait_for(ready, "Vessel readiness")
 
-    def request(self, command):
+    def restart_supervisor(self, binary):
+        self.supervisor.terminate()
+        self.supervisor.wait(timeout=10)
+        self.binary = binary
+        self.start()
+
+    def request(self, command, *, envelope=False):
         payload = json.dumps({"protocol": 1, "command": command}).encode()
         with socket.socket(socket.AF_UNIX) as client:
             client.settimeout(30)
@@ -174,18 +187,22 @@ class Fixture:
                 assert len(payload) == size, "truncated Vessel response"
         response = json.loads(payload)
         assert response["protocol"] == 1, response
+        if envelope:
+            return response
         assert response.get("error") is None, response
         return response["result"]
 
-    def new(self):
+    def new(self, configured=True):
         session = str(uuid.uuid4())
         # Retain the target before asking the supervisor to create a process.
         self.sessions[session] = None
-        info = self.request({"op": "start_configured", "session_id": session,
-                             "command_id": str(uuid.uuid4()),
-                             "workspace": str(self.workspace),
-                             "config_path": str(self.config)})
-        assert info["state"] == "live", info
+        command = {"op": "start_configured" if configured else "start",
+                   "session_id": session, "command_id": str(uuid.uuid4()),
+                   "workspace": str(self.workspace)}
+        if configured:
+            command["config_path"] = str(self.config)
+        info = self.request(command)
+        assert info["state"] in ("live", "suspended"), info
         self.sessions[session] = info["incarnation"]
         health = self.command(session, {"op": "health"})
         assert health["session_id"] == session, health
@@ -193,8 +210,16 @@ class Fixture:
         return session
 
     def raw_command(self, session, command):
-        return self.request({"op": "forward", "session_id": session,
-                             "incarnation": self.sessions[session], "command": command})
+        # Refresh the currently registered process identity before admission. Tests
+        # that exercise stale identity rejection use request() directly.
+        info = self.request({"op": "inspect", "session_id": session})
+        incarnation = info["incarnation"]
+        self.sessions[session] = incarnation
+        response = self.request({"op": "forward", "session_id": session,
+                                 "incarnation": incarnation, "command": command})
+        assert response.get("resumed_from") in (None, incarnation), response
+        self.sessions[session] = response["incarnation"]
+        return response
 
     def command(self, session, command):
         response = self.raw_command(session, command)
@@ -240,6 +265,7 @@ class Fixture:
             assert not self.provider.errors, self.provider.errors
             return self.provider.count(prompt) == 1 and run["state"] == "running"
         wait_for(observe, f"provider request for {prompt}")
+        self.pids[session] = self.command(session, {"op": "health"})["pid"]
 
     def finished(self, session, state="completed"):
         def observe():
@@ -266,7 +292,8 @@ class Fixture:
                 continue
             try:
                 argv = (entry / "cmdline").read_bytes().split(b"\0")
-                if len(argv) > 4 and argv[:3] == [os.fsencode(self.binary), b"serve", b"--directory"]:
+                if (len(argv) > 4 and argv[0] in {os.fsencode(path) for path in self.binaries}
+                        and argv[1:3] == [b"serve", b"--directory"]):
                     if Path(os.fsdecode(argv[3])).parent == self.directory / "sessions":
                         matches.append(int(entry.name))
             except (FileNotFoundError, ProcessLookupError):

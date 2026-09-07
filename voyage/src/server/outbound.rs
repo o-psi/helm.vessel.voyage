@@ -1,10 +1,8 @@
-//! Enrollment relay executes inside the same independent canonical owner.
+//! Turn worker consumes a transient lease from the separate enrollment relay.
 use super::*;
 use crate::attachment::{
-    client::EnrollmentClient,
     journal::{RemoteBinding, RemoteGrantObserver, RemoteReplay, TurnAdmission},
     runtime::{Admission, RuntimeClock, SystemClock},
-    transport::{self, ConnectionLease},
 };
 use crate::build::redactor;
 use crate::{policy::Policy, tools::Redactor};
@@ -16,31 +14,35 @@ use voyage_protocol::{
     process::RuntimeInitialization,
     stream::{DenialCode, Frame, Reply},
 };
+mod observe;
+mod proxy;
+pub async fn outbound_observe(directory: PathBuf) -> Result<()> {
+    observe::run(directory).await
+}
+#[cfg(unix)]
+mod relay;
+#[cfg(unix)]
+pub async fn outbound_relay(directory: PathBuf, binary: Option<PathBuf>) -> Result<()> {
+    relay::run(directory, binary.unwrap_or(std::env::current_exe()?)).await
+}
+use proxy::Lease as ConnectionLease;
 mod authority;
 use authority::{Authority, DispatchAuthority, features, public_reply};
 mod initialize;
 pub(super) use initialize::initialize;
 pub(super) async fn run(state: Arc<State>) -> Result<()> {
-    let Some(RuntimeInitialization::Outbound {
-        enrollment_directory,
-        origin,
-        allow_insecure_loopback,
-        ..
-    }) = &state.registration.initialize
-    else {
+    let Some(RuntimeInitialization::Outbound { .. }) = &state.registration.initialize else {
         bail!("not outbound owner")
     };
     let mut config = state.config.read().await.clone();
     let workspace = state.registration.workspace.clone();
     let launch_policy = Policy::new(&config, workspace.clone())?;
-    let first_client =
-        EnrollmentClient::open_existing(enrollment_directory, origin, *allow_insecure_loopback)?;
-    let inspection = first_client.inspection();
+    let identity = proxy::identity(&state.directory)?;
     let binding = RemoteBinding {
-        origin: first_client.origin().into(),
-        machine_id: inspection.machine_id,
-        owner_id: inspection.owner_id.context("enrollment inactive")?,
-        epoch: inspection.epoch,
+        origin: identity.origin,
+        machine_id: identity.machine_id,
+        owner_id: identity.owner_id,
+        epoch: identity.epoch,
         local_installation_id: state.actor.installation_id,
         local_principal_id: state.actor.principal_id,
     };
@@ -59,7 +61,6 @@ pub(super) async fn run(state: Arc<State>) -> Result<()> {
     );
     config.workspace = Some(workspace.clone());
     let redactor = redactor(&config);
-    let mut first = Some(first_client);
     // Keep signal subscriptions alive while a selected branch awaits storage,
     // output or connection cleanup. Recreating this future each iteration loses
     // signals delivered between the select and its next subscription.
@@ -75,17 +76,9 @@ pub(super) async fn run(state: Arc<State>) -> Result<()> {
             tokio::select! {_ = &mut interrupt=>return Ok(()),_ = tokio::time::sleep(Duration::from_secs(1))=>{}}
             continue;
         }
-        let client = match first.take() {
-            Some(client) => client,
-            None => EnrollmentClient::open_existing(
-                enrollment_directory,
-                origin,
-                *allow_insecure_loopback,
-            )?,
-        };
         let mut connection = tokio::select! {biased;
             _=&mut interrupt=>return Ok(()),
-            result=transport::connect(client,features(),CancellationToken::new())=>result?,
+            result=proxy::connect(&state.directory,&state.registration)=>result?,
         };
         ensure!(
             connection.context().machine_id == binding.machine_id
@@ -120,14 +113,32 @@ pub(super) async fn run(state: Arc<State>) -> Result<()> {
         };
         let mut cursor = latest.get();
         let mut interval = tokio::time::interval(Duration::from_millis(100));
+        let idle_since = tokio::time::Instant::now();
         let mut shutdown = false;
         let mut cleanup_observed = true;
         loop {
             tokio::select! {biased;
                 _=&mut interrupt=>{shutdown=true;break;},
                 result=async {match &mut active {Some(task)=>Some(task.await),None=>std::future::pending().await}}=>{
+                    let _admission=state.admission.lock().await;
                     active=None;
+                    *state.active.lock().await=None;
                     if !matches!(result,Some(Ok(Ok(ref finished))) if finished.cleanup_observed) {cleanup_observed=false;break;}
+                    // Drain final durable events before ending the worker lease.
+                    'drain: loop {
+                        match owner.remote_replay(binding.clone(),cursor,4,authority.clone()).await {
+                            Ok(RemoteReplay::Events{events,..}) if !events.is_empty()=>{
+                                for event in events {cursor=event.cursor.get();if connection.send(Frame::Event{connection_id:connection.context().connection_id,session_id:session,event}).is_err(){break 'drain;}}
+                            },
+                            Ok(RemoteReplay::Events{..})=>break,
+                            _=>break,
+                        }
+                    }
+                    if cleanup_observed {
+                        state.suspend_requested.store(true,std::sync::atomic::Ordering::Release);
+                        state.shutdown.cancel();shutdown=true;
+                    }
+                    break;
                 },
                 frame=connection.receive()=>{
                     let Some(frame)=frame else {break};
@@ -148,6 +159,8 @@ pub(super) async fn run(state: Arc<State>) -> Result<()> {
                                     },
                                     Operation::Inspect{session_id} if *session_id==session=>owner.remote_snapshot(binding.clone(),authority.clone()).await.unwrap_or(Reply::Denied{code:DenialCode::Internal}),
                                     Operation::Submit{session_id,expected_revision,prompt} if *session_id==session=>{
+                                        let _admission=state.admission.lock().await;
+                                        if state.shutdown.is_cancelled() { break; }
                                         let request=TurnAdmission{operator_name:None,command_id:command.command_id,machine_id:binding.machine_id,principal_id:binding.owner_id,session_id:session,expected_revision:*expected_revision,expires_at_ms:command.expires_at_ms,prompt:prompt.clone()};
                                         match owner.admit_authorized(request,dispatch_authority.clone()).await {
                                             Ok(Admission::Existing(run))=>Reply::Run{session_id:run.session_id,run_id:run.id,state:public_state(run.state)},
@@ -156,6 +169,7 @@ pub(super) async fn run(state: Arc<State>) -> Result<()> {
                                                 else {
                                                     let snapshot=owner.remote_snapshot(binding.clone(),authority.clone()).await;
                                                     let owner=owner.clone();let config=config.clone();let workspace=workspace.clone();let authority=dispatch_authority.clone();let execution_cancel=cancel.child_token();let interrupt=execution_cancel.clone();
+                                                    *state.active.lock().await=Some(ActiveRun{id:run.record().await?.id,cancel:cancel.clone(),steering:None});
                                                     active=Some(tokio::spawn(async move {crate::execution::execute_admitted(&owner,&mut run,&config,workspace,Arc::new(crate::agent::SilentSink),execution_cancel,async move{interrupt.cancelled().await},Some(authority),None).await}));
                                                     snapshot.unwrap_or(Reply::Denied{code:DenialCode::Internal})
                                                 }
@@ -189,6 +203,13 @@ pub(super) async fn run(state: Arc<State>) -> Result<()> {
                     }
                 },
                 _=interval.tick()=>{
+                    if active.is_none() && idle_since.elapsed() >= Duration::from_secs(2) {
+                        let _admission=state.admission.lock().await;
+                        if state.active.lock().await.is_none() {
+                            state.suspend_requested.store(true,std::sync::atomic::Ordering::Release);
+                            state.shutdown.cancel();shutdown=true;break;
+                        }
+                    }
                     match owner.remote_replay(binding.clone(),cursor,4,authority.clone()).await {
                         Ok(RemoteReplay::Events{events,..})=>{
 
@@ -208,10 +229,21 @@ pub(super) async fn run(state: Arc<State>) -> Result<()> {
         if let Some(task) = active {
             cleanup_observed &=
                 matches!(task.await, Ok(Ok(ref finished)) if finished.cleanup_observed);
+            let _admission = state.admission.lock().await;
+            *state.active.lock().await = None;
+            if cleanup_observed && !shutdown {
+                // Loss of the lease cancels the turn. Once cancellation cleanup
+                // is observed, its completed checkpoint can suspend as usual.
+                state
+                    .suspend_requested
+                    .store(true, std::sync::atomic::Ordering::Release);
+                state.shutdown.cancel();
+                shutdown = true;
+            }
         }
         drop(dispatch_authority);
         drop(authority);
-        connection.close().await;
+        connection.close(cleanup_observed).await;
         ensure!(
             cleanup_observed,
             "remote owned-resource cleanup unconfirmed; inspect the dedicated journal and recover locally"

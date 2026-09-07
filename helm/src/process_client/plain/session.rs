@@ -7,6 +7,7 @@ use voyage_protocol::process::{ProcessInfo, RuntimeCommand, VesselCommand};
 pub(super) struct Connection<'a> {
     pub client: &'a Client,
     pub process: ProcessInfo,
+    observed_incarnation: std::cell::Cell<Uuid>,
 }
 
 pub(super) fn deadline() -> Result<u64> {
@@ -20,17 +21,28 @@ pub(super) fn deadline() -> Result<u64> {
 
 impl<'a> Connection<'a> {
     pub async fn open(client: &'a Client, session_id: Uuid) -> Result<Self> {
-        let process = serde_json::from_value(
+        let process: ProcessInfo = serde_json::from_value(
             client
                 .request(VesselCommand::Inspect { session_id })
                 .await?,
         )?;
-        Ok(Self { client, process })
+        Ok(Self {
+            client,
+            observed_incarnation: std::cell::Cell::new(process.incarnation),
+            process,
+        })
     }
     pub async fn forward(&self, command: RuntimeCommand) -> Result<Value> {
-        self.client
-            .forward(self.process.session_id, self.process.incarnation, command)
-            .await
+        let (value, incarnation) = self
+            .client
+            .forward_observed(
+                self.process.session_id,
+                self.observed_incarnation.get(),
+                command,
+            )
+            .await?;
+        self.observed_incarnation.set(incarnation);
+        Ok(value)
     }
     pub async fn snapshot(&self) -> Result<Value> {
         self.forward(RuntimeCommand::Snapshot).await

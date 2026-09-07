@@ -231,7 +231,7 @@ impl Supervisor {
             .await?;
         let info: ProcessInfo = serde_json::from_value(started)?;
         ensure!(
-            info.state == ProcessState::Live,
+            matches!(info.state, ProcessState::Live | ProcessState::Suspended),
             "assignment child startup unavailable; acceptance unknown"
         );
         assignment.observation.child_incarnation = Some(info.incarnation);
@@ -242,22 +242,23 @@ impl Supervisor {
             2 * 1024 * 1024,
         )?;
         let registration = self.registration(child).await?;
-        let response = routing::forward_authorized(
-            &registry::directory(&self.directory, child),
-            &registration,
-            RuntimeCommand::Submit {
-                command_id: assignment.request.assignment_id,
-                expected_revision: 0,
-                expires_at_ms: assignment.request.expires_at_ms,
-                prompt: prompt(&assignment.request)?,
-            },
-            Some(GrantBinding {
-                grant_id: assignment.child_grant_id,
-                revision: 1,
-                principal_id: assignment.principal_id,
-            }),
-        )
-        .await?;
+        let response = self
+            .forward_resuming(
+                child,
+                registration.incarnation,
+                RuntimeCommand::Submit {
+                    command_id: assignment.request.assignment_id,
+                    expected_revision: 0,
+                    expires_at_ms: assignment.request.expires_at_ms,
+                    prompt: prompt(&assignment.request)?,
+                },
+                Some(GrantBinding {
+                    grant_id: assignment.child_grant_id,
+                    revision: 1,
+                    principal_id: assignment.principal_id,
+                }),
+            )
+            .await?;
         ensure!(
             response.error.is_none(),
             "participant run admission unresolved: {}",

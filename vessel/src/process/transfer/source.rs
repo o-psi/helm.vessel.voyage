@@ -39,7 +39,7 @@ impl Supervisor {
                 store::load(&path.join("export.json"))?;
             return Ok(serde_json::to_value(manifest)?);
         }
-        let registration = self.registration(*session_id).await?;
+        let mut registration = self.registration(*session_id).await?;
         ensure!(
             registration.incarnation == *incarnation,
             "stale source incarnation"
@@ -56,25 +56,28 @@ impl Supervisor {
             registry::command_record(&self.directory, *command_id, &command, true)?;
         }
         if !artifact.exists() {
-            let response = routing::forward(
-                &source,
-                &registration,
-                RuntimeCommand::Relinquish {
-                    command_id: *command_id,
-                    expected_revision: *expected_revision,
-                    expires_at_ms: *expires_at_ms,
-                    transfer_id: prepared.transfer_id,
-                    destination_vessel_id: prepared.destination_vessel_id,
-                    prepare_digest: identity::digest(preparation)?,
-                },
-            )
-            .await?;
+            let response = self
+                .forward_resuming(
+                    *session_id,
+                    registration.incarnation,
+                    RuntimeCommand::Relinquish {
+                        command_id: *command_id,
+                        expected_revision: *expected_revision,
+                        expires_at_ms: *expires_at_ms,
+                        transfer_id: prepared.transfer_id,
+                        destination_vessel_id: prepared.destination_vessel_id,
+                        prepare_digest: identity::digest(preparation)?,
+                    },
+                    None,
+                )
+                .await?;
             ensure!(
                 response.error.is_none(),
                 "source relinquishment refused: {}",
                 response.error.unwrap_or_default()
             );
         }
+        registration = self.registration(*session_id).await?;
         let stopped = tokio::time::timeout(std::time::Duration::from_secs(10), async {
             loop {
                 if routing::inspect(&source, &registration).await.state == ProcessState::Stopped {

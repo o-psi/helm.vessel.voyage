@@ -20,16 +20,30 @@ impl Journal {
     }
     pub(crate) fn saved_configuration(&mut self, guard: &ExecutionGuard) -> Result<Option<String>> {
         self.check_guard(guard, guard.session_id)?;
-        self.connection.execute_batch("CREATE TABLE IF NOT EXISTS process_configuration(session_id TEXT PRIMARY KEY, settings TEXT NOT NULL)")?;
-        Ok(self
-            .connection
-            .query_row(
-                "SELECT settings FROM process_configuration WHERE session_id=?1",
-                [guard.session_id.to_string()],
-                |row| row.get(0),
-            )
-            .optional()?)
+        self.initial_configuration(guard.session_id)
     }
+    /// Freeze the original executing-host configuration without changing history.
+    pub(crate) fn retain_initial_configuration(
+        &mut self,
+        guard: &ExecutionGuard,
+        settings: String,
+    ) -> Result<()> {
+        self.check_guard(guard, guard.session_id)?;
+        ensure!(
+            settings.len() <= 1024 * 1024,
+            "initial configuration exceeds limit"
+        );
+        let tx = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        tx.execute_batch("CREATE TABLE IF NOT EXISTS process_configuration(session_id TEXT PRIMARY KEY, settings TEXT NOT NULL)")?;
+        tx.execute(
+            "INSERT INTO process_configuration VALUES(?1,?2) ON CONFLICT(session_id) DO NOTHING",
+            params![guard.session_id.to_string(), settings],
+        )?;
+        commit(tx, &self.commit_fence)
+    }
+
     pub(crate) fn configure(
         &mut self,
         guard: &ExecutionGuard,
@@ -38,7 +52,8 @@ impl Journal {
         model: String,
         now: i64,
     ) -> Result<Value> {
-        self.saved_configuration(guard)?;
+        self.check_guard(guard, guard.session_id)?;
+        self.connection.execute_batch("CREATE TABLE IF NOT EXISTS process_configuration(session_id TEXT PRIMARY KEY, settings TEXT NOT NULL)")?;
         let (RuntimeCommand::Configure {
             command_id,
             expected_revision,

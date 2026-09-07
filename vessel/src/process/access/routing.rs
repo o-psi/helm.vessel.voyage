@@ -84,19 +84,9 @@ impl Supervisor {
                     !matches!(command, RuntimeCommand::Stop),
                     "use exact lifecycle stop"
                 );
-                let registration = self.registration(session_id).await?;
-                ensure!(
-                    registration.incarnation == incarnation,
-                    "stale runtime incarnation"
-                );
                 Ok(serde_json::to_value(
-                    routing::forward_authorized(
-                        &registry::directory(&self.directory, session_id),
-                        &registration,
-                        command,
-                        Some(binding),
-                    )
-                    .await?,
+                    self.forward_resuming(session_id, incarnation, command, Some(binding))
+                        .await?,
                 )?)
             }
             VesselCommand::Start {
@@ -118,20 +108,8 @@ impl Supervisor {
             } => {
                 has(ProcessRight::Lifecycle)?;
                 ensure!(session_id == grant.session_id, "session grant denied");
-                // Grant-bound stop is checked again by the runtime, so racing revocation cannot stop a different owner.
-                let registration = self.registration(session_id).await?;
-                ensure!(
-                    registration.incarnation == incarnation,
-                    "stale runtime incarnation"
-                );
                 Ok(serde_json::to_value(
-                    routing::forward_authorized(
-                        &registry::directory(&self.directory, session_id),
-                        &registration,
-                        RuntimeCommand::Stop,
-                        Some(binding),
-                    )
-                    .await?,
+                    self.stop(session_id, incarnation, Some(binding)).await?,
                 )?)
             }
             VesselCommand::Restart {
