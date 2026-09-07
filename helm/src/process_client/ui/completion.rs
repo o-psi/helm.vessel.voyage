@@ -30,6 +30,16 @@ const COMMANDS: &[(&str, &str, &str)] = &[
         "Change the next-turn model",
         "Choose or type a model ID",
     ),
+    (
+        "thinking",
+        "Change next-turn thinking",
+        "Choose or type an effort; default clears",
+    ),
+    (
+        "service",
+        "Change next-turn service",
+        "Choose or type a tier; default clears",
+    ),
     ("models", "Show available models", ""),
     (
         "configure",
@@ -264,6 +274,34 @@ impl App {
         let view = &self.views[&target];
         let mut options = Vec::new();
         match command {
+            "thinking" | "service" => {
+                options.push(("default".into(), "Provider default (clear override)".into()));
+                if let Some(settings) = view.snapshot.as_ref().and_then(|s| s.inference.as_ref()) {
+                    let choices = if command == "thinking" {
+                        &settings.reasoning_efforts
+                    } else {
+                        &settings.service_tiers
+                    };
+                    options.extend(
+                        choices
+                            .iter()
+                            .filter(|value| {
+                                value.as_str() != "default"
+                                    && safe(value) == **value
+                                    && !value.chars().any(char::is_whitespace)
+                            })
+                            .map(|value| {
+                                (
+                                    value.clone(),
+                                    "Advertised choice; runtime/provider validates".into(),
+                                )
+                            }),
+                    );
+                }
+                menu.hint =
+                    "Enter a value, or send the bare command to open its picker; default clears"
+                        .into();
+            }
             "access" => options.extend([
                 ("read-only".into(), "Read only".into()),
                 ("approval".into(), "Ask first".into()),

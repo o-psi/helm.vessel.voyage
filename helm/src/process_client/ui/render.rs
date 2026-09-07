@@ -46,6 +46,7 @@ fn state(view: &super::state::View) -> &'static str {
 }
 
 pub fn draw(frame: &mut Frame<'_>, app: &App) {
+    app.clear_inference_hits();
     app.sync_interactions();
     app.sidebar.hits.borrow_mut().clear();
     app.sidebar.visible.set(None);
@@ -99,6 +100,7 @@ pub fn draw(frame: &mut Frame<'_>, app: &App) {
     }
     if app.active_draft.is_some() {
         app.draw_new_draft(frame, columns[1]);
+        app.draw_inference_picker(frame);
         return;
     }
     let main = inset(columns[1], if area.width >= 72 { 2 } else { 1 }, 0);
@@ -233,6 +235,7 @@ pub fn draw(frame: &mut Frame<'_>, app: &App) {
         },
     );
     app.draw_actions(frame);
+    app.draw_inference_picker(frame);
 }
 
 fn sidebar(frame: &mut Frame<'_>, app: &App, area: Rect) {
@@ -437,24 +440,23 @@ fn composer(frame: &mut Frame<'_>, app: &App, area: Rect) {
         presentation::wrap(Text::raw(safe(draft)), body.width)
     };
     frame.render_widget(Paragraph::new(text).scroll((scroll, 0)), body);
-    let model = view
-        .and_then(|v| v.snapshot.as_ref())
-        .map_or("Choose a voyage", |s| s.model.as_str());
-    let hint = if pending {
-        "Not confirmed yet · F4 Check status"
-    } else if area.width >= 60 {
-        "/ Commands · Enter Send · Alt+Enter New line"
-    } else {
-        "Enter Send"
-    };
-    let controls = format!("{}   |   {hint}", safe(model));
-    frame.render_widget(
-        Paragraph::new(controls).style(if pending {
-            Style::default().fg(Color::Yellow)
-        } else {
-            muted()
-        }),
+    app.draw_inference_controls(
+        frame,
         Rect::new(inner.x, inner.bottom().saturating_sub(1), inner.width, 1),
+    );
+    let active = view
+        .and_then(|v| v.snapshot.as_ref())
+        .is_some_and(|s| s.inference_next_turn);
+    frame.render_widget(
+        Paragraph::new(if pending {
+            "Pending · F4 Check status · Text preserved"
+        } else if active {
+            "Next-turn settings · Enter Send · / Commands"
+        } else {
+            "Enter Send · Alt+Enter New line · / Commands"
+        })
+        .style(muted()),
+        Rect::new(area.x, area.bottom().saturating_sub(1), area.width, 1),
     );
     if let Some((row, column)) = cursor
         && app.sidebar.menu.is_none()

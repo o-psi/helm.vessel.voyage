@@ -6,6 +6,7 @@ impl App {
             view.transcript.borrow_mut().dirty = true;
         }
         match update {
+            Update::InferenceModels { id, result } => self.inference_models(id, result),
             Update::FirstSend { saved, result } => self.first_send_update(*saved, result),
             Update::Live {
                 target,
@@ -309,6 +310,12 @@ impl App {
                 else {
                     return;
                 };
+                let inference = pending.original.as_deref().is_some_and(|command| {
+                    matches!(
+                        command,
+                        voyage_protocol::vessel::VoyageCommand::SetInference { .. }
+                    )
+                });
                 match result {
                     Ok(mut value) => {
                         // Steering dispatch wraps its journal record, while receipt
@@ -338,13 +345,38 @@ impl App {
                             self.status = "The response could not be matched. Your draft is saved; press F4 to check.".into();
                             return;
                         }
-                        let rejected =
-                            matches!(value["status"].as_str(), Some("rejected" | "not_admitted"))
-                                || (value["status"] == "transferred"
-                                    && matches!(
-                                        value["original_status"].as_str(),
-                                        Some("rejected" | "not_admitted")
-                                    ));
+                        let inference_status = if value["status"] == "transferred" {
+                            value["original_status"].as_str()
+                        } else {
+                            value["status"].as_str()
+                        };
+                        if inference
+                            && !matches!(
+                                inference_status,
+                                Some(
+                                    "applied"
+                                        | "completed"
+                                        | "rejected"
+                                        | "not_admitted"
+                                        | "failed"
+                                )
+                            )
+                        {
+                            self.status =
+                                "Inference pending, not yet applied · text preserved · F4 checks"
+                                    .into();
+                            return;
+                        }
+                        let rejected = (inference && inference_status == Some("failed"))
+                            || matches!(
+                                value["status"].as_str(),
+                                Some("rejected" | "not_admitted")
+                            )
+                            || (value["status"] == "transferred"
+                                && matches!(
+                                    value["original_status"].as_str(),
+                                    Some("rejected" | "not_admitted")
+                                ));
                         if rejected
                             && !pending.preserve_draft
                             && (view.draft.text.is_empty() || view.draft.text.trim() == "/receipt")
@@ -381,7 +413,17 @@ impl App {
                             .into();
                         }
                         view.pending = None;
-                        self.status = if value["archived"] == true {
+                        self.status = if inference {
+                            format!(
+                                "Inference {} · {}",
+                                if rejected {
+                                    "rejected; text preserved"
+                                } else {
+                                    "applied to saved / next-turn settings; current turn unchanged"
+                                },
+                                super::presentation::receipt(&value)
+                            )
+                        } else if value["archived"] == true {
                             "Archived. Waiting for confirmed cleanup before releasing the process slot. F5 opens archives.".into()
                         } else {
                             super::presentation::receipt(&value)

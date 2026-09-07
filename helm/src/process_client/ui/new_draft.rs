@@ -313,3 +313,77 @@ pub(in crate::process_client) async fn start_plain(
         .process
         .context("first send omitted process identity")
 }
+
+impl App {
+    pub(super) fn ensure_draft_inference_editable(&self, id: Uuid) -> Result<()> {
+        let draft = self.new_drafts.get(&id).context("draft unavailable")?;
+        anyhow::ensure!(
+            draft.saved.start.is_none() && !draft.busy,
+            "Check the pending first send with F4 before changing this draft"
+        );
+        anyhow::ensure!(
+            draft.saved.config.is_some(),
+            "Remote draft inference uses executing-host settings; configure that host before sending"
+        );
+        Ok(())
+    }
+    pub(super) fn draft_inference_settings(&self, id: Uuid) -> Result<super::inference::Settings> {
+        let config = self
+            .new_drafts
+            .get(&id)
+            .context("draft unavailable")?
+            .saved
+            .config
+            .as_ref()
+            .context("Remote drafts use executing-host inference settings")?;
+        let (reasoning_efforts, service_tiers) = crate::provider::inference_capabilities(config);
+        Ok(super::inference::Settings {
+            model: config.model.clone(),
+            reasoning_effort: config.reasoning_effort.clone(),
+            service_tier: config.service_tier.clone(),
+            provider: format!("{:?}", config.provider),
+            reasoning_efforts,
+            service_tiers,
+        })
+    }
+    pub(super) fn draft_inference_catalog(&self, id: Uuid) -> Result<(crate::Config, PathBuf)> {
+        let draft = self.new_drafts.get(&id).context("draft unavailable")?;
+        Ok((
+            draft
+                .saved
+                .config
+                .clone()
+                .context("Remote draft catalog unavailable; use an explicit model ID")?,
+            draft.saved.workspace.clone(),
+        ))
+    }
+    pub(super) fn save_draft_inference(
+        &mut self,
+        id: Uuid,
+        settings: &super::inference::Settings,
+        command: Option<&str>,
+    ) -> Result<()> {
+        self.ensure_draft_inference_editable(id)?;
+        let draft = self.new_drafts.get_mut(&id).context("draft unavailable")?;
+        // Validate a clone, persist the complete replacement, then update memory.
+        let mut saved = draft.saved.clone();
+        let config = saved
+            .config
+            .as_mut()
+            .context("draft configuration unavailable")?;
+        config.model = settings.model.clone();
+        config.reasoning_effort = settings.reasoning_effort.clone();
+        config.service_tier = settings.service_tier.clone();
+        crate::provider::validate_inference_settings(config)?;
+        let clear_command = command.is_some_and(|text| draft.composer.text.trim() == text);
+        if clear_command {
+            saved.text.clear();
+        }
+        storage::save(&saved)?;
+        draft.saved = saved;
+        if clear_command {
+            draft.composer.take();
+        }
+        Ok(())
+    }
+}

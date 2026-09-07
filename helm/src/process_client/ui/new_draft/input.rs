@@ -50,7 +50,7 @@ impl App {
                 return Ok(true);
             }
             if key.code == KeyCode::F(1) {
-                self.status = "Draft commands: /model NAME, /access MODE, /workspace PATH, /new [PATH], /discard. Enter sends; Tab changes view; F4 checks first send.".into();
+                self.status = "Draft commands: /model [NAME], /thinking [VALUE], /service [VALUE], /access MODE, /workspace PATH, /new [PATH], /discard. Enter sends; Tab changes view; F4 checks first send.".into();
                 return Ok(true);
             }
             if key.code == KeyCode::F(5) {
@@ -146,13 +146,24 @@ impl App {
         Ok(true)
     }
 
-    fn draft_command(&mut self, id: Uuid, text: &str) -> Result<()> {
+    pub(in crate::process_client::ui) fn draft_command(
+        &mut self,
+        id: Uuid,
+        text: &str,
+    ) -> Result<()> {
+        if super::super::inference::parse(text).is_some() {
+            return self.inference_command(
+                super::super::inference::Destination::Draft(id),
+                text,
+                false,
+            );
+        }
         if text == "/quit" {
             self.quit = true;
             return Ok(());
         }
         if text == "/help" {
-            self.status = "Draft commands: /model NAME, /access read-only|approval|unrestricted, /workspace PATH, /new [PATH], /discard. Enter sends; Tab changes view; F4 checks first send.".into();
+            self.status = "Draft commands: /model [NAME], /thinking [VALUE], /service [VALUE], /access read-only|approval|unrestricted, /workspace PATH, /new [PATH], /discard. Enter sends; Tab changes view; F4 checks first send.".into();
         } else {
             let draft = self.new_drafts.get_mut(&id).context("draft unavailable")?;
             anyhow::ensure!(
@@ -168,10 +179,7 @@ impl App {
                 self.status = "Local draft discarded.".into();
                 return Ok(());
             }
-            if let Some(model) = text.strip_prefix("/model ") {
-                anyhow::ensure!(!model.trim().is_empty(), "model name required");
-                draft.saved.config.as_mut().context("Remote drafts use executing-host settings; configure that host before sending")?.model = model.trim().into();
-            } else if let Some(access) = text.strip_prefix("/access ") {
+            if let Some(access) = text.strip_prefix("/access ") {
                 let config = draft
                     .saved
                     .config

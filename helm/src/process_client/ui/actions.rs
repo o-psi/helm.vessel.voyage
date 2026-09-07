@@ -17,6 +17,7 @@ impl App {
         });
         self.send_command()?;
         if let Some((target, draft)) = original
+            && super::inference::parse(draft.trim()).is_none()
             && draft.trim_start().starts_with('/')
             && let Some(view) = self.views.get_mut(&target)
             && view.pending.is_none()
@@ -49,6 +50,13 @@ impl App {
         preserve_draft: bool,
     ) -> Result<()> {
         let command_text = draft.trim();
+        if super::inference::parse(command_text).is_some() {
+            return self.inference_command(
+                super::inference::Destination::Live(target),
+                command_text,
+                preserve_draft,
+            );
+        }
         if command_text == "/access" || command_text.starts_with("/access ") {
             return self.open_access(target, command_text.strip_prefix("/access "));
         }
@@ -217,13 +225,6 @@ impl App {
                 expected_revision,
                 expires_at_ms,
                 name: name.into(),
-            }
-        } else if let Some(model) = command_text.strip_prefix("/model ") {
-            VoyageCommand::SetModel {
-                command_id,
-                expected_revision,
-                expires_at_ms,
-                model: model.into(),
             }
         } else if command_text == "/cancel" {
             let run = snapshot

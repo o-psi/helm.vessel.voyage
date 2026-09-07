@@ -12,6 +12,9 @@ impl App {
         {
             return Ok(());
         }
+        if self.inference_input(&event)? {
+            return Ok(());
+        }
         self.sync_interactions();
         if self.new_draft_input(&event)? {
             return Ok(());
