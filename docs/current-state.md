@@ -45,8 +45,8 @@ stable identity tie-break. Renaming, polling, or system compaction markers do no
 
 Each sidebar voyage has a clickable **⋮** Actions button. Mouse hover highlights
 voyage rows, their separate Actions buttons, enabled action-menu entries and
-access-mode choices with a contrasting background and underline, without changing
-keyboard focus or selection. Hover uses the current rendered rectangles and is
+access-mode choices with a contrasting background, without changing keyboard
+focus or selection. Voyage rows use no underline across their wrapped text or padding. Hover uses the current rendered rectangles and is
 suppressed behind modal input; disabled actions retain their explanatory styling.
 Mouse-motion reporting requires a supporting terminal. Pointer state clears on
 reported terminal focus loss and private-terminal handoff. With an empty composer
