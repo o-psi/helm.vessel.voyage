@@ -449,7 +449,7 @@ fn composer(frame: &mut Frame<'_>, app: &App, area: Rect) {
         .is_some_and(|s| s.inference_next_turn);
     frame.render_widget(
         Paragraph::new(if pending {
-            "Pending · F4 Check status · Text preserved"
+            "Pending · Checking automatically · Text preserved"
         } else if active {
             "Next-turn settings · Enter Send · / Commands"
         } else {

@@ -138,6 +138,8 @@ impl Tool for SubagentTool {
                 } else {
                     None
                 };
+                let mut policy = self.policy.clone();
+                policy.limit_access(context.policy.access_mode());
                 let spawned = self
                     .runtime
                     .spawn_for_run(
@@ -145,7 +147,7 @@ impl Tool for SubagentTool {
                             parent_id: self.parent_id,
                             name,
                             task,
-                            policy: self.policy.clone(),
+                            policy,
                             budget: self.budget.clone(),
                             worktree: lease.as_ref().map(|lease| lease.path.clone()),
                             branch: lease.as_ref().map(|lease| lease.branch.clone()),

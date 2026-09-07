@@ -27,7 +27,7 @@ impl App {
             .context("select an archived voyage")?;
         ensure!(
             view.pending.is_none(),
-            "resolve the pending command first with /receipt"
+            "Waiting for delivery confirmation; Helm checks automatically"
         );
         ensure!(
             view.process.state == ProcessState::Stopped && view.process.archive.is_some(),
@@ -50,6 +50,7 @@ impl App {
         let client = self.clients[target.route].clone();
         let sender = self.sender.clone();
         self.status = "Restoring voyage…".into();
+        self.command_checks.insert((target, command_id), None);
         tokio::spawn(async move {
             let result: Result<_> = async {
                 let process: ProcessInfo = serde_json::from_value(

@@ -45,12 +45,8 @@ impl App {
                 }
                 return Ok(true);
             }
-            if key.code == KeyCode::F(4) {
-                self.send_new_draft(true)?;
-                return Ok(true);
-            }
             if key.code == KeyCode::F(1) {
-                self.status = "Draft commands: /model [NAME], /thinking [VALUE], /service [VALUE], /access MODE, /workspace PATH, /new [PATH], /discard. Enter sends; Tab changes view; F4 checks first send.".into();
+                self.status = "Draft commands: /model [NAME], /thinking [VALUE], /service [VALUE], /access MODE, /workspace PATH, /new [PATH], /discard. Enter sends; Tab changes view. First sends recover automatically.".into();
                 return Ok(true);
             }
             if key.code == KeyCode::F(5) {
@@ -87,14 +83,14 @@ impl App {
                 if text.trim_start().starts_with('/') {
                     self.draft_command(id, text.trim())?;
                 } else {
-                    self.send_new_draft(false)?;
+                    self.send_new_draft()?;
                 }
                 return Ok(true);
             }
         }
         let draft = self.new_drafts.get_mut(&id).context("draft unavailable")?;
         if draft.saved.start.is_some() || draft.busy {
-            self.status = "First send pending. Text and settings are frozen; F4 checks, Enter continues setup or checks delivery.".into();
+            self.status = "First send pending. Text and settings are frozen; Helm continues setup and checks delivery automatically.".into();
             return Ok(true);
         }
         match event {
@@ -163,12 +159,12 @@ impl App {
             return Ok(());
         }
         if text == "/help" {
-            self.status = "Draft commands: /model [NAME], /thinking [VALUE], /service [VALUE], /access read-only|approval|unrestricted, /workspace PATH, /new [PATH], /discard. Enter sends; Tab changes view; F4 checks first send.".into();
+            self.status = "Draft commands: /model [NAME], /thinking [VALUE], /service [VALUE], /access read-only|approval|unrestricted, /workspace PATH, /new [PATH], /discard. Enter sends; Tab changes view. First sends recover automatically.".into();
         } else {
             let draft = self.new_drafts.get_mut(&id).context("draft unavailable")?;
             anyhow::ensure!(
                 draft.saved.start.is_none() && !draft.busy,
-                "Check the pending first send with F4 before changing this draft"
+                "Waiting for first-send confirmation before changing this draft"
             );
             if text == "/discard" {
                 draft.saved.finished = true;

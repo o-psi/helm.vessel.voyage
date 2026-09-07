@@ -300,7 +300,7 @@ fn build(view: &View, state: &State, width: u16) -> Vec<Row> {
         note(
             &mut out,
             Key::Pending,
-            "You · Delivery unconfirmed · F4 checks status",
+            "You · Delivery unconfirmed · Checking automatically",
             width,
         );
     }

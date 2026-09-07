@@ -2,6 +2,21 @@ use super::*;
 
 impl App {
     pub(super) fn update(&mut self, update: Update) {
+        let background = match &update {
+            Update::Command { target, .. } => {
+                self.active_draft.is_some() || self.selected != Some(*target)
+            }
+            Update::FirstSend { saved, .. } => self.active_draft != Some(saved.id),
+            _ => false,
+        };
+        let status = background.then(|| self.status.clone());
+        self.apply_update(update);
+        if let Some(status) = status {
+            self.status = status;
+        }
+    }
+
+    fn apply_update(&mut self, update: Update) {
         for view in self.views.values() {
             view.transcript.borrow_mut().dirty = true;
         }
@@ -141,7 +156,7 @@ impl App {
                             view.rendered.take();
                             view.observed = None;
                             view.error = Some(
-                                "The voyage reconnected. Check any unconfirmed action before trying again."
+                                "The voyage reconnected. Helm checks unconfirmed actions automatically."
                                     .into(),
                             );
                         }
@@ -303,6 +318,10 @@ impl App {
                 refused,
                 result,
             } => {
+                self.command_checks.insert(
+                    (target, command_id),
+                    Some(Instant::now() + Duration::from_secs(5)),
+                );
                 let Some(view) = self.views.get_mut(&target) else {
                     return;
                 };
@@ -335,14 +354,14 @@ impl App {
                         if value.get("status").and_then(|status| status.as_str()) == Some("unknown")
                         {
                             self.status =
-                                "Not confirmed yet. Your draft is saved. Press F4 to check again."
+                                "Not confirmed yet. Your draft is saved; Helm checks automatically."
                                     .into();
                             return;
                         }
                         if receipt_id != Some(command_id.to_string().as_str())
                             || value["status"].as_str().is_none_or(str::is_empty)
                         {
-                            self.status = "The response could not be matched. Your draft is saved; press F4 to check.".into();
+                            self.status = "The response could not be matched. Your draft is saved; Helm checks automatically.".into();
                             return;
                         }
                         let inference_status = if value["status"] == "transferred" {
@@ -363,7 +382,7 @@ impl App {
                             )
                         {
                             self.status =
-                                "Inference pending, not yet applied · text preserved · F4 checks"
+                                "Inference pending, not yet applied · text preserved · Checking automatically"
                                     .into();
                             return;
                         }
@@ -399,7 +418,10 @@ impl App {
                                 snapshot.lifecycle["archived"] = archived.into();
                             }
                             view.rendered.take();
-                            if !archived {
+                            if !archived
+                                && self.active_draft.is_none()
+                                && self.selected == Some(target)
+                            {
                                 self.archives = false;
                                 self.selected = Some(target);
                             }
@@ -434,7 +456,7 @@ impl App {
                             delivery.label = if refused {
                                 "Not sent · Draft kept"
                             } else {
-                                "Delivery unconfirmed · F4 checks status"
+                                "Delivery unconfirmed · Checking automatically"
                             }
                             .into();
                         }

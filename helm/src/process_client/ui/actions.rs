@@ -146,7 +146,7 @@ impl App {
         }
         ensure!(
             view.pending.is_none(),
-            "resolve the pending command with /receipt before sending again; draft preserved"
+            "Waiting for delivery confirmation; Helm checks automatically. Draft preserved"
         );
         ensure!(!command_text.is_empty(), "input is empty");
         ensure!(
@@ -282,14 +282,20 @@ impl App {
     }
 
     pub(super) fn dispatch(&mut self, target: Target, command_id: Uuid, command: VoyageCommand) {
+        if self.command_checks.get(&(target, command_id)) == Some(&None) {
+            return;
+        }
+        self.command_checks.insert((target, command_id), None);
         let incarnation = self.views[&target].process.incarnation;
         let client = self.clients[target.route].clone();
         let sender = self.sender.clone();
-        self.status = "Sending...".into();
         let resolving = matches!(
             command,
             VoyageCommand::Resolve { .. } | VoyageCommand::Receipt { .. }
         );
+        if !resolving {
+            self.status = "Sending...".into();
+        }
         tokio::spawn(async move {
             let mut result = client
                 .voyage(target.session, incarnation, command.clone())
@@ -321,7 +327,7 @@ impl App {
                         }),
                     result: result.map_err(|error| {
                         if resolving {
-                            format!("Status check unavailable after bounded attempts: {error}. Original command remains unresolved; F4 checks again")
+                            format!("Status check unavailable after bounded attempts: {error}. Original command remains unresolved; Helm will check again automatically")
                         } else {
                             error.to_string()
                         }

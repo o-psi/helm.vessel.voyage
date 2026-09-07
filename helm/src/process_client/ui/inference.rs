@@ -149,7 +149,7 @@ impl App {
                 );
                 ensure!(
                     view.pending.is_none(),
-                    "Inference not sent: another command is pending; F4 checks it. Text preserved"
+                    "Inference not sent: another command is pending; Helm checks it automatically. Text preserved"
                 );
                 (
                     Some(view.process.incarnation),
@@ -343,7 +343,7 @@ impl App {
                 let view = self.views.get_mut(&target).context("voyage unavailable")?;
                 ensure!(
                     view.pending.is_none(),
-                    "Another command is pending; F4 checks it. Text preserved"
+                    "Another command is pending; Helm checks it automatically. Text preserved"
                 );
                 let snapshot = view.snapshot.as_ref().context("snapshot unavailable")?;
                 ensure!(
@@ -382,7 +382,7 @@ impl App {
                     );
                 }
                 self.dispatch(target, command_id, command);
-                self.status = if active { "Inference pending for next turn (current turn unchanged) · text preserved · F4 checks" } else { "Inference pending · text preserved · F4 checks" }.into();
+                self.status = if active { "Inference pending for next turn (current turn unchanged) · text preserved · Checking automatically" } else { "Inference pending · text preserved · Checking automatically" }.into();
             }
         }
         Ok(())

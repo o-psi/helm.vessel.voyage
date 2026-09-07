@@ -186,7 +186,7 @@ impl App {
             return Some("Access changes require executing-account owner authority");
         }
         if view.pending.is_some() {
-            return Some("Check the pending action with F4 first");
+            return Some("Waiting for automatic confirmation of the pending action");
         }
         if action == Action::Restore && view.process.archive.is_some() {
             return None;

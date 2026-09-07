@@ -9,6 +9,7 @@ mod inference;
 mod input;
 mod interactions;
 mod lifecycle;
+mod reconcile;
 mod transcript;
 mod updates;
 use crate::composer;
@@ -49,6 +50,8 @@ pub(super) struct App {
     active_draft: Option<uuid::Uuid>,
     draft_hits: std::cell::RefCell<Vec<(ratatui::layout::Rect, uuid::Uuid)>>,
     sender: mpsc::Sender<Update>,
+    command_checks: BTreeMap<(Target, uuid::Uuid), Option<Instant>>,
+    first_send_checks: BTreeMap<uuid::Uuid, Instant>,
     status: String,
     quit: bool,
     help: bool,
@@ -124,6 +127,8 @@ pub async fn run_with_notice(
         active_draft: None,
         draft_hits: Default::default(),
         sender,
+        command_checks: BTreeMap::new(),
+        first_send_checks: BTreeMap::new(),
         status: notice.unwrap_or_else(|| {
             "Your workspace is ready. Start a conversation, or press F1 for help.".into()
         }),
@@ -142,7 +147,9 @@ pub async fn run_with_notice(
     if session.is_none() && app.new_chat_config.is_some() {
         if let Some(id) = app.new_drafts.keys().next().copied() {
             app.select_draft(id);
-            app.status = "Recovered your local draft. Pending first sends require F4 to check their outcome.".into();
+            app.status =
+                "Recovered your local draft. Pending first sends will recover automatically."
+                    .into();
         } else {
             let workspace = app
                 .new_chat_config
@@ -159,7 +166,10 @@ pub async fn run_with_notice(
             app.sync_completion();
             app.refresh_transcript();
             tokio::select! {
-                _ = repaint.tick() => terminal.draw(|frame| render::draw(frame, &app)).map(|_| ())?,
+                _ = repaint.tick() => {
+                    app.reconcile_pending();
+                    terminal.draw(|frame| render::draw(frame, &app)).map(|_| ())?;
+                },
                 event = events.next() => match event {
                     Some(Ok(event)) => if let Err(error) = app.input(event) { app.status = safe(&error.to_string()); },
                     Some(Err(error)) => return Err(error.into()),

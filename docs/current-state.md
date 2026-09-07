@@ -35,9 +35,9 @@ requesting Vessel creation, then saves the exact revision-bound submission befor
 sending it. This uses the existing deduplicated start and submit protocol; the two
 steps are not a cross-process atomic transaction. An interruption between them can
 leave an owner with no admitted turn, attached to the recoverable first-send draft.
-F4 resolves the original creation/turn outcome; Enter continues creation or a
-first submission that has not been attempted. Once submission was attempted, both
-controls resolve its original identity without replaying it. Helm never automatically
+Helm automatically continues the saved, user-authorized creation and any first
+submission that has not been attempted, including after reopening Helm. Once
+submission was attempted, recovery resolves its original identity without replaying it. Helm never automatically
 sends an uncertain turn again or creates a replacement session. Pending text/settings are frozen until the outcome resolves.
 Definite initial creation refusal preserves an editable draft; definite first-turn
 refusal preserves its text on the created voyage. Recovery retains pinned policy
@@ -251,9 +251,13 @@ stream-boundary metadata show canonical text without a speculative live preview.
 F8 opens a keyboard chooser for existing read-only overviews without editing the
 draft. A quiet voyage rail, borderless conversation and compact composer adapt
 the supplied conversation-interface reference to terminal cells.
-F4 and `/receipt` resolve an uncertain ordinary runtime command without resending
-work. Helm saves its full public request, ID, revision and expiry before dispatch.
-Each status check makes at most three bounded attempts. Under the exclusive runtime
+Helm automatically resolves uncertain ordinary runtime commands, including interaction
+responses, without resending work. `/receipt` remains an optional diagnostic command. Helm saves its full public request, ID, revision and expiry before dispatch.
+Each ordinary status check makes at most three bounded attempts. Unresolved outcomes
+are checked again after five seconds, without overlapping checks or racing the initial
+send. At most four background recovery jobs run at once across all views and first-send
+drafts, scheduled oldest-due first so unavailable routes cannot monopolize recovery.
+Recovery does not require selecting a view. No F4 check action is needed. Under the exclusive runtime
 dispatch gate (or the cleanly suspended execution fence), resolution returns an
 existing receipt or durably closes an unadmitted command ID. A delayed copy of that
 ID cannot subsequently execute. `not_admitted` restores an editable draft; confirmed

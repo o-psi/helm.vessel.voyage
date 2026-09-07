@@ -19,7 +19,7 @@ impl App {
         if self.new_draft_input(&event)? {
             return Ok(());
         }
-        let global = matches!(&event, Event::Key(key) if key.code == KeyCode::F(4) || (key.modifiers.contains(KeyModifiers::CONTROL) && matches!(key.code, KeyCode::Char('c' | 'q'))));
+        let global = matches!(&event, Event::Key(key) if (key.modifiers.contains(KeyModifiers::CONTROL) && matches!(key.code, KeyCode::Char('c' | 'q'))));
         if self.interactions.borrow().focused && !global {
             self.interaction_input(&event)?;
             return Ok(());
@@ -74,16 +74,6 @@ impl App {
             }
             if key.code == KeyCode::F(5) {
                 self.show_archives(!self.archives);
-                return Ok(());
-            }
-            if key.code == KeyCode::F(4) {
-                if let Some(target) = self.selected {
-                    if let Some(pending) = self.views.get(&target).and_then(|v| v.pending.clone()) {
-                        self.dispatch(target, pending.command_id, pending.resolution());
-                    } else {
-                        self.status = "All sent messages are accounted for.".into();
-                    }
-                }
                 return Ok(());
             }
             if self.completion_input(key)? {

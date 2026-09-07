@@ -12,7 +12,7 @@ use voyage_protocol::vessel::{ProcessInfo, VesselCommand, VoyageCommand};
 
 #[derive(Clone, Serialize, Deserialize)]
 pub(super) struct Saved {
-    id: Uuid,
+    pub(super) id: Uuid,
     route: String,
     workspace: PathBuf,
     config: Option<crate::Config>,
@@ -20,7 +20,7 @@ pub(super) struct Saved {
     selection: Option<voyage_runtime::policy_profile::selection::SelectionRequest>,
     confirmation: Option<String>,
     text: String,
-    start: Option<VesselCommand>,
+    pub(super) start: Option<VesselCommand>,
     start_attempted: bool,
     process: Option<ProcessInfo>,
     turn: Uuid,
@@ -31,10 +31,10 @@ pub(super) struct Saved {
 }
 
 pub(super) struct Draft {
-    saved: Saved,
+    pub(super) saved: Saved,
     composer: composer::Composer,
     route: usize,
-    busy: bool,
+    pub(super) busy: bool,
     _lock: std::fs::File,
 }
 
@@ -151,8 +151,12 @@ impl App {
         self.completion = Default::default();
     }
 
-    pub(super) fn send_new_draft(&mut self, check_only: bool) -> Result<()> {
+    pub(super) fn send_new_draft(&mut self) -> Result<()> {
         let id = self.active_draft.context("select a draft")?;
+        self.send_draft(id)
+    }
+
+    pub(super) fn send_draft(&mut self, id: Uuid) -> Result<()> {
         let draft = self.new_drafts.get_mut(&id).context("draft unavailable")?;
         anyhow::ensure!(!draft.busy, "First send is already being checked");
         anyhow::ensure!(
@@ -162,9 +166,6 @@ impl App {
         anyhow::ensure!(draft.composer.text.len() <= 65536, "draft limit is 64 KiB");
         let client = self.clients[draft.route].clone();
         if draft.saved.start.is_none() {
-            if check_only {
-                return Ok(());
-            }
             let command_id = Uuid::new_v4();
             let workspace = draft.saved.workspace.clone();
             draft.saved.start = Some(if let Some(config) = &draft.saved.launch_config()? {
@@ -192,15 +193,10 @@ impl App {
         draft.busy = true;
         let mut saved = draft.saved.clone();
         let sender = self.sender.clone();
-        self.status = if check_only {
-            "Checking first-send outcome…"
-        } else {
-            "Starting your voyage…"
-        }
-        .into();
+        self.status = "Starting your voyage…".into();
         tokio::spawn(async move {
             let _lock = lock;
-            let result = launch::advance(&client, &mut saved, check_only)
+            let result = launch::advance(&client, &mut saved)
                 .await
                 .map_err(|e| e.to_string());
             let _ = sender
@@ -223,21 +219,35 @@ impl App {
             return;
         };
         draft.busy = false;
+        self.first_send_checks
+            .insert(id, Instant::now() + Duration::from_secs(5));
         draft.saved = saved;
         match result {
             Ok(Some(receipt)) => {
                 let process = draft.saved.process.clone().expect("accepted first send has process");
                 let target = Target { route: draft.route, session: id };
-                let mut view = self.views.remove(&target).unwrap_or_else(|| View::new(process.clone()));
-                view.process = process;
-                view.draft.text = draft.saved.text.clone();
-                view.draft.cursor = view.draft.text.len();
-                view.pending = Some(state::Pending { command_id: draft.saved.turn, incarnation: view.process.incarnation, draft: draft.saved.text.clone(), preserve_draft: false, original: draft.saved.submit.clone().map(Box::new), receipt_only: false });
-                if let Err(error) = drafts::save(&self.clients[target.route], &view) {
-                    self.status = format!("First-send receipt found; draft handoff could not be saved: {error}. F4 retries recovery.");
+                // Stage the durable handoff without exposing a second recovery
+                // owner. A failed finished-record save must not make this view
+                // editable and then overwrite it on the next recovery attempt.
+                let mut handoff = View::new(process.clone());
+                if let Some(view) = self.views.get(&target) {
+                    handoff.draft = view.draft.clone();
+                    handoff.pending = view.pending.clone();
+                } else if let Err(error) = drafts::load(&self.clients[target.route], &mut handoff) {
+                    self.status = format!("First-send handoff cannot load the saved view: {error}. Existing recovery data retained.");
                     return;
                 }
-                self.views.insert(target, view);
+                if handoff.draft.text.is_empty() {
+                    handoff.draft.text = draft.saved.text.clone();
+                    handoff.draft.cursor = handoff.draft.text.len();
+                }
+                if handoff.pending.is_none() {
+                    handoff.pending = Some(state::Pending { command_id: draft.saved.turn, incarnation: process.incarnation, draft: draft.saved.text.clone(), preserve_draft: false, original: draft.saved.submit.clone().map(Box::new), receipt_only: false });
+                }
+                if let Err(error) = drafts::save(&self.clients[target.route], &handoff) {
+                    self.status = format!("First-send receipt found; draft handoff could not be saved: {error}. Helm will retry recovery automatically.");
+                    return;
+                }
                 let command_id = draft.saved.turn;
                 draft.saved.finished = true;
                 if let Err(error) = storage::save(&draft.saved) {
@@ -245,12 +255,20 @@ impl App {
                     self.status = format!("First-send receipt found; recovery record could not be saved: {error}");
                     return;
                 }
+                let view = self.views.entry(target).or_insert_with(|| View::new(process.clone()));
+                view.process = process;
+                view.draft = handoff.draft;
+                view.pending = handoff.pending;
                 self.new_drafts.remove(&id);
                 if self.active_draft == Some(id) { self.active_draft = None; self.selected = Some(target); }
                 self.update(Update::Command { target, command_id, refused: false, result: Ok(receipt) });
             }
-            Ok(None) => self.status = "First send is not confirmed. F4 checks; Enter continues setup or checks delivery. Your text is preserved.".into(),
-            Err(error) => self.status = format!("{} · Text and identity saved. F4 checks; Enter continues setup or checks delivery.", safe(&error)),
+            Ok(None) => self.status = "First send is not confirmed. Helm continues setup and checks delivery automatically. Your text is preserved.".into(),
+            Err(error) => self.status = if draft.saved.start.is_none() {
+                format!("{} · Voyage not started. Your draft is editable.", safe(&error))
+            } else {
+                format!("{} · Text and identity saved. Helm continues setup and checks delivery automatically.", safe(&error))
+            },
         }
     }
 }
@@ -293,11 +311,11 @@ pub(in crate::process_client) async fn start_plain(
         config_path,
     });
     storage::save(&draft.saved)?;
-    let result = launch::advance(client, &mut draft.saved, false).await;
+    let result = launch::advance(client, &mut draft.saved).await;
     let receipt = result
         .with_context(|| {
             format!(
-                "First send saved as local draft {}. Open interactive Helm to check with F4",
+                "First send saved as local draft {}. Open interactive Helm for automatic recovery",
                 draft.saved.id
             )
         })?
@@ -319,7 +337,7 @@ impl App {
         let draft = self.new_drafts.get(&id).context("draft unavailable")?;
         anyhow::ensure!(
             draft.saved.start.is_none() && !draft.busy,
-            "Check the pending first send with F4 before changing this draft"
+            "Wait for automatic first-send confirmation before changing this draft"
         );
         anyhow::ensure!(
             draft.saved.config.is_some(),

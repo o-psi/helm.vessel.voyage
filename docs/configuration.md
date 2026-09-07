@@ -215,7 +215,7 @@ Vessel directory (normally `~/.local/state/voyage/helm-new-drafts` on Linux).
 These files contain local launch settings, composer text and any pending first-send
 identities; they are not canonical sessions. Draft locks keep concurrent Helm
 windows independent. Untouched blank drafts are not saved. Open interactive Helm
-to recover a saved first send and press F4 to check its outcome before retrying.
+to recover a saved first send; Helm automatically continues setup and checks its outcome without replaying an attempted turn.
 Keep these files private alongside the existing `helm-views/` interface drafts.
 
 The platform local-data directory's `helm` child is the ordinary data root,
