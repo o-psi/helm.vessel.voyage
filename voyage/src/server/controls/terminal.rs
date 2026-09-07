@@ -15,6 +15,10 @@ pub(super) async fn execute(
         TerminalOperation::Attach => Some(manager.attach(id).await?),
         TerminalOperation::Snapshot => Some(manager.attach(id).await?),
         TerminalOperation::Write { bytes } => {
+            ensure!(
+                policy.access_mode() != crate::config::AccessMode::ReadOnly,
+                "private input is disabled in read-only access mode"
+            );
             ensure!(bytes.len() <= 65536, "private input frame exceeds 64 KiB");
             // Enter private capture before accepting bytes, even without an earlier attach.
             manager.attach(id).await?;

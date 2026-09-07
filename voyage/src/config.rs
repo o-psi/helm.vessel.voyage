@@ -85,6 +85,9 @@ impl ProviderKind {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
+    /// Process-local access updates; never persisted or delegated as authority.
+    #[serde(skip)]
+    pub live_access: Option<std::sync::Arc<crate::policy::LiveAccess>>,
     /// Locally accepted participant endpoints; credential contents never enter model context.
     pub participants: Vec<voyage_protocol::process::ParticipantEndpoint>,
     /// Chat-only preference recording; never carried to workers or runtime config files.
@@ -425,6 +428,7 @@ impl Default for Config {
             env: BTreeMap::new(),
             inherit_env: vec!["PATH".into(), "LANG".into(), "LC_ALL".into(), "TERM".into()],
             redact_values: Vec::new(),
+            live_access: None,
             policy_profile: None,
             policy_defaults: None,
             policy_explicit: Default::default(),

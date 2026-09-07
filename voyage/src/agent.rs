@@ -1161,8 +1161,6 @@ impl Agent {
             }
             result = tokio::task::spawn_blocking(move || crate::extensions::guidance(extension_policy.workspace())) => result.unwrap_or_default(),
         };
-        let system_prompt = self.effective_system_prompt(workspace.as_deref(), &extension_guidance);
-
         loop {
             // Diagnostic accounting only; progress never imposes an execution cutoff.
             turn = turn.saturating_add(1);
@@ -1194,7 +1192,7 @@ impl Agent {
             let mut messages = history.clone();
             messages.insert(
                 0,
-                Message::new(crate::model::Role::System, system_prompt.clone()),
+                Message::new(crate::model::Role::System, self.effective_system_prompt(workspace.as_deref(), &extension_guidance)),
             );
             if let Some(update) = &reconciliation {
                 messages.insert(1, Message::new(crate::model::Role::System, update.clone()));

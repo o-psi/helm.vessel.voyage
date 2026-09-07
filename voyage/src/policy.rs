@@ -1,3 +1,5 @@
+mod live;
+pub use live::LiveAccess;
 use std::path::{Component, Path, PathBuf};
 
 use anyhow::{Result, bail};
@@ -25,6 +27,9 @@ pub struct Policy {
     writable: Vec<PathBuf>,
     deny_commands: Vec<String>,
     mode: AccessMode,
+    live_access: Option<std::sync::Arc<LiveAccess>>,
+    live_ceiling: bool,
+    dispatch_access: Option<u64>,
     snapshot: crate::runtime_policy::Snapshot,
 }
 
@@ -39,6 +44,9 @@ impl Policy {
         let effective = &snapshot.effective;
         Self {
             execution_authority: None,
+            live_access: None,
+            live_ceiling: false,
+            dispatch_access: None,
             workspace: effective.workspace().path().into(),
             readable: effective.rules().read_roots.clone(),
             writable: effective.rules().write_roots.clone(),
@@ -60,6 +68,12 @@ impl Policy {
         self
     }
     pub fn check_execution_authority(&self) -> Result<()> {
+        if let (Some(live), Some(version)) = (&self.live_access, self.dispatch_access) {
+            anyhow::ensure!(
+                live.snapshot() == version,
+                "access changed; retry the tool under the current mode"
+            );
+        }
         if let Some(authority) = &self.execution_authority {
             authority.check()?;
         }
@@ -67,6 +81,8 @@ impl Policy {
     }
     pub(crate) fn inherit_execution_authority(&mut self, parent: &Self) {
         self.execution_authority = parent.execution_authority.clone();
+        self.live_access = parent.live_access.clone();
+        self.live_ceiling = true;
     }
     pub(crate) fn inherit_profile_freshness(&mut self, parent: &Policy) {
         self.snapshot.ancestor_selection = parent.snapshot.inherited_selection();
@@ -108,8 +124,8 @@ impl Policy {
             AccessMode::Approval => 1,
             AccessMode::Unrestricted => 2,
         };
-        if rank(config.access_mode()) > rank(self.mode) {
-            config.access = Some(self.mode);
+        if rank(config.access_mode()) > rank(self.access_mode()) {
+            config.access = Some(self.access_mode());
         }
         crate::runtime_policy::restrictive_unattended(
             &mut config.unattended_approval,
@@ -133,7 +149,15 @@ impl Policy {
     }
 
     pub fn access_mode(&self) -> AccessMode {
-        self.mode
+        let Some(live) = &self.live_access else {
+            return self.mode;
+        };
+        let mode = LiveAccess::mode(self.dispatch_access.unwrap_or_else(|| live.snapshot()));
+        if self.live_ceiling {
+            live::restrict(self.mode, mode)
+        } else {
+            mode
+        }
     }
 
     pub fn resolve_read(&self, path: &Path) -> Result<PathBuf> {
@@ -187,7 +211,7 @@ impl Policy {
             return Decision::Deny(error.to_string());
         }
         let risky = looks_risky(command, &parsed);
-        match (self.mode, risky) {
+        match (self.access_mode(), risky) {
             (AccessMode::ReadOnly, _) => {
                 Decision::Deny("commands are disabled in read-only access mode".into())
             }
@@ -199,7 +223,7 @@ impl Policy {
     }
 
     pub fn write(&self, path: &Path, _replacing: bool) -> Decision {
-        match self.mode {
+        match self.access_mode() {
             AccessMode::ReadOnly => {
                 Decision::Deny("writes are disabled in read-only access mode".into())
             }
@@ -211,7 +235,7 @@ impl Policy {
     /// MCP tools do not expose a trustworthy read/write classification, so the
     /// access mode must treat each invocation conservatively.
     pub fn external_tool(&self, name: &str) -> Decision {
-        match self.mode {
+        match self.access_mode() {
             AccessMode::ReadOnly => Decision::Deny(format!(
                 "external tool `{name}` is disabled in read-only access mode"
             )),

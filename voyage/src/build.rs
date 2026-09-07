@@ -64,7 +64,10 @@ pub async fn build_authorized_agent_bundle(
         }
         let resolved = crate::runtime_policy::RuntimePolicy::resolve(config, &workspace)?;
         let config = resolved.config();
-        let mut policy = resolved.policy().clone();
+        let mut policy = resolved
+            .policy()
+            .clone()
+            .with_live_access(config.live_access.clone());
         if let Some(authority) = authority {
             policy = policy.with_execution_authority(authority);
         }

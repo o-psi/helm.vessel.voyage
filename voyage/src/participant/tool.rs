@@ -130,7 +130,7 @@ impl ParticipantTool {
             task,
             context: disclosed,
             policy: ParticipantPolicy {
-                access: serde_json::to_value(rules.access)?
+                access: serde_json::to_value(context.policy.access_mode())?
                     .as_str()
                     .ok_or_else(|| anyhow::anyhow!("invalid parent policy"))?
                     .into(),

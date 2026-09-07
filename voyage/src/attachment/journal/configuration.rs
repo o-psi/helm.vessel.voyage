@@ -99,8 +99,11 @@ impl Journal {
             [guard.session_id.to_string()],
             |r| r.get(0),
         )?;
+        let access_only = matches!(&command, RuntimeCommand::SetAccess { .. });
         ensure!(
-            active == 0 && super::catalogue::pending_cleanup(&tx, guard.session_id)?.is_none(),
+            (access_only && active > 0)
+                || (active == 0
+                    && super::catalogue::pending_cleanup(&tx, guard.session_id)?.is_none()),
             "configuration requires idle voyage and observed cleanup"
         );
         let mut saved = read_session(&tx, guard.session_id)?;
@@ -108,7 +111,20 @@ impl Journal {
             saved.revision == *expected_revision,
             "session revision conflict"
         );
-        saved.session.switch_model(model)?;
+        if access_only {
+            ensure!(
+                saved.session.model == model,
+                "access change cannot switch model"
+            );
+            // Changing mode is not approval for a previously displayed effect.
+            // Questions are deliberately left pending.
+            tx.execute(
+                "UPDATE process_decisions SET response='\"invalidated\"' WHERE response IS NULL AND json_extract(request, '$.kind')='approval' AND run_id IN (SELECT id FROM runs WHERE session_id=?1 AND active=1)",
+                [guard.session_id.to_string()],
+            )?;
+        } else {
+            saved.session.switch_model(model)?;
+        }
         saved.revision = saved.revision.checked_add(1).context("revision overflow")?;
         saved.session.revision = saved.revision;
         tx.execute(

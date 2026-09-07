@@ -2,6 +2,18 @@ use super::*;
 use serde_json::Value;
 use voyage_protocol::process::RuntimeCommand;
 impl ManagedSessionOwner {
+    pub(crate) async fn dismiss_approval(&self, id: Uuid) -> anyhow::Result<()> {
+        let shared = self.store.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut store = shared
+                .lock()
+                .map_err(|_| anyhow::anyhow!("owner poisoned"))?;
+            let Store { journal, guard, .. } = &mut *store;
+            journal.dismiss_approval(guard, id)
+        })
+        .await?
+    }
+
     pub(crate) async fn create_decision(
         &self,
         run: Uuid,

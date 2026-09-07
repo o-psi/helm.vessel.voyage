@@ -216,7 +216,7 @@ impl App {
         } else {
             let (action, _, description) = MODES[menu.access_selected];
             let text = format!(
-                "Change access to {}?\n\n{description}\n\nExisting folder limits, blocked commands and machine policy still apply. Retained terminals close before the change.",
+                "Change access to {}?\n\n{description}\n\nApplies to subsequent tool calls, including active local agents. Pending approvals are denied; retry those actions under the new mode. Already-started work and private terminals are not undone or stopped. Existing folder limits, blocked commands and machine policy still apply. Idle changes close retained terminals.",
                 action.label()
             );
             let area = Rect::new(

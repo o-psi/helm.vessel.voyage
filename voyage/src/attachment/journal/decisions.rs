@@ -3,6 +3,18 @@ use super::*;
 use serde_json::{Value, json};
 use voyage_protocol::process::RuntimeCommand;
 impl Journal {
+    pub(crate) fn dismiss_approval(&mut self, guard: &ExecutionGuard, id: Uuid) -> Result<()> {
+        self.check_guard(guard, guard.session_id)?;
+        let tx = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        tx.execute(
+            "UPDATE process_decisions SET response='\"invalidated\"' WHERE id=?1 AND response IS NULL AND json_extract(request, '$.kind')='approval' AND run_id IN (SELECT id FROM runs WHERE session_id=?2)",
+            params![id.to_string(), guard.session_id.to_string()],
+        )?;
+        commit(tx, &self.commit_fence)
+    }
+
     pub(crate) fn initialize_decisions(&mut self, guard: &ExecutionGuard) -> Result<()> {
         self.check_guard(guard, guard.session_id)?;
         self.connection.execute_batch("CREATE TABLE IF NOT EXISTS process_decisions(id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES runs(id), incarnation TEXT NOT NULL, expires INTEGER NOT NULL, request TEXT NOT NULL, response TEXT)")?;

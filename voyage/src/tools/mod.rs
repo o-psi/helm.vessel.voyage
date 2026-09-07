@@ -83,6 +83,9 @@ pub enum InteractionMode {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ApprovalRequest {
+    /// Runtime-only binding; never accepted from a serialized approval response.
+    #[serde(skip)]
+    pub access_generation: Option<(Arc<crate::policy::LiveAccess>, u64)>,
     pub id: uuid::Uuid,
     pub execution_id: uuid::Uuid,
     pub action: String,
@@ -292,6 +295,7 @@ impl ToolContext {
         reason: String,
     ) -> ApprovalRequest {
         ApprovalRequest {
+            access_generation: self.policy.access_binding(),
             id: uuid::Uuid::new_v4(),
             execution_id: self.execution_id,
             action: action.into(),
@@ -428,6 +432,14 @@ impl ToolRegistry {
         context: &ToolContext,
         bindings: Option<&crate::workflow::secrets::RunBindings>,
     ) -> Result<String, ToolError> {
+        // Bind every permission decision (including MCP approval) to one access generation.
+        let mut dispatch_context = context.clone();
+        dispatch_context.policy = Arc::new(context.policy.for_dispatch());
+        dispatch_context.approver = Arc::new(DispatchApprover {
+            inner: context.approver.clone(),
+            policy: dispatch_context.policy.clone(),
+        });
+        let context = &dispatch_context;
         let private_environment = if let Some(references) = arguments.get("workflow_secrets") {
             if name != "shell" {
                 return Err(ToolError::InvalidArguments(

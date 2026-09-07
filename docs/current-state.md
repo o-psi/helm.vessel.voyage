@@ -359,15 +359,21 @@ Voyage Actions also includes **Access**: Read only, Ask first, or Unrestricted.
 `/access` opens the same chooser; `/access read-only`, `/access approval` and
 `/access unrestricted` open a confirmation for that mode. Slash completion offers
 all three. The chooser shows effective access and preserves the composer draft.
-Changes require an idle live voyage, executing-account owner authority, and observed
-cleanup; retained terminals close first. The runtime changes only access in its
+Changes require executing-account owner authority and are allowed during an active
+run. New tool admissions use the updated mode; pending tool approvals are invalidated
+and stale admissions must retry. Already-started work and terminals are not stopped,
+but read-only mode refuses new terminal input. Idle changes still require observed
+cleanup and close retained terminals first. Ordinary configuration remains idle-only.
+The runtime changes only access in its
 private durable configuration, preserving the current model, credentials and other
 policy settings across restart. System and participant limits still apply; requests
 above those limits are refused. Named profiles retain their bound selection and
 receive an explicit access override. Defaults that require a fresh workspace
 activation must still be previewed and activated through the policy defaults
 workflow; the chooser does not silently activate them. Unrestricted does not remove
-folder limits, blocked commands or administrator policy.
+folder limits, blocked commands or administrator policy. Built-in tools remain
+available for later access changes; MCP servers omitted when a run starts in
+read-only mode are not started by a mid-run access change.
 
 Outbound enrollment-relay commands retain their separate remote-owner receipt
 and transport-lease authority; local `Resolve` refuses remote-bound sessions.

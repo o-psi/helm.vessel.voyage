@@ -205,6 +205,11 @@ pub async fn serve(args: ServeArgs) -> Result<()> {
         owner
             .retain_initial_configuration(&config, &registration.workspace)
             .await?;
+        config.live_access = Some(Arc::new(crate::policy::LiveAccess::new(
+            crate::runtime_policy::RuntimePolicy::resolve(&config, &registration.workspace)?
+                .policy()
+                .access_mode(),
+        )));
         crate::build::set_resource_root(directory.join("resources"))?;
         let state = Arc::new(State {
             directory: directory.clone(),

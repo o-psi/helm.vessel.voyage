@@ -219,10 +219,12 @@ impl App {
                 Some("The selected run has ended or changed")
             };
         }
-        if snapshot.run.as_ref().is_some_and(|r| r.active()) {
+        if action != Action::Access && snapshot.run.as_ref().is_some_and(|r| r.active()) {
             return Some("Wait for the current run to finish");
         }
-        if snapshot.pending_cleanup_run.is_some() {
+        if snapshot.pending_cleanup_run.is_some()
+            && !(action == Action::Access && snapshot.run.as_ref().is_some_and(|r| r.active()))
+        {
             return Some("Waiting for confirmed cleanup");
         }
         None

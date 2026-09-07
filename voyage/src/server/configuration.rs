@@ -5,6 +5,15 @@ pub(super) async fn configure(
     command: RuntimeCommand,
     authorization: super::authorization::Authorization,
 ) -> Result<serde_json::Value> {
+    // Finish durable acceptance and live publication even if the transport waiter leaves.
+    let state = state.clone();
+    tokio::spawn(async move { configure_inner(&state, command, authorization).await }).await?
+}
+async fn configure_inner(
+    state: &Arc<State>,
+    command: RuntimeCommand,
+    authorization: super::authorization::Authorization,
+) -> Result<serde_json::Value> {
     ensure!(
         authorization.grant.is_none(),
         "configuration requires executing-account owner authority"
@@ -22,9 +31,11 @@ pub(super) async fn configure(
     else {
         anyhow::bail!("not configure")
     };
+    let access_only = matches!(&command, RuntimeCommand::SetAccess { .. });
     let _admission = state.admission.lock().await;
+    let active = state.active.lock().await.is_some();
     ensure!(
-        !state.shutdown.is_cancelled() && state.active.lock().await.is_none(),
+        !state.shutdown.is_cancelled() && (access_only || !active),
         "configuration requires idle runtime"
     );
     if let Some(receipt) = state.owner.process_receipt(*command_id).await? {
@@ -84,6 +95,26 @@ pub(super) async fn configure(
             "requested access is restricted by the executing machine or parent policy"
         );
     }
+    if access_only {
+        // A live override must not smuggle in changed roots, environment, or other rules.
+        let previous = state.config.read().await;
+        let before = crate::runtime_policy::RuntimePolicy::resolve(
+            &previous,
+            &state.registration.workspace,
+        )?;
+        let after =
+            crate::runtime_policy::RuntimePolicy::resolve(&config, &state.registration.workspace)?;
+        let mut rules = before.policy().effective().rules().clone();
+        rules.access = after.policy().effective().rules().access;
+        ensure!(
+            rules == *after.policy().effective().rules(),
+            "access update changed other policy rules; wait for idle and reconfigure"
+        );
+    }
+    let effective_access =
+        crate::runtime_policy::RuntimePolicy::resolve(&config, &state.registration.workspace)?
+            .policy()
+            .access_mode();
     let secrets = crate::build::redactor(&config);
     crate::provider::validate_models_for_display(
         &[crate::provider::ModelInfo::minimal(config.model.clone())],
@@ -95,12 +126,13 @@ pub(super) async fn configure(
         state.owner.snapshot().await?.revision == *expected_revision,
         "session revision conflict"
     );
-    if !launch.matches_config(&*state.config.read().await)? {
+    if !active && !launch.matches_config(&*state.config.read().await)? {
         state
             .controls
             .close_for_command(&state.owner, &command)
             .await?;
     }
+    let mut current = state.config.write().await;
     let receipt = state
         .owner
         .configure(
@@ -109,6 +141,11 @@ pub(super) async fn configure(
             config.model.clone(),
         )
         .await?;
-    *state.config.write().await = config;
+    // Publish only after durable acceptance. Stale approvals fail closed.
+    if let Some(live) = &current.live_access {
+        live.update(effective_access);
+        config.live_access = Some(live.clone());
+    }
+    *current = config;
     Ok(receipt)
 }

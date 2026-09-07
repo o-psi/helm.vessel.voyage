@@ -44,7 +44,11 @@ pub async fn build_tools(
     if config.access_mode() == AccessMode::ReadOnly {
         // Do not even start external MCP servers in read-only mode: their
         // initialization and tool contracts are outside Helm's authority model.
-        tools.retain_read_only();
+        // Live process runtimes retain built-ins behind per-dispatch policy checks
+        // so an access upgrade does not need to rebuild the running agent.
+        if config.live_access.is_none() {
+            tools.retain_read_only();
+        }
         return Ok(tools);
     }
     // Keep transport ownership until assembly succeeds so a later discovery or
