@@ -185,6 +185,7 @@ impl View {
             .snapshot
             .as_ref()
             .and_then(|s| s.name.as_deref())
+            .or(self.process.name.as_deref())
             .or_else(|| {
                 self.process
                     .archive
@@ -216,7 +217,9 @@ impl View {
                     .join(" ")
             })
             .filter(|title| !title.is_empty())
-            .unwrap_or_else(|| "New voyage".into())
+            .unwrap_or_else(|| {
+                format!("Saved voyage {}", &self.process.session_id.to_string()[..8])
+            })
     }
 }
 

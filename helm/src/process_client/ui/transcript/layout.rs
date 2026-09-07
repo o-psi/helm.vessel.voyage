@@ -95,6 +95,12 @@ fn build(view: &View, state: &State, width: u16) -> Vec<Row> {
             Key::Notice,
             if view.archived() {
                 "Archived · Restore this voyage to load saved history. Unfinished work will not resume automatically."
+            } else if view.process.state == voyage_protocol::process::ProcessState::Unavailable
+                && view.error.is_some()
+            {
+                "Saved conversation needs recovery. Vessel will not replay interrupted work or attest uncertain cleanup; open Actions → Details for the refusal."
+            } else if view.process.state == voyage_protocol::process::ProcessState::Unavailable {
+                "Vessel is recovering and respawning this saved conversation…"
             } else {
                 "Connecting to your conversation…"
             },

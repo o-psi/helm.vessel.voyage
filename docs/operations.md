@@ -268,6 +268,14 @@ Persistent root terminals remain owned by the independent voyage between turns.
 
 ## Exact retries, cancellation and recovery
 
+Helm observations and new turns automatically ask Vessel to recover and respawn an
+unavailable owner when exclusive recovery can do so without an attestation. This
+preserves the session and history, records interrupted work, and never repeats a
+turn or tool. If cleanup, a retained resource or a tool outcome remains uncertain,
+automatic recovery stops. Inspect the recovery disposition and use the explicit
+commands below only after checking the named effect or resource. Vessel's catalogue
+retains the last observed canonical name while the voyage process is absent.
+
 When a submit response is uncertain, preserve its original command UUID, expected
 revision, deadline and prompt. Observe it by repeating the exact request:
 

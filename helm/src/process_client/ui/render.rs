@@ -24,7 +24,13 @@ fn state(view: &super::state::View) -> &'static str {
     if view.archived() {
         return "Archiving · cleanup pending";
     }
-    if view.error.is_some() {
+    if view.process.state == voyage_protocol::process::ProcessState::Unavailable {
+        if view.error.is_some() {
+            "Recovery needed"
+        } else {
+            "Recovering"
+        }
+    } else if view.error.is_some() {
         "Reconnecting"
     } else if view
         .snapshot

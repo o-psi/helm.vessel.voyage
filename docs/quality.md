@@ -54,8 +54,10 @@ with isolated task/completion state; and brief versus persistent contention in t
 shared inference database without replay or lost attribution. Additional cases verify
 completed turn suspension, history/receipt observations without waking the executor, fresh
 next-turn incarnations with canonical history and deduplication, and refusal to
-automatically wake without positive suspension evidence. Default-start configuration
-is retained even when the original configuration file disappears between turns.
+automatically replay work while fenced recovery respawns an owner that lacks clean
+suspension evidence. That recovery also preserves canonical history and the
+supervisor-catalogued voyage name. Default-start configuration is retained even
+when the original configuration file disappears between turns.
 A supervisor restart selects its updated executable path for the next turn, and
 simultaneous submissions against one suspended incarnation admit only one owner.
 

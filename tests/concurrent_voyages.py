@@ -290,27 +290,33 @@ class ConcurrentVoyages(unittest.TestCase):
             ("assistant", "answer:default-second")])
         self.assertEqual(fixture.provider.errors, [])
 
-    def test_missing_suspension_evidence_refuses_automatic_wake(self):
+    def test_missing_suspension_evidence_recovers_history_without_replay(self):
         fixture = self.fixture
+        title = "Recovered historical voyage"
+        fixture.command(self.a, fixture.mutation(self.a, "rename", name=title))
         turn = fixture.submit(self.a, "proof-required")
         fixture.reached_provider(self.a, "proof-required")
         turn[0].set()
         fixture.finished(self.a)
         self.suspended(self.a)
-        command = fixture.mutation(self.a, "submit", prompt="must-not-wake")
+        old_incarnation = fixture.sessions[self.a]
         directory = fixture.directory / "sessions" / self.a
         marker = directory / "stopped.json"
         retained = directory / "stopped.test-retained"
         marker.rename(retained)
         try:
-            with self.assertRaises(AssertionError):
-                fixture.command(self.a, command)
-            self.assertFalse((directory / "runtime.sock").exists())
-            self.assertEqual(fixture.provider.count("must-not-wake"), 0)
-            registration = json.loads((directory / "registration.json").read_text())
-            self.assertEqual(registration["incarnation"], fixture.sessions[self.a])
+            snapshot = fixture.snapshot(self.a)
+            self.assertNotEqual(fixture.sessions[self.a], old_incarnation)
+            self.assertEqual(snapshot["name"], title)
+            self.assert_history(self.a, [
+                ("user", "proof-required"),
+                ("assistant", "answer:proof-required")])
+            self.assertEqual(fixture.provider.count("proof-required"), 1)
+            catalogue = fixture.request({"op": "catalogue"})
+            entry = next(item for item in catalogue if item["session_id"] == self.a)
+            self.assertEqual(entry["name"], title)
         finally:
-            retained.rename(marker)
+            retained.unlink(missing_ok=True)
 
     def test_cancelling_one_voyage_preserves_the_other_and_allows_another_run(self):
         fixture = self.fixture

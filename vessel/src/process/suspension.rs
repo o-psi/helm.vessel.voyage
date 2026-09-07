@@ -100,10 +100,15 @@ impl Supervisor {
         if info.state == ProcessState::Live {
             return Ok(serde_json::to_value(info)?);
         }
-        ensure!(
-            info.state == ProcessState::Suspended,
-            "owner is not cleanly suspended; explicit recovery required"
-        );
+        if info.state == ProcessState::Unavailable {
+            self.recover_abandoned(session, registration.incarnation)
+                .await?;
+        } else {
+            ensure!(
+                info.state == ProcessState::Suspended,
+                "owner cannot be resumed from its current lifecycle state"
+            );
+        }
         self.restart(Uuid::new_v4(), session, registration.incarnation)
             .await
     }
@@ -126,6 +131,28 @@ impl Supervisor {
         let deadline = tokio::time::Instant::now() + Duration::from_secs(12);
         let mut resumed = false;
         loop {
+            if !directory.join("runtime.sock").exists()
+                && !super::recovery::clean_stop(&directory, &registration)
+                && registration.state != ProcessState::Relinquished
+            {
+                ensure!(
+                    !matches!(
+                        command,
+                        RuntimeCommand::ExecuteTool { .. }
+                            | RuntimeCommand::Terminal { .. }
+                            | RuntimeCommand::Steer { .. }
+                            | RuntimeCommand::Respond { .. }
+                            | RuntimeCommand::Cancel { .. }
+                    ),
+                    "the addressed runtime is gone; inspect the recovered voyage before acting on live resources"
+                );
+                self.recover_abandoned(session, registration.incarnation)
+                    .await?;
+                self.restart(Uuid::new_v4(), session, registration.incarnation)
+                    .await?;
+                registration = self.registration(session).await?;
+                resumed = true;
+            }
             if super::recovery::suspended(&directory, &registration)
                 && !command.observes_suspended()
             {
@@ -167,10 +194,50 @@ impl Supervisor {
                     tokio::time::sleep(Duration::from_millis(50)).await;
                 }
                 Ok(mut response) => {
+                    let observed_name = if response.error.is_none() {
+                        match &command {
+                            RuntimeCommand::Snapshot => response.result["name"].as_str(),
+                            RuntimeCommand::Rename { name, .. } => Some(name.as_str()),
+                            _ => None,
+                        }
+                    } else {
+                        None
+                    };
+                    if let Some(name) = observed_name {
+                        self.remember_name(session, registration.incarnation, name)
+                            .await?;
+                    }
                     if resumed {
                         response.resumed_from = Some(incarnation);
                     }
                     return Ok(response);
+                }
+                Err(error)
+                    if error.downcast_ref::<routing::NotConnected>().is_some()
+                        && !super::recovery::clean_stop(&directory, &registration)
+                        && registration.state != ProcessState::Relinquished
+                        && tokio::time::Instant::now() < deadline =>
+                {
+                    // Connecting failed before any request bytes were sent. A stale
+                    // endpoint can survive an unclean exit, so absence alone is not
+                    // the only abandoned-owner signal.
+                    ensure!(
+                        !matches!(
+                            command,
+                            RuntimeCommand::ExecuteTool { .. }
+                                | RuntimeCommand::Terminal { .. }
+                                | RuntimeCommand::Steer { .. }
+                                | RuntimeCommand::Respond { .. }
+                                | RuntimeCommand::Cancel { .. }
+                        ),
+                        "the addressed runtime is gone; inspect the recovered voyage before acting on live resources"
+                    );
+                    self.recover_abandoned(session, registration.incarnation)
+                        .await?;
+                    self.restart(Uuid::new_v4(), session, registration.incarnation)
+                        .await?;
+                    registration = self.registration(session).await?;
+                    resumed = true;
                 }
                 Err(_)
                     if command.observes_suspended() && tokio::time::Instant::now() < deadline =>
@@ -194,6 +261,26 @@ impl Supervisor {
                 Err(error) => return Err(error),
             }
         }
+    }
+
+    async fn remember_name(&self, session: Uuid, incarnation: Uuid, name: &str) -> Result<()> {
+        ensure!(
+            !name.is_empty()
+                && name.len() <= 256
+                && !name.chars().any(|character| character.is_control()),
+            "invalid public voyage name"
+        );
+        let mut registrations = self.registrations.lock().await;
+        let registration = registrations.get_mut(&session).context("unknown session")?;
+        ensure!(
+            registration.incarnation == incarnation,
+            "runtime changed while saving voyage name"
+        );
+        if registration.name.as_deref() != Some(name) {
+            registration.name = Some(name.to_owned());
+            registry::save(&registry::directory(&self.directory, session), registration)?;
+        }
+        Ok(())
     }
 }
 

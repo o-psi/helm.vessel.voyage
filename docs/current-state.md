@@ -39,6 +39,14 @@ The on-disk registration's `starting` field is initial metadata, not a current
 health reading: Vessel derives live state using authenticated runtime inspection.
 Existing empty or unavailable voyages are not removed by draft handling.
 
+When a runtime disappears without clean suspension evidence, an ordinary history
+or turn request asks Vessel to run the existing exclusively fenced recovery with
+no operator attestations. Recovery records interrupted work without replaying it,
+then respawns the same session in a fresh voyage process. Unknown cleanup,
+unresolved tools or retained resources remain fenced for explicit recovery rather
+than being inferred safe. Vessel retains the last bounded canonical voyage name as
+catalogue metadata, so Helm can identify saved conversations while recovery runs.
+
 Helm chat, one-shot runs, connected clients, workflows, managed sessions and the
 outbound worker adapter use **Helm → Vessel → voyage**. Vessel launches a separate
 long-lived process for each session. Only that voyage constructs the executor,

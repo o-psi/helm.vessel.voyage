@@ -21,6 +21,59 @@ pub(super) fn restart_permitted(directory: &Path, registration: &ProcessRegistra
 }
 
 impl Supervisor {
+    /// Recover an abandoned owner without supplying operator attestations. This
+    /// can record interrupted work, but cannot clear uncertain cleanup, reconcile
+    /// tools or claim that retained resources stopped.
+    pub(super) async fn recover_abandoned(
+        &self,
+        session_id: uuid::Uuid,
+        incarnation: uuid::Uuid,
+    ) -> Result<()> {
+        let directory = registry::directory(&self.directory, session_id);
+        let registration = self.registration(session_id).await?;
+        ensure!(
+            registration.incarnation == incarnation,
+            "stale runtime incarnation"
+        );
+        if restart_permitted(&directory, &registration) {
+            return Ok(());
+        }
+        ensure!(
+            registration.state != ProcessState::CleanupUnconfirmed,
+            "automatic recovery stopped because cleanup or retained resources need explicit operator confirmation"
+        );
+        let marker = self
+            .recover(VesselCommand::Recover {
+                command_id: uuid::Uuid::new_v4(),
+                session_id,
+                incarnation,
+                acknowledge_cleanup: None,
+                reconcile_tools: None,
+                expected_revision: None,
+                acknowledge_resources: Vec::new(),
+            })
+            .await?;
+        if marker["restart_permitted"] == true {
+            return Ok(());
+        }
+
+        // A polling Helm must not create unbounded duplicate recovery records.
+        // Explicit recovery remains available with exact attestation identities.
+        let mut registrations = self.registrations.lock().await;
+        let current = registrations
+            .get_mut(&session_id)
+            .ok_or_else(|| anyhow::anyhow!("unknown session"))?;
+        ensure!(
+            current.incarnation == incarnation,
+            "runtime changed during recovery"
+        );
+        current.state = ProcessState::CleanupUnconfirmed;
+        registry::save(&directory, current)?;
+        anyhow::bail!(
+            "automatic recovery stopped because cleanup or retained resources need explicit operator confirmation"
+        )
+    }
+
     pub(super) async fn recover(&self, command: VesselCommand) -> Result<serde_json::Value> {
         let VesselCommand::Recover {
             command_id,

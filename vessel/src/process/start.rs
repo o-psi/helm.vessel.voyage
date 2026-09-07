@@ -127,6 +127,7 @@ impl Supervisor {
             token: format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple()),
             workspace,
             state: ProcessState::Starting,
+            name: None,
         };
         registry::command_record(&self.directory, command_id, &command, true)
             .map_err(|error| error.context(routing::OutcomeUnknown))?;

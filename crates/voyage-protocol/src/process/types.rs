@@ -274,6 +274,10 @@ pub struct ProcessRegistration {
     pub token: String,
     pub workspace: PathBuf,
     pub state: ProcessState,
+    /// Last bounded canonical name observed from this owner. This is catalogue
+    /// metadata only; canonical conversation state remains in the voyage journal.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
 }
 
 /// Public summary emitted only alongside positively observed runtime cleanup.
@@ -294,6 +298,8 @@ pub struct ProcessInfo {
     pub incarnation: Uuid,
     pub workspace: PathBuf,
     pub state: ProcessState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
 }
 impl From<&ProcessRegistration> for ProcessInfo {
     fn from(value: &ProcessRegistration) -> Self {
@@ -304,6 +310,7 @@ impl From<&ProcessRegistration> for ProcessInfo {
             incarnation: value.incarnation,
             workspace: value.workspace.clone(),
             state: value.state.clone(),
+            name: value.name.clone(),
         }
     }
 }
