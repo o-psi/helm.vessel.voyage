@@ -754,12 +754,15 @@ fn wrap_fragments(
         .iter()
         .flat_map(|part| part.text.graphemes(true).map(move |g| (g, part.style)))
         .peekable();
+    let mut continuing_word = false;
     while let Some((g, style)) = units.next() {
+        let continuation = continuing_word;
         // Look ahead only one display-width, even for a very large word.
         let mut word = vec![(g, style)];
         let mut word_width = g.width();
         if !preserve_whitespace && !g.chars().all(char::is_whitespace) {
             while word_width <= width
+                && word.len() <= width
                 && units
                     .peek()
                     .is_some_and(|(next, _)| !next.chars().all(char::is_whitespace))
@@ -769,8 +772,14 @@ fn wrap_fragments(
                 word.push(next);
             }
         }
+        continuing_word = !preserve_whitespace
+            && !g.chars().all(char::is_whitespace)
+            && units
+                .peek()
+                .is_some_and(|(next, _)| !next.chars().all(char::is_whitespace));
         if g == "\n"
             || (!preserve_whitespace
+                && !continuation
                 && used > indent
                 && word_width + used > width
                 && !g.chars().all(char::is_whitespace))
