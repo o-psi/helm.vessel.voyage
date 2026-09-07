@@ -291,6 +291,15 @@ impl From<crate::context::ContextError> for AgentError {
 }
 
 impl AgentError {
+    /// Only locally authored text may cross the public failure surface.
+    pub(crate) fn public_failure_reason(&self) -> &'static str {
+        match self {
+            Self::Finalization(failure) => failure.source.public_failure_reason(),
+            Self::Provider(ProviderError::UsageLimit) => crate::provider::USAGE_LIMIT_MESSAGE,
+            _ => "provider or runtime failed",
+        }
+    }
+
     pub fn recovery(&self) -> Option<&CanonicalRecovery> {
         match self {
             Self::Context(failure) => failure.recovery.as_deref(),

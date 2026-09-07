@@ -42,6 +42,8 @@ pub struct ToolCall {
 #[derive(Clone, Deserialize, PartialEq)]
 pub struct Turn {
     #[serde(default)]
+    pub failure_summary: Option<String>,
+    #[serde(default)]
     pub started_at: Option<chrono::DateTime<chrono::Utc>>,
     #[serde(default)]
     pub finished_at: Option<chrono::DateTime<chrono::Utc>>,

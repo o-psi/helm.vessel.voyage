@@ -11,6 +11,7 @@ pub enum CompletionPhase {
     Reconciling,
     Completed,
     Incomplete,
+    Failed,
     Interrupted,
 }
 

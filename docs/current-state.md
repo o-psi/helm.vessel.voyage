@@ -1,11 +1,18 @@
 # Current implementation
 
 This inventory describes implemented source, not live-provider certification or
-native-platform validation. Automated tests and evaluations remain absent by
-request; see [quality](quality.md). The [implementation ledger](implementation.md)
+native-platform validation. Focused regression and explicitly enabled live checks
+are described in [quality](quality.md). The [implementation ledger](implementation.md)
 records delivery evidence and its limits.
 
 ## Process ownership
+
+Provider account exhaustion (`usage_limit_reached` or `insufficient_quota` in an
+HTTP 429 response) stops the turn without transient-rate-limit retries. Helm shows
+newly failed runs as Failed and retains an authored usage-limit explanation across
+turns and runtime suspension. Raw provider error bodies are not exposed in these
+public failure summaries. Ordinary transient throttling retains bounded retries.
+This handling cannot restore an exhausted provider account's allowance.
 
 Ordinary Helm chat opens a private local draft. Opening and closing the interface,
 editing its first message, or pressing Ctrl+N does not create a session or launch

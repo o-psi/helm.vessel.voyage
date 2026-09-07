@@ -1094,6 +1094,10 @@ impl Journal {
             current
                 .session
                 .finish_run_summary(&crate::agent::StopReason::Completed);
+        } else if state == RunState::Failed {
+            current
+                .session
+                .fail_run_summary(reason.unwrap_or("provider or runtime failed").to_owned());
         } else {
             current
                 .session

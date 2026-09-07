@@ -235,7 +235,10 @@ fn build(view: &View, state: &State, width: u16) -> Vec<Row> {
             }
             let ends_turn = snapshot.turns.iter().any(|t| {
                 t.message_end == Some(message.message_index + 1)
-                    && matches!(t.phase.as_str(), "completed" | "incomplete" | "interrupted")
+                    && matches!(
+                        t.phase.as_str(),
+                        "completed" | "incomplete" | "failed" | "interrupted"
+                    )
             });
             if message.tool_calls.is_empty() && !ends_turn {
                 note(&mut out, key, "", width);
@@ -256,6 +259,7 @@ fn build(view: &View, state: &State, width: u16) -> Vec<Row> {
             let label = match turn.phase.as_str() {
                 "completed" => Some("Completed"),
                 "incomplete" => Some("Work ended with unfinished items"),
+                "failed" => Some("Failed"),
                 "interrupted" => Some("Interrupted · Work was not confirmed complete"),
                 _ => None,
             };
@@ -266,6 +270,9 @@ fn build(view: &View, state: &State, width: u16) -> Vec<Row> {
                     super::activity::separator(turn, label, width),
                     width,
                 );
+                if let Some(reason) = &turn.failure_summary {
+                    note(&mut out, Key::Turn(turn.run_id), safe(reason), width);
+                }
             }
         }
     }

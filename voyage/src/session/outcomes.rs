@@ -70,6 +70,7 @@ impl Session {
                 phase,
                 CompletionPhase::Completed
                     | CompletionPhase::Incomplete
+                    | CompletionPhase::Failed
                     | CompletionPhase::Interrupted
             ) {
                 summary.finished_at.get_or_insert_with(Utc::now);
@@ -102,6 +103,12 @@ impl Session {
         self.extend_run_summary();
         let readiness = self.run_summaries.last().and_then(|s| s.readiness.clone());
         self.update_run_summary(CompletionPhase::Interrupted, readiness, Some(detail));
+    }
+
+    pub fn fail_run_summary(&mut self, detail: String) {
+        self.extend_run_summary();
+        let readiness = self.run_summaries.last().and_then(|s| s.readiness.clone());
+        self.update_run_summary(CompletionPhase::Failed, readiness, Some(detail));
     }
 
     /// Refresh the current annotation range after a durable canonical checkpoint.
@@ -187,6 +194,7 @@ impl Session {
                 match summary.phase {
                     CompletionPhase::Completed => "completed",
                     CompletionPhase::Incomplete => "incomplete",
+                    CompletionPhase::Failed => "failed",
                     CompletionPhase::Interrupted => "interrupted",
                     _ => "provisional",
                 }

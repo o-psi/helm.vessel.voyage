@@ -73,6 +73,37 @@ HOME/XDG directories and a loopback provider. It retains evidence under its prin
 `/tmp/vct-*` path and observes cleanup of its own runtime processes. These are
 automated offline Linux checks, not live-provider or native macOS/Windows evidence.
 
+## Conversation and account-limit checks
+
+The explicitly enabled live test uses the executing user's native ChatGPT OAuth
+login and an explicitly selected model. It sends at most three requests without
+tools or automatic retries, requires three completed replies remembering a random
+marker, and serializes/reloads canonical history and provider continuation between
+turns. It tests the provider adapter; it does not establish TUI or supervised-process
+acceptance. Run only with account and usage approval:
+
+```sh
+VOYAGE_TEST_MODEL=YOUR_MODEL cargo test -p voyage --locked --test chatgpt_conversation -- --ignored --nocapture
+```
+
+An exhausted account fails this check; a quota error is never counted as a successful
+conversation. The ignored test does not contact a provider during ordinary tests.
+
+The offline failure regression starts an isolated Vessel and independent voyage
+processes against a loopback ChatGPT quota response, with synthetic credentials.
+It checks one inference request per explicit submission, safe durable failure
+summaries, failed transcript status, history retention, and observed cleanup across
+suspension and the next turn. It retains evidence under its printed `/tmp/vql-*` path.
+
+```sh
+cargo build -p helm -p vessel -p voyage --locked
+python3 voyage/tests/account_limit.py --bin-dir target/debug
+cargo test -p voyage --locked --lib provider::failure_tests
+```
+
+These focused checks do not restore the removed general test suite. No live success
+is implied by the offline failure regression.
+
 ## Isolation and evidence
 
 The runner locks the repository's common Git directory, including linked worktrees.

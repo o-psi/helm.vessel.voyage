@@ -30,10 +30,17 @@ pub use codex_subscription::CodexSubscriptionProvider;
 pub use openai::OpenAiProvider;
 pub use openai_responses::OpenAiResponsesProvider;
 
+#[cfg(test)]
+mod failure_tests;
+
+pub(crate) const USAGE_LIMIT_MESSAGE: &str = "Provider account usage limit reached. Wait for the account allowance to reset before sending another message.";
+
 #[derive(Debug, Error)]
 pub enum ProviderError {
     #[error("authentication failed: {0}")]
     Authentication(String),
+    #[error("{USAGE_LIMIT_MESSAGE}")]
+    UsageLimit,
     #[error("provider rate limit: {message}")]
     RateLimit {
         message: String,
@@ -286,6 +293,24 @@ pub(crate) async fn checked_json(
     } else if status.as_u16() == 401 || status.as_u16() == 403 {
         Err(ProviderError::Authentication(body))
     } else if status.as_u16() == 429 {
+        // Account exhaustion is not transient throttling. Do not retry the same
+        // exhausted allowance, or retain arbitrary provider error text.
+        let exhausted = serde_json::from_str::<serde_json::Value>(&body)
+            .ok()
+            .is_some_and(|value| {
+                [value.pointer("/error/type"), value.pointer("/error/code")]
+                    .into_iter()
+                    .flatten()
+                    .any(|code| {
+                        matches!(
+                            code.as_str(),
+                            Some("usage_limit_reached" | "insufficient_quota")
+                        )
+                    })
+            });
+        if exhausted {
+            return Err(ProviderError::UsageLimit);
+        }
         Err(ProviderError::RateLimit {
             message: body,
             retry_after,

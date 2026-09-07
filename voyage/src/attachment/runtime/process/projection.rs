@@ -59,7 +59,7 @@ pub(super) fn recent(messages: &[Message]) -> Result<(Vec<Value>, usize)> {
     Ok((output, offset))
 }
 
-/// Only authored startup labels cross this surface, never underlying diagnostics.
+/// Only authored failure labels cross this surface, never underlying diagnostics.
 pub(super) fn failure_summary(reason: Option<&str>) -> Option<&str> {
     match reason {
         Some(
@@ -70,6 +70,8 @@ pub(super) fn failure_summary(reason: Option<&str>) -> Option<&str> {
             | "Runtime startup failed during provider configuration."),
         ) => Some(reason),
         Some("local runtime construction or output failed") => Some("Runtime startup failed."),
+        Some(crate::provider::USAGE_LIMIT_MESSAGE) => Some(crate::provider::USAGE_LIMIT_MESSAGE),
+        Some("provider or runtime failed") => Some("Provider or runtime failed."),
         _ => None,
     }
 }
@@ -110,6 +112,6 @@ pub(super) fn run(
 }
 pub(super) fn turns(session: &crate::session::Session) -> Vec<Value> {
     session.run_summaries.iter().rev().take(1024).rev().map(|s| json!({
-        "run_id":s.run_id,"phase":s.phase,"message_start":s.message_start,"message_end":s.message_end,"started_at":s.started_at,"finished_at":s.finished_at
+        "run_id":s.run_id,"phase":s.phase,"failure_summary":failure_summary(s.detail.as_deref()),"message_start":s.message_start,"message_end":s.message_end,"started_at":s.started_at,"finished_at":s.finished_at
     })).collect()
 }
