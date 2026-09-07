@@ -232,7 +232,7 @@ impl App {
                 view.process = process;
                 view.draft.text = draft.saved.text.clone();
                 view.draft.cursor = view.draft.text.len();
-                view.pending = Some(state::Pending { command_id: draft.saved.turn, incarnation: view.process.incarnation, draft: draft.saved.text.clone(), preserve_draft: false });
+                view.pending = Some(state::Pending { command_id: draft.saved.turn, incarnation: view.process.incarnation, draft: draft.saved.text.clone(), preserve_draft: false, original: draft.saved.submit.clone().map(Box::new), receipt_only: false });
                 if let Err(error) = drafts::save(&self.clients[target.route], &view) {
                     self.status = format!("First-send receipt found; draft handoff could not be saved: {error}. F4 retries recovery.");
                     return;
@@ -249,8 +249,8 @@ impl App {
                 if self.active_draft == Some(id) { self.active_draft = None; self.selected = Some(target); }
                 self.update(Update::Command { target, command_id, refused: false, result: Ok(receipt) });
             }
-            Ok(None) => self.status = "First send is not confirmed. F4 checks; Enter retries the same saved request. Your text is preserved.".into(),
-            Err(error) => self.status = format!("{} · Text and identity saved. F4 checks; Enter retries the same request.", safe(&error)),
+            Ok(None) => self.status = "First send is not confirmed. F4 checks; Enter continues setup or checks delivery. Your text is preserved.".into(),
+            Err(error) => self.status = format!("{} · Text and identity saved. F4 checks; Enter continues setup or checks delivery.", safe(&error)),
         }
     }
 }

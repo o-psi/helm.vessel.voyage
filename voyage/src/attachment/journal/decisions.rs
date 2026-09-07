@@ -67,7 +67,9 @@ impl Journal {
             [id.to_string()],
             |row| Ok((row.get(0)?, row.get(1)?)),
         )?;
-        ensure!(expires > now, "decision expired");
+        if response.is_none() && expires <= now {
+            return Ok(Some(json!("expired")));
+        }
         response
             .map(|encoded| serde_json::from_str(&encoded).map_err(Into::into))
             .transpose()

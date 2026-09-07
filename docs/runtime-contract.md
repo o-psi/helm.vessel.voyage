@@ -192,3 +192,29 @@ attestation carries exact identifiers and is reported separately from observed
 cleanup. Only a positive, exact-incarnation disposition enables explicit restart.
 Owner transfer requires signed preparation, positive permanent source fencing and
 verified checkpoint publication; no timeout or failed health probe grants takeover.
+
+## Delivery resolution
+
+`Resolve { command_id, original }` never dispatches `original`. A live runtime
+excludes mutation dispatch while resolving; a suspended observer holds the same
+exclusive execution fence as the owner. Existing receipts retain their meaning.
+Absent admission is converted to a durable `not_admitted` tombstone and caller
+reservation before responding. Later requests with that ID cannot be admitted,
+including after restart. Payload and principal conflicts fail closed. Scoped
+resolution requires the original command's right and matching identity; payload-free
+legacy resolution requires local host authority. `Receipt` remains a read-only lookup.
+
+Helm persists exact public mutation envelopes before transmission and resolves
+uncertain ordinary submissions without automatic replay. Definitive non-admission
+restores editable text, allowing an explicit new command. An unavailable status
+check never becomes evidence that the original send was refused. Branch and stopped
+archive restart remain separate Vessel lifecycle workflows. Private terminal input
+and workflow secrets are excluded from persistent public command envelopes.
+
+Long-lived event waits do not hold admission/dispatch locks or stall the listener.
+Suspension and mutation dispatch are mutually exclusive. Accepted request handlers
+are drained on retirement, and queued sockets receive explicit non-dispatch where
+possible; unavoidable connection loss is handled by durable resolution.
+
+Outbound enrollment-relay commands retain their separate remote-owner receipt
+and transport-lease authority; local `Resolve` refuses remote-bound sessions.

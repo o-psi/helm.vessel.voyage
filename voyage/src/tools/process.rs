@@ -221,15 +221,11 @@ impl Tool for ProcessTool {
             } => {
                 match ctx.policy.command(&command) {
                     Decision::Deny(reason) => return Err(ToolError::Denied(reason)),
-                    Decision::Ask(reason)
-                        if !ctx
-                            .approver
-                            .approve(&ctx.approval("process.start", &command, reason.clone()))
-                            .await
-                            .approved() =>
-                    {
-                        return Err(ToolError::Denied("user declined approval".into()));
-                    }
+                    Decision::Ask(reason) => ctx
+                        .approver
+                        .approve(&ctx.approval("process.start", &command, reason.clone()))
+                        .await
+                        .require_approved()?,
                     _ => {}
                 }
                 self.start(command, name, cwd, env, rows, cols, ctx)

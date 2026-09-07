@@ -7,33 +7,14 @@ pub(super) async fn dispatch(
     command: RuntimeCommand,
     authorization: super::authorization::Authorization,
 ) -> Result<Value> {
-    if let RuntimeCommand::ExecuteTool {
-        name, arguments, ..
-    }
-    | RuntimeCommand::OperatorTool {
-        name, arguments, ..
-    } = &command
-    {
-        ensure!(
-            !(name == "process" && arguments["action"] == "write"),
-            "human terminal input requires private channel"
-        );
-    }
-    if matches!(
-        &command,
-        RuntimeCommand::SetModel { .. }
-            | RuntimeCommand::OperatorTool { .. }
-            | RuntimeCommand::ExecuteTool { .. }
-            | RuntimeCommand::Github { .. }
-            | RuntimeCommand::WorkflowSubmit { .. }
-    ) {
-        let config = state.config.read().await;
-        let public = serde_json::to_string(&command)?;
-        ensure!(
-            !crate::build::redactor(&config).contains_secret(&public),
-            "command contains configured secret; use private input channel"
-        );
-    }
+    let public = match &command {
+        RuntimeCommand::Resolve {
+            original: Some(original),
+            ..
+        } => original.as_ref(),
+        _ => &command,
+    };
+    validate_public(public, &*state.config.read().await)?;
     if matches!(
         state.registration.initialize,
         Some(voyage_protocol::process::RuntimeInitialization::Outbound { .. })
@@ -86,7 +67,7 @@ pub(super) async fn dispatch(
     if let Some(id) = command_id
         && let Some(receipt) = state.owner.process_receipt(id).await?
     {
-        if receipt["status"] == "rejected" {
+        if receipt["status"] == "rejected" || receipt["status"] == "not_admitted" {
             return Err(Rejected(receipt).into());
         }
         if receipt["status"] == "deleted" || receipt["status"] == "transferred" {
@@ -132,3 +113,34 @@ impl std::fmt::Display for Rejected {
     }
 }
 impl std::error::Error for Rejected {}
+
+/// Resolution accepts the same public envelope as dispatch, never private input.
+pub(super) fn validate_public(command: &RuntimeCommand, config: &Config) -> Result<()> {
+    if let RuntimeCommand::ExecuteTool {
+        name, arguments, ..
+    }
+    | RuntimeCommand::OperatorTool {
+        name, arguments, ..
+    } = command
+    {
+        ensure!(
+            !(name == "process" && arguments["action"] == "write"),
+            "human terminal input requires private channel"
+        );
+    }
+    if matches!(
+        command,
+        RuntimeCommand::SetModel { .. }
+            | RuntimeCommand::OperatorTool { .. }
+            | RuntimeCommand::ExecuteTool { .. }
+            | RuntimeCommand::Github { .. }
+            | RuntimeCommand::WorkflowSubmit { .. }
+    ) {
+        let public = serde_json::to_string(&command)?;
+        ensure!(
+            !crate::build::redactor(config).contains_secret(&public),
+            "command contains configured secret; use private input channel"
+        );
+    }
+    Ok(())
+}

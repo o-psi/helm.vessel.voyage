@@ -133,13 +133,7 @@ impl App {
                 .as_ref()
                 .context("no unresolved command")?
                 .clone();
-            self.dispatch(
-                target,
-                pending.command_id,
-                RuntimeCommand::Receipt {
-                    command_id: pending.command_id,
-                },
-            );
+            self.dispatch(target, pending.command_id, pending.resolution());
             return Ok(());
         }
         ensure!(
@@ -263,6 +257,8 @@ impl App {
         };
         view.pending = Some(Pending {
             command_id,
+            original: Some(Box::new(command.clone())),
+            receipt_only: false,
             incarnation: view.process.incarnation,
             draft,
             preserve_draft,
@@ -289,18 +285,46 @@ impl App {
         let client = self.clients[target.route].clone();
         let sender = self.sender.clone();
         self.status = "Sending...".into();
+        let resolving = matches!(
+            command,
+            RuntimeCommand::Resolve { .. } | RuntimeCommand::Receipt { .. }
+        );
         tokio::spawn(async move {
-            let result = client.forward(target.session, incarnation, command).await;
+            let mut result = client
+                .forward(target.session, incarnation, command.clone())
+                .await;
+            // Bounded status recovery only. Never replay the submitted mutation.
+            if resolving {
+                for _ in 1..3 {
+                    if result
+                        .as_ref()
+                        .is_ok_and(|value| value["status"] != "unknown")
+                    {
+                        break;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(750)).await;
+                    result = client
+                        .forward(target.session, incarnation, command.clone())
+                        .await;
+                }
+            }
             let _ = sender
                 .send(Update::Command {
                     target,
                     command_id,
-                    refused: result.as_ref().err().is_some_and(|error| {
-                        error
-                            .downcast_ref::<crate::process_client::transport::Refusal>()
-                            .is_some()
+                    refused: !resolving
+                        && result.as_ref().err().is_some_and(|error| {
+                            error
+                                .downcast_ref::<crate::process_client::transport::Refusal>()
+                                .is_some()
+                        }),
+                    result: result.map_err(|error| {
+                        if resolving {
+                            format!("Status check unavailable after bounded attempts: {error}. Original command remains unresolved; F4 checks again")
+                        } else {
+                            error.to_string()
+                        }
                     }),
-                    result: result.map_err(|error| error.to_string()),
                 })
                 .await;
         });

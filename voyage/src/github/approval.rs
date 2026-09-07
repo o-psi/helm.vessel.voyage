@@ -134,9 +134,10 @@ pub async fn approve_terminal(request: &ApprovalRequest) -> ApprovalOutcome {
         }
         match input.read() {
             Ok(Some((code, repeat))) => match code {
-                // Bracketed paste begins with ESC and is denied, not interpreted
+                // Bracketed paste begins with ESC and is cancelled, not interpreted
                 // as approval. Plain unmarked input has no trustworthy origin.
-                3 | 27 | 110 | 78 => break ApprovalOutcome::Denied,
+                3 | 27 => break ApprovalOutcome::Cancelled,
+                110 | 78 => break ApprovalOutcome::Denied,
                 121 | 89 if presented_end && repeat == 1 => break ApprovalOutcome::Approved,
                 32 | 13 | 10 if end < wrapped.len() => {
                     offset = end;
@@ -152,7 +153,7 @@ pub async fn approve_terminal(request: &ApprovalRequest) -> ApprovalOutcome {
             Ok(None) => (),
         }
         if tokio::time::Instant::now() >= deadline {
-            break ApprovalOutcome::Unavailable;
+            break ApprovalOutcome::Expired;
         }
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     };

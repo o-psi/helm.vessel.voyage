@@ -320,15 +320,11 @@ async fn approve_git_command(
 ) -> Result<(), ToolError> {
     match context.policy.command(command) {
         Decision::Deny(reason) => Err(ToolError::Denied(reason)),
-        Decision::Ask(reason)
-            if !context
-                .approver
-                .approve(&context.approval(action, target, reason.clone()))
-                .await
-                .approved() =>
-        {
-            Err(ToolError::Denied("user declined approval".into()))
-        }
+        Decision::Ask(reason) => context
+            .approver
+            .approve(&context.approval(action, target, reason.clone()))
+            .await
+            .require_approved(),
         _ => Ok(()),
     }
 }

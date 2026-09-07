@@ -310,7 +310,21 @@ impl App {
                     return;
                 };
                 match result {
-                    Ok(value) => {
+                    Ok(mut value) => {
+                        // Steering dispatch wraps its journal record, while receipt
+                        // lookup returns that record directly. Both identify the
+                        // command through request.receipt_id.
+                        if value["record"]["request"]["receipt_id"].is_string() {
+                            value = value["record"].clone();
+                        }
+                        let receipt_id = value
+                            .get("command_id")
+                            .or_else(|| {
+                                value
+                                    .get("request")
+                                    .and_then(|request| request.get("receipt_id"))
+                            })
+                            .and_then(|id| id.as_str());
                         if value.get("status").and_then(|status| status.as_str()) == Some("unknown")
                         {
                             self.status =
@@ -318,21 +332,26 @@ impl App {
                                     .into();
                             return;
                         }
-                        if value
-                            .get("command_id")
-                            .and_then(|id| id.as_str())
-                            .is_some_and(|id| id != command_id.to_string())
+                        if receipt_id != Some(command_id.to_string().as_str())
+                            || value["status"].as_str().is_none_or(str::is_empty)
                         {
                             self.status = "The response could not be matched. Your draft is saved; press F4 to check.".into();
                             return;
                         }
-                        let rejected = value.get("status").and_then(|status| status.as_str())
-                            == Some("rejected")
-                            || (value["status"] == "transferred"
-                                && matches!(
-                                    value["original_status"].as_str(),
-                                    Some("rejected" | "not_admitted")
-                                ));
+                        let rejected =
+                            matches!(value["status"].as_str(), Some("rejected" | "not_admitted"))
+                                || (value["status"] == "transferred"
+                                    && matches!(
+                                        value["original_status"].as_str(),
+                                        Some("rejected" | "not_admitted")
+                                    ));
+                        if rejected
+                            && !pending.preserve_draft
+                            && (view.draft.text.is_empty() || view.draft.text.trim() == "/receipt")
+                        {
+                            view.draft.text = pending.draft.clone();
+                            view.draft.cursor = view.draft.text.len();
+                        }
                         if !rejected
                             && !pending.preserve_draft
                             && !pending.draft.trim_start().starts_with('/')

@@ -70,7 +70,33 @@ async fn observe(directory: &std::path::Path, request: &RuntimeRequest) -> Resul
     super::authorization::authorize_parts(identity.actor, &registration, request, &directory)?;
     let owner = open_owner(directory.join("journal"), registration.session_id).await?;
     check_suspended(&directory, &registration)?;
-    let value = inspect(&owner, &registration, &request.command, &directory).await?;
+    let value = match &request.command {
+        RuntimeCommand::Resolve {
+            command_id,
+            original,
+        } => {
+            if let Some(original) = original {
+                super::dispatch::validate_public(
+                    original,
+                    &config(&owner, &registration, &directory).await?,
+                )?;
+            }
+            let authorization = super::authorization::authorize_parts(
+                identity.actor,
+                &registration,
+                request,
+                &directory,
+            )?;
+            owner
+                .resolve_process_command(
+                    *command_id,
+                    authorization.actor.principal_id,
+                    original.clone(),
+                )
+                .await?
+        }
+        _ => inspect(&owner, &registration, &request.command, &directory).await?,
+    };
     // Re-read authority immediately before releasing the fenced result.
     authenticate(&super::transport::registration(&directory)?, request)?;
     check_suspended(&directory, &registration)?;
@@ -152,7 +178,7 @@ async fn inspect(
         RuntimeCommand::Health => Ok(json!({"pid":null,"session_id":registration.session_id,
             "incarnation":registration.incarnation,"suspended":true,
             "capabilities":["snapshot","history","message_chunk","run_output","submit",
-                "receipt","cancel","steer","rename","set_model","set_access","decisions",
+                "receipt","resolve","cancel","steer","rename","set_model","set_access","decisions",
                 "respond","archive","delete","branch","clear","compact","events","controls",
                 "operator_tool","configure","workflow_submit","terminal","assignment_observe",
                 "relinquish","stop"],"outbound":null,"decisions":"bounded_120_seconds"})),

@@ -208,11 +208,8 @@ async fn confirm(context: &ToolContext, value: &Value) -> Result<()> {
     let decision = tokio::select! {
         biased;
         _ = context.cancellation.cancelled() => anyhow::bail!("GitHub administration cancelled"),
-        decision = tokio::time::timeout(std::time::Duration::from_secs(900),context.approver.approve(&request)) => decision.unwrap_or(ApprovalOutcome::Unavailable),
+        decision = tokio::time::timeout(std::time::Duration::from_secs(900),context.approver.approve(&request)) => decision.unwrap_or(ApprovalOutcome::Expired),
     };
-    ensure!(
-        decision == ApprovalOutcome::Approved,
-        "GitHub administration was not approved"
-    );
+    decision.require_approved()?;
     current(context, true)
 }

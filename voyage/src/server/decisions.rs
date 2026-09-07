@@ -21,7 +21,31 @@ impl Decisions {
         self.owner
             .create_decision(self.run, self.incarnation, id, expires, request)
             .await?;
-        tokio::time::timeout(timeout,async{loop{tokio::select!{_ = self.cancel.cancelled()=>anyhow::bail!("decision cancelled"),_=tokio::time::sleep(std::time::Duration::from_millis(50))=>{if let Some(response)=self.owner.decision_response(id).await?{return Ok(response)}}}}}).await?
+        let result = tokio::time::timeout(timeout, async {
+            loop {
+                tokio::select! {
+                    _ = self.cancel.cancelled() => return Ok(json!("cancelled")),
+                    _ = tokio::time::sleep(std::time::Duration::from_millis(50)) => {
+                        if let Some(response) = self.owner.decision_response(id).await? { return Ok(response); }
+                    }
+                }
+            }
+        }).await;
+        match result {
+            Ok(response) => response,
+            Err(_) => {
+                if self.cancel.is_cancelled() {
+                    return Ok(json!("cancelled"));
+                }
+                // A response may have committed before expiry but after the last poll.
+                // Preserve that durable answer instead of misreporting an expiry.
+                Ok(self
+                    .owner
+                    .decision_response(id)
+                    .await?
+                    .unwrap_or(json!("expired")))
+            }
+        }
     }
 }
 #[async_trait]
@@ -32,7 +56,11 @@ impl Approver for Decisions {
             .await
         {
             Ok(response) if response == "approved" => ApprovalOutcome::Approved,
-            Ok(_) => ApprovalOutcome::Denied,
+            Ok(response) if response == "denied" => ApprovalOutcome::Denied,
+            Ok(response) if response == "expired" => ApprovalOutcome::Expired,
+            Ok(response) if response == "cancelled" => ApprovalOutcome::Cancelled,
+            Ok(response) if response == "invalidated" => ApprovalOutcome::Invalidated,
+            Ok(_) => ApprovalOutcome::Unavailable,
             Err(_) => ApprovalOutcome::Unavailable,
         }
     }

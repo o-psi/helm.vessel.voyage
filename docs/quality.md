@@ -104,6 +104,22 @@ cargo test -p voyage --locked --lib provider::failure_tests
 These focused checks do not restore the removed general test suite. No live success
 is implied by the offline failure regression.
 
+## Delivery recovery checks
+
+```sh
+cargo build -p helm -p vessel -p voyage --locked
+python3 voyage/tests/delivery_recovery.py --bin-dir target/debug
+```
+
+This focused Linux process check uses isolated HOME/XDG directories and a local
+synthetic provider. It verifies event polling overlapping idle suspension and
+submission, a lost acceptance response, exact duplicate admission, durable
+non-admission and late-request refusal across suspension and Vessel restart,
+identity/payload conflicts, and distinct approval expiry/refusal/cancellation.
+Evidence is retained under the printed `/tmp/vdr-*` directory. Cleanup succeeds only
+after fixture-owned processes disappear and matching durable cleanup evidence is
+observed. This is not a live-provider, native macOS/Windows, or full TUI check.
+
 ## Isolation and evidence
 
 The runner locks the repository's common Git directory, including linked worktrees.

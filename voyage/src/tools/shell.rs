@@ -48,15 +48,11 @@ impl Tool for Shell {
         }
         match ctx.policy.command(&args.command) {
             Decision::Deny(reason) => return Err(ToolError::Denied(reason)),
-            Decision::Ask(reason)
-                if !ctx
-                    .approver
-                    .approve(&ctx.approval("shell", &args.command, reason.clone()))
-                    .await
-                    .approved() =>
-            {
-                return Err(ToolError::Denied("user declined approval".into()));
-            }
+            Decision::Ask(reason) => ctx
+                .approver
+                .approve(&ctx.approval("shell", &args.command, reason.clone()))
+                .await
+                .require_approved()?,
             _ => {}
         }
         let mut command = Command::new("sh");
@@ -194,11 +190,9 @@ async fn authorize_secret_command(args: &Args, ctx: &ToolContext) -> Result<(), 
             let approved = tokio::select! {
                 biased;
                 _=ctx.cancellation.cancelled()=>return Err(ToolError::Cancelled),
-                result=ctx.approver.approve(&approval)=>result.approved(),
+                result=ctx.approver.approve(&approval)=>result,
             };
-            if !approved {
-                return Err(ToolError::Denied("user declined approval".into()));
-            }
+            approved.require_approved()?;
         }
         Decision::Allow => {}
     }

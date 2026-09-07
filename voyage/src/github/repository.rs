@@ -27,14 +27,11 @@ pub async fn discover(context: &crate::tools::ToolContext) -> Result<Vec<Candida
             "GitHub remote discovery is denied by command policy; select an explicit object URL"
         ),
         crate::policy::Decision::Ask(reason) => {
-            ensure!(
-                context
-                    .approver
-                    .approve(&context.approval("github.remotes", "local Git configuration", reason))
-                    .await
-                    .approved(),
-                "GitHub remote discovery was not approved"
-            );
+            context
+                .approver
+                .approve(&context.approval("github.remotes", "local Git configuration", reason))
+                .await
+                .require_approved()?;
         }
         crate::policy::Decision::Allow => (),
     }

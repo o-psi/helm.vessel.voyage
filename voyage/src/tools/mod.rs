@@ -60,11 +60,11 @@ struct DispatchApprover {
 impl Approver for DispatchApprover {
     async fn approve(&self, request: &ApprovalRequest) -> ApprovalOutcome {
         if self.policy.check_execution_authority().is_err() {
-            return ApprovalOutcome::Denied;
+            return ApprovalOutcome::Invalidated;
         }
         let outcome = self.inner.approve(request).await;
         if self.policy.check_execution_authority().is_err() {
-            ApprovalOutcome::Denied
+            ApprovalOutcome::Invalidated
         } else {
             outcome
         }
@@ -96,6 +96,9 @@ pub struct ApprovalRequest {
 pub enum ApprovalOutcome {
     Approved,
     Denied,
+    Expired,
+    Cancelled,
+    Invalidated,
     Unavailable,
 }
 
@@ -119,6 +122,24 @@ impl Approver for UnattendedApprover {
 }
 
 impl ApprovalOutcome {
+    /// Preserve why authority was not granted; absence of approval is not a user denial.
+    pub fn require_approved(&self) -> Result<(), ToolError> {
+        match self {
+            Self::Approved => Ok(()),
+            Self::Denied => Err(ToolError::Denied("user declined approval".into())),
+            Self::Expired => Err(ToolError::Denied(
+                "approval expired without a response".into(),
+            )),
+            Self::Cancelled => Err(ToolError::Cancelled),
+            Self::Invalidated => Err(ToolError::Denied(
+                "approval invalidated by an authority or access change".into(),
+            )),
+            Self::Unavailable => Err(ToolError::Denied(
+                "approval interface unavailable; no approval was granted".into(),
+            )),
+        }
+    }
+
     pub fn approved(&self) -> bool {
         *self == Self::Approved
     }
@@ -446,15 +467,11 @@ impl ToolRegistry {
         if name.starts_with("mcp_") {
             match context.policy.external_tool(name) {
                 Decision::Deny(reason) => return Err(ToolError::Denied(reason)),
-                Decision::Ask(reason)
-                    if !context
-                        .approver
-                        .approve(&context.approval("mcp.call", name, reason.clone()))
-                        .await
-                        .approved() =>
-                {
-                    return Err(ToolError::Denied("user declined approval".into()));
-                }
+                Decision::Ask(reason) => context
+                    .approver
+                    .approve(&context.approval("mcp.call", name, reason.clone()))
+                    .await
+                    .require_approved()?,
                 _ => {}
             }
         }

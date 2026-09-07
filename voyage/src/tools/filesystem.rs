@@ -86,19 +86,15 @@ impl Tool for ApplyPatch {
         }
         match ctx.policy.write(&path, exists) {
             Decision::Deny(reason) => return Err(ToolError::Denied(reason)),
-            Decision::Ask(reason)
-                if !ctx
-                    .approver
-                    .approve(&ctx.approval(
-                        "filesystem.patch",
-                        path.display().to_string(),
-                        reason.clone(),
-                    ))
-                    .await
-                    .approved() =>
-            {
-                return Err(ToolError::Denied("user declined approval".into()));
-            }
+            Decision::Ask(reason) => ctx
+                .approver
+                .approve(&ctx.approval(
+                    "filesystem.patch",
+                    path.display().to_string(),
+                    reason.clone(),
+                ))
+                .await
+                .require_approved()?,
             _ => {}
         }
         let patch = diffy::Patch::from_str(&args.patch)
@@ -151,19 +147,15 @@ impl Tool for WriteFile {
         let path = ctx.policy.resolve_write(&args.path).map_err(denied)?;
         match ctx.policy.write(&path, path.exists()) {
             Decision::Deny(reason) => return Err(ToolError::Denied(reason)),
-            Decision::Ask(reason)
-                if !ctx
-                    .approver
-                    .approve(&ctx.approval(
-                        "filesystem.write",
-                        path.display().to_string(),
-                        reason.clone(),
-                    ))
-                    .await
-                    .approved() =>
-            {
-                return Err(ToolError::Denied("user declined approval".into()));
-            }
+            Decision::Ask(reason) => ctx
+                .approver
+                .approve(&ctx.approval(
+                    "filesystem.write",
+                    path.display().to_string(),
+                    reason.clone(),
+                ))
+                .await
+                .require_approved()?,
             _ => {}
         }
         if let Some(parent) = path.parent() {

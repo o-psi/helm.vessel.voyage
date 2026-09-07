@@ -364,12 +364,9 @@ impl Service {
         let decision = tokio::select! {
             biased;
             _ = self.context.cancellation.cancelled() => anyhow::bail!("GitHub decision cancelled"),
-            decision = tokio::time::timeout(Duration::from_secs(900), self.context.approver.approve(&request)) => decision.unwrap_or(ApprovalOutcome::Unavailable),
+            decision = tokio::time::timeout(Duration::from_secs(900), self.context.approver.approve(&request)) => decision.unwrap_or(ApprovalOutcome::Expired),
         };
-        ensure!(
-            decision == ApprovalOutcome::Approved,
-            "GitHub decision was not approved"
-        );
+        decision.require_approved()?;
         self.current()?;
         Ok(())
     }
@@ -523,12 +520,9 @@ impl Service {
         let decision = tokio::select! {
             biased;
             _ = self.context.cancellation.cancelled() => anyhow::bail!("GitHub publication cancelled before approval"),
-            decision = tokio::time::timeout(remaining, self.context.approver.approve(&request)) => decision.unwrap_or(ApprovalOutcome::Unavailable),
+            decision = tokio::time::timeout(remaining, self.context.approver.approve(&request)) => decision.unwrap_or(ApprovalOutcome::Expired),
         };
-        ensure!(
-            decision == ApprovalOutcome::Approved,
-            "GitHub publication was not approved"
-        );
+        decision.require_approved()?;
         self.mutation_allowed()?;
         ensure!(
             operation.actor == self.actor().await?,

@@ -34,6 +34,8 @@ impl App {
         view.pending = Some(Pending {
             command_id,
             incarnation,
+            original: None,
+            receipt_only: true,
             draft: view.draft.text.clone(),
             preserve_draft,
         });

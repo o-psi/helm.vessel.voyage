@@ -154,6 +154,13 @@ pub enum RuntimeCommand {
     Receipt {
         command_id: Uuid,
     },
+    /// Resolve delivery without executing the original request. A missing command
+    /// is durably fenced against later admission before returning not_admitted.
+    Resolve {
+        command_id: Uuid,
+        #[serde(default)]
+        original: Option<Box<RuntimeCommand>>,
+    },
     Cancel {
         command_id: Uuid,
         expected_revision: u64,
@@ -216,7 +223,33 @@ pub enum RuntimeCommand {
 }
 
 impl RuntimeCommand {
-    /// Pure session observations served without waking a cleanly suspended runtime.
+    /// Immutable identity of a journalled mutation, excluding resolution itself.
+    pub fn mutation_id(&self) -> Option<Uuid> {
+        match self {
+            Self::Clear { command_id, .. }
+            | Self::Compact { command_id, .. }
+            | Self::OperatorTool { command_id, .. }
+            | Self::Github { command_id, .. }
+            | Self::SetAccess { command_id, .. }
+            | Self::Configure { command_id, .. }
+            | Self::Relinquish { command_id, .. }
+            | Self::WorkflowSubmit { command_id, .. }
+            | Self::Submit { command_id, .. }
+            | Self::Cancel { command_id, .. }
+            | Self::Steer { command_id, .. }
+            | Self::Rename { command_id, .. }
+            | Self::SetModel { command_id, .. }
+            | Self::Respond { command_id, .. }
+            | Self::Archive { command_id, .. }
+            | Self::Delete { command_id, .. }
+            | Self::Branch { command_id, .. }
+            | Self::ExecuteTool { command_id, .. } => Some(*command_id),
+            _ => None,
+        }
+    }
+
+    /// Commands served under the session fence without starting execution.
+    /// Resolve may record non-admission; it never dispatches the original work.
     pub fn observes_suspended(&self) -> bool {
         matches!(
             self,
@@ -227,6 +260,7 @@ impl RuntimeCommand {
                 | Self::MessageChunk { .. }
                 | Self::RunOutput { .. }
                 | Self::Receipt { .. }
+                | Self::Resolve { .. }
                 | Self::Events { .. }
                 | Self::Decisions
                 | Self::Controls { .. }

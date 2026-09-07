@@ -76,13 +76,7 @@ impl App {
             if key.code == KeyCode::F(4) {
                 if let Some(target) = self.selected {
                     if let Some(pending) = self.views.get(&target).and_then(|v| v.pending.clone()) {
-                        self.dispatch(
-                            target,
-                            pending.command_id,
-                            voyage_protocol::process::RuntimeCommand::Receipt {
-                                command_id: pending.command_id,
-                            },
-                        );
+                        self.dispatch(target, pending.command_id, pending.resolution());
                     } else {
                         self.status = "All sent messages are accounted for.".into();
                     }

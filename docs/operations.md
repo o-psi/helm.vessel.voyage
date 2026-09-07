@@ -148,7 +148,9 @@ retains its command identity; use F4 to check an unconfirmed response. Unknown f
 an exact approval; `/answer DECISION_UUID text` answers a model question. There is
 no approve-all operation. Responses are tied to the observed decision, run,
 incarnation and revision, and an expired request cannot authorize an action.
-Decision waits are bounded; leaving an unanswered prompt is not approval.
+Decision waits are bounded; leaving an unanswered prompt is not approval. Expiry
+is reported as an unanswered approval, separately from an explicit refusal or
+cancellation.
 `/tools`, `/policy`, `/todos`, `/subagents`, `/workflows` and `/models`
 inspect runtime controls; Esc returns to history. `/tool NAME JSON`
 executes a real authorized tool, using an operator run when idle. `/terminal UUID`
@@ -176,6 +178,12 @@ helm connect restart SESSION_UUID --incarnation INCARNATION_UUID --command-id RE
 Deadlines are Unix milliseconds, not durations. Revisions and run/incarnation IDs
 come from current inspection. A receipt records admission, not successful execution
 or observed cleanup. An unknown receipt does not authorize a different resubmission.
+In Helm, F4 or `/receipt` resolves an ordinary pending send without repeating it:
+a saved receipt confirms delivery, or the runtime durably prevents that command ID
+from being admitted and returns your editable draft. Send the draft again only after
+that definitive result. Status checks are bounded; an unavailable or older owner
+leaves the original identity saved. The CLI `connect receipt` remains a read-only
+lookup and does not close an unadmitted command ID.
 A stop response can precede observed cleanup; inspect again. Never infer survival
 from a stored PID or force restart by removing registration/cleanup records.
 

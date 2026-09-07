@@ -94,7 +94,7 @@ impl App {
         }
         let draft = self.new_drafts.get_mut(&id).context("draft unavailable")?;
         if draft.saved.start.is_some() || draft.busy {
-            self.status = "First send pending. Text and settings are frozen; F4 checks, Enter retries the original request.".into();
+            self.status = "First send pending. Text and settings are frozen; F4 checks, Enter continues setup or checks delivery.".into();
             return Ok(true);
         }
         match event {

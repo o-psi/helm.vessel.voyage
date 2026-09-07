@@ -51,6 +51,8 @@ impl App {
         };
         view.pending = Some(Pending {
             command_id,
+            original: Some(Box::new(command.clone())),
+            receipt_only: false,
             incarnation: view.process.incarnation,
             draft: String::new(),
             preserve_draft: true,

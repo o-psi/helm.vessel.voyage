@@ -34,6 +34,16 @@ pub(super) async fn dispatch_admitted(
     };
 
     match command {
+        RuntimeCommand::Resolve {
+            command_id,
+            original,
+        } => {
+            // Transport holds the exclusive dispatch gate for this operation.
+            state
+                .owner
+                .resolve_process_command(command_id, authorization.actor.principal_id, original)
+                .await
+        }
         command @ RuntimeCommand::Github { .. } => {
             super::github::submit(state, authorization, command).await
         }
@@ -102,6 +112,7 @@ pub(super) async fn dispatch_admitted(
                 "run_output",
                 "submit",
                 "receipt",
+                "resolve",
                 "cancel",
                 "steer",
                 "rename",

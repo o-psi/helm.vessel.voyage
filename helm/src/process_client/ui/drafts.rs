@@ -6,6 +6,9 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{io::Write, path::PathBuf};
 
+// Include the immutable public command envelope and escaped draft text.
+const MAX_DRAFT_BYTES: usize = 2 * voyage_protocol::process::MAX_PROCESS_FRAME;
+
 #[derive(Serialize, Deserialize)]
 struct Draft {
     text: String,
@@ -41,7 +44,9 @@ pub fn load(client: &Client, view: &mut View) -> Result<()> {
     }
     let metadata = std::fs::symlink_metadata(&path)?;
     ensure!(
-        metadata.is_file() && !metadata.file_type().is_symlink() && metadata.len() <= 256 * 1024,
+        metadata.is_file()
+            && !metadata.file_type().is_symlink()
+            && metadata.len() <= MAX_DRAFT_BYTES as u64,
         "invalid saved interface draft"
     );
     let draft: Draft = serde_json::from_slice(&std::fs::read(path)?)?;
@@ -57,8 +62,13 @@ pub fn save(client: &Client, view: &View) -> Result<()> {
         text: view.draft.text.clone(),
         pending: view.pending.clone(),
     };
+    let bytes = serde_json::to_vec(&draft)?;
+    ensure!(
+        bytes.len() <= MAX_DRAFT_BYTES,
+        "saved interface draft exceeds recovery limit"
+    );
     let mut temporary = tempfile::NamedTempFile::new_in(path.parent().expect("view parent"))?;
-    temporary.write_all(&serde_json::to_vec(&draft)?)?;
+    temporary.write_all(&bytes)?;
     temporary.as_file().sync_all()?;
     temporary.persist(&path)?;
     #[cfg(unix)]

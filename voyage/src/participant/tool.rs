@@ -2,7 +2,7 @@ use super::*;
 use crate::{
     config::AccessMode,
     model::ToolDefinition,
-    tools::{ApprovalOutcome, Tool, ToolContext, ToolError},
+    tools::{Tool, ToolContext, ToolError},
 };
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -106,10 +106,11 @@ impl ParticipantTool {
                     task
                 ),
             );
-            ensure!(
-                context.approver.approve(&request).await == ApprovalOutcome::Approved,
-                "participant delegation not approved"
-            );
+            context
+                .approver
+                .approve(&request)
+                .await
+                .require_approved()?;
             context.policy.check_current()?;
         }
         let credential = self.parent.connected(&endpoint).await?;

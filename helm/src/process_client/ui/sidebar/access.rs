@@ -148,6 +148,8 @@ impl App {
         };
         view.pending = Some(super::super::state::Pending {
             command_id,
+            original: Some(Box::new(command.clone())),
+            receipt_only: false,
             incarnation: menu.incarnation,
             draft: format!("/access {access}"),
             preserve_draft: true,

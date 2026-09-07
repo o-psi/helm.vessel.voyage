@@ -48,6 +48,7 @@ pub(super) async fn listen(directory: PathBuf, state: Arc<State>) -> Result<()> 
     std::fs::set_permissions(&endpoint, std::fs::Permissions::from_mode(0o600))?;
     let capacity = Arc::new(tokio::sync::Semaphore::new(16));
     let mut clients = tokio::task::JoinSet::new();
+    let mut suspensions = tokio::task::JoinSet::new();
     let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
     let mut idle = tokio::time::interval_at(
         tokio::time::Instant::now() + std::time::Duration::from_secs(2),
@@ -56,14 +57,16 @@ pub(super) async fn listen(directory: PathBuf, state: Arc<State>) -> Result<()> 
     loop {
         tokio::select! {
             _=idle.tick() => {
-                if !matches!(state.registration.initialize, Some(voyage_protocol::process::RuntimeInitialization::Outbound { .. })) {
-                    let _ = super::suspension::suspend(&state).await;
+                if suspensions.is_empty() && !matches!(state.registration.initialize, Some(voyage_protocol::process::RuntimeInitialization::Outbound { .. })) {
+                    let state = state.clone();
+                    suspensions.spawn(async move { super::suspension::suspend(&state).await });
                 }
             },
             _=state.shutdown.cancelled()=>break,
             _=tokio::signal::ctrl_c()=>{state.shutdown.cancel();break},
             _=terminate.recv()=>{state.shutdown.cancel();break},
             Some(_)=clients.join_next()=>{},
+            Some(_)=suspensions.join_next()=>{},
             connection=listener.accept()=>{
                 let (socket,_)=connection?;
                 if socket.peer_cred()?.uid()!=unsafe{libc::geteuid()} {continue}
@@ -72,6 +75,40 @@ pub(super) async fn listen(directory: PathBuf, state: Arc<State>) -> Result<()> 
             }
         }
     }
+    // A connected socket can already be queued when suspension wins select!.
+    // Drain that finite backlog into authenticated not-dispatched responses.
+    // Later connection failures remain uncertain to clients and are resolved by
+    // the journal, never replayed merely because the transport disappeared.
+    if state
+        .suspend_requested
+        .load(std::sync::atomic::Ordering::Acquire)
+    {
+        let listener = listener.into_std()?;
+        for _ in 0..16 {
+            let (socket, _) = match listener.accept() {
+                Ok(connection) => connection,
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => break,
+                Err(error) => return Err(error.into()),
+            };
+            socket.set_nonblocking(true)?;
+            let socket = UnixStream::from_std(socket)?;
+            if socket.peer_cred()?.uid() != unsafe { libc::geteuid() } {
+                continue;
+            }
+            let state = state.clone();
+            let directory = directory.clone();
+            clients.spawn(async move {
+                let _ = tokio::time::timeout(
+                    std::time::Duration::from_secs(2),
+                    respond(socket, state, directory),
+                )
+                .await;
+            });
+        }
+    } else {
+        drop(listener);
+    }
+    while suspensions.join_next().await.is_some() {}
     // Wait for accepted commands to register their owned work before shutdown observation.
     let barrier = state.admission.lock().await;
     if let Some(active) = state.active.lock().await.as_ref() {
@@ -171,8 +208,28 @@ async fn respond(mut socket: UnixStream, state: Arc<State>, directory: PathBuf) 
             && token_matches(&request.token, &state.registration.token),
         "runtime authentication rejected"
     );
+    super::authorization::authorize(&state, &request, &directory)?;
+    // Long polls are pure observations and must not hold the dispatch barrier.
+    // Resolution excludes all dispatch while proving and fencing non-admission.
+    let exclusive = if matches!(
+        request.command,
+        voyage_protocol::process::RuntimeCommand::Resolve { .. }
+    ) {
+        Some(state.requests.write().await)
+    } else {
+        None
+    };
+    let requests = if exclusive.is_none()
+        && !matches!(
+            request.command,
+            voyage_protocol::process::RuntimeCommand::Events { .. }
+        ) {
+        Some(state.requests.read().await)
+    } else {
+        None
+    };
+    // Authority may have changed while waiting behind another dispatch.
     let authorization = super::authorization::authorize(&state, &request, &directory)?;
-    let requests = state.requests.read().await;
     let suspending = state.shutdown.is_cancelled()
         && state
             .suspend_requested
@@ -183,6 +240,7 @@ async fn respond(mut socket: UnixStream, state: Arc<State>, directory: PathBuf) 
         commands::dispatch(&state, request.command.clone(), authorization).await
     };
     drop(requests);
+    drop(exclusive);
     let rejected = result
         .as_ref()
         .err()

@@ -35,9 +35,10 @@ requesting Vessel creation, then saves the exact revision-bound submission befor
 sending it. This uses the existing deduplicated start and submit protocol; the two
 steps are not a cross-process atomic transaction. An interruption between them can
 leave an owner with no admitted turn, attached to the recoverable first-send draft.
-F4 checks the original creation/turn outcome; Enter explicitly continues or retries
-the same request. Helm never automatically sends an uncertain turn again or creates
-a replacement session. Pending text/settings are frozen until the outcome resolves.
+F4 resolves the original creation/turn outcome; Enter continues creation or a
+first submission that has not been attempted. Once submission was attempted, both
+controls resolve its original identity without replaying it. Helm never automatically
+sends an uncertain turn again or creates a replacement session. Pending text/settings are frozen until the outcome resolves.
 Definite initial creation refusal preserves an editable draft; definite first-turn
 refusal preserves its text on the created voyage. Recovery retains pinned policy
 selection and explicit overrides, which are revalidated before local launch.
@@ -242,7 +243,27 @@ stream-boundary metadata show canonical text without a speculative live preview.
 F8 opens a keyboard chooser for existing read-only overviews without editing the
 draft. A quiet voyage rail, borderless conversation and compact composer adapt
 the supplied conversation-interface reference to terminal cells.
-F4 checks an unresolved receipt without resending work or editing the draft.
+F4 and `/receipt` resolve an uncertain ordinary runtime command without resending
+work. Helm saves its full public request, ID, revision and expiry before dispatch.
+Each status check makes at most three bounded attempts. Under the exclusive runtime
+dispatch gate (or the cleanly suspended execution fence), resolution returns an
+existing receipt or durably closes an unadmitted command ID. A delayed copy of that
+ID cannot subsequently execute. `not_admitted` restores an editable draft; confirmed
+admission clears pending delivery. Transport failures and older owners without
+`resolve` leave the original pending, rather than treating a failed status check
+as a refused submission. Legacy payload-free pending commands can be resolved with
+local host authority; scoped clients need the original public request. Vessel branch
+and stopped-archive restart workflows keep their separate receipt-only recovery.
+Private terminal input and workflow secret inputs never enter these envelopes.
+
+The runtime's event long polls do not hold the dispatch gate. Idle suspension runs
+outside the listener accept loop, excludes mutation dispatch, and drains queued
+connections into explicit non-dispatch responses where transport permits. Lost
+connections still require command resolution, not inferred success or replay.
+
+Approval tools distinguish explicit refusal, expiry without an answer, cancellation,
+authority invalidation and an unavailable approval interface. An answer durably
+recorded before expiry remains the answer even when read after the deadline.
 Ordinary screens use names and plain-language summaries rather than runtime
 identifiers and schemas. Console rendering preserves blank/wide cells and uses
 the runtime's cursor; a supplied program title appears in its private header.
@@ -336,3 +357,6 @@ receive an explicit access override. Defaults that require a fresh workspace
 activation must still be previewed and activated through the policy defaults
 workflow; the chooser does not silently activate them. Unrestricted does not remove
 folder limits, blocked commands or administrator policy.
+
+Outbound enrollment-relay commands retain their separate remote-owner receipt
+and transport-lease authority; local `Resolve` refuses remote-bound sessions.

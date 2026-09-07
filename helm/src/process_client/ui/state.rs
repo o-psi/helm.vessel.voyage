@@ -132,6 +132,33 @@ pub struct Pending {
     pub draft: String,
     #[serde(default)]
     pub preserve_draft: bool,
+    /// Exact public request retained before dispatch; never private input.
+    #[serde(default)]
+    pub original: Option<Box<voyage_protocol::process::RuntimeCommand>>,
+    /// Vessel lifecycle operations have separate admission semantics.
+    #[serde(default)]
+    pub receipt_only: bool,
+}
+
+impl Pending {
+    pub fn resolution(&self) -> voyage_protocol::process::RuntimeCommand {
+        use voyage_protocol::process::RuntimeCommand;
+        if self.receipt_only
+            || (self.original.is_none()
+                && (self.draft.trim() == "/branch"
+                    || self.draft.trim_start().starts_with("/branch ")
+                    || self.draft.trim() == "/restore"))
+        {
+            RuntimeCommand::Receipt {
+                command_id: self.command_id,
+            }
+        } else {
+            RuntimeCommand::Resolve {
+                command_id: self.command_id,
+                original: self.original.clone(),
+            }
+        }
+    }
 }
 
 pub struct View {

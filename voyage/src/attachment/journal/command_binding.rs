@@ -2,6 +2,82 @@
 use super::*;
 use voyage_protocol::process::RuntimeCommand;
 impl Journal {
+    /// Called with the lifetime execution fence and dispatch excluded (or from a
+    /// suspended observer). The tombstone and ID reservation commit together, so
+    /// a delayed admission cannot turn a negative answer into a later effect.
+    pub(crate) fn resolve_process_command(
+        &mut self,
+        guard: &ExecutionGuard,
+        id: Uuid,
+        principal: Uuid,
+        original: Option<&RuntimeCommand>,
+    ) -> Result<serde_json::Value> {
+        self.check_guard(guard, guard.session_id)?;
+        ensure!(!id.is_nil() && !principal.is_nil(), "nil command actor");
+        // The outbound enrollment relay has a separate command/lease authority
+        // and receipt namespace. This local protocol cannot close its commands.
+        ensure!(
+            super::remote::binding(&self.connection)?.is_none(),
+            "outbound command delivery must be resolved by its remote owner"
+        );
+        if let Some(original) = original {
+            ensure!(
+                original.mutation_id() == Some(id),
+                "resolution identity mismatch"
+            );
+            self.bind_process_command(guard, id, principal, original)?;
+        }
+        if let Some(historical) = self.transferred_command(id)? {
+            ensure!(
+                historical.principal_id == principal,
+                "command principal conflict"
+            );
+        }
+        let binding: Option<(String, Option<String>)> = self
+            .connection
+            .query_row(
+                "SELECT principal,request FROM process_command_bindings WHERE id=?1",
+                [id.to_string()],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?;
+        if let Some((actor, _)) = &binding {
+            ensure!(
+                *actor == principal.to_string(),
+                "command principal conflict"
+            );
+        }
+        if let Some(receipt) = self.process_receipt(id)? {
+            return Ok(receipt);
+        }
+        let tx = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let count: i64 =
+            tx.query_row("SELECT count(*) FROM process_command_bindings", [], |r| {
+                r.get(0)
+            })?;
+        ensure!(
+            binding.is_some() || count < MAX_COMMANDS,
+            "command reservation capacity reached"
+        );
+        tx.execute(
+            "INSERT OR IGNORE INTO process_command_bindings VALUES(?1,?2,NULL)",
+            params![id.to_string(), principal.to_string()],
+        )?;
+        let request = binding
+            .and_then(|(_, payload)| payload)
+            .unwrap_or_else(|| "null".into());
+        let receipt = serde_json::json!({"command_id":id,"status":"not_admitted",
+            "reason":"Delivery resolved: this command was not admitted. Its ID is closed; your draft can be sent as a new command."});
+        tx.execute(
+            "INSERT INTO process_commands VALUES(?1,?2,?3)",
+            params![id.to_string(), request, serde_json::to_string(&receipt)?],
+        )?;
+        commit(tx, &self.commit_fence)?;
+        Ok(receipt)
+    }
+
     pub(crate) fn initialize_command_bindings(
         &mut self,
         guard: &ExecutionGuard,

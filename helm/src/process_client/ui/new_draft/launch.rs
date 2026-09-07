@@ -1,5 +1,4 @@
-//! Persist every transition before sending; uncertain submissions are receipt-only
-//! until the operator explicitly retries their original immutable command.
+//! Persist every transition before sending; resolve uncertain submissions without replay.
 use super::*;
 use anyhow::ensure;
 
@@ -44,17 +43,17 @@ pub(super) async fn advance(
             .forward(
                 saved.id,
                 process.incarnation,
-                RuntimeCommand::Receipt {
+                RuntimeCommand::Resolve {
                     command_id: saved.turn,
+                    original: saved.submit.clone().map(Box::new),
                 },
             )
             .await?;
         if receipt["status"] != "unknown" {
             return retain_receipt(saved, receipt);
         }
-        if check_only {
-            return Ok(None);
-        }
+        // An unresolved original is never resent, even on an explicit retry.
+        return Ok(None);
     } else if check_only {
         return Ok(None);
     }

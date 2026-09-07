@@ -163,11 +163,9 @@ impl ManagedShell {
                     let approval = ctx.approval("shell", &args.command, reason);
                     let approved = tokio::select! {
                         _ = ctx.cancellation.cancelled() => return Err(ToolError::Cancelled),
-                        outcome = ctx.approver.approve(&approval) => outcome.approved(),
+                        outcome = ctx.approver.approve(&approval) => outcome,
                     };
-                    if !approved {
-                        return Err(ToolError::Denied("user declined approval".into()));
-                    }
+                    approved.require_approved()?;
                 }
                 Decision::Allow => {}
             }
