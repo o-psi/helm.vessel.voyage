@@ -29,6 +29,7 @@ pub async fn exchange(directory: &Path, request: &VesselRequest) -> Result<Vesse
         "invalid local Vessel HTTP credential"
     );
     let response = reqwest::Client::builder()
+        .no_proxy()
         .redirect(reqwest::redirect::Policy::none())
         .timeout(Duration::from_secs(30))
         .build()?

@@ -7,7 +7,8 @@ pub(crate) async fn models(
     endpoint: &str,
     key: &str,
 ) -> Result<Option<Vec<ModelInfo>>, ProviderError> {
-    let response = client
+    super::validate_native_endpoint(endpoint)?;
+    let response = super::endpoint_http_client(client, endpoint)
         .get(format!("{endpoint}/models"))
         .apply_key(key)
         .send()

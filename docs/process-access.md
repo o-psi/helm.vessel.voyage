@@ -49,7 +49,10 @@ Only literal loopback development origins can use HTTP, with
 `--allow-insecure-loopback`. The listener still binds a literal loopback address.
 The gateway validates an optional browser Origin against the configured origin,
 limits frames, SSE subscriptions and concurrent requests, and returns
-`Cache-Control: no-store`. SSE carries bounded metadata-only invalidations and
+`Cache-Control: no-store`. Gateway request-body collection has a ten-second total
+deadline before dispatch; this deadline does not cancel admitted commands or SSE
+streams. Public deployment also needs the proxy controls and remaining release
+gates in the [first-release audit](security.md#first-release-audit-2026-09-08). SSE carries bounded metadata-only invalidations and
 keepalives. A slow or disconnected Helm cannot block canonical writes; it reconnects
 from a durable cursor and uses a snapshot after a retained-event gap. Stream loss
 does not imply cancellation and never causes command replay. WebSockets are not used

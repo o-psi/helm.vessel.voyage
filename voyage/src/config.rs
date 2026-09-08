@@ -668,6 +668,7 @@ impl Config {
         self.vessel.validate()?;
         self.sandbox.validate()?;
         crate::provider::validate_inference_settings(self)?;
+        crate::provider::validate_config_endpoints(self)?;
         if !self.api_key_required {
             if !matches!(
                 self.provider,

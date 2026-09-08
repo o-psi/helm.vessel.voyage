@@ -146,10 +146,19 @@ pub(super) fn endpoint(base: &str, path: &str) -> Result<reqwest::Url> {
     endpoint.set_path(path);
     Ok(endpoint)
 }
-pub(super) fn http(streaming: bool) -> Result<reqwest::Client> {
+pub(super) fn http(base: &str, streaming: bool) -> Result<reqwest::Client> {
+    let endpoint = endpoint(base, "/")?;
     let mut builder = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .connect_timeout(Duration::from_secs(8));
+    // Loopback credentials and pairing secrets must never reach a system proxy.
+    if endpoint.host_str().is_some_and(|host| {
+        host.trim_matches(['[', ']'])
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|ip| ip.is_loopback())
+    }) {
+        builder = builder.no_proxy();
+    }
     if !streaming {
         builder = builder.timeout(Duration::from_secs(15));
     }
@@ -249,7 +258,7 @@ pub(super) async fn exchange_credential(
     command: VesselCommand,
 ) -> Result<serde_json::Value> {
     let request = credential.authorize(
-        http(false)?.post(endpoint(
+        http(credential.endpoint(), false)?.post(endpoint(
             credential.endpoint(),
             voyage_protocol::vessel::COMMAND_PATH,
         )?),
@@ -274,7 +283,7 @@ pub(super) async fn events_credential(
 ) -> Result<futures_util::stream::BoxStream<'static, Result<VesselEvent>>> {
     let request = credential
         .authorize(
-            http(true)?
+            http(credential.endpoint(), true)?
                 .post(endpoint(
                     credential.endpoint(),
                     voyage_protocol::vessel::EVENTS_PATH,

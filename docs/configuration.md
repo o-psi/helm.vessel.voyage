@@ -192,7 +192,9 @@ Set the named environment variable privately before invoking Helm. TOML names th
 variable, not its secret value. `base_url` selects a deliberate API endpoint for
 native compatible transports. Subscription credentials are not redirected by that
 field; `chatgpt_base_url` is separate and should normally remain unset. Native HTTP
-requests do not follow redirects. Local compatible endpoints and keyless access
+requests do not follow redirects. Native provider endpoints require HTTPS except
+literal-loopback HTTP for local/development use. Userinfo and fragments are
+rejected, and loopback requests bypass environment proxies. Local compatible endpoints and keyless access
 require explicit configuration; inspect `helm local-provider --help` for discovery,
 probe and config-generation commands before changing endpoints.
 
@@ -203,6 +205,14 @@ vessel auth status
 vessel auth import-codex
 vessel auth logout
 ```
+
+The native OAuth cache and import source must be private owned regular files under
+private immediate parent directories, without symlinks or hardlinks. Reads are
+bounded to 64 KiB; unsafe existing storage is refused rather than silently changing
+permissions. Logout atomically replaces the cache with a private logged-out
+record; it does not revoke upstream tokens or remove the path. These storage
+changes have Linux verification; native platform claims require separate evidence.
+
 
 Choose browser login or device login, not both for one authentication attempt.
 Import explicitly reads an existing Codex credential file; it does not run Codex.

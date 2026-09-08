@@ -116,6 +116,7 @@ pub(super) async fn exchange(
 ) -> Result<serde_json::Value> {
     let credential = credential(directory)?;
     let mut response = reqwest::Client::builder()
+        .no_proxy()
         .redirect(reqwest::redirect::Policy::none())
         .timeout(Duration::from_secs(15))
         .build()?
@@ -173,6 +174,7 @@ pub(super) async fn events(
 {
     let credential = credential(directory)?;
     let response = reqwest::Client::builder()
+        .no_proxy()
         .redirect(reqwest::redirect::Policy::none())
         .connect_timeout(Duration::from_secs(8))
         .build()?

@@ -31,11 +31,22 @@ impl Client {
             (32..=1024).contains(&token.len()) && !token.chars().any(char::is_control),
             "Enter a 32–1024 byte Vessel operator token without control characters"
         );
-        let http = reqwest::Client::builder()
+        let mut http = reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
             .timeout(Duration::from_secs(8))
-            .connect_timeout(Duration::from_secs(4))
-            .build()?;
+            .connect_timeout(Duration::from_secs(4));
+        // Discovery uses an operator credential even during loopback development.
+        if reqwest::Url::parse(&origin)?
+            .host_str()
+            .is_some_and(|host| {
+                host.trim_matches(['[', ']'])
+                    .parse::<std::net::IpAddr>()
+                    .is_ok_and(|ip| ip.is_loopback())
+            })
+        {
+            http = http.no_proxy();
+        }
+        let http = http.build()?;
         Ok(Self {
             origin,
             token,

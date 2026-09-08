@@ -17,7 +17,7 @@ are not presented as usable commands.
 | [Vessel coordination](vessel-coordination.md) | Native model inspection, steering, independent voyage creation and follow-up |
 | [Images and screenshots](multimodal-implementation.md) | Attaching images, private storage, provider support and limits |
 | [Process access](process-access.md) | Scoped grants, participant execution, signed owner transfer and recovery |
-| [Security](security.md) | Authority, credentials, disclosure and terminal safety |
+| [Security](security.md) | Authority, credentials, disclosure, terminal safety and first-release audit |
 | [Development](development.md) | Source layout, build commands and contribution workflow |
 | [UX readiness](ux-readiness.md) | Interaction inventory, known gaps and manual product acceptance gate |
 | [Design lessons](design-lessons.md) | Consolidated design principles from 13 terminal apps, source evidence and Helm design guidance |

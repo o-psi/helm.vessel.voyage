@@ -12,7 +12,7 @@ pub struct PairingCapabilities {
 /// Public metadata does not describe invitation authority. The resulting grant is
 /// reviewed after redemption, before saving a live connection.
 pub async fn pairing_capabilities(endpoint: &str) -> Result<PairingCapabilities> {
-    let response = access::http(false)?
+    let response = access::http(endpoint, false)?
         .get(access::endpoint(endpoint, "/v1/vessel/pair/capabilities")?)
         .send()
         .await
@@ -235,7 +235,7 @@ impl Registry {
         let bytes = if let Some(saved) = saved {
             saved
         } else {
-            let response = access::http(false)?
+            let response = access::http(&redemption.summary.endpoint, false)?
                 .post(access::endpoint(
                     &redemption.summary.endpoint,
                     "/v1/vessel/pair",

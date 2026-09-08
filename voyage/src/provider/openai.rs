@@ -59,6 +59,7 @@ impl Provider for OpenAiProvider {
             })
     }
     async fn complete(&self, request: ModelRequest) -> Result<ModelResponse, ProviderError> {
+        super::validate_native_endpoint(&self.base_url)?;
         let images = super::multimodal::has_images(&request);
         super::multimodal::preflight(self, &crate::config::ProviderKind::OpenaiChat, &request)
             .await?;
@@ -66,8 +67,7 @@ impl Provider for OpenAiProvider {
             super::multimodal::guard(images, async {
                 let body = self.body(request, false)?;
 
-                let response = self
-                    .client
+                let response = super::endpoint_http_client(&self.client, &self.base_url)
                     .post(format!("{}/chat/completions", self.base_url))
                     .apply_key(&self.api_key)
                     .json(&body)
@@ -82,13 +82,13 @@ impl Provider for OpenAiProvider {
     }
 
     async fn stream(&self, request: ModelRequest) -> Result<ProviderStream, ProviderError> {
+        super::validate_native_endpoint(&self.base_url)?;
         let images = super::multimodal::has_images(&request);
         super::multimodal::preflight(self, &crate::config::ProviderKind::OpenaiChat, &request)
             .await?;
         let result: Result<ProviderStream, ProviderError> =
             super::multimodal::guard(images, async {
-                let response = self
-                    .client
+                let response = super::endpoint_http_client(&self.client, &self.base_url)
                     .post(format!("{}/chat/completions", self.base_url))
                     .apply_key(&self.api_key)
                     .json(&self.body(request, true)?)

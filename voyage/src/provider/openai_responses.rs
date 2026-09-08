@@ -43,6 +43,7 @@ impl Provider for OpenAiResponsesProvider {
     }
 
     async fn complete(&self, request: ModelRequest) -> Result<ModelResponse, ProviderError> {
+        super::validate_native_endpoint(&self.base_url)?;
         let images = super::multimodal::has_images(&request);
         super::multimodal::preflight(
             self,
@@ -52,8 +53,7 @@ impl Provider for OpenAiResponsesProvider {
         .await?;
         let result: Result<ModelResponse, ProviderError> =
             super::multimodal::guard(images, async {
-                let response = self
-                    .client
+                let response = super::endpoint_http_client(&self.client, &self.base_url)
                     .post(format!("{}/responses", self.base_url))
                     .apply_key(&self.api_key)
                     .json(&request_body(request, false)?)
@@ -67,6 +67,7 @@ impl Provider for OpenAiResponsesProvider {
     }
 
     async fn stream(&self, request: ModelRequest) -> Result<ProviderStream, ProviderError> {
+        super::validate_native_endpoint(&self.base_url)?;
         let images = super::multimodal::has_images(&request);
         super::multimodal::preflight(
             self,
@@ -76,8 +77,7 @@ impl Provider for OpenAiResponsesProvider {
         .await?;
         let result: Result<ProviderStream, ProviderError> =
             super::multimodal::guard(images, async {
-                let response = self
-                    .client
+                let response = super::endpoint_http_client(&self.client, &self.base_url)
                     .post(format!("{}/responses", self.base_url))
                     .apply_key(&self.api_key)
                     .json(&request_body(request, true)?)

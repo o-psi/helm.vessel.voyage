@@ -238,6 +238,7 @@ pub fn from_config(
     config: &Config,
     workspace: std::path::PathBuf,
 ) -> Result<Box<dyn Provider>, ProviderError> {
+    validate_config_endpoints(config)?;
     validate_inference_settings(config)
         .map_err(|error| ProviderError::Request(error.to_string()))?;
     match config.provider {
@@ -279,6 +280,48 @@ pub fn from_config(
     }
 }
 
+/// Validate before credentials are loaded and again at transport dispatch, since
+/// public provider constructors do not require a validated Config.
+pub(crate) fn validate_config_endpoints(config: &Config) -> Result<(), ProviderError> {
+    let endpoint = match config.provider {
+        ProviderKind::OpenaiChat | ProviderKind::OpenaiResponses | ProviderKind::Anthropic => {
+            config.base_url.as_deref()
+        }
+        ProviderKind::ChatGptOauth => config.chatgpt_base_url.as_deref(),
+        ProviderKind::CodexSubscription => None,
+    };
+    if let Some(endpoint) = endpoint {
+        validate_native_endpoint(endpoint)?;
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_native_endpoint(raw: &str) -> Result<(), ProviderError> {
+    let denied = || {
+        ProviderError::Request(
+            "provider endpoint requires HTTPS or literal loopback HTTP, without userinfo or fragment"
+                .into(),
+        )
+    };
+    let url = reqwest::Url::parse(raw).map_err(|_| denied())?;
+    let loopback = url.host_str().is_some_and(|host| {
+        host.trim_matches(['[', ']'])
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|address| address.is_loopback())
+    });
+    if !(url.scheme() == "https" || (url.scheme() == "http" && loopback))
+        || url.host_str().is_none()
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.fragment().is_some()
+        || raw.trim() != raw
+        || raw.chars().any(char::is_control)
+    {
+        return Err(denied());
+    }
+    Ok(())
+}
+
 /// Credentials and request bodies belong only to the explicitly configured endpoint.
 /// Even same-origin redirects are rejected so no redirect can replay a POST.
 pub(crate) fn native_http_client() -> reqwest::Client {
@@ -289,6 +332,24 @@ pub(crate) fn native_http_client() -> reqwest::Client {
 
 fn native_http_client_builder() -> reqwest::ClientBuilder {
     reqwest::Client::builder().redirect(reqwest::redirect::Policy::none())
+}
+
+/// Literal loopback HTTP must remain local even when HTTP_PROXY is configured.
+/// Remote HTTPS keeps the caller's normal proxy configuration and connection pool.
+pub(crate) fn endpoint_http_client(client: &reqwest::Client, endpoint: &str) -> reqwest::Client {
+    if reqwest::Url::parse(endpoint).is_ok_and(|url| url.scheme() == "http") {
+        static LOCAL: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+        LOCAL
+            .get_or_init(|| {
+                native_http_client_builder()
+                    .no_proxy()
+                    .build()
+                    .expect("local provider HTTP client")
+            })
+            .clone()
+    } else {
+        client.clone()
+    }
 }
 
 pub(crate) fn reject_redirect(response: &reqwest::Response) -> Result<(), ProviderError> {

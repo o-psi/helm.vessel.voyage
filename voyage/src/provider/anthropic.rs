@@ -43,8 +43,7 @@ impl AnthropicProvider {
             .map_err(|_| ProviderError::Request("invalid Anthropic model metadata URL".into()))?
             .pop_if_empty()
             .push(&request.model);
-        let response = self
-            .client
+        let response = super::endpoint_http_client(&self.client, &self.base_url)
             .get(url)
             .header("x-api-key", &self.api_key)
             .header("anthropic-version", "2023-06-01")
@@ -74,13 +73,13 @@ fn missing_output_capacity() -> ProviderError {
 #[async_trait]
 impl Provider for AnthropicProvider {
     async fn models(&self) -> Result<Vec<ModelInfo>, ProviderError> {
+        super::validate_native_endpoint(&self.base_url)?;
         let mut models = Vec::new();
         let mut after_id: Option<String> = None;
         let mut remaining = super::catalog::MAX_BYTES;
         let mut cursors = std::collections::BTreeSet::new();
         loop {
-            let mut request = self
-                .client
+            let mut request = super::endpoint_http_client(&self.client, &self.base_url)
                 .get(format!("{}/models", self.base_url))
                 .header("x-api-key", &self.api_key)
                 .header("anthropic-version", "2023-06-01")
@@ -140,6 +139,7 @@ impl Provider for AnthropicProvider {
         Ok(models)
     }
     async fn complete(&self, request: ModelRequest) -> Result<ModelResponse, ProviderError> {
+        super::validate_native_endpoint(&self.base_url)?;
         let images = super::multimodal::has_images(&request);
         super::multimodal::preflight(self, &crate::config::ProviderKind::Anthropic, &request)
             .await?;
@@ -171,8 +171,7 @@ impl Provider for AnthropicProvider {
                     body["temperature"] = json!(value);
                 }
                 super::multimodal::check_body(&body)?;
-                let response = self
-                    .client
+                let response = super::endpoint_http_client(&self.client, &self.base_url)
                     .post(format!("{}/messages", self.base_url))
                     .header("x-api-key", &self.api_key)
                     .header("anthropic-version", "2023-06-01")
@@ -187,6 +186,7 @@ impl Provider for AnthropicProvider {
     }
 
     async fn stream(&self, request: ModelRequest) -> Result<ProviderStream, ProviderError> {
+        super::validate_native_endpoint(&self.base_url)?;
         let images = super::multimodal::has_images(&request);
         super::multimodal::preflight(self, &crate::config::ProviderKind::Anthropic, &request)
             .await?;
@@ -218,8 +218,7 @@ impl Provider for AnthropicProvider {
                     body["temperature"] = json!(value);
                 }
                 super::multimodal::check_body(&body)?;
-                let response = self
-                    .client
+                let response = super::endpoint_http_client(&self.client, &self.base_url)
                     .post(format!("{}/messages", self.base_url))
                     .header("x-api-key", &self.api_key)
                     .header("anthropic-version", "2023-06-01")

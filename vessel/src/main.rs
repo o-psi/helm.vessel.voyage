@@ -1,6 +1,7 @@
 mod auth;
 mod coordination_http;
 mod enrollment_inspection_http;
+mod http_boundary;
 mod process_http;
 mod remote_http;
 use anyhow::Result;
@@ -348,6 +349,8 @@ async fn main() -> Result<()> {
     } else {
         app
     };
+    // Include enrollment and attachment routers in the same receive boundary.
+    let app = app.layer(middleware::from_fn(http_boundary::boundary));
     let listener = tokio::net::TcpListener::bind(&cli.bind).await?;
     tracing::info!(address = %cli.bind, attachment_presence = attachment.is_some(), remote_execution = cli.remote_execution, "Vessel ready");
     axum::serve(listener, app)
@@ -442,7 +445,12 @@ async fn correlate(mut request: Request<Body>, next: Next) -> Response {
         .unwrap_or_else(|| Uuid::new_v4().to_string());
     request.extensions_mut().insert(request_id.clone());
     let method = request.method().clone();
-    let path = request.uri().path().to_owned();
+    // Never log attacker-controlled URL paths (which may contain pasted secrets).
+    let path = request
+        .extensions()
+        .get::<axum::extract::MatchedPath>()
+        .map_or("<unmatched>", axum::extract::MatchedPath::as_str)
+        .to_owned();
     let span = tracing::info_span!("http.request", request_id = %request_id, %method, %path);
     let mut response = next.run(request).instrument(span).await;
     if let Ok(value) = HeaderValue::from_str(&request_id) {

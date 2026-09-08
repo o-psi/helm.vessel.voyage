@@ -29,6 +29,8 @@ use crate::model::{ModelRequest, ModelResponse};
 const CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
 const REFRESH_SKEW_SECS: u64 = 300;
 
+mod storage;
+
 #[derive(Clone, Debug)]
 pub struct OAuthEndpoints {
     pub authorize: String,
@@ -42,9 +44,9 @@ pub struct OAuthEndpoints {
 #[async_trait]
 impl Provider for ChatGptOAuth {
     async fn models(&self) -> Result<Vec<ModelInfo>, ProviderError> {
+        super::validate_native_endpoint(&self.endpoints.models)?;
         let tokens = self.valid_tokens().await?;
-        let response = self
-            .client
+        let response = super::endpoint_http_client(&self.client, &self.endpoints.models)
             .get(&self.endpoints.models)
             // OpenAI's own catalog-refresh workflow uses this sentinel so new
             // models are not hidden behind an unrelated client release number.
@@ -304,51 +306,44 @@ impl TokenStore {
     }
 
     pub async fn load(&self) -> Result<Option<OAuthTokens>, ProviderError> {
-        match tokio::fs::read(&self.path).await {
-            Ok(bytes) => serde_json::from_slice(&bytes).map(Some).map_err(|error| {
-                ProviderError::Authentication(format!("invalid ChatGPT token cache: {error}"))
-            }),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-            Err(error) => Err(ProviderError::Authentication(format!(
-                "cannot read ChatGPT token cache: {error}"
-            ))),
+        let Some(bytes) = self.private_bytes().await? else {
+            return Ok(None);
+        };
+        let tokens: Option<OAuthTokens> = serde_json::from_slice(&bytes)
+            .map_err(|_| ProviderError::Authentication("invalid ChatGPT token cache".into()))?;
+        if let Some(tokens) = &tokens {
+            validate_tokens(tokens)?;
         }
+        Ok(tokens)
+    }
+
+    async fn private_bytes(&self) -> Result<Option<Vec<u8>>, ProviderError> {
+        let path = self.path.clone();
+        tokio::task::spawn_blocking(move || storage::read(&path))
+            .await
+            .map_err(|_| private_cache_error())?
+            .map_err(|_| private_cache_error())
+    }
+
+    async fn publish(&self, bytes: Option<Vec<u8>>) -> Result<(), ProviderError> {
+        let path = self.path.clone();
+        tokio::task::spawn_blocking(move || storage::write(&path, bytes.as_deref()))
+            .await
+            .map_err(|_| private_cache_error())?
+            .map_err(|_| private_cache_error())
     }
 
     pub async fn save(&self, tokens: &OAuthTokens) -> Result<(), ProviderError> {
         validate_tokens(tokens)?;
-        let parent = self
-            .path
-            .parent()
-            .ok_or_else(|| ProviderError::Authentication("token cache has no parent".into()))?;
-        tokio::fs::create_dir_all(parent).await.map_err(auth_io)?;
-        set_mode(parent, 0o700).await?;
-        let temporary = self
-            .path
-            .with_extension(format!("tmp-{}", uuid::Uuid::new_v4()));
-        let mut file = tokio::fs::File::create(&temporary).await.map_err(auth_io)?;
-        set_mode(&temporary, 0o600).await?;
-        file.write_all(
-            &serde_json::to_vec(tokens)
-                .map_err(|error| ProviderError::Authentication(error.to_string()))?,
-        )
-        .await
-        .map_err(auth_io)?;
-        file.sync_all().await.map_err(auth_io)?;
-        if let Err(error) = tokio::fs::rename(&temporary, &self.path).await {
-            let _ = tokio::fs::remove_file(&temporary).await;
-            return Err(auth_io(error));
+        let bytes = serde_json::to_vec(tokens).map_err(|_| private_cache_error())?;
+        if bytes.len() > storage::LIMIT {
+            return Err(private_cache_error());
         }
-        set_mode(&self.path, 0o600).await?;
-        Ok(())
+        self.publish(Some(bytes)).await
     }
 
     pub async fn clear(&self) -> Result<(), ProviderError> {
-        match tokio::fs::remove_file(&self.path).await {
-            Ok(()) => Ok(()),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(error) => Err(auth_io(error)),
-        }
+        self.publish(None).await
     }
 
     pub async fn status(&self) -> Result<TokenStatus, ProviderError> {
@@ -374,10 +369,12 @@ impl TokenStore {
                 "Local ChatGPT credentials already exist".into(),
             ));
         }
-        let document: Value =
-            serde_json::from_slice(&tokio::fs::read(source).await.map_err(auth_io)?).map_err(
-                |error| ProviderError::Authentication(format!("invalid Codex auth file: {error}")),
-            )?;
+        let bytes = Self::new(source.to_owned())
+            .private_bytes()
+            .await?
+            .ok_or_else(private_cache_error)?;
+        let document: Value = serde_json::from_slice(&bytes)
+            .map_err(|_| ProviderError::Authentication("invalid Codex auth file".into()))?;
         let source = document.get("tokens").unwrap_or(&document);
         let access_token = required_string(source, "access_token")?;
         let refresh_token = required_string(source, "refresh_token")?;
@@ -492,6 +489,8 @@ impl ChatGptOAuth {
     where
         F: FnOnce(&str),
     {
+        super::validate_native_endpoint(&self.endpoints.authorize)?;
+        super::validate_native_endpoint(&self.endpoints.token)?;
         let listener = match tokio::net::TcpListener::bind(("127.0.0.1", 1455)).await {
             Ok(listener) => listener,
             Err(_) => tokio::net::TcpListener::bind(("127.0.0.1", 1457))
@@ -566,8 +565,8 @@ impl ChatGptOAuth {
     }
 
     pub async fn begin_device(&self) -> Result<DeviceAuthorization, ProviderError> {
-        let response = self
-            .client
+        super::validate_native_endpoint(&self.endpoints.device_user_code)?;
+        let response = super::endpoint_http_client(&self.client, &self.endpoints.device_user_code)
             .post(&self.endpoints.device_user_code)
             .json(&serde_json::json!({"client_id": CLIENT_ID}))
             .send()
@@ -592,7 +591,8 @@ impl ChatGptOAuth {
         &self,
         device: &DeviceAuthorization,
     ) -> Result<OAuthTokens, ProviderError> {
-        let response = self.client.post(&self.endpoints.device_token).json(&serde_json::json!({"device_auth_id":device.device_auth_id,"user_code":device.user_code})).send().await.map_err(map_request)?;
+        super::validate_native_endpoint(&self.endpoints.device_token)?;
+        let response = super::endpoint_http_client(&self.client, &self.endpoints.device_token).post(&self.endpoints.device_token).json(&serde_json::json!({"device_auth_id":device.device_auth_id,"user_code":device.user_code})).send().await.map_err(map_request)?;
         super::reject_redirect(&response)?;
         if !response.status().is_success() {
             return match response.status().as_u16() {
@@ -656,9 +656,9 @@ impl ChatGptOAuth {
         &self,
         body: &Value,
     ) -> Result<(reqwest::RequestBuilder, OAuthTokens), ProviderError> {
+        super::validate_native_endpoint(&self.endpoints.responses)?;
         let tokens = self.valid_tokens().await?;
-        let request = self
-            .client
+        let request = super::endpoint_http_client(&self.client, &self.endpoints.responses)
             .post(&self.endpoints.responses)
             .bearer_auth(&tokens.access_token)
             .header("ChatGPT-Account-Id", &tokens.account_id)
@@ -701,8 +701,8 @@ impl ChatGptOAuth {
     }
 
     async fn exchange(&self, form: &[(&str, &str)]) -> Result<OAuthTokens, ProviderError> {
-        let response = self
-            .client
+        super::validate_native_endpoint(&self.endpoints.token)?;
+        let response = super::endpoint_http_client(&self.client, &self.endpoints.token)
             .post(&self.endpoints.token)
             .form(form)
             .send()
@@ -897,16 +897,10 @@ fn percent_decode(value: &str) -> Result<String, ProviderError> {
     String::from_utf8(output)
         .map_err(|_| ProviderError::Authentication("invalid OAuth callback encoding".into()))
 }
-#[cfg(unix)]
-async fn set_mode(path: &Path, mode: u32) -> Result<(), ProviderError> {
-    use std::os::unix::fs::PermissionsExt;
-    tokio::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))
-        .await
-        .map_err(auth_io)
-}
-#[cfg(not(unix))]
-async fn set_mode(_: &Path, _: u32) -> Result<(), ProviderError> {
-    Ok(())
+fn private_cache_error() -> ProviderError {
+    ProviderError::Authentication(
+        "ChatGPT credential storage must be owned, private, bounded and free of symlinks".into(),
+    )
 }
 
 // ChatGPT's catalog convention uses default to suppress client tier selection.

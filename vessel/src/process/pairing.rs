@@ -265,38 +265,41 @@ pub fn redeem(
     let _lock = lock(root)?;
     let mut state = load(root)?;
     let now = store::now()?;
-    if now.saturating_sub(state.window_ms) >= 60_000 {
-        state.window_ms = now;
-        state.attempts = 0;
-    }
-    ensure!(state.attempts < 120, PairRefusal::RateLimited);
-    state.attempts += 1;
-    // Persist even unknown-invitation attempts; restarts do not reset the budget.
-    save(root, &state)?;
     let position = state
         .invitations
         .iter()
-        .position(|p| p.invitation_id == request.invitation_id)
-        .ok_or_else(|| anyhow::anyhow!(PairRefusal::Denied))?;
-    let p = &state.invitations[position];
-    let same_code = bool::from(
-        store::hash(&request.code)
-            .as_bytes()
-            .ct_eq(p.code_hash.as_bytes()),
-    );
-    if let Some(expected) = expected_vessel_id {
-        ensure!(expected == identity(root)?, PairRefusal::IdentityChanged);
-    }
-    let matching = same_code
-        && p.principal_id == request.principal_id
-        && p.endpoint == origin
-        && p.vessel_id == identity(root)?;
+        .position(|p| p.invitation_id == request.invitation_id);
+    let code_hash = store::hash(&request.code);
+    let matching = position.is_some_and(|position| {
+        let p = &state.invitations[position];
+        bool::from(code_hash.as_bytes().ct_eq(p.code_hash.as_bytes()))
+            && p.principal_id == request.principal_id
+            && p.endpoint == origin
+    });
     if !matching {
-        let p = &mut state.invitations[position];
-        p.attempts = p.attempts.saturating_add(1);
+        if now.saturating_sub(state.window_ms) >= 60_000 {
+            state.window_ms = now;
+            state.attempts = 0;
+        }
+        ensure!(state.attempts < 120, PairRefusal::RateLimited);
+        state.attempts += 1;
+        if let Some(position) = position {
+            let p = &mut state.invitations[position];
+            p.attempts = p.attempts.saturating_add(1);
+        }
+        // Anonymous failures share a durable abuse budget. Possession of the
+        // invitation secret must still permit redemption and exact retries when
+        // strangers have exhausted that budget. Per-invitation lockout remains.
         save(root, &state)?;
         anyhow::bail!(PairRefusal::Denied);
     }
+    let position = position.expect("matching invitation");
+    let p = &state.invitations[position];
+    let vessel_id = identity(root)?;
+    if let Some(expected) = expected_vessel_id {
+        ensure!(expected == vessel_id, PairRefusal::IdentityChanged);
+    }
+    ensure!(p.vessel_id == vessel_id, PairRefusal::Denied);
     if p.redemption.is_none() {
         ensure!(p.attempts < 8 && p.expires_at_ms > now, PairRefusal::Denied);
         ensure!(
