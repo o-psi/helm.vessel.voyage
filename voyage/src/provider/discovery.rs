@@ -46,7 +46,9 @@ pub(crate) async fn models(
                 "model-list failure: invalid or credential-bearing model ID".into(),
             ));
         }
-        models.push(ModelInfo::minimal(id));
+        let mut model = ModelInfo::minimal(id);
+        model.input_modalities = super::multimodal::discovered_modalities(item)?;
+        models.push(model);
     }
     super::validate_models(&models, &[key])?;
     normalize_models(&mut models);

@@ -33,7 +33,7 @@ impl OpenAiProvider {
     }
     fn body(&self, request: ModelRequest, streaming: bool) -> Result<Value, ProviderError> {
         super::inference::validate_request(&crate::config::ProviderKind::OpenaiChat, &request)?;
-        let mut body = request_body(request, streaming);
+        let mut body = request_body(request, streaming)?;
         if self.use_max_tokens
             && let Some(value) = body
                 .as_object_mut()
@@ -42,6 +42,7 @@ impl OpenAiProvider {
         {
             body["max_tokens"] = value;
         }
+        super::multimodal::check_body(&body)?;
         Ok(body)
     }
 }
@@ -58,37 +59,53 @@ impl Provider for OpenAiProvider {
             })
     }
     async fn complete(&self, request: ModelRequest) -> Result<ModelResponse, ProviderError> {
-        let body = self.body(request, false)?;
+        let images = super::multimodal::has_images(&request);
+        super::multimodal::preflight(self, &crate::config::ProviderKind::OpenaiChat, &request)
+            .await?;
+        let result: Result<ModelResponse, ProviderError> =
+            super::multimodal::guard(images, async {
+                let body = self.body(request, false)?;
 
-        let response = self
-            .client
-            .post(format!("{}/chat/completions", self.base_url))
-            .apply_key(&self.api_key)
-            .json(&body)
-            .send()
-            .await
-            .map_err(map_transport)?;
-        let value = checked_json(response).await?;
-        decode_response(value)
+                let response = self
+                    .client
+                    .post(format!("{}/chat/completions", self.base_url))
+                    .apply_key(&self.api_key)
+                    .json(&body)
+                    .send()
+                    .await
+                    .map_err(map_transport)?;
+                let value = checked_json(response).await?;
+                decode_response(value)
+            })
+            .await;
+        result
     }
 
     async fn stream(&self, request: ModelRequest) -> Result<ProviderStream, ProviderError> {
-        let response = self
-            .client
-            .post(format!("{}/chat/completions", self.base_url))
-            .apply_key(&self.api_key)
-            .json(&self.body(request, true)?)
-            .send()
-            .await
-            .map_err(map_transport)?;
-        let response = checked_stream_response(response).await?;
-        let byte_stream = response.bytes_stream();
-        Ok(Box::pin(openai_stream(byte_stream)))
+        let images = super::multimodal::has_images(&request);
+        super::multimodal::preflight(self, &crate::config::ProviderKind::OpenaiChat, &request)
+            .await?;
+        let result: Result<ProviderStream, ProviderError> =
+            super::multimodal::guard(images, async {
+                let response = self
+                    .client
+                    .post(format!("{}/chat/completions", self.base_url))
+                    .apply_key(&self.api_key)
+                    .json(&self.body(request, true)?)
+                    .send()
+                    .await
+                    .map_err(map_transport)?;
+                let response = checked_stream_response(response).await?;
+                let byte_stream = response.bytes_stream();
+                Ok(Box::pin(openai_stream(byte_stream)) as ProviderStream)
+            })
+            .await;
+        result.map(|stream| super::multimodal::guard_stream(images, stream))
     }
 }
 
-fn request_body(request: ModelRequest, streaming: bool) -> Value {
-    let messages = encode_messages(&request.messages);
+fn request_body(request: ModelRequest, streaming: bool) -> Result<Value, ProviderError> {
+    let messages = encode_messages(&request.messages)?;
     let tools: Vec<Value> = request.tools.iter().map(|t| json!({"type":"function","function":{"name":t.name,"description":t.description,"parameters":t.input_schema}})).collect();
     let mut body = json!({"model":request.model,"messages":messages,"stream":streaming});
     if streaming {
@@ -109,7 +126,7 @@ fn request_body(request: ModelRequest, streaming: bool) -> Value {
     if let Some(value) = request.max_tokens {
         body["max_completion_tokens"] = json!(value);
     }
-    body
+    Ok(body)
 }
 
 #[derive(Default)]
@@ -172,6 +189,11 @@ fn apply_stream_chunk(
     value: &Value,
     assembly: &mut StreamAssembly,
 ) -> Result<Vec<ProviderDelta>, ProviderError> {
+    if value.get("error").is_some() {
+        return Err(ProviderError::Request(
+            "OpenAI stream reported a provider error".into(),
+        ));
+    }
     let mut events = Vec::new();
     if let Some(usage) = value.get("usage") {
         assembly.usage.input_tokens = usage
@@ -260,6 +282,8 @@ fn finish_stream(assembly: StreamAssembly) -> Result<ModelResponse, ProviderErro
     Ok(ModelResponse {
         service_tier: assembly.service_tier,
         message: Message {
+            parts: Vec::new(),
+            image_data: Default::default(),
             operator_name: None,
             created_at: Some(chrono::Utc::now()),
             role: Role::Assistant,
@@ -314,11 +338,13 @@ fn map_transport(error: reqwest::Error) -> ProviderError {
 /// exact ordered text at the same authority level without changing canonical
 /// messages. Stop at any other role or unusual tool metadata; never promote or
 /// silently discard a malformed/late message to make a template accept it.
-fn encode_messages(messages: &[Message]) -> Vec<Value> {
+fn encode_messages(messages: &[Message]) -> Result<Vec<Value>, ProviderError> {
     let leading = messages
         .iter()
         .take_while(|message| {
             message.role == Role::System
+                && message.parts.is_empty()
+                && message.image_data.is_empty()
                 && message.tool_call_id.is_none()
                 && message.tool_calls.is_empty()
         })
@@ -331,19 +357,21 @@ fn encode_messages(messages: &[Message]) -> Vec<Value> {
         .map(|message| message.content.as_str())
         .collect::<Vec<_>>()
         .join("\n\n");
-    std::iter::once(json!({"role": "system", "content": content}))
+    std::iter::once(Ok(json!({"role": "system", "content": content})))
         .chain(messages[leading..].iter().map(encode_message))
         .collect()
 }
 
-fn encode_message(message: &Message) -> Value {
+fn encode_message(message: &Message) -> Result<Value, ProviderError> {
     let role = match message.role {
         Role::System => "system",
         Role::User => "user",
         Role::Assistant => "assistant",
         Role::Tool => "tool",
     };
-    let mut value = json!({ "role": role, "content": message.content });
+    let content = super::multimodal::content(message, super::multimodal::Wire::Chat)?
+        .unwrap_or_else(|| json!(message.content));
+    let mut value = json!({ "role": role, "content": content });
     if let Some(id) = &message.tool_call_id {
         value["tool_call_id"] = json!(id);
     }
@@ -352,7 +380,7 @@ fn encode_message(message: &Message) -> Value {
             "id": c.id, "type": "function", "function": { "name": c.name, "arguments": c.arguments.to_string() }
         })).collect::<Vec<_>>());
     }
-    value
+    Ok(value)
 }
 
 fn decode_response(value: Value) -> Result<ModelResponse, ProviderError> {
@@ -406,6 +434,8 @@ fn decode_response(value: Value) -> Result<ModelResponse, ProviderError> {
     Ok(ModelResponse {
         service_tier: super::reported_service_tier(value.get("service_tier")),
         message: Message {
+            parts: Vec::new(),
+            image_data: Default::default(),
             operator_name: None,
             created_at: Some(chrono::Utc::now()),
             role: Role::Assistant,

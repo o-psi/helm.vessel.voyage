@@ -106,6 +106,7 @@ impl Provider for AnthropicProvider {
                     ProviderError::InvalidResponse("Anthropic model omitted id".into())
                 })?;
                 let mut model = ModelInfo::minimal(id);
+                model.input_modalities = super::multimodal::discovered_modalities(item)?;
                 model.display_name =
                     super::catalog::optional_text(item, "display_name", id)?.to_owned();
                 super::validate_model(&model, &[&self.api_key])?;
@@ -139,65 +140,99 @@ impl Provider for AnthropicProvider {
         Ok(models)
     }
     async fn complete(&self, request: ModelRequest) -> Result<ModelResponse, ProviderError> {
-        super::inference::validate_request(&crate::config::ProviderKind::Anthropic, &request)?;
-        let system = request
-            .messages
-            .iter()
-            .filter(|m| m.role == Role::System)
-            .map(|m| m.content.as_str())
-            .collect::<Vec<_>>()
-            .join("\n\n");
-        let messages = encode_messages(&request.messages);
-        let tools: Vec<Value> = request.tools.iter().map(|t| json!({ "name": t.name, "description": t.description, "input_schema": t.input_schema })).collect();
-        let mut body = json!({ "model": request.model, "max_tokens": self.output_tokens(&request).await?, "system": system, "messages": messages });
-        if !tools.is_empty() {
-            body["tools"] = json!(tools);
-        }
-        if let Some(value) = request.temperature {
-            body["temperature"] = json!(value);
-        }
-        let response = self
-            .client
-            .post(format!("{}/messages", self.base_url))
-            .header("x-api-key", &self.api_key)
-            .header("anthropic-version", "2023-06-01")
-            .json(&body)
-            .send()
-            .await
-            .map_err(map_transport)?;
-        decode_response(checked_json(response).await?)
+        let images = super::multimodal::has_images(&request);
+        super::multimodal::preflight(self, &crate::config::ProviderKind::Anthropic, &request)
+            .await?;
+        let result: Result<ModelResponse, ProviderError> =
+            super::multimodal::guard(images, async {
+                super::inference::validate_request(
+                    &crate::config::ProviderKind::Anthropic,
+                    &request,
+                )?;
+                let system = request
+                    .messages
+                    .iter()
+                    .filter(|m| m.role == Role::System)
+                    .map(|m| m.content.as_str())
+                    .collect::<Vec<_>>()
+                    .join("\n\n");
+                let messages = encode_messages(&request.messages)?;
+                let tools: Vec<Value> = request.tools.iter().map(|t| {
+            json!({"name":t.name,"description":t.description,"input_schema":t.input_schema})
+        }).collect();
+                let mut body = json!({
+                    "model": request.model, "max_tokens": self.output_tokens(&request).await?,
+                    "system": system, "messages": messages
+                });
+                if !tools.is_empty() {
+                    body["tools"] = json!(tools);
+                }
+                if let Some(value) = request.temperature {
+                    body["temperature"] = json!(value);
+                }
+                super::multimodal::check_body(&body)?;
+                let response = self
+                    .client
+                    .post(format!("{}/messages", self.base_url))
+                    .header("x-api-key", &self.api_key)
+                    .header("anthropic-version", "2023-06-01")
+                    .json(&body)
+                    .send()
+                    .await
+                    .map_err(map_transport)?;
+                decode_response(checked_json(response).await?)
+            })
+            .await;
+        result
     }
 
     async fn stream(&self, request: ModelRequest) -> Result<ProviderStream, ProviderError> {
-        super::inference::validate_request(&crate::config::ProviderKind::Anthropic, &request)?;
-        let system = request
-            .messages
-            .iter()
-            .filter(|m| m.role == Role::System)
-            .map(|m| m.content.as_str())
-            .collect::<Vec<_>>()
-            .join("\n\n");
-        let messages = encode_messages(&request.messages);
-        let tools: Vec<Value> = request.tools.iter().map(|t| json!({"name":t.name,"description":t.description,"input_schema":t.input_schema})).collect();
-        let mut body = json!({"model":request.model,"max_tokens":self.output_tokens(&request).await?,"system":system,"messages":messages,"stream":true});
-        if !tools.is_empty() {
-            body["tools"] = json!(tools);
-        }
-        if let Some(value) = request.temperature {
-            body["temperature"] = json!(value);
-        }
-        let response = self
-            .client
-            .post(format!("{}/messages", self.base_url))
-            .header("x-api-key", &self.api_key)
-            .header("anthropic-version", "2023-06-01")
-            .json(&body)
-            .send()
-            .await
-            .map_err(map_transport)?;
-        Ok(Box::pin(anthropic_stream(
-            checked_stream_response(response).await?.bytes_stream(),
-        )))
+        let images = super::multimodal::has_images(&request);
+        super::multimodal::preflight(self, &crate::config::ProviderKind::Anthropic, &request)
+            .await?;
+        let result: Result<ProviderStream, ProviderError> =
+            super::multimodal::guard(images, async {
+                super::inference::validate_request(
+                    &crate::config::ProviderKind::Anthropic,
+                    &request,
+                )?;
+                let system = request
+                    .messages
+                    .iter()
+                    .filter(|m| m.role == Role::System)
+                    .map(|m| m.content.as_str())
+                    .collect::<Vec<_>>()
+                    .join("\n\n");
+                let messages = encode_messages(&request.messages)?;
+                let tools: Vec<Value> = request.tools.iter().map(|t| {
+            json!({"name":t.name,"description":t.description,"input_schema":t.input_schema})
+        }).collect();
+                let mut body = json!({
+                    "model":request.model,"max_tokens":self.output_tokens(&request).await?,
+                    "system":system,"messages":messages,"stream":true
+                });
+                if !tools.is_empty() {
+                    body["tools"] = json!(tools);
+                }
+                if let Some(value) = request.temperature {
+                    body["temperature"] = json!(value);
+                }
+                super::multimodal::check_body(&body)?;
+                let response = self
+                    .client
+                    .post(format!("{}/messages", self.base_url))
+                    .header("x-api-key", &self.api_key)
+                    .header("anthropic-version", "2023-06-01")
+                    .json(&body)
+                    .send()
+                    .await
+                    .map_err(map_transport)?;
+                Ok(Box::pin(anthropic_stream(
+                    checked_stream_response(response).await?.bytes_stream(),
+                )) as ProviderStream)
+            })
+            .await;
+        result.map(|stream| super::multimodal::guard_stream(images, stream))
     }
 }
 
@@ -234,6 +269,9 @@ where
                 let data=super::openai::sse_data(&frame);
                 if data.is_empty(){continue;}
                 let value:Value=serde_json::from_slice(data).map_err(|e|ProviderError::InvalidResponse(format!("invalid Anthropic stream event: {e}")))?;
+                if value.get("type").and_then(Value::as_str) == Some("error") {
+                    Err(ProviderError::Request("Anthropic stream reported a provider error".into()))?;
+                }
                 if let Some(usage) = value.pointer("/message/usage").or_else(|| value.get("usage")) {
                     if let Some(tier) = super::reported_service_tier(usage.get("service_tier")) { assembly.service_tier = Some(tier); }
                     yield ProviderStreamEvent::UsageReported(super::reported_usage(usage, "input_tokens", "output_tokens")?);
@@ -349,6 +387,8 @@ fn finish_stream(assembly: StreamAssembly) -> Result<ModelResponse, ProviderErro
     Ok(ModelResponse {
         service_tier: assembly.service_tier,
         message: Message {
+            parts: Vec::new(),
+            image_data: Default::default(),
             operator_name: None,
             created_at: Some(chrono::Utc::now()),
             role: Role::Assistant,
@@ -373,11 +413,12 @@ fn map_transport(error: reqwest::Error) -> ProviderError {
     }
 }
 
-fn encode_messages(messages: &[Message]) -> Vec<Value> {
+fn encode_messages(messages: &[Message]) -> Result<Vec<Value>, ProviderError> {
     let mut result = Vec::new();
-    for message in messages.iter().filter(|m| m.role != Role::System) {
+    for message in messages {
+        let structured = super::multimodal::content(message, super::multimodal::Wire::Anthropic)?;
         match message.role {
-            Role::User => result.push(json!({"role":"user", "content": message.content})),
+            Role::User => result.push(json!({"role":"user", "content": structured.unwrap_or_else(|| json!(message.content))})),
             Role::Assistant => {
                 let mut blocks = Vec::new();
                 if !message.content.is_empty() { blocks.push(json!({"type":"text", "text":message.content})); }
@@ -388,7 +429,7 @@ fn encode_messages(messages: &[Message]) -> Vec<Value> {
             Role::System => {}
         }
     }
-    result
+    Ok(result)
 }
 
 fn decode_response(value: Value) -> Result<ModelResponse, ProviderError> {
@@ -422,6 +463,8 @@ fn decode_response(value: Value) -> Result<ModelResponse, ProviderError> {
     Ok(ModelResponse {
         service_tier: super::reported_service_tier(value.pointer("/usage/service_tier")),
         message: Message {
+            parts: Vec::new(),
+            image_data: Default::default(),
             operator_name: None,
             created_at: Some(chrono::Utc::now()),
             role: Role::Assistant,

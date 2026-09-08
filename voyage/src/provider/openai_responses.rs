@@ -43,28 +43,52 @@ impl Provider for OpenAiResponsesProvider {
     }
 
     async fn complete(&self, request: ModelRequest) -> Result<ModelResponse, ProviderError> {
-        let response = self
-            .client
-            .post(format!("{}/responses", self.base_url))
-            .apply_key(&self.api_key)
-            .json(&request_body(request, false)?)
-            .send()
-            .await
-            .map_err(map_transport)?;
-        decode_response(checked_json(response).await?)
+        let images = super::multimodal::has_images(&request);
+        super::multimodal::preflight(
+            self,
+            &crate::config::ProviderKind::OpenaiResponses,
+            &request,
+        )
+        .await?;
+        let result: Result<ModelResponse, ProviderError> =
+            super::multimodal::guard(images, async {
+                let response = self
+                    .client
+                    .post(format!("{}/responses", self.base_url))
+                    .apply_key(&self.api_key)
+                    .json(&request_body(request, false)?)
+                    .send()
+                    .await
+                    .map_err(map_transport)?;
+                decode_response(checked_json(response).await?)
+            })
+            .await;
+        result
     }
 
     async fn stream(&self, request: ModelRequest) -> Result<ProviderStream, ProviderError> {
-        let response = self
-            .client
-            .post(format!("{}/responses", self.base_url))
-            .apply_key(&self.api_key)
-            .json(&request_body(request, true)?)
-            .send()
-            .await
-            .map_err(map_transport)?;
-        let response = checked_stream_response(response).await?;
-        Ok(Box::pin(responses_stream(response.bytes_stream())))
+        let images = super::multimodal::has_images(&request);
+        super::multimodal::preflight(
+            self,
+            &crate::config::ProviderKind::OpenaiResponses,
+            &request,
+        )
+        .await?;
+        let result: Result<ProviderStream, ProviderError> =
+            super::multimodal::guard(images, async {
+                let response = self
+                    .client
+                    .post(format!("{}/responses", self.base_url))
+                    .apply_key(&self.api_key)
+                    .json(&request_body(request, true)?)
+                    .send()
+                    .await
+                    .map_err(map_transport)?;
+                let response = checked_stream_response(response).await?;
+                Ok(Box::pin(responses_stream(response.bytes_stream())) as ProviderStream)
+            })
+            .await;
+        result.map(|stream| super::multimodal::guard_stream(images, stream))
     }
 }
 
@@ -140,6 +164,7 @@ pub(crate) fn request_body_for(
     if let Some(temperature) = request.temperature {
         body["temperature"] = json!(temperature)
     }
+    super::multimodal::check_body(&body)?;
     Ok(body)
 }
 
@@ -176,6 +201,12 @@ fn unique_replay_calls(items: Vec<Value>) -> Result<Vec<Value>, ProviderError> {
 }
 
 fn encode_message(message: &Message) -> Result<Vec<Value>, ProviderError> {
+    if let Some(content) = super::multimodal::content(message, super::multimodal::Wire::Responses)?
+    {
+        return Ok(vec![
+            json!({"type":"message", "role":"user", "content":content}),
+        ]);
+    }
     if message.role == Role::Tool {
         return Ok(message
             .tool_call_id
@@ -583,6 +614,8 @@ fn finish(assembly: Assembly) -> Result<ModelResponse, ProviderError> {
     Ok(ModelResponse {
         service_tier: assembly.service_tier,
         message: Message {
+            parts: Vec::new(),
+            image_data: Default::default(),
             operator_name: None,
             created_at: Some(chrono::Utc::now()),
             role: Role::Assistant,

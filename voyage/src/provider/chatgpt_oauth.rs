@@ -105,7 +105,7 @@ impl Provider for ChatGptOAuth {
                         "default_service_tier",
                     )?,
                     observed_at_ms: Some(super::catalog::now_ms()),
-                    input_modalities: vec!["text".into()],
+                    input_modalities: super::multimodal::discovered_modalities(entry)?,
                     id,
                 })
             })
@@ -124,52 +124,80 @@ impl Provider for ChatGptOAuth {
     }
 
     async fn complete(&self, request: ModelRequest) -> Result<ModelResponse, ProviderError> {
-        super::inference::validate_request(&crate::config::ProviderKind::ChatGptOauth, &request)?;
-        let mut body = super::openai_responses::request_body_for(
-            &crate::ProviderKind::ChatGptOauth,
-            subscription_request(request),
-            false,
-        )?;
-        body.as_object_mut()
-            .map(|value| value.remove("max_output_tokens"));
-        let (request, tokens) = self.responses_request_with_tokens(&body).await?;
-        let response = request
-            .header("User-Agent", format!("helm/{}", env!("CARGO_PKG_VERSION")))
-            .send()
-            .await
-            .map_err(map_request)?;
-        let mut response = super::openai_responses::decode_response(checked_json(response).await?)?;
-        filter_response_tier(&mut response, &tokens);
-        Ok(response)
+        let images = super::multimodal::has_images(&request);
+        super::multimodal::preflight(self, &crate::config::ProviderKind::ChatGptOauth, &request)
+            .await?;
+        let result: Result<ModelResponse, ProviderError> =
+            super::multimodal::guard(images, async {
+                super::inference::validate_request(
+                    &crate::config::ProviderKind::ChatGptOauth,
+                    &request,
+                )?;
+                let mut body = super::openai_responses::request_body_for(
+                    &crate::ProviderKind::ChatGptOauth,
+                    subscription_request(request),
+                    false,
+                )?;
+                body.as_object_mut()
+                    .map(|value| value.remove("max_output_tokens"));
+                super::multimodal::check_body(&body)?;
+                let (request, tokens) = self.responses_request_with_tokens(&body).await?;
+                let response = request
+                    .header("User-Agent", format!("helm/{}", env!("CARGO_PKG_VERSION")))
+                    .send()
+                    .await
+                    .map_err(map_request)?;
+                let mut response =
+                    super::openai_responses::decode_response(checked_json(response).await?)?;
+                filter_response_tier(&mut response, &tokens);
+                Ok(response)
+            })
+            .await;
+        result
     }
 
     async fn stream(&self, request: ModelRequest) -> Result<ProviderStream, ProviderError> {
-        super::inference::validate_request(&crate::config::ProviderKind::ChatGptOauth, &request)?;
-        let mut body = super::openai_responses::request_body_for(
-            &crate::ProviderKind::ChatGptOauth,
-            subscription_request(request),
-            true,
-        )?;
-        body.as_object_mut()
-            .map(|value| value.remove("max_output_tokens"));
-        let (request, tokens) = self.responses_request_with_tokens(&body).await?;
-        let response = request
-            .header("User-Agent", format!("helm/{}", env!("CARGO_PKG_VERSION")))
-            .send()
-            .await
-            .map_err(map_request)?;
-        let response = checked_stream_response(response).await?;
-        use futures_util::StreamExt;
-        Ok(Box::pin(
-            super::openai_responses::responses_stream(response.bytes_stream()).map(move |event| {
-                event.map(|mut event| {
-                    if let super::ProviderStreamEvent::Completed(response) = &mut event {
-                        filter_response_tier(response, &tokens);
-                    }
-                    event
-                })
-            }),
-        ))
+        let images = super::multimodal::has_images(&request);
+        super::multimodal::preflight(self, &crate::config::ProviderKind::ChatGptOauth, &request)
+            .await?;
+        let result: Result<ProviderStream, ProviderError> =
+            super::multimodal::guard(images, async {
+                super::inference::validate_request(
+                    &crate::config::ProviderKind::ChatGptOauth,
+                    &request,
+                )?;
+                let mut body = super::openai_responses::request_body_for(
+                    &crate::ProviderKind::ChatGptOauth,
+                    subscription_request(request),
+                    true,
+                )?;
+                body.as_object_mut()
+                    .map(|value| value.remove("max_output_tokens"));
+                super::multimodal::check_body(&body)?;
+                let (request, tokens) = self.responses_request_with_tokens(&body).await?;
+                let response = request
+                    .header("User-Agent", format!("helm/{}", env!("CARGO_PKG_VERSION")))
+                    .send()
+                    .await
+                    .map_err(map_request)?;
+                let response = checked_stream_response(response).await?;
+                use futures_util::StreamExt;
+                Ok(Box::pin(
+                    super::openai_responses::responses_stream(response.bytes_stream()).map(
+                        move |event| {
+                            event.map(|mut event| {
+                                if let super::ProviderStreamEvent::Completed(response) = &mut event
+                                {
+                                    filter_response_tier(response, &tokens);
+                                }
+                                event
+                            })
+                        },
+                    ),
+                ) as ProviderStream)
+            })
+            .await;
+        result.map(|stream| super::multimodal::guard_stream(images, stream))
     }
 }
 

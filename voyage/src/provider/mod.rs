@@ -1,3 +1,5 @@
+pub(crate) mod multimodal;
+pub use multimodal::validate_image_capability;
 mod anthropic;
 mod catalog;
 mod inference;
