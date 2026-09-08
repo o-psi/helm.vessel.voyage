@@ -244,3 +244,21 @@ real remote SSH/TLS deployment, reboot deployment, live paid-provider or browser
 console validation is claimed. Linux supports the implementation; these additional
 deployment/provider certifications remain separate and must not be inferred from
 the seven formatting, analysis, build and packaging gates.
+
+### Inference composer controls (#177)
+
+The public Vessel command, durable Voyage settings and Helm composer selectors
+are implemented. Model, reasoning effort and service tier are applied atomically
+at the next-turn boundary; drafts retain selected launch settings. Current adapter
+support and UI behavior are recorded in [current state](current-state.md).
+
+Integration verification on Linux used locked development builds of `helm`,
+`vessel` and `voyage`, workspace formatting, and an offline HTTP provider fixture
+with actual supervised Voyage processes. The fixture observed durable command
+retention and identical retries, frozen settings through a tool continuation,
+resumed next-turn request fields, invalid/stale refusal without changing settings,
+omitted defaults, persistence through supervisor restart and process cleanup.
+The earlier saved smoke failure did not reproduce after integration with current
+main; this does not establish a specific cause for that historical failure.
+No paid provider or native macOS/Windows verification was performed. The complete
+interactive acceptance matrix in [UX readiness](ux-readiness.md) remains unverified.

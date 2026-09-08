@@ -87,12 +87,11 @@ Every row still needs an explicit release decision and product-owner review.
 | J40 | Get help and diagnose an unavailable command | F1, `/help`, `--help`, `doctor`, manpage/completions | Partial evidence #143: guide and scrolling. Unknown commands, no selected voyage, disabled capabilities and next-step errors need review. |
 | J41 | Install, upgrade, roll back and manage the user service | `voyage-installer`, installer guide | Separate interface review: first install, upgrade failure, rollback, busy service and reboot evidence. Do not infer from package checksums. |
 
-### Planned inference selectors (#177)
+### Inference selector acceptance (#177)
 
-Target UX for J25 and J07/J12 recovery, associated with
-[#177](https://github.com/o-psi/voyage/issues/177). This is an acceptance contract,
-not implementation or interaction-test evidence. See [current state](current-state.md)
-for existing behavior.
+Acceptance contract for J25 and J07/J12 recovery, associated with
+[#177](https://github.com/o-psi/voyage/issues/177). The selectors are implemented; this contract is not interaction-test evidence.
+See [current state](current-state.md) for behavior and verification limits.
 
 - **Discover and choose:** clickable **Model**, **Thinking** and **Service**
   controls beside the composer show the selection and open a searchable modal.
