@@ -325,6 +325,17 @@ impl Registry {
             Ok(())
         })
     }
+    /// Restore only the retained route and exact original credential. This does
+    /// not renew authority, replay commands, or connect to a replacement grant.
+    pub fn restore(&self, id: Uuid, expected_revision: u64) -> Result<Connection> {
+        self.mutate(id, expected_revision, |c| {
+            ensure!(c.forgotten, "connection is not forgotten; reload registry");
+            self.read_credential(c)?;
+            c.forgotten = false;
+            c.autoconnect = false;
+            Ok(())
+        })
+    }
     fn mutate(
         &self,
         id: Uuid,
