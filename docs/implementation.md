@@ -37,6 +37,27 @@ The steering workflow exposed a timestamp/canonical-message mismatch in existing
 code. Admission now persists one timestamp and reconstructs it identically for
 queue delivery/application, retaining absent timestamps for legacy records.
 
+## Queued steering expiry (#187)
+
+Expired guidance is now settled in the same transaction as canonical checkpoint
+publication. The agent adopts the returned accepted history before dispatch or
+completion; it does not send rejected guidance to the provider, report it as
+applied, or run another inference request solely because guidance expired.
+Existing strict checkpoint callers remain fail-closed. Receipt identity, FIFO,
+authority checks and admission deadlines remain enforced.
+
+One-shot Linux probes against the development Vessel/voyage binaries and a local
+ChatGPT-response fixture observed timely application, expiry after a held provider
+response, mixed expired/live FIFO input, tool-boundary expiry, approval-timeout
+expiry, mixed input behind approval, and cancellation with queued input. They
+checked accurate `expired` receipts, canonical indexes, exclusion from provider
+history, no extra inference for expired-only finalization, duplicate/conflicting
+commands, retained receipts after suspension, and observed fixture cleanup.
+Short synthetic steering deadlines exercised expiry without paid provider calls.
+The original 60-second failure was reproduced separately through the live Vessel
+tool before the fix. These are manual verification results, not a recreated
+regression suite or a post-fix deployed-service/native-platform certification.
+
 ## Implementation status ledger
 
 The six delivery steps now have implemented runtime and operator paths. The table

@@ -796,6 +796,33 @@ impl RunCheckpoint for ManagedRunCheckpoint {
         })
         .await
     }
+    async fn reconciled(
+        &self,
+        messages: &[Message],
+        usage: &Usage,
+    ) -> Result<Vec<Message>, CheckpointError> {
+        let messages = messages.to_vec();
+        let usage = usage.clone();
+        let token = self.token.clone();
+        self.storage(move |store| {
+            if let Some(authority) = &token.execution_authority {
+                authority.check()?;
+            }
+            steering::authorize(store, &token)?;
+            store.journal.checkpoint_reconciled_with_clock(
+                &store.guard,
+                store.run_id,
+                &messages,
+                &usage,
+                || match token.steering_authority.get() {
+                    Some((_, clock)) => clock.now_ms(),
+                    None => SystemClock.now_ms(),
+                },
+                true,
+            )
+        })
+        .await
+    }
     async fn accepted(
         &self,
         messages: &[Message],
@@ -859,6 +886,13 @@ impl RunCheckpoint for RunOwner {
     }
     async fn canonical(&self, messages: &[Message], usage: &Usage) -> Result<(), CheckpointError> {
         self.checkpoint().canonical(messages, usage).await
+    }
+    async fn reconciled(
+        &self,
+        messages: &[Message],
+        usage: &Usage,
+    ) -> Result<Vec<Message>, CheckpointError> {
+        self.checkpoint().reconciled(messages, usage).await
     }
     async fn accepted(
         &self,

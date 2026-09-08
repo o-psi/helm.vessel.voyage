@@ -181,6 +181,17 @@ pub trait EventSink: Send + Sync {
 pub trait RunCheckpoint: Send + Sync {
     fn run_id(&self) -> uuid::Uuid;
     async fn canonical(&self, messages: &[Message], usage: &Usage) -> Result<(), CheckpointError>;
+    /// Publish and return the canonical history. Managed journals may atomically
+    /// reject expired, not-yet-canonical steering; accepted history is immutable.
+    async fn reconciled(
+        &self,
+        messages: &[Message],
+        usage: &Usage,
+    ) -> Result<Vec<Message>, CheckpointError> {
+        self.canonical(messages, usage).await?;
+        Ok(messages.to_vec())
+    }
+
     async fn partial(&self, text: &str) -> Result<(), CheckpointError>;
     /// Called after canonical publication for assistant text that had no text
     /// deltas. It is still provisional. Canonical-only frontends need no extra
@@ -1187,10 +1198,10 @@ impl Agent {
             }
             result = tokio::task::spawn_blocking(move || crate::extensions::guidance(extension_policy.workspace())) => result.unwrap_or_default(),
         };
-        loop {
+        'execution: loop {
             // Diagnostic accounting only; progress never imposes an execution cutoff.
             turn = turn.saturating_add(1);
-            let mut applied = 0;
+            let steering_start = history.len();
             if let Some(receiver) = &mut input {
                 for mut message in receiver.drain() {
                     if !self.supports_steering() {
@@ -1200,11 +1211,10 @@ impl Agent {
                         receipt.status = crate::model::SteeringStatus::Applied;
                     }
                     history.push(message);
-                    applied += 1;
                 }
             }
-            gate::guarded(self.checkpoint(checkpoint, &history, &usage), &cancel).await??;
-            if applied > 0 {
+            gate::guarded(self.checkpoint(checkpoint, &mut history, &usage), &cancel).await??;
+            if history.len() > steering_start {
                 self.sink
                     .emit(AgentEvent::SteeringApplied {
                         history: history.clone(),
@@ -1247,7 +1257,7 @@ impl Agent {
             let calls = assistant.tool_calls.clone();
             let answer = assistant.content.clone();
             history.push(assistant);
-            gate::guarded(self.checkpoint(checkpoint, &history, &usage), &cancel).await??;
+            gate::guarded(self.checkpoint(checkpoint, &mut history, &usage), &cancel).await??;
             if cancel.is_cancelled() {
                 return Err(AgentError::Cancelled);
             }
@@ -1266,70 +1276,83 @@ impl Agent {
                     .await;
             }
             if calls.is_empty() {
-                let mut received_input = 0;
-                if let Some(receiver) = &mut input {
-                    let pending = if root_gate.is_some() { receiver.drain() } else { receiver.drain_or_close() };
-                    for mut message in pending {
-                        if !self.supports_steering() {
-                            return Err(ProviderError::Request("active steering is unavailable with this compatibility provider; send a new turn after completion".into()).into());
+                loop {
+                    let steering_start = history.len();
+                    if let Some(receiver) = &mut input {
+                        let pending = if root_gate.is_some() { receiver.drain() } else { receiver.drain_or_close() };
+                        if pending.is_empty() { break; }
+                        for mut message in pending {
+                            if !self.supports_steering() {
+                                return Err(ProviderError::Request("active steering is unavailable with this compatibility provider; send a new turn after completion".into()).into());
+                            }
+                            if let Some(receipt) = &mut message.steering {
+                                receipt.status = crate::model::SteeringStatus::Applied;
+                            }
+                            history.push(message);
                         }
-                        if let Some(receipt) = &mut message.steering {
-                            receipt.status = crate::model::SteeringStatus::Applied;
-                        }
-                        history.push(message);
-                        received_input += 1;
+                    } else { break; }
+                    if history.len() > steering_start {
+                        gate::guarded(self.checkpoint(checkpoint, &mut history, &usage), &cancel).await??;
                     }
-                }
-                if received_input > 0 {
-                    gate::guarded(self.checkpoint(checkpoint, &history, &usage), &cancel).await??;
-                    self.sink
-                        .emit(AgentEvent::SteeringApplied {
-                            history: history.clone(),
-                        })
-                        .await;
-                    continue;
+                    if history.len() > steering_start {
+                        self.sink
+                            .emit(AgentEvent::SteeringApplied {
+                                history: history.clone(),
+                            })
+                            .await;
+                        continue 'execution;
+                    }
+                    // Expiry alone must not trigger inference; drain again to close input.
                 }
                 if let (Some(gate), Some(scope)) = (root_gate, &root_scope) {
-                    let mut lease = gate::guarded(gate.lease(scope), &cancel).await??;
-                    last_readiness = Some(lease.readiness.clone());
-                    let clean = lease.readiness.ready() && lease.readiness.incomplete == 0;
-                    if !clean {
-                        drop(lease);
-                        gate::guarded(gate.shutdown_owned(scope), &cancel).await?;
-                        lease = gate::guarded(gate.lease(scope), &cancel).await??;
+                    loop {
+                        let mut lease = gate::guarded(gate.lease(scope), &cancel).await??;
                         last_readiness = Some(lease.readiness.clone());
-                    }
-                    // Finalization is local: no extra model pass for bookkeeping.
-                    // Close steering atomically while record writers are excluded.
-                    if let Some(receiver) = &mut input {
-                        let pending = receiver.drain_or_close();
-                        if !pending.is_empty() {
-                            for mut message in pending {
-                                if let Some(receipt) = &mut message.steering { receipt.status = crate::model::SteeringStatus::Applied; }
-                                history.push(message);
-                            }
+                        let clean = lease.readiness.ready() && lease.readiness.incomplete == 0;
+                        if !clean {
                             drop(lease);
-                            gate::guarded(self.checkpoint(checkpoint, &history, &usage), &cancel).await??;
-                            self.sink.emit(AgentEvent::SteeringApplied { history: history.clone() }).await;
-                            continue;
+                            gate::guarded(gate.shutdown_owned(scope), &cancel).await?;
+                            lease = gate::guarded(gate.lease(scope), &cancel).await??;
+                            last_readiness = Some(lease.readiness.clone());
                         }
+                        // Finalization is local: no extra model pass for bookkeeping.
+                        // Close steering atomically while record writers are excluded.
+                        if let Some(receiver) = &mut input {
+                            let pending = receiver.drain_or_close();
+                            if !pending.is_empty() {
+                                let steering_start = history.len();
+                                for mut message in pending {
+                                    if let Some(receipt) = &mut message.steering { receipt.status = crate::model::SteeringStatus::Applied; }
+                                    history.push(message);
+                                }
+                                drop(lease);
+                                gate::guarded(self.checkpoint(checkpoint, &mut history, &usage), &cancel).await??;
+                                if history.len() > steering_start {
+                                    self.sink.emit(AgentEvent::SteeringApplied { history: history.clone() }).await;
+                                    continue 'execution;
+                                }
+                                // Expiry alone does not justify another provider call.
+                                // Reacquire the completion lease and close input atomically.
+                                continue;
+                            }
+                        }
+                        gate::guarded(self.checkpoint(checkpoint, &mut history, &usage), &cancel).await??;
+                        let readiness = lease.readiness.clone();
+                        let clean = readiness.ready() && readiness.incomplete == 0;
+                        let reason = (!clean).then(|| gate::incomplete_reason(&readiness));
+                        let final_outcome = if clean { crate::completion::FinalOutcome::Completed } else { crate::completion::FinalOutcome::Incomplete };
+                        gate::guarded(lease.seal(final_outcome, reason.clone()), &cancel).await?
+                            .map_err(|error| AgentError::Completion(error.to_string()))?;
+                        sealed = true;
+                        if cancel.is_cancelled() { return Err(AgentError::Cancelled); }
+                        let stop_reason = if clean { StopReason::Completed } else { StopReason::Incomplete { reason: reason.clone().unwrap(), readiness: Some(readiness.clone()) } };
+                        if let Some(checkpoint) = checkpoint {
+                            tokio::time::timeout(gate.shutdown_timeout, checkpoint.accepted(&history, &usage, &stop_reason)).await.map_err(|_| CheckpointError)??;
+                        }
+                        if cancel.is_cancelled() { return Err(AgentError::Cancelled); }
+                        self.sink.emit(AgentEvent::CompletionState { phase: if clean { CompletionPhase::Completed } else { CompletionPhase::Incomplete }, readiness: Some(readiness), detail: reason }).await;
+                        return Ok(AgentOutcome { messages: history.clone(), answer, usage: usage.clone(), turns: turn, stop_reason });
                     }
-                    gate::guarded(self.checkpoint(checkpoint, &history, &usage), &cancel).await??;
-                    let readiness = lease.readiness.clone();
-                    let clean = readiness.ready() && readiness.incomplete == 0;
-                    let reason = (!clean).then(|| gate::incomplete_reason(&readiness));
-                    let final_outcome = if clean { crate::completion::FinalOutcome::Completed } else { crate::completion::FinalOutcome::Incomplete };
-                    gate::guarded(lease.seal(final_outcome, reason.clone()), &cancel).await?
-                        .map_err(|error| AgentError::Completion(error.to_string()))?;
-                    sealed = true;
-                    if cancel.is_cancelled() { return Err(AgentError::Cancelled); }
-                    let stop_reason = if clean { StopReason::Completed } else { StopReason::Incomplete { reason: reason.clone().unwrap(), readiness: Some(readiness.clone()) } };
-                    if let Some(checkpoint) = checkpoint {
-                        tokio::time::timeout(gate.shutdown_timeout, checkpoint.accepted(&history, &usage, &stop_reason)).await.map_err(|_| CheckpointError)??;
-                    }
-                    if cancel.is_cancelled() { return Err(AgentError::Cancelled); }
-                    self.sink.emit(AgentEvent::CompletionState { phase: if clean { CompletionPhase::Completed } else { CompletionPhase::Incomplete }, readiness: Some(readiness), detail: reason }).await;
-                    return Ok(AgentOutcome { messages: history.clone(), answer, usage: usage.clone(), turns: turn, stop_reason });
                 }
                 if let Some(checkpoint) = checkpoint {
                     tokio::time::timeout(context.timeout, checkpoint.accepted(&history, &usage, &StopReason::Completed)).await.map_err(|_| CheckpointError)??;
@@ -1360,7 +1383,7 @@ impl Agent {
                     Err(error) => (error.to_string(), false),
                 };
                 history.push(Message::tool_result(&call.id, &content, success));
-                gate::guarded(self.checkpoint(checkpoint, &history, &usage), &cancel).await??;
+                gate::guarded(self.checkpoint(checkpoint, &mut history, &usage), &cancel).await??;
                 self.sink
                     .emit(AgentEvent::ToolFinished {
                         name: call.name,
@@ -1414,13 +1437,14 @@ impl Agent {
     async fn checkpoint(
         &self,
         checkpoint: Option<&dyn RunCheckpoint>,
-        messages: &[Message],
+        messages: &mut Vec<Message>,
         usage: &Usage,
     ) -> Result<(), AgentError> {
         if let Some(checkpoint) = checkpoint {
-            tokio::time::timeout(self.context.timeout, checkpoint.canonical(messages, usage))
-                .await
-                .map_err(|_| CheckpointError)??;
+            *messages =
+                tokio::time::timeout(self.context.timeout, checkpoint.reconciled(messages, usage))
+                    .await
+                    .map_err(|_| CheckpointError)??;
         }
         Ok(())
     }

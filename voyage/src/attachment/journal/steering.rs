@@ -27,6 +27,7 @@ pub struct SteeringAdmission {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SteeringRejection {
+    Expired,
     QueueFull,
     Closed,
     Cancelled,
@@ -417,9 +418,13 @@ pub(super) fn apply(
     offset: usize,
     revision: u64,
     now_ms: i64,
-) -> Result<()> {
-    for (index, message) in appended.iter().enumerate() {
+    reject_expired: bool,
+) -> Result<Vec<Message>> {
+    ensure!(now_ms >= 0, "invalid steering application clock");
+    let mut accepted = Vec::with_capacity(appended.len());
+    for message in appended {
         let Some(receipt) = &message.steering else {
+            accepted.push(message.clone());
             continue;
         };
         let mut record = read(tx, receipt.id)?;
@@ -428,10 +433,6 @@ pub(super) fn apply(
                 && record.request.session_id == run.session_id
                 && record.status == SteeringStatus::Queued,
             "unknown, stale or duplicate steering receipt"
-        );
-        ensure!(
-            now_ms >= 0 && record.request.expires_at_ms > now_ms,
-            "steering expired before application"
         );
         ensure!(
             serde_json::to_vec(message)? == serde_json::to_vec(&record.applied_message())?,
@@ -446,6 +447,23 @@ pub(super) fn apply(
             first == receipt.id.to_string(),
             "steering applied out of FIFO order"
         );
+        if record.request.expires_at_ms <= now_ms {
+            ensure!(reject_expired, "steering expired before application");
+            record.status = SteeringStatus::NotApplied;
+            record.reason = Some(SteeringRejection::Expired);
+            record.revision = revision;
+            write(tx, &record)?;
+            append_event(
+                tx,
+                run,
+                EventKind::SteeringRejected {
+                    id: receipt.id,
+                    reason: SteeringRejection::Expired,
+                },
+            )?;
+            continue;
+        }
+        let index = accepted.len();
         record.status = SteeringStatus::Applied;
         record.canonical_index = Some(
             offset
@@ -455,8 +473,9 @@ pub(super) fn apply(
         record.revision = revision;
         write(tx, &record)?;
         append_event(tx, run, EventKind::SteeringApplied(receipt.id))?;
+        accepted.push(message.clone());
     }
-    Ok(())
+    Ok(accepted)
 }
 pub(super) fn ensure_no_pending(db: &Connection, run_id: Uuid) -> Result<()> {
     let pending: bool = db.query_row(

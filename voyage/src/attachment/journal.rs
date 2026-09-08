@@ -786,6 +786,21 @@ impl Journal {
         usage: &Usage,
         clock: impl FnOnce() -> Result<i64>,
     ) -> Result<()> {
+        self.checkpoint_reconciled_with_clock(guard, run_id, messages, usage, clock, false)
+            .map(|_| ())
+    }
+
+    /// Settle expired queued steering and publish only accepted messages in one
+    /// transaction. The caller must adopt the returned history before dispatch.
+    pub(crate) fn checkpoint_reconciled_with_clock(
+        &mut self,
+        guard: &ExecutionGuard,
+        run_id: Uuid,
+        messages: &[Message],
+        usage: &Usage,
+        clock: impl FnOnce() -> Result<i64>,
+        reject_expired: bool,
+    ) -> Result<Vec<Message>> {
         let run = self.run(run_id)?;
         self.check_guard(guard, run.session_id)?;
         let tx = self
@@ -818,9 +833,9 @@ impl Journal {
             .checked_sub(run.usage.output_tokens)
             .context("run usage decreased")?;
         if messages.len() == previous && input_delta == 0 && output_delta == 0 {
-            return Ok(());
+            return Ok(messages.to_vec());
         }
-        if self.opened_schema >= STEERING_SCHEMA_VERSION {
+        let appended = if self.opened_schema >= STEERING_SCHEMA_VERSION {
             steering::apply(
                 &tx,
                 &run,
@@ -831,7 +846,8 @@ impl Journal {
                     .checked_add(1)
                     .context("revision overflow")?,
                 clock()?,
-            )?;
+                reject_expired,
+            )?
         } else {
             ensure!(
                 messages[previous..]
@@ -839,8 +855,11 @@ impl Journal {
                     .all(|message| message.steering.is_none()),
                 "steering requires quiescent journal upgrade"
             );
-        }
-        current.session.replace_messages(messages.to_vec());
+            messages[previous..].to_vec()
+        };
+        let mut messages = messages[..previous].to_vec();
+        messages.extend(appended);
+        current.session.replace_messages(messages.clone());
         current.session.refresh_active_run_summary();
         current.session.usage.input_tokens = current
             .session
@@ -871,7 +890,7 @@ impl Journal {
         )?;
         append_event(&tx, &run, EventKind::CanonicalCheckpoint)?;
         commit(tx, &self.commit_fence)?;
-        Ok(())
+        Ok(messages)
     }
 
     /// Record trusted run ownership before any provider or tool dispatch.

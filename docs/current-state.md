@@ -225,6 +225,14 @@ steering and cleanup obligations survive interface disconnect. Exact command
 retries retain their original outcome, including definite rejections. A changed
 principal or payload conflicts. An unknown outcome requires receipt inspection.
 
+Queued steering is checked at the next safe execution boundary. If its deadline
+has passed, Voyage atomically records `not_applied` with reason `expired` and
+continues the run without adding that guidance to canonical or provider history.
+Timely guidance behind an expired message can still apply in FIFO order. Expiry
+alone neither fails the turn nor triggers another provider request; receipt lookup
+retains the rejection after suspension. This does not extend admission deadlines
+or weaken authority, cancellation, or real checkpoint-failure handling.
+
 Ordinary JSON sessions import on explicit resume with the original UUID, source
 revision and fingerprint. The source is fenced and retired before destination
 execution. Legacy shared managed journals migrate the selected session, receipts
