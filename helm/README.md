@@ -39,3 +39,11 @@ recovery. `helm connect` needs the companion `vessel` and `voyage` executables. 
 [security](../docs/security.md) for execution and privacy boundaries and
 [development](../docs/development.md) for repository work. Automated tests and
 evaluations were removed in #140; no current coverage is implied by this inventory.
+
+In the connected TUI, **F9 Actions** and incoming questions/approval requests
+open in a right-hand sidebar while the conversation stays visible. The sidebar
+takes input focus: use its displayed keys to choose, answer, or dismiss it;
+questions do not grant approval. Action editors keep their existing confirmation
+and Escape behavior. The sidebar uses half the terminal width, capped at 64
+columns; voyage navigation hides when space is needed. The minimum supported
+terminal remains 40 columns by 18 rows.

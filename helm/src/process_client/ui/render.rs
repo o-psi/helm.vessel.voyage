@@ -2,7 +2,7 @@ use super::{App, presentation};
 use crate::process_client::safe;
 use ratatui::{
     Frame,
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::{Constraint, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span, Text},
     widgets::{Block, BorderType, Borders, List, ListItem, ListState, Paragraph},
@@ -90,11 +90,23 @@ pub fn draw(frame: &mut Frame<'_>, app: &App) {
         }
         return;
     }
+    // Requests and actions own input, but never replace the conversation.
+    // Hide voyage navigation first on narrow terminals to retain both panes.
+    let reviewing = app.interactions.borrow().focused;
+    let actions_open = app.sidebar.menu.is_some();
+    let sidebar_open = reviewing || actions_open;
+    let right_width = if sidebar_open {
+        (area.width / 2).min(64)
+    } else {
+        0
+    };
+    let panes =
+        Layout::horizontal([Constraint::Min(1), Constraint::Length(right_width)]).split(area);
     let columns = Layout::horizontal([
-        Constraint::Length(if area.width >= 110 { 30 } else { 0 }),
+        Constraint::Length(if panes[0].width >= 110 { 30 } else { 0 }),
         Constraint::Min(1),
     ])
-    .split(area);
+    .split(panes[0]);
     if columns[0].width > 0 {
         sidebar(frame, app, columns[0]);
     }
@@ -106,7 +118,6 @@ pub fn draw(frame: &mut Frame<'_>, app: &App) {
     let main = inset(columns[1], if area.width >= 72 { 2 } else { 1 }, 0);
     let terminals_open = view.is_some_and(|v| v.terminals.open);
     let panel_open = view.is_some_and(|v| v.panel.is_some());
-    let reviewing = app.interactions.borrow().focused;
     let overlay = terminals_open || panel_open;
     let status = presentation::notice(&app.status);
     let status = if status.starts_with("Your workspace is ready.")
@@ -171,23 +182,10 @@ pub fn draw(frame: &mut Frame<'_>, app: &App) {
         ),
         rows[0],
     );
-    let has_interactions = reviewing;
-    let content = Layout::default()
-        .direction(if rows[1].width >= 100 {
-            Direction::Horizontal
-        } else {
-            Direction::Vertical
-        })
-        .constraints(if !has_interactions {
-            [Constraint::Percentage(100), Constraint::Length(0)]
-        } else {
-            [Constraint::Length(0), Constraint::Percentage(100)]
-        })
-        .split(rows[1]);
     if terminals_open {
         super::terminals::draw(frame, app, rows[1]);
     } else {
-        conversation(frame, app, content[0]);
+        conversation(frame, app, rows[1]);
     }
     if !reviewing {
         app.draw_completion(frame, rows[2]);
@@ -228,13 +226,9 @@ pub fn draw(frame: &mut Frame<'_>, app: &App) {
     super::interactions::draw(
         frame,
         app,
-        if has_interactions {
-            content[1]
-        } else {
-            Rect::default()
-        },
+        if reviewing { panes[1] } else { Rect::default() },
     );
-    app.draw_actions(frame);
+    app.draw_actions(frame, panes[1]);
     app.draw_inference_picker(frame);
 }
 

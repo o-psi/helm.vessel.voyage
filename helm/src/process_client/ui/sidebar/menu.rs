@@ -3,11 +3,11 @@ use ratatui::{
     Frame,
     style::{Color, Modifier, Style},
     text::{Line, Text},
-    widgets::{Block, Borders, Clear, Paragraph},
+    widgets::{Block, Borders, Paragraph},
 };
 
 impl App {
-    pub(in crate::process_client::ui) fn draw_actions(&self, frame: &mut Frame<'_>) {
+    pub(in crate::process_client::ui) fn draw_actions(&self, frame: &mut Frame<'_>, area: Rect) {
         self.sidebar.menu_hits.borrow_mut().clear();
         let Some(menu) = &self.sidebar.menu else {
             return;
@@ -15,16 +15,6 @@ impl App {
         self.sidebar
             .visible
             .set(Some((menu.target, menu.incarnation, menu.editor)));
-        let screen = frame.area();
-        let width = screen.width.saturating_sub(4).min(76);
-        let height = screen.height.saturating_sub(2).min(22);
-        let area = Rect::new(
-            (screen.width - width) / 2,
-            (screen.height - height) / 2,
-            width,
-            height,
-        );
-        frame.render_widget(Clear, area);
         let block = Block::default()
             .borders(Borders::ALL)
             .title(" Voyage actions ")
