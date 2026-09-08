@@ -2,7 +2,6 @@
 pub mod cli;
 pub mod local;
 mod sse;
-mod ssh;
 pub mod transport;
 mod ui;
 

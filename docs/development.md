@@ -12,7 +12,7 @@ operator interfaces. Paths in backticks require the source checkout.
 | Path | Current responsibility |
 | --- | --- |
 | `helm/src/main.rs`, `helm/src/cli.rs`, `helm/src/diagnostics.rs` | CLI dispatch, grammar and execution-host diagnostics clients |
-| `helm/src/process_client/` | Connected CLI, local HTTP/scoped HTTPS commands and SSE, SSH compatibility, lifecycle/courier clients and multiplexer |
+| `helm/src/process_client/` | Connected CLI, local HTTP/scoped HTTPS commands and SSE, lifecycle/courier clients and multiplexer |
 | `helm/src/markdown.rs`, `helm/src/onboarding/` | Rendering and repository onboarding |
 | `voyage/src/main.rs`, `voyage/src/server/` | Independent runtime entrypoint, private transport and session command dispatch |
 | `voyage/src/agent.rs`, `voyage/src/agent/`, `voyage/src/context.rs` | Provider-neutral loop, cancellation, context and completion integration |

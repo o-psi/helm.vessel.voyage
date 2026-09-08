@@ -33,7 +33,8 @@ fn path(client: &Client, view: &View) -> Result<PathBuf> {
     }
     super::super::local::check_private_directory(&root)?;
     let identity = serde_json::to_vec(&(
-        client.ssh.as_deref(),
+        // Retain the reserved null slot so existing local/HTTPS view hashes stay stable.
+        Option::<&str>::None,
         &client.access_file,
         &client.directory,
         view.process.session_id,

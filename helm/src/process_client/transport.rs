@@ -10,7 +10,6 @@ use voyage_protocol::vessel::{
 #[derive(Clone, Debug)]
 pub struct Client {
     pub directory: PathBuf,
-    pub ssh: Option<String>,
     pub access_file: Option<PathBuf>,
 }
 
@@ -20,20 +19,18 @@ pub struct Refusal(pub String);
 
 impl Client {
     pub fn is_local(&self) -> bool {
-        self.ssh.is_none() && self.access_file.is_none()
+        self.access_file.is_none()
     }
     pub fn label(&self) -> String {
-        self.ssh.clone().unwrap_or_else(|| {
-            self.access_file
-                .as_ref()
-                .map(|p| {
-                    format!(
-                        "grant:{}",
-                        p.file_name().unwrap_or_default().to_string_lossy()
-                    )
-                })
-                .unwrap_or_else(|| "local".into())
-        })
+        self.access_file
+            .as_ref()
+            .map(|p| {
+                format!(
+                    "grant:{}",
+                    p.file_name().unwrap_or_default().to_string_lossy()
+                )
+            })
+            .unwrap_or_else(|| "local".into())
     }
     pub async fn request(&self, command: VesselCommand) -> Result<Value> {
         tokio::time::timeout(Duration::from_secs(15), self.exchange(command))
@@ -52,17 +49,10 @@ impl Client {
         if let Some(path) = &self.access_file {
             return super::access::events(path, request).await;
         }
-        ensure!(
-            self.ssh.is_none(),
-            "SSE is unavailable through the SSH compatibility route"
-        );
         super::local::events(&self.directory, request).await
     }
 
     pub async fn supports_events(&self) -> bool {
-        if self.ssh.is_some() {
-            return false;
-        }
         self.request(VesselCommand::Capabilities)
             .await
             .ok()
@@ -74,9 +64,6 @@ impl Client {
     async fn exchange(&self, command: VesselCommand) -> Result<Value> {
         if let Some(path) = &self.access_file {
             return super::access::exchange(path, command).await;
-        }
-        if let Some(destination) = &self.ssh {
-            return super::ssh::exchange(destination, &self.directory, command).await;
         }
         super::local::exchange(&self.directory, command).await
     }

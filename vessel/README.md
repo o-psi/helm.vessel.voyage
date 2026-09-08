@@ -10,8 +10,7 @@ executables and exposes its process protocol through an authenticated ephemeral
 loopback HTTP endpoint. Helm discovers the endpoint and bearer credential from the
 owned private `process-http.json` record. Commands use bounded POST requests and
 incoming durable invalidations use SSE. Vessel verifies runtime identity, serializes
-competing starts and supports explicit stop/restart. `local-request` is a framed
-stdin/stdout compatibility adapter that reaches the same local HTTP endpoint.
+competing starts and supports explicit stop/restart.
 These account-authorized operations are separate from the existing HTTP management,
 enrollment, presence and opt-in outbound compatibility relay. The separate scoped
 HTTP process gateway binds explicit grants and current enrollment epochs. Participant

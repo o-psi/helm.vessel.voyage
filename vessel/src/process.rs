@@ -5,9 +5,6 @@ mod routing;
 mod service;
 pub use service::serve;
 
-mod client;
-pub use client::request;
-
 mod recovery;
 mod suspension;
 

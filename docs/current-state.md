@@ -160,8 +160,8 @@ POST requests. The connected TUI and plain/run followers receive durable
 invalidations over authenticated SSE and fetch canonical snapshots/output only when
 notified; stream reconnect uses the last snapshot cursor and never resubmits work.
 Scoped remote routes use HTTPS and private credential files bound to one session,
-principal, workspace, rights, revision and expiry. The SSH account adapter remains a
-compatibility path and relays to the same local HTTP endpoint. Enrollment-bound
+principal, workspace, rights, revision and expiry. SSH transport is removed; remote
+connections use scoped HTTPS credentials, not account-wide pairing. Enrollment-bound
 grants also verify the current machine epoch.
 Provider credentials are never copied between Vessels by these transports.
 
@@ -350,7 +350,7 @@ fences. Public SSE follows session owners and reports observed incarnation chang
 The private runtime IPC remains protocol v1. See [process access](process-access.md#wire-and-retained-state)
 for wire examples and the coordinated Helm/Vessel gateway upgrade requirement.
 
-The connected TUI combines local HTTP, scoped HTTPS and SSH compatibility routes. It retains separate
+The connected TUI combines local HTTP and scoped HTTPS routes. It retains separate
 drafts, prompt navigation, scroll, pending command identities and observation
 cursors per voyage. Switching views does not redirect in-flight actions. Background
 voyages show unread state and pending decisions; slow remote observation runs

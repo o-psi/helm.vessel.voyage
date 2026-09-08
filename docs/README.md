@@ -11,7 +11,7 @@ are not presented as usable commands.
 | [Implementation](implementation.md) | Work needed to deliver the target, in dependency order |
 | [Current state](current-state.md) | What the existing code implements and what remains unfinished |
 | [Configuration](configuration.md) | Current provider, policy and storage configuration |
-| [Operations](operations.md) | Connected HTTP(S) voyages, SSH compatibility and legacy chat/managed/worker procedures |
+| [Operations](operations.md) | Connected HTTP(S) voyages and legacy chat/managed/worker procedures |
 | [Vessel coordination](vessel-coordination.md) | Native model inspection, steering, independent voyage creation and follow-up |
 | [Images and screenshots](multimodal-implementation.md) | Attaching images, private storage, provider support and limits |
 | [Process access](process-access.md) | Scoped grants, participant execution, signed owner transfer and recovery |

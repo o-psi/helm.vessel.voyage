@@ -40,9 +40,24 @@ pub(super) async fn run(source: &Client, args: MoveArgs) -> Result<Value> {
         .ok_or_else(|| anyhow::anyhow!("journal parent missing"))?;
     local::check_private_directory(parent)?;
     let _lock = lock(&args.journal)?;
+    // Read before contacting either endpoint: a retired remote route must never
+    // be reinterpreted as a local destination, even when paths happen to match.
+    let saved = if args.journal.exists() {
+        check_file(&args.journal)?;
+        let value: Value = read_json(&args.journal)?;
+        ensure!(
+            value
+                .get("args")
+                .and_then(|v| v.get("destination_ssh"))
+                .is_none_or(Value::is_null),
+            "SSH courier journals are no longer supported; original journal preserved"
+        );
+        Some(serde_json::from_value::<Journal>(value)?)
+    } else {
+        None
+    };
     let destination = Client {
         directory: args.destination_directory.clone(),
-        ssh: args.destination_ssh.clone(),
         access_file: None,
     };
     let source_id: VesselIdentity =
@@ -53,9 +68,7 @@ pub(super) async fn run(source: &Client, args: MoveArgs) -> Result<Value> {
         source_id.vessel_id != destination_id.vessel_id,
         "source and destination must be distinct Vessels"
     );
-    let mut journal = if args.journal.exists() {
-        check_file(&args.journal)?;
-        let saved: Journal = read_json(&args.journal)?;
+    let mut journal = if let Some(saved) = saved {
         ensure!(
             saved.args == args
                 && serde_json::to_vec(&saved.source)? == serde_json::to_vec(&source_id)?

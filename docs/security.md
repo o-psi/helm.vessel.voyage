@@ -59,10 +59,8 @@ owned private regular file under the owned private Vessel directory. Browser Ori
 requests, redirects and non-loopback endpoints are rejected. SSE subscriptions are
 bounded and carry only durable invalidations; canonical history requires its
 separate right. Vessel forwards with a session/incarnation-bound runtime secret and
-does not keep the canonical transcript. The SSH compatibility adapter invokes the
-remote account's local client with noninteractive authentication and agent
-forwarding disabled. This provides the remote account's local authority, not an
-enrolled per-session grant.
+does not keep the canonical transcript. Remote Helm connections use scoped HTTPS
+grants; there is no SSH account-authority transport.
 
 Pending runtime decisions have exact targeting, durable receipts, single-response
 semantics and bounded expiry. Local policy remains the execution ceiling. Scoped process grants bind principal, workspace, session, rights, revision and

@@ -29,7 +29,6 @@ pub fn check_private_directory(_path: &Path) -> Result<()> {
 pub async fn connect(directory: std::path::PathBuf, auto_start: bool) -> Result<Client> {
     let client = Client {
         directory,
-        ssh: None,
         access_file: None,
     };
     if client.directory.exists() {

@@ -182,8 +182,7 @@ SSE streams versioned, session/incarnation-bound invalidation batches for up to 
 subscriptions. They send keepalives, preserve runtime event cursors and terminate on
 authorization or routing failure. Canonical text remains in snapshots/history/output;
 stream reconnection never dispatches or retries a command. See
-[process access](process-access.md) for authenticated local HTTP, scoped HTTPS and
-the SSH compatibility adapter.
+[process access](process-access.md) for authenticated local HTTP and scoped HTTPS.
 
 `Events {after, limit, wait_ms}` returns metadata-only `public-v1` invalidations,
 ordered cursors, `replay_gap`, `has_more` and `latest_cursor`. Limits are 1–128 events,

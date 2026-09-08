@@ -176,9 +176,14 @@ results are stored separately with a 1 MiB bound.
 
 ## Signed ownership transfer
 
-Both accounts must independently pin the other Vessel's public identity. Retrieve
-`helm connect ... admin identity` on each host, verify the exchanged UUID and public
-key through an authenticated channel, then run `admin trust /path/to/peer.json` on
+The Helm courier currently supports two local Vessels accessible to the executing
+account. Cross-machine courier transport is unavailable after SSH removal; scoped
+HTTPS grants do not authorize owner-transfer administration.
+
+Both Vessels must independently pin the other's public identity. Retrieve
+`helm connect --directory /absolute/vessel admin identity` for each, verify the
+UUID and public key through an authenticated channel, then run
+`admin trust /path/to/peer.json` on
 the other. The courier never automatically trusts a key supplied in an artifact.
 These are public identities, not bearer credentials.
 
@@ -188,16 +193,17 @@ obtain its exact incarnation and revision, then run:
 ```sh
 helm connect --directory /home/alice/.local/state/voyage/vessel admin move SESSION_UUID \
   --incarnation SOURCE_INCARNATION --expected-revision SOURCE_REVISION \
-  --destination-ssh bob@destination \
-  --destination-directory /home/bob/.local/state/voyage/vessel \
-  --workspace /home/bob/work/project \
-  --config-path /home/bob/private/voyage.toml \
+  --destination-directory /home/alice/.local/state/voyage/second-vessel \
+  --workspace /home/alice/work/destination-project \
+  --config-path /home/alice/private/destination-voyage.toml \
   --journal /home/alice/private/move.json
 ```
 
-Omit `--destination-ssh` for a second local Vessel. Destination service discovery is
-explicit; start it beforehand. The source connection can also use the ordinary SSH
-options. Grants do not authorize this account administration workflow.
+Destination service discovery is explicit; start the second local Vessel beforehand.
+Grants do not authorize this account administration workflow. Old journals with a
+non-null SSH destination are refused without rewriting them or contacting that
+destination. Do not change a pending remote journal into a local operation;
+reconcile its original outcome on the executing hosts.
 
 The destination validates local configuration/policy and reserves capacity before
 signing a preparation. The idle source requires resolved cleanup, permanently
@@ -258,8 +264,7 @@ are in `crates/voyage-protocol/src/vessel.rs`; private execution messages remain
 `crates/voyage-protocol/src/process/`.
 
 Local requests authenticate with the private service credential. Scoped HTTPS
-requests add the grant Bearer credential and `X-Voyage-Grant` UUID header. SSH uses
-`vessel local-request --api-version 1` with bounded length-prefixed JSON. The private
+requests add the grant Bearer credential and `X-Voyage-Grant` UUID header. The private
 Vessel-to-voyage connection still uses length-prefixed JSON over an owned Unix
 socket, with runtime token and session/incarnation authentication.
 
@@ -331,8 +336,7 @@ transport/observation failures without resubmitting commands.
 This replaces the former `/v3/process/*` public tunnel. Upgrade Helm, the local
 Vessel supervisor and any scoped gateway together; restart the service to expose the
 new API. Old public endpoints and the pre-HTTP local socket fallback are not served.
-SSH explicitly requires the service API flag, so an older helper fails before
-accepting work. Already-running voyage processes retain private protocol v1 and do
+Already-running voyage processes retain private protocol v1 and do
 not need to be killed for the public API change. Pending Helm operation payloads
 retain their serialized names, command IDs, revisions and deadlines, so recovery
 continues to resolve the original command rather than replay it. Enrollment-relay

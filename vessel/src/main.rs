@@ -83,14 +83,6 @@ enum Command {
         #[arg(long)]
         command_id: Uuid,
     },
-    /// Relay one framed request over stdio to this account's local Vessel.
-    LocalRequest {
-        #[arg(long)]
-        directory: PathBuf,
-        /// Require the public Vessel service API version before reading a request.
-        #[arg(long, default_value_t = voyage_protocol::vessel::VESSEL_API_VERSION)]
-        api_version: u32,
-    },
     /// Serve authenticated loopback HTTP/SSE and supervise independent voyage processes.
     LocalServe {
         #[arg(long)]
@@ -162,19 +154,6 @@ async fn main() -> Result<()> {
                 *command_id,
             )
             .await;
-        }
-        Some(Command::LocalRequest {
-            directory,
-            api_version,
-        }) => {
-            anyhow::ensure!(
-                *api_version == voyage_protocol::vessel::VESSEL_API_VERSION,
-                "unsupported Vessel API version"
-            );
-            #[cfg(target_os = "linux")]
-            return vessel::process::request(directory.clone()).await;
-            #[cfg(not(target_os = "linux"))]
-            anyhow::bail!("local process routing currently requires Linux");
         }
         Some(Command::LocalServe {
             directory,

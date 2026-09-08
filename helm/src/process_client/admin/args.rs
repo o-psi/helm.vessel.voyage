@@ -64,11 +64,9 @@ pub struct MoveArgs {
     pub incarnation: Uuid,
     #[arg(long)]
     pub expected_revision: u64,
-    /// Absolute state directory on the destination host.
+    /// Absolute state directory of a second local Vessel.
     #[arg(long)]
     pub destination_directory: PathBuf,
-    #[arg(long)]
-    pub destination_ssh: Option<String>,
     /// Destination-local workspace; no source filesystem paths are imported.
     #[arg(long)]
     pub workspace: PathBuf,

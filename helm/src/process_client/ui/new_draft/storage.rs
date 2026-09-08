@@ -25,7 +25,8 @@ fn root() -> Result<PathBuf> {
 pub(super) fn route(client: &Client) -> Result<String> {
     Ok(serde_json::to_string(&(
         &client.directory,
-        &client.ssh,
+        // Retain the reserved null slot to preserve saved local/HTTPS route identities.
+        Option::<&str>::None,
         &client.access_file,
     ))?)
 }

@@ -6,7 +6,7 @@ Voyage process**. See the [architecture](../docs/architecture.md).
 
 `helm connect` combines independent voyages through authenticated local HTTP and
 scoped HTTPS Vessel routes. Incoming durable updates use SSE, while commands remain
-ordinary bounded POST requests. An SSH account adapter remains for compatibility.
+ordinary bounded POST requests. Remote connections use scoped HTTPS credentials.
 Ordinary chat, plain chat, one-shot, workflow and managed commands
 also use supervised voyage owners. Tools, policy, tasks, subagents, terminals,
 workflows and lifecycle actions are authorized runtime requests. See the

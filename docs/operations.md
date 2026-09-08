@@ -239,29 +239,31 @@ its data chunks form a public message JSON projection. `run_output` requires an
 exact `run_id`, byte `offset` and `limit`. Follow returned `next_offset` values;
 never split a UTF-8 character or treat partial assistant output as accepted history.
 
-## SSH-account compatibility route
+## Remote HTTPS routes
 
-Start a Linux Vessel on the remote machine and put `vessel` on that account's PATH.
-Configure SSH authentication and known-host verification independently. The SSH
-helper is noninteractive, does not forward the agent, and does not provision or
-start a remote supervisor:
+Use a private scoped credential issued on the executing host; see
+[process access](process-access.md#scoped-remote-access) for the gateway, TLS and
+grant setup. Provider credentials stay on that host.
 
 ```sh
-helm connect --ssh USER@HOST --remote-directory /absolute/private-vessel
-helm connect --ssh USER@HOST --remote-directory /absolute/private-vessel --include-local
-helm connect --ssh USER@HOST --remote-directory /absolute/private-vessel list
-helm connect --ssh USER@HOST_A --remote-directory /absolute/vessel-a --ssh USER@HOST_B --remote-directory /absolute/vessel-b --include-local
+helm connect --access-file /absolute/private/session-access.json
+helm connect --access-file /absolute/private/session-access.json --include-local
+helm connect --access-file /absolute/private/session-access.json list
 ```
 
-Pair each repeated `--ssh` with one `--remote-directory` in the same order, up to
-16 remote Vessels. Plain commands select one Vessel, so do not combine multiple
-routes or `--include-local` with a CLI subcommand. Remote `/new` needs an explicit
-absolute path on the remote machine.
-SSH-account authority is broad local-account authority; this is not enrolled
-per-session grant delegation or participant-Vessel execution. The provider and its
-credentials remain on the remote executing machine. Snapshot polling/reconnect does
-not replay work, and SSH loss does not request runtime cancellation. This adapter
-does not carry SSE; use a scoped HTTPS credential for streamed remote updates.
+Repeat `--access-file` for up to 16 grant routes. `--include-local` adds the local
+Vessel to the TUI. CLI subcommands require a single route, so do not combine
+multiple credentials or `--include-local` with a CLI subcommand.
+
+Each grant is scoped to an existing voyage and explicit permissions; it cannot
+create additional voyages or grant account-owner administration. This is not
+Vessel-wide pairing. HTTPS routes receive streamed SSE invalidations; disconnecting
+does not cancel accepted work and reconnecting does not replay commands.
+
+The legacy `--ssh`, `--remote-directory`, `admin move --destination-ssh` and
+`vessel local-request` options have been removed. There is no automatic SSH-to-HTTPS
+migration. Existing saved SSH drafts and journals are preserved, not rerouted or
+replayed; reconcile uncertain operations on their original executing host.
 
 ## Ordinary local work and migration
 
@@ -434,7 +436,7 @@ own contiguous public cursor; `snapshot_required` means inspect and resume there
 These compatibility routes do not provide create/history/model/root editing or
 approval delegation. The separate scoped process gateway provides explicitly
 granted history, lifecycle/model and decision operations; host/root configuration
-requires local or SSH account-owner access. Disconnecting an HTTP observer does
+requires local account-owner access. Disconnecting an HTTP observer does
 not cancel execution; losing the
 worker's Vessel link conservatively cancels it and stops dispatch.
 

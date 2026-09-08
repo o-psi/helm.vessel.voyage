@@ -10,13 +10,7 @@ pub struct ConnectArgs {
     /// Private local Vessel state directory containing HTTP discovery credentials.
     #[arg(long)]
     pub directory: Option<PathBuf>,
-    /// Compatibility SSH account route; remote authority is this account's local authority.
-    #[arg(long, requires = "remote_directory")]
-    pub ssh: Vec<String>,
-    /// Absolute private Vessel directory on the SSH host.
-    #[arg(long, requires = "ssh")]
-    pub remote_directory: Vec<PathBuf>,
-    /// Include the local Vessel alongside the SSH host.
+    /// Include the local Vessel alongside scoped HTTPS routes.
     #[arg(long)]
     pub include_local: bool,
     /// Connect without starting an absent local Vessel.
@@ -172,18 +166,13 @@ pub enum ConnectedCommand {
 
 pub async fn run(args: ConnectArgs) -> Result<()> {
     let mut clients = Vec::new();
-    ensure!(
-        args.ssh.len() == args.remote_directory.len() && args.ssh.len() <= 16,
-        "provide one --remote-directory per --ssh destination, with at most 16 remote Vessels"
-    );
-    if (args.ssh.is_empty() && args.access_file.is_empty()) || args.include_local {
+    if args.access_file.is_empty() || args.include_local {
         let directory = args.directory.unwrap_or_else(default_directory);
         if args.command.is_some() {
             clients.push(local::connect(directory, !args.no_start).await?);
         } else {
             let client = Client {
                 directory: directory.clone(),
-                ssh: None,
                 access_file: None,
             };
             clients.push(client);
@@ -194,19 +183,10 @@ pub async fn run(args: ConnectArgs) -> Result<()> {
             }
         }
     }
-    for (ssh, directory) in args.ssh.into_iter().zip(args.remote_directory) {
-        let client = Client {
-            directory,
-            ssh: Some(ssh),
-            access_file: None,
-        };
-        clients.push(client);
-    }
     ensure!(args.access_file.len() <= 16, "at most 16 grant routes");
     for path in args.access_file {
         clients.push(Client {
             directory: PathBuf::new(),
-            ssh: None,
             access_file: Some(path),
         });
     }
