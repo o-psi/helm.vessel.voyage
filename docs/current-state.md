@@ -326,6 +326,25 @@ connections still require command resolution, not inferred success or replay.
 Approval tools distinguish explicit refusal, expiry without an answer, cancellation,
 authority invalidation and an unavailable approval interface. An answer durably
 recorded before expiry remains the answer even when read after the deadline.
+Local workers, including nested workers, use the owning voyage's decision interface
+when one is available. Helm identifies the requesting worker in the approval panel;
+approving one action does not mark its execution complete. Delegated access, tools,
+roots and administrator ceilings still constrain the action, and an explicit worker
+approval-deny policy cannot be widened by a descendant. Workers without a decision
+interface refuse actions requiring fresh approval; already permitted actions run.
+Worker clarification questions remain unavailable.
+
+Approval cancellation follows the executing tool/worker, not the Helm connection.
+Dropped requests, cancellation, authority invalidation and expiry clear pending
+requests durably and emit observation updates. A reconnect can observe the same
+unexpired request while its execution is still waiting; it does not replay work.
+Waits are bounded by the configured command timeout, capped at 120 seconds. New
+worktrees still require explicit parent read/write roots before creation; choosing
+worktree isolation does not grant access to a new directory. Finished workers
+owning worktrees remain retained for commit, integration and cleanup, even when
+all ancestors have finished. Successful cleanup clears ownership and permits
+normal archival; dirty worktrees are not silently discarded.
+
 Ordinary screens use names and plain-language summaries rather than runtime
 identifiers and schemas. Console rendering preserves blank/wide cells and uses
 the runtime's cursor; a supplied program title appears in its private header.

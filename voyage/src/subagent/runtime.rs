@@ -920,6 +920,7 @@ impl SubagentRuntime {
             record.updated_at = Utc::now();
         }
         self.persist(&control).await;
+        self.archive_finished().await;
         Ok(())
     }
     pub async fn send_message(

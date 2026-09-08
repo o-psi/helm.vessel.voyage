@@ -48,6 +48,12 @@ pub(in crate::process_client::ui) fn draw(frame: &mut Frame<'_>, app: &App, area
     } else {
         "Your answer needed"
     };
+    let source = decision.request["approval"]["source"]["name"]
+        .as_str()
+        .map(safe);
+    let title = source
+        .as_ref()
+        .map_or_else(|| title.to_owned(), |name| format!("{title} · {name}"));
     let block = Block::default()
         .borders(Borders::ALL)
         .title(format!(

@@ -72,6 +72,8 @@ impl AgentTree {
     /// Only leaves are removed so every retained child continues to have its
     /// parent available for tree rendering and follow-up policy checks. A
     /// protected record (normally the parent of a pending spawn) is retained.
+    /// Worktree owners remain addressable for commit/integration/cleanup even
+    /// after their entire ancestor chain has finished.
     pub fn prune_terminal_leaves(
         &mut self,
         max_records: usize,
@@ -85,7 +87,7 @@ impl AgentTree {
                 .filter(|record| {
                     record.status.is_terminal()
                         && Some(record.id) != protected
-                        && !(record.worktree.is_some() && self.has_active_ancestor(record))
+                        && record.worktree.is_none()
                         && !self
                             .agents
                             .values()
@@ -106,20 +108,6 @@ impl AgentTree {
             removed.push(id);
         }
         removed
-    }
-
-    fn has_active_ancestor(&self, record: &AgentRecord) -> bool {
-        let mut parent = record.parent_id;
-        while let Some(id) = parent {
-            let Some(ancestor) = self.agents.get(&id) else {
-                break;
-            };
-            if !ancestor.status.is_terminal() {
-                return true;
-            }
-            parent = ancestor.parent_id;
-        }
-        false
     }
 }
 

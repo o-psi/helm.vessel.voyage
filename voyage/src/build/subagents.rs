@@ -54,7 +54,27 @@ fn check_requested_workspace(
     Ok(())
 }
 
+/// Attribution is added outside the model-facing tool arguments. Delegated
+/// policy and DispatchApprover still enforce authority before and after consent.
+struct WorkerApprover {
+    inner: Arc<dyn Approver>,
+    source: crate::tools::ApprovalSource,
+}
+#[async_trait]
+impl Approver for WorkerApprover {
+    async fn approve(
+        &self,
+        request: &crate::tools::ApprovalRequest,
+    ) -> crate::tools::ApprovalOutcome {
+        let mut request = request.clone();
+        request.source = Some(self.source.clone());
+        request.mode = InteractionMode::Attended;
+        self.inner.approve(&request).await
+    }
+}
+
 struct CliSubagentExecutor {
+    approver: Option<Arc<dyn Approver>>,
     managed_resources: Option<Arc<ManagedResources>>,
     pub todos: TodoTool,
     config: Config,
@@ -120,17 +140,44 @@ impl SubagentExecutor for CliSubagentExecutor {
         .map_err(|e| e.to_string())?;
         let config = resolved.config().clone();
         let policy = Arc::new(resolved.policy().clone());
+        let approver = if context.policy.approval != ApprovalPolicy::Deny {
+            self.approver.clone()
+        } else {
+            None
+        };
+        let interaction = if approver.is_some() {
+            InteractionMode::Attended
+        } else {
+            InteractionMode::Unattended
+        };
+        let approver: Arc<dyn Approver> = if let Some(inner) = approver {
+            let runtime = self
+                .runtime
+                .get()
+                .and_then(Weak::upgrade)
+                .ok_or("subagent runtime unavailable")?;
+            let record = runtime.get(context.id).await.map_err(|e| e.to_string())?;
+            Arc::new(WorkerApprover {
+                inner,
+                source: crate::tools::ApprovalSource {
+                    agent_id: context.id.0,
+                    name: redactor(&config).redact(record.name),
+                },
+            })
+        } else {
+            Arc::new(UnattendedApprover { allow: false })
+        };
         let tool_context = ToolContext {
             github: crate::github::Credential::from_config(&config),
             completion: context.completion.clone(),
             policy,
-            approver: Arc::new(UnattendedApprover { allow: false }),
+            approver,
             timeout: config.timeout(),
             max_output_bytes: config.max_output_bytes,
             environment: tool_environment(&config),
             cancellation: context.cancellation.clone(),
             execution_id: uuid::Uuid::new_v4(),
-            interaction: InteractionMode::Unattended,
+            interaction,
             redactor: redactor(&config),
         };
         let child_worktrees = self.worktrees.clone().map(|manager| {
@@ -233,6 +280,7 @@ pub async fn build_subagents_managed(
     workspace: &std::path::Path,
     parent_policy: Arc<Policy>,
     managed_resources: Option<Arc<ManagedResources>>,
+    approver: Option<Arc<dyn Approver>>,
 ) -> Result<SubagentBundle> {
     parent_policy.check_execution_authority()?;
     let standard = ToolRegistry::standard();
@@ -262,7 +310,11 @@ pub async fn build_subagents_managed(
             .chain(config.allow_write.clone())
             .collect(),
         allowed_tools,
-        approval: ApprovalPolicy::Deny,
+        approval: if approver.is_some() {
+            ApprovalPolicy::Inherit
+        } else {
+            ApprovalPolicy::Deny
+        },
         budget: budget.clone(),
     };
     let workspace_key = hex::encode(Sha256::digest(workspace.as_os_str().as_encoded_bytes()));
@@ -292,6 +344,7 @@ pub async fn build_subagents_managed(
     });
     let model = Arc::new(RwLock::new(config.model.clone()));
     let executor = Arc::new(CliSubagentExecutor {
+        approver,
         managed_resources,
         todos: todos.clone(),
         config: config.clone(),

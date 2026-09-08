@@ -59,11 +59,16 @@ struct DispatchApprover {
 #[async_trait]
 impl Approver for DispatchApprover {
     async fn approve(&self, request: &ApprovalRequest) -> ApprovalOutcome {
+        if request.cancellation.is_cancelled() {
+            return ApprovalOutcome::Cancelled;
+        }
         if self.policy.check_execution_authority().is_err() {
             return ApprovalOutcome::Invalidated;
         }
         let outcome = self.inner.approve(request).await;
-        if self.policy.check_execution_authority().is_err() {
+        if request.cancellation.is_cancelled() {
+            ApprovalOutcome::Cancelled
+        } else if self.policy.check_execution_authority().is_err() {
             ApprovalOutcome::Invalidated
         } else {
             outcome
@@ -81,8 +86,20 @@ pub enum InteractionMode {
     Unattended,
 }
 
+/// Runtime-assigned attribution, never supplied by tool arguments.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ApprovalSource {
+    pub agent_id: uuid::Uuid,
+    pub name: String,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ApprovalRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<ApprovalSource>,
+    /// Cancellation belongs to the executing tool, not the UI connection.
+    #[serde(skip)]
+    pub cancellation: tokio_util::sync::CancellationToken,
     /// Runtime-only binding; never accepted from a serialized approval response.
     #[serde(skip)]
     pub access_generation: Option<(Arc<crate::policy::LiveAccess>, u64)>,
@@ -295,6 +312,8 @@ impl ToolContext {
         reason: String,
     ) -> ApprovalRequest {
         ApprovalRequest {
+            source: None,
+            cancellation: self.cancellation.clone(),
             access_generation: self.policy.access_binding(),
             id: uuid::Uuid::new_v4(),
             execution_id: self.execution_id,

@@ -74,6 +74,7 @@ pub async fn build_authorized_agent_bundle(
         policy.check_execution_authority()?;
         let policy = Arc::new(policy);
 
+        let worker_approver = decision_approver.clone();
         let interactive = decision_approver.is_some();
         let approver: Arc<dyn Approver> = if let Some(approver) = decision_approver {
             approver
@@ -111,6 +112,7 @@ pub async fn build_authorized_agent_bundle(
             &workspace,
             context.policy.clone(),
             Some(managed_resources.clone()),
+            worker_approver,
         )
         .await?;
         runtime = Some(subagents.runtime.clone());

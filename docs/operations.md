@@ -150,7 +150,14 @@ no approve-all operation. Responses are tied to the observed decision, run,
 incarnation and revision, and an expired request cannot authorize an action.
 Decision waits are bounded; leaving an unanswered prompt is not approval. Expiry
 is reported as an unanswered approval, separately from an explicit refusal or
-cancellation.
+cancellation. Local worker approvals appear here too, labelled with the worker's
+name, including requests from nested workers. Allow once authorizes only the
+pending action within its existing execution policy; it does not approve the
+worker's whole task. Cancelling a worker clears its pending request. Leaving Helm
+does not cancel work: reconnect before the deadline to answer the same request.
+The wait uses `command_timeout_secs`, capped at 120 seconds. Expired requests are
+closed; a later reconnect does not retry the action. Workers with no approval
+interface refuse actions needing fresh consent. Worker questions are not routed.
 `/tools`, `/policy`, `/todos`, `/subagents`, `/workflows` and `/models`
 inspect runtime controls; Esc returns to history. `/tool NAME JSON`
 executes a real authorized tool, using an operator run when idle. `/terminal UUID`
