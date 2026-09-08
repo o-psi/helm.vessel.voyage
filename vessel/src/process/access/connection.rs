@@ -28,7 +28,7 @@ impl Supervisor {
                 "scope": "workspaces", "grant_revision": grant.revision,
                 "rights": grant.rights, "expires_at_ms": grant.expires_at_ms,
                 "workspaces": grant.workspaces,
-                "features": ["workspace_pairing", "sse_events", "scoped_catalogue", "voyage_operations", "grant_revocation"]
+                "features": ["workspace_pairing", "sse_events", "scoped_catalogue", "voyage_operations", "grant_revocation","start_resolution"]
             })),
             VesselCommand::Catalogue => {
                 has(ProcessRight::Catalogue)?;
@@ -68,6 +68,33 @@ impl Supervisor {
                     &store::load(&store::connection_path(&self.directory, id))?,
                 )?;
                 Ok(serde_json::to_value(entries)?)
+            }
+            VesselCommand::ResolveStart {
+                command_id,
+                session_id,
+                workspace,
+                config_path,
+            } => {
+                has(ProcessRight::Create)?;
+                ensure!(config_path.is_none(), "host configuration denied");
+                approved(&grant, &workspace)?;
+                if let Ok(existing) = self.registration(session_id).await {
+                    ordinary(&existing)?;
+                    ensure!(
+                        existing.workspace == workspace,
+                        "session workspace conflict"
+                    );
+                }
+                // Resolve binds the original Start, never a second lifecycle payload.
+                let original = VesselCommand::Start {
+                    command_id,
+                    session_id,
+                    workspace: workspace.clone(),
+                };
+                self.bind_connection_operation(&grant, command_id, &original)
+                    .await?;
+                self.resolve_start(command_id, session_id, workspace, None)
+                    .await
             }
             VesselCommand::Start {
                 command_id,

@@ -340,7 +340,7 @@ impl Supervisor {
             command @ VesselCommand::StartOutbound { .. } => self.start_outbound(command).await,
             command @ VesselCommand::ManagedImport { .. } => self.initialize_managed(command).await,
             VesselCommand::Capabilities => Ok(
-                json!({"protocol":VESSEL_API_VERSION,"version":env!("CARGO_PKG_VERSION"),"vessel_id":super::identity::public(&self.directory)?.vessel_id,"platform":std::env::consts::OS,"features":["catalogue","start","start_configured","inspect","voyage_operations","stop","restart","explicit_recovery","durable_receipts","history_paging","events","sse_events","decisions","lifecycle","branch","ordinary_import","managed_import","outbound_adapter","scoped_grants","revocation","participant_bindings","participant_assignments","signed_owner_transfer"],"max_frame_bytes":MAX_VESSEL_BODY,"capacity":null,"max_connections":64}),
+                json!({"protocol":VESSEL_API_VERSION,"version":env!("CARGO_PKG_VERSION"),"vessel_id":super::identity::public(&self.directory)?.vessel_id,"platform":std::env::consts::OS,"features":["catalogue","start","start_configured","start_resolution","inspect","voyage_operations","stop","restart","explicit_recovery","durable_receipts","history_paging","events","sse_events","decisions","lifecycle","branch","ordinary_import","managed_import","outbound_adapter","scoped_grants","revocation","participant_bindings","participant_assignments","signed_owner_transfer"],"max_frame_bytes":MAX_VESSEL_BODY,"capacity":null,"max_connections":64}),
             ),
             VesselCommand::Catalogue => {
                 let registrations: Vec<_> = self
@@ -373,6 +373,15 @@ impl Supervisor {
                 session_id,
                 workspace,
             } => self.start(command_id, session_id, workspace, None).await,
+            VesselCommand::ResolveStart {
+                command_id,
+                session_id,
+                workspace,
+                config_path,
+            } => {
+                self.resolve_start(command_id, session_id, workspace, config_path)
+                    .await
+            }
             VesselCommand::StartConfigured {
                 command_id,
                 session_id,

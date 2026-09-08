@@ -444,6 +444,13 @@ pub enum VesselCommand {
         session_id: Uuid,
         workspace: PathBuf,
     },
+    /// Resolve the exact original creation identity without launching a process.
+    ResolveStart {
+        command_id: Uuid,
+        session_id: Uuid,
+        workspace: PathBuf,
+        config_path: Option<PathBuf>,
+    },
     StartConfigured {
         command_id: Uuid,
         session_id: Uuid,
