@@ -1,44 +1,27 @@
 //! Authenticate the endpoint and preserve previously observed live runtime identities.
 use super::command;
 use anyhow::{Context, Result, ensure};
-use serde_json::{Value, json};
+use serde_json::Value;
 use std::{
     path::Path,
     time::{Duration, Instant},
 };
-fn request(bin: &Path, state: &Path, command: Value) -> Result<Value> {
-    let bytes = serde_json::to_vec(&json!({"protocol":1,"command":command}))?;
-    let mut frame = (bytes.len() as u32).to_be_bytes().to_vec();
-    frame.extend(bytes);
+pub(super) fn catalogue(bin: &Path, state: &Path) -> Result<Vec<Value>> {
+    // Reuse the public HTTP client: it validates private discovery, bearer
+    // authentication and the wire version without exposing credentials here.
+    // Observation must never implicitly start a missing supervisor.
     let output = command::run(
-        &bin.join("vessel"),
+        &bin.join("helm"),
         &[
-            "local-request",
+            "connect",
+            "--no-start",
             "--directory",
             state.to_str().context("state path requires UTF-8")?,
+            "list",
         ],
-        Some(&frame),
+        None,
     )?;
-    ensure!(output.len() >= 4, "Vessel returned no frame");
-    let length = u32::from_be_bytes(output[..4].try_into()?) as usize;
-    ensure!(
-        length > 0 && length <= 4 * 1024 * 1024 && output.len() == length + 4,
-        "invalid Vessel readiness frame"
-    );
-    let reply: Value = serde_json::from_slice(&output[4..])?;
-    ensure!(
-        reply["protocol"] == 1 && reply["error"].is_null(),
-        "Vessel process protocol incompatible or unavailable"
-    );
-    Ok(reply["result"].clone())
-}
-pub(super) fn catalogue(bin: &Path, state: &Path) -> Result<Vec<Value>> {
-    let capabilities = request(bin, state, json!({"op":"capabilities"}))?;
-    ensure!(
-        capabilities["protocol"] == 1,
-        "unsupported existing process protocol; explicit migration required"
-    );
-    let entries = request(bin, state, json!({"op":"catalogue"}))?;
+    let entries: Value = serde_json::from_slice(&output)?;
     Ok(entries
         .as_array()
         .context("invalid Vessel catalogue")?
