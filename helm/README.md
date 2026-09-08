@@ -47,3 +47,12 @@ questions do not grant approval. Action editors keep their existing confirmation
 and Escape behavior. The sidebar uses half the terminal width, capped at 64
 columns; voyage navigation hides when space is needed. The minimum supported
 terminal remains 40 columns by 18 rows.
+
+Question and approval sidebars support left-click selection and explicit
+**Confirm**/**Send** and **Deny**/**Skip** controls. Selecting **Allow once** does
+not submit approval until Confirm is clicked (or Enter is pressed). Click
+**Write a custom answer…** to type a response; **Back** preserves its draft.
+Use the mouse wheel inside the sidebar to read long requests and **Prev**/**Next**
+to switch requests when not editing. Clicks outside the sidebar do not move focus.
+Pending or expired requests cannot submit another response; keyboard controls
+remain available.

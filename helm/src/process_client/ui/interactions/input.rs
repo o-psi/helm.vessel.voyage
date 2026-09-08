@@ -1,6 +1,8 @@
-use super::super::App;
+use super::{super::App, Control};
 use anyhow::{Context, Result, ensure};
-use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers};
+use crossterm::event::{
+    Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind,
+};
 use serde_json::json;
 
 impl App {
@@ -14,12 +16,15 @@ impl App {
         }
         if matches!(event, Event::Resize(..)) {
             review.follow_selection = true;
+            review.hits.clear();
+            review.area = Default::default();
+            review.displayed = None;
             return Ok(true);
         }
         let Some((target, decision_id)) = review.displayed else {
             return Ok(true);
         };
-        if self.selected != Some(target) {
+        if self.selected != Some(target) || review.selected != review.displayed {
             return Ok(true);
         }
         let view = self.views.get(&target).context("request unavailable")?;
@@ -51,12 +56,58 @@ impl App {
             }
             return Ok(true);
         }
-        let Event::Key(key) = event else {
-            return Ok(true);
+        let key = match event {
+            Event::Key(key) => *key,
+            Event::Mouse(mouse) => {
+                let point = (mouse.column, mouse.row).into();
+                if !review.area.contains(point) {
+                    return Ok(true);
+                }
+                match mouse.kind {
+                    MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
+                        review.scroll = if mouse.kind == MouseEventKind::ScrollUp {
+                            review.scroll.saturating_sub(3)
+                        } else {
+                            review.scroll.saturating_add(3)
+                        };
+                        review.follow_selection = false;
+                        review.hits.clear();
+                        return Ok(true);
+                    }
+                    MouseEventKind::Down(MouseButton::Left) => {}
+                    _ => return Ok(true),
+                }
+                let control = review
+                    .hits
+                    .iter()
+                    .find(|(area, _)| area.contains(point))
+                    .map(|(_, control)| *control);
+                let Some(control) = control else {
+                    return Ok(true);
+                };
+                review.hits.clear();
+                let code = match control {
+                    Control::Choice(option) => {
+                        let answer = review.answers.entry((target, decision_id)).or_default();
+                        answer.option = option;
+                        answer.editing = kind == "question" && option.is_none();
+                        review.follow_selection = true;
+                        return Ok(true);
+                    }
+                    Control::Confirm => KeyCode::Enter,
+                    Control::Cancel => KeyCode::Esc,
+                    Control::Previous => KeyCode::Left,
+                    Control::Next => KeyCode::Right,
+                };
+                KeyEvent::new(code, KeyModifiers::NONE)
+            }
+            _ => return Ok(true),
         };
         if key.kind != KeyEventKind::Press {
             return Ok(true);
         }
+        // Geometry is valid only for the state painted before this input.
+        review.hits.clear();
         let editing = review
             .answers
             .get(&(target, decision_id))

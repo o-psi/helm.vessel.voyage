@@ -1,5 +1,5 @@
 use super::super::{App, safe};
-use super::now_ms;
+use super::{Control, now_ms};
 use ratatui::{
     Frame,
     layout::Rect,
@@ -15,6 +15,8 @@ fn wrapped(text: impl Into<String>, width: u16) -> Vec<Line<'static>> {
 pub(in crate::process_client::ui) fn draw(frame: &mut Frame<'_>, app: &App, area: Rect) {
     let mut review = app.interactions.borrow_mut();
     review.displayed = None;
+    review.hits.clear();
+    review.area = Rect::default();
     let Some((target, id)) = review.selected else {
         return;
     };
@@ -78,7 +80,7 @@ pub(in crate::process_client::ui) fn draw(frame: &mut Frame<'_>, app: &App, area
     let column = unicode_width::UnicodeWidthStr::width(
         safe(&answer.text.text[..answer.text.cursor]).as_str(),
     ) as u16;
-    let footer_height = if editing { 5 } else { 3 };
+    let footer_height = if editing { 8 } else { 5 };
     let body = Rect {
         height: inner.height.saturating_sub(footer_height),
         ..inner
@@ -137,6 +139,7 @@ pub(in crate::process_client::ui) fn draw(frame: &mut Frame<'_>, app: &App, area
         Vec::new()
     };
     let chosen = selected.unwrap_or(options.len().saturating_sub(1));
+    let mut option_ranges = Vec::new();
     let mut selected_start = 0;
     let mut selected_end = 0;
     for (i, option) in options.iter().enumerate() {
@@ -164,6 +167,7 @@ pub(in crate::process_client::ui) fn draw(frame: &mut Frame<'_>, app: &App, area
                 line
             });
         }
+        option_ranges.push((start, lines.len(), i));
         if i == chosen {
             selected_start = start;
             selected_end = lines.len();
@@ -189,6 +193,29 @@ pub(in crate::process_client::ui) fn draw(frame: &mut Frame<'_>, app: &App, area
     }
     scroll = scroll.min(max);
     review.scroll = scroll.min(u16::MAX as usize) as u16;
+    let enabled =
+        view.pending.is_none() && remaining > 0 && matches!(kind, "question" | "approval");
+    if enabled {
+        for (start, end, i) in option_ranges {
+            let top = start.max(scroll);
+            let bottom = end.min(scroll + body.height as usize);
+            if top < bottom {
+                review.hits.push((
+                    Rect::new(
+                        body.x,
+                        body.y + (top - scroll) as u16,
+                        body.width,
+                        (bottom - top) as u16,
+                    ),
+                    Control::Choice(if kind == "question" && i == options.len() - 1 {
+                        None
+                    } else {
+                        Some(i)
+                    }),
+                ));
+            }
+        }
+    }
     frame.render_widget(Paragraph::new(lines).scroll((review.scroll, 0)), body);
     let controls = if view.pending.is_some() {
         "Sending answer… Unconfirmed responses are checked automatically".to_owned()
@@ -209,13 +236,57 @@ pub(in crate::process_client::ui) fn draw(frame: &mut Frame<'_>, app: &App, area
         ""
     };
     let controls_area = Rect {
-        height: footer.height.saturating_sub(if editing { 3 } else { 0 }),
+        height: 2.min(footer.height),
         ..footer
     };
     frame.render_widget(
         Paragraph::new(wrapped(format!("{controls}\n{extra}"), controls_area.width)),
         controls_area,
     );
+    // Separate selection from confirmation, including for mouse approvals.
+    let mut buttons = vec![
+        (
+            if editing { "[Send]" } else { "[Confirm]" },
+            Control::Confirm,
+        ),
+        (
+            if editing {
+                "[Back]"
+            } else if kind == "approval" {
+                "[Deny]"
+            } else {
+                "[Skip]"
+            },
+            Control::Cancel,
+        ),
+    ];
+    if snapshot.decisions.len() > 1 && !editing {
+        buttons.extend([("[Prev]", Control::Previous), ("[Next]", Control::Next)]);
+    }
+    let mut x = footer.x;
+    let mut y = footer.y + 2;
+    for (index, (label, control)) in buttons.into_iter().enumerate() {
+        if index == 2 {
+            x = footer.x;
+            y += 1;
+        }
+        let width = label.len() as u16;
+        let rect = Rect::new(x, y, width, 1);
+        if rect.right() <= footer.right() && rect.bottom() <= footer.bottom() {
+            frame.render_widget(
+                Paragraph::new(label).style(Style::default().fg(if enabled {
+                    Color::Cyan
+                } else {
+                    Color::DarkGray
+                })),
+                rect,
+            );
+            if enabled {
+                review.hits.push((rect, control));
+            }
+        }
+        x += width + 1;
+    }
     if editing {
         let editor = Rect::new(footer.x, footer.bottom().saturating_sub(3), footer.width, 3);
         let offset = column.saturating_sub(editor.width.saturating_sub(3));
@@ -229,5 +300,6 @@ pub(in crate::process_client::ui) fn draw(frame: &mut Frame<'_>, app: &App, area
         );
         frame.set_cursor_position((editor.x + 1 + column.saturating_sub(offset), editor.y + 1));
     }
+    review.area = area;
     review.displayed = Some((target, id));
 }

@@ -9,6 +9,15 @@ use std::collections::BTreeMap;
 use uuid::Uuid;
 
 type Identity = (Target, Uuid);
+#[derive(Clone, Copy)]
+enum Control {
+    Choice(Option<usize>),
+    Confirm,
+    Cancel,
+    Previous,
+    Next,
+}
+
 struct AnswerDraft {
     text: Composer,
     option: Option<usize>,
@@ -28,6 +37,8 @@ pub(super) struct Review {
     // Only the last rendered identity can receive a response.
     displayed: Option<Identity>,
     selected: Option<Identity>,
+    hits: Vec<(ratatui::layout::Rect, Control)>,
+    area: ratatui::layout::Rect,
     pub(super) focused: bool,
     scroll: u16,
     follow_selection: bool,
@@ -98,6 +109,8 @@ impl super::App {
         if review.selected != next {
             review.selected = next;
             review.displayed = None;
+            review.hits.clear();
+            review.area = Default::default();
             review.scroll = 0;
             review.follow_selection = true;
         }
