@@ -2,7 +2,8 @@ use super::*;
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect},
-    style::{Color, Modifier, Style},
+    style::{Color, Style},
+    text::Span,
     widgets::{Block, Borders, Clear, Paragraph, Wrap},
 };
 
@@ -31,22 +32,11 @@ impl App {
                 .as_ref()
                 .map(|s| s.label(field))
                 .unwrap_or_else(|| "unavailable".into());
-            let hover = self
-                .sidebar
-                .pointer
-                .is_some_and(|point| area.contains(point));
-            let style = Style::default().fg(if settings.is_some() {
-                Color::Cyan
-            } else {
-                Color::DarkGray
-            });
-            frame.render_widget(
-                Paragraph::new(format!("{}: {} ▾", field.name(), safe(&value))).style(if hover {
-                    style.bg(Color::DarkGray).add_modifier(Modifier::BOLD)
-                } else {
-                    style
-                }),
+            self.draw_composer_control(
+                frame,
                 area,
+                format!("{}: {} ▾", field.name(), safe(&value)),
+                settings.is_some(),
             );
             // Keep unavailable controls discoverable; activation explains why.
             self.inference
@@ -55,6 +45,30 @@ impl App {
                 .push((area, destination, field));
         }
     }
+    // Style the label, not the Paragraph's entire equal-width section.
+    pub(super) fn draw_composer_control(
+        &self,
+        frame: &mut Frame<'_>,
+        area: Rect,
+        label: String,
+        available: bool,
+    ) {
+        let style = Style::default().fg(if available {
+            Color::Cyan
+        } else {
+            Color::DarkGray
+        });
+        let hover = if self.inference_picker_open() {
+            Style::default()
+        } else {
+            self.hover_style(area, false)
+        };
+        frame.render_widget(
+            Paragraph::new(Span::styled(label, style.patch(hover))),
+            area,
+        );
+    }
+
     pub(in crate::process_client::ui) fn draw_inference_picker(&self, frame: &mut Frame<'_>) {
         self.draw_draft_access(frame);
         let Some(picker) = &self.inference.picker else {

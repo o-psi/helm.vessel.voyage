@@ -4,7 +4,6 @@ use crossterm::event::{KeyEventKind, MouseButton, MouseEventKind};
 use ratatui::{
     Frame,
     layout::Rect,
-    style::{Color, Style},
     widgets::{Block, Borders, Clear, Paragraph},
 };
 
@@ -36,18 +35,14 @@ impl App {
                 .and_then(|s| s.access.clone()),
             Destination::Draft(id) => self.draft_access(id).ok(),
         };
-        let style = Style::default().fg(if value.is_some() {
-            Color::Cyan
-        } else {
-            Color::DarkGray
-        });
-        frame.render_widget(
-            Paragraph::new(format!(
+        self.draw_composer_control(
+            frame,
+            area,
+            format!(
                 "Access: {} ▾",
                 safe(value.as_deref().unwrap_or("unavailable"))
-            ))
-            .style(style.patch(self.hover_style(area, true))),
-            area,
+            ),
+            value.is_some(),
         );
         self.inference.access.hit.set(Some((area, destination)));
     }
