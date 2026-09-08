@@ -44,6 +44,10 @@ into current runtime instructions. Browser console work remains deferred.
 4. Unless the user says otherwise, commit completed changes, fetch and integrate
    into local `main`, and push normally to GitHub `origin/main`. This publication is
    authorized. Preserve unrelated history/work and verify local/remote `main` match.
+   A feature branch or worktree is not delivery. Before finishing, integrate its
+   applicable changes into main and retire the completed worktree, preserving
+   unrelated work, release artifacts and verification evidence. Do not leave
+   reviewed implementation stranded on a local branch.
 5. Update the issue with results and actual verification. Close only completed
    scope. Report blockers, remaining work and platform limitations accurately.
 
