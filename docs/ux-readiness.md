@@ -46,7 +46,7 @@ Every row still needs an explicit release decision and product-owner review.
 | ID | User intention | Current entrypoint | Readiness / missing acceptance |
 | --- | --- | --- | --- |
 | J01 | Start Helm and understand background work | `helm`, `helm chat`, `helm connect` | Review: first launch, missing Vessel, launch failure, empty catalogue and independent runtime lifetime. |
-| J02 | Connect to the intended machine | `connect --directory` local HTTP, scoped HTTPS options | Gap: no in-TUI connection chooser/editor; distinguish connecting, denied and unavailable. |
+| J02 | Connect to the intended machine | Vessels panel, Ctrl+G and `/vessels`; remembered local HTTP/remote HTTPS connections | Implemented for Linux in #194: pairing/import, live connection controls, scope/identity review, recovery and automatic reconnect. See [verification](vessel-connections-verification.md); other native platforms and broad load remain separate. |
 | J03 | Configure a provider and sign in | `vessel auth`, `helm config`, `helm doctor`, `local-provider`, startup flags | Gap: CLI onboarding; credential expiry, billing distinctions, wrong host and retry need an integrated journey. |
 | J04 | Create a voyage in a workspace | Ctrl+N, `/new [absolute-workspace]`, `connect new` | Review: remote paths, launch progress and lost start response. Recovery is not a guided durable creation view. |
 | J05 | Find, resume and switch voyages | Tab/Shift+Tab, `/use UUID`, `sessions`, `chat --resume` | Gap: sidebar hides below 110 columns, no searchable picker; UUID selection is an expert path. Verify background decisions and separate drafts. |

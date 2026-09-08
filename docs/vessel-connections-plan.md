@@ -1,6 +1,7 @@
 # In-app Vessel connections
 
-Status: implemented in source; Linux integration verification and installed rollout are tracked in #194.
+Status: implemented and installed on the verified Linux desktop/remote deployment.
+Evidence: [Linux verification](vessel-connections-verification.md).
 Operational usage: [Vessel connections](vessel-connections.md).
 Tracking: [#194](https://github.com/o-psi/voyage/issues/194).
 

@@ -3,6 +3,8 @@
 Helm's **Vessels** panel manages human connections independently of conversation
 text and model-driven coordination. A connection identifies where work executes;
 it is not a conversation, a provider account, or permission to run as root.
+[Linux verification](vessel-connections-verification.md) records the exercised
+workflows and deployment limits.
 
 ## Open and use the manager
 
