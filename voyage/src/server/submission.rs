@@ -78,6 +78,19 @@ pub(super) async fn submit(
         expires_at_ms: i64::try_from(expires_at_ms)?,
         prompt,
     };
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_millis();
+    if expected_revision == saved.revision
+        && u128::from(expires_at_ms) > now
+        && u128::from(expires_at_ms) - now <= 300_000
+        && !command_id.is_nil()
+        && !submitted_prompt.trim().is_empty()
+        && submitted_prompt.len() <= 64 * 1024
+        && state.owner.process_receipt(command_id).await?.is_none()
+    {
+        state.cleanup.retry().await;
+    }
     let admission = match &authorization.authority {
         Some(authority) => {
             state
@@ -161,6 +174,7 @@ pub(super) async fn submit(
             std::future::pending(),
             authorization.authority,
             Some(approver),
+            state.cleanup.clone(),
             Some(state.controls.clone()),
             operator,
         )

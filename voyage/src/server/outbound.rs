@@ -170,9 +170,9 @@ pub(super) async fn run(state: Arc<State>) -> Result<()> {
                                                 if active.is_some() || run.register_local_cleanup().await.is_err(){let _=run.fail_before_execution().await;Reply::Denied{code:DenialCode::Internal}}
                                                 else {
                                                     let snapshot=owner.remote_snapshot(binding.clone(),authority.clone()).await;
-                                                    let owner=owner.clone();let config=config.clone();let workspace=workspace.clone();let authority=dispatch_authority.clone();let execution_cancel=cancel.child_token();let interrupt=execution_cancel.clone();
+                                                    let owner=owner.clone();let config=config.clone();let workspace=workspace.clone();let authority=dispatch_authority.clone();let execution_cancel=cancel.child_token();let interrupt=execution_cancel.clone();let cleanup=state.cleanup.clone();
                                                     *state.active.lock().await=Some(ActiveRun{id:run.record().await?.id,inference:super::configuration::inference_snapshot(&config),cancel:cancel.clone(),steering:None});
-                                                    active=Some(tokio::spawn(async move {crate::execution::execute_admitted(&owner,&mut run,&config,workspace,Arc::new(crate::agent::SilentSink),execution_cancel,async move{interrupt.cancelled().await},Some(authority),None).await}));
+                                                    active=Some(tokio::spawn(async move {crate::execution::execute_admitted(&owner,&mut run,&config,workspace,Arc::new(crate::agent::SilentSink),execution_cancel,async move{interrupt.cancelled().await},Some(authority),None,cleanup).await}));
                                                     snapshot.unwrap_or(Reply::Denied{code:DenialCode::Internal})
                                                 }
                                             },

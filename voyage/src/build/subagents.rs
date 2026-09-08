@@ -153,12 +153,6 @@ impl SubagentExecutor for CliSubagentExecutor {
         });
         // Worktree-isolated children still coordinate through the parent's workspace plan.
         // Keying todos by the temporary worktree would silently fork task state.
-        let completion_tool = self
-            .runtime
-            .get()
-            .and_then(Weak::upgrade)
-            .and_then(|runtime| runtime.store())
-            .map(|store| crate::completion::tool::CompletionTool::new(self.todos.store(), store));
         tool_context
             .policy
             .check_execution_authority()
@@ -171,7 +165,6 @@ impl SubagentExecutor for CliSubagentExecutor {
             &config,
             child_tool,
             Some(self.todos.clone()),
-            completion_tool,
             self.managed_resources.as_deref(),
             &tool_context.policy,
         )
@@ -231,7 +224,6 @@ impl SubagentExecutor for CliSubagentExecutor {
 pub struct SubagentBundle {
     pub coordinator: crate::completion::runtime::Coordinator,
     pub todos: TodoTool,
-    pub completion_tool: crate::completion::tool::CompletionTool,
     pub runtime: Arc<SubagentRuntime>,
     pub tool: SubagentTool,
     pub model: Arc<RwLock<String>>,
@@ -251,7 +243,6 @@ pub async fn build_subagents_managed(
         .collect();
     allowed_tools.insert("subagent".to_string());
     allowed_tools.insert("todo".to_string());
-    allowed_tools.insert("completion".to_string());
     if config.github_enabled && parent_policy.effective().rules().github_enabled {
         allowed_tools.insert("github".into());
     }
@@ -333,14 +324,9 @@ pub async fn build_subagents_managed(
         .set(Arc::downgrade(&runtime))
         .map_err(|_| anyhow::anyhow!("subagent runtime already initialized"))?;
     let tool = SubagentTool::new(runtime.clone(), policy, budget).with_worktrees(worktrees);
-    let completion_tool = crate::completion::tool::CompletionTool::new(
-        todos.store(),
-        runtime.store().expect("persistent runtime"),
-    );
     Ok(SubagentBundle {
         coordinator,
         todos,
-        completion_tool,
         runtime,
         tool,
         model,

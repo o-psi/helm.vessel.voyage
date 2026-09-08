@@ -85,6 +85,18 @@ impl Run {
 }
 
 #[derive(Clone, Deserialize, PartialEq)]
+pub struct Cleanup {
+    pub run_id: Uuid,
+    pub phase: String,
+    #[serde(default)]
+    pub pending: Vec<String>,
+    #[serde(default)]
+    pub reason: Option<String>,
+    #[serde(default)]
+    pub retryable: bool,
+}
+
+#[derive(Clone, Deserialize, PartialEq)]
 pub struct Snapshot {
     #[serde(default)]
     pub total_messages: usize,
@@ -114,6 +126,8 @@ pub struct Snapshot {
     pub run: Option<Run>,
     #[serde(default)]
     pub pending_cleanup_run: Option<Uuid>,
+    #[serde(default)]
+    pub cleanup: Option<Cleanup>,
     #[serde(default)]
     pub decisions: Vec<Decision>,
     #[serde(default)]
@@ -216,6 +230,11 @@ impl View {
         }
     }
     pub fn title(&self) -> String {
+        // Archived owners no longer participate in snapshot refresh. Their final
+        // metadata must take precedence over any retained live snapshot.
+        if let Some(name) = self.process.archive.as_ref().and_then(|a| a.name.as_ref()) {
+            return name.clone();
+        }
         let name = self
             .snapshot
             .as_ref()

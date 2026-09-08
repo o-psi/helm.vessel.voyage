@@ -422,8 +422,14 @@ impl RunHandle {
         ledger.state = super::LedgerState::Open;
         ledger.revision = decision.readiness.revision;
         let (todos, agents) = self.records(&ledger, todos, agents).await?;
+        let observed = ledger.snapshot(&todos, &agents, super::MAX_OBLIGATIONS)?;
+        // Old sealed runs retain their exact review-based acceptance semantics.
+        // Both observations bind the complete ledger and record fingerprints, so
+        // this compatibility path cannot accept a changed record.
         ensure!(
-            ledger.snapshot(&todos, &agents, super::MAX_OBLIGATIONS)? == decision.readiness,
+            observed == decision.readiness
+                || ledger.snapshot_with_reviews(&todos, &agents, super::MAX_OBLIGATIONS, true)?
+                    == decision.readiness,
             "owned completion records changed after final decision"
         );
         Ok(decision)

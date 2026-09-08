@@ -36,7 +36,6 @@ impl std::fmt::Debug for FinalizationFailure {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let category = match self.source.as_ref() {
             AgentError::Finalization(_) => "finalization",
-            AgentError::ReconciliationExpired => "reconciliation_deadline",
             AgentError::Completion(_) => "completion_store",
             AgentError::Context(_) => "context",
             AgentError::Policy(_) => "policy",
@@ -62,7 +61,6 @@ pub(super) struct GateResources {
     pub todos: Arc<TodoStore>,
     pub agents: AgentTreeStore,
     pub runtime: Arc<SubagentRuntime>,
-    pub reconciliation_timeout: Duration,
     pub shutdown_timeout: Duration,
 }
 
@@ -122,17 +120,6 @@ impl GateResources {
     }
 }
 
-pub(super) fn reconciliation_prompt(readiness: &Readiness) -> String {
-    let mut readiness = readiness.clone();
-    readiness.omitted_unresolved += readiness.unresolved.len().saturating_sub(32);
-    readiness.unresolved.truncate(32);
-    readiness.incomplete_obligations.truncate(32);
-    format!(
-        "Helm has withheld final acceptance. This is the one bounded reconciliation pass for the current run. Review the owned obligation IDs and states below using the completion tool. Read and incorporate useful agent results; wait for useful active agents or cancel unnecessary work with an explicit reason. Verify todo evidence. Preserve blocked or deferred statuses and account for their impact truthfully; never mark every item completed merely to pass the check. Failed/cancelled/interrupted children are not success. Do not delete, archive, unassign, hide, or broaden authority to evade obligations. Use normal policy-controlled tools and produce a revised final only after reconciliation. The next final proposal is rechecked against fresh state; unresolved or accounted-incomplete work yields an incomplete outcome.\n{}",
-        serde_json::to_string(&readiness).expect("readiness is serializable")
-    )
-}
-
 pub(super) fn incomplete_reason(readiness: &Readiness) -> String {
     let unresolved = readiness
         .unresolved
@@ -149,7 +136,7 @@ pub(super) fn incomplete_reason(readiness: &Readiness) -> String {
         .collect::<Vec<_>>()
         .join(", ");
     format!(
-        "Run incomplete: {} of {} obligations accounted for; {} accounted obligations incomplete. Unresolved IDs (first 16): [{}]. Accounted incomplete IDs (first 16): [{}]. Full IDs remain in structured readiness.",
+        "Work ended with unfinished items: {} of {} outcomes recorded; {} items incomplete. Unresolved IDs (first 16): [{}]. Accounted incomplete IDs (first 16): [{}]. Full IDs remain in structured readiness.",
         readiness.accounted, readiness.total, readiness.incomplete, unresolved, incomplete
     )
 }
@@ -157,12 +144,10 @@ pub(super) fn incomplete_reason(readiness: &Readiness) -> String {
 pub(super) async fn guarded<F: std::future::Future>(
     future: F,
     cancel: &CancellationToken,
-    deadline: Option<tokio::time::Instant>,
 ) -> Result<F::Output, AgentError> {
     tokio::select! {
         biased;
         _ = cancel.cancelled() => Err(AgentError::Cancelled),
-        _ = async { match deadline { Some(deadline) => tokio::time::sleep_until(deadline).await, None => std::future::pending().await } } => Err(AgentError::ReconciliationExpired),
         result = future => Ok(result),
     }
 }

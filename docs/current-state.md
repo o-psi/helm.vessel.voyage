@@ -55,6 +55,30 @@ unresolved tools or retained resources remain fenced for explicit recovery rathe
 than being inferred safe. Vessel retains the last bounded canonical voyage name as
 catalogue metadata, so Helm can identify saved conversations while recovery runs.
 
+After a constructed run stops, its voyage retains cleanup tasks, resource managers,
+checkpoint ownership and host reservations until cleanup is observed. A failed
+cancellation monitor explains an interruption but does not permanently poison
+cleanup: its original in-flight database read is retained until observed, and
+outstanding checkpoint callbacks continue to hold the run fence. Cleanup observes
+subordinate tasks, tools, root terminals, runtime controls and compatibility
+processes. Finished terminals are explicitly closed before the run blocker clears.
+
+Cleanup makes at most three attempts per failed component, with paced retries.
+An overdue task keeps its original handle; observation never launches a duplicate
+while that task is still running. Helm shows cleanup progress and the unresolved
+component groups. A fresh, valid explicit send can request another cleanup batch;
+if cleanup still blocks admission, the message remains an unsent draft. Retrying a
+previously accepted or definitively rejected command does not reset cleanup.
+Only an explicit later turn continues the same saved voyage; cleanup replays no
+provider requests or tools and does not turn interrupted work into success.
+
+This repairs cleanup after interruption; cancellation monitoring still stops a run
+when its five-second observation budget fails. It does not make every computer
+suspend transparent. A dead owner or an older live runtime without retained cleanup
+handles still requires evidence-based explicit recovery. Restart never converts
+legacy uncertainty into observed cleanup. Construction failures before the cleanup
+coordinator is installed retain their existing conservative recovery behavior.
+
 Helm chat, one-shot runs, connected clients, workflows, managed sessions and the
 outbound worker adapter use **Helm → Vessel → voyage**. Vessel launches a separate
 long-lived process for each session. Only that voyage constructs the executor,
@@ -304,6 +328,21 @@ denials, approvals, cancellation, administrator ceilings and resource limits app
 to root and subordinate work. Application policy is not an OS sandbox. Execution
 configuration is loaded and revalidated on the executing host; routing cannot
 broaden it. External content remains untrusted.
+
+At the model's final response, Voyage derives completion automatically from the
+run's recorded task and agent outcomes. Completed items need no separate review,
+fingerprint exchange or disposition call. Unfinished todos and unsuccessful agents
+remain incomplete; missing records and active agents remain unresolved. Remaining
+owned agents receive bounded shutdown and a fresh observation before the final
+decision is saved under the existing writer lock. Resource cleanup still requires
+actual observation before another turn can start. Completion does not ask the model
+for an extra reconciliation turn or impose a bookkeeping deadline.
+
+The standard tool registry no longer advertises the internal `completion` tool.
+Default instructions make todos and delegation discretionary when useful. Existing
+review records and sealed decisions remain readable without rewriting their history;
+Helm describes historical bookkeeping calls by operation rather than “Completion”.
+Recorded completion is not proof that an answer is semantically correct.
 
 Todos, subagents, terminal inventories and completion accounting are session-scoped.
 The subagent writer lease protects that session's persistent agent tree, so distinct

@@ -205,18 +205,6 @@ impl LiveControls {
         *retained = None;
         Ok(())
     }
-    pub(crate) async fn retire_empty(&self, owner: &ManagedSessionOwner) -> Result<()> {
-        let empty = self
-            .retained
-            .read()
-            .await
-            .as_ref()
-            .is_some_and(|entry| !entry.manager.has_owned_work());
-        if empty {
-            self.shutdown_retained(owner).await?;
-        }
-        Ok(())
-    }
     pub(super) async fn retained(&self, run: Uuid) -> Result<Retained> {
         let entry = self
             .retained

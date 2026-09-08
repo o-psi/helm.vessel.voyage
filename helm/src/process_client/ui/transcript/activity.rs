@@ -91,6 +91,14 @@ fn description(call: &ToolCall) -> String {
                 ""
             }
         ),
+        // Historical transcripts can contain the retired bookkeeping tool.
+        "completion" => match field("action") {
+            "snapshot" => "Check task outcomes".into(),
+            "read" => format!("Read {} outcome", field("kind")),
+            "account" => format!("Record {} review", field("kind")),
+            "adopt" => format!("Include earlier {} work", field("kind")),
+            _ => "Review task outcomes".into(),
+        },
         "questions" => format!("Ask: {}", field("question")),
         "todo" => format!(
             "{} tasks {}",

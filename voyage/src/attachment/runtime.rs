@@ -467,6 +467,7 @@ impl RunOwner {
         state: RunState,
         reason: Option<&'static str>,
         classification: Option<StopReason>,
+        title: Option<crate::titles::TitleResult>,
         cancel: CancellationToken,
     ) -> Result<RunRecord, CheckpointError> {
         let shared = self.store.clone();
@@ -494,7 +495,16 @@ impl RunOwner {
                         run_id,
                         ..
                     } = &mut *store;
-                    journal.finish_classified(guard, *run_id, state, reason, None, classification)
+                    journal.finish_classified_with_title(
+                        guard,
+                        *run_id,
+                        state,
+                        reason,
+                        None,
+                        classification,
+                        true,
+                        title.as_ref(),
+                    )
                 })();
                 match attempt {
                     Ok(record) => return Ok(record),
@@ -730,8 +740,26 @@ impl RunOwner {
             .ok()
             .map(|outcome| outcome.stop_reason.clone());
         before_finish()?;
+        // Use the durable canonical transcript, including the accepted answer
+        // and current run attribution. Never hold the journal lock over I/O.
+        // This bounded, best-effort request is outside terminal-commit retries.
+        let title = if state == RunState::Completed && !cancel.is_cancelled() {
+            match self
+                .storage(|store| Ok(store.journal.load_session(store.session_id)?.session))
+                .await
+            {
+                Ok(session) if session.title_due_after_turn() => {
+                    agent
+                        .generate_title_for_session(&session, cancel.clone())
+                        .await
+                }
+                _ => None,
+            }
+        } else {
+            None
+        };
         let durable = self
-            .persist_terminal(state, reason, classification, cancel)
+            .persist_terminal(state, reason, classification, title, cancel)
             .await?;
         if durable.state == RunState::Cancelled {
             Err(AgentError::Cancelled)
@@ -870,3 +898,5 @@ mod configuration;
 mod operator;
 
 mod session_resources;
+
+mod cleanup;
