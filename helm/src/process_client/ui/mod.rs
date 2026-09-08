@@ -11,6 +11,7 @@ mod input;
 mod interactions;
 mod lifecycle;
 mod paste;
+mod previews;
 mod reconcile;
 mod routes;
 mod transcript;
@@ -47,6 +48,7 @@ use std::{
 use tokio::sync::mpsc;
 
 pub(super) struct App {
+    previews: previews::State,
     vessels: Option<std::cell::RefCell<vessels::Manager>>,
     vessel_button: std::cell::Cell<ratatui::layout::Rect>,
     vessel_sidebar_button: std::cell::Cell<ratatui::layout::Rect>,
@@ -124,6 +126,8 @@ pub async fn run_with_notice(
         "connected TUI needs a terminal; use connect list/new/inspect/submit for plain operation"
     );
     let mut styles = crate::theme::TerminalStyles::from_env()?;
+    let previews =
+        previews::State::new(styles.allows_color_images(), styles.allows_native_images())?;
     terminal::enable_raw_mode()?;
     let _screen = Screen;
     execute!(
@@ -157,6 +161,7 @@ pub async fn run_with_notice(
     let selected =
         session.and_then(|session| clients.first_route().map(|route| Target { route, session }));
     let mut app = App {
+        previews,
         vessels: manager.ok().map(std::cell::RefCell::new),
         vessel_button: Default::default(),
         vessel_sidebar_button: Default::default(),
@@ -215,6 +220,7 @@ pub async fn run_with_notice(
     let result = async {
         while !app.quit {
             app.poll_clipboard();
+            app.poll_previews()?;
             app.sync_completion();
             app.refresh_transcript();
             tokio::select! {
@@ -234,6 +240,7 @@ pub async fn run_with_notice(
             }
             app.acknowledge_departed_completions();
             if let Some((target,incarnation,run,terminal_id))=app.terminal_request.take() {
+                app.previews.clear()?;
                 app.sidebar.pointer = None;
                 app.sidebar.resize.clear();
                 execute!(io::stdout(),crossterm::event::DisableMouseCapture,crossterm::event::DisableFocusChange)?;
@@ -251,6 +258,7 @@ pub async fn run_with_notice(
         Ok(())
     }.await;
     let clipboard_cleanup = app.finish_clipboard().await;
+    let preview_cleanup = app.previews.finish();
     for (_, job) in std::mem::take(&mut app.observers) {
         job.abort();
         app.retired_observers.push(job);
@@ -268,7 +276,7 @@ pub async fn run_with_notice(
     for job in app.retired_observers {
         let _ = job.await;
     }
-    result.and(clipboard_cleanup)
+    result.and(clipboard_cleanup).and(preview_cleanup)
 }
 
 impl App {

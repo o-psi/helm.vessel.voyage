@@ -52,6 +52,26 @@ fn valid_name(name: &str) -> bool {
 }
 
 impl Image {
+    pub(super) fn preview_bytes(&self) -> Result<Vec<u8>> {
+        ensure!(
+            self.data_base64.len() <= MAX_BASE64_BYTES,
+            "Preview image exceeds byte limit"
+        );
+        let bytes = STANDARD
+            .decode(&self.data_base64)
+            .context("Invalid preview image encoding")?;
+        ensure!(
+            !bytes.is_empty() && bytes.len() <= MAX_BYTES,
+            "Preview image exceeds byte limit"
+        );
+        ensure!(
+            bytes.len() as u64 == self.byte_size
+                && hex::encode(Sha256::digest(&bytes)) == self.sha256,
+            "Preview image identity mismatch"
+        );
+        Ok(bytes)
+    }
+
     pub(super) fn metadata(&self) -> ImageAttachment {
         ImageAttachment {
             id: self.upload_id,
@@ -442,7 +462,10 @@ impl App {
             .collect()
     }
     pub(super) fn attachment_summary(&self) -> String {
-        "Paste: Ctrl+V / Alt+V · image paths also work".into()
+        format!(
+            "Alt+P previews {} · Paste: Ctrl+V / Alt+V",
+            if self.previews.enabled { "on" } else { "off" }
+        )
     }
 }
 

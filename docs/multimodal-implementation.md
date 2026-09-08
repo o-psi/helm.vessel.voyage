@@ -34,6 +34,13 @@ in-app `screenshot`/CAPTURE flow.** Capturing the screen is an OS action; pastin
 already captured image does not capture anything new or require another capture
 confirmation.
 
+**Alt+P toggles optional inline previews** of already-owned composer images.
+Metadata remains available when previews are disabled, the terminal uses text
+fallback, or an image exceeds the preview-only decoding limits. Toggling does not
+capture, upload, submit, or modify the saved image. See
+[Composer image previews](ui-previews.md) for terminal protocol selection,
+resource bounds and verification limitations.
+
 ### Terminal paste versus native clipboard access
 
 Ctrl+V/Alt+V are application clipboard actions when the terminal delivers those

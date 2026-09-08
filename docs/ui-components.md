@@ -38,13 +38,12 @@ features promised by this epic.
 
 ## Attachment previews
 
-Current images remain UUID-owned inline markers and attachment metadata. There is
-no image modal or automatic image-URL fetching. Optional inline thumbnails require
-an agreed interaction and bounded decoding/caching before adoption.
-[Preview follow-up #201](https://github.com/o-psi/helm.vessel.voyage/issues/201)
-records that separate delivery scope, including ratatui-image feature review,
-Chafa avoidance, terminal negotiation and protocol/halfblock/text fallbacks.
-No image decoding or image protocol costs changed in this delivery.
+Images retain UUID-owned inline markers and attachment metadata. The subsequent
+[preview delivery #201](https://github.com/o-psi/helm.vessel.voyage/issues/201)
+adds opt-in Alt+P thumbnails with bounded background decoding and Kitty,
+halfblock and text fallbacks. There is no image modal or automatic image-URL
+fetching. See [composer previews](ui-previews.md) for dependency review,
+resource bounds, passive terminal selection and measured verification.
 
 ## Private terminals
 

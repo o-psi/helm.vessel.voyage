@@ -36,6 +36,11 @@ movement/removal and exact text/image interleaving. Normal metadata rows display
 name/type/size/dimensions. The image modal and in-app screenshot-capture flow have
 been removed; use OS screenshot tools and paste their results.
 
+Alt+P toggles [inline composer previews](ui-previews.md), initially off. One bounded
+background worker uses retained image bytes, with Kitty graphics when explicitly
+supported by passive geometry/color selection, halfblocks otherwise, and metadata
+only for no-color or oversized inputs. Previews do not alter pending submissions.
+
 Private drafts retain verified bytes and marker ownership, including legacy image
 draft migration without changing immutable pending commands. The existing bounded,
 authorized Vessel upload/admission path, session-scoped SHA-verified raster storage,

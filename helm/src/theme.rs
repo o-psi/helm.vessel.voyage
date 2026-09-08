@@ -64,6 +64,14 @@ pub(crate) struct TerminalStyles {
 }
 
 impl TerminalStyles {
+    pub(crate) fn allows_color_images(&self) -> bool {
+        self.profile >= TermProfile::Ansi16
+    }
+
+    pub(crate) fn allows_native_images(&self) -> bool {
+        self.profile == TermProfile::TrueColor
+    }
+
     pub(crate) fn from_env() -> anyhow::Result<Self> {
         let override_value = std::env::var("HELM_COLOR");
         let profile = match override_value.as_deref() {

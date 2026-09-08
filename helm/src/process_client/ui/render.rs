@@ -218,6 +218,7 @@ fn draw_inner(frame: &mut Frame<'_>, app: &App) {
     } else {
         status
     };
+    let preview_rows = app.preview_rows(main.width.saturating_sub(2), main.height);
     let rows = Layout::vertical([
         Constraint::Length(3),
         Constraint::Min(4),
@@ -229,7 +230,7 @@ fn draw_inner(frame: &mut Frame<'_>, app: &App) {
         Constraint::Length(if overlay || reviewing {
             1
         } else {
-            6 + app.attachment_details().len() as u16
+            6 + app.attachment_details().len() as u16 + preview_rows
         }),
         Constraint::Length(if status.is_empty() { 1 } else { 3 }),
     ])
@@ -305,7 +306,7 @@ fn draw_inner(frame: &mut Frame<'_>, app: &App) {
             rows[3],
         );
     } else {
-        composer(frame, app, rows[3]);
+        composer(frame, app, rows[3], preview_rows);
     }
     let shortcuts = if reviewing {
         "Ctrl+C Leave"
@@ -521,7 +522,7 @@ fn sidebar(frame: &mut Frame<'_>, app: &App, area: Rect) {
     );
 }
 
-fn composer(frame: &mut Frame<'_>, app: &App, area: Rect) {
+fn composer(frame: &mut Frame<'_>, app: &App, area: Rect, preview_rows: u16) {
     let view = app.selected.and_then(|t| app.views.get(&t));
     let pending = view.is_some_and(|v| v.pending.is_some());
     let box_area = Rect {
@@ -542,8 +543,9 @@ fn composer(frame: &mut Frame<'_>, app: &App, area: Rect) {
     let draft = view.map_or("", |v| v.draft.text.as_str());
     let details = app.attachment_details();
     let detail_rows = (details.len() as u16).min(inner.height.saturating_sub(2));
+    let preview_rows = preview_rows.min(inner.height.saturating_sub(3 + detail_rows));
     let body = Rect {
-        height: inner.height.saturating_sub(1 + detail_rows),
+        height: inner.height.saturating_sub(1 + detail_rows + preview_rows),
         ..inner
     };
     if let Some(view) = view {
@@ -563,9 +565,18 @@ fn composer(frame: &mut Frame<'_>, app: &App, area: Rect) {
         )
     };
     frame.render_widget(Paragraph::new(text).scroll((scroll, 0)), body);
+    app.draw_previews(
+        frame,
+        Rect::new(inner.x, body.bottom(), inner.width, preview_rows),
+    );
     frame.render_widget(
         Paragraph::new(details.join("\n")).style(crate::theme::Role::Focus.style()),
-        Rect::new(inner.x, body.bottom(), inner.width, detail_rows),
+        Rect::new(
+            inner.x,
+            body.bottom() + preview_rows,
+            inner.width,
+            detail_rows,
+        ),
     );
     app.draw_inference_controls(
         frame,

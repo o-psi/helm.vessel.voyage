@@ -11,10 +11,11 @@ impl App {
             return;
         };
         let area = area.inner(ratatui::layout::Margin::new(2, 1));
+        let preview_rows = self.preview_rows(area.width.saturating_sub(2), area.height);
         let rows = Layout::vertical([
             Constraint::Length(4),
             Constraint::Min(2),
-            Constraint::Length(7 + draft.saved.images.len() as u16),
+            Constraint::Length(7 + draft.saved.images.len() as u16 + preview_rows),
             Constraint::Length(4),
         ])
         .split(area);
@@ -64,14 +65,24 @@ impl App {
         let inner = block.inner(rows[2]);
         let details = self.attachment_details();
         let detail_rows = (details.len() as u16).min(inner.height.saturating_sub(2));
+        let preview_rows = preview_rows.min(inner.height.saturating_sub(3 + detail_rows));
         let body = Rect {
-            height: inner.height.saturating_sub(1 + detail_rows),
+            height: inner.height.saturating_sub(1 + detail_rows + preview_rows),
             ..inner
         };
         frame.render_widget(block, rows[2]);
+        self.draw_previews(
+            frame,
+            Rect::new(inner.x, body.bottom(), inner.width, preview_rows),
+        );
         frame.render_widget(
             Paragraph::new(details.join("\n")).style(crate::theme::Role::Focus.style()),
-            Rect::new(inner.x, body.bottom(), inner.width, detail_rows),
+            Rect::new(
+                inner.x,
+                body.bottom() + preview_rows,
+                inner.width,
+                detail_rows,
+            ),
         );
         self.draw_inference_controls(
             frame,

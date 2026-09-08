@@ -2,6 +2,9 @@ use super::*;
 
 impl App {
     pub(super) fn input(&mut self, event: Event) -> Result<()> {
+        if matches!(event, Event::Resize(..)) {
+            self.resize_previews()?;
+        }
         // Private connection input (especially paste) precedes every composer path.
         if self.vessel_input(&event)? {
             return Ok(());
@@ -37,6 +40,9 @@ impl App {
             return Ok(());
         }
         if self.inference_input(&event)? {
+            return Ok(());
+        }
+        if self.preview_input(&event) {
             return Ok(());
         }
         self.sync_interactions();
