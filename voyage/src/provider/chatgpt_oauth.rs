@@ -246,8 +246,30 @@ pub struct DeviceAuthorization {
     pub user_code: String,
     #[serde(default = "device_verification_uri")]
     pub verification_uri: String,
-    #[serde(default = "default_poll_interval")]
+    #[serde(
+        default = "default_poll_interval",
+        deserialize_with = "device_poll_interval"
+    )]
     pub interval: u64,
+}
+
+// The native device endpoint encodes interval as a decimal string; retain
+// numeric responses as well for compatible providers and saved fixtures.
+fn device_poll_interval<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<u64, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Interval {
+        Number(u64),
+        Text(String),
+    }
+    match Interval::deserialize(deserializer)? {
+        Interval::Number(value) => Ok(value),
+        Interval::Text(value) => value
+            .parse()
+            .map_err(|_| serde::de::Error::custom("invalid device polling interval")),
+    }
 }
 
 #[derive(Deserialize)]
