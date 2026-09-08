@@ -16,7 +16,8 @@ impl ManagedSessionOwner {
             journal.initialize_decisions(guard)?;
             journal.initialize_lifecycle(guard)?;
             journal.initialize_assignments(guard)?;
-            journal.initialize_observations(guard)
+            journal.initialize_observations(guard)?;
+            journal.initialize_cleanup_progress(guard)
         })
         .await?
     }
@@ -55,7 +56,7 @@ impl ManagedSessionOwner {
             let run = store.journal.process_latest_run(store.session_id)?;
             let last_message_at = session.messages.iter().filter(|message| message.role != crate::model::Role::System).filter_map(|message| message.created_at).max();
             let (messages, offset) = projection::recent(&session.messages)?;
-            Ok(json!({"session_id":session.id,"revision":saved.revision,"created_at":session.created_at,"last_message_at":last_message_at,"name":session.name,"model":session.model,"workspace":session.workspace,"turns":projection::turns(&session),"messages":messages,"total_messages":session.messages.len(),"message_offset":offset,"history_truncated":offset>0 || messages.iter().any(|message| message["projection_truncated"]==true),"run":run.map(|run| projection::run(&session, &run)),"pending_cleanup_run":summary.and_then(|s|s.pending_cleanup_run),"decisions":[],"session_resources":store.journal.session_resources(store.session_id)?,"lifecycle":store.journal.lifecycle_status(store.session_id)?,"observation_cursor":store.journal.observation_cursor(store.session_id)?,"observation":"snapshot","projection":"public-v1"}))
+            Ok(json!({"session_id":session.id,"revision":saved.revision,"created_at":session.created_at,"last_message_at":last_message_at,"name":session.name,"model":session.model,"workspace":session.workspace,"turns":projection::turns(&session),"messages":messages,"total_messages":session.messages.len(),"message_offset":offset,"history_truncated":offset>0 || messages.iter().any(|message| message["projection_truncated"]==true),"run":run.map(|run| projection::run(&session, &run)),"pending_cleanup_run":summary.and_then(|s|s.pending_cleanup_run),"cleanup":store.journal.cleanup_progress(store.session_id)?,"decisions":[],"session_resources":store.journal.session_resources(store.session_id)?,"lifecycle":store.journal.lifecycle_status(store.session_id)?,"observation_cursor":store.journal.observation_cursor(store.session_id)?,"observation":"snapshot","projection":"public-v1"}))
         }).await?
     }
     pub(crate) async fn process_history(

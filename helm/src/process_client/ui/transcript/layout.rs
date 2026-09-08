@@ -305,7 +305,9 @@ fn build(view: &View, state: &State, width: u16) -> Vec<Row> {
         );
     }
     if let Some(run) = &snapshot.run
-        && (run.state != "completed" || run.live_text.as_ref().is_some_and(|text| !text.is_empty()))
+        && (run.state != "completed"
+            || snapshot.pending_cleanup_run.is_some()
+            || run.live_text.as_ref().is_some_and(|text| !text.is_empty()))
     {
         let key = Key::Live(run.run_id);
         entry_gap(&mut out, key.clone());
@@ -352,13 +354,40 @@ fn build(view: &View, state: &State, width: u16) -> Vec<Row> {
         if let Some(reason) = &run.failure_summary {
             note(&mut out, key.clone(), safe(reason), width);
         }
-        if !run.active() && snapshot.pending_cleanup_run.is_some() {
-            note(
-                &mut out,
-                key,
-                "Cleanup is unconfirmed. Further work is blocked until recovery.",
-                width,
-            );
+        if !run.active() {
+            let cleanup = snapshot
+                .cleanup
+                .as_ref()
+                .filter(|cleanup| cleanup.run_id == run.run_id);
+            if let Some(reason) = cleanup.and_then(|cleanup| cleanup.reason.as_ref()) {
+                note(&mut out, key.clone(), safe(reason), width);
+            }
+            if snapshot.pending_cleanup_run.is_some() {
+                let message = match cleanup {
+                    Some(cleanup) if cleanup.phase == "running" => {
+                        "Finishing cleanup. Your draft is kept."
+                    }
+                    Some(cleanup) if cleanup.retryable => {
+                        "Cleanup needs attention. Send again to retry cleanup; your draft is kept."
+                    }
+                    _ => "Cleanup is unconfirmed. Further work is blocked until explicit recovery.",
+                };
+                note(&mut out, key.clone(), message, width);
+                if let Some(cleanup) = cleanup {
+                    for component in &cleanup.pending {
+                        note(
+                            &mut out,
+                            key.clone(),
+                            format!("Waiting for: {}", safe(component)),
+                            width,
+                        );
+                    }
+                }
+            } else if !view.archived()
+                && matches!(run.state.as_str(), "cancelled" | "interrupted" | "failed")
+            {
+                note(&mut out, key, "Ready to continue.", width);
+            }
         }
     }
     if state.loading && !view.archived() {

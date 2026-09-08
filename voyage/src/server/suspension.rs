@@ -2,6 +2,8 @@
 use super::*;
 
 pub(super) async fn suspend(state: &Arc<State>) -> Result<()> {
+    // Observation tasks run independently of these short admission/dispatch gates.
+    state.cleanup.advance(1).await?;
     let _requests = state.requests.write().await;
     let _admission = state.admission.lock().await;
     if state.shutdown.is_cancelled() || state.active.lock().await.is_some() {

@@ -219,6 +219,22 @@ minutes for initial relinquishment; the Helm courier uses a five-minute command
 admission window; committed transfers remain recoverable by exact
 identity. Portable artifacts are bounded to 16 MiB and chunks to 64 KiB.
 
+## Cleanup in a surviving owner
+
+The snapshot's optional `cleanup` object reports the latest run's `run_id`,
+`phase` (`running`, `blocked` or `observed`), `pending` component labels, an authored
+interruption `reason`, and whether the live owner can retry. It is diagnostic
+progress; `pending_cleanup_run` and resource observations remain authoritative.
+Older snapshots omit this object. New process startup marks unfinished progress
+from a previous lifetime as blocked and not retryable by that new lifetime.
+
+The original voyage observes cleanup asynchronously, retaining task handles across
+bounded observation windows. A new, valid Submit can request another bounded
+cleanup batch without admitting the message while cleanup remains unresolved.
+A rejected Submit keeps its rejected receipt; use a new command ID and current
+revision for a later explicit send. An uncertain Submit must still be resolved
+under its original identity. Reading progress does not send a draft or repeat work.
+
 ## Unavailable-owner recovery
 
 Use `admin recover SESSION --incarnation OLD --command-id UUID` for a registered

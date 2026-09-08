@@ -44,17 +44,25 @@ impl LiveControls {
         });
     }
     pub(crate) async fn close(&self) -> bool {
-        let Some(active) = self.active.write().await.take() else {
+        let mut owned = self.active.write().await;
+        let Some(active) = owned.as_ref() else {
             return true;
         };
         active.cancel.cancel();
-        tokio::time::timeout(
-            std::time::Duration::from_secs(15),
-            active.slots.acquire_many_owned(8),
-        )
-        .await
-        .is_ok()
+        let observed = matches!(
+            tokio::time::timeout(
+                std::time::Duration::from_secs(15),
+                active.slots.clone().acquire_many_owned(8),
+            )
+            .await,
+            Ok(Ok(_))
+        );
+        if observed {
+            *owned = None;
+        }
+        observed
     }
+
     async fn active(&self, run: Option<Uuid>) -> Result<Active> {
         let active = self
             .active

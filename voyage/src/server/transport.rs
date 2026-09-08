@@ -140,11 +140,16 @@ pub(super) async fn listen(directory: PathBuf, state: Arc<State>) -> Result<()> 
         ),
         None => true,
     };
+    let run_cleanup = state
+        .cleanup
+        .wait(std::time::Duration::from_secs(60), 1)
+        .await;
     let retained = state.controls.shutdown_retained(&state.owner).await;
     let compatibility = crate::provider::shutdown_compatibility().await;
     let snapshot = state.owner.process_snapshot().await?;
     let session_resources = state.owner.session_resources().await?;
     let observed = relay
+        && run_cleanup
         && retained.is_ok()
         && session_resources.as_array().is_some_and(Vec::is_empty)
         && cleanup.is_ok()

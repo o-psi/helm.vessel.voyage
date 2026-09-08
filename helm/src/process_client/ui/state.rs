@@ -85,6 +85,18 @@ impl Run {
 }
 
 #[derive(Clone, Deserialize, PartialEq)]
+pub struct Cleanup {
+    pub run_id: Uuid,
+    pub phase: String,
+    #[serde(default)]
+    pub pending: Vec<String>,
+    #[serde(default)]
+    pub reason: Option<String>,
+    #[serde(default)]
+    pub retryable: bool,
+}
+
+#[derive(Clone, Deserialize, PartialEq)]
 pub struct Snapshot {
     #[serde(default)]
     pub total_messages: usize,
@@ -108,6 +120,8 @@ pub struct Snapshot {
     pub run: Option<Run>,
     #[serde(default)]
     pub pending_cleanup_run: Option<Uuid>,
+    #[serde(default)]
+    pub cleanup: Option<Cleanup>,
     #[serde(default)]
     pub decisions: Vec<Decision>,
     #[serde(default)]
