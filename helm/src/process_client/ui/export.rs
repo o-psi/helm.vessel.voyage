@@ -3,6 +3,10 @@ use anyhow::{Result, ensure};
 impl App {
     pub(super) fn export(&mut self, target: Target, path: &str) -> Result<()> {
         ensure!(
+            self.clients.current(target.route),
+            "Vessel disconnected; reconnect before exporting"
+        );
+        ensure!(
             !path.trim().is_empty(),
             "export requires a local destination path"
         );

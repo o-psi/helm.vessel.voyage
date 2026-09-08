@@ -2,6 +2,24 @@ use super::*;
 
 impl App {
     pub(super) fn update(&mut self, update: Update) {
+        let route = match &update {
+            Update::Live { target, .. }
+            | Update::History { target, .. }
+            | Update::Completion { target, .. }
+            | Update::Terminals { target, .. }
+            | Update::Control { target, .. }
+            | Update::Snapshot { target, .. }
+            | Update::Command { target, .. } => Some(target.route),
+            Update::FirstSend { route, .. }
+            | Update::Catalogue { route, .. }
+            | Update::RouteError { route, .. }
+            | Update::Created { route, .. } => Some(*route),
+            Update::InferenceModels { route, .. } => *route,
+            _ => None,
+        };
+        if route.is_some_and(|route| !self.clients.current(route)) {
+            return;
+        }
         let background = match &update {
             Update::Command { target, .. } => {
                 self.active_draft.is_some() || self.selected != Some(*target)
@@ -21,6 +39,7 @@ impl App {
             view.transcript.borrow_mut().dirty = true;
         }
         match update {
+            Update::Vessels(event) => self.vessel_update(event),
             Update::DraftInferenceModels {
                 id,
                 provider,
@@ -29,12 +48,17 @@ impl App {
                 models,
             } => self.draft_inference_models(id, provider, context, generation, models),
             Update::InferenceModels {
+                route: _,
                 id,
                 context,
                 generation,
                 result,
             } => self.inference_models(id, context, generation, result),
-            Update::FirstSend { saved, result } => self.first_send_update(*saved, result),
+            Update::FirstSend {
+                route: _,
+                saved,
+                result,
+            } => self.first_send_update(*saved, result),
             Update::Live {
                 target,
                 incarnation,
@@ -152,6 +176,7 @@ impl App {
                 }
             }
             Update::Catalogue { route, processes } => {
+                self.vessel_state(route, vessels::ConnectionState::Connected);
                 for process in processes.into_iter().take(256) {
                     if self.new_drafts.contains_key(&process.session_id) {
                         continue;
@@ -295,6 +320,7 @@ impl App {
                 self.sync_live_inference_picker(target);
             }
             Update::RouteError { route, error } => {
+                self.vessel_state(route, vessels::classify_error(&error));
                 self.status = format!("{} unavailable: {}", self.route_label(route), safe(&error));
                 for (target, view) in &mut self.views {
                     if target.route == route {

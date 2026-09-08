@@ -109,6 +109,11 @@ fn sidebar_state(view: &super::state::View) -> (&'static str, Color, bool) {
 pub fn draw(frame: &mut Frame<'_>, app: &App) {
     draw_inner(frame, app);
     app.draw_attachments(frame);
+    app.draw_vessel_control(frame);
+    app.draw_workspace_picker(frame, frame.area());
+    if let Some(manager) = &app.vessels {
+        manager.borrow_mut().render(frame, frame.area());
+    }
 }
 
 fn draw_inner(frame: &mut Frame<'_>, app: &App) {

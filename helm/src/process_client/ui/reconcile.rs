@@ -3,6 +3,7 @@ use super::*;
 
 impl App {
     pub(super) fn reconcile_pending(&mut self) {
+        self.observe_retired();
         self.refresh_draft_capabilities();
         let now = Instant::now();
         self.command_checks.retain(|(target, id), _| {
@@ -18,6 +19,9 @@ impl App {
         // across both classes prevents unavailable routes starving new voyages.
         let mut ready = Vec::new();
         for (target, view) in &self.views {
+            if !self.clients.current(target.route) {
+                continue;
+            }
             if self.new_drafts.contains_key(&target.session) {
                 continue; // The durable first-send handoff still owns recovery.
             }
@@ -34,7 +38,7 @@ impl App {
             }
         }
         for (id, draft) in &self.new_drafts {
-            if !draft.busy && draft.saved.start.is_some() {
+            if self.clients.current(draft.route) && !draft.busy && draft.saved.start.is_some() {
                 let due = *self.first_send_checks.entry(*id).or_insert(now);
                 if due <= now {
                     ready.push((due, None, *id));
@@ -61,10 +65,9 @@ impl App {
             } else {
                 self.first_send_checks
                     .insert(id, now + Duration::from_secs(5));
-                // Continue the user-authorized first send. Start is exactly
-                // deduplicated; advance resolves, never resends an attempted turn.
+                // Reconnection only observes exact creation/submission identity.
                 let status = self.status.clone();
-                if let Err(error) = self.send_draft(id) {
+                if let Err(error) = self.recover_draft(id) {
                     if self.active_draft == Some(id) {
                         self.status = format!(
                             "First-send recovery unavailable: {} · draft retained",

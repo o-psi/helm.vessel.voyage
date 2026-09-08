@@ -2,6 +2,13 @@ use super::*;
 
 impl App {
     pub(super) fn input(&mut self, event: Event) -> Result<()> {
+        // Private connection input (especially paste) precedes every composer path.
+        if self.vessel_input(&event)? {
+            return Ok(());
+        }
+        if self.workspace_picker_input(&event)? {
+            return Ok(());
+        }
         self.sync_interactions();
         if self.attachment_input(&event)? {
             return Ok(());

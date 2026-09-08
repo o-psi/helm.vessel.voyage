@@ -13,6 +13,7 @@ use voyage_protocol::vessel::VoyageCommand;
 
 const COMMANDS: &[(&str, &str, &str)] = &[
     ("help", "Show help", ""),
+    ("vessels", "Manage connected Vessels", ""),
     (
         "new",
         "Start a voyage",
@@ -178,6 +179,9 @@ impl App {
         let Some(target) = self.selected else {
             return;
         };
+        if !self.clients.current(target.route) {
+            return;
+        }
         let view = &self.views[&target];
         let incarnation = view.process.incarnation;
         if self.completion.metadata.as_ref().is_some_and(|m| {
