@@ -90,8 +90,19 @@ Filesystem tools check canonical allowed roots. Subprocesses use the configured
 filtered environment. Linux policy resolution checks the administrator ceiling;
 do not infer equivalent enforcement on another platform. Profile escalation requires
 fresh exact review, and a saved conversation cannot restore an old policy grant.
-These are application controls, not OS containment of arbitrary code. Native
-sandbox adapters remain separate work.
+These remain application controls when `[sandbox].mode = "off"` (the default).
+Optional required isolation adds a Linux x86_64 bubblewrap boundary at subprocess
+launch in Voyage, independently of approvals. It uses pinned root mounts,
+namespaces, seccomp, filtered environments and inherited resource limits, and
+refuses launch when setup fails. See [configuration](configuration.md#optional-linux-process-isolation)
+for the explicit network grants, per-process and same-UID limit scopes, separate
+compatibility-bridge grants and local diagnostic probe. Native HTTP provider
+requests are not tool subprocesses and retain their executing-host credentials.
+This implementation does not establish macOS or Windows containment, an aggregate
+descendant budget, or an endpoint network allowlist.
+New subprocess launches narrow their pinned mounts when the current dispatch is
+read-only. Changing access does not retroactively remount an already-running
+process; stop it before relying on a narrower OS boundary for that process.
 
 The current worker connects outbound to Vessel. Do not expose a new inbound Helm
 task port or forward its provider credentials. Enrollment/presence alone do not

@@ -243,10 +243,10 @@ pub fn from_config(
                 .map_err(|e| ProviderError::Authentication(e.to_string()))?,
             config.base_url.clone(),
         ))),
-        ProviderKind::CodexSubscription => Ok(Box::new(CodexSubscriptionProvider::new(
-            config.codex_command.clone(),
-            workspace,
-        ))),
+        ProviderKind::CodexSubscription => Ok(Box::new(
+            CodexSubscriptionProvider::new(config.codex_command.clone(), workspace)
+                .with_sandbox(&config.sandbox)?,
+        )),
     }
 }
 

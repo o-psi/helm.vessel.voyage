@@ -313,7 +313,13 @@ mod linux {
         // racing this admission. Shutdown never reports it cleaned prematurely.
         drop(guard);
         drop(state);
-        let mut cmd = std::process::Command::new("sh");
+        let mut cmd = match ctx.policy.process_command("sh", ctx.policy.workspace()) {
+            Ok(command) => command,
+            Err(error) => {
+                job.observed.store(true, Ordering::Release);
+                return Err(ToolError::Failed(error.to_string()));
+            }
+        };
         cmd.arg("-lc")
             .arg(command)
             .current_dir(ctx.policy.workspace())
@@ -364,6 +370,10 @@ mod linux {
                     ToolError::Timeout(ctx.timeout)
                 });
             }
+        }
+        if let Err(error) = ctx.policy.isolate_process(&mut cmd, ctx.policy.workspace()) {
+            job.observed.store(true, Ordering::Release);
+            return Err(ToolError::Failed(error.to_string()));
         }
         let child = cmd.spawn();
         let mut child = match child {

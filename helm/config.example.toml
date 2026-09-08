@@ -47,3 +47,10 @@ redact_values = []
 # args = ["/path/to/allowed/root"]
 # [mcp_servers.files.env]
 # LOG_LEVEL = "warn"
+
+# Optional OS process isolation on the executing Linux x86_64 host.
+# Requires /usr/bin/bwrap and working unprivileged user namespaces; no fallback.
+# Default is off. See docs/configuration.md for limits and separate bridge grants.
+# [sandbox]
+# mode = "required"
+# network = "denied"

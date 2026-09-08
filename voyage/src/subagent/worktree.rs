@@ -373,10 +373,16 @@ fn git_command<const N: usize>(
         let arguments = std::iter::once("git").chain(args).collect::<Vec<_>>();
         policy.check_command_denials(&arguments)?;
     }
-    let mut command = Command::new("git");
+    let mut command = match policy {
+        Some(policy) => policy.process_command("git", cwd)?,
+        None => Command::new("git"),
+    };
     command.args(args).current_dir(cwd);
     if let Some(environment) = environment {
         command.env_clear().envs(environment);
+    }
+    if let Some(policy) = policy {
+        policy.isolate_process(&mut command, cwd)?;
     }
     Ok(command)
 }

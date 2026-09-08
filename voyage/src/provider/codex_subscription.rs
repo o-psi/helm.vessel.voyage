@@ -35,6 +35,7 @@ const CONTROL_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub struct CodexSubscriptionProvider {
     state: Arc<Mutex<State>>,
+    sandbox: Option<crate::sandbox::Sandbox>,
     program: String,
     args: Vec<String>,
     workspace: PathBuf,
@@ -71,6 +72,16 @@ struct Inbox {
 }
 
 impl CodexSubscriptionProvider {
+    pub fn with_sandbox(
+        mut self,
+        settings: &crate::sandbox::Settings,
+    ) -> Result<Self, ProviderError> {
+        self.sandbox = Some(
+            crate::sandbox::Sandbox::bridge(settings)
+                .map_err(|e| ProviderError::Unavailable(e.to_string()))?,
+        );
+        Ok(self)
+    }
     pub fn new(program: String, workspace: PathBuf) -> Self {
         Self::with_command(
             program,
@@ -89,6 +100,7 @@ impl CodexSubscriptionProvider {
                 active: false,
                 system_instructions: None,
             })),
+            sandbox: None,
             program,
             args,
             workspace,
@@ -111,7 +123,7 @@ impl Provider for CodexSubscriptionProvider {
             ));
         }
         if state.client.is_none() {
-            let client = AppClient::spawn(&self.program, &self.args).await?;
+            let client = AppClient::spawn(&self.program, &self.args, self.sandbox.as_ref()).await?;
             client.initialize().await?;
             state.initialized = true;
             state.client = Some(client);
@@ -215,12 +227,13 @@ impl Provider for CodexSubscriptionProvider {
         let state = self.state.clone();
         let program = self.program.clone();
         let args = self.args.clone();
+        let sandbox = self.sandbox.clone();
         let workspace = self.workspace.clone();
         let cancelled = self.cancelled.clone();
         Ok(Box::pin(async_stream::try_stream! {
             let mut state=state.lock().await;
             if cancelled.swap(false,Ordering::SeqCst) { state.client=None;state.initialized=false;state.thread_id=None;state.active=false;state.pending_tool=None;state.turn_id=None; }
-            if state.client.is_none() { state.client=Some(AppClient::spawn(&program,&args).await?); }
+            if state.client.is_none() { state.client=Some(AppClient::spawn(&program,&args,sandbox.as_ref()).await?); }
             let client=state.client.as_ref().expect("client initialized").clone();
             let mut startup_guard=StartupGuard { client:client.clone(),cancelled:cancelled.clone(),armed:true };
             let system=request.messages.iter().filter(|m|m.role==Role::System).map(|m|m.content.as_str()).collect::<Vec<_>>().join("\n\n");
@@ -282,9 +295,21 @@ impl Drop for CodexSubscriptionProvider {
 }
 
 impl AppClient {
-    async fn spawn(program: &str, args: &[String]) -> Result<Arc<Self>, ProviderError> {
+    async fn spawn(
+        program: &str,
+        args: &[String],
+        sandbox: Option<&crate::sandbox::Sandbox>,
+    ) -> Result<Arc<Self>, ProviderError> {
         let slot = cleanup::capacity()?;
         let mut command = Command::new(program);
+        if let Some(sandbox) = sandbox.filter(|sandbox| sandbox.required()) {
+            command.env_clear();
+            for key in &sandbox.settings.bridge_inherit_env {
+                if let Some(value) = std::env::var_os(key) {
+                    command.env(key, value);
+                }
+            }
+        }
         command
             .args(args)
             .stdin(Stdio::piped())
@@ -300,6 +325,11 @@ impl AppClient {
                     Ok(())
                 }
             });
+        }
+        if let Some(sandbox) = sandbox {
+            sandbox
+                .apply(command.as_std_mut(), std::path::Path::new("/tmp"))
+                .map_err(|error| ProviderError::Unavailable(error.to_string()))?;
         }
         let mut child = command.spawn().map_err(|e| {
             ProviderError::Unavailable(format!("failed to start `{program} app-server`: {e}"))

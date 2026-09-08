@@ -43,30 +43,29 @@ struct Transport {
 }
 
 impl McpServer {
-    pub async fn connect(
+    /// Acquire the scoped child before awaiting initialization so cleanup owns it.
+    pub fn start_scoped(
         name: impl Into<String>,
         program: &str,
         args: &[String],
         environment: &BTreeMap<String, String>,
+        policy: &crate::policy::Policy,
     ) -> Result<Self, ToolError> {
-        let server = Self::start(name, program, args, environment)?;
-        if let Err(error) = server.initialize().await {
-            server.shutdown().await?;
-            return Err(error);
-        }
-        Ok(server)
+        let command = Command::from(
+            policy
+                .process_command(program, policy.workspace())
+                .map_err(failed)?,
+        );
+        Self::start_command(name, command, args, environment, policy)
     }
-
-    /// Acquire the child before awaiting initialization, so callers can retain
-    /// and explicitly reap it when an initialization deadline expires.
-    pub fn start(
+    fn start_command(
         name: impl Into<String>,
-        program: &str,
+        mut command: Command,
         args: &[String],
         environment: &BTreeMap<String, String>,
+        policy: &crate::policy::Policy,
     ) -> Result<Self, ToolError> {
         let name = sanitize(&name.into());
-        let mut command = Command::new(program);
         command
             .args(args)
             .env_clear()
@@ -89,6 +88,9 @@ impl McpServer {
                 }
             });
         }
+        policy
+            .isolate_process(command.as_std_mut(), policy.workspace())
+            .map_err(failed)?;
         let mut child = command.spawn().map_err(failed)?;
         #[cfg(target_os = "linux")]
         let identity = child

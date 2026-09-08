@@ -245,7 +245,11 @@ impl Tool for SearchFiles {
     async fn execute(&self, args: Value, ctx: &ToolContext) -> Result<String, ToolError> {
         let args: SearchArgs = parse(args)?;
         let path = ctx.policy.resolve_read(&args.path).map_err(denied)?;
-        let mut command = tokio::process::Command::new("rg");
+        let mut command = tokio::process::Command::from(
+            ctx.policy
+                .process_command("rg", ctx.policy.workspace())
+                .map_err(failed)?,
+        );
         command.args(["--line-number", "--no-heading", "--color", "never"]);
         if let Some(glob) = args.glob {
             command.args(["--glob", &glob]);
@@ -257,6 +261,9 @@ impl Tool for SearchFiles {
             .env_clear()
             .envs(&ctx.environment)
             .kill_on_drop(true);
+        ctx.policy
+            .isolate_process(command.as_std_mut(), ctx.policy.workspace())
+            .map_err(failed)?;
         let output = tokio::select! {
             _ = ctx.cancellation.cancelled() => return Err(ToolError::Cancelled),
             result = tokio::time::timeout(ctx.timeout, command.output()) => result.map_err(|_| ToolError::Timeout(ctx.timeout))?.map_err(failed)?,

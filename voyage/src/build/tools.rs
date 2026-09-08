@@ -56,11 +56,12 @@ pub async fn build_tools(
             environment.extend(server.env.clone());
             let start = || {
                 policy.check_current()?;
-                crate::tools::mcp::McpServer::start(
+                crate::tools::mcp::McpServer::start_scoped(
                     name,
                     &server.command,
                     &server.args,
                     &environment,
+                    policy,
                 )
                 .map(Arc::new)
                 .with_context(|| format!("failed to start MCP server `{name}`"))

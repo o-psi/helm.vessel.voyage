@@ -19,6 +19,7 @@ pub use voyage_runtime::policy;
 pub use voyage_runtime::policy_profile;
 pub use voyage_runtime::provider;
 pub use voyage_runtime::runtime_policy;
+pub use voyage_runtime::sandbox;
 pub use voyage_runtime::session;
 pub use voyage_runtime::subagent;
 pub use voyage_runtime::supervision;

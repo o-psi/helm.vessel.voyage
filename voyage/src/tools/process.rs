@@ -1,4 +1,6 @@
 mod input;
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+mod isolated;
 mod shutdown;
 use super::{Tool, ToolContext, ToolError};
 use crate::terminal::{
@@ -431,7 +433,15 @@ impl ProcessTool {
         let reservation =
             crate::host_resources::Reservation::acquire("terminals", ctx.execution_id, 1)
                 .map_err(failed)?;
-        let spawned = match pair.slave.spawn_command(builder) {
+        #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+        let spawn_result = if ctx.policy.sandbox().required() {
+            isolated::spawn(&*pair.master, &builder, &ctx.policy)
+        } else {
+            pair.slave.spawn_command(builder)
+        };
+        #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
+        let spawn_result = pair.slave.spawn_command(builder);
+        let spawned = match spawn_result {
             Ok(child) => child,
             Err(error) => {
                 reservation.release_observed().map_err(failed)?;

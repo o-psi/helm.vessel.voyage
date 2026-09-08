@@ -36,7 +36,11 @@ pub async fn discover(context: &crate::tools::ToolContext) -> Result<Vec<Candida
         crate::policy::Decision::Allow => (),
     }
     context.policy.check_current()?;
-    let mut command = tokio::process::Command::new("git");
+    let mut command = tokio::process::Command::from(
+        context
+            .policy
+            .process_command("git", context.policy.workspace())?,
+    );
     command
         .args([
             "config",
@@ -55,6 +59,9 @@ pub async fn discover(context: &crate::tools::ToolContext) -> Result<Vec<Candida
     if let Some(path) = context.environment.get("PATH") {
         command.env("PATH", path);
     }
+    context
+        .policy
+        .isolate_process(command.as_std_mut(), context.policy.workspace())?;
     let mut child = command.spawn().map_err(|_| {
         anyhow::anyhow!("GitHub remote discovery could not start Git; select an explicit URL")
     })?;

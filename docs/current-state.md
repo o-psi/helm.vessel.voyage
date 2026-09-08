@@ -325,7 +325,14 @@ retain their bounded transports and observed child-session cleanup.
 
 The live registry supplies tools and runtime instructions. Local roots, command
 denials, approvals, cancellation, administrator ceilings and resource limits apply
-to root and subordinate work. Application policy is not an OS sandbox. Execution
+to root and subordinate work. Application policy alone is not an OS sandbox.
+Optional `[sandbox].mode = "required"` adds Linux x86_64 bubblewrap isolation for
+Voyage subprocesses; default off mode retains application policy alone. Required
+mode fails closed, and live read-only dispatch narrows new subprocess mounts.
+Existing processes retain their original mounts. Native HTTP model transports are
+separate from tool isolation; the optional compatibility bridge needs explicit
+transport grants. See [configuration](configuration.md#optional-linux-process-isolation)
+for readiness diagnostics, network grants and resource-limit scope. Execution
 configuration is loaded and revalidated on the executing host; routing cannot
 broaden it. External content remains untrusted.
 

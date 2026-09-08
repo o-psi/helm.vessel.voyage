@@ -85,6 +85,7 @@ impl ProviderKind {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
+    pub sandbox: crate::sandbox::Settings,
     /// Process-local access updates; never persisted or delegated as authority.
     #[serde(skip)]
     pub live_access: Option<std::sync::Arc<crate::policy::LiveAccess>>,
@@ -174,6 +175,7 @@ pub enum ConfigValueKind {
     StringList,
     StringMap,
     McpServers,
+    Sandbox,
     Executable,
 }
 
@@ -185,6 +187,11 @@ pub struct ConfigOverrideSpec {
 }
 
 pub const CONFIG_OVERRIDE_SPECS: &[ConfigOverrideSpec] = &[
+    ConfigOverrideSpec {
+        key: "sandbox",
+        description: "Explicit Linux process isolation configuration",
+        kind: ConfigValueKind::Sandbox,
+    },
     ConfigOverrideSpec {
         key: "github_enabled",
         description: "Enable the dedicated GitHub capability using HELM_GITHUB_TOKEN",
@@ -395,6 +402,7 @@ pub enum UnattendedApprovalMode {
 impl Default for Config {
     fn default() -> Self {
         Self {
+            sandbox: Default::default(),
             participants: Vec::new(),
             chat_preferences: None,
             github_enabled: false,
@@ -624,6 +632,7 @@ impl Config {
     }
 
     pub fn validate(&self) -> Result<()> {
+        self.sandbox.validate()?;
         if !self.api_key_required {
             if !matches!(
                 self.provider,

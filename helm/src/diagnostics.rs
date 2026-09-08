@@ -62,8 +62,10 @@ pub(crate) async fn doctor(config: &Config, workspace: Option<PathBuf>) -> Resul
         (None, None) => !config.api_key_required || config.api_key().is_ok(),
     };
     let profile = config.provider_profile();
+    let sandbox = helm::sandbox::diagnostics(config, &workspace);
+    let sandbox_ready = sandbox["ready"].as_bool().unwrap_or(false);
     let report = serde_json::json!({
-        "status": if provider_ready { "ok" } else { "action_required" },
+        "status": if provider_ready && sandbox_ready { "ok" } else { "action_required" },
         "version": env!("CARGO_PKG_VERSION"),
         "workspace": workspace,
         "workspace_readable": workspace.is_dir(),
@@ -75,6 +77,7 @@ pub(crate) async fn doctor(config: &Config, workspace: Option<PathBuf>) -> Resul
         "codex_compatibility": subscription,
         "sessions_directory": helm::config::default_data_dir().join("sessions"),
         "access": config.access_mode(),
+        "sandbox": sandbox,
         "unattended_approval": config.unattended_approval,
         "inherited_environment": config.inherit_env,
         "mcp_servers": config.mcp_servers.keys().collect::<Vec<_>>(),

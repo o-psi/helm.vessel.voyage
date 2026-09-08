@@ -131,6 +131,7 @@ impl Policy {
             &mut config.unattended_approval,
             &self.snapshot.effective.rules().unattended,
         );
+        config.sandbox = self.sandbox().settings.clone();
         config.github_enabled &= self.snapshot.effective.rules().github_enabled;
         config.deny_commands.extend(self.deny_commands.clone());
         config.deny_commands.sort();
@@ -144,6 +145,27 @@ impl Policy {
         Ok(())
     }
 
+    pub fn sandbox(&self) -> &crate::sandbox::Sandbox {
+        &self.snapshot.sandbox
+    }
+    pub fn process_command(
+        &self,
+        program: impl AsRef<std::ffi::OsStr>,
+        cwd: &Path,
+    ) -> Result<std::process::Command> {
+        self.check_current()?;
+        let mut command = std::process::Command::new(program);
+        command.current_dir(cwd);
+        Ok(command)
+    }
+    pub fn isolate_process(&self, command: &mut std::process::Command, cwd: &Path) -> Result<()> {
+        self.check_current()?;
+        Ok(self.sandbox().apply_read_only(
+            command,
+            cwd,
+            self.access_mode() == AccessMode::ReadOnly,
+        )?)
+    }
     pub fn workspace(&self) -> &Path {
         &self.workspace
     }
@@ -324,7 +346,7 @@ fn looks_risky(command: &str, words: &[String]) -> bool {
         || !confidently_read_only(command, words)
 }
 
-/// Shell is not sandboxed, so approval mode only bypasses a prompt for a
+/// Application approval only bypasses a prompt for a
 /// deliberately small set of inspection commands. Anything ambiguous asks.
 fn confidently_read_only(command: &str, words: &[String]) -> bool {
     if command

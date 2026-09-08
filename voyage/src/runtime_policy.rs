@@ -27,6 +27,7 @@ impl Source {
 }
 #[derive(Clone, Debug)]
 pub(crate) struct Snapshot {
+    pub(crate) sandbox: crate::sandbox::Sandbox,
     source: Source,
     base: Rules,
     selection: Option<Selection>,
@@ -123,9 +124,12 @@ impl RuntimePolicy {
         if let Some(allowed) = effective.environment_ceiling() {
             restrict_environment(&mut config, allowed);
         }
+        let sandbox =
+            crate::sandbox::Sandbox::new(&config.sandbox, &rules.read_roots, &rules.write_roots)?;
         Ok(Self {
             config,
             policy: Policy::from_runtime(Snapshot {
+                sandbox,
                 source,
                 base,
                 selection,

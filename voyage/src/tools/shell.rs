@@ -55,7 +55,11 @@ impl Tool for Shell {
                 .require_approved()?,
             _ => {}
         }
-        let mut command = Command::new("sh");
+        let mut command = Command::from(
+            ctx.policy
+                .process_command("sh", ctx.policy.workspace())
+                .map_err(|e| ToolError::Failed(e.to_string()))?,
+        );
         command
             .arg("-lc")
             .arg(&args.command)
@@ -68,6 +72,9 @@ impl Tool for Shell {
         command.envs(&ctx.environment);
         #[cfg(unix)]
         command.process_group(0);
+        ctx.policy
+            .isolate_process(command.as_std_mut(), ctx.policy.workspace())
+            .map_err(|e| ToolError::Failed(e.to_string()))?;
         let child = command
             .spawn()
             .map_err(|error| ToolError::Failed(error.to_string()))?;
@@ -106,7 +113,11 @@ impl Tool for Shell {
         authorize_secret_command(&args, ctx)
             .await
             .map_err(private_shell_error)?;
-        let mut command = Command::new("sh");
+        let mut command = Command::from(
+            ctx.policy
+                .process_command("sh", ctx.policy.workspace())
+                .map_err(|e| ToolError::Failed(e.to_string()))?,
+        );
         command
             .arg("-lc")
             .arg(&args.command)
@@ -120,6 +131,9 @@ impl Tool for Shell {
             .stderr(Stdio::null());
         #[cfg(unix)]
         command.process_group(0);
+        ctx.policy
+            .isolate_process(command.as_std_mut(), ctx.policy.workspace())
+            .map_err(|e| ToolError::Failed(e.to_string()))?;
         let mut child = command
             .spawn()
             .map_err(|_| ToolError::Failed("private one-shot shell spawn failed".into()))?;

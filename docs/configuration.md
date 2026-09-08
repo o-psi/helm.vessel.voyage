@@ -125,6 +125,48 @@ secret-like inherited names are refused. Keep credentials out of child environme
 values too. `redact_values` supplies additional literal output redactions.
 See [Security](security.md) for enforcement and cleanup limits.
 
+### Optional Linux process isolation
+
+`[sandbox]` selects an additional OS boundary on the executing Voyage host.
+The default `mode = "off"` retains application policy alone. `mode = "required"`
+uses the system `/usr/bin/bwrap` on Linux x86_64 and refuses launch when setup
+cannot succeed; approvals and unrestricted access do not disable it. Install
+bubblewrap on that host and use a kernel that permits unprivileged user namespaces.
+`helm doctor` reports local adapter readiness separately from provider readiness;
+its bounded `/bin/true` probe checks setup, not every security property or a remote
+Vessel's environment.
+
+```toml
+[sandbox]
+mode = "required"
+network = "denied"
+address_space_bytes = 4294967296
+cpu_seconds = 600
+file_size_bytes = 1073741824
+open_files = 1024
+uid_processes = 4096
+temporary_bytes = 268435456
+```
+
+The adapter mounts explicitly allowed roots plus a small read-only system runtime,
+with private process/device views and temporary storage. Broad host roots and
+reserved runtime mounts are refused. `network = "host"` is an explicit grant of
+host IPv4/IPv6 connectivity, including local endpoints; it is not an endpoint
+allowlist. Unix socket creation remains denied. Subprocess environments still use
+the configured allowlist.
+
+Address space, CPU, file size and descriptor limits apply per process. The process
+count limit covers the same real UID, including processes outside this sandbox.
+The temporary storage limit covers its private tmpfs. These are not aggregate
+descendant memory or CPU budgets.
+
+The optional Codex compatibility bridge has separate `bridge_read`,
+`bridge_inherit_env` and `bridge_network` grants inside `[sandbox]`. They do not add
+tool roots. Required mode does not automatically expose provider login stores or
+grant bridge network access. Native HTTP providers remain outside tool subprocess
+isolation and keep credentials on the executing host. Required isolation on other
+platforms is unsupported and fails closed.
+
 Named profiles are explicit, private choices. Create/inspect a candidate, preview
 its exact revision and digest for the actual workspace, then select it at launch:
 
