@@ -54,7 +54,13 @@ impl Manager {
                     Button::Import,
                 ));
                 rows.push(Row {
-                    text: "This computer — local".into(),
+                    text: format!(
+                        "This computer — {}",
+                        self.local_id
+                            .and_then(|id| self.states.get(&id))
+                            .map(|(_, state)| state.label())
+                            .unwrap_or("not connected")
+                    ),
                     button: Some(Button::Select(0)),
                     selected: self.panel.selected == 0,
                 });
@@ -124,6 +130,15 @@ impl Manager {
                     ] {
                         rows.push(Row::button(label, b));
                     }
+                } else if self.panel.selected == 0 {
+                    rows.push(Row::button(
+                        "[c / Enter Connect / Retry local]",
+                        Button::Connect,
+                    ));
+                    rows.push(Row::button(
+                        "[d Disconnect local observation]",
+                        Button::Disconnect,
+                    ));
                 } else if self.panel.selected > self.records.len() {
                     rows.push(Row::button(
                         "[p / Enter Recover pending pairing]",

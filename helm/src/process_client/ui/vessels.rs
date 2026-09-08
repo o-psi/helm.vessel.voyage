@@ -19,6 +19,8 @@ use zeroize::Zeroizing;
 
 pub enum Action {
     Activate(Connection),
+    ConnectLocal,
+    DisconnectLocal,
     Disconnect(Uuid),
     Forget(Uuid),
     New(Option<Uuid>),
@@ -122,10 +124,12 @@ impl Default for Panel {
 pub struct Manager {
     registry: Arc<Registry>,
     principal: Option<Uuid>,
+    local_id: Option<Uuid>,
     records: Vec<Connection>,
     pending: Vec<Uuid>,
     states: HashMap<Uuid, (u64, ConnectionState)>,
     panel: Panel,
+    jobs: Vec<tokio::task::JoinHandle<()>>,
 }
 impl Manager {
     pub fn open(root: PathBuf) -> anyhow::Result<Self> {
@@ -134,13 +138,22 @@ impl Manager {
         let mut manager = Self {
             registry,
             principal,
+            local_id: None,
             records: Vec::new(),
             pending: Vec::new(),
             states: HashMap::new(),
             panel: Panel::default(),
+            jobs: Vec::new(),
         };
         manager.reload()?;
         Ok(manager)
+    }
+    pub fn stop_tasks(&mut self) -> Vec<tokio::task::JoinHandle<()>> {
+        let jobs = std::mem::take(&mut self.jobs);
+        for job in &jobs {
+            job.abort();
+        }
+        jobs
     }
     pub fn registry(&self) -> &Registry {
         &self.registry
@@ -168,6 +181,9 @@ impl Manager {
         )?;
         self.reload()?;
         Ok(())
+    }
+    pub fn set_local(&mut self, id: Uuid) {
+        self.local_id = Some(id);
     }
     pub fn records(&self) -> &[Connection] {
         &self.records
@@ -298,7 +314,17 @@ impl Manager {
             "Validating privately… Closing does not cancel pairing; pending recovery is retained."
                 .into();
         let sender = sender.clone();
-        tokio::spawn(async move {
+        let mut running = Vec::new();
+        for job in self.jobs.drain(..) {
+            if job.is_finished() {
+                use futures_util::FutureExt;
+                let _ = job.now_or_never();
+            } else {
+                running.push(job);
+            }
+        }
+        self.jobs = running;
+        let job = tokio::spawn(async move {
             let result = tokio::time::timeout(Duration::from_secs(45), async {
                 if let Some(id) = resume {
                     registry.resume_pair(id).await
@@ -320,6 +346,7 @@ impl Manager {
                 .send(super::observe::Update::Vessels(Event { operation, result }))
                 .await;
         });
+        self.jobs.push(job);
     }
     fn preferences(&mut self, id: Uuid, alias: Option<String>, toggle: bool) {
         let Some(c) = self.records.iter().find(|c| c.id == id) else {

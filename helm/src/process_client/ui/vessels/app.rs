@@ -11,6 +11,9 @@ impl App {
         self.vessels.as_ref().is_some_and(|m| m.borrow().is_open())
     }
     pub(in crate::process_client::ui) fn open_vessels(&mut self) {
+        // A clipboard acquisition begun in the composer must not complete after
+        // the operator has switched to credential setup and copied an invitation.
+        self.cancel_paste_for_private_panel();
         if self.vessels.is_none() {
             let root =
                 crate::process_client::cli::default_directory().with_file_name("helm-connections");
@@ -47,7 +50,7 @@ impl App {
             return Ok(true);
         }
         let open = matches!(event, Input::Key(k) if k.modifiers.contains(KeyModifiers::CONTROL) && k.code == KeyCode::Char('g'))
-            || matches!(event, Input::Mouse(m) if m.kind == MouseEventKind::Down(MouseButton::Left) && self.vessel_button.get().contains((m.column,m.row).into()));
+            || matches!(event, Input::Mouse(m) if m.kind == MouseEventKind::Down(MouseButton::Left) && (self.vessel_button.get().contains((m.column,m.row).into()) || self.vessel_sidebar_button.get().contains((m.column,m.row).into())));
         if open {
             self.open_vessels();
             return Ok(true);
@@ -65,6 +68,18 @@ impl App {
     fn vessel_actions(&mut self, actions: Vec<Action>) {
         for action in actions {
             match action {
+                Action::ConnectLocal => {
+                    if let Some(client) = self.clients.local_client() {
+                        self.activate_client(client);
+                    } else {
+                        self.status = "This launch has no local route. Start ordinary Helm to include this computer.".into();
+                    }
+                }
+                Action::DisconnectLocal => {
+                    if let Some(client) = self.clients.local_client() {
+                        self.disconnect_connection(client.id());
+                    }
+                }
                 Action::Activate(connection) => {
                     if let Some(manager) = &self.vessels {
                         let client = connection.client(manager.borrow().registry());

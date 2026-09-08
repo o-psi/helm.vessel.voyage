@@ -84,6 +84,11 @@ fn prepare_content(
 }
 
 impl App {
+    pub(super) fn cancel_paste_for_private_panel(&self) {
+        if let Some(pending) = &self.clipboard_pending {
+            pending.cancel.cancel();
+        }
+    }
     fn paste_destination(&self) -> Option<Destination> {
         if self.vessels_open()
             || self.workspace_picker.is_some()

@@ -47,6 +47,13 @@ impl Routes {
     pub fn iter(&self) -> impl Iterator<Item = &Client> {
         self.routes().map(|r| &self.clients[&r])
     }
+    pub fn local_client(&self) -> Option<Client> {
+        self.clients
+            .values()
+            .filter(|client| client.is_local())
+            .last()
+            .cloned()
+    }
     pub fn first_route(&self) -> Option<Route> {
         self.routes().next()
     }
@@ -59,9 +66,6 @@ impl Routes {
     pub fn len(&self) -> usize {
         self.active.len()
     }
-    pub fn is_empty(&self) -> bool {
-        self.active.is_empty()
-    }
 }
 impl Index<Route> for Routes {
     type Output = Client;
@@ -72,6 +76,12 @@ impl Index<Route> for Routes {
 impl App {
     pub(super) fn start_observers(&mut self) {
         for route in self.clients.routes() {
+            if self.clients[route].is_local()
+                && let Some(manager) = &self.vessels
+            {
+                manager.borrow_mut().set_local(route.id);
+            }
+            self.vessel_state(route, super::vessels::ConnectionState::Connecting);
             self.observers.insert(
                 route.id,
                 observe::spawn(self.clients[route].clone(), route, self.sender.clone()),
@@ -83,6 +93,7 @@ impl App {
             self.vessel_state(route, super::vessels::ConnectionState::Offline);
         }
         self.clients.deactivate(id);
+        self.pending_disconnects.insert(id);
         self.pending_activations.remove(&id);
         if let Some(jobs) = self.route_tasks.remove(&id) {
             for job in jobs {
@@ -112,6 +123,10 @@ impl App {
     }
     pub(super) fn activate_client(&mut self, client: Client) {
         let id = client.id();
+        if self.clients.len() >= 32 && !self.clients.routes().any(|route| route.id == id) {
+            self.status = "At most 32 active Vessels. Disconnect another connection first; its recovery records will remain.".into();
+            return;
+        }
         self.disconnect_connection(id);
         self.pending_activations.insert(id, client);
         self.status = "Connecting · waiting for previous observation cleanup".into();
@@ -176,6 +191,14 @@ impl App {
             *jobs = running;
         }
         if self.retired_observers.is_empty() {
+            for id in std::mem::take(&mut self.pending_disconnects) {
+                if let Err(error) = self.cancel_new_drafts(id) {
+                    self.status = format!(
+                        "Draft recovery retained: {}",
+                        super::safe(&error.to_string())
+                    );
+                }
+            }
             for (_, client) in std::mem::take(&mut self.pending_activations) {
                 self.finish_activation(client);
             }

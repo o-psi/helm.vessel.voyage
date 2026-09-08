@@ -19,7 +19,9 @@ impl App {
             Constraint::Length(4),
         ])
         .split(area);
-        let state = if draft.busy {
+        let state = if !self.clients.current(draft.route) {
+            "Disconnected · draft and pending delivery retained; reconnect through Vessels"
+        } else if draft.busy {
             "Starting / checking…"
         } else if draft.saved.attempted {
             "First turn pending · checking receipts, never replaying"
@@ -111,12 +113,17 @@ impl App {
         frame: &mut Frame<'_>,
         area: Rect,
     ) {
+        let drafts: Vec<_> = self
+            .new_drafts
+            .iter()
+            .filter(|(_, draft)| self.vessel_filter.is_none_or(|id| draft.route.id == id))
+            .collect();
         let offset = self
             .active_draft
-            .and_then(|id| self.new_drafts.keys().position(|key| *key == id))
+            .and_then(|id| drafts.iter().position(|(key, _)| **key == id))
             .unwrap_or(0)
             .saturating_sub(area.height.saturating_sub(1) as usize);
-        for (y, (id, draft)) in (area.y..).zip(self.new_drafts.iter().skip(offset)) {
+        for (y, (id, draft)) in (area.y..).zip(drafts.into_iter().skip(offset)) {
             if y >= area.bottom() {
                 break;
             }
@@ -130,12 +137,13 @@ impl App {
                 .unwrap_or("New voyage");
             frame.render_widget(
                 Paragraph::new(format!(
-                    "{}Draft: {}",
+                    "{}[{}] Draft: {}",
                     if self.active_draft == Some(*id) {
                         "> "
                     } else {
                         "  "
                     },
+                    self.route_label(draft.route),
                     safe(title)
                 ))
                 .style(Style::default().fg(Color::Cyan)),

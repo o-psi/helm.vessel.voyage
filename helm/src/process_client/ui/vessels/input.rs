@@ -210,6 +210,9 @@ impl Manager {
                 self.clear_fields();
             }
             Button::Connect if matches!(self.panel.page, Page::List) => {
+                if self.panel.selected == 0 {
+                    return vec![Action::ConnectLocal];
+                }
                 if let Some(c) = self.selected() {
                     if c.forgotten {
                         self.panel.notice = "Restore this original connection first (o). Recovery credentials are retained; no commands will be replayed.".into();
@@ -219,6 +222,9 @@ impl Manager {
                 }
             }
             Button::Disconnect if matches!(self.panel.page, Page::List) => {
+                if self.panel.selected == 0 {
+                    return vec![Action::DisconnectLocal];
+                }
                 if let Some(c) = self.selected() {
                     return vec![Action::Disconnect(c.id)];
                 }

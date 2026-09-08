@@ -49,12 +49,14 @@ use tokio::sync::mpsc;
 pub(super) struct App {
     vessels: Option<std::cell::RefCell<vessels::Manager>>,
     vessel_button: std::cell::Cell<ratatui::layout::Rect>,
+    vessel_sidebar_button: std::cell::Cell<ratatui::layout::Rect>,
     vessel_filter: Option<uuid::Uuid>,
     clients: routes::Routes,
     observers: BTreeMap<uuid::Uuid, tokio::task::JoinHandle<()>>,
     retired_observers: Vec<tokio::task::JoinHandle<()>>,
     route_tasks: BTreeMap<uuid::Uuid, Vec<tokio::task::JoinHandle<()>>>,
     pending_activations: BTreeMap<uuid::Uuid, Client>,
+    pending_disconnects: std::collections::BTreeSet<uuid::Uuid>,
     clipboard_pending: Option<paste::PendingPaste>,
     clipboard_blocked: bool,
     new_chat_config: Option<crate::Config>,
@@ -137,11 +139,15 @@ pub async fn run_with_notice(
     let mut clients = clients;
     let registry_root =
         crate::process_client::cli::default_directory().with_file_name("helm-connections");
-    let manager = vessels::Manager::open(registry_root);
+    let manager = registry_root
+        .parent()
+        .context("connection registry parent")
+        .and_then(|parent| std::fs::create_dir_all(parent).map_err(Into::into))
+        .and_then(|()| vessels::Manager::open(registry_root));
     let registry_notice = manager.as_ref().err().map(|_| "Saved Vessels unavailable: check private address-book permissions. Local work remains available.".to_owned());
     if let Ok(manager) = &manager {
         for connection in manager.autoconnect().take(16) {
-            if !clients.iter().any(|client| client.id() == connection.id) {
+            if clients.len() < 32 && !clients.iter().any(|client| client.id() == connection.id) {
                 clients.push(connection.client(manager.registry()));
             }
         }
@@ -152,6 +158,7 @@ pub async fn run_with_notice(
     let mut app = App {
         vessels: manager.ok().map(std::cell::RefCell::new),
         vessel_button: Default::default(),
+        vessel_sidebar_button: Default::default(),
         vessel_filter: None,
         clipboard_pending: None,
         clipboard_blocked: false,
@@ -160,6 +167,7 @@ pub async fn run_with_notice(
         retired_observers: Vec::new(),
         route_tasks: BTreeMap::new(),
         pending_activations: BTreeMap::new(),
+        pending_disconnects: Default::default(),
         new_chat_config,
         views: BTreeMap::new(),
         selected,
@@ -248,6 +256,10 @@ pub async fn run_with_notice(
             job.abort();
             app.retired_observers.push(job);
         }
+    }
+    if let Some(manager) = &app.vessels {
+        app.retired_observers
+            .extend(manager.borrow_mut().stop_tasks());
     }
     for job in app.retired_observers {
         let _ = job.await;

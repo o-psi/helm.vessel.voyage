@@ -153,8 +153,11 @@ impl App {
                     "Saved draft connection identity changed; original retained"
                 );
                 draft.saved = saved;
-                draft.composer.text = draft.saved.text.clone();
-                draft.composer.cursor = draft.composer.text.len();
+                draft.composer = super::attachments::restore_draft(
+                    draft.saved.text.clone(),
+                    draft.saved.markers.clone(),
+                    &draft.saved.images,
+                )?;
             }
             draft.route = route;
             draft.busy = false;
@@ -177,8 +180,11 @@ impl App {
                     "Saved draft route identity changed"
                 );
                 draft.saved = saved;
-                draft.composer.text = draft.saved.text.clone();
-                draft.composer.cursor = draft.composer.text.len();
+                draft.composer = super::attachments::restore_draft(
+                    draft.saved.text.clone(),
+                    draft.saved.markers.clone(),
+                    &draft.saved.images,
+                )?;
             }
             draft.busy = false;
         }
@@ -229,6 +235,16 @@ impl App {
                         .filter(|draft| draft.route == route)
                         .and_then(|draft| choices.iter().find(|w| w.path == draft.saved.workspace))
                         .map(|w| w.id)
+                        .or_else(|| {
+                            self.vessels.as_ref().and_then(|manager| {
+                                manager
+                                    .borrow()
+                                    .records()
+                                    .iter()
+                                    .find(|c| c.id == route.id)
+                                    .and_then(|c| c.workspace_preference)
+                            })
+                        })
                         .or_else(|| client.managed().and_then(|c| c.workspace_preference));
                     self.workspace_picker = Some(WorkspacePicker::new(route, choices, preferred));
                     return Ok(());
