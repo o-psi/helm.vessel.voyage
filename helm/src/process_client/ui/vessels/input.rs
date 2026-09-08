@@ -10,6 +10,12 @@ impl Manager {
         if !self.panel.open {
             return Vec::new();
         }
+        self.sync_focus();
+        if matches!(event, TerminalEvent::Resize(..)) {
+            self.panel.hits.clear();
+            self.panel.reveal_selection = true;
+            return Vec::new();
+        }
         let button = match event {
             TerminalEvent::Mouse(mouse) => match mouse.kind {
                 MouseEventKind::Down(MouseButton::Left) => self
@@ -51,26 +57,14 @@ impl Manager {
                         self.panel.scroll = self.panel.scroll.saturating_sub(8);
                         None
                     }
-                    KeyCode::Tab | KeyCode::BackTab
-                        if matches!(self.panel.page, Page::Form { .. } | Page::Rename(_)) =>
-                    {
-                        let count = if matches!(self.panel.page, Page::Rename(_)) {
-                            1
+                    KeyCode::Tab | KeyCode::BackTab if !self.panel.focus.is_empty() => {
+                        if key.code == KeyCode::BackTab {
+                            self.panel.focus.prev();
                         } else {
-                            3
-                        };
-                        self.panel.field = (self.panel.field
-                            + if key.code == KeyCode::BackTab {
-                                count - 1
-                            } else {
-                                1
-                            })
-                            % count;
-                        if matches!(self.panel.page, Page::Form { import: true, .. })
-                            && self.panel.field == 1
-                        {
-                            self.panel.field = if key.code == KeyCode::BackTab { 0 } else { 2 };
+                            self.panel.focus.next();
                         }
+                        self.sync_focus();
+                        self.panel.reveal_selection = true;
                         None
                     }
                     KeyCode::Backspace if self.editing() => {
@@ -91,6 +85,15 @@ impl Manager {
                     {
                         self.insert(&c.to_string());
                         None
+                    }
+                    KeyCode::Char(' ') if !self.editing() && !self.panel.focus.is_empty() => {
+                        self.panel.focus.current().copied()
+                    }
+                    KeyCode::Enter if !self.panel.focus.is_empty() => {
+                        self.panel.focus.current().map(|button| match button {
+                            Button::Field(_) => Button::Submit,
+                            button => *button,
+                        })
                     }
                     KeyCode::Enter => Some(match self.panel.page {
                         Page::List if self.panel.selected > self.records.len() => Button::Resume,
@@ -128,10 +131,15 @@ impl Manager {
             }
             _ => None,
         };
-        button.map(|b| self.press(b, sender)).unwrap_or_default()
+        let actions = button.map(|b| self.press(b, sender)).unwrap_or_default();
+        // Areas belong to the rendered page, not to its successor or old scroll.
+        self.panel.hits.clear();
+        actions
     }
     fn editing(&self) -> bool {
-        self.panel.busy.is_none() && matches!(self.panel.page, Page::Form { .. } | Page::Rename(_))
+        self.panel.busy.is_none()
+            && matches!(self.panel.page, Page::Form { .. } | Page::Rename(_))
+            && matches!(self.panel.focus.current(), Some(Button::Field(_)))
     }
     fn insert(&mut self, value: &str) {
         if !self.editing() {
@@ -162,6 +170,11 @@ impl Manager {
         if self.panel.busy.is_some() {
             return Vec::new();
         }
+        if !matches!(self.panel.page, Page::List) && !self.panel.focus.elements().contains(&button)
+        {
+            return Vec::new();
+        }
+        self.focus_control(button);
         match button {
             Button::New if matches!(self.panel.page, Page::List) => {
                 let id = self.selected().map(|c| c.id);
@@ -182,7 +195,7 @@ impl Manager {
                 }];
             }
             Button::Select(i) => self.panel.selected = i,
-            Button::Field(i) => self.panel.field = i,
+            Button::Field(_) => {}
             Button::Add | Button::Import | Button::Replace
                 if matches!(self.panel.page, Page::List) =>
             {

@@ -2,7 +2,6 @@ use super::*;
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect},
-    style::{Color, Style},
     widgets::{Block, Borders, Paragraph},
 };
 
@@ -71,17 +70,16 @@ impl App {
         };
         frame.render_widget(block, rows[2]);
         frame.render_widget(
-            Paragraph::new(details.join("\n")).style(Style::default().fg(Color::Cyan)),
+            Paragraph::new(details.join("\n")).style(crate::theme::Role::Focus.style()),
             Rect::new(inner.x, body.bottom(), inner.width, detail_rows),
         );
         self.draw_inference_controls(
             frame,
             Rect::new(inner.x, inner.bottom().saturating_sub(1), inner.width, 1),
         );
-        let (row, col) = composer::cursor_position(
-            &safe(&draft.composer.text[..draft.composer.cursor]),
-            body.width,
-        );
+        draft.composer.viewport_width.set(body.width);
+        let (row, col) =
+            composer::cursor_position_at(&draft.composer.text, draft.composer.cursor, body.width);
         let scroll = row.saturating_sub(body.height.saturating_sub(1));
         frame.render_widget(
             Paragraph::new(presentation::wrap(
@@ -102,7 +100,7 @@ impl App {
                 "{}\nEnter Send · Alt+Enter New line · Ctrl+C Leave",
                 safe(&self.status)
             ))
-            .style(Style::default().fg(Color::Cyan))
+            .style(crate::theme::Role::Focus.style())
             .wrap(ratatui::widgets::Wrap { trim: false }),
             rows[3],
         );
@@ -146,7 +144,7 @@ impl App {
                     self.route_label(draft.route),
                     safe(title)
                 ))
-                .style(Style::default().fg(Color::Cyan)),
+                .style(crate::theme::Role::Focus.style()),
                 row,
             );
             self.draft_hits.borrow_mut().push((row, *id));

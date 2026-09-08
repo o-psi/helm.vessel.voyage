@@ -7,13 +7,13 @@ use crate::{
 use ratatui::{
     Frame,
     layout::Rect,
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Text},
     widgets::Paragraph,
 };
 
 fn muted() -> Style {
-    Style::default().fg(Color::DarkGray)
+    crate::theme::Role::Muted.style()
 }
 fn heading() -> Style {
     Style::default().add_modifier(Modifier::BOLD)
@@ -225,10 +225,10 @@ fn build(view: &View, state: &State, width: u16) -> Vec<Row> {
                 Key::MessageHeading(message.message_index),
                 Text::from(Line::styled(
                     format!("{label}{time}"),
-                    heading().fg(if message.role == "user" {
-                        Color::Cyan
+                    heading().patch(if message.role == "user" {
+                        crate::theme::Role::Focus.style()
                     } else {
-                        Color::Reset
+                        crate::theme::Role::Primary.style()
                     }),
                 )),
             );
@@ -534,16 +534,11 @@ pub(in crate::process_client::ui) fn draw(frame: &mut Frame<'_>, app: &App, area
             if matches!(row.key, Key::ActivityHeader(_)) {
                 let rect = Rect::new(area.x, area.y + y as u16, area.width, 1);
                 if app.sidebar.pointer.is_some_and(|p| rect.contains(p)) {
-                    line = line.style(
-                        Style::default()
-                            .bg(Color::DarkGray)
-                            .fg(Color::White)
-                            .add_modifier(Modifier::UNDERLINED),
-                    );
+                    line = line.style(crate::theme::Role::Hover.style());
                 }
             }
             if !query.is_empty() && line.to_string().to_lowercase().contains(&query) {
-                line.style(Style::default().bg(Color::DarkGray).fg(Color::White))
+                line.style(crate::theme::Role::SearchMatch.style())
             } else {
                 line
             }

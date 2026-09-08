@@ -44,13 +44,19 @@ impl Default for MarkdownTheme {
                 .fg
                 .unwrap_or(Color::Reset),
             heading: crate::theme::Role::Focus.style().fg.unwrap_or(Color::Reset),
-            link: Color::Blue,
+            link: crate::theme::Role::Link.style().fg.unwrap_or(Color::Reset),
             code: crate::theme::Role::Code.style().fg.unwrap_or(Color::Reset),
             code_background: crate::theme::Role::Code.style().bg.unwrap_or(Color::Reset),
-            quote: Color::DarkGray,
-            rule: Color::DarkGray,
-            table_header: Color::Magenta,
-            warning: Color::Yellow,
+            quote: crate::theme::Role::Muted.style().fg.unwrap_or(Color::Reset),
+            rule: crate::theme::Role::Muted.style().fg.unwrap_or(Color::Reset),
+            table_header: crate::theme::Role::TableHeader
+                .style()
+                .fg
+                .unwrap_or(Color::Reset),
+            warning: crate::theme::Role::AwaitingInput
+                .style()
+                .fg
+                .unwrap_or(Color::Reset),
         }
     }
 }

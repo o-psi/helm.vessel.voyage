@@ -1,7 +1,7 @@
 use super::*;
 use ratatui::{
     Frame,
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Text},
     widgets::{Block, Borders, Paragraph},
 };
@@ -18,7 +18,7 @@ impl App {
         let block = Block::default()
             .borders(Borders::ALL)
             .title(" Voyage actions ")
-            .border_style(Style::default().fg(Color::Cyan));
+            .border_style(crate::theme::Role::Focus.style());
         let inner = block.inner(area);
         frame.render_widget(block, area);
         let view = self.views.get(&menu.target);
@@ -102,24 +102,20 @@ impl App {
                     )
                 };
                 let row = Rect::new(body.x, y, body.width, 1);
-                let color = if reason.is_some() {
-                    Color::DarkGray
-                } else if *action == Action::Delete {
-                    Color::Red
+                let style = if reason.is_some() {
+                    crate::theme::Role::Muted.style()
                 } else if index == menu.selected {
-                    Color::Cyan
+                    crate::theme::Role::Selection.style()
                 } else {
-                    Color::Reset
+                    crate::theme::Role::Primary.style()
                 };
                 let style = if reason.is_none() {
-                    Style::default()
-                        .fg(color)
-                        .patch(self.hover_style(row, true))
+                    style.patch(self.hover_style(row, true))
                 } else {
-                    Style::default().fg(color)
+                    style
                 };
                 let style = if *action == Action::Delete && reason.is_none() {
-                    style.fg(Color::Red)
+                    style.patch(crate::theme::Role::Failed.style())
                 } else {
                     style
                 };
@@ -151,11 +147,11 @@ impl App {
                 Text::raw(super::super::safe(hint)),
                 inner.width,
             ))
-            .style(Style::default().fg(if menu.error.is_empty() {
-                Color::DarkGray
+            .style(if menu.error.is_empty() {
+                crate::theme::Role::Muted.style()
             } else {
-                Color::Yellow
-            })),
+                crate::theme::Role::AwaitingInput.style()
+            }),
             Rect::new(inner.x, inner.bottom().saturating_sub(2), inner.width, 2),
         );
     }

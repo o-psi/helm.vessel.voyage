@@ -448,34 +448,43 @@ impl App {
 
 /// Owned images are styled editor elements, never parsed from lookalike text.
 pub(super) fn styled_draft(draft: &composer::Composer) -> ratatui::text::Text<'static> {
-    use ratatui::{
-        style::{Color, Modifier, Style},
-        text::{Line, Span, Text},
-    };
-    let mut lines = vec![Line::default()];
-    let mut end = 0;
+    use ratatui::text::{Line, Span, Text};
+    let selection = draft.selection();
+    let mut boundaries = vec![0, draft.text.len()];
     for marker in &draft.markers {
-        append_text(&mut lines, &safe(&draft.text[end..marker.start]));
-        lines.last_mut().expect("line").spans.push(Span::styled(
-            draft.text[marker.start..marker.end].to_owned(),
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        ));
-        end = marker.end;
+        boundaries.extend([marker.start, marker.end]);
     }
-    append_text(&mut lines, &safe(&draft.text[end..]));
-    Text::from(lines)
-}
-fn append_text(lines: &mut Vec<ratatui::text::Line<'static>>, text: &str) {
-    for (n, line) in text.split('\n').enumerate() {
-        if n > 0 {
-            lines.push(ratatui::text::Line::default());
+    if let Some((start, end)) = selection {
+        boundaries.extend([start, end]);
+    }
+    boundaries.sort_unstable();
+    boundaries.dedup();
+    let mut lines = vec![Line::default()];
+    for pair in boundaries.windows(2) {
+        let (start, end) = (pair[0], pair[1]);
+        let mut style = if draft
+            .markers
+            .iter()
+            .any(|m| m.start <= start && end <= m.end)
+        {
+            crate::theme::Role::Focus.style()
+        } else {
+            ratatui::style::Style::default()
+        };
+        if selection.is_some_and(|(a, b)| a <= start && end <= b) {
+            style = style.patch(crate::theme::Role::Selection.style());
         }
-        lines
-            .last_mut()
-            .expect("line")
-            .spans
-            .push(ratatui::text::Span::raw(line.to_owned()));
+        let text = safe(&draft.text[start..end]);
+        for (index, line) in text.split('\n').enumerate() {
+            if index > 0 {
+                lines.push(Line::default());
+            }
+            lines
+                .last_mut()
+                .expect("line")
+                .spans
+                .push(Span::styled(line.to_owned(), style));
+        }
     }
+    Text::from(lines)
 }

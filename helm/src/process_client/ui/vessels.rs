@@ -2,6 +2,7 @@
 //! including paste. Neither setup input nor backend diagnostics belong in chat/logs.
 mod app;
 mod failure;
+mod focus;
 mod input;
 pub(super) use app::classify_error;
 use failure::SetupFailure;
@@ -57,7 +58,7 @@ pub struct Event {
     operation: Uuid,
     result: Result<ConnectionPreview, SetupFailure>,
 }
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 enum Button {
     Add,
     Import,
@@ -98,6 +99,7 @@ struct Panel {
     scroll: usize,
     reveal_selection: bool,
     field: usize,
+    focus: ratatui_interact::state::FocusManager<Button>,
     fields: [Zeroizing<String>; 3],
     autoconnect: bool,
     notice: String,
@@ -113,6 +115,7 @@ impl Default for Panel {
             scroll: 0,
             reveal_selection: false,
             field: 0,
+            focus: Default::default(),
             fields: std::array::from_fn(|_| Zeroizing::new(String::new())),
             autoconnect: true,
             notice: String::new(),
@@ -225,6 +228,7 @@ impl Manager {
     }
     fn reload(&mut self) -> anyhow::Result<()> {
         let snapshot = self.registry.load()?;
+        self.panel.hits.clear();
         self.records = snapshot.connections;
         self.pending = snapshot
             .pending_pairs
@@ -247,6 +251,8 @@ impl Manager {
     fn clear_fields(&mut self) {
         self.panel.fields = std::array::from_fn(|_| Zeroizing::new(String::new()));
         self.panel.field = 0;
+        self.panel.focus.clear();
+        self.panel.hits.clear();
     }
     fn back(&mut self) {
         self.clear_fields();
@@ -258,6 +264,8 @@ impl Manager {
             return Vec::new();
         }
         let replacement = self.panel.busy.take().and_then(|b| b.1);
+        self.panel.hits.clear();
+        self.panel.focus.clear();
         match event.result {
             Ok(preview) => {
                 self.panel.page = Page::Preview {

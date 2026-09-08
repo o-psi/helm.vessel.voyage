@@ -2,11 +2,7 @@
 use super::*;
 use anyhow::{Context, Result};
 use crossterm::event::{Event, KeyCode, KeyModifiers, MouseButton, MouseEventKind};
-use ratatui::{
-    Frame,
-    style::{Color, Style},
-    widgets::Paragraph,
-};
+use ratatui::{Frame, style::Style, widgets::Paragraph};
 use voyage_protocol::vessel::VoyageCommand;
 
 const MODES: [(Action, &str, &str); 3] = [
@@ -190,17 +186,20 @@ impl App {
                         action.label()
                     ))
                     .style(
-                        Style::default()
-                            .fg(if selected { Color::Cyan } else { Color::Reset })
-                            .patch(
-                                if self.sidebar.visible.get()
-                                    == Some((menu.target, menu.incarnation, menu.editor))
-                                {
-                                    self.hover_style(row, true)
-                                } else {
-                                    Style::default()
-                                },
-                            ),
+                        (if selected {
+                            crate::theme::Role::Selection.style()
+                        } else {
+                            crate::theme::Role::Primary.style()
+                        })
+                        .patch(
+                            if self.sidebar.visible.get()
+                                == Some((menu.target, menu.incarnation, menu.editor))
+                            {
+                                self.hover_style(row, true)
+                            } else {
+                                Style::default()
+                            },
+                        ),
                     ),
                     row,
                 );

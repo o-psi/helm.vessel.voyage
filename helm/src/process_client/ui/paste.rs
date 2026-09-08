@@ -169,9 +169,10 @@ impl App {
         &mut self,
         destination: Destination,
         draft: composer::Composer,
-        images: Vec<attachments::Image>,
+        mut images: Vec<attachments::Image>,
     ) -> Result<()> {
         self.ensure_paste_editable(destination)?;
+        attachments::sync_images(&draft, &mut images)?;
         match destination {
             Destination::Live(target) => {
                 let view = self
@@ -252,7 +253,7 @@ impl App {
                 // Ordinary terminal text paste does not consult the OS clipboard.
                 let (mut draft, images) = self.copy_paste_draft(destination)?;
                 ensure!(
-                    draft.text.len().saturating_add(text.len()) <= 65536,
+                    draft.insertion_len(text.len()) <= 65536,
                     "Composer limit is 64 KiB; draft preserved"
                 );
                 draft.insert_str(&text);
@@ -335,7 +336,7 @@ impl App {
         let destination = pending.destination;
         let anchor = self
             .paste_composer_mut(destination)
-            .and_then(|d| d.take_paste_anchor());
+            .and_then(|d| d.take_paste_range());
         if result
             .as_ref()
             .is_err_and(|error| error.contains("cleanup failed"))
@@ -349,28 +350,27 @@ impl App {
             return;
         }
         let applied: Result<()> = (|| {
-            let at = anchor.context("Draft was replaced while reading; paste again")?;
+            let (at, end) = anchor.context("Draft was replaced while reading; paste again")?;
             self.ensure_paste_editable(destination)?;
             let prepared = result.map_err(anyhow::Error::msg)?;
             let (mut draft, mut images) = self.copy_paste_draft(destination)?;
             match prepared {
                 Prepared::Images(added) => {
+                    draft.apply_paste_range(at, end, "");
+                    attachments::sync_images(&draft, &mut images)?;
                     attachments::insert_images(&mut draft, &mut images, added, at)?
                 }
                 Prepared::Text(text) => {
                     ensure!(
-                        draft.text.len().saturating_add(text.len()) <= 65536,
+                        draft
+                            .text
+                            .len()
+                            .saturating_sub(end - at)
+                            .saturating_add(text.len())
+                            <= 65536,
                         "Composer limit is 64 KiB; paste not applied"
                     );
-                    // Rebase the current caret after insertion at the request's anchor.
-                    let cursor = draft.cursor;
-                    draft.cursor = at;
-                    draft.insert_str(&text);
-                    draft.cursor = if cursor >= at {
-                        cursor + text.len()
-                    } else {
-                        cursor
-                    };
+                    draft.apply_paste_range(at, end, &text);
                 }
                 Prepared::Empty => {
                     anyhow::bail!("Clipboard has no image or text to paste; draft preserved")

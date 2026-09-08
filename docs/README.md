@@ -16,6 +16,7 @@ are not presented as usable commands.
 | [Connection verification](vessel-connections-verification.md) | Observed Linux UI, protocol, recovery, transport and deployment checks |
 | [Vessel coordination](vessel-coordination.md) | Native model inspection, steering, independent voyage creation and follow-up |
 | [Images and screenshots](multimodal-implementation.md) | Attaching images, private storage, provider support and limits |
+| [UI components](ui-components.md) | Semantic styles, scoped forms, Unicode editing and library decisions |
 | [Process access](process-access.md) | Scoped grants, participant execution, signed owner transfer and recovery |
 | [Security](security.md) | Authority, credentials, disclosure, terminal safety and first-release audit |
 | [Development](development.md) | Source layout, build commands and contribution workflow |

@@ -3,16 +3,16 @@ use crate::process_client::safe;
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect},
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span, Text},
     widgets::{Block, BorderType, Borders, List, ListItem, ListState, Paragraph},
 };
 
 fn muted() -> Style {
-    Style::default().fg(Color::DarkGray)
+    crate::theme::Role::Muted.style()
 }
 fn accent() -> Style {
-    Style::default().fg(Color::Cyan)
+    crate::theme::Role::Focus.style()
 }
 fn inset(area: Rect, horizontal: u16, vertical: u16) -> Rect {
     area.inner(ratatui::layout::Margin::new(horizontal, vertical))
@@ -49,13 +49,13 @@ fn state(view: &super::state::View) -> &'static str {
     }
 }
 
-/// Label, colour and compactness share one precedence order.
-fn sidebar_state(view: &super::state::View) -> (&'static str, Color, bool) {
+/// Label, style and compactness share one precedence order.
+fn sidebar_state(view: &super::state::View) -> (&'static str, Style, bool) {
     use voyage_protocol::process::ProcessState;
-    let attention = Color::Rgb(230, 145, 45);
-    let running = Color::Rgb(65, 105, 170);
+    let attention = crate::theme::Role::AwaitingInput.style();
+    let running = crate::theme::Role::Running.style();
     if view.process.archive.is_some() {
-        return ("Archived", Color::Gray, false);
+        return ("Archived", crate::theme::Role::Muted.style(), false);
     }
     if view.archived() || view.process.state == ProcessState::CleanupUnconfirmed {
         return ("Needs attention · cleanup", attention, false);
@@ -85,13 +85,13 @@ fn sidebar_state(view: &super::state::View) -> (&'static str, Color, bool) {
             return ("Needs attention · cleanup", attention, false);
         }
         if view.sidebar_suspended() {
-            return ("Suspended", Color::Gray, true);
+            return ("Suspended", crate::theme::Role::Muted.style(), true);
         }
         if let Some(run) = &snapshot.run {
             match run.state.as_str() {
-                "failed" => return ("Failed", Color::Red, false),
-                "completed" => return ("Finished", Color::Green, false),
-                "cancelled" => return ("Cancelled", Color::Gray, false),
+                "failed" => return ("Failed", crate::theme::Role::Failed.style(), false),
+                "completed" => return ("Finished", crate::theme::Role::Completed.style(), false),
+                "cancelled" => return ("Cancelled", crate::theme::Role::Muted.style(), false),
                 "interrupted" | "awaiting_decision" => {
                     return ("Needs attention", attention, false);
                 }
@@ -100,7 +100,9 @@ fn sidebar_state(view: &super::state::View) -> (&'static str, Color, bool) {
         }
     }
     match view.process.state {
-        ProcessState::Suspended if view.sidebar_suspended() => ("Suspended", Color::Gray, true),
+        ProcessState::Suspended if view.sidebar_suspended() => {
+            ("Suspended", crate::theme::Role::Muted.style(), true)
+        }
         ProcessState::Suspended => ("Status unavailable", attention, false),
         ProcessState::Starting => ("Running · starting", running, false),
         ProcessState::Stopped | ProcessState::Relinquished => {
@@ -111,7 +113,9 @@ fn sidebar_state(view: &super::state::View) -> (&'static str, Color, bool) {
             Some(snapshot) => match snapshot.run.as_ref().map(|run| run.state.as_str()) {
                 Some("accepted" | "running") => ("Running", running, false),
                 Some("cancel_requested") => ("Running · cancelling", running, false),
-                Some("completed") | None => ("Finished", Color::Green, false),
+                Some("completed") | None => {
+                    ("Finished", crate::theme::Role::Completed.style(), false)
+                }
                 _ => ("Needs attention", attention, false),
             },
         },
@@ -404,7 +408,7 @@ fn sidebar(frame: &mut Frame<'_>, app: &App, area: Rect) {
         .iter()
         .map(|target| {
             let view = &app.views[target];
-            let (label, color, compact) = sidebar_state(view);
+            let (label, style, compact) = sidebar_state(view);
             // Compact entries reserve their second row for the same divider.
             let mut lines = if compact {
                 vec![Line::from(format!(
@@ -442,17 +446,13 @@ fn sidebar(frame: &mut Frame<'_>, app: &App, area: Rect) {
             };
             lines.push(Line::default());
             heights.push(lines.len() as u16);
-            ListItem::new(lines).style(Style::default().fg(color))
+            ListItem::new(lines).style(style)
         })
         .collect::<Vec<_>>();
     let index = targets.iter().position(|t| Some(*t) == app.selected);
     let mut list_state = ListState::default().with_selected(index);
     frame.render_stateful_widget(
-        List::new(entries).highlight_style(
-            Style::default()
-                .bg(Color::Rgb(30, 35, 45))
-                .add_modifier(Modifier::BOLD),
-        ),
+        List::new(entries).highlight_style(crate::theme::Role::Selection.style()),
         list_area,
         &mut list_state,
     );
@@ -478,7 +478,7 @@ fn sidebar(frame: &mut Frame<'_>, app: &App, area: Rect) {
                 area,
                 app.hover_style(area, false)
                     .remove_modifier(Modifier::UNDERLINED)
-                    .fg(sidebar_state(&app.views[target]).1),
+                    .patch(sidebar_state(&app.views[target]).1),
             );
         }
         frame.render_widget(
@@ -486,9 +486,8 @@ fn sidebar(frame: &mut Frame<'_>, app: &App, area: Rect) {
                 (if app.selected == Some(*target)
                     && app.sidebar.focus == super::sidebar::Focus::Button
                 {
-                    Style::default()
-                        .fg(Color::Black)
-                        .bg(Color::Cyan)
+                    crate::theme::Role::Selection
+                        .style()
                         .add_modifier(Modifier::BOLD)
                 } else {
                     accent()
@@ -534,7 +533,7 @@ fn composer(frame: &mut Frame<'_>, app: &App, area: Rect) {
         .title(app.attachment_summary())
         .border_type(BorderType::Rounded)
         .border_style(if pending {
-            Style::default().fg(Color::Yellow)
+            crate::theme::Role::AwaitingInput.style()
         } else {
             muted()
         });
@@ -547,9 +546,11 @@ fn composer(frame: &mut Frame<'_>, app: &App, area: Rect) {
         height: inner.height.saturating_sub(1 + detail_rows),
         ..inner
     };
-    let cursor = view.map(|v| {
-        super::composer::cursor_position(&safe(&v.draft.text[..v.draft.cursor]), body.width)
-    });
+    if let Some(view) = view {
+        view.draft.viewport_width.set(body.width);
+    }
+    let cursor = view
+        .map(|v| super::composer::cursor_position_at(&v.draft.text, v.draft.cursor, body.width));
     let scroll = cursor.map_or(0, |(row, _)| {
         row.saturating_sub(body.height.saturating_sub(1))
     });
@@ -563,7 +564,7 @@ fn composer(frame: &mut Frame<'_>, app: &App, area: Rect) {
     };
     frame.render_widget(Paragraph::new(text).scroll((scroll, 0)), body);
     frame.render_widget(
-        Paragraph::new(details.join("\n")).style(Style::default().fg(Color::Cyan)),
+        Paragraph::new(details.join("\n")).style(crate::theme::Role::Focus.style()),
         Rect::new(inner.x, body.bottom(), inner.width, detail_rows),
     );
     app.draw_inference_controls(

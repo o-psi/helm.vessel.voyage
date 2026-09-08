@@ -1,10 +1,7 @@
 use super::*;
 use crate::process_client::ui::{App, Route};
 use crossterm::event::{Event as Input, KeyCode, KeyModifiers, MouseButton, MouseEventKind};
-use ratatui::{
-    style::{Color, Style},
-    widgets::Paragraph,
-};
+use ratatui::widgets::Paragraph;
 
 impl App {
     pub(in crate::process_client::ui) fn vessels_open(&self) -> bool {
@@ -144,7 +141,7 @@ impl App {
             " Vessels "
         };
         frame.render_widget(
-            Paragraph::new(label).style(Style::default().fg(Color::Black).bg(Color::Cyan)),
+            Paragraph::new(label).style(crate::theme::Role::Selection.style()),
             rect,
         );
     }

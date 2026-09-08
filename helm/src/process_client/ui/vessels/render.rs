@@ -1,6 +1,6 @@
 use super::*;
 use ratatui::{
-    style::{Color, Style},
+    style::Style,
     widgets::{Clear, Paragraph},
 };
 use unicode_width::UnicodeWidthChar;
@@ -31,6 +31,7 @@ impl Manager {
         if !self.panel.open {
             return;
         }
+        self.sync_focus();
         frame.render_widget(Clear, area);
         self.panel.hits.clear();
         if area.width == 0 || area.height == 0 {
@@ -185,7 +186,7 @@ impl Manager {
                     "[Enter: Validate and preview — does not save]",
                     Button::Submit,
                 ));
-                rows.push(Row::plain("Tab / Shift-Tab selects fields. Ctrl-U clears. Paste stays in this private panel. Invitation is never shown or copied to chat."));
+                rows.push(Row::plain("Tab / Shift-Tab selects fields and actions. Enter submits a field or activates an action; Space activates an action. Ctrl-U clears a field. Paste stays private."));
             }
             Page::Preview {
                 preview,
@@ -230,7 +231,7 @@ impl Manager {
                     Button::Auto,
                 ));
                 rows.push(Row::button(
-                    "[s / Enter Save reviewed access and connect]",
+                    "[s / select + Enter: Save reviewed access and connect]",
                     Button::Save,
                 ));
                 rows.push(Row::plain("Provider credentials stay on the executing host. Human access is not model coordination authority."));
@@ -245,7 +246,10 @@ impl Manager {
             Page::Forget(_) => {
                 rows.push(Row::plain("Forget this saved connection locally?"));
                 rows.push(Row::plain("This disconnects Helm observations, not remote execution. It does NOT revoke remote access, cancel, archive or delete voyages. Drafts, uncertain commands and delivery receipts remain recoverable under their original identity. Replacement access will not replay them."));
-                rows.push(Row::button("[s / Enter Confirm Forget]", Button::Save));
+                rows.push(Row::button(
+                    "[s / select + Enter: Confirm Forget]",
+                    Button::Save,
+                ));
             }
         }
         if self.panel.busy.is_some() {
@@ -255,12 +259,18 @@ impl Manager {
             rows.push(Row::plain(text(&self.panel.notice)));
         }
         rows.push(Row::plain(
-            "PgUp/PgDn or mouse wheel: scroll • Esc: back/close",
+            "Tab/Shift-Tab: form action • Enter/Space: activate • PgUp/PgDn: scroll • Esc: back/close",
         ));
         let mut physical = Vec::new();
         for row in rows {
+            let selected = if self.panel.focus.is_empty() {
+                row.selected
+            } else {
+                row.button
+                    .is_some_and(|button| self.panel.focus.is_focused(&button))
+            };
             for line in wrap(&row.text, area.width as usize) {
-                physical.push((line, row.button, row.selected));
+                physical.push((line, row.button, selected));
             }
         }
         if self.panel.reveal_selection {
@@ -285,9 +295,9 @@ impl Manager {
         {
             let rect = Rect::new(area.x, area.y + y as u16, area.width, 1);
             let style = if selected {
-                Style::default().fg(Color::Black).bg(Color::Cyan)
+                crate::theme::Role::Selection.style()
             } else if button.is_some() {
-                Style::default().fg(Color::Cyan)
+                crate::theme::Role::Focus.style()
             } else {
                 Style::default()
             };
@@ -301,7 +311,11 @@ impl Manager {
         Row {
             text: format!(
                 "{} {}: {}",
-                if self.panel.field == i { ">" } else { " " },
+                if self.panel.focus.is_focused(&Button::Field(i)) {
+                    ">"
+                } else {
+                    " "
+                },
                 label,
                 if masked {
                     "•".repeat(self.panel.fields[i].chars().count().min(32))
@@ -310,7 +324,7 @@ impl Manager {
                 }
             ),
             button: Some(Button::Field(i)),
-            selected: self.panel.field == i,
+            selected: self.panel.focus.is_focused(&Button::Field(i)),
         }
     }
 }

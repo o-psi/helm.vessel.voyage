@@ -5,7 +5,7 @@ use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect},
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::Line,
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph},
 };
@@ -93,7 +93,7 @@ pub(super) fn draw(frame: &mut Frame<'_>, app: &App, area: Rect) {
                 "Explore your voyage",
                 Style::default().add_modifier(Modifier::BOLD),
             ),
-            Line::styled(super::safe(&title), Style::default().fg(Color::DarkGray)),
+            Line::styled(super::safe(&title), crate::theme::Role::Muted.style()),
         ]),
         rows[0],
     );
@@ -102,17 +102,15 @@ pub(super) fn draw(frame: &mut Frame<'_>, app: &App, area: Rect) {
         .map(|(name, description, _)| {
             ListItem::new(vec![
                 Line::from(*name),
-                Line::styled(*description, Style::default().fg(Color::DarkGray)),
+                Line::styled(*description, crate::theme::Role::Muted.style()),
                 Line::default(),
             ])
         })
         .collect::<Vec<_>>();
     frame.render_stateful_widget(
-        List::new(items).highlight_symbol("> ").highlight_style(
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        ),
+        List::new(items)
+            .highlight_symbol("> ")
+            .highlight_style(crate::theme::Role::Selection.style()),
         rows[1],
         &mut ListState::default().with_selected(app.explore),
     );
@@ -120,7 +118,7 @@ pub(super) fn draw(frame: &mut Frame<'_>, app: &App, area: Rect) {
         Paragraph::new("Up/Down Choose  Enter Open  Esc Back").block(
             Block::default()
                 .borders(Borders::TOP)
-                .border_style(Style::default().fg(Color::DarkGray)),
+                .border_style(crate::theme::Role::Muted.style()),
         ),
         rows[2],
     );

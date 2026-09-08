@@ -212,7 +212,7 @@ pub(super) fn render(section: &str, envelope: &Value) -> String {
 /// Overview typography is UI, not a Markdown source view.
 pub(super) fn display(content: &str, width: u16) -> ratatui::text::Text<'static> {
     use ratatui::{
-        style::{Color, Modifier, Style},
+        style::Style,
         text::{Line, Text},
     };
     use unicode_segmentation::UnicodeSegmentation;
@@ -224,9 +224,7 @@ pub(super) fn display(content: &str, width: u16) -> ratatui::text::Text<'static>
             .strip_prefix("## ")
             .or_else(|| source.strip_prefix("# "));
         let style = if heading.is_some() {
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD)
+            crate::theme::Role::Focus.style()
         } else {
             Style::default()
         };

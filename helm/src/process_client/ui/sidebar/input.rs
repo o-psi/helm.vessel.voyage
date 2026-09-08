@@ -70,6 +70,20 @@ impl App {
         {
             return Ok(false);
         }
+        if self.sidebar.focus == Focus::Composer
+            && key.modifiers.contains(KeyModifiers::SHIFT)
+            && matches!(
+                key.code,
+                KeyCode::Left
+                    | KeyCode::Right
+                    | KeyCode::Up
+                    | KeyCode::Down
+                    | KeyCode::Home
+                    | KeyCode::End
+            )
+        {
+            return Ok(false);
+        }
         let empty = self
             .selected
             .and_then(|t| self.views.get(&t))

@@ -2,7 +2,7 @@ use super::*;
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect},
-    style::{Color, Style},
+    style::Style,
     text::Span,
     widgets::{Block, Borders, Clear, Paragraph, Wrap},
 };
@@ -53,11 +53,11 @@ impl App {
         label: String,
         available: bool,
     ) {
-        let style = Style::default().fg(if available {
-            Color::Cyan
+        let style = if available {
+            crate::theme::Role::Focus.style()
         } else {
-            Color::DarkGray
-        });
+            crate::theme::Role::Muted.style()
+        };
         let hover = if self.inference_picker_open() {
             Style::default()
         } else {
@@ -145,7 +145,7 @@ impl App {
         ])
         .split(inner);
         frame.render_widget(
-            Paragraph::new(heading).style(Style::default().fg(Color::DarkGray)),
+            Paragraph::new(heading).style(crate::theme::Role::Muted.style()),
             rows[0],
         );
         frame.render_widget(
@@ -162,7 +162,7 @@ impl App {
                     }
                 )
             })
-            .style(Style::default().fg(Color::Cyan)),
+            .style(crate::theme::Role::Focus.style()),
             rows[1],
         );
         let options = picker.options();
@@ -192,13 +192,16 @@ impl App {
             );
             frame.render_widget(
                 Paragraph::new(text).style(
-                    Style::default()
-                        .fg(if index == picker.selected {
-                            Color::Cyan
-                        } else {
-                            Color::White
-                        })
-                        .bg(if hover { Color::DarkGray } else { Color::Reset }),
+                    (if index == picker.selected {
+                        crate::theme::Role::Selection.style()
+                    } else {
+                        crate::theme::Role::Primary.style()
+                    })
+                    .patch(if hover {
+                        crate::theme::Role::Hover.style()
+                    } else {
+                        Style::default()
+                    }),
                 ),
                 rect,
             );
@@ -215,7 +218,7 @@ impl App {
                 }
             ))
             .wrap(Wrap { trim: false })
-            .style(Style::default().fg(Color::Yellow)),
+            .style(crate::theme::Role::AwaitingInput.style()),
             rows[3],
         );
         if picker.confirmation.is_none() && rows[1].width > 0 {

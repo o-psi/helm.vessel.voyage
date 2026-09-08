@@ -5,10 +5,7 @@ use super::super::{
 };
 use super::{Key, Message, Row, State, layout::note};
 use crate::process_client::safe;
-use ratatui::{
-    style::{Color, Style},
-    text::{Line, Span, Text},
-};
+use ratatui::text::{Line, Span, Text};
 
 fn compact(text: &str, limit: usize) -> String {
     let text = safe(text).split_whitespace().collect::<Vec<_>>().join(" ");
@@ -230,14 +227,14 @@ pub(super) fn flush(
             } else {
                 String::new()
             };
-            let color = match status {
-                "Failed" => Color::Red,
-                "Working" => Color::Cyan,
-                "Done" => Color::Green,
-                _ => Color::DarkGray,
+            let style = match status {
+                "Failed" => crate::theme::Role::Failed.style(),
+                "Working" => crate::theme::Role::Running.style(),
+                "Done" => crate::theme::Role::Completed.style(),
+                _ => crate::theme::Role::Muted.style(),
             };
             let text = Text::from(Line::from(vec![
-                Span::styled(format!("{status}{outcome} · "), Style::default().fg(color)),
+                Span::styled(format!("{status}{outcome} · "), style),
                 Span::raw(compact(
                     &description(call),
                     usize::from(width).saturating_mul(2).saturating_sub(24),

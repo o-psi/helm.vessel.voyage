@@ -11,9 +11,20 @@ Full-screen Helm and private-terminal chrome use passive terminal color detectio
 and `HELM_COLOR=auto|never|16|256|truecolor` overrides. Automatic mode honors any
 nonempty `NO_COLOR`; explicit modes take precedence. Final visible-frame adaptation
 covers legacy widgets and syntax colors without changing plain output or input
-routing. Shared semantic roles initially serve Markdown defaults and the terminal
-browser/chrome; the wider UI migration remains incremental. See [UI styles and
-fallbacks](ui-styles.md) for dependencies, bounds, and remaining #196 scope.
+routing. Shared semantic roles cover Markdown defaults, transcript, sidebar,
+forms, actions and terminal chrome, with non-color focus/selection cues. See
+[UI styles and fallbacks](ui-styles.md) for dependencies and bounds, and
+[component decisions](ui-components.md) for selected libraries and follow-up scope.
+
+The private Vessel panel uses scoped focus for form fields, reconnect toggles,
+submission and confirmation controls. Tab/Shift+Tab traverse that scope; ordinary
+composer completion and voyage switching retain their own routing. See
+[scoped interaction](ui-interaction.md).
+
+Normal new/existing composers support grapheme-aware editing and selection with
+bounded text undo/redo. Attachment ownership changes establish an undo boundary;
+deleted image labels cannot return without their owned attachment. See
+[composer editing](ui-editor.md) for keys, retention and paste behavior.
 
 ## Direct image paste
 

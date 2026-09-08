@@ -79,7 +79,7 @@ pub(super) struct Sidebar {
 impl App {
     // Resolve against current geometry; hover never changes keyboard selection.
     pub(super) fn hover_style(&self, area: Rect, modal: bool) -> ratatui::style::Style {
-        use ratatui::style::{Color, Modifier, Style};
+        use ratatui::style::Style;
         let searching = self
             .selected
             .and_then(|t| self.views.get(&t))
@@ -96,10 +96,7 @@ impl App {
                 .pointer
                 .is_some_and(|point| area.contains(point))
         {
-            Style::default()
-                .fg(Color::White)
-                .bg(Color::DarkGray)
-                .add_modifier(Modifier::UNDERLINED)
+            crate::theme::Role::Hover.style()
         } else {
             Style::default()
         }

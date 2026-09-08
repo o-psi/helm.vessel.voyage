@@ -5,7 +5,6 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
     Frame,
     layout::Rect,
-    style::{Color, Style},
     widgets::{Block, Borders, List, ListItem, ListState},
 };
 use uuid::Uuid;
@@ -508,7 +507,7 @@ impl App {
                         .borders(Borders::ALL)
                         .title(" Commands · ↑↓ select · Tab complete · Esc close "),
                 )
-                .highlight_style(Style::default().fg(Color::Cyan))
+                .highlight_style(crate::theme::Role::Selection.style())
                 .highlight_symbol("> "),
             area,
             &mut ListState::default().with_selected(selected),

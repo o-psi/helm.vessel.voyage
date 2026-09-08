@@ -3,7 +3,7 @@ use super::{Control, now_ms};
 use ratatui::{
     Frame,
     layout::Rect,
-    style::{Color, Modifier, Style},
+    style::Modifier,
     text::{Line, Span, Text},
     widgets::{Block, Borders, Paragraph},
 };
@@ -63,7 +63,7 @@ pub(in crate::process_client::ui) fn draw(frame: &mut Frame<'_>, app: &App, area
             index + 1,
             snapshot.decisions.len()
         ))
-        .border_style(Style::default().fg(Color::Yellow));
+        .border_style(crate::theme::Role::AwaitingInput.style());
     let inner = block.inner(area);
     frame.render_widget(block, area);
     let answer = review.answers.entry((target, id)).or_default();
@@ -158,9 +158,8 @@ pub(in crate::process_client::ui) fn draw(frame: &mut Frame<'_>, app: &App, area
             let line = Line::from(spans);
             lines.push(if i == chosen {
                 line.style(
-                    Style::default()
-                        .bg(Color::Cyan)
-                        .fg(Color::Black)
+                    crate::theme::Role::Selection
+                        .style()
                         .add_modifier(Modifier::BOLD),
                 )
             } else {
@@ -274,11 +273,11 @@ pub(in crate::process_client::ui) fn draw(frame: &mut Frame<'_>, app: &App, area
         let rect = Rect::new(x, y, width, 1);
         if rect.right() <= footer.right() && rect.bottom() <= footer.bottom() {
             frame.render_widget(
-                Paragraph::new(label).style(Style::default().fg(if enabled {
-                    Color::Cyan
+                Paragraph::new(label).style(if enabled {
+                    crate::theme::Role::Focus.style()
                 } else {
-                    Color::DarkGray
-                })),
+                    crate::theme::Role::Muted.style()
+                }),
                 rect,
             );
             if enabled {

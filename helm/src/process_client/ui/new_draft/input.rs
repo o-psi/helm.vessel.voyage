@@ -37,13 +37,16 @@ impl App {
             }
             if key.modifiers.contains(KeyModifiers::CONTROL) {
                 match key.code {
-                    KeyCode::Char('c' | 'q') => self.quit = true,
+                    KeyCode::Char('c' | 'q') => {
+                        self.quit = true;
+                        return Ok(true);
+                    }
                     KeyCode::Char('n') => {
                         self.create(None)?;
+                        return Ok(true);
                     }
                     _ => {}
                 }
-                return Ok(true);
             }
             if key.code == KeyCode::F(1) {
                 self.status = "Draft commands: /vessels, /model [NAME], /thinking [VALUE], /service [VALUE], /access MODE, /workspace PATH, /new [PATH], /discard. Enter sends; Tab changes view. Receipt checks are automatic; no creation or message is replayed on reconnect.".into();
@@ -99,7 +102,7 @@ impl App {
             Event::Paste(text) => {
                 let text = safe(text);
                 anyhow::ensure!(
-                    draft.composer.text.len().saturating_add(text.len()) <= 65536,
+                    draft.composer.insertion_len(text.len()) <= 65536,
                     "draft limit is 64 KiB"
                 );
                 draft.composer.insert_str(&text);
@@ -111,21 +114,19 @@ impl App {
                         .intersects(KeyModifiers::ALT | KeyModifiers::CONTROL) =>
                 {
                     anyhow::ensure!(
-                        draft.composer.text.len() + ch.len_utf8() <= 65536,
+                        draft.composer.insertion_len(ch.len_utf8()) <= 65536,
                         "draft limit is 64 KiB"
                     );
                     draft.composer.insert(ch);
                 }
                 KeyCode::Enter => {
-                    anyhow::ensure!(draft.composer.text.len() < 65536, "draft limit is 64 KiB");
+                    anyhow::ensure!(
+                        draft.composer.insertion_len(1) <= 65536,
+                        "draft limit is 64 KiB"
+                    );
                     draft.composer.insert('\n');
                 }
-                KeyCode::Backspace => draft.composer.backspace(),
-                KeyCode::Delete => draft.composer.delete(),
-                KeyCode::Home => draft.composer.line_start(),
-                KeyCode::End => draft.composer.line_end(),
-                KeyCode::Left => draft.composer.move_left(),
-                KeyCode::Right => draft.composer.move_right(),
+                _ if draft.composer.edit_key(*key) => {}
                 _ => return Ok(true),
             },
             _ => return Ok(true),

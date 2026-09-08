@@ -183,7 +183,7 @@ impl App {
             Event::Paste(text) => {
                 let text = safe(&text);
                 anyhow::ensure!(
-                    view.draft.text.len().saturating_add(text.len()) <= 64 * 1024,
+                    view.draft.insertion_len(text.len()) <= 64 * 1024,
                     "draft limit is 64 KiB"
                 );
                 view.draft.insert_str(&text);
@@ -195,20 +195,32 @@ impl App {
                         .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
                 {
                     anyhow::ensure!(
-                        view.draft.text.len() + ch.len_utf8() <= 64 * 1024,
+                        view.draft.insertion_len(ch.len_utf8()) <= 64 * 1024,
                         "draft limit is 64 KiB"
                     );
                     view.draft.insert(ch);
                 }
-                KeyCode::Enter => view.draft.insert('\n'),
-                KeyCode::Backspace => view.draft.backspace(),
-                KeyCode::Delete => view.draft.delete(),
-                KeyCode::Home => view.draft.line_start(),
-                KeyCode::End => view.draft.line_end(),
-                KeyCode::Left => view.draft.move_left(),
-                KeyCode::Right => view.draft.move_right(),
-                KeyCode::Up => view.history.navigate(&mut view.draft, true),
-                KeyCode::Down => view.history.navigate(&mut view.draft, false),
+                KeyCode::Enter => {
+                    anyhow::ensure!(
+                        view.draft.insertion_len(1) <= 65536,
+                        "draft limit is 64 KiB"
+                    );
+                    view.draft.insert('\n');
+                }
+                KeyCode::Up | KeyCode::Down
+                    if key.modifiers.contains(KeyModifiers::ALT)
+                        || (key.modifiers.is_empty()
+                            && !view.draft.text.contains('\n')
+                            && composer::cursor_position(
+                                &view.draft.text,
+                                view.draft.viewport_width.get().max(1),
+                            )
+                            .0 == 0) =>
+                {
+                    view.history
+                        .navigate(&mut view.draft, key.code == KeyCode::Up)
+                }
+                _ if view.draft.edit_key(key) => {}
                 KeyCode::PageUp => view.scroll = view.scroll.saturating_add(10),
                 KeyCode::PageDown => view.scroll = view.scroll.saturating_sub(10),
                 _ => return Ok(()),

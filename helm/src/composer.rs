@@ -43,9 +43,257 @@ pub(super) struct Composer {
     pub(super) cursor: usize,
     pub(super) markers: Vec<ImageMarker>,
     paste_anchor: Option<usize>,
+    paste_end: Option<usize>,
+    selection_anchor: Option<usize>,
+    undo: Vec<EditState>,
+    redo: Vec<EditState>,
+    yank: String,
+    pub(super) viewport_width: std::cell::Cell<u16>,
+}
+
+#[derive(Clone)]
+struct EditState {
+    text: String,
+    cursor: usize,
+    markers: Vec<ImageMarker>,
 }
 
 impl Composer {
+    pub(super) fn selection(&self) -> Option<(usize, usize)> {
+        let anchor = self.safe_offset(self.selection_anchor?);
+        let cursor = self.safe_offset(self.cursor);
+        (anchor != cursor).then_some((anchor.min(cursor), anchor.max(cursor)))
+    }
+
+    pub(super) fn insertion_len(&self, added: usize) -> usize {
+        self.text.len() - self.selection().map_or(0, |(a, b)| b - a) + added
+    }
+
+    fn snapshot(&self) -> EditState {
+        EditState {
+            text: self.text.clone(),
+            cursor: self.cursor,
+            markers: self.markers.clone(),
+        }
+    }
+
+    fn history_barrier(&mut self) {
+        self.undo.clear();
+        self.redo.clear();
+    }
+
+    fn checkpoint(&mut self) {
+        self.undo.push(self.snapshot());
+        self.redo.clear();
+        self.trim_history();
+    }
+
+    fn trim_history(&mut self) {
+        // Bound both stacks together; no attachment bytes are duplicated.
+        while self.undo.len() + self.redo.len() > 64
+            || self
+                .undo
+                .iter()
+                .chain(&self.redo)
+                .map(|s| s.text.len())
+                .sum::<usize>()
+                > 1024 * 1024
+        {
+            if !self.undo.is_empty() {
+                self.undo.remove(0);
+            } else {
+                self.redo.remove(0);
+            }
+        }
+    }
+
+    fn restore_edit(&mut self, redo: bool) {
+        let state = if redo {
+            self.redo.pop()
+        } else {
+            self.undo.pop()
+        };
+        let Some(state) = state else {
+            return;
+        };
+        let current = self.snapshot();
+        if redo {
+            self.undo.push(current);
+        } else {
+            self.redo.push(current);
+        }
+        self.trim_history();
+        // An asynchronous clipboard result cannot safely target a replaced history state.
+        self.clear_paste_anchor();
+        self.selection_anchor = None;
+        self.text = state.text;
+        self.cursor = state.cursor;
+        self.markers = state.markers;
+    }
+
+    fn word_move(&mut self, right: bool) {
+        self.cursor = self.safe_offset(self.cursor);
+        let mut offset = self.cursor;
+        let mut found_word = false;
+        if right {
+            for (i, ch) in self.text[self.cursor..].char_indices() {
+                if ch.is_whitespace() && found_word {
+                    break;
+                }
+                found_word |= !ch.is_whitespace();
+                offset = self.cursor + i + ch.len_utf8();
+            }
+        } else {
+            for (i, ch) in self.text[..self.cursor].char_indices().rev() {
+                if ch.is_whitespace() && found_word {
+                    break;
+                }
+                found_word |= !ch.is_whitespace();
+                offset = i;
+            }
+        }
+        self.cursor = self.safe_offset(offset);
+        if right
+            && let Some(marker) = self
+                .markers
+                .iter()
+                .find(|m| m.start < offset && offset < m.end)
+        {
+            self.cursor = marker.end;
+        }
+    }
+
+    fn vertical_move(&mut self, down: bool) {
+        let width = self.viewport_width.get().max(1);
+        let (row, column) = cursor_position_at(&self.text, self.safe_offset(self.cursor), width);
+        let target = if down {
+            row.saturating_add(1)
+        } else {
+            row.saturating_sub(1)
+        };
+        if target == row {
+            return;
+        }
+        let mut position = (0u16, 0u16);
+        let mut best = None;
+        for (offset, grapheme) in self
+            .text
+            .grapheme_indices(true)
+            .chain(std::iter::once((self.text.len(), "")))
+        {
+            let size = grapheme.width() as u16;
+            if grapheme != "\n" && position.1.saturating_add(size) > width {
+                position = (position.0.saturating_add(1), 0);
+            }
+            let visible = if position.1 == width {
+                (position.0.saturating_add(1), 0)
+            } else {
+                position
+            };
+            if visible.0 == target
+                && !self
+                    .markers
+                    .iter()
+                    .any(|m| m.start < offset && offset < m.end)
+            {
+                let distance = visible.1.abs_diff(column);
+                if best.is_none_or(|(_, previous)| distance < previous) {
+                    best = Some((offset, distance));
+                }
+            }
+            if grapheme == "\n" {
+                position = (position.0.saturating_add(1), 0);
+            } else {
+                position.1 = position.1.saturating_add(size);
+            }
+        }
+        if let Some((offset, _)) = best {
+            self.cursor = offset;
+        }
+    }
+
+    /// Editing only: callers retain ownership of send, history, completion and private input.
+    pub(super) fn edit_key(&mut self, key: crossterm::event::KeyEvent) -> bool {
+        use crossterm::event::{KeyCode as K, KeyModifiers as M};
+        let control = key.modifiers.contains(M::CONTROL);
+        let shift = key.modifiers.contains(M::SHIFT);
+        let alt = key.modifiers.contains(M::ALT);
+        if control && matches!(key.code, K::Char('z' | 'Z' | 'y' | 'Y')) {
+            self.restore_edit(matches!(key.code, K::Char('y' | 'Y' | 'Z')) || shift);
+            return true;
+        }
+        if control && key.code == K::Char('a') {
+            self.selection_anchor = Some(0);
+            self.cursor = self.text.len();
+            return true;
+        }
+        if control && key.code == K::Char('x') {
+            if let Some((start, end)) = self.selection() {
+                // Internal text yank deliberately excludes owned image markers.
+                let mut at = start;
+                self.yank.clear();
+                for marker in self
+                    .markers
+                    .iter()
+                    .filter(|m| start <= m.start && m.end <= end)
+                {
+                    self.yank.push_str(&self.text[at..marker.start]);
+                    at = marker.end;
+                }
+                self.yank.push_str(&self.text[at..end]);
+                self.insert_str("");
+            }
+            return true;
+        }
+        if alt && key.code == K::Char('y') {
+            let text = self.yank.clone();
+            if self.insertion_len(text.len()) <= 65536 {
+                self.insert_str(&text);
+            }
+            return true;
+        }
+        if matches!(
+            key.code,
+            K::Left | K::Right | K::Up | K::Down | K::Home | K::End
+        ) {
+            if shift {
+                let cursor = self.safe_offset(self.cursor);
+                self.selection_anchor.get_or_insert(cursor);
+            } else {
+                self.selection_anchor = None;
+            }
+            match key.code {
+                K::Left if control || alt => self.word_move(false),
+                K::Right if control || alt => self.word_move(true),
+                K::Left => self.move_left(),
+                K::Right => self.move_right(),
+                K::Up => self.vertical_move(false),
+                K::Down => self.vertical_move(true),
+                K::Home if control => self.cursor = 0,
+                K::End if control => self.cursor = self.text.len(),
+                K::Home => self.line_start(),
+                K::End => self.line_end(),
+                _ => {}
+            }
+            return true;
+        }
+        match key.code {
+            K::Backspace | K::Delete if control || alt => {
+                if self.selection().is_none() {
+                    let cursor = self.safe_offset(self.cursor);
+                    self.word_move(key.code == K::Delete);
+                    self.selection_anchor = Some(self.cursor);
+                    self.cursor = cursor;
+                }
+                self.insert_str("");
+            }
+            K::Backspace => self.backspace(),
+            K::Delete => self.delete(),
+            _ => return false,
+        }
+        true
+    }
+
     // External cursor assignments are tolerated: clamp to UTF-8 and an atomic
     // boundary. Text/marker mutation must use these methods, not direct writes.
     fn safe_offset(&self, offset: usize) -> usize {
@@ -54,9 +302,30 @@ impl Composer {
             offset -= 1;
         }
         for marker in &self.markers {
-            if marker.start < offset && offset < marker.end {
-                return marker.start;
+            if marker.start <= offset && offset <= marker.end {
+                return if offset == marker.end {
+                    marker.end
+                } else {
+                    marker.start
+                };
             }
+        }
+        let start = self
+            .markers
+            .iter()
+            .rev()
+            .find(|m| m.end < offset)
+            .map_or(0, |m| m.end);
+        let end = self
+            .markers
+            .iter()
+            .find(|m| m.start > offset)
+            .map_or(self.text.len(), |m| m.start);
+        let text = &self.text[start..end];
+        let mut cursor =
+            unicode_segmentation::GraphemeCursor::new(offset - start, text.len(), true);
+        if !cursor.is_boundary(text, 0).unwrap_or(false) {
+            offset = start + cursor.prev_boundary(text, 0).ok().flatten().unwrap_or(0);
         }
         offset
     }
@@ -74,6 +343,13 @@ impl Composer {
     /// Replace a range whose boundaries do not split an owned marker.
     fn replace(&mut self, start: usize, end: usize, text: &str) {
         self.cursor = Self::rebase(self.cursor, start, end, text.len(), true);
+        self.paste_end = self.paste_end.map(|p| {
+            if start < end && start < p && p <= end {
+                start
+            } else {
+                Self::rebase(p, start, end, text.len(), false)
+            }
+        });
         self.paste_anchor = self
             .paste_anchor
             .map(|p| Self::rebase(p, start, end, text.len(), false));
@@ -92,7 +368,11 @@ impl Composer {
             let marker = self.markers[index].clone();
             let label = format!("[Image {}]", index + 1);
             if self.text[marker.start..marker.end] != label {
+                // Renaming a surviving image is not deletion of the selected paste range.
+                let paste_end = self.paste_end;
                 self.replace(marker.start, marker.end, &label);
+                self.paste_end = paste_end
+                    .map(|p| Self::rebase(p, marker.start, marker.end, label.len(), false));
                 self.markers.insert(
                     index,
                     ImageMarker {
@@ -110,7 +390,20 @@ impl Composer {
 
     pub(super) fn insert_str(&mut self, text: &str) {
         self.cursor = self.safe_offset(self.cursor);
-        self.replace(self.cursor, self.cursor, text);
+        if text.is_empty() && self.selection().is_none() {
+            self.selection_anchor = None;
+            return;
+        }
+        self.checkpoint();
+        let (start, end) = self.selection().unwrap_or((self.cursor, self.cursor));
+        let removes_image = self.markers.iter().any(|m| m.start < end && start < m.end);
+        self.selection_anchor = None;
+        self.replace(start, end, text);
+        self.cursor = start + text.len();
+        self.renumber();
+        if removes_image {
+            self.history_barrier();
+        }
     }
 
     /// Invalid/duplicate identities are ignored, preserving the existing image.
@@ -124,6 +417,8 @@ impl Composer {
         if id.is_nil() || self.markers.iter().any(|m| m.id == id) {
             return;
         }
+        self.history_barrier();
+        self.selection_anchor = None;
         self.cursor = self.safe_offset(self.cursor);
         let start = self.safe_offset(offset);
         let index = self.markers.partition_point(|m| m.start < start);
@@ -148,10 +443,16 @@ impl Composer {
             .find(|m| m.end == self.cursor)
             .map(|m| m.start)
             .unwrap_or_else(|| {
-                self.text[..self.cursor]
-                    .char_indices()
+                let start = self
+                    .markers
+                    .iter()
+                    .rev()
+                    .find(|m| m.end < self.cursor)
+                    .map_or(0, |m| m.end);
+                self.text[start..self.cursor]
+                    .grapheme_indices(true)
                     .next_back()
-                    .map_or(0, |(i, _)| i)
+                    .map_or(start, |(i, _)| start + i)
             });
     }
 
@@ -163,30 +464,41 @@ impl Composer {
             .find(|m| m.start == self.cursor)
             .map(|m| m.end)
             .unwrap_or_else(|| {
+                let end = self
+                    .markers
+                    .iter()
+                    .find(|m| m.start > self.cursor)
+                    .map_or(self.text.len(), |m| m.start);
                 self.cursor
-                    + self.text[self.cursor..]
-                        .chars()
+                    + self.text[self.cursor..end]
+                        .graphemes(true)
                         .next()
-                        .map_or(0, char::len_utf8)
+                        .map_or(0, str::len)
             });
     }
 
     pub(super) fn backspace(&mut self) {
-        self.cursor = self.safe_offset(self.cursor);
-        let end = self.cursor;
+        if self.selection().is_some() {
+            self.insert_str("");
+            return;
+        }
+        let end = self.safe_offset(self.cursor);
         self.move_left();
-        self.replace(self.cursor, end, "");
-        self.renumber();
+        self.selection_anchor = Some(self.cursor);
+        self.cursor = end;
+        self.insert_str("");
     }
 
     pub(super) fn delete(&mut self) {
-        self.cursor = self.safe_offset(self.cursor);
-        let start = self.cursor;
+        if self.selection().is_some() {
+            self.insert_str("");
+            return;
+        }
+        let start = self.safe_offset(self.cursor);
         self.move_right();
-        let end = self.cursor;
+        self.selection_anchor = Some(self.cursor);
         self.cursor = start;
-        self.replace(start, end, "");
-        self.renumber();
+        self.insert_str("");
     }
 
     pub(super) fn line_start(&mut self) {
@@ -205,14 +517,35 @@ impl Composer {
 
     pub(super) fn set_paste_anchor(&mut self) {
         self.cursor = self.safe_offset(self.cursor);
-        self.paste_anchor = Some(self.cursor);
+        let (start, end) = self.selection().unwrap_or((self.cursor, self.cursor));
+        self.paste_anchor = Some(start);
+        self.paste_end = Some(end);
     }
 
+    #[cfg(test)]
     pub(super) fn take_paste_anchor(&mut self) -> Option<usize> {
+        self.paste_end = None;
         self.paste_anchor.take()
     }
     pub(super) fn clear_paste_anchor(&mut self) {
         self.paste_anchor = None;
+        self.paste_end = None;
+    }
+
+    pub(super) fn take_paste_range(&mut self) -> Option<(usize, usize)> {
+        let start = self.paste_anchor.take()?;
+        Some((start, self.paste_end.take().unwrap_or(start).max(start)))
+    }
+
+    pub(super) fn apply_paste_range(&mut self, start: usize, end: usize, text: &str) {
+        self.checkpoint();
+        self.selection_anchor = None;
+        let removes_image = self.markers.iter().any(|m| m.start < end && start < m.end);
+        self.replace(start, end, text);
+        self.renumber();
+        if removes_image {
+            self.history_barrier();
+        }
     }
 
     pub(super) fn ordered_parts(&self) -> Vec<ComposerPart> {
@@ -244,6 +577,8 @@ impl Composer {
     /// On failure nothing changes. Call set_text first when restoring a draft.
     pub(super) fn restore_markers(&mut self, markers: Vec<ImageMarker>) -> Result<(), String> {
         validate_markers(&self.text, &markers)?;
+        self.history_barrier();
+        self.selection_anchor = None;
         self.markers = markers;
         self.cursor = self.safe_offset(self.cursor);
         self.clear_paste_anchor();
@@ -251,6 +586,8 @@ impl Composer {
     }
 
     pub(super) fn set_text(&mut self, text: String) {
+        self.history_barrier();
+        self.selection_anchor = None;
         self.text = text;
         self.cursor = self.text.len();
         self.markers.clear();
@@ -258,6 +595,9 @@ impl Composer {
     }
 
     pub(super) fn take(&mut self) -> String {
+        self.history_barrier();
+        self.selection_anchor = None;
+        self.yank.clear();
         self.cursor = 0;
         self.markers.clear();
         self.clear_paste_anchor();
@@ -327,6 +667,16 @@ impl PromptHistory {
         };
         self.position = Some(position);
         composer.set_text(self.entries[position].clone());
+    }
+}
+
+pub(super) fn cursor_position_at(text: &str, offset: usize, width: u16) -> (u16, u16) {
+    let position = cursor_position(&text[..offset], width);
+    let next = text[offset..].graphemes(true).next().unwrap_or("");
+    if next != "\n" && position.1.saturating_add(next.width() as u16) > width.max(1) {
+        (position.0.saturating_add(1), 0)
+    } else {
+        position
     }
 }
 
@@ -463,17 +813,17 @@ mod tests {
     }
 
     #[test]
-    fn utf8_and_graphemes_keep_existing_scalar_editing_behavior() {
+    fn utf8_and_graphemes_are_atomic_around_owned_markers() {
         let mut c = Composer::default();
         c.insert_str("é👩\u{200d}💻e\u{301}");
-        c.backspace(); // Existing API edits Unicode scalars, not grapheme clusters.
-        assert!(c.text.ends_with('e'));
+        c.backspace(); // The combining sequence is one editing unit.
+        assert!(c.text.ends_with("👩\u{200d}💻"));
         c.move_left();
         c.insert_image(id(1));
         valid(&c);
         c.move_left();
         c.delete();
-        assert_eq!(c.text, "é👩\u{200d}💻e");
+        assert_eq!(c.text, "é👩\u{200d}💻");
         c.cursor = 1; // Even a stale offset within é is normalized safely.
         c.insert_image(id(2));
         assert!(c.text.starts_with("[Image 1]é"));

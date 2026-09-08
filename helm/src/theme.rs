@@ -6,14 +6,17 @@ use ratatui::{
 use std::collections::HashMap;
 use termprofile::{DetectorSettings, TermProfile};
 
-/// Roles describe meaning, not terminal capabilities. Migrate legacy surfaces
-/// incrementally; the final buffer pass also covers their explicit colors.
+/// Application palette. Roles describe meaning, independently of terminal capabilities.
 #[derive(Clone, Copy)]
 pub(crate) enum Role {
     Primary,
     Muted,
     Focus,
     Selection,
+    Hover,
+    SearchMatch,
+    Link,
+    TableHeader,
     Running,
     AwaitingInput,
     Failed,
@@ -31,6 +34,14 @@ impl Role {
                 .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
             Self::Selection => Style::default().add_modifier(Modifier::REVERSED | Modifier::BOLD),
+            Self::Hover => Style::default().add_modifier(Modifier::UNDERLINED | Modifier::BOLD),
+            Self::SearchMatch => Style::default().add_modifier(Modifier::REVERSED),
+            Self::Link => Style::default()
+                .fg(Color::Blue)
+                .add_modifier(Modifier::UNDERLINED),
+            Self::TableHeader => Style::default()
+                .fg(Color::Magenta)
+                .add_modifier(Modifier::BOLD),
             Self::Running => Style::default().fg(Color::Blue),
             Self::AwaitingInput => Style::default()
                 .fg(Color::Yellow)
