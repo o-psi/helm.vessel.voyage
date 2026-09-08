@@ -91,6 +91,20 @@ fn description(call: &ToolCall) -> String {
                 ""
             }
         ),
+        "vessel" => format!(
+            "{} voyages{}{}",
+            presentation::label(field("action")),
+            if field("target").is_empty() {
+                String::new()
+            } else {
+                format!(" on {}", field("target"))
+            },
+            if field("name").is_empty() {
+                String::new()
+            } else {
+                format!(" · {}", field("name"))
+            },
+        ),
         // Historical transcripts can contain the retired bookkeeping tool.
         "completion" => match field("action") {
             "snapshot" => "Check task outcomes".into(),
@@ -108,8 +122,36 @@ fn description(call: &ToolCall) -> String {
         _ => presentation::label(&call.name),
     }
 }
+// A successful tool invocation can still report a refused or uncertain Vessel
+// command. Do not label admission as completed independent work.
+fn vessel_outcome(call: &ToolCall, result: &Message) -> Option<&'static str> {
+    if call.name != "vessel" {
+        return None;
+    }
+    fn outcome(value: &serde_json::Value) -> Option<&'static str> {
+        match value.get("status").and_then(serde_json::Value::as_str) {
+            Some("outcome_unknown" | "unknown") => return Some("Unconfirmed"),
+            Some("refused" | "rejected") => return Some("Refused"),
+            Some("output_limit") => return Some("Output limited"),
+            Some("accepted" | "queued") => return Some("Accepted"),
+            _ => (),
+        }
+        // These are protocol-result wrappers, not arbitrary observed target state.
+        for field in ["submit", "result", "start", "record"] {
+            if let Some(result) = value.get(field).and_then(outcome) {
+                return Some(result);
+            }
+        }
+        None
+    }
+    serde_json::from_str(&result.content)
+        .ok()
+        .as_ref()
+        .and_then(outcome)
+}
 fn failed(call: &ToolCall, result: &Message) -> bool {
     result.tool_success == Some(false)
+        || vessel_outcome(call, result) == Some("Refused")
         || (call.name == "shell"
             && result
                 .content
@@ -172,6 +214,7 @@ pub(super) fn flush(
         for (call, result, active) in entries {
             let status = match result {
                 Some(r) if failed(call, r) => "Failed",
+                Some(r) if vessel_outcome(call, r).is_some() => vessel_outcome(call, r).unwrap(),
                 Some(r) if r.tool_success == Some(true) => "Done",
                 Some(_) => "Received",
                 None if active => "Working",

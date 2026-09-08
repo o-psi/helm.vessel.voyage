@@ -13,6 +13,30 @@ by Helm through a local or remote Vessel. A local runtime socket directly expose
 to Helm, a TUI task per session, or agent loops inside Vessel do not satisfy it.
 Uncommitted experiments and historical issue closure are not implementation evidence.
 
+## Native Vessel coordination (#186)
+
+The runtime now exposes a native public-HTTP `vessel` tool with a bundled
+[coordination skill](vessel-coordination.md): discovery, inspection, model/policy
+metadata, catalogue search, history/events, independent creation plus initial task,
+submission, steering, receipt/operation observation and lifecycle management.
+Session identity is bootstrap-supplied; no related-voyages-only filter is imposed.
+Exact mutation intent and per-step wire requests are durable before dispatch.
+
+Isolated Linux checks used the actual development binaries and synthetic provider
+credentials. They observed tool/skill registry inclusion and exclusion, created
+work, exact duplicate/conflict behavior, applied steering, follow-up/lifecycle,
+cancellation, grant-scoped rights, lost rename and creation responses without
+replay, offline receipts, and independent child execution after parent suspension.
+All fixture processes had observed cleanup. Strict Clippy across affected packages
+and installer consumers, development builds, formatting and documentation/config
+checks passed. These are one-shot verification results, not a recreated regression
+suite, paid-provider certification, deployed TLS verification or native
+macOS/Windows evidence. Existing deleted scripts/tests were preserved.
+
+The steering workflow exposed a timestamp/canonical-message mismatch in existing
+code. Admission now persists one timestamp and reconstructs it identically for
+queue delivery/application, retaining absent timestamps for legacy records.
+
 ## Implementation status ledger
 
 The six delivery steps now have implemented runtime and operator paths. The table

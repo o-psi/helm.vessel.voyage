@@ -6,6 +6,8 @@ pub(crate) use process::SessionIdentity;
 mod questions;
 mod shell;
 mod todo;
+mod vessel;
+pub use vessel::{VesselContext, VesselSettings, VesselTool};
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -431,6 +433,7 @@ impl ToolRegistry {
                     | "todo"
                     | "completion"
                     | "github"
+                    | "vessel"
             )
         });
     }
@@ -571,6 +574,22 @@ fn allowed_in_read_only(name: &str, arguments: &Value) -> bool {
         "todo" => action == Some("list"),
         "completion" => matches!(action, Some("snapshot" | "read")),
         "github" => matches!(action, Some("read" | "logs" | "inspect" | "list")),
+        "vessel" => matches!(
+            action,
+            Some(
+                "inspect"
+                    | "capabilities"
+                    | "list"
+                    | "search"
+                    | "history"
+                    | "follow"
+                    | "wait"
+                    | "receipt"
+                    | "routes"
+                    | "operations"
+                    | "controls"
+            )
+        ),
         "subagent" => match action {
             Some(
                 "status" | "list" | "archive" | "wait" | "wait_many" | "message" | "follow_up"

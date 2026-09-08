@@ -12,6 +12,7 @@ are not presented as usable commands.
 | [Current state](current-state.md) | What the existing code implements and what remains unfinished |
 | [Configuration](configuration.md) | Current provider, policy and storage configuration |
 | [Operations](operations.md) | Connected HTTP(S) voyages, SSH compatibility and legacy chat/managed/worker procedures |
+| [Vessel coordination](vessel-coordination.md) | Native model inspection, steering, independent voyage creation and follow-up |
 | [Process access](process-access.md) | Scoped grants, participant execution, signed owner transfer and recovery |
 | [Security](security.md) | Authority, credentials, disclosure and terminal safety |
 | [Development](development.md) | Source layout, build commands and contribution workflow |

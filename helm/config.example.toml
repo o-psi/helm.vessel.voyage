@@ -62,3 +62,12 @@ redact_values = []
 # [sandbox]
 # mode = "required"
 # network = "denied"
+
+# Native coordination of local/remote voyages, with bundled model guidance.
+[vessel]
+enabled = true
+# Supervised runtimes discover their owner automatically.
+# local_directory = "/absolute/private/vessel"
+
+[vessel.remotes]
+# build = "/absolute/private/build-vessel-access.json"

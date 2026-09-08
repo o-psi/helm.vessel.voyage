@@ -348,7 +348,7 @@ impl Tool for VesselTool {
         }
         if matches!(action, Action::Routes) {
             return output(
-                json!({"self_session_id":self.context.as_ref().map(|c|c.session_id),"local_available":self.local().is_ok(),"targets":std::iter::once("local".to_owned()).chain(self.settings.remotes.keys().filter(|k| k.as_str() != "local").cloned()).collect::<Vec<_>>(),"transport":"public_http","remote_scope":"configured grant rights","automatic_start":false}),
+                json!({"self_session_id":self.context.as_ref().map(|c|c.session_id),"local_configured":self.local().is_ok(),"targets":std::iter::once("local".to_owned()).chain(self.settings.remotes.keys().filter(|k| k.as_str() != "local").cloned()).collect::<Vec<_>>(),"transport":"public_http","remote_scope":"configured grant rights","automatic_start":false}),
                 context,
             );
         }
@@ -675,12 +675,10 @@ async fn perform(
                 .get("archive")
                 .and_then(|a| a.get("receipt"))
                 .or_else(|| info.get("deletion"))
-            {
-                if receipt.get("command_id").and_then(Value::as_str)
+                && receipt.get("command_id").and_then(Value::as_str)
                     == Some(command_id.to_string().as_str())
-                {
-                    return Ok(receipt.clone());
-                }
+            {
+                return Ok(receipt.clone());
             }
             voyage(
                 t,

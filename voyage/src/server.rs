@@ -207,6 +207,14 @@ pub async fn serve(args: ServeArgs) -> Result<()> {
         owner
             .retain_initial_configuration(&config, &registration.workspace)
             .await?;
+        config.vessel_context = Some(crate::tools::VesselContext {
+            session_id: registration.session_id,
+            directory: directory
+                .parent()
+                .and_then(std::path::Path::parent)
+                .context("runtime directory missing supervising Vessel")?
+                .to_path_buf(),
+        });
         config.live_access = Some(Arc::new(crate::policy::LiveAccess::new(
             crate::runtime_policy::RuntimePolicy::resolve(&config, &registration.workspace)?
                 .policy()

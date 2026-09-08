@@ -28,6 +28,12 @@ pub async fn build_tools(
         config.terminal_max_count,
         config.terminal_max_unread_bytes,
     );
+    if config.vessel.enabled {
+        tools.register(crate::tools::VesselTool::new(
+            config.vessel.clone(),
+            config.vessel_context.clone(),
+        ));
+    }
     if let Some(tool) = subagents {
         tools.register_subagents(tool)?;
     }

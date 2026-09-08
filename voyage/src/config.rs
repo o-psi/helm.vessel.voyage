@@ -85,6 +85,11 @@ impl ProviderKind {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
+    /// Native Vessel coordination routes; credential contents never enter model context.
+    pub vessel: crate::tools::VesselSettings,
+    /// Authenticated process identity, populated by the supervisor bootstrap only.
+    #[serde(skip)]
+    pub vessel_context: Option<crate::tools::VesselContext>,
     pub sandbox: crate::sandbox::Settings,
     /// Process-local access updates; never persisted or delegated as authority.
     #[serde(skip)]
@@ -182,6 +187,7 @@ pub enum ConfigValueKind {
     StringMap,
     McpServers,
     Sandbox,
+    Vessel,
     Executable,
 }
 
@@ -193,6 +199,11 @@ pub struct ConfigOverrideSpec {
 }
 
 pub const CONFIG_OVERRIDE_SPECS: &[ConfigOverrideSpec] = &[
+    ConfigOverrideSpec {
+        key: "vessel",
+        description: "Native Vessel coordination settings and named routes",
+        kind: ConfigValueKind::Vessel,
+    },
     ConfigOverrideSpec {
         key: "sandbox",
         description: "Explicit Linux process isolation configuration",
@@ -418,6 +429,8 @@ pub enum UnattendedApprovalMode {
 impl Default for Config {
     fn default() -> Self {
         Self {
+            vessel: Default::default(),
+            vessel_context: None,
             sandbox: Default::default(),
             participants: Vec::new(),
             chat_preferences: None,
@@ -637,6 +650,8 @@ impl Config {
         let mut updated: Self = document.try_into()?;
         // Serialization deliberately drops launch authority; in-process edits must
         // retain it so the next rebuild checks the same profile and transition.
+        updated.vessel_context = self.vessel_context.clone();
+        updated.live_access = self.live_access.clone();
         updated.chat_preferences = self.chat_preferences.clone();
         updated.policy_profile = self.policy_profile.clone();
         updated.policy_explicit = self.policy_explicit.clone();
@@ -650,6 +665,7 @@ impl Config {
     }
 
     pub fn validate(&self) -> Result<()> {
+        self.vessel.validate()?;
         self.sandbox.validate()?;
         crate::provider::validate_inference_settings(self)?;
         if !self.api_key_required {

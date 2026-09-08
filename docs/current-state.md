@@ -374,6 +374,27 @@ shell bindings travel through an expiring private input channel and are excluded
 from durable command/history payloads. GitHub operator commands run in voyage with
 exact attended publication decisions and canonical session references.
 
+## Model-driven Vessel coordination
+
+Voyage registers a native `vessel` tool for configured local and remote routes,
+with a bundled coordination skill included only in executors that have the tool.
+The authenticated supervised session identity supplies introspection context.
+Catalogue search, target inspection and conversation pages support discovery;
+steering targets active runs, submission continues idle voyages, and creation
+starts an independent voyage with an initial task. Steering admission retains one
+stable message timestamp through canonical application; legacy records retain
+absent times. Follow-up reads/waits and
+cancel, rename, archive and restore use the existing public lifecycle protocol.
+Vessel capabilities include software version and stable Vessel identity.
+
+There is no related-voyages-only restriction. Actual execution policy and route
+rights still apply. Mutation intents and exact wire requests are retained before
+effects; uncertain requests are not blindly replayed. Independent voyages are not
+subagents and remain outside the originating run's resource/completion accounting.
+The tool does not expose private terminal input, raw credentials, administrative
+attestations or an arbitrary public-command escape hatch. See
+[Vessel coordination](vessel-coordination.md) for the interface and limitations.
+
 ## Resources and execution policy
 
 Native OpenAI Chat, OpenAI Responses, Anthropic and ChatGPT OAuth transports retain

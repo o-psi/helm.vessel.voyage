@@ -24,15 +24,27 @@ fn directory(_: &Path) -> Result<(), ToolError> {
     ))
 }
 
-pub(super) fn root(local: &Path, owner: Uuid) -> Result<PathBuf, ToolError> {
+fn owner_resources(local: &Path, owner: Uuid) -> Result<PathBuf, ToolError> {
     transport::private_directory(local)?;
-    let root = local.join("tool-journal");
+    let sessions = local.join("sessions");
+    transport::private_directory(&sessions)?;
+    let session = sessions.join(owner.to_string());
+    transport::private_directory(&session)?;
+    Ok(session.join("resources"))
+}
+
+pub(super) fn root(local: &Path, owner: Uuid) -> Result<PathBuf, ToolError> {
+    let resources = owner_resources(local, owner)?;
+    directory(&resources)?;
+    sync(
+        resources
+            .parent()
+            .ok_or_else(|| failed("invalid resource path"))?,
+    )?;
+    let root = resources.join("vessel-coordination");
     directory(&root)?;
-    sync(local)?;
-    let scoped = root.join(owner.to_string());
-    directory(&scoped)?;
-    sync(&root)?;
-    Ok(scoped)
+    sync(&resources)?;
+    Ok(root)
 }
 fn sync(path: &Path) -> Result<(), ToolError> {
     std::fs::File::open(path)
@@ -79,7 +91,10 @@ pub(super) fn admit(root: &Path, id: Uuid, intent: &Value) -> Result<Admission, 
                 "command_id already reserved for a different request",
             ));
         }
-        return Ok(Admission::Existing(receipt(root, id)?));
+        let retained = receipt(root, id)?;
+        return Ok(Admission::Existing(
+            retained.get("result").cloned().unwrap_or(retained),
+        ));
     }
     exclusive(&path, intent)?;
     Ok(Admission::Fresh)
@@ -88,22 +103,17 @@ pub(super) fn finish(root: &Path, id: Uuid, result: &Value) -> Result<(), ToolEr
     exclusive(&root.join(format!("{id}.result.json")), result)
 }
 pub(super) fn existing_root(local: &Path, owner: Uuid) -> Result<PathBuf, ToolError> {
-    transport::private_directory(local)?;
-    let root = local.join("tool-journal");
-    if root
-        .try_exists()
-        .map_err(|_| failed("cannot inspect journal directory"))?
-    {
-        transport::private_directory(&root)?;
+    let resources = owner_resources(local, owner)?;
+    let root = resources.join("vessel-coordination");
+    for path in [&resources, &root] {
+        if path
+            .try_exists()
+            .map_err(|_| failed("cannot inspect journal directory"))?
+        {
+            transport::private_directory(path)?;
+        }
     }
-    let scoped = root.join(owner.to_string());
-    if scoped
-        .try_exists()
-        .map_err(|_| failed("cannot inspect journal directory"))?
-    {
-        transport::private_directory(&scoped)?;
-    }
-    Ok(scoped)
+    Ok(root)
 }
 fn metadata(root: &Path, id: Uuid) -> Result<Value, ToolError> {
     let path = root.join(format!("{id}.intent.json"));

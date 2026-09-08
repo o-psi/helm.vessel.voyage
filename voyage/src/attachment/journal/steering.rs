@@ -37,6 +37,9 @@ pub enum SteeringRejection {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SteeringRecord {
+    /// Captured once at durable admission; legacy records retain absent time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub queued_at: Option<chrono::DateTime<chrono::Utc>>,
     pub request: SteeringAdmission,
     pub ordinal: u64,
     /// Session revision which last changed this receipt, not an execution claim.
@@ -56,6 +59,9 @@ impl std::fmt::Debug for SteeringRecord {
 impl SteeringRecord {
     fn message(&self, status: SteeringStatus) -> Message {
         let mut message = Message::new(Role::User, &self.request.text);
+        // Queue delivery and canonical verification must construct identical text
+        // and metadata, even when separated by an arbitrarily long provider call.
+        message.created_at = self.queued_at;
         message.steering = Some(SteeringReceipt {
             id: self.request.receipt_id,
             status,
@@ -269,6 +275,10 @@ impl Journal {
         let count: i64 = tx.query_row("SELECT count(*) FROM steering", [], |r| r.get(0))?;
         ensure!(count < MAX_COMMANDS, "steering evidence capacity reached");
         let record = SteeringRecord {
+            queued_at: Some(
+                chrono::DateTime::from_timestamp_millis(now_ms)
+                    .context("steering admission timestamp out of range")?,
+            ),
             request: request.clone(),
             ordinal: u64::try_from(total)?
                 .checked_add(1)

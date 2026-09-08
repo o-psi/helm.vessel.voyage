@@ -179,6 +179,7 @@ async fn configure_inner(
         }
         config.live_access = Some(live.clone());
     }
+    config.vessel_context = current.vessel_context.clone();
     *current = config;
     Ok(receipt)
 }

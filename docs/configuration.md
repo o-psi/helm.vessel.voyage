@@ -28,6 +28,30 @@ and require owner authority. Participant endpoint configuration names a private
 scoped credential file, receiver identity and accepted binding revision; see
 [process access](process-access.md).
 
+## Native Vessel coordination
+
+The `vessel` tool is enabled by default. Supervised voyages receive their own
+session identity and supervisor directory at bootstrap; these runtime-only values
+cannot be supplied through saved conversation or configuration. Its bundled
+coordination skill is included only when the tool is in the actual registry.
+
+```toml
+[vessel]
+enabled = true
+# Optional discovery directory for an embedding without supervised context:
+# local_directory = "/absolute/private/vessel"
+
+[vessel.remotes]
+# Named routes use private AccessCredential files, not inline tokens or URLs:
+# build = "/absolute/private/build-vessel-access.json"
+```
+
+`local` denotes the supervising Vessel; other tool targets are configured aliases.
+The route uses the credential's real grant rights: a session-scoped grant does not
+acquire host-level creation authority. No route is enrolled or supervisor started
+implicitly. Set `vessel.enabled = false` to omit the tool and bundled guidance.
+See [Vessel coordination](vessel-coordination.md) for action and receipt semantics.
+
 ## Configuration sources
 
 Use [helm/config.example.toml](../helm/config.example.toml) as the field reference.

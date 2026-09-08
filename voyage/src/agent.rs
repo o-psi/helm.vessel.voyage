@@ -1695,8 +1695,18 @@ fn runtime_guidance(base: &str, tools: &[ToolDefinition], access: AccessMode) ->
             "This execution is unrestricted within the runtime's configured roots and hard deny rules. Tool actions do not require interactive approval."
         }
     };
+    // Bundled guidance is ephemeral and follows the actual registry (including
+    // delegated tool restrictions); it is never saved as a conversation message.
+    let coordination = if tools.iter().any(|tool| tool.name == "vessel") {
+        concat!(
+            "\n\n## Bundled skill: ",
+            include_str!("../skills/vessel-coordination.md")
+        )
+    } else {
+        ""
+    };
     format!(
-        "{base}\n\n## Authoritative Helm runtime\n\n\
+        "{base}{coordination}\n\n## Authoritative Helm runtime\n\n\
          Access mode: `{access}`. {authority}\n\n\
          The tool calls available in this execution are exactly the ones below. This generated \
          list and runtime policy override any workspace instructions, provider-host, prior-session, plugin, skill, app, MCP, or built-in \

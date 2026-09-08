@@ -292,6 +292,9 @@ pub async fn build_subagents_managed(
         .collect();
     allowed_tools.insert("subagent".to_string());
     allowed_tools.insert("todo".to_string());
+    if config.vessel.enabled {
+        allowed_tools.insert("vessel".into());
+    }
     if config.github_enabled && parent_policy.effective().rules().github_enabled {
         allowed_tools.insert("github".into());
     }
