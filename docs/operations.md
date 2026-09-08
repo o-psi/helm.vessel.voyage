@@ -47,6 +47,18 @@ to detach. `/new /absolute/workspace`, `/use SESSION_UUID`, `/rename NAME`,
 voyage. Ordinary text submits a turn when idle and steers the exact observed run
 when active. A refused or uncertain command retains its draft; Helm checks uncertain delivery
 automatically before allowing another send. Switching views does not cancel or redirect outstanding work.
+
+Drag the voyage sidebar's right-hand divider (marked **↔**) with the left mouse
+button to resize it. The divider highlights on hover or while dragging. Its width
+starts at 30 columns and is remembered across voyage switches in the current Helm
+instance, not across restarts. Width is limited to 24–64 columns while retaining
+at least 80 columns for the conversation. The sidebar still hides when its available
+pane is narrower than 110 columns. Temporary layout constraints do not overwrite
+the preferred width. Close action menus, requests, or inference pickers before
+resizing. Release the mouse to finish; focus loss, terminal resize, keyboard input,
+and private-terminal handoff also end a drag. Mouse reporting requires a supporting
+terminal.
+
 F1 opens a scrollable keyboard guide. PageUp/PageDown scroll the current view;
 Esc returns from details to the preserved conversation draft. The footer always
 shows **F3 Console**, including on layouts without the voyage sidebar. Operator

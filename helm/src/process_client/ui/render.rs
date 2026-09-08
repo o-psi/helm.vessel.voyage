@@ -54,6 +54,7 @@ pub fn draw(frame: &mut Frame<'_>, app: &App) {
     let area = frame.area();
     let view = app.selected.and_then(|key| app.views.get(&key));
     if area.width < 40 || area.height < 18 {
+        app.sidebar.resize.clear();
         super::interactions::draw(frame, app, Rect::default());
         if let Some(view) = view {
             view.terminals.clear_displayed();
@@ -62,6 +63,7 @@ pub fn draw(frame: &mut Frame<'_>, app: &App) {
         return;
     }
     if app.help || app.explore.is_some() {
+        app.sidebar.resize.clear();
         super::interactions::draw(frame, app, Rect::default());
         if let Some(view) = view {
             view.terminals.clear_displayed();
@@ -102,11 +104,12 @@ pub fn draw(frame: &mut Frame<'_>, app: &App) {
     };
     let panes =
         Layout::horizontal([Constraint::Min(1), Constraint::Length(right_width)]).split(area);
-    let columns = Layout::horizontal([
-        Constraint::Length(if panes[0].width >= 110 { 30 } else { 0 }),
-        Constraint::Min(1),
-    ])
-    .split(panes[0]);
+    let width = app.sidebar.resize.width(panes[0]);
+    app.sidebar
+        .resize
+        .layout((width > 0 && !sidebar_open && !app.inference_picker_open()).then_some(panes[0]));
+    let columns =
+        Layout::horizontal([Constraint::Length(width), Constraint::Min(1)]).split(panes[0]);
     if columns[0].width > 0 {
         sidebar(frame, app, columns[0]);
     }
@@ -233,11 +236,20 @@ pub fn draw(frame: &mut Frame<'_>, app: &App) {
 }
 
 fn sidebar(frame: &mut Frame<'_>, app: &App, area: Rect) {
+    let divider_style = if app.sidebar.resize.highlighted(app.sidebar.pointer) {
+        accent().add_modifier(Modifier::BOLD)
+    } else {
+        muted()
+    };
     frame.render_widget(
         Block::default()
             .borders(Borders::RIGHT)
-            .border_style(muted()),
+            .border_style(divider_style),
         area,
+    );
+    frame.render_widget(
+        Paragraph::new("↔").style(divider_style),
+        Rect::new(area.right() - 1, area.y + area.height / 2, 1, 1),
     );
     let area = inset(
         Rect {

@@ -176,6 +176,17 @@ calls when preceding content is not already blank. Expanded groups use the same
 spacing; wrapped lines within a call stay together. This separates chats and
 activity without extra leading space or changes to saved message text.
 
+Drag the voyage sidebar's right-hand divider (marked **↔**) with the left mouse
+button to resize it. The divider highlights on hover or while dragging. Its width
+starts at 30 columns and is remembered across voyage switches in the current Helm
+instance, not across restarts. Width is limited to 24–64 columns while retaining
+at least 80 columns for the conversation. The sidebar still hides when its available
+pane is narrower than 110 columns. Temporary layout constraints do not overwrite
+the preferred width. Close action menus, requests, or inference pickers before
+resizing. Release the mouse to finish; focus loss, terminal resize, keyboard input,
+and private-terminal handoff also end a drag. Mouse reporting requires a supporting
+terminal.
+
 Muted horizontal rules separate sidebar voyages in both current and archived lists,
 using the existing padding row without increasing entry height.
 Each sidebar voyage has a clickable **⋮** Actions button. Mouse hover highlights

@@ -204,6 +204,10 @@ impl Picker {
     }
 }
 impl App {
+    pub(super) fn inference_picker_open(&self) -> bool {
+        self.inference.picker.is_some()
+    }
+
     fn inference_destination(&self) -> Option<Destination> {
         self.active_draft
             .map(Destination::Draft)

@@ -7,6 +7,19 @@ impl App {
             Event::FocusLost => self.sidebar.pointer = None,
             _ => {}
         }
+        self.sync_interactions();
+        if self.help
+            || self.explore.is_some()
+            || self.sidebar.menu.is_some()
+            || self.interactions.borrow().focused
+            || self.inference_picker_open()
+        {
+            self.sidebar.resize.clear();
+        }
+        // The divider owns its drag before any pane interprets the same click.
+        if self.sidebar.resize.input(&event) {
+            return Ok(());
+        }
         // Motion remains passive even while a modal owns input.
         if matches!(&event, Event::Mouse(mouse) if mouse.kind == crossterm::event::MouseEventKind::Moved)
         {

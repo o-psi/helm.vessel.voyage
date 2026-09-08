@@ -179,6 +179,7 @@ pub async fn run_with_notice(
             }
             if let Some((target,incarnation,run,terminal_id))=app.terminal_request.take() {
                 app.sidebar.pointer = None;
+                app.sidebar.resize.clear();
                 execute!(io::stdout(),crossterm::event::DisableMouseCapture,crossterm::event::DisableFocusChange)?;
                 drop(events);
                 let result=super::terminal::attach_observed(&app.clients[target.route],target.session,incarnation,run,terminal_id).await;

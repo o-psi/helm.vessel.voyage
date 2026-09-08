@@ -67,6 +67,7 @@ pub(super) struct Hit {
 }
 #[derive(Default)]
 pub(super) struct Sidebar {
+    pub resize: Resize,
     pub focus: Focus,
     pub pointer: Option<ratatui::layout::Position>,
     pub hits: std::cell::RefCell<Vec<Hit>>,
@@ -228,5 +229,92 @@ impl App {
             return Some("Waiting for confirmed cleanup");
         }
         None
+    }
+}
+
+// Rendering publishes geometry. Temporary constraints must not erase preference.
+pub(super) struct Resize {
+    preferred: u16,
+    pane: std::cell::Cell<Option<Rect>>,
+    divider: std::cell::Cell<Option<Rect>>,
+    dragging: std::cell::Cell<bool>,
+}
+impl Default for Resize {
+    fn default() -> Self {
+        Self {
+            preferred: 30,
+            pane: Default::default(),
+            divider: Default::default(),
+            dragging: Default::default(),
+        }
+    }
+}
+impl Resize {
+    pub fn width(&self, pane: Rect) -> u16 {
+        if pane.width < 110 {
+            0
+        } else {
+            self.preferred.clamp(24, Self::maximum(pane))
+        }
+    }
+    fn maximum(pane: Rect) -> u16 {
+        pane.width.saturating_sub(80).clamp(24, 64)
+    }
+    pub fn layout(&self, pane: Option<Rect>) {
+        self.divider.set(pane.map(|pane| self.divider(pane)));
+        if self.pane.replace(pane) != pane || pane.is_none() {
+            self.dragging.set(false);
+        }
+    }
+    pub fn clear(&self) {
+        self.layout(None);
+    }
+    pub fn highlighted(&self, pointer: Option<ratatui::layout::Position>) -> bool {
+        self.dragging.get()
+            || self
+                .divider
+                .get()
+                .is_some_and(|divider| pointer.is_some_and(|point| divider.contains(point)))
+    }
+    fn divider(&self, pane: Rect) -> Rect {
+        Rect::new(pane.x + self.width(pane) - 1, pane.y, 1, pane.height)
+    }
+    pub fn input(&mut self, event: &crossterm::event::Event) -> bool {
+        use crossterm::event::{Event, MouseButton, MouseEventKind};
+        if matches!(event, Event::FocusLost | Event::Resize(..)) {
+            self.clear();
+            return false;
+        }
+        let Event::Mouse(mouse) = event else {
+            // Keyboard input may change views or open overlays before repaint.
+            self.dragging.set(false);
+            return false;
+        };
+        let Some(pane) = self.pane.get() else {
+            return false;
+        };
+        match mouse.kind {
+            MouseEventKind::Down(MouseButton::Left) => {
+                let hit = self
+                    .divider
+                    .get()
+                    .is_some_and(|divider| divider.contains((mouse.column, mouse.row).into()));
+                self.dragging.set(hit);
+                hit
+            }
+            MouseEventKind::Drag(MouseButton::Left) if self.dragging.get() => {
+                self.preferred = mouse
+                    .column
+                    .saturating_sub(pane.x)
+                    .saturating_add(1)
+                    .clamp(24, Self::maximum(pane));
+                true
+            }
+            MouseEventKind::Up(_) => self.dragging.replace(false),
+            _ => {
+                self.dragging.set(false);
+                false
+            }
+        }
     }
 }
