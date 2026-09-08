@@ -30,6 +30,8 @@ pub struct Message {
     pub projection_truncated: bool,
     pub role: String,
     pub content: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub parts: Vec<voyage_protocol::content::ContentPart>,
 }
 
 #[derive(Clone, Deserialize, Serialize, PartialEq)]
@@ -185,6 +187,7 @@ pub struct View {
     pub process: ProcessInfo,
     pub snapshot: Option<Snapshot>,
     pub draft: Composer,
+    pub images: Vec<super::attachments::Image>,
     pub history: PromptHistory,
     pub pending: Option<Pending>,
     pub panel: Option<String>,
@@ -221,6 +224,7 @@ impl View {
             process,
             snapshot: None,
             draft: Composer::default(),
+            images: Vec::new(),
             history: PromptHistory::default(),
             pending: None,
             panel: None,

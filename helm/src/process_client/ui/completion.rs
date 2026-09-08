@@ -432,6 +432,11 @@ impl App {
     }
 
     pub(super) fn completion_input(&mut self, key: &KeyEvent) -> Result<bool> {
+        if self.selected.and_then(|t| self.views.get(&t))
+            .is_some_and(|v| v.pending.is_some() && !v.images.is_empty())
+        {
+            return Ok(false);
+        }
         let Some(menu) = self.completion_menu() else {
             return Ok(false);
         };

@@ -59,8 +59,15 @@ pub(in crate::process_client::ui) struct State {
 #[derive(Clone)]
 pub(super) struct Delivery {
     pub text: String,
+    pub parts: Vec<voyage_protocol::content::ContentPart>,
     pub before: usize,
     pub label: String,
+}
+impl Delivery {
+    pub(super) fn matches(&self, message: &Message) -> bool {
+        message.role == "user" && message.message_index >= self.before
+            && message.content == self.text && message.parts == self.parts
+    }
 }
 impl State {
     pub fn observe_growth(&mut self, grew: bool) {
@@ -114,6 +121,7 @@ impl State {
                     .is_none_or(|old| {
                         old.role == new.role
                             && old.tool_call_id == new.tool_call_id
+                            && old.parts == new.parts
                             && if new.projection_truncated {
                                 old.content.starts_with(&new.content)
                             } else {
@@ -149,5 +157,36 @@ impl State {
         {
             self.loaded_revision = Some(snapshot.revision);
         }
+    }
+}
+
+#[cfg(test)]
+mod attachment_tests {
+    use super::*;
+    use voyage_protocol::content::{ContentPart, ImageAttachment, ImageMediaType};
+    #[test]
+    fn attachment_delivery_equality_requires_metadata_not_only_empty_text() {
+        let attachment = ImageAttachment {
+            id: uuid::Uuid::from_u128(74), name: "image.png".into(),
+            media_type: ImageMediaType::Png, byte_size: 70, width: 1, height: 1,
+                sha256: "a".repeat(64),
+        };
+        let mut message: Message = serde_json::from_value(serde_json::json!({
+            "role": "user", "content": "", "message_index": 3
+        })).unwrap();
+        assert!(message.parts.is_empty());
+        let delivery = Delivery {
+            text: String::new(), before: 3, label: "Sending".into(),
+            parts: vec![ContentPart::Image { attachment }],
+        };
+        assert!(!delivery.matches(&message));
+        message.parts = delivery.parts.clone();
+        assert!(delivery.matches(&message));
+        message.message_index = 2;
+        assert!(!delivery.matches(&message));
+        message.message_index = 3;
+        let ContentPart::Image { attachment } = &mut message.parts[0] else { unreachable!() };
+        attachment.id = uuid::Uuid::from_u128(75);
+        assert!(!delivery.matches(&message));
     }
 }

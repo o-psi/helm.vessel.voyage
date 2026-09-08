@@ -1,5 +1,6 @@
 //! Helm-owned proposals. No runtime exists until the user sends the first turn.
 mod input;
+mod images;
 mod launch;
 mod render;
 mod storage;
@@ -20,6 +21,8 @@ pub(super) struct Saved {
     selection: Option<voyage_runtime::policy_profile::selection::SelectionRequest>,
     confirmation: Option<String>,
     text: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    images: Vec<super::attachments::Image>,
     pub(super) start: Option<VesselCommand>,
     start_attempted: bool,
     process: Option<ProcessInfo>,
@@ -107,6 +110,7 @@ impl App {
                 && d.saved.workspace == workspace
                 && d.saved.start.is_none()
                 && d.composer.text.is_empty()
+                && d.saved.images.is_empty()
         }) {
             self.select_draft(id);
             return Ok(());
@@ -121,6 +125,7 @@ impl App {
                 None
             },
             text: String::new(),
+            images: Vec::new(),
             start: None,
             start_attempted: false,
             process: None,
@@ -160,10 +165,11 @@ impl App {
         let draft = self.new_drafts.get_mut(&id).context("draft unavailable")?;
         anyhow::ensure!(!draft.busy, "First send is already being checked");
         anyhow::ensure!(
-            !draft.composer.text.trim().is_empty(),
+            !draft.composer.text.trim().is_empty() || !draft.saved.images.is_empty(),
             "Write your first message before starting a voyage"
         );
         anyhow::ensure!(draft.composer.text.len() <= 65536, "draft limit is 64 KiB");
+        super::attachments::validate_set(&draft.saved.images)?;
         let client = self.clients[draft.route].clone();
         if draft.saved.start.is_none() {
             let command_id = Uuid::new_v4();
@@ -232,11 +238,17 @@ impl App {
                 let mut handoff = View::new(process.clone());
                 if let Some(view) = self.views.get(&target) {
                     handoff.draft = view.draft.clone();
+                    handoff.images = view.images.clone();
                     handoff.pending = view.pending.clone();
                 } else if let Err(error) = drafts::load(&self.clients[target.route], &mut handoff) {
                     self.status = format!("First-send handoff cannot load the saved view: {error}. Existing recovery data retained.");
                     return;
                 }
+                if !handoff.images.is_empty() && handoff.images != draft.saved.images {
+                    self.status = "First-send handoff found another saved image draft; recovery data retained.".into();
+                    return;
+                }
+                handoff.images = draft.saved.images.clone();
                 if handoff.draft.text.is_empty() {
                     handoff.draft.text = draft.saved.text.clone();
                     handoff.draft.cursor = handoff.draft.text.len();
@@ -258,6 +270,7 @@ impl App {
                 let view = self.views.entry(target).or_insert_with(|| View::new(process.clone()));
                 view.process = process;
                 view.draft = handoff.draft;
+                view.images = handoff.images;
                 view.pending = handoff.pending;
                 self.new_drafts.remove(&id);
                 if self.active_draft == Some(id) { self.active_draft = None; self.selected = Some(target); }
@@ -285,6 +298,7 @@ pub(in crate::process_client) async fn start_plain(
         workspace,
         config: Some(config),
         text: prompt,
+        images: Vec::new(),
         start: None,
         start_attempted: false,
         process: None,

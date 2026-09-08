@@ -12,6 +12,8 @@ const MAX_DRAFT_BYTES: usize = 2 * voyage_protocol::vessel::MAX_VESSEL_BODY;
 #[derive(Serialize, Deserialize)]
 struct Draft {
     text: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    images: Vec<super::attachments::Image>,
     pending: Option<Pending>,
     #[serde(default)]
     acknowledged_completion: Option<uuid::Uuid>,
@@ -52,6 +54,8 @@ pub fn load(client: &Client, view: &mut View) -> Result<()> {
         "invalid saved interface draft"
     );
     let draft: Draft = serde_json::from_slice(&std::fs::read(path)?)?;
+    super::attachments::validate_set(&draft.images)?;
+    view.images = draft.images;
     view.draft.text = draft.text;
     view.draft.cursor = view.draft.text.len();
     view.pending = draft.pending;
@@ -63,6 +67,7 @@ pub fn save(client: &Client, view: &View) -> Result<()> {
     let path = path(client, view)?;
     let draft = Draft {
         text: view.draft.text.clone(),
+        images: view.images.clone(),
         pending: view.pending.clone(),
         acknowledged_completion: view.acknowledged_completion,
     };
@@ -78,4 +83,17 @@ pub fn save(client: &Client, view: &View) -> Result<()> {
     #[cfg(unix)]
     std::fs::File::open(path.parent().expect("view parent"))?.sync_all()?;
     Ok(())
+}
+
+#[cfg(test)]
+mod attachment_tests {
+    use super::*;
+    #[test]
+    fn attachment_old_view_draft_roundtrip_omits_empty_images() {
+        let old = r#"{"text":" keep\n","pending":null,"acknowledged_completion":null}"#;
+        let draft: Draft = serde_json::from_str(old).unwrap();
+        assert!(draft.images.is_empty());
+        assert_eq!(draft.text, " keep\n");
+        assert_eq!(serde_json::to_string(&draft).unwrap(), old);
+    }
 }

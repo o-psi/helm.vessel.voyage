@@ -148,7 +148,7 @@ impl App {
             view.pending.is_none(),
             "Waiting for delivery confirmation; Helm checks automatically. Draft preserved"
         );
-        ensure!(!command_text.is_empty(), "input is empty");
+        ensure!(!command_text.is_empty() || !view.images.is_empty(), "input is empty");
         ensure!(
             draft.len() <= 64 * 1024,
             "input limit is 64 KiB; draft preserved"
@@ -256,6 +256,7 @@ impl App {
                 prompt: draft.clone(),
             }
         };
+        let command = super::attachments::prepare(command, &view.images)?;
         view.pending = Some(Pending {
             command_id,
             original: Some(Box::new(command.clone())),
@@ -272,6 +273,10 @@ impl App {
             let mut transcript = view.transcript.borrow_mut();
             transcript.delivery = Some(super::transcript::Delivery {
                 text: view.draft.text.clone(),
+                parts: match &command {
+                    VoyageCommand::SubmitContent { content, .. } => content.clone(),
+                    _ => Vec::new(),
+                },
                 before: view.snapshot.as_ref().map_or(0, |s| s.total_messages),
                 label: "Sending…".into(),
             });
@@ -287,6 +292,11 @@ impl App {
         }
         self.command_checks.insert((target, command_id), None);
         let incarnation = self.views[&target].process.incarnation;
+        let images = if super::attachments::is_image_submission(&command) {
+            self.views[&target].images.clone()
+        } else {
+            Vec::new()
+        };
         let client = self.clients[target.route].clone();
         let sender = self.sender.clone();
         let resolving = matches!(
@@ -297,9 +307,9 @@ impl App {
             self.status = "Sending...".into();
         }
         tokio::spawn(async move {
-            let mut result = client
-                .voyage(target.session, incarnation, command.clone())
-                .await;
+            let mut result = super::attachments::upload_then_submit(
+                &client, target.session, incarnation, command_id, command.clone(), &images,
+            ).await;
             // Bounded status recovery only. Never replay the submitted mutation.
             if resolving {
                 for _ in 1..3 {

@@ -51,7 +51,7 @@ pub(super) fn save(saved: &Saved) -> Result<()> {
     let mut file = tempfile::NamedTempFile::new_in(&root)?;
     let bytes = serde_json::to_vec(saved)?;
     ensure!(
-        bytes.len() <= 1024 * 1024,
+        bytes.len() <= 2 * voyage_protocol::vessel::MAX_VESSEL_BODY,
         "new-voyage draft exceeds private storage limit"
     );
     file.write_all(&bytes)?;
@@ -64,7 +64,7 @@ pub(super) fn save(saved: &Saved) -> Result<()> {
 
 pub(super) fn create(saved: Saved, route: usize) -> Result<Draft> {
     let lock = lock(&root()?, saved.id)?.context("draft is open in another Helm")?;
-    if !saved.text.is_empty() {
+    if !saved.text.is_empty() || !saved.images.is_empty() {
         save(&saved)?;
     }
     Ok(Draft {
@@ -99,7 +99,7 @@ pub(super) fn recover(clients: &[Client]) -> Result<BTreeMap<Uuid, Draft>> {
         ensure!(
             metadata.is_file()
                 && !metadata.file_type().is_symlink()
-                && metadata.len() <= 1024 * 1024,
+                && metadata.len() <= (2 * voyage_protocol::vessel::MAX_VESSEL_BODY) as u64,
             "invalid new-voyage draft file"
         );
         let saved: Saved = serde_json::from_slice(&std::fs::read(path)?)?;
@@ -107,6 +107,7 @@ pub(super) fn recover(clients: &[Client]) -> Result<BTreeMap<Uuid, Draft>> {
         if saved.finished {
             continue;
         }
+        super::super::attachments::validate_set(&saved.images)?;
         ensure!(
             drafts.len() < 4096,
             "too many local drafts to recover; archive draft files before continuing"

@@ -2,6 +2,10 @@ use super::*;
 
 impl App {
     pub(super) fn input(&mut self, event: Event) -> Result<()> {
+        self.sync_interactions();
+        if self.attachment_input(&event)? {
+            return Ok(());
+        }
         match &event {
             Event::Mouse(mouse) => self.sidebar.pointer = Some((mouse.column, mouse.row).into()),
             Event::FocusLost => self.sidebar.pointer = None,
@@ -161,6 +165,10 @@ impl App {
             .get_mut(&target)
             .context("selected voyage unavailable")?;
         if view.panel.is_some() {
+            return Ok(());
+        }
+        if view.pending.is_some() && !view.images.is_empty() {
+            self.status = "Delivery pending · text and images frozen · checking automatically".into();
             return Ok(());
         }
         match event {

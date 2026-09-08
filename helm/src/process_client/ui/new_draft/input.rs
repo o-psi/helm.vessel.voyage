@@ -169,6 +169,7 @@ impl App {
             if text == "/discard" {
                 draft.saved.finished = true;
                 draft.saved.text.clear();
+                draft.saved.images.clear();
                 storage::save(&draft.saved)?;
                 self.new_drafts.remove(&id);
                 self.active_draft = None;

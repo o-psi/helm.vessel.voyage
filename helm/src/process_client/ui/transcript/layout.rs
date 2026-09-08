@@ -87,6 +87,24 @@ fn body(text: &str, width: u16) -> Text<'static> {
     }
     rendered
 }
+fn content_rows(out: &mut Vec<Row>, key: Key, parts: &[voyage_protocol::content::ContentPart], width: u16) {
+    use voyage_protocol::content::{ContentPart, ImageMediaType};
+    for part in parts {
+        match part {
+            ContentPart::Text { text } => rows(out, key.clone(), body(text, width)),
+            ContentPart::Image { attachment } => {
+                let media = match attachment.media_type {
+                    ImageMediaType::Png => "image/png",
+                    ImageMediaType::Jpeg => "image/jpeg",
+                    ImageMediaType::WebP => "image/webp",
+                };
+                note(out, key.clone(), format!("Image: {} · {} · {} bytes · {}×{}",
+                    safe(&attachment.name), media, attachment.byte_size,
+                    attachment.width, attachment.height), width);
+            }
+        }
+    }
+}
 fn build(view: &View, state: &State, width: u16) -> Vec<Row> {
     let mut out = Vec::new();
     let Some(snapshot) = &view.snapshot else {
@@ -159,10 +177,12 @@ fn build(view: &View, state: &State, width: u16) -> Vec<Row> {
     }
     let mut calls = Vec::new();
     for message in messages {
-        if matches!(message.role.as_str(), "user" | "assistant") && !message.content.is_empty() {
+        if matches!(message.role.as_str(), "user" | "assistant")
+            && (!message.content.is_empty() || !message.parts.is_empty()) {
             super::activity::flush(&mut out, &mut calls, messages, snapshot, state, width);
         }
-        if matches!(message.role.as_str(), "user" | "assistant") && !message.content.is_empty() {
+        if matches!(message.role.as_str(), "user" | "assistant")
+            && (!message.content.is_empty() || !message.parts.is_empty()) {
             let key = Key::Message(message.message_index);
             let final_answer = snapshot.turns.iter().any(|t| {
                 t.phase == "completed" && t.message_end == Some(message.message_index + 1)
@@ -207,11 +227,11 @@ fn build(view: &View, state: &State, width: u16) -> Vec<Row> {
             } else {
                 None
             };
-            rows(
-                &mut out,
-                key.clone(),
-                body(content.as_deref().unwrap_or(&message.content), width),
-            );
+            if message.parts.is_empty() || content.is_some() {
+                rows(&mut out, key.clone(), body(content.as_deref().unwrap_or(&message.content), width));
+            } else {
+                content_rows(&mut out, key.clone(), &message.parts, width);
+            }
             if message.projection_truncated {
                 note(
                     &mut out,
@@ -278,9 +298,7 @@ fn build(view: &View, state: &State, width: u16) -> Vec<Row> {
     }
     super::activity::flush(&mut out, &mut calls, messages, snapshot, state, width);
     if let Some(delivery) = &state.delivery {
-        let saved = messages.iter().any(|m| {
-            m.role == "user" && m.message_index >= delivery.before && m.content == delivery.text
-        });
+        let saved = messages.iter().any(|m| delivery.matches(m));
         if !saved {
             entry_gap(&mut out, Key::Pending);
             note(
@@ -289,7 +307,11 @@ fn build(view: &View, state: &State, width: u16) -> Vec<Row> {
                 format!("You · {}", delivery.label),
                 width,
             );
-            rows(&mut out, Key::Pending, body(&delivery.text, width));
+            if delivery.parts.is_empty() {
+                rows(&mut out, Key::Pending, body(&delivery.text, width));
+            } else {
+                content_rows(&mut out, Key::Pending, &delivery.parts, width);
+            }
             note(&mut out, Key::Pending, "", width);
         }
     } else if let Some(pending) = &view.pending
@@ -565,4 +587,34 @@ pub(in crate::process_client::ui) fn draw(frame: &mut Frame<'_>, app: &App, area
     );
     state.top = top;
     state.height = height;
+}
+
+#[cfg(test)]
+mod attachment_tests {
+    use super::*;
+    use voyage_protocol::content::{ContentPart, ImageAttachment, ImageMediaType};
+    #[test]
+    fn attachment_transcript_renders_ordered_metadata_without_duplicate_text() {
+        let parts = vec![
+            ContentPart::Text { text: "before".into() },
+            ContentPart::Image { attachment: ImageAttachment {
+                id: uuid::Uuid::from_u128(74), name: "image.png".into(),
+                media_type: ImageMediaType::Png, byte_size: 70, width: 1, height: 1,
+                sha256: "a".repeat(64),
+            } },
+            ContentPart::Text { text: "after".into() },
+        ];
+        let mut out = Vec::new();
+        content_rows(&mut out, Key::Message(0), &parts, 100);
+        let text = out.iter().map(|r| r.line.to_string()).collect::<Vec<_>>().join("\n");
+        assert_eq!(text.matches("before").count(), 1);
+        assert!(text.find("before").unwrap() < text.find("image.png").unwrap());
+        assert!(text.find("image.png").unwrap() < text.find("after").unwrap());
+        assert!(text.contains("image/png"));
+        assert!(text.contains("70 bytes"));
+        assert!(!text.contains("data_base64"));
+        let mut out = Vec::new();
+        content_rows(&mut out, Key::Message(0), &parts[1..2], 100);
+        assert!(out.iter().any(|r| r.line.to_string().contains("image.png")));
+    }
 }

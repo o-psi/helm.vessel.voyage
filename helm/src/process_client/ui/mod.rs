@@ -1,5 +1,6 @@
 //! Multiplexed presentation; dropping this interface only drops observations.
 mod actions;
+mod attachments;
 mod archive;
 mod completion;
 mod controls;
@@ -43,6 +44,7 @@ use std::{
 use tokio::sync::mpsc;
 
 pub(super) struct App {
+    attachment_modal: Option<attachments::Modal>,
     clients: Vec<Client>,
     new_chat_config: Option<crate::Config>,
     views: BTreeMap<Target, View>,
@@ -120,6 +122,7 @@ pub async fn run_with_notice(
     let (sender, mut receiver) = mpsc::channel(64);
     let jobs = observe::spawn(&clients, sender.clone());
     let mut app = App {
+        attachment_modal: None,
         clients,
         new_chat_config,
         views: BTreeMap::new(),

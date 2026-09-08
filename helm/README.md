@@ -56,3 +56,33 @@ Use the mouse wheel inside the sidebar to read long requests and **Prev**/**Next
 to switch requests when not editing. Clicks outside the sidebar do not move focus.
 Pending or expired requests cannot submit another response; keyboard controls
 remain available.
+
+## Image drafts
+
+In an existing-voyage or new-voyage composer, **Ctrl+I** opens the image modal.
+**F6** is an equivalent fallback for terminals that encode Ctrl+I as Tab; ordinary
+Tab navigation is unchanged. Enter a local image path (optionally `add PATH`) and
+press Enter, or enter `remove INDEX` using the displayed one-based index. Paths
+with spaces need no shell quoting. Files are read on the computer running Helm,
+even when the voyage runs remotely. Escape returns without replacing composer
+text or removing attachments.
+
+Up to four PNG, JPEG or WebP images may be attached, with a combined 2 MiB limit.
+The modal and saved transcript show names, media types, byte sizes and dimensions.
+An image-only first message is supported. Image steering into an active run is
+not supported: the send is refused and the full draft is kept.
+
+The modal's `screenshot` command first shows a separate warning that the entire
+Helm-local display may contain secrets. Type **CAPTURE** and press Enter to
+confirm; Escape cancels. Capture uses Helm-local policy and the bounded native
+screenshot helper, not a remote tool or a shell command. It adds an attachment
+only: you must return to the composer and explicitly send. Capture currently
+blocks the UI during the helper's bounded capture window.
+
+Images are saved in private Helm draft files with immutable upload UUIDs and
+SHA-256 digests, not canonical messages or pending public command envelopes.
+After saving the frozen draft and command identity, Helm uploads bounded files
+and submits metadata references. The images and text stay frozen while delivery
+is unresolved. Recovery checks the original command identity; it never repeats
+the submission or resumes uploads. A definite rejection keeps the complete draft
+for correction. Unfinished immutable uploads do not execute a turn.

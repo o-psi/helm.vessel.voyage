@@ -46,7 +46,7 @@ impl App {
         frame.render_widget(Paragraph::new("Describe what you want to do.\n\nThis draft is saved on this computer.\n/model · /thinking · /service · /access MODE · /workspace PATH · /help\n\nTab switches drafts and voyages. Ctrl+N opens a blank draft.").wrap(ratatui::widgets::Wrap { trim: false }), rows[1]);
         let block = Block::default()
             .borders(Borders::ALL)
-            .title(" First message ");
+            .title(format!(" First message · {} ", self.attachment_summary()));
         let inner = block.inner(rows[2]);
         let body = Rect {
             height: inner.height.saturating_sub(1),

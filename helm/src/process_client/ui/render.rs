@@ -107,6 +107,11 @@ fn sidebar_state(view: &super::state::View) -> (&'static str, Color, bool) {
 }
 
 pub fn draw(frame: &mut Frame<'_>, app: &App) {
+    draw_inner(frame, app);
+    app.draw_attachments(frame);
+}
+
+fn draw_inner(frame: &mut Frame<'_>, app: &App) {
     app.clear_inference_hits();
     app.sync_interactions();
     app.sidebar.hits.borrow_mut().clear();
@@ -503,6 +508,7 @@ fn composer(frame: &mut Frame<'_>, app: &App, area: Rect) {
     };
     let border = Block::default()
         .borders(Borders::ALL)
+        .title(app.attachment_summary())
         .border_type(BorderType::Rounded)
         .border_style(if pending {
             Style::default().fg(Color::Yellow)

@@ -264,9 +264,7 @@ impl App {
                             }
                             if transcript.delivery.as_ref().is_some_and(|d| {
                                 snapshot.messages.iter().any(|m| {
-                                    m.role == "user"
-                                        && m.message_index >= d.before
-                                        && m.content == d.text
+                                    d.matches(m)
                                 })
                             }) {
                                 transcript.delivery = None;
@@ -422,9 +420,17 @@ impl App {
                         {
                             view.history.record(&pending.draft);
                         }
+                        let same_image_draft = super::attachments::pending_matches(pending, view);
                         if !rejected && !pending.preserve_draft && view.draft.text == pending.draft
+                            && (pending.original.as_deref().is_none_or(|c| !super::attachments::is_image_submission(c))
+                                || same_image_draft)
                         {
                             view.draft.take();
+                        }
+                        if !rejected && !pending.preserve_draft
+                            && same_image_draft
+                        {
+                            view.images.clear();
                         }
                         if !rejected && let Some(archived) = value["archived"].as_bool() {
                             if let Some(snapshot) = view.snapshot.as_mut() {
