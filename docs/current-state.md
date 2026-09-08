@@ -35,7 +35,8 @@ The composer has clickable Model, Thinking and Service selectors, with matching
 selection and cancellation while preserving composer text. Local drafts carry
 explicit selections into creation; remote drafts retain executing-host defaults.
 Model changes with existing overrides require confirmation to clear or keep them.
-`default` clears an explicit Thinking or Service override.
+`inherit` clears an explicit Thinking or Service override. `/service default` is
+an explicit adapter-specific choice, distinct from inheritance.
 
 Inference changes travel through the public Vessel API to the owning Voyage as
 revision-bound, deduplicated commands. Vessel retains the immutable intent before
@@ -45,13 +46,29 @@ Confirmed changes survive runtime suspension and supervisor restart. Helm retain
 pending commands and reconciles their original identities after reconnect without
 replaying uncertain commands. Stale or unsupported changes preserve prior values.
 
-OpenAI Responses, Chat Completions and ChatGPT OAuth adapters encode supported
-explicit reasoning-effort and service-tier fields. Anthropic and the optional
-Codex compatibility bridge reject these overrides. Choices reflect transport
-capabilities, narrowed by available model metadata; they do not establish account
-entitlement, billing or acceptance by a live provider. No paid-provider verification
-is implied. Full interactive selector acceptance remains separate from source and
-offline process verification.
+OpenAI Responses, Chat Completions and ChatGPT OAuth adapters encode explicit
+reasoning-effort and service-tier fields. Native ChatGPT catalog discovery retains
+advertised reasoning and service choices and their optional defaults. A shared
+resolver distinguishes transport-only suggestions, advertised support, unsupported
+settings and unknown account entitlement. Inherited catalog defaults are sent on the
+wire when available; missing defaults remain provider-managed, not guessed. Explicit
+ChatGPT `default` suppresses catalog tier selection and is omitted on the wire;
+OpenAI API `default` is sent explicitly. Anthropic and the optional Codex bridge
+reject these generic overrides rather than silently discard them.
+
+Discovery is bounded and scoped to provider, endpoint and credential/account,
+with five-minute freshness and 30-second automatic failure backoff. Snapshots schedule
+nonblocking discovery; local draft discovery stays in a supervised Voyage. Pickers
+refresh metadata for all three controls, not just Model. Runtime turn dispatch
+validates and freezes resolved defaults across tool continuations/retries. The
+active-turn snapshot separately reports the last completed response's service tier
+when supplied; it is not a billing ledger. Unknown metadata after suspension/restart
+remains unknown until rediscovery. Remote drafts retain executing-host settings.
+See [configuration](configuration.md#next-turn-inference-controls) for inheritance,
+provider differences, freshness and cost semantics. Neither metadata nor offline
+verification establishes live account entitlement or paid-provider acceptance.
+[Linux verification results](inference-resolution-verification.md) record the
+supervised runtime, API and PTY checks performed for this resolution pass.
 
 First send saves stable session, start and turn command identities locally before
 requesting Vessel creation, then saves the exact revision-bound submission before

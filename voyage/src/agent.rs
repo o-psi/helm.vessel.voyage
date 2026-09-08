@@ -338,6 +338,9 @@ pub struct Agent {
     temperature: Option<f32>,
     reasoning_effort: Option<String>,
     service_tier: Option<String>,
+    inference_provider: Option<crate::ProviderKind>,
+    resolved_inference:
+        tokio::sync::Mutex<Option<(String, voyage_protocol::inference::InferenceResolution)>>,
     retry: RetryPolicy,
     retry_jitter: Arc<dyn RetryJitter>,
 }
@@ -535,12 +538,28 @@ impl Agent {
             temperature,
             reasoning_effort: None,
             service_tier: None,
+            inference_provider: None,
+            resolved_inference: tokio::sync::Mutex::new(None),
             retry: RetryPolicy::default(),
             retry_jitter: Arc::new(retry::RandomJitter),
         }
     }
 
     /// Applied at agent construction; request-boundary validation remains in the adapter.
+    pub fn with_inference_provider(mut self, provider: crate::ProviderKind) -> Self {
+        self.inference_provider = Some(provider);
+        self
+    }
+    pub(crate) async fn inference_resolution(
+        &self,
+    ) -> Option<voyage_protocol::inference::InferenceResolution> {
+        self.resolved_inference
+            .try_lock()
+            .ok()?
+            .as_ref()
+            .map(|(_, r)| r.clone())
+    }
+
     pub fn with_inference_settings(
         mut self,
         reasoning_effort: Option<String>,
@@ -1079,6 +1098,8 @@ impl Agent {
         bindings: Option<crate::workflow::secrets::RunBindings>,
     ) -> Result<AgentOutcome, AgentError> {
         self.check_current_policy()?;
+        // Reset inherited defaults at each turn when an agent is reused.
+        *self.resolved_inference.lock().await = None;
         let root_scope = scope.clone();
         if let (Some(scope), Some(checkpoint)) = (&root_scope, checkpoint)
             && scope.run_id() != checkpoint.run_id()
@@ -1451,16 +1472,37 @@ impl Agent {
         if cancel.is_cancelled() {
             return Err(AgentError::Cancelled);
         }
-        {
-            let cache = self.model_cache.lock().await;
-            let known = cache
+        if let Some(provider) = &self.inference_provider {
+            let mut frozen = self.resolved_inference.lock().await;
+            if frozen
                 .as_ref()
-                .and_then(|(_, models)| models.iter().find(|model| model.id == request.model));
-            crate::provider::validate_model_effort(
-                &request.model,
-                request.reasoning_effort.as_deref(),
-                known,
-            )?;
+                .is_none_or(|(model, _)| model != &request.model)
+            {
+                // Resolve once for this admitted executor/model, then freeze the
+                // wire settings across retries and tool continuations. A later
+                // catalog refresh or next-turn setting cannot alter this turn.
+                tokio::select! {
+                    _ = cancel.cancelled() => return Err(AgentError::Cancelled),
+                    _ = tokio::time::timeout(Duration::from_secs(20), self.models(false)) => {}
+                }
+                let cache = self.model_cache.lock().await;
+                let known = cache
+                    .as_ref()
+                    .and_then(|(_, models)| models.iter().find(|m| m.id == request.model));
+                let resolution = crate::provider::resolve_inference_values(
+                    provider,
+                    &request.model,
+                    request.reasoning_effort.as_deref(),
+                    request.service_tier.as_deref(),
+                    known,
+                );
+                crate::provider::validate_resolution(provider, &resolution)?;
+                *frozen = Some((request.model.clone(), resolution));
+            }
+            if let Some((_, resolution)) = frozen.as_ref() {
+                request.reasoning_effort = resolution.thinking.wire_value.clone();
+                request.service_tier = resolution.service.wire_value.clone();
+            }
         }
         // Project outgoing copies; previously stored canonical history is not
         // rewritten when the operator configures a new secret.
@@ -1546,6 +1588,14 @@ impl Agent {
                         }
                     }
                     Some(Ok(ProviderStreamEvent::Completed(mut response))) => {
+                        if let Some((_, resolution)) = self.resolved_inference.lock().await.as_mut()
+                        {
+                            resolution.service.provider_reported = response
+                                .service_tier
+                                .as_ref()
+                                .filter(|tier| !self.context.redactor.contains_secret(tier))
+                                .cloned();
+                        }
                         if let Err(error) = crate::provider::redact_message(
                             &mut response.message,
                             &self.context.redactor,

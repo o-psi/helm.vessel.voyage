@@ -203,6 +203,7 @@ impl Provider for AnthropicProvider {
 
 #[derive(Default)]
 struct StreamAssembly {
+    service_tier: Option<String>,
     content: String,
     calls: Vec<CallAssembly>,
     usage: Usage,
@@ -234,6 +235,7 @@ where
                 if data.is_empty(){continue;}
                 let value:Value=serde_json::from_slice(data).map_err(|e|ProviderError::InvalidResponse(format!("invalid Anthropic stream event: {e}")))?;
                 if let Some(usage) = value.pointer("/message/usage").or_else(|| value.get("usage")) {
+                    if let Some(tier) = super::reported_service_tier(usage.get("service_tier")) { assembly.service_tier = Some(tier); }
                     yield ProviderStreamEvent::UsageReported(super::reported_usage(usage, "input_tokens", "output_tokens")?);
                 }
                 if value.get("type").and_then(Value::as_str)==Some("message_stop") {
@@ -345,6 +347,7 @@ fn finish_stream(assembly: StreamAssembly) -> Result<ModelResponse, ProviderErro
         })
         .collect::<Result<Vec<_>, ProviderError>>()?;
     Ok(ModelResponse {
+        service_tier: assembly.service_tier,
         message: Message {
             operator_name: None,
             created_at: Some(chrono::Utc::now()),
@@ -417,6 +420,7 @@ fn decode_response(value: Value) -> Result<ModelResponse, ProviderError> {
         })
         .collect();
     Ok(ModelResponse {
+        service_tier: super::reported_service_tier(value.pointer("/usage/service_tier")),
         message: Message {
             operator_name: None,
             created_at: Some(chrono::Utc::now()),

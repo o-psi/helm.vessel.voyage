@@ -29,29 +29,10 @@ impl App {
         ])
         .split(area);
         for (field, area) in fields.into_iter().zip(columns.iter().copied()) {
-            let value =
-                settings
-                    .as_ref()
-                    .map(|s| match field {
-                        Field::Model => s.model.as_str(),
-                        Field::Thinking => s.reasoning_effort.as_deref().unwrap_or(
-                            if s.reasoning_efforts.is_empty() {
-                                "Not configurable"
-                            } else {
-                                "default"
-                            },
-                        ),
-                        Field::Service => {
-                            s.service_tier
-                                .as_deref()
-                                .unwrap_or(if s.service_tiers.is_empty() {
-                                    "Not configurable"
-                                } else {
-                                    "default"
-                                })
-                        }
-                    })
-                    .unwrap_or("unavailable");
+            let value = settings
+                .as_ref()
+                .map(|s| s.label(field))
+                .unwrap_or_else(|| "unavailable".into());
             let hover = self
                 .sidebar
                 .pointer
@@ -62,7 +43,7 @@ impl App {
                 Color::DarkGray
             });
             frame.render_widget(
-                Paragraph::new(format!("{}: {} ▾", field.name(), safe(value))).style(if hover {
+                Paragraph::new(format!("{}: {} ▾", field.name(), safe(&value))).style(if hover {
                     style.bg(Color::DarkGray).add_modifier(Modifier::BOLD)
                 } else {
                     style
@@ -119,8 +100,16 @@ impl App {
             format!(
                 "{} · thinking {} · service {}",
                 safe(&s.model),
-                safe(s.reasoning_effort.as_deref().unwrap_or("default")),
-                safe(s.service_tier.as_deref().unwrap_or("default"))
+                safe(&s.label(Field::Thinking)),
+                safe(&format!(
+                    "{}{}",
+                    s.label(Field::Service),
+                    s.resolution
+                        .as_ref()
+                        .and_then(|r| r.service.provider_reported.as_ref())
+                        .map(|tier| format!(" · last reported {tier}"))
+                        .unwrap_or_default()
+                ))
             )
         };
         let heading = format!(
@@ -182,7 +171,7 @@ impl App {
                 safe(value),
                 if explicit {
                     " (explicit; support unverified)"
-                } else if picker.confirmation.is_none() && value == "default" {
+                } else if picker.confirmation.is_none() && value == "inherit" {
                     " (clear override)"
                 } else {
                     ""
@@ -209,7 +198,7 @@ impl App {
                 if active {
                     "Applies to the next turn only. Composer text is kept."
                 } else {
-                    "Composer text is kept. Provider default clears the override."
+                    "Composer text is kept. Inherit selects catalog defaults, otherwise provider-managed."
                 }
             ))
             .wrap(Wrap { trim: false })

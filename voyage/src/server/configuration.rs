@@ -105,7 +105,14 @@ async fn configure_inner(
         _ => unreachable!(),
     };
     bootstrap::limit_participant(&mut config, &state.registration)?;
-    let known = state.controls.known_model(&config).await;
+    let known = if access_only {
+        state.controls.known_model(&config).await
+    } else {
+        state
+            .controls
+            .resolve_model(&config, &state.registration.workspace)
+            .await
+    };
     crate::provider::validate_inference_settings_with_model(&config, known.as_ref())?;
     if let RuntimeCommand::SetAccess { access, .. } = &command {
         ensure!(
@@ -179,8 +186,17 @@ async fn configure_inner(
 /// Public, non-secret settings projection. These are requested values, not proof of
 /// an account entitlement or of the tier ultimately delivered by a provider.
 pub(super) fn inference_snapshot(config: &Config) -> serde_json::Value {
-    let (reasoning_efforts, service_tiers) = crate::provider::inference_capabilities(config);
+    inference_snapshot_with_model(config, None)
+}
+pub(super) fn inference_snapshot_with_model(
+    config: &Config,
+    model: Option<&crate::provider::ModelInfo>,
+) -> serde_json::Value {
+    let resolution = crate::provider::resolve_inference(config, model);
+    let reasoning_efforts = &resolution.thinking.values;
+    let service_tiers = &resolution.service.values;
     serde_json::json!({
+        "resolution": resolution,
         "model": config.model,
         "reasoning_effort": config.reasoning_effort,
         "service_tier": config.service_tier,

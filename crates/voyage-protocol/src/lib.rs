@@ -34,3 +34,6 @@ pub mod vessel;
 
 /// Ordered turn content metadata. Not yet accepted by submission transports.
 pub mod content;
+
+/// Model/account-scoped inference observations.
+pub mod inference;

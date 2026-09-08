@@ -125,6 +125,7 @@ pub struct ModelRequest {
 
 #[derive(Clone, Debug)]
 pub struct ModelResponse {
+    pub service_tier: Option<String>,
     pub message: Message,
     pub usage: Usage,
 }

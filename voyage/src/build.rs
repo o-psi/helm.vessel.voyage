@@ -149,6 +149,7 @@ pub async fn build_authorized_agent_bundle(
             config.max_tokens,
             config.temperature,
         )
+        .with_inference_provider(config.provider.clone())
         .with_inference_settings(config.reasoning_effort.clone(), config.service_tier.clone())
         .with_inference_accounting(accounting)
         .with_completion_coordinator(subagents.coordinator)

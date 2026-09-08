@@ -25,6 +25,52 @@ pub(super) struct Settings {
     pub reasoning_efforts: Vec<String>,
     #[serde(default)]
     pub service_tiers: Vec<String>,
+    #[serde(default)]
+    pub resolution: Option<voyage_protocol::inference::InferenceResolution>,
+}
+impl Settings {
+    fn label(&self, field: Field) -> String {
+        let (requested, resolved) = match field {
+            Field::Model => return self.model.clone(),
+            Field::Thinking => (
+                &self.reasoning_effort,
+                self.resolution.as_ref().map(|r| &r.thinking),
+            ),
+            Field::Service => (
+                &self.service_tier,
+                self.resolution.as_ref().map(|r| &r.service),
+            ),
+        };
+        if let Some(value) = requested {
+            return format!("{value} (explicit)");
+        }
+        match resolved {
+            Some(r) if r.support == voyage_protocol::inference::Support::Unsupported => {
+                "Not configurable".into()
+            }
+            Some(r) if r.default.is_some() => format!(
+                "{} (catalog default)",
+                r.default.as_deref().unwrap_or("unknown")
+            ),
+            _ => "Provider-managed (unknown)".into(),
+        }
+    }
+    fn resolve(&mut self, models: &[crate::provider::ModelInfo]) {
+        if let Ok(provider) =
+            serde_json::from_value(serde_json::Value::String(self.provider.clone()))
+        {
+            let resolution = crate::provider::resolve_inference_values(
+                &provider,
+                &self.model,
+                self.reasoning_effort.as_deref(),
+                self.service_tier.as_deref(),
+                models.iter().find(|m| m.id == self.model),
+            );
+            self.reasoning_efforts = resolution.thinking.values.clone();
+            self.service_tiers = resolution.service.values.clone();
+            self.resolution = Some(resolution);
+        }
+    }
 }
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum Destination {
@@ -68,14 +114,24 @@ pub(super) fn parse(text: &str) -> Option<(Field, &str)> {
 #[derive(Default)]
 pub(super) struct Controls {
     picker: Option<Picker>,
+    catalogs: std::collections::BTreeMap<Uuid, DraftCatalog>,
+    draft_generations: std::collections::BTreeMap<Uuid, Uuid>,
+    draft_checks: std::collections::BTreeMap<Uuid, std::time::Instant>,
     visible: std::cell::Cell<bool>,
     hits: std::cell::RefCell<Vec<(ratatui::layout::Rect, Destination, Field)>>,
     choices: std::cell::RefCell<Vec<(ratatui::layout::Rect, usize)>>,
+}
+struct DraftCatalog {
+    provider: String,
+    context: [u8; 32],
+    observed: std::time::Instant,
+    models: Vec<crate::provider::ModelInfo>,
 }
 struct Picker {
     id: Uuid,
     destination: Destination,
     original: Settings,
+    models: Vec<crate::provider::ModelInfo>,
     field: Field,
     query: String,
     selected: usize,
@@ -88,11 +144,48 @@ struct Picker {
     preserve_draft: bool,
 }
 impl Picker {
+    fn install_models(&mut self, models: Option<Vec<crate::provider::ModelInfo>>) {
+        self.loading = false;
+        let available = models.is_some();
+        self.models = models.unwrap_or_default();
+        self.original.resolve(&self.models);
+        self.options = match self.field {
+            Field::Model => self
+                .models
+                .iter()
+                .map(|m| m.id.clone())
+                .chain(std::iter::once(self.original.model.clone()))
+                .collect(),
+            Field::Thinking => self.original.reasoning_efforts.clone(),
+            Field::Service => self.original.service_tiers.clone(),
+        };
+        if self.field != Field::Model {
+            self.options.insert(0, "inherit".into());
+        }
+        let mut seen = std::collections::BTreeSet::new();
+        self.options.retain(|v| {
+            safe(v) == *v && !v.chars().any(char::is_whitespace) && seen.insert(v.clone())
+        });
+        self.selected = 0;
+        self.notice = if !available {
+            "Catalog unavailable or context changed. Defaults/support are unknown. Explicit values receive runtime validation; reopen to retry."
+        } else {
+            match self.original.resolution.as_ref().map(|r| if self.field == Field::Service { r.service.support } else { r.thinking.support }) {
+                Some(voyage_protocol::inference::Support::Advertised) => "Model-advertised choices; account acceptance remains provider-authoritative.",
+                Some(voyage_protocol::inference::Support::Unsupported) if self.field != Field::Model => "Explicit overrides are not supported by this adapter/model. Inherit removes an existing override.",
+                _ => "Support/default not exposed: choices are encodable suggestions, not account entitlements.",
+            }
+        }.into();
+        if self.field == Field::Service {
+            self.notice.push_str(" Priority may cost more. Inherit uses catalog defaults; default disables catalog tier selection (API: standard).");
+        }
+    }
+
     fn options(&self) -> Vec<String> {
         if self.confirmation.is_some() {
             return vec![
                 "Cancel".into(),
-                "Change model and reset both overrides to provider defaults".into(),
+                "Change model and reset both overrides to catalog/provider defaults".into(),
                 "Keep overrides (runtime/provider validates compatibility)".into(),
             ];
         }
@@ -160,12 +253,7 @@ impl App {
             Field::Service => original.service_tiers.clone(),
         };
         if field != Field::Model {
-            ensure!(
-                !options.is_empty() || !value.is_empty(),
-                "{} is not configurable through this provider transport; provider default is retained",
-                field.name()
-            );
-            options.insert(0, "default".into());
+            options.insert(0, "inherit".into());
         }
         let mut seen = std::collections::BTreeSet::new();
         options.retain(|value| {
@@ -178,16 +266,13 @@ impl App {
             id: Uuid::new_v4(),
             destination,
             original,
+            models: Vec::new(),
             field,
             query: String::new(),
             selected: 0,
             options,
             loading: false,
-            notice: if matches!(destination, Destination::Draft(_)) {
-                "Transport choices only; model/account support is unverified. Type an explicit value to request provider validation.".into()
-            } else {
-                "Advertised transport choices; model/account support is unverified. Type an explicit value for runtime/provider validation.".into()
-            },
+            notice: "Loading model metadata. Inherit uses advertised catalog defaults, otherwise provider-managed. Service default is an explicit adapter-specific choice. Unknown support is not entitlement.".into(),
             confirmation: None,
             command_text: match destination {
                 Destination::Live(target)
@@ -206,9 +291,7 @@ impl App {
             return self.select_inference(picker, value);
         }
         self.inference.picker = Some(picker);
-        if field == Field::Model {
-            self.load_inference_models()?;
-        }
+        self.load_inference_models()?;
         Ok(())
     }
     fn load_inference_models(&mut self) -> Result<()> {
@@ -247,48 +330,247 @@ impl App {
                     .await
                     .map_err(|e| e.to_string())
                     .and_then(|r| r.map_err(|e| e.to_string()));
-                    let _ = sender.send(Update::InferenceModels { id, result }).await;
+                    let _ = sender
+                        .send(Update::InferenceModels {
+                            id,
+                            context: None,
+                            generation: None,
+                            result,
+                        })
+                        .await;
                 });
             }
             Destination::Draft(draft_id) => {
                 let (config, workspace) = self.draft_inference_catalog(draft_id)?;
+                self.inference.draft_generations.insert(draft_id, id);
+                self.inference
+                    .draft_checks
+                    .insert(draft_id, std::time::Instant::now());
                 tokio::spawn(async move {
-                    // Reuse the supervised discovery path, including its cleanup.
-                    let result =
+                    let context = crate::provider::inference_context(&config).await;
+                    let mut result =
                         crate::process_client::frontend::models::discover(&config, &workspace)
                             .await
                             .and_then(|models| Ok(serde_json::to_value(models)?))
                             .map_err(|e| e.to_string());
-                    let _ = sender.send(Update::InferenceModels { id, result }).await;
+                    if context.is_none()
+                        || context != crate::provider::inference_context(&config).await
+                    {
+                        result = Err("catalog context changed".into());
+                    }
+                    let _ = sender
+                        .send(Update::InferenceModels {
+                            id,
+                            context,
+                            generation: Some(id),
+                            result,
+                        })
+                        .await;
                 });
             }
         }
         Ok(())
     }
+    pub(super) fn sync_live_inference_picker(&mut self, target: Target) {
+        let Some(latest) = self
+            .views
+            .get(&target)
+            .and_then(|v| v.snapshot.as_ref())
+            .and_then(|s| s.inference.as_ref())
+        else {
+            return;
+        };
+        let Some(picker) = self.inference.picker.as_mut().filter(|p| {
+            p.destination == Destination::Live(target) && !p.loading && p.field != Field::Model
+        }) else {
+            return;
+        };
+        if picker.original.model != latest.model
+            || picker.original.provider != latest.provider
+            || picker.original.reasoning_effort != latest.reasoning_effort
+            || picker.original.service_tier != latest.service_tier
+        {
+            picker.notice = "Settings changed in another view. Reopen this picker before applying; nothing sent.".into();
+            return;
+        }
+        if picker.original.resolution != latest.resolution {
+            picker.original = latest.clone();
+            picker.models.clear();
+            picker.options = if picker.field == Field::Thinking {
+                latest.reasoning_efforts.clone()
+            } else {
+                latest.service_tiers.clone()
+            };
+            picker.options.insert(0, "inherit".into());
+            picker.selected = 0;
+            self.inference.choices.borrow_mut().clear();
+            picker.notice = "Executing-host capabilities refreshed. Unknown support is not entitlement; inherited service defaults may affect cost.".into();
+        }
+    }
     pub(super) fn inference_models(
         &mut self,
         id: Uuid,
+        context: Option<[u8; 32]>,
+        generation: Option<Uuid>,
         result: std::result::Result<serde_json::Value, String>,
     ) {
         let Some(picker) = self.inference.picker.as_mut().filter(|p| p.id == id) else {
             return;
         };
+        if let Destination::Draft(draft_id) = picker.destination
+            && self.inference.draft_generations.get(&draft_id).copied() != generation
+        {
+            return;
+        }
         self.inference.choices.borrow_mut().clear();
-        picker.loading = false;
-        match result {
-            Ok(value) => {
+        let models = result
+            .ok()
+            .and_then(|value| {
                 let value = value.get("value").unwrap_or(&value);
                 let value = value.get("inventory").unwrap_or(value);
-                if let Some(models) = value.as_array() {
-                    for model in models.iter().take(2048) {
-                        if let Some(id) = model["id"].as_str().filter(|v| safe(v) == *v && !v.chars().any(char::is_whitespace)) {
-                            if !picker.options.iter().any(|v| v == id) { picker.options.push(id.into()); }
-                        }
-                    }
-                }
+                serde_json::from_value::<Vec<crate::provider::ModelInfo>>(value.clone()).ok()
+            })
+            .filter(|models| crate::provider::validate_models(models, &[]).is_ok());
+        if let Destination::Draft(draft_id) = picker.destination {
+            self.inference.catalogs.remove(&draft_id);
+            if let (Some(context), Some(models)) = (context, models.as_ref()) {
+                self.inference.catalogs.insert(
+                    draft_id,
+                    DraftCatalog {
+                        provider: picker.original.provider.clone(),
+                        context,
+                        observed: std::time::Instant::now(),
+                        models: models.clone(),
+                    },
+                );
             }
-            Err(_) => picker.notice = "Catalog unavailable. Type an explicit model ID; runtime/provider validates it. Esc and reopen to retry.".into(),
         }
+        picker.install_models(models);
+    }
+    pub(super) fn refresh_draft_capabilities(&mut self) {
+        let Some(id) = self.active_draft else {
+            return;
+        };
+        if self
+            .inference
+            .picker
+            .as_ref()
+            .is_some_and(|p| p.destination == Destination::Draft(id) && p.loading)
+            || self
+                .inference
+                .draft_checks
+                .get(&id)
+                .is_some_and(|at| at.elapsed().as_secs() < 30)
+        {
+            return;
+        }
+        if self.ensure_draft_inference_editable(id).is_err() {
+            return;
+        }
+        let Ok((config, workspace)) = self.draft_inference_catalog(id) else {
+            return;
+        };
+        self.inference
+            .draft_checks
+            .retain(|id, _| self.new_drafts.contains_key(id));
+        self.inference
+            .draft_generations
+            .retain(|id, _| self.new_drafts.contains_key(id));
+        self.inference.catalogs.retain(|id, c| {
+            self.new_drafts.contains_key(id) && c.observed.elapsed().as_secs() < 300
+        });
+        self.inference
+            .draft_checks
+            .insert(id, std::time::Instant::now());
+        let generation = Uuid::new_v4();
+        self.inference.draft_generations.insert(id, generation);
+        let previous = self
+            .inference
+            .catalogs
+            .get(&id)
+            .map(|c| (c.context, c.observed));
+        let sender = self.sender.clone();
+        tokio::spawn(async move {
+            let context = crate::provider::inference_context(&config).await;
+            if let (Some(context), Some((key, at))) = (context, previous)
+                && key == context
+                && at.elapsed().as_secs() < 300
+            {
+                return;
+            }
+            let provider = serde_json::to_value(&config.provider)
+                .ok()
+                .and_then(|v| v.as_str().map(str::to_owned))
+                .unwrap_or_default();
+            let result =
+                crate::process_client::frontend::models::discover(&config, &workspace).await;
+            let models = if context.is_some()
+                && context == crate::provider::inference_context(&config).await
+            {
+                result.ok()
+            } else {
+                None
+            };
+            let _ = sender
+                .send(Update::DraftInferenceModels {
+                    id,
+                    provider,
+                    context,
+                    generation,
+                    models,
+                })
+                .await;
+        });
+    }
+    pub(super) fn draft_inference_models(
+        &mut self,
+        id: Uuid,
+        provider: String,
+        context: Option<[u8; 32]>,
+        generation: Uuid,
+        models: Option<Vec<crate::provider::ModelInfo>>,
+    ) {
+        if !self.new_drafts.contains_key(&id)
+            || self.inference.draft_generations.get(&id) != Some(&generation)
+        {
+            return;
+        }
+        self.inference.catalogs.remove(&id);
+        let models = models.filter(|models| {
+            context.is_some() && crate::provider::validate_models(models, &[]).is_ok()
+        });
+        if let (Some(context), Some(models)) = (context, models.as_ref()) {
+            self.inference.catalogs.insert(
+                id,
+                DraftCatalog {
+                    provider,
+                    context,
+                    observed: std::time::Instant::now(),
+                    models: models.clone(),
+                },
+            );
+        }
+        if let Some(picker) = self
+            .inference
+            .picker
+            .as_mut()
+            .filter(|p| p.destination == Destination::Draft(id))
+        {
+            self.inference.choices.borrow_mut().clear();
+            picker.install_models(models);
+        }
+    }
+    pub(super) fn draft_known_model(
+        &self,
+        id: Uuid,
+        provider: &str,
+        model: &str,
+    ) -> Option<&crate::provider::ModelInfo> {
+        self.inference
+            .catalogs
+            .get(&id)
+            .filter(|c| c.provider == provider && c.observed.elapsed().as_secs() < 300)
+            .and_then(|c| c.models.iter().find(|m| m.id == model))
     }
     fn select_inference(&mut self, mut picker: Picker, value: &str) -> Result<()> {
         ensure!(
@@ -302,10 +584,12 @@ impl App {
         match picker.field {
             Field::Model => settings.model = value.into(),
             Field::Thinking => {
-                settings.reasoning_effort = (value != "default").then(|| value.into())
+                settings.reasoning_effort =
+                    (!matches!(value, "inherit" | "default")).then(|| value.into())
             }
-            Field::Service => settings.service_tier = (value != "default").then(|| value.into()),
+            Field::Service => settings.service_tier = (value != "inherit").then(|| value.into()),
         }
+        settings.resolve(&picker.models);
         if picker.field == Field::Model
             && settings.model != picker.original.model
             && (settings.reasoning_effort.is_some() || settings.service_tier.is_some())

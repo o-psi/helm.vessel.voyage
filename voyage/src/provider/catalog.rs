@@ -31,12 +31,33 @@ pub fn validate_model(model: &ModelInfo, secrets: &[&str]) -> Result<(), Provide
     validate_text(&model.id, 512, true, secrets)?;
     validate_text(&model.display_name, 512, true, secrets)?;
     validate_text(&model.description, 4096, false, secrets)?;
-    for fields in [&model.reasoning_efforts, &model.input_modalities] {
+    for fields in [
+        &model.reasoning_efforts,
+        &model.input_modalities,
+        &model.service_tiers,
+    ] {
         if fields.len() > 16 {
             return Err(invalid());
         }
         for field in fields {
             validate_text(field, 128, true, secrets)?;
+        }
+    }
+    if let Some(default) = &model.default_reasoning_effort {
+        validate_text(default, 128, true, secrets)?;
+        if (model.reasoning_support_known || !model.reasoning_efforts.is_empty())
+            && !model.reasoning_efforts.contains(default)
+        {
+            return Err(invalid());
+        }
+    }
+    if let Some(default) = &model.default_service_tier {
+        validate_text(default, 128, true, secrets)?;
+        if default != "default"
+            && (model.service_support_known || !model.service_tiers.is_empty())
+            && !model.service_tiers.contains(default)
+        {
+            return Err(invalid());
         }
     }
     Ok(())
@@ -53,6 +74,12 @@ pub fn validate_models(models: &[ModelInfo], secrets: &[&str]) -> Result<(), Pro
             model.id.len()
                 + model.display_name.len()
                 + model.description.len()
+                + model
+                    .default_reasoning_effort
+                    .as_ref()
+                    .map_or(0, String::len)
+                + model.default_service_tier.as_ref().map_or(0, String::len)
+                + model.service_tiers.iter().map(String::len).sum::<usize>()
                 + model
                     .reasoning_efforts
                     .iter()
@@ -81,6 +108,9 @@ pub fn validate_models_for_display(
     for model in models {
         let fields = [&model.id, &model.display_name, &model.description]
             .into_iter()
+            .chain(model.default_service_tier.iter())
+            .chain(model.service_tiers.iter())
+            .chain(model.default_reasoning_effort.iter())
             .chain(model.reasoning_efforts.iter())
             .chain(model.input_modalities.iter());
         if fields.into_iter().any(|field| contains_secret(field)) {
@@ -209,4 +239,18 @@ pub(crate) async fn json(
     serde_json::from_slice(&bytes).map_err(|_| {
         ProviderError::InvalidResponse("protocol failure: invalid model-list JSON".into())
     })
+}
+
+/// Nullable optional strings retain absence instead of inventing a default.
+pub(crate) fn nullable_text(value: &Value, key: &str) -> Result<Option<String>, ProviderError> {
+    match value.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(text)) => Ok(Some(text.clone())),
+        _ => Err(invalid()),
+    }
+}
+pub(crate) fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis().min(u64::MAX as u128) as u64)
 }

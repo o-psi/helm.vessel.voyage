@@ -109,6 +109,11 @@ pub(super) async fn submit(
         Admission::New(run) => run,
     };
     let workflow_result: Result<()> = async {
+        let known = state
+            .controls
+            .resolve_model(&config, &state.registration.workspace)
+            .await;
+        crate::provider::validate_inference_settings_with_model(&config, known.as_ref())?;
         if let Some(prepared) = state
             .workflows
             .take(command_id, authorization.actor.principal_id)
@@ -151,7 +156,10 @@ pub(super) async fn submit(
     let cancel = CancellationToken::new();
     *state.active.lock().await = Some(ActiveRun {
         id: run_id,
-        inference: super::configuration::inference_snapshot(&config),
+        inference: super::configuration::inference_snapshot_with_model(
+            &config,
+            state.controls.known_model(&config).await.as_ref(),
+        ),
         cancel: cancel.clone(),
         steering: accepts_steering.then_some(steering),
     });

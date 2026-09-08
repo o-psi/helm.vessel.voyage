@@ -33,12 +33,12 @@ const COMMANDS: &[(&str, &str, &str)] = &[
     (
         "thinking",
         "Change next-turn thinking",
-        "Choose or type an effort; default clears",
+        "Choose or type an effort; inherit clears",
     ),
     (
         "service",
         "Change next-turn service",
-        "Choose or type a tier; default clears",
+        "Choose or type a tier; inherit clears",
     ),
     ("models", "Show available models", ""),
     (
@@ -275,7 +275,10 @@ impl App {
         let mut options = Vec::new();
         match command {
             "thinking" | "service" => {
-                options.push(("default".into(), "Provider default (clear override)".into()));
+                options.push((
+                    "inherit".into(),
+                    "Catalog/provider-managed (clear override)".into(),
+                ));
                 if let Some(settings) = view.snapshot.as_ref().and_then(|s| s.inference.as_ref()) {
                     let choices = if command == "thinking" {
                         &settings.reasoning_efforts
@@ -286,20 +289,20 @@ impl App {
                         choices
                             .iter()
                             .filter(|value| {
-                                value.as_str() != "default"
+                                value.as_str() != "inherit"
                                     && safe(value) == **value
                                     && !value.chars().any(char::is_whitespace)
                             })
                             .map(|value| {
                                 (
                                     value.clone(),
-                                    "Advertised choice; runtime/provider validates".into(),
+                                    "Explicit request; support/entitlement may be unknown".into(),
                                 )
                             }),
                     );
                 }
                 menu.hint =
-                    "Enter a value, or send the bare command to open its picker; default clears"
+                    "Enter a value, or send the bare command to open its picker; inherit clears; service default is explicit"
                         .into();
             }
             "access" => options.extend([

@@ -21,7 +21,19 @@ impl App {
             view.transcript.borrow_mut().dirty = true;
         }
         match update {
-            Update::InferenceModels { id, result } => self.inference_models(id, result),
+            Update::DraftInferenceModels {
+                id,
+                provider,
+                context,
+                generation,
+                models,
+            } => self.draft_inference_models(id, provider, context, generation, models),
+            Update::InferenceModels {
+                id,
+                context,
+                generation,
+                result,
+            } => self.inference_models(id, context, generation, result),
             Update::FirstSend { saved, result } => self.first_send_update(*saved, result),
             Update::Live {
                 target,
@@ -282,6 +294,7 @@ impl App {
                     Ok(_) => view.error = Some("Snapshot identity mismatch".into()),
                     Err(error) => view.error = Some(error),
                 }
+                self.sync_live_inference_picker(target);
             }
             Update::RouteError { route, error } => {
                 self.status = format!("{} unavailable: {}", self.route_label(route), safe(&error));

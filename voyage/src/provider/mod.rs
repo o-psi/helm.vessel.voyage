@@ -2,9 +2,10 @@ mod anthropic;
 mod catalog;
 mod inference;
 pub use catalog::{validate_model, validate_models, validate_models_for_display};
-pub(crate) use inference::validate_model_effort;
+pub(crate) use inference::validate_resolution;
 pub use inference::{
-    inference_capabilities, inference_capabilities_with_model, validate_inference_settings,
+    inference_capabilities, inference_capabilities_with_model, inference_context,
+    resolve_inference, resolve_inference_values, validate_inference_settings,
     validate_inference_settings_with_model,
 };
 mod chatgpt_oauth;
@@ -127,6 +128,18 @@ pub struct ModelInfo {
     #[serde(default)]
     pub reasoning_efforts: Vec<String>,
     #[serde(default)]
+    pub reasoning_support_known: bool,
+    #[serde(default)]
+    pub default_reasoning_effort: Option<String>,
+    #[serde(default)]
+    pub service_tiers: Vec<String>,
+    #[serde(default)]
+    pub service_support_known: bool,
+    #[serde(default)]
+    pub default_service_tier: Option<String>,
+    #[serde(default)]
+    pub observed_at_ms: Option<u64>,
+    #[serde(default)]
     pub input_modalities: Vec<String>,
 }
 
@@ -139,6 +152,12 @@ impl ModelInfo {
             description: String::new(),
             is_default: false,
             reasoning_efforts: Vec::new(),
+            reasoning_support_known: false,
+            default_reasoning_effort: None,
+            service_tiers: Vec::new(),
+            service_support_known: false,
+            default_service_tier: None,
+            observed_at_ms: None,
             input_modalities: vec!["text".into()],
         }
     }
@@ -354,4 +373,16 @@ impl CompatibleAuthentication for reqwest::RequestBuilder {
             self.bearer_auth(key)
         }
     }
+}
+
+/// Unknown response tier IDs are metadata, never instructions. Invalid metadata
+/// is discarded rather than failing/retrying an already completed inference.
+pub(crate) fn reported_service_tier(value: Option<&serde_json::Value>) -> Option<String> {
+    let text = value?.as_str()?;
+    (!text.is_empty()
+        && text.len() <= 64
+        && text
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-'))
+    .then(|| text.to_owned())
 }

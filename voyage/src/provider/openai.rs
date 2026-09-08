@@ -114,6 +114,7 @@ fn request_body(request: ModelRequest, streaming: bool) -> Value {
 
 #[derive(Default)]
 struct StreamAssembly {
+    service_tier: Option<String>,
     content: String,
     calls: Vec<CallAssembly>,
     usage: Usage,
@@ -150,6 +151,7 @@ where
                     return;
                 }
                 let value: Value = serde_json::from_slice(data).map_err(|e| ProviderError::InvalidResponse(format!("invalid OpenAI stream event: {e}")))?;
+                if let Some(tier) = super::reported_service_tier(value.get("service_tier")) { assembly.service_tier = Some(tier); }
                 if let Some(usage) = value.get("usage") {
                     yield ProviderStreamEvent::UsageReported(super::reported_usage(usage, "prompt_tokens", "completion_tokens")?);
                 }
@@ -256,6 +258,7 @@ fn finish_stream(assembly: StreamAssembly) -> Result<ModelResponse, ProviderErro
         })
         .collect::<Result<Vec<_>, ProviderError>>()?;
     Ok(ModelResponse {
+        service_tier: assembly.service_tier,
         message: Message {
             operator_name: None,
             created_at: Some(chrono::Utc::now()),
@@ -401,6 +404,7 @@ fn decode_response(value: Value) -> Result<ModelResponse, ProviderError> {
             .unwrap_or(0),
     };
     Ok(ModelResponse {
+        service_tier: super::reported_service_tier(value.get("service_tier")),
         message: Message {
             operator_name: None,
             created_at: Some(chrono::Utc::now()),

@@ -354,12 +354,20 @@ impl App {
             .config
             .as_ref()
             .context("Remote drafts use executing-host inference settings")?;
-        let (reasoning_efforts, service_tiers) = crate::provider::inference_capabilities(config);
+        let provider = serde_json::to_value(&config.provider)?
+            .as_str()
+            .unwrap_or("unknown")
+            .to_owned();
+        let known = self.draft_known_model(id, &provider, &config.model);
+        let resolution = crate::provider::resolve_inference(config, known);
+        let reasoning_efforts = resolution.thinking.values.clone();
+        let service_tiers = resolution.service.values.clone();
         Ok(super::inference::Settings {
             model: config.model.clone(),
             reasoning_effort: config.reasoning_effort.clone(),
             service_tier: config.service_tier.clone(),
-            provider: format!("{:?}", config.provider),
+            provider,
+            resolution: Some(resolution),
             reasoning_efforts,
             service_tiers,
         })

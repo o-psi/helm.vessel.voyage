@@ -167,21 +167,25 @@ pub(super) async fn dispatch_admitted(
             let mut inference_config = state.config.read().await.clone();
             let saved = state.owner.snapshot().await?.session;
             inference_config.model = saved.pending_model.unwrap_or(saved.model);
-            snapshot["inference"] = super::configuration::inference_snapshot(&inference_config);
+            state.controls.schedule_resolution(
+                inference_config.clone(),
+                state.registration.workspace.clone(),
+            );
             let known = state.controls.known_model(&inference_config).await;
-            let (efforts, tiers) = crate::provider::inference_capabilities_with_model(
+            snapshot["inference"] = super::configuration::inference_snapshot_with_model(
                 &inference_config,
                 known.as_ref(),
             );
-            snapshot["inference"]["reasoning_efforts"] = json!(efforts);
-            snapshot["inference"]["service_tiers"] = json!(tiers);
-            snapshot["inference"]["reasoning_support_known"] =
-                json!(known.is_some_and(|model| !model.reasoning_efforts.is_empty()));
             let active = state.active.lock().await;
             snapshot["inference_next_turn"] = json!(active.is_some());
             snapshot["inference_current"] = active
                 .as_ref()
                 .map_or(Value::Null, |run| run.inference.clone());
+            if let Some(run) = active.as_ref()
+                && let Some(resolution) = state.controls.inference_resolution(run.id).await
+            {
+                snapshot["inference_current"]["resolution"] = json!(resolution);
+            }
             drop(active);
             snapshot["access"] = crate::runtime_policy::RuntimePolicy::resolve(
                 &*state.config.read().await,

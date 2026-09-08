@@ -3,6 +3,7 @@ use super::*;
 
 impl App {
     pub(super) fn reconcile_pending(&mut self) {
+        self.refresh_draft_capabilities();
         let now = Instant::now();
         self.command_checks.retain(|(target, id), _| {
             self.views.get(target).is_some_and(|view| {

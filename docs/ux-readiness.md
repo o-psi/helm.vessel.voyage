@@ -100,9 +100,11 @@ See [current state](current-state.md) for behavior and verification limits.
 - **One path:** `/model`, `/thinking` and `/service` open the corresponding picker.
   Typed arguments use the same validation, confirmation and submission path as
   clicks; they do not bypass safeguards.
-- **Defaults and model changes:** `default` clears the corresponding explicit
-  override and inherits the applicable default, rather than sending a literal
-  provider value. Changing model with Thinking or Service overrides requires
+- **Defaults and model changes:** `inherit` clears the corresponding explicit
+  override and resolves an advertised catalog default when present, otherwise
+  leaving the value provider-managed/unknown. `/service default` is explicit:
+  standard on the OpenAI API, suppression of catalog tier selection on ChatGPT.
+  Show catalog defaults separately from user overrides and actual response tiers. Changing model with Thinking or Service overrides requires
   explicit confirmation: reset both overrides atomically, or explicitly keep them
   for runtime/provider compatibility validation. Show what will be cleared; cancel
   retains the old model and overrides. Never silently reset them or silently carry
@@ -110,8 +112,8 @@ See [current state](current-state.md) for behavior and verification limits.
 - **Capabilities:** offer choices from live capabilities for the selected
   model/provider on the executing host. Distinguish unknown or unavailable data
   from known unsupported choices. Unknown typed values remain subject to runtime
-  validation, not an assurance of support. Local configuration drafts show only
-  transport-known choices, not model/account support claims. Remote drafts retain
+  validation, not an assurance of support. Local configuration drafts use supervised account-scoped catalog discovery;
+  while unavailable, choices are transport suggestions, never entitlement claims. Remote drafts retain
   executing-host settings. Surface refusal without claiming a change.
 - **Pending and recovery:** durably retain the pending action and preserve composer
   text across disconnect/restart. Distinguish pending from confirmed settings and

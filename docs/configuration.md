@@ -59,26 +59,67 @@ and `/service` open the corresponding picker; a value selects it directly:
 /model MODEL_ID
 /thinking high
 /service priority
-/thinking default
+/thinking inherit
+/service inherit
 /service default
 ```
 
-`default` clears that override; it is not an alias for medium thinking or paid
-priority. Explicit launch fields are `reasoning_effort` and `service_tier`:
+`inherit` clears the explicit override. Voyage selects an advertised catalog
+value when one exists; otherwise the request is provider-managed and the actual
+default is unknown. `/thinking default` remains a compatibility alias for
+`/thinking inherit`. **`/service default` is now an explicit choice, not a clear
+operation.** On the OpenAI API it sends `service_tier = "default"` (standard
+service). On ChatGPT OAuth it disables catalog tier selection and omits the wire
+field, matching that backend's client convention; this does not claim a delivered
+tier. Use `inherit`, not `default`, to restore catalog selection.
+
+Explicit launch fields are `reasoning_effort` and `service_tier`:
 
 ```toml
 reasoning_effort = "high"
 service_tier = "priority"
 ```
 
-Omit either field for provider-default behavior. Responses, ChatGPT OAuth, and
-compatible Chat Completions encode the overrides. Anthropic and the optional
-Codex compatibility bridge currently reject explicit overrides rather than ignore
-them. Transport choices are not a guarantee of model support, account entitlement,
-price, availability, or the service tier actually delivered. Advertised model
-reasoning levels narrow choices when metadata is available; unknown metadata does
-not prove support. An endpoint can still reject a request. Priority may cost more.
+Omitting a launch field enables catalog/provider inheritance. Catalog defaults
+are actually encoded when selected, not merely displayed as guesses about backend
+omission. **A catalog-selected service tier may affect cost or allowance.** Use an
+explicit service choice to override it. No rejection causes an automatic downgrade,
+tier change, or support-probing inference request.
+
+Native ChatGPT discovery uses the executing account's authenticated catalog:
+`supported_reasoning_levels`, `default_reasoning_level`, `service_tiers`, and
+`default_service_tier`. OpenAI's public/compatible model-list endpoint does not
+establish reasoning defaults, project service defaults or account entitlements.
+Those remain unknown rather than being inferred from model names or plan labels.
+OpenAI-compatible endpoints are not assumed to share OpenAI's backend defaults.
+Anthropic and the optional Codex compatibility bridge still reject these generic
+explicit overrides; their different thinking/tier configuration is not silently
+translated. Compatibility catalog metadata cannot broaden adapter support.
+
+The shared resolution distinguishes unknown, unsupported, and model-advertised
+choices; explicit requests; advertised defaults; resolved wire values; source and
+observation time; and account support (unknown unless established). Model-advertised
+support is not a promise of account entitlement, availability, pricing or acceptance.
+Priority may cost more. Actual response service metadata, when present, is separate
+from the requested tier. The active-turn picker shows the last completed response's
+reported service; this is a live observation, not a durable billing ledger or a claim
+about every request in that turn. Absent/malformed response metadata is not guessed.
 Automatic title requests use a separate utility model and its provider defaults.
+
+Runtime catalog observations expire after five minutes and are bound to provider,
+endpoint and executing credential/account context. Logout/account/endpoint changes
+cannot reuse another context's catalog. Failed automatic discovery backs off for
+30 seconds; reopening a picker explicitly retries. Background snapshots do not wait
+for network discovery. Local drafts discover through temporary supervised Voyages
+and check their context every 30 seconds while selected; their metadata is advisory,
+and sending always invokes executing-host validation. Suspended/restarted runtimes
+may show unknown metadata until discovery runs again; explicit settings remain saved.
+Catalog errors never turn unknown support into known unsupported. Catalog fields
+are bounded and screened for unsafe terminal text and credential disclosure.
+
+Defaults and validation are resolved again before provider dispatch and frozen for
+the admitted turn, including retries and tool continuations. Mid-turn model/catalog
+changes only affect future turns. The provider can still reject an encodable request.
 
 Selections on an unsent new-voyage draft stay local until creation. For an existing
 voyage, Helm submits one atomic `set_inference` replacement of model and both

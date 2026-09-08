@@ -91,6 +91,20 @@ impl Provider for ChatGptOAuth {
                         .to_owned(),
                     is_default: super::catalog::optional_bool(entry, "is_default", false)?,
                     reasoning_efforts,
+                    reasoning_support_known: entry
+                        .get("supported_reasoning_levels")
+                        .is_some_and(Value::is_array),
+                    default_reasoning_effort: super::catalog::nullable_text(
+                        entry,
+                        "default_reasoning_level",
+                    )?,
+                    service_tiers: super::catalog::strings(entry, "service_tiers", Some("id"))?,
+                    service_support_known: entry.get("service_tiers").is_some_and(Value::is_array),
+                    default_service_tier: super::catalog::nullable_text(
+                        entry,
+                        "default_service_tier",
+                    )?,
+                    observed_at_ms: Some(super::catalog::now_ms()),
                     input_modalities: vec!["text".into()],
                     id,
                 })
@@ -111,35 +125,51 @@ impl Provider for ChatGptOAuth {
 
     async fn complete(&self, request: ModelRequest) -> Result<ModelResponse, ProviderError> {
         super::inference::validate_request(&crate::config::ProviderKind::ChatGptOauth, &request)?;
-        let mut body = super::openai_responses::request_body(request, false)?;
+        let mut body = super::openai_responses::request_body_for(
+            &crate::ProviderKind::ChatGptOauth,
+            subscription_request(request),
+            false,
+        )?;
         body.as_object_mut()
             .map(|value| value.remove("max_output_tokens"));
-        let response = self
-            .responses_request(&body)
-            .await?
+        let (request, tokens) = self.responses_request_with_tokens(&body).await?;
+        let response = request
             .header("User-Agent", format!("helm/{}", env!("CARGO_PKG_VERSION")))
             .send()
             .await
             .map_err(map_request)?;
-        super::openai_responses::decode_response(checked_json(response).await?)
+        let mut response = super::openai_responses::decode_response(checked_json(response).await?)?;
+        filter_response_tier(&mut response, &tokens);
+        Ok(response)
     }
 
     async fn stream(&self, request: ModelRequest) -> Result<ProviderStream, ProviderError> {
         super::inference::validate_request(&crate::config::ProviderKind::ChatGptOauth, &request)?;
-        let mut body = super::openai_responses::request_body(request, true)?;
+        let mut body = super::openai_responses::request_body_for(
+            &crate::ProviderKind::ChatGptOauth,
+            subscription_request(request),
+            true,
+        )?;
         body.as_object_mut()
             .map(|value| value.remove("max_output_tokens"));
-        let response = self
-            .responses_request(&body)
-            .await?
+        let (request, tokens) = self.responses_request_with_tokens(&body).await?;
+        let response = request
             .header("User-Agent", format!("helm/{}", env!("CARGO_PKG_VERSION")))
             .send()
             .await
             .map_err(map_request)?;
         let response = checked_stream_response(response).await?;
-        Ok(Box::pin(super::openai_responses::responses_stream(
-            response.bytes_stream(),
-        )))
+        use futures_util::StreamExt;
+        Ok(Box::pin(
+            super::openai_responses::responses_stream(response.bytes_stream()).map(move |event| {
+                event.map(|mut event| {
+                    if let super::ProviderStreamEvent::Completed(response) = &mut event {
+                        filter_response_tier(response, &tokens);
+                    }
+                    event
+                })
+            }),
+        ))
     }
 }
 
@@ -568,15 +598,24 @@ impl ChatGptOAuth {
         &self,
         body: &Value,
     ) -> Result<reqwest::RequestBuilder, ProviderError> {
+        self.responses_request_with_tokens(body)
+            .await
+            .map(|(request, _)| request)
+    }
+    async fn responses_request_with_tokens(
+        &self,
+        body: &Value,
+    ) -> Result<(reqwest::RequestBuilder, OAuthTokens), ProviderError> {
         let tokens = self.valid_tokens().await?;
-        Ok(self
+        let request = self
             .client
             .post(&self.endpoints.responses)
-            .bearer_auth(tokens.access_token)
-            .header("ChatGPT-Account-Id", tokens.account_id)
+            .bearer_auth(&tokens.access_token)
+            .header("ChatGPT-Account-Id", &tokens.account_id)
             .header("originator", "helm")
             .header("OpenAI-Beta", "responses=experimental")
-            .json(body))
+            .json(body);
+        Ok((request, tokens))
     }
 
     async fn valid_tokens(&self) -> Result<OAuthTokens, ProviderError> {
@@ -818,4 +857,32 @@ async fn set_mode(path: &Path, mode: u32) -> Result<(), ProviderError> {
 #[cfg(not(unix))]
 async fn set_mode(_: &Path, _: u32) -> Result<(), ProviderError> {
     Ok(())
+}
+
+// ChatGPT's catalog convention uses default to suppress client tier selection.
+// Public OpenAI API adapters intentionally do not apply this normalization.
+fn subscription_request(mut request: ModelRequest) -> ModelRequest {
+    if request.service_tier.as_deref() == Some("default") {
+        request.service_tier = None;
+    }
+    request
+}
+
+fn filter_response_tier(response: &mut ModelResponse, tokens: &OAuthTokens) {
+    if response.service_tier.as_ref().is_some_and(|tier| {
+        super::catalog::validate_text(
+            tier,
+            64,
+            true,
+            &[
+                &tokens.access_token,
+                &tokens.refresh_token,
+                tokens.id_token.as_deref().unwrap_or(""),
+                &tokens.account_id,
+            ],
+        )
+        .is_err()
+    }) {
+        response.service_tier = None;
+    }
 }

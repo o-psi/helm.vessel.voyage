@@ -18,6 +18,24 @@ pub async fn open(
     model_overridden: bool,
     configuration_explicit: bool,
 ) -> Result<(Client, ProcessInfo)> {
+    open_inner(
+        config,
+        workspace,
+        reference,
+        model_overridden,
+        configuration_explicit,
+        true,
+    )
+    .await
+}
+async fn open_inner(
+    config: &crate::Config,
+    workspace: Option<PathBuf>,
+    reference: Option<String>,
+    model_overridden: bool,
+    configuration_explicit: bool,
+    announce: bool,
+) -> Result<(Client, ProcessInfo)> {
     let client = local::connect(super::cli::default_directory(), true).await?;
     let resuming = reference.is_some();
     let process = match reference {
@@ -27,7 +45,9 @@ pub async fn open(
             let config_path = launch::persist(config, &workspace, &client.directory)?;
             let session_id = Uuid::new_v4();
             let command_id = Uuid::new_v4();
-            eprintln!("Creating voyage {session_id} · command {command_id}");
+            if announce {
+                eprintln!("Creating voyage {session_id} · command {command_id}");
+            }
             serde_json::from_value(
                 client
                     .request(VesselCommand::StartConfigured {
@@ -70,7 +90,9 @@ pub async fn open(
             let expected_revision = snapshot["revision"]
                 .as_u64()
                 .ok_or_else(|| anyhow::anyhow!("snapshot revision missing"))?;
-            eprintln!("Configuration command {command_id}");
+            if announce {
+                eprintln!("Configuration command {command_id}");
+            }
             client
                 .voyage(
                     process.session_id,
@@ -246,24 +268,58 @@ async fn discard(client: &Client, process: &ProcessInfo) -> Result<()> {
         let expected_revision = snapshot["revision"]
             .as_u64()
             .ok_or_else(|| anyhow::anyhow!("snapshot revision missing"))?;
-        client
+        let command_id = Uuid::new_v4();
+        let result = client
             .voyage(
                 process.session_id,
                 process.incarnation,
                 VoyageCommand::Delete {
-                    command_id: Uuid::new_v4(),
+                    command_id,
                     expected_revision,
                     expires_at_ms: deadline()?,
                     confirm_session_id: process.session_id,
                 },
             )
-            .await?;
-        client
-            .request(VesselCommand::Stop {
-                session_id: process.session_id,
-                incarnation: process.incarnation,
-            })
-            .await?;
+            .await;
+        if let Err(error) = &result
+            && error.downcast_ref::<super::transport::Refusal>().is_some()
+        {
+            return result.map(|_| ());
+        }
+        // Delete already shuts the runtime down. Sending Stop races that shutdown
+        // and can turn a successful discovery into an uncertain cleanup error.
+        // Observe the exact durable deletion and clean stop instead; never replay
+        // either an uncertain deletion or a second lifecycle mutation.
+        let observed = tokio::time::timeout(std::time::Duration::from_secs(20), async {
+            loop {
+                if let Ok(value) = client
+                    .request(VesselCommand::Inspect {
+                        session_id: process.session_id,
+                    })
+                    .await
+                    && let Ok(info) = serde_json::from_value::<ProcessInfo>(value)
+                    && info.session_id == process.session_id
+                    && info.incarnation == process.incarnation
+                    && info.state == voyage_protocol::vessel::ProcessState::Stopped
+                    && info.deletion.as_ref().is_some_and(|receipt| {
+                        receipt["command_id"].as_str() == Some(command_id.to_string().as_str())
+                            && receipt["status"] == "applied"
+                            && receipt["deleted"] == true
+                            && receipt["cleanup"] == "observed"
+                    })
+                {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            }
+        })
+        .await;
+        ensure!(
+            observed.is_ok(),
+            "Temporary voyage {} deletion {} remains unconfirmed; inspect its durable outcome before retrying",
+            process.session_id,
+            command_id
+        );
     }
     Ok(())
 }

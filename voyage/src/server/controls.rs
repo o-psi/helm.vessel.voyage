@@ -20,12 +20,20 @@ struct Active {
     cancel: CancellationToken,
     slots: Arc<Semaphore>,
 }
+type CachedModels = (
+    [u8; 32],
+    std::time::Instant,
+    Vec<crate::provider::ModelInfo>,
+);
 #[derive(Default)]
 pub struct LiveControls {
     retained: Arc<RwLock<Option<retained::Retained>>>,
     active: RwLock<Option<Active>>,
     inventory: RwLock<Option<Value>>,
-    model_catalog: RwLock<Option<(crate::ProviderKind, Vec<crate::provider::ModelInfo>)>>,
+    model_catalog: RwLock<Option<CachedModels>>,
+    catalog_refresh: tokio::sync::Mutex<()>,
+    catalog_scheduled: std::sync::atomic::AtomicBool,
+    catalog_attempt: RwLock<Option<([u8; 32], std::time::Instant)>>,
 }
 impl LiveControls {
     pub(crate) async fn open(
@@ -128,14 +136,33 @@ impl LiveControls {
         config: &crate::Config,
         workspace: &std::path::Path,
     ) -> Result<Value> {
-        let result = if self.active.read().await.is_some() {
-            self.inspect(run, section).await?
-        } else {
-            idle::inspect(self, section, config, workspace).await?
-        };
+        // Native discovery must use next-turn config, not an active agent whose
+        // provider/account was captured at admission.
+        let context = crate::provider::inference_context(config).await;
+        let result =
+            if section == "models" && config.provider != crate::ProviderKind::CodexSubscription {
+                idle::inspect(self, section, config, workspace).await?
+            } else if self.active.read().await.is_some() {
+                self.inspect(run, section).await?
+            } else {
+                idle::inspect(self, section, config, workspace).await?
+            };
         if section == "models" {
             let models = serde_json::from_value(result["value"].clone())?;
-            *self.model_catalog.write().await = Some((config.provider.clone(), models));
+            // OAuth refresh may rotate the credential during discovery. Never
+            // bind a response to a different login/config than the one requested.
+            if let Some(context) = context
+                && crate::provider::inference_context(config).await == Some(context)
+            {
+                *self.model_catalog.write().await =
+                    Some((context, std::time::Instant::now(), models));
+            } else {
+                *self.model_catalog.write().await = None;
+                ensure!(
+                    config.provider == crate::ProviderKind::CodexSubscription,
+                    "model discovery account context changed; retry discovery"
+                );
+            }
         }
         Ok(result)
     }
@@ -144,17 +171,72 @@ impl LiveControls {
         &self,
         config: &crate::Config,
     ) -> Option<crate::provider::ModelInfo> {
+        let context = crate::provider::inference_context(config).await?;
         self.model_catalog
             .read()
             .await
             .as_ref()
-            .filter(|(provider, _)| provider == &config.provider)
-            .and_then(|(_, models)| {
-                models
-                    .iter()
-                    .find(|model| model.id == config.model)
-                    .cloned()
+            .filter(|(key, at, _)| {
+                *key == context && at.elapsed() < std::time::Duration::from_secs(300)
             })
+            .and_then(|(_, _, models)| models.iter().find(|m| m.id == config.model).cloned())
+    }
+    /// Best-effort bounded metadata discovery, independent of opening /models.
+    /// Failures leave support unknown; explicit requests still receive transport
+    /// validation and the provider remains the authority. No inference probes.
+    pub(crate) async fn resolve_model(
+        &self,
+        config: &crate::Config,
+        workspace: &std::path::Path,
+    ) -> Option<crate::provider::ModelInfo> {
+        let _refresh = self.catalog_refresh.lock().await;
+        if let Some(model) = self.known_model(config).await {
+            return Some(model);
+        }
+        let context = crate::provider::inference_context(config).await?;
+        if self
+            .catalog_attempt
+            .read()
+            .await
+            .as_ref()
+            .is_some_and(|(key, at)| {
+                *key == context && at.elapsed() < std::time::Duration::from_secs(30)
+            })
+        {
+            return None;
+        }
+        *self.catalog_attempt.write().await = Some((context, std::time::Instant::now()));
+        let _ = self
+            .inspect_or_idle(None, "models", config, workspace)
+            .await;
+        self.known_model(config).await
+    }
+    /// Snapshot polling must never wait on provider network I/O or enqueue an
+    /// unbounded discovery backlog. The resolver supplies TTL/backoff checks.
+    pub(crate) fn schedule_resolution(
+        self: &Arc<Self>,
+        config: crate::Config,
+        workspace: std::path::PathBuf,
+    ) {
+        use std::sync::atomic::Ordering;
+        if self.catalog_scheduled.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        let controls = self.clone();
+        tokio::spawn(async move {
+            controls.resolve_model(&config, &workspace).await;
+            controls.catalog_scheduled.store(false, Ordering::Release);
+        });
+    }
+    pub(crate) async fn inference_resolution(
+        &self,
+        run: Uuid,
+    ) -> Option<voyage_protocol::inference::InferenceResolution> {
+        let active = self.active.read().await.clone()?;
+        if active.run != run {
+            return None;
+        }
+        active.agent.inference_resolution().await
     }
     pub(crate) async fn execute(
         &self,

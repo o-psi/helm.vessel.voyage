@@ -4,7 +4,8 @@ pub async fn discover(
     config: &crate::Config,
     workspace: &std::path::Path,
 ) -> Result<Vec<crate::provider::ModelInfo>> {
-    let (client, process) = open(config, Some(workspace.to_owned()), None, false, true).await?;
+    let (client, process) =
+        open_inner(config, Some(workspace.to_owned()), None, false, true, false).await?;
     let result = async {
         let value = client
             .voyage(

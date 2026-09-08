@@ -69,7 +69,18 @@ impl Provider for OpenAiResponsesProvider {
 }
 
 pub(crate) fn request_body(request: ModelRequest, stream: bool) -> Result<Value, ProviderError> {
-    super::inference::validate_request(&crate::config::ProviderKind::OpenaiResponses, &request)?;
+    request_body_for(
+        &crate::config::ProviderKind::OpenaiResponses,
+        request,
+        stream,
+    )
+}
+pub(crate) fn request_body_for(
+    provider: &crate::ProviderKind,
+    request: ModelRequest,
+    stream: bool,
+) -> Result<Value, ProviderError> {
+    super::inference::validate_request(provider, &request)?;
     let instructions = request
         .messages
         .iter()
@@ -434,6 +445,7 @@ fn validate_replay(items: &[ReplayItem]) -> Result<(), ProviderError> {
 
 #[derive(Default)]
 struct Assembly {
+    service_tier: Option<String>,
     content: String,
     calls: std::collections::BTreeMap<usize, Call>,
     usage: Usage,
@@ -494,6 +506,7 @@ fn output_index(event: &Value) -> usize {
         .unwrap_or(0) as usize
 }
 fn merge_final(response: &Value, assembly: &mut Assembly) -> Result<(), ProviderError> {
+    assembly.service_tier = super::reported_service_tier(response.get("service_tier"));
     if let Some(usage) = response.get("usage") {
         assembly.usage = decode_usage(usage)
     }
@@ -568,6 +581,7 @@ fn finish(assembly: Assembly) -> Result<ModelResponse, ProviderError> {
         })
         .collect::<Result<Vec<_>, _>>()?;
     Ok(ModelResponse {
+        service_tier: assembly.service_tier,
         message: Message {
             operator_name: None,
             created_at: Some(chrono::Utc::now()),
@@ -585,6 +599,7 @@ fn finish(assembly: Assembly) -> Result<ModelResponse, ProviderError> {
 
 pub(crate) fn decode_response(value: Value) -> Result<ModelResponse, ProviderError> {
     let mut assembly = Assembly {
+        service_tier: super::reported_service_tier(value.get("service_tier")),
         usage: value.get("usage").map(decode_usage).unwrap_or_default(),
         ..Assembly::default()
     };
