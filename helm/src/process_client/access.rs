@@ -31,10 +31,9 @@ impl Credential {
         let value: Self = serde_json::from_slice(bytes)
             .map_err(|_| anyhow::anyhow!("invalid private access credential"))?;
         if let Self::Workspace(c) = &value {
-            ensure!(
-                c.schema_version == 1 && c.kind == "workspace",
-                "unsupported access credential version or kind"
-            );
+            if c.schema_version != 1 || c.kind != "workspace" {
+                return Err(ConnectionFailure::Version.into());
+            }
             ensure!(
                 !c.vessel_id.is_nil() && !c.principal_id.is_nil(),
                 "invalid credential identity"
