@@ -24,13 +24,7 @@ impl App {
         };
         let settings = self.inference_settings(destination).ok();
         let fields = [Field::Model, Field::Thinking, Field::Service];
-        let columns = Layout::horizontal([
-            Constraint::Percentage(30),
-            Constraint::Percentage(25),
-            Constraint::Percentage(25),
-            Constraint::Percentage(20),
-        ])
-        .split(area);
+        let columns = Layout::horizontal([Constraint::Percentage(25); 4]).split(area);
         self.draw_access_control(frame, columns[3], destination);
         for (field, area) in fields.into_iter().zip(columns.iter().copied()) {
             let value = settings
