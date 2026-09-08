@@ -195,6 +195,13 @@ applies trusted host settings while idle. `/branch [name]`, `/archive`, `/restor
 `/export local-new-file.md` provide lifecycle controls. Clear retains old run/receipt
 evidence; delete purges text after cleanup and leaves a tombstone.
 
+Idle operator tool runs report setup, tool and finalization failures separately.
+These summaries exclude underlying diagnostics. A failed finalization may follow
+a tool effect that already happened; it does not roll back or replay that effect.
+Cancellation remains a cancelled outcome, and another turn requires observed
+cleanup. If terminal persistence itself fails, the retained cleanup/recovery
+obligation remains authoritative; an accepted command is not proof of success.
+
 For plain automation, capture identity before mutation and preserve exact commands
 when delivery is uncertain:
 

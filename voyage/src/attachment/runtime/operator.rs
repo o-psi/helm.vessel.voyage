@@ -1,6 +1,55 @@
 //! Explicit human operator actions use the same exclusive durable run owner.
 use super::*;
 impl RunOwner {
+    /// Dispatch once, and account for errors from every operator phase. Cleanup
+    /// remains separately owned by the execution driver even if persistence fails.
+    pub(crate) async fn execute_operator(
+        &mut self,
+        agent: &Agent,
+        cancel: CancellationToken,
+        name: &str,
+        arguments: serde_json::Value,
+        redactor: Arc<crate::tools::Redactor>,
+    ) -> anyhow::Result<()> {
+        let mut reason = "Operator action failed during setup.";
+        let result: anyhow::Result<()> = async {
+            anyhow::ensure!(!cancel.is_cancelled(), "operator action cancelled");
+            self.start_operator_scope(agent).await?;
+            reason = "Operator tool failed.";
+            let session_id = self.record().await?.session_id;
+            let text = agent
+                .operator_tool(session_id, self.run_id, cancel.clone(), name, arguments)
+                .await?;
+            reason = "Operator action failed during finalization.";
+            anyhow::ensure!(!cancel.is_cancelled(), "operator action cancelled");
+            let lease = agent.operator_lease(session_id, self.run_id).await?;
+            self.finish_operator_scoped(redactor.redact(text), lease, cancel.clone())
+                .await?;
+            Ok(())
+        }
+        .await;
+        if result.is_err() {
+            // Only authored phase labels are public. A late error must not
+            // overwrite an already committed outcome or retry the tool effect.
+            self.storage(move |store| {
+                let run = store.journal.run(store.run_id)?;
+                if !matches!(run.state, RunState::Accepted | RunState::Running) {
+                    return Ok(run);
+                }
+                let (state, reason) = if cancel.is_cancelled() {
+                    (RunState::Cancelled, "operator action cancelled")
+                } else {
+                    (RunState::Failed, reason)
+                };
+                store
+                    .journal
+                    .finish(&store.guard, store.run_id, state, Some(reason), None)
+            })
+            .await?;
+        }
+        result
+    }
+
     pub(crate) async fn start_operator(&mut self) -> Result<(), CheckpointError> {
         let _input = self.input.take().ok_or(CheckpointError)?;
         self.steering_receiver.take();
@@ -67,6 +116,7 @@ impl RunOwner {
         &self,
         text: String,
         lease: crate::completion::runtime::ReadinessLease,
+        cancel: CancellationToken,
     ) -> Result<RunRecord, CheckpointError> {
         let clean = lease.readiness.ready() && lease.readiness.incomplete == 0;
         self.storage(move |store| {
@@ -107,17 +157,19 @@ impl RunOwner {
                 &saved.session.messages,
                 &run.usage,
             )?;
-            store.journal.finish(
-                &store.guard,
-                store.run_id,
-                if clean {
-                    RunState::Completed
-                } else {
-                    RunState::Incomplete
-                },
-                (!clean).then_some("operator action left incomplete obligations"),
-                None,
-            )
+            let (state, reason) = if cancel.is_cancelled() {
+                (RunState::Cancelled, Some("operator action cancelled"))
+            } else if clean {
+                (RunState::Completed, None)
+            } else {
+                (
+                    RunState::Incomplete,
+                    Some("operator action left incomplete obligations"),
+                )
+            };
+            store
+                .journal
+                .finish(&store.guard, store.run_id, state, reason, None)
         })
         .await
     }

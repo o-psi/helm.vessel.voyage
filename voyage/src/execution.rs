@@ -261,26 +261,14 @@ pub async fn execute_admitted_with_controls(
     let result = await_execution(
         async {
             if let Some((name, arguments)) = operator {
-                run.start_operator_scope(&resources.agent).await?;
-                let output = resources
-                    .agent
-                    .operator_tool(owner.session_id(), run_id, cancel.clone(), &name, arguments)
-                    .await;
-                let output = output
-                    .map(|text| redactor(config).redact(text))
-                    .map_err(|_| "operator tool failed".to_owned());
-                match output {
-                    Ok(text) if !cancel.is_cancelled() => {
-                        let lease = resources
-                            .agent
-                            .operator_lease(owner.session_id(), run_id)
-                            .await?;
-                        run.finish_operator_scoped(text, lease).await?;
-                    }
-                    other => {
-                        run.finish_operator(other, cancel.is_cancelled()).await?;
-                    }
-                }
+                run.execute_operator(
+                    &resources.agent,
+                    cancel.clone(),
+                    &name,
+                    arguments,
+                    redactor(config),
+                )
+                .await?;
                 Ok::<(), anyhow::Error>(())
             } else {
                 run.execute(&resources.agent, cancel.clone(), None).await?;

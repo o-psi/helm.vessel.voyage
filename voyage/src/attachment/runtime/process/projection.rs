@@ -67,7 +67,10 @@ pub(super) fn failure_summary(reason: Option<&str>) -> Option<&str> {
             | "Runtime startup failed during inference accounting."
             | "Runtime startup failed during subagent initialization."
             | "Runtime startup failed during tool initialization."
-            | "Runtime startup failed during provider configuration."),
+            | "Runtime startup failed during provider configuration."
+            | "Operator action failed during setup."
+            | "Operator tool failed."
+            | "Operator action failed during finalization."),
         ) => Some(reason),
         Some("local runtime construction or output failed") => Some("Runtime startup failed."),
         Some(crate::provider::USAGE_LIMIT_MESSAGE) => Some(crate::provider::USAGE_LIMIT_MESSAGE),
