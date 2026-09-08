@@ -1,6 +1,7 @@
 # In-app Vessel connections
 
-Status: proposed implementation plan, not implemented capability.
+Status: implemented in source; Linux integration verification and installed rollout are tracked in #194.
+Operational usage: [Vessel connections](vessel-connections.md).
 Tracking: [#194](https://github.com/o-psi/voyage/issues/194).
 
 ## User outcome
@@ -15,7 +16,7 @@ one conversation, whereas an owner expects to connect to a Vessel and start more
 conversations. Deliver both the in-app connection lifecycle and explicit
 workspace-scoped remote creation authority. Keep conversation sharing restricted.
 
-## Observed implementation constraints
+## Pre-change implementation constraints
 
 - `helm/src/process_client/cli.rs` constructs all clients from startup arguments.
 - `helm/src/process_client/ui/mod.rs` owns a `Vec<Client>`; observation jobs start

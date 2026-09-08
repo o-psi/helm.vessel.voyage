@@ -52,7 +52,7 @@ pub(super) fn authorized(client: &Client) -> Result<Vec<Workspace>> {
 pub(super) fn select<'a>(choices: &'a [Workspace], value: &str) -> Result<&'a Workspace> {
     let matches: Vec<_> = choices
         .iter()
-        .filter(|w| w.path == PathBuf::from(value) || w.id.to_string() == value)
+        .filter(|w| w.path == std::path::Path::new(value) || w.id.to_string() == value)
         .collect();
     let [workspace] = matches.as_slice() else {
         anyhow::bail!(

@@ -12,6 +12,7 @@ are not presented as usable commands.
 | [Current state](current-state.md) | What the existing code implements and what remains unfinished |
 | [Configuration](configuration.md) | Current provider, policy and storage configuration |
 | [Operations](operations.md) | Connected HTTP(S) voyages and legacy chat/managed/worker procedures |
+| [Vessel connections](vessel-connections.md) | In-app connection manager, remembered Vessels, pairing, workspaces and access recovery |
 | [Vessel coordination](vessel-coordination.md) | Native model inspection, steering, independent voyage creation and follow-up |
 | [Images and screenshots](multimodal-implementation.md) | Attaching images, private storage, provider support and limits |
 | [Process access](process-access.md) | Scoped grants, participant execution, signed owner transfer and recovery |

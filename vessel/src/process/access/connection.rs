@@ -53,10 +53,10 @@ impl Supervisor {
                     approved(&grant, &registration.workspace)?;
                     let directory = registry::directory(&self.directory, registration.session_id);
                     tasks.spawn(async move { routing::inspect(&directory, &registration).await });
-                    if tasks.len() >= 16 {
-                        if let Some(result) = tasks.join_next().await {
-                            entries.push(result?);
-                        }
+                    if tasks.len() >= 16
+                        && let Some(result) = tasks.join_next().await
+                    {
+                        entries.push(result?);
                     }
                 }
                 while let Some(result) = tasks.join_next().await {

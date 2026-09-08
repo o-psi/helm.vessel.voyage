@@ -7,6 +7,18 @@ Configuration, provider credentials and execution policy remain on the executing
 See [operations](operations.md) for ordinary connected sessions and
 [security](security.md) for the policy and sandbox boundary.
 
+## Workspace pairing for human Helm connections
+
+Use the [Vessel connections guide](vessel-connections.md) to connect from inside
+an already-running Helm. `vessel pair-invite` issues a short-lived invitation bound
+to the desktop principal, approved canonical workspaces and explicit rights.
+Redemption over `/v1/vessel/pair` produces a distinct versioned workspace credential;
+it does not reinterpret or broaden the session grants below. Workspace grants are
+checked at gateway dispatch and by each running voyage's authority watcher.
+`vessel revoke-connection` is the local owner's revision-bound revocation operation.
+The gateway admits at most 32 distinct SSE subscriptions per request; Helm rotates
+bounded subscription groups. Provider credentials remain on the executing host.
+
 ## Scoped remote access
 
 A local account uses a private bearer credential to its Vessel's literal-loopback
@@ -267,6 +279,14 @@ Local requests authenticate with the private service credential. Scoped HTTPS
 requests add the grant Bearer credential and `X-Voyage-Grant` UUID header. The private
 Vessel-to-voyage connection still uses length-prefixed JSON over an owned Unix
 socket, with runtime token and session/incarnation authentication.
+
+`resolve_start` resolves the exact original creation command ID, session, workspace
+and optional host configuration path without creating or restarting anything.
+It returns an observed `created` result, a durable `not_admitted` fence, or `unknown`
+for unconfirmed evidence. Delayed Starts with fenced IDs are refused. Workspace
+clients require `create`, their approved workspace, and no arbitrary config path;
+legacy clients retain their exact session scope. Older servers without the
+`start_resolution` capability cannot prove absence of admission this way.
 
 Public session operations are explicit top-level commands, not a `forward` envelope.
 For example, a submission is:

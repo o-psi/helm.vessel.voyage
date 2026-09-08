@@ -67,7 +67,7 @@ pub(super) async fn events(
     }
     let expected_vessel_id = match expected_vessel(&headers) {
         Ok(id) => id,
-        Err(response) => return response,
+        Err(response) => return response.into_response(),
     };
     let Some(token) = headers
         .get("authorization")
@@ -184,7 +184,7 @@ pub(super) async fn command(
     }
     let expected_vessel_id = match expected_vessel(&headers) {
         Ok(id) => id,
-        Err(response) => return response,
+        Err(response) => return response.into_response(),
     };
     let Some(token) = headers
         .get("authorization")
@@ -237,13 +237,13 @@ pub(super) async fn command(
     Json(response).into_response()
 }
 
-fn expected_vessel(headers: &HeaderMap) -> Result<Option<Uuid>, Response> {
+fn expected_vessel(headers: &HeaderMap) -> Result<Option<Uuid>, StatusCode> {
     let count = headers.get_all("x-voyage-vessel").iter().count();
     if count == 0 {
         return Ok(None);
     }
     if count != 1 {
-        return Err(StatusCode::BAD_REQUEST.into_response());
+        return Err(StatusCode::BAD_REQUEST);
     }
     headers
         .get("x-voyage-vessel")
@@ -251,7 +251,7 @@ fn expected_vessel(headers: &HeaderMap) -> Result<Option<Uuid>, Response> {
         .and_then(|v| Uuid::parse_str(v).ok())
         .filter(|v| !v.is_nil())
         .map(Some)
-        .ok_or_else(|| StatusCode::BAD_REQUEST.into_response())
+        .ok_or(StatusCode::BAD_REQUEST)
 }
 
 /// Public discovery exposes identity and protocol, never workspaces or secrets.
@@ -278,7 +278,7 @@ pub(super) async fn pair(
     };
     let expected_vessel_id = match expected_vessel(&headers) {
         Ok(id) => id,
-        Err(response) => return response,
+        Err(response) => return response.into_response(),
     };
     let response = match vessel::process::pairing::redeem(
         &directory,

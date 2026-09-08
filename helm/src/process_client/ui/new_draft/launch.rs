@@ -29,11 +29,60 @@ async fn advance_mode(
         // registration may establish that the intended session now exists; an
         // absent registration cannot establish that an uncertain Start failed.
         let result = if saved.start_attempted {
-            client
-                .request(VesselCommand::Inspect {
-                    session_id: saved.id,
-                })
-                .await
+            let capabilities = client.request(VesselCommand::Capabilities).await?;
+            if capabilities["features"]
+                .as_array()
+                .is_some_and(|features| features.iter().any(|f| f == "start_resolution"))
+            {
+                let (command_id, workspace, config_path) = match saved.start.as_ref() {
+                    Some(VesselCommand::Start {
+                        command_id,
+                        workspace,
+                        ..
+                    }) => (*command_id, workspace.clone(), None),
+                    Some(VesselCommand::StartConfigured {
+                        command_id,
+                        workspace,
+                        config_path,
+                        ..
+                    }) => (*command_id, workspace.clone(), Some(config_path.clone())),
+                    _ => anyhow::bail!("original creation envelope missing; recovery retained"),
+                };
+                let resolution = client
+                    .request(VesselCommand::ResolveStart {
+                        command_id,
+                        session_id: saved.id,
+                        workspace,
+                        config_path,
+                    })
+                    .await?;
+                ensure!(
+                    resolution["command_id"] == command_id.to_string()
+                        && resolution["session_id"] == saved.id.to_string(),
+                    "creation resolution identity mismatch"
+                );
+                match resolution["status"].as_str() {
+                    Some("created") => Ok(resolution["process"].clone()),
+                    Some("not_admitted") => {
+                        // The original ID is durably fenced. Only a subsequent
+                        // explicit send may allocate another creation command.
+                        saved.start = None;
+                        saved.start_attempted = false;
+                        storage::save(saved)?;
+                        anyhow::bail!("Creation was not admitted; your draft is editable again")
+                    }
+                    Some("unknown") => return Ok(None),
+                    _ => anyhow::bail!("invalid creation resolution; original recovery retained"),
+                }
+            } else {
+                // Older servers can confirm an existing owner but cannot prove
+                // non-admission from an absent registration. Keep that uncertainty.
+                client
+                    .request(VesselCommand::Inspect {
+                        session_id: saved.id,
+                    })
+                    .await
+            }
         } else {
             if observe_only {
                 return Ok(None);
@@ -84,6 +133,27 @@ async fn advance_mode(
             .await?;
         if receipt["status"] != "unknown" {
             return retain_receipt(saved, receipt);
+        }
+        // Resolve may durably close an unadmitted ID; it never resubmits the
+        // original prompt or uploads. Older owners may refuse this operation,
+        // in which case the original uncertainty remains saved.
+        let resolved = client
+            .voyage(
+                saved.id,
+                process.incarnation,
+                VoyageCommand::Resolve {
+                    command_id: saved.turn,
+                    original: Some(Box::new(
+                        saved
+                            .submit
+                            .clone()
+                            .context("first turn envelope missing")?,
+                    )),
+                },
+            )
+            .await?;
+        if resolved["status"] != "unknown" {
+            return retain_receipt(saved, resolved);
         }
         // An unresolved original is never resent, even on an explicit retry.
         return Ok(None);

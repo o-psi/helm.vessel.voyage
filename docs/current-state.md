@@ -44,9 +44,10 @@ nonempty message; EOF and `/quit` before that create no voyage.
 
 In a draft, `/model NAME`, `/access read-only|approval|unrestricted`, and
 `/workspace /absolute/path` edit local launch settings; `/discard` discards a draft
-only before first send. Remote drafts use executing-host configuration and need
-an explicit absolute workspace with `/new /absolute/path`. Session-scoped grant
-connections cannot create another voyage. Explicit `connect new`, resume and
+only before first send. Remote drafts use executing-host configuration and an explicitly selected
+server-authorized workspace. The Vessels panel provides workspace pairing and a
+workspace picker; `/new` can also select an approved path or workspace UUID.
+Session-scoped sharing connections cannot create another voyage. Explicit `connect new`, resume and
 branch retain their existing intentional session semantics.
 
 The composer has four clickable controls: Model, Thinking, Service and Access.
@@ -99,10 +100,14 @@ requesting Vessel creation, then saves the exact revision-bound submission befor
 sending it. This uses the existing deduplicated start and submit protocol; the two
 steps are not a cross-process atomic transaction. An interruption between them can
 leave an owner with no admitted turn, attached to the recoverable first-send draft.
-Helm automatically continues the saved, user-authorized creation and any first
-submission that has not been attempted, including after reopening Helm. Once
-submission was attempted, recovery resolves its original identity without replaying it. Helm never automatically
-sends an uncertain turn again or creates a replacement session. Pending text/settings are frozen until the outcome resolves.
+Reopening or reconnecting observes the saved creation and turn identities without
+replaying Start, Submit or image uploads. Servers advertising `start_resolution`
+can durably fence an unadmitted creation ID and restore the editable draft; older
+servers can confirm an existing owner but leave absent-owner uncertainty fenced.
+A confirmed owner with no attempted turn requires an explicit Enter to continue.
+Attempted submissions use receipts and exact-envelope resolution, never replay.
+Pending text/settings remain frozen until admission is known or the original ID
+is durably closed. Helm never silently creates a replacement session.
 Definite initial creation refusal preserves an editable draft; definite first-turn
 refusal preserves its text on the created voyage. Recovery retains pinned policy
 selection and explicit overrides, which are revalidated before local launch.
@@ -159,10 +164,12 @@ directory, credential file and endpoint before every request. Commands use bound
 POST requests. The connected TUI and plain/run followers receive durable
 invalidations over authenticated SSE and fetch canonical snapshots/output only when
 notified; stream reconnect uses the last snapshot cursor and never resubmits work.
-Scoped remote routes use HTTPS and private credential files bound to one session,
-principal, workspace, rights, revision and expiry. SSH transport is removed; remote
-connections use scoped HTTPS credentials, not account-wide pairing. Enrollment-bound
-grants also verify the current machine epoch.
+Remote routes use HTTPS and private credentials. Legacy sharing grants remain
+bound to one session, principal, workspace, rights, revision and expiry. Explicit
+owner-approved pairing grants permit catalogue access and creation across selected
+canonical workspaces, with separate rights and runtime-checked revocation/expiry.
+They do not grant OS account or host-administrator authority. SSH transport is
+removed. Enrollment-bound legacy grants also verify the current machine epoch.
 Provider credentials are never copied between Vessels by these transports.
 
 Vessel retains private supervision metadata, serializes starts,
@@ -449,6 +456,28 @@ request. Saved workflows retain digest-bound trust and typed public inputs; secr
 shell bindings travel through an expiring private input channel and are excluded
 from durable command/history payloads. GitHub operator commands run in voyage with
 exact attended publication decisions and canonical session references.
+
+## Human Vessel connections
+
+Normal interactive Helm startup loads remembered connections without shell flags.
+The visible **Vessels** control, Ctrl+G and `/vessels` open a private connection
+panel for pairing/import, authenticated review, aliases, autoconnect, live
+connect/disconnect, renewal/replacement and forgotten-access restoration. It stays
+available in narrow layouts. Remote setup input is intercepted before composer
+clipboard handling and never becomes a conversation message.
+
+Immutable connection UUIDs and activation generations replace positional routing.
+Disconnection observes task cleanup, retains exact pending identities and stops
+observation, not accepted remote work. Older-generation updates cannot redirect
+input or change the active view. Private credentials, pairing recovery and the
+versioned address book are separate from provider configuration and model-driven
+routes. Concurrent-window updates use per-record revisions and atomic private
+storage. New remote drafts select approved workspaces and retain host-owned
+configuration; no runtime is created merely by connecting or choosing a workspace.
+
+See [Vessel connections](vessel-connections.md) for the owner invitation flow,
+rights, migration, expiry, recovery and tunnel requirements. This is human-client
+pairing, not outbound worker enrollment or automatic model delegation.
 
 ## Model-driven Vessel coordination
 

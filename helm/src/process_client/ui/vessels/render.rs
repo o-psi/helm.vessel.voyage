@@ -326,7 +326,7 @@ fn scope(scope: &Scope) -> String {
 }
 fn metadata(rows: &mut Vec<Row>, metadata: &crate::process_client::connections::Metadata) {
     rows.push(Row::plain(format!(
-        "Protocol version: {}",
+        "Vessel version: {}",
         metadata.version.as_deref().unwrap_or("not advertised")
     )));
     rows.push(Row::plain(format!(

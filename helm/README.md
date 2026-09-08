@@ -4,7 +4,12 @@ Helm is a TUI that connects only to local or remote Vessels. Each Vessel
 supervises and exposes Voyage runtime processes, with **one session per independent
 Voyage process**. See the [architecture](../docs/architecture.md).
 
-`helm connect` combines independent voyages through authenticated local HTTP and
+Start Helm normally and click **Vessels**, press Ctrl+G, or type `/vessels` to
+connect another machine without restarting. Pair or import access once, review its
+permissions, and save it for automatic reconnection. See
+[Vessel connections](../docs/vessel-connections.md).
+
+`helm connect` also provides explicit CLI routes through authenticated local HTTP and
 scoped HTTPS Vessel routes. Incoming durable updates use SSE, while commands remain
 ordinary bounded POST requests. Remote connections use scoped HTTPS credentials.
 Ordinary chat, plain chat, one-shot, workflow and managed commands

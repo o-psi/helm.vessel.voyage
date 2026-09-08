@@ -50,8 +50,8 @@ impl Routes {
     pub fn local_client(&self) -> Option<Client> {
         self.clients
             .values()
-            .filter(|client| client.is_local())
-            .last()
+            .rev()
+            .find(|client| client.is_local())
             .cloned()
     }
     pub fn first_route(&self) -> Option<Route> {

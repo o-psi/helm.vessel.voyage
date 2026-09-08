@@ -18,7 +18,7 @@ use uuid::Uuid;
 use zeroize::Zeroizing;
 
 pub enum Action {
-    Activate(Connection),
+    Activate(Box<Connection>),
     ConnectLocal,
     DisconnectLocal,
     Disconnect(Uuid),
@@ -300,9 +300,14 @@ impl Manager {
         }
         if resume.is_none()
             && !import
-            && (!self.panel.fields[0].starts_with("https://") || self.panel.fields[1].is_empty())
+            && (crate::process_client::access::endpoint(
+                self.panel.fields[0].trim(),
+                "/v1/vessel/pair",
+            )
+            .is_err()
+                || self.panel.fields[1].is_empty())
         {
-            self.panel.notice = "Pairing requires HTTPS and an owner-issued invitation.".into();
+            self.panel.notice = "Pairing requires HTTPS (or literal loopback for development) and an owner-issued invitation.".into();
             return;
         }
         let registry = Arc::clone(&self.registry);
@@ -359,7 +364,7 @@ impl Manager {
             } else {
                 c.autoconnect
             },
-            workspace_preference: c.workspace_preference.clone(),
+            workspace_preference: c.workspace_preference,
         };
         self.panel.notice = match self.registry.update(id, c.revision, preferences) {
             Ok(_) => "Preferences saved.".into(),

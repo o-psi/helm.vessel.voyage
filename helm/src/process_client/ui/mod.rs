@@ -269,14 +269,14 @@ pub async fn run_with_notice(
 
 impl App {
     fn route_label(&self, route: Route) -> String {
-        if let Some(manager) = &self.vessels {
-            if let Some(connection) = manager.borrow().records().iter().find(|c| c.id == route.id) {
-                return safe(if connection.alias.is_empty() {
-                    &connection.endpoint
-                } else {
-                    &connection.alias
-                });
-            }
+        if let Some(manager) = &self.vessels
+            && let Some(connection) = manager.borrow().records().iter().find(|c| c.id == route.id)
+        {
+            return safe(if connection.alias.is_empty() {
+                &connection.endpoint
+            } else {
+                &connection.alias
+            });
         }
         let label = self.clients[route].label();
         if label == "local" {

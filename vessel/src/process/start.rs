@@ -72,10 +72,6 @@ impl Supervisor {
                 anyhow::anyhow!("start outcome unconfirmed; retained admission prevents replay")
                     .context(routing::OutcomeUnknown)
             })?;
-            ensure!(
-                previous.command_id == command_id,
-                "start receipt does not identify the original registration"
-            );
             return Ok(serde_json::to_value(
                 routing::inspect(&registry::directory(&self.directory, session_id), previous).await,
             )?);

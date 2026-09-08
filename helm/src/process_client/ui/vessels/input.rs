@@ -217,7 +217,7 @@ impl Manager {
                     if c.forgotten {
                         self.panel.notice = "Restore this original connection first (o). Recovery credentials are retained; no commands will be replayed.".into();
                     } else {
-                        return vec![Action::Activate(c.clone())];
+                        return vec![Action::Activate(Box::new(c.clone()))];
                     }
                 }
             }
@@ -262,10 +262,10 @@ impl Manager {
                 }
             }
             Button::Resume if matches!(self.panel.page, Page::List) => {
-                if let Some(i) = self.panel.selected.checked_sub(self.records.len() + 1) {
-                    if let Some(id) = self.pending.get(i).copied() {
-                        self.prepare(sender, Some(id));
-                    }
+                if let Some(i) = self.panel.selected.checked_sub(self.records.len() + 1)
+                    && let Some(id) = self.pending.get(i).copied()
+                {
+                    self.prepare(sender, Some(id));
                 }
             }
             Button::Submit => {
@@ -296,22 +296,22 @@ impl Manager {
                         self.panel.autoconnect,
                     );
                     match result {
-                        Ok(c) => { self.back(); let _ = self.reload(); self.panel.notice = "Saved. Old access, drafts and pending deliveries remain separate; forget old access explicitly if desired.".into(); return vec![Action::Activate(c)]; }
+                        Ok(c) => { self.back(); let _ = self.reload(); self.panel.notice = "Saved. Old access, drafts and pending deliveries remain separate; forget old access explicitly if desired.".into(); return vec![Action::Activate(Box::new(c))]; }
                         Err(_) => self.panel.notice = "Not saved. Check private storage, duplicate access or a concurrent registry change; review again.".into(),
                     }
-                } else if let Page::Forget(id) = self.panel.page {
-                    if let Some(c) = self.records.iter().find(|c| c.id == id) {
-                        match self.registry.forget(id, c.revision) {
-                            Ok(_) => {
-                                self.back();
-                                let _ = self.reload();
-                                self.panel.notice = "Forgotten locally. Remote access is not revoked; drafts and pending deliveries are retained.".into();
-                                return vec![Action::Forget(id)];
-                            }
-                            Err(_) => {
-                                self.panel.notice = "Not forgotten: reload after a concurrent change or storage failure.".into();
-                                let _ = self.reload();
-                            }
+                } else if let Page::Forget(id) = self.panel.page
+                    && let Some(c) = self.records.iter().find(|c| c.id == id)
+                {
+                    match self.registry.forget(id, c.revision) {
+                        Ok(_) => {
+                            self.back();
+                            let _ = self.reload();
+                            self.panel.notice = "Forgotten locally. Remote access is not revoked; drafts and pending deliveries are retained.".into();
+                            return vec![Action::Forget(id)];
+                        }
+                        Err(_) => {
+                            self.panel.notice = "Not forgotten: reload after a concurrent change or storage failure.".into();
+                            let _ = self.reload();
                         }
                     }
                 }

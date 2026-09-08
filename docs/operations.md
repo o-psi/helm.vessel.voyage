@@ -242,9 +242,12 @@ never split a UTF-8 character or treat partial assistant output as accepted hist
 
 ## Remote HTTPS routes
 
-Use a private scoped credential issued on the executing host; see
-[process access](process-access.md#scoped-remote-access) for the gateway, TLS and
-grant setup. Provider credentials stay on that host.
+Start Helm normally and choose **Vessels** (also Ctrl+G or `/vessels`) to add or
+import a remote connection without restarting. Pairing, saved connections, remote
+workspace selection and access recovery are covered in
+[Vessel connections](vessel-connections.md). Provider credentials stay on the
+executing host. See [process access](process-access.md#scoped-remote-access) for
+the gateway and TLS setup. Explicit CLI routes remain available for scripts:
 
 ```sh
 helm connect --access-file /absolute/private/session-access.json
@@ -256,10 +259,12 @@ Repeat `--access-file` for up to 16 grant routes. `--include-local` adds the loc
 Vessel to the TUI. CLI subcommands require a single route, so do not combine
 multiple credentials or `--include-local` with a CLI subcommand.
 
-Each grant is scoped to an existing voyage and explicit permissions; it cannot
-create additional voyages or grant account-owner administration. This is not
-Vessel-wide pairing. HTTPS routes receive streamed SSE invalidations; disconnecting
-does not cancel accepted work and reconnecting does not replay commands.
+Legacy session grants remain restricted to one voyage. New workspace pairing
+grants permit creating additional voyages only in owner-approved workspaces and
+only with the `create` right; neither kind grants account-owner administration.
+HTTPS routes receive streamed SSE invalidations. Disconnecting does not cancel
+accepted work and reconnecting does not replay commands. Saved interactive
+connections do not change the target of an explicit CLI subcommand.
 
 The legacy `--ssh`, `--remote-directory`, `admin move --destination-ssh` and
 `vessel local-request` options have been removed. There is no automatic SSH-to-HTTPS
