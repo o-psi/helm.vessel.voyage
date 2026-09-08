@@ -65,7 +65,7 @@ pub struct Workspace {
     pub name: String,
     pub path: PathBuf,
     #[serde(default)]
-    pub provider_ready: bool,
+    pub provider_ready: Option<bool>,
 }
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Metadata {
