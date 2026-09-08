@@ -5,6 +5,16 @@ native-platform validation. Focused regression and explicitly enabled live check
 are described in [quality](quality.md). The [implementation ledger](implementation.md)
 records delivery evidence and its limits.
 
+## Terminal color adaptation
+
+Full-screen Helm and private-terminal chrome use passive terminal color detection
+and `HELM_COLOR=auto|never|16|256|truecolor` overrides. Automatic mode honors any
+nonempty `NO_COLOR`; explicit modes take precedence. Final visible-frame adaptation
+covers legacy widgets and syntax colors without changing plain output or input
+routing. Shared semantic roles initially serve Markdown defaults and the terminal
+browser/chrome; the wider UI migration remains incremental. See [UI styles and
+fallbacks](ui-styles.md) for dependencies, bounds, and remaining #196 scope.
+
 ## Direct image paste
 
 The normal new/existing Helm composers accept **Ctrl+V / Alt+V** clipboard input

@@ -1,5 +1,6 @@
 //! Explicit human-only terminal attachment. Input never enters drafts or history.
 use super::{safe, transport::Client};
+use crate::theme::{Role, TerminalStyles};
 use anyhow::{Context, Result, ensure};
 use crossterm::{
     event::{Event, EventStream, KeyCode, KeyModifiers},
@@ -48,6 +49,7 @@ pub async fn attach_observed(
         std::io::stdin().is_terminal() && std::io::stdout().is_terminal(),
         "terminal attachment requires a human terminal"
     );
+    let mut styles = TerminalStyles::from_env()?;
     let process: ProcessInfo = serde_json::from_value(
         client
             .request(VesselCommand::Inspect { session_id })
@@ -175,7 +177,7 @@ pub async fn attach_observed(
                 screen = snapshots.recv() => {
                     let screen=screen.context("terminal observation stopped")?.map_err(anyhow::Error::msg)?;
                     ensure!(screen["terminal_id"] == serde_json::to_value(terminal_id)? && screen["run_id"] == serde_json::to_value(run_id)?, "terminal observation identity mismatch");
-                    draw_screen(&mut display, &screen, &client.label())?;
+                    draw_screen(&mut display, &screen, &client.label(), &mut styles)?;
                 }
             }
         }
@@ -233,12 +235,9 @@ fn draw_screen(
     display: &mut ratatui::Terminal<ratatui::backend::CrosstermBackend<std::io::Stdout>>,
     screen: &serde_json::Value,
     host: &str,
+    styles: &mut TerminalStyles,
 ) -> Result<()> {
-    use ratatui::{
-        layout::Rect,
-        style::{Color, Style},
-        widgets::Paragraph,
-    };
+    use ratatui::{layout::Rect, widgets::Paragraph};
     let host = if host == "local" {
         "This computer"
     } else {
@@ -256,7 +255,7 @@ fn draw_screen(
                 ),
                 columns,
             ))
-            .style(Style::default().fg(Color::Cyan)),
+            .style(Role::PrivateTerminal.style()),
             Rect::new(0, 0, columns, rows.min(1)),
         );
         if rows > 1 {
@@ -299,7 +298,7 @@ fn draw_screen(
                     &format!("Program: {state} | Ctrl+] detach | Ctrl+C interrupts program"),
                     columns,
                 ))
-                .style(Style::default().fg(Color::Yellow)),
+                .style(Role::AwaitingInput.style()),
                 Rect::new(0, rows - 2, columns, 1),
             );
         }
@@ -312,6 +311,7 @@ fn draw_screen(
                 frame.set_cursor_position((col as u16, row as u16 + 2));
             }
         }
+        styles.apply(frame.buffer_mut());
     })?;
     Ok(())
 }

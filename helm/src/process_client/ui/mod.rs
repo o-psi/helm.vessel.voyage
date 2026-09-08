@@ -123,6 +123,7 @@ pub async fn run_with_notice(
         io::stdin().is_terminal() && io::stdout().is_terminal(),
         "connected TUI needs a terminal; use connect list/new/inspect/submit for plain operation"
     );
+    let mut styles = crate::theme::TerminalStyles::from_env()?;
     terminal::enable_raw_mode()?;
     let _screen = Screen;
     execute!(
@@ -219,7 +220,10 @@ pub async fn run_with_notice(
             tokio::select! {
                 _ = repaint.tick() => {
                     app.reconcile_pending();
-                    terminal.draw(|frame| render::draw(frame, &app)).map(|_| ())?;
+                    terminal.draw(|frame| {
+                        render::draw(frame, &app);
+                        styles.apply(frame.buffer_mut());
+                    }).map(|_| ())?;
                 },
                 event = events.next() => match event {
                     Some(Ok(event)) => if let Err(error) = app.input(event) { app.status = safe(&error.to_string()); },

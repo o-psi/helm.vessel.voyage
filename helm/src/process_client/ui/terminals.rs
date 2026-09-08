@@ -1,11 +1,12 @@
 //! Discover metadata without attaching. Only explicit human action opens private capture.
 use super::{App, safe, state::Target};
+use crate::theme::Role;
 use anyhow::{Context, Result, ensure};
 use crossterm::event::{Event, KeyCode, KeyEventKind};
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect},
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Text},
     widgets::{List, ListItem, ListState, Paragraph, Wrap},
 };
@@ -35,6 +36,19 @@ impl Entry {
             };
         }
         "Status unavailable".into()
+    }
+    fn role(&self) -> Role {
+        if self.running() {
+            Role::Running
+        } else if let Some(exit) = self.state.get("exited") {
+            match exit["code"].as_i64() {
+                Some(0) => Role::Completed,
+                Some(_) => Role::Failed,
+                None => Role::Muted,
+            }
+        } else {
+            Role::Muted
+        }
     }
     fn running(&self) -> bool {
         self.state == "running"
@@ -260,10 +274,7 @@ pub(super) fn draw(frame: &mut Frame<'_>, app: &App, area: Rect) {
     frame.render_widget(
         Paragraph::new(vec![
             Line::styled("Console", Style::default().add_modifier(Modifier::BOLD)),
-            Line::styled(
-                "Choose a program to use directly.",
-                Style::default().fg(Color::DarkGray),
-            ),
+            Line::styled("Choose a program to use directly.", Role::Muted.style()),
         ]),
         areas[0],
     );
@@ -295,7 +306,7 @@ pub(super) fn draw(frame: &mut Frame<'_>, app: &App, area: Rect) {
                         safe(&entry.title),
                         Style::default().add_modifier(Modifier::BOLD),
                     ),
-                    Line::styled(entry.state(), Style::default().fg(Color::DarkGray)),
+                    Line::styled(entry.state(), entry.role().style()),
                     Line::default(),
                 ])
             })
@@ -303,7 +314,7 @@ pub(super) fn draw(frame: &mut Frame<'_>, app: &App, area: Rect) {
         frame.render_stateful_widget(
             List::new(items)
                 .highlight_symbol("> ")
-                .highlight_style(Style::default().fg(Color::Cyan)),
+                .highlight_style(Role::Selection.style()),
             panes[0],
             &mut ListState::default().with_selected(Some(index)),
         );
@@ -314,10 +325,7 @@ pub(super) fn draw(frame: &mut Frame<'_>, app: &App, area: Rect) {
                     safe(&entry.title),
                     Style::default().add_modifier(Modifier::BOLD),
                 ),
-                Line::styled(
-                    app.route_label(target.route),
-                    Style::default().fg(Color::DarkGray),
-                ),
+                Line::styled(app.route_label(target.route), Role::Muted.style()),
                 Line::default(),
                 Line::from(if entry.running() {
                     "Press Enter to open this program."
@@ -355,10 +363,10 @@ pub(super) fn draw(frame: &mut Frame<'_>, app: &App, area: Rect) {
     frame.render_widget(
         Paragraph::new(super::presentation::wrap(
             Text::from(vec![
-                Line::styled(action, Style::default().fg(Color::Cyan)),
+                Line::styled(action, Role::Focus.style()),
                 Line::styled(
                     "Private after opening. Passwords may be hidden.",
-                    Style::default().fg(Color::DarkGray),
+                    Role::Muted.style(),
                 ),
             ]),
             areas[2].width,

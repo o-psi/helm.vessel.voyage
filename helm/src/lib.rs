@@ -12,6 +12,7 @@ pub use voyage_runtime::local_provider;
 mod clipboard;
 mod composer;
 pub mod markdown;
+mod theme;
 pub use voyage_runtime::model;
 pub mod onboarding;
 pub mod plain_terminal;

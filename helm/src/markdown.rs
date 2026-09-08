@@ -39,11 +39,14 @@ pub struct MarkdownTheme {
 impl Default for MarkdownTheme {
     fn default() -> Self {
         Self {
-            text: Color::Reset,
-            heading: Color::Cyan,
+            text: crate::theme::Role::Primary
+                .style()
+                .fg
+                .unwrap_or(Color::Reset),
+            heading: crate::theme::Role::Focus.style().fg.unwrap_or(Color::Reset),
             link: Color::Blue,
-            code: Color::Yellow,
-            code_background: Color::DarkGray,
+            code: crate::theme::Role::Code.style().fg.unwrap_or(Color::Reset),
+            code_background: crate::theme::Role::Code.style().bg.unwrap_or(Color::Reset),
             quote: Color::DarkGray,
             rule: Color::DarkGray,
             table_header: Color::Magenta,
