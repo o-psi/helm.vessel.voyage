@@ -95,7 +95,16 @@ impl Supervisor {
                 self.bind_connection_operation(&grant, command_id, &operation)
                     .await?;
                 self.connection_session(&grant, session_id, &canonical)?;
-                self.start(command_id, session_id, workspace, None).await
+                // Dispatch the path that was authorized, not a caller-supplied
+                // symlink that could resolve differently after the scope check.
+                // Retain the exact original request for command deduplication.
+                let original = VesselCommand::Start {
+                    command_id,
+                    session_id,
+                    workspace,
+                };
+                self.start_initialized(command_id, session_id, canonical, None, None, original)
+                    .await
             }
             VesselCommand::Inspect { session_id } => {
                 has(ProcessRight::Observe)?;
