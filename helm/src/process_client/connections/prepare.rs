@@ -18,6 +18,9 @@ pub async fn pairing_capabilities(endpoint: &str) -> Result<PairingCapabilities>
         .await
         .map_err(|_| ConnectionFailure::Offline)?;
     let (status, bytes) = access::bounded(response).await?;
+    if status == reqwest::StatusCode::NOT_FOUND {
+        return Err(ConnectionFailure::Version.into());
+    }
     ensure!(
         status.is_success(),
         "Vessel pairing discovery unavailable (HTTP {})",
@@ -376,9 +379,15 @@ pub(super) async fn inspect(
             }
         }
         Credential::Workspace(_) => {
+            if value.get("scope").and_then(Value::as_str) != Some("workspaces") {
+                return Err(ConnectionFailure::Identity.into());
+            }
             ensure!(
-                value.get("scope").and_then(Value::as_str) == Some("workspaces"),
-                "workspace grant scope missing or changed"
+                metadata.version.is_some()
+                    && metadata.expires_at_ms.is_some()
+                    && metadata.grant_revision.is_some()
+                    && !metadata.rights.is_empty(),
+                "workspace grant is missing review metadata"
             );
             let mut workspace_ids: Vec<_> = metadata.workspaces.iter().map(|w| w.id).collect();
             workspace_ids.sort();
