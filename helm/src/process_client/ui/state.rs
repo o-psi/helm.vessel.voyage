@@ -192,6 +192,10 @@ pub struct View {
     pub scroll: u16,
     pub transcript: std::cell::RefCell<super::transcript::State>,
     pub unread: bool,
+    /// Helm-local acknowledgement, bound to a run rather than process incarnation.
+    pub acknowledged_completion: Option<Uuid>,
+    /// Set only when the result conversation is actually rendered this visit.
+    pub viewed_completion: std::cell::Cell<Option<Uuid>>,
     pub observed: Option<Instant>,
     pub error: Option<String>,
     pub rendered: std::cell::RefCell<Option<(u16, ratatui::text::Text<'static>)>>,
@@ -224,6 +228,8 @@ impl View {
             scroll: 0,
             transcript: Default::default(),
             unread: false,
+            acknowledged_completion: None,
+            viewed_completion: Default::default(),
             observed: None,
             error: None,
             rendered: Default::default(),
@@ -292,7 +298,11 @@ impl super::App {
                 .snapshot
                 .as_ref()
                 .and_then(|snapshot| snapshot.last_message_at.or(snapshot.created_at));
-            (std::cmp::Reverse(activity), *target)
+            (
+                self.views[target].sidebar_suspended(),
+                std::cmp::Reverse(activity),
+                *target,
+            )
         });
         targets
     }

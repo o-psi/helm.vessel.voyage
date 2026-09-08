@@ -193,19 +193,39 @@ and private-terminal handoff also end a drag. Mouse reporting requires a support
 terminal.
 
 Sidebar voyages show explicit state labels and colours: running is dark blue,
-idle/finished is green, needs attention is orange, and failed is red. Suspended
-and cancelled voyages are grey and occupy two terminal rows (combined state/title
-and a divider); other entries occupy three (state, title, divider). Muted horizontal
-rules separate every pair of entries, including compact ones. Long titles are clipped
-to one row. Unread is an additional marker, not a replacement for state.
-Selection uses bold text and a subtle background, without an arrow or replacing
+idle/finished is green, needs attention is orange, and failed is red. A terminal
+result (including failure or cancellation) remains expanded as a notification even
+when Vessel has already suspended the process. Opening its conversation clears
+the result's Unread marker but does not compact or reorder it. Only after that
+conversation has been displayed and you navigate away does Helm acknowledge the
+result and move the clean suspended voyage below active and unreviewed voyages.
+Recency ordering is retained within each group; mouse and keyboard use that same
+order. A result that arrives while you are viewing the conversation can be
+acknowledged when you leave. Help, action menus, panels, requests and private
+terminals do not count as viewing a result.
+
+Acknowledged suspended voyages are grey and use two terminal rows (combined
+state/title and a divider). Unreviewed results and other entries use three (state,
+title, divider), including cancelled results awaiting review. Muted horizontal
+rules separate every pair of entries. Long titles are clipped to one row.
+Selection uses bold text and a subtle background without an arrow or replacing
 the state colour. Compact entries omit the route label; Actions → Details retains
 the Vessel identity.
-Input and unresolved cleanup after a run stops take attention precedence;
-cleanup obligations recorded during active work do not change Running to attention.
-Disconnected or unavailable owners are explicitly labelled rather than inferred to be finished. Actual process
-suspension is compact even after successful completion; failed and cancelled run
-outcomes retain their own labels across suspension.
+
+Acknowledgement is saved with Helm's local view/draft state by run UUID, survives
+Helm restart and does not mutate runtime history or keep a voyage process alive.
+A new run creates a new notification; repeated snapshots, cleanup updates and new
+process incarnations do not re-notify an acknowledged result. Existing views with
+no saved acknowledgement present their latest result for review once. Closing Helm
+without navigating away does not acknowledge the result. A persistence failure is
+reported and can leave it unacknowledged after restart. Separate Helm windows keep
+their own in-memory views; this is not a cross-device notification service.
+
+Input and unresolved cleanup after a run stops take attention precedence and
+prevent compaction; cleanup obligations during active work do not change Running
+to attention. Disconnected or unavailable owners are explicitly labelled rather
+than inferred to be finished or suspended. Terminal outcomes remain in the
+conversation even after the sidebar moves the voyage into the suspended group.
 Each sidebar voyage has a clickable **⋮** Actions button. Mouse hover highlights
 voyage rows, their separate Actions buttons, enabled action-menu entries and
 access-mode choices with a contrasting background, without changing keyboard

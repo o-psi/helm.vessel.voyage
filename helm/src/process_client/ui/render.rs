@@ -72,10 +72,14 @@ fn sidebar_state(view: &super::state::View) -> (&'static str, Color, bool) {
         {
             return ("Needs attention · cleanup", attention, false);
         }
+        if view.sidebar_suspended() {
+            return ("Suspended", Color::Gray, true);
+        }
         if let Some(run) = &snapshot.run {
             match run.state.as_str() {
                 "failed" => return ("Failed", Color::Red, false),
-                "cancelled" => return ("Cancelled", Color::Gray, true),
+                "completed" => return ("Finished", Color::Green, false),
+                "cancelled" => return ("Cancelled", Color::Gray, false),
                 "interrupted" | "awaiting_decision" => {
                     return ("Needs attention", attention, false);
                 }
@@ -84,7 +88,8 @@ fn sidebar_state(view: &super::state::View) -> (&'static str, Color, bool) {
         }
     }
     match view.process.state {
-        ProcessState::Suspended => ("Suspended", Color::Gray, true),
+        ProcessState::Suspended if view.sidebar_suspended() => ("Suspended", Color::Gray, true),
+        ProcessState::Suspended => ("Status unavailable", attention, false),
         ProcessState::Starting => ("Running · starting", running, false),
         ProcessState::Stopped | ProcessState::Relinquished => {
             ("Status unavailable", attention, false)
@@ -245,6 +250,14 @@ pub fn draw(frame: &mut Frame<'_>, app: &App) {
         super::terminals::draw(frame, app, rows[1]);
     } else {
         conversation(frame, app, rows[1]);
+        if !panel_open
+            && !reviewing
+            && !actions_open
+            && !app.inference_picker_open()
+            && let Some(view) = view
+        {
+            view.mark_completion_viewed();
+        }
     }
     if !reviewing {
         app.draw_completion(frame, rows[2]);
@@ -369,7 +382,15 @@ fn sidebar(frame: &mut Frame<'_>, app: &App, area: Rect) {
                 vec![Line::from(format!(
                     "{}{} · {}",
                     label,
-                    if view.unread { " · Unread" } else { "" },
+                    if view.completion_unread()
+                        || (view.unread
+                            && view.terminal_completion().is_none()
+                            && !view.sidebar_suspended())
+                    {
+                        " · Unread"
+                    } else {
+                        ""
+                    },
                     safe(&view.title()),
                 ))]
             } else {
@@ -377,7 +398,15 @@ fn sidebar(frame: &mut Frame<'_>, app: &App, area: Rect) {
                     Line::from(format!(
                         "{}{} · {}",
                         label,
-                        if view.unread { " · Unread" } else { "" },
+                        if view.completion_unread()
+                            || (view.unread
+                                && view.terminal_completion().is_none()
+                                && !view.sidebar_suspended())
+                        {
+                            " · Unread"
+                        } else {
+                            ""
+                        },
                         app.route_label(target.route),
                     )),
                     Line::from(safe(&view.title())),

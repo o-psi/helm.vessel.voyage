@@ -16,6 +16,7 @@ use crate::composer;
 mod drafts;
 mod new_draft;
 pub(super) use new_draft::start_plain;
+mod notifications;
 mod observe;
 mod panels;
 mod presentation;
@@ -177,6 +178,7 @@ pub async fn run_with_notice(
                 },
                 update = receiver.recv() => if let Some(update) = update { app.update(update); },
             }
+            app.acknowledge_departed_completions();
             if let Some((target,incarnation,run,terminal_id))=app.terminal_request.take() {
                 app.sidebar.pointer = None;
                 app.sidebar.resize.clear();

@@ -13,6 +13,8 @@ const MAX_DRAFT_BYTES: usize = 2 * voyage_protocol::vessel::MAX_VESSEL_BODY;
 struct Draft {
     text: String,
     pending: Option<Pending>,
+    #[serde(default)]
+    acknowledged_completion: Option<uuid::Uuid>,
 }
 
 fn path(client: &Client, view: &View) -> Result<PathBuf> {
@@ -53,6 +55,7 @@ pub fn load(client: &Client, view: &mut View) -> Result<()> {
     view.draft.text = draft.text;
     view.draft.cursor = view.draft.text.len();
     view.pending = draft.pending;
+    view.acknowledged_completion = draft.acknowledged_completion;
     Ok(())
 }
 
@@ -61,6 +64,7 @@ pub fn save(client: &Client, view: &View) -> Result<()> {
     let draft = Draft {
         text: view.draft.text.clone(),
         pending: view.pending.clone(),
+        acknowledged_completion: view.acknowledged_completion,
     };
     let bytes = serde_json::to_vec(&draft)?;
     ensure!(
