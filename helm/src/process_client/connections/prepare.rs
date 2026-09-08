@@ -189,8 +189,11 @@ impl Registry {
                 snapshot.pending_pairs.len() < 1024,
                 "pending pairing capacity reached; recovery records retained"
             );
+            let connection_id = Uuid::new_v4();
             let summary = PendingPair {
                 id: Uuid::new_v4(),
+                connection_id: Some(connection_id),
+                completed: false,
                 endpoint,
                 vessel_id: capabilities.vessel_id,
                 principal_id: request.principal_id,
@@ -202,7 +205,7 @@ impl Registry {
                 summary: summary.clone(),
                 request,
                 credential_ref: Uuid::new_v4(),
-                connection_id: Uuid::new_v4(),
+                connection_id,
             };
             // Durable private intent and discoverable index both precede network.
             dir.write(
@@ -307,6 +310,9 @@ impl Registry {
         tokio::task::spawn_blocking(move || registry.checkpoint_preview(connection, None)).await?
     }
 }
+pub(super) fn redemption_connection(dir: &private::Directory, id: Uuid) -> Result<Uuid> {
+    Ok(read_redemption(dir, id)?.connection_id)
+}
 fn read_redemption(dir: &private::Directory, id: Uuid) -> Result<Redemption> {
     let bytes = dir
         .read(&format!("{id}.redemption"), private::CREDENTIAL_LIMIT)?
@@ -315,6 +321,10 @@ fn read_redemption(dir: &private::Directory, id: Uuid) -> Result<Redemption> {
         .map_err(|_| anyhow::anyhow!("invalid private pairing recovery record"))?;
     ensure!(
         value.summary.id == id
+            && value
+                .summary
+                .connection_id
+                .is_none_or(|id| id == value.connection_id)
             && value.summary.command_id == value.request.command_id
             && value.summary.principal_id == value.request.principal_id
             && value.summary.invitation_id == value.request.invitation_id

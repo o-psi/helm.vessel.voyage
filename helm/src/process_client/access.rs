@@ -105,6 +105,10 @@ pub enum ConnectionFailure {
     Expired,
     #[error("Access revoked or refused; original recovery credentials are retained.")]
     Revoked,
+    #[error(
+        "Access unavailable: the server combined expiry and revocation; original recovery credentials are retained."
+    )]
+    Unavailable,
     #[error("Vessel or principal identity changed; review as a new connection.")]
     Identity,
     #[error("Unsupported Vessel protocol or credential version.")]
@@ -153,7 +157,9 @@ pub(super) fn http(streaming: bool) -> Result<reqwest::Client> {
 }
 fn classified(text: &str) -> Option<ConnectionFailure> {
     let text = text.to_ascii_lowercase();
-    if text.contains("expir") {
+    if text.contains("expir") && text.contains("revok") {
+        Some(ConnectionFailure::Unavailable)
+    } else if text.contains("expir") {
         Some(ConnectionFailure::Expired)
     } else if text.contains("revok") {
         Some(ConnectionFailure::Revoked)
@@ -200,13 +206,20 @@ pub(super) async fn envelope(response: reqwest::Response) -> Result<serde_json::
                 );
             }
             if let Some(error) = classified(error) {
-                return Err(error.into());
+                // Preserve both downcasts: command handlers use Refusal to clear
+                // only definitely rejected deliveries; the panel uses the reason.
+                return Err(
+                    anyhow::Error::new(error).context(super::transport::Refusal(error.to_string()))
+                );
             }
             // Do not echo untrusted HTTP error text (it may include the submitted secret).
             if status == reqwest::StatusCode::UNAUTHORIZED
                 || status == reqwest::StatusCode::FORBIDDEN
             {
-                return Err(ConnectionFailure::Revoked.into());
+                let error = ConnectionFailure::Revoked;
+                return Err(
+                    anyhow::Error::new(error).context(super::transport::Refusal(error.to_string()))
+                );
             }
             return Err(super::transport::Refusal("Vessel refused the request".into()).into());
         }

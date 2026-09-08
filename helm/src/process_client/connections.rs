@@ -104,6 +104,10 @@ impl Connection {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PendingPair {
     pub id: Uuid,
+    #[serde(default)]
+    pub connection_id: Option<Uuid>,
+    #[serde(default)]
+    pub completed: bool,
     pub endpoint: String,
     pub vessel_id: Uuid,
     pub principal_id: Uuid,
@@ -259,12 +263,20 @@ impl Registry {
             .context("review credential unavailable")?;
         validate_credential(&saved, &Credential::parse(&bytes)?)?;
         let mut snapshot = Self::read_snapshot(&dir)?;
-        if let Some(existing) = snapshot.connections.iter().find(|c| c.id == saved.id) {
+        if let Some(existing) = snapshot
+            .connections
+            .iter()
+            .find(|c| c.id == saved.id)
+            .cloned()
+        {
             ensure!(
                 existing.credential_ref == saved.credential_ref && !existing.forgotten,
                 "connection already saved or forgotten; reload registry"
             );
-            return Ok(existing.clone());
+            if Self::complete_pair(&dir, &mut snapshot, saved.id)? {
+                Self::commit(&dir, &mut snapshot)?;
+            }
+            return Ok(existing);
         }
         // Never merge privileges just because endpoint/Vessel matches. Exact grants
         // also cannot be silently revived after Forget; a new review is explicit.
@@ -295,8 +307,27 @@ impl Registry {
         connection.autoconnect = p.autoconnect;
         connection.revision = 1;
         snapshot.connections.push(connection.clone());
+        Self::complete_pair(&dir, &mut snapshot, connection.id)?;
         Self::commit(&dir, &mut snapshot)?;
         Ok(connection)
+    }
+    fn complete_pair(dir: &private::Directory, snapshot: &mut Snapshot, id: Uuid) -> Result<bool> {
+        let mut changed = false;
+        for pending in &mut snapshot.pending_pairs {
+            if pending.completed {
+                continue;
+            }
+            let connection_id = match pending.connection_id {
+                Some(id) => id,
+                None => prepare::redemption_connection(dir, pending.id)?,
+            };
+            if connection_id == id {
+                pending.connection_id = Some(id);
+                pending.completed = true;
+                changed = true;
+            }
+        }
+        Ok(changed)
     }
     pub fn update(
         &self,
