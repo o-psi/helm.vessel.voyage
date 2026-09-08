@@ -122,6 +122,13 @@ observed or explicitly reported unconfirmed. A late model result cannot overwrit
 a committed cancellation. Cancel one voyage without stopping unrelated voyages.
 Helm detach is never a cancellation request.
 
+A monitoring failure and resource cleanup are separate outcomes. Retain the original
+in-flight observation and cleanup handles after a timeout. A live owner retries
+failed observations in bounded batches without creating concurrent cleanup workers.
+Observed callback termination, terminal/resource teardown and reservation release
+permit continuation; a successful monitor result is not an extra prerequisite.
+Do not lose ownership just because a run has reached terminal state.
+
 After process failure, recover exclusive ownership before admitting another run.
 Mark abandoned execution interrupted; preserve partial output, unresolved effects
 and pending cleanup. Never replay an uncertain tool effect automatically. A stored

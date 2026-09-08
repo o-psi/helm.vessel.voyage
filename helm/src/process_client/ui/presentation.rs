@@ -117,7 +117,15 @@ pub(super) fn voyage_state(snapshot: &super::state::Snapshot) -> &'static str {
     if snapshot.pending_cleanup_run.is_some()
         && snapshot.run.as_ref().is_none_or(|run| !run.active())
     {
-        return "Cleanup pending";
+        return match snapshot
+            .cleanup
+            .as_ref()
+            .map(|cleanup| cleanup.phase.as_str())
+        {
+            Some("running") => "Finishing cleanup",
+            Some("blocked") => "Cleanup needs attention",
+            _ => "Cleanup pending",
+        };
     }
     let Some(run) = &snapshot.run else {
         return "Ready";
