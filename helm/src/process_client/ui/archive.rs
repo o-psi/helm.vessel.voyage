@@ -21,6 +21,10 @@ impl App {
     }
 
     pub(super) fn restore_archive(&mut self, target: Target, preserve_draft: bool) -> Result<()> {
+        ensure!(
+            self.clients.current(target.route),
+            "Vessel disconnected; reconnect before changing remote work"
+        );
         let view = self
             .views
             .get_mut(&target)
@@ -51,7 +55,7 @@ impl App {
         let sender = self.sender.clone();
         self.status = "Restoring voyage…".into();
         self.command_checks.insert((target, command_id), None);
-        tokio::spawn(async move {
+        let job = tokio::spawn(async move {
             let result: Result<_> = async {
                 let process: ProcessInfo = serde_json::from_value(
                     client
@@ -100,6 +104,10 @@ impl App {
                 })
                 .await;
         });
+        self.route_tasks
+            .entry(target.route.id)
+            .or_default()
+            .push(job);
         Ok(())
     }
 }

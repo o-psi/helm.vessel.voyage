@@ -19,10 +19,18 @@ impl App {
             Constraint::Length(4),
         ])
         .split(area);
-        let state = if draft.busy {
+        let state = if !self.clients.current(draft.route) {
+            "Disconnected · draft and pending delivery retained; reconnect through Vessels"
+        } else if draft.busy {
             "Starting / checking…"
+        } else if draft.saved.attempted {
+            "First turn pending · checking receipts, never replaying"
+        } else if draft.saved.process.is_some() {
+            "Voyage created · Enter sends the saved first message"
+        } else if draft.saved.start_attempted {
+            "Creation outcome unknown · observing, never replaying"
         } else if draft.saved.start.is_some() {
-            "First send pending · Recovering automatically"
+            "Not started · Enter retries the saved launch preflight"
         } else {
             "Draft · starts when you send"
         };
@@ -42,7 +50,15 @@ impl App {
             .block(Block::default().borders(Borders::BOTTOM)),
             rows[0],
         );
-        frame.render_widget(Paragraph::new("Describe what you want to do.\n\nThis draft is saved on this computer.\n/model · /thinking · /service · /access MODE · /workspace PATH · /help\n\nTab switches drafts and voyages. Ctrl+N opens a blank draft.").wrap(ratatui::widgets::Wrap { trim: false }), rows[1]);
+        let guidance = if self.clients[draft.route].is_local() {
+            "Describe what you want to do.\n\nThis draft is saved on this computer.\n/model · /thinking · /service · /access MODE · /workspace PATH · /help\n\nTab switches drafts and voyages. Ctrl+N opens a blank draft."
+        } else {
+            "Describe what you want the remote host to do.\n\nOnly the draft is saved here. Workspace authority, model settings, policy and provider credentials remain on the executing host.\n/workspace PATH must name an authorized workspace. Ctrl+N opens the workspace picker; Esc cancels without sending."
+        };
+        frame.render_widget(
+            Paragraph::new(guidance).wrap(ratatui::widgets::Wrap { trim: false }),
+            rows[1],
+        );
         let block = Block::default()
             .borders(Borders::ALL)
             .title(format!(" First message · {} ", self.attachment_summary()));
@@ -97,12 +113,17 @@ impl App {
         frame: &mut Frame<'_>,
         area: Rect,
     ) {
+        let drafts: Vec<_> = self
+            .new_drafts
+            .iter()
+            .filter(|(_, draft)| self.vessel_filter.is_none_or(|id| draft.route.id == id))
+            .collect();
         let offset = self
             .active_draft
-            .and_then(|id| self.new_drafts.keys().position(|key| *key == id))
+            .and_then(|id| drafts.iter().position(|(key, _)| **key == id))
             .unwrap_or(0)
             .saturating_sub(area.height.saturating_sub(1) as usize);
-        for (y, (id, draft)) in (area.y..).zip(self.new_drafts.iter().skip(offset)) {
+        for (y, (id, draft)) in (area.y..).zip(drafts.into_iter().skip(offset)) {
             if y >= area.bottom() {
                 break;
             }
@@ -116,12 +137,13 @@ impl App {
                 .unwrap_or("New voyage");
             frame.render_widget(
                 Paragraph::new(format!(
-                    "{}Draft: {}",
+                    "{}[{}] Draft: {}",
                     if self.active_draft == Some(*id) {
                         "> "
                     } else {
                         "  "
                     },
+                    self.route_label(draft.route),
                     safe(title)
                 ))
                 .style(Style::default().fg(Color::Cyan)),

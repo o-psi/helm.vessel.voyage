@@ -60,6 +60,10 @@ impl App {
         preserve_draft: bool,
     ) -> Result<()> {
         let command_text = draft.trim();
+        if command_text == "/vessels" {
+            self.open_vessels();
+            return Ok(());
+        }
         if super::inference::parse(command_text).is_some() {
             return self.inference_command(
                 super::inference::Destination::Live(target),
@@ -300,6 +304,12 @@ impl App {
     }
 
     pub(super) fn dispatch(&mut self, target: Target, command_id: Uuid, command: VoyageCommand) {
+        if !self.clients.current(target.route) {
+            self.status =
+                "Vessel disconnected. Pending command retained; reconnect to observe its receipt."
+                    .into();
+            return;
+        }
         if self.command_checks.get(&(target, command_id)) == Some(&None) {
             return;
         }
@@ -319,7 +329,7 @@ impl App {
         if !resolving {
             self.status = "Sending...".into();
         }
-        tokio::spawn(async move {
+        let job = tokio::spawn(async move {
             let mut result = super::attachments::upload_then_submit(
                 &client,
                 target.session,
@@ -344,6 +354,18 @@ impl App {
                         .await;
                 }
             }
+            if let Ok(value) = &result {
+                // A late receipt remains useful even after disconnect/forget. Persist
+                // against the original immutable identity, never the selected host.
+                if let Err(error) = super::routes::retain_receipt(target, command_id, value) {
+                    let _ = sender
+                        .send(Update::RouteError {
+                            route: target.route,
+                            error: format!("Receipt retention failed: {error}"),
+                        })
+                        .await;
+                }
+            }
             let _ = sender
                 .send(Update::Command {
                     target,
@@ -364,5 +386,9 @@ impl App {
                 })
                 .await;
         });
+        self.route_tasks
+            .entry(target.route.id)
+            .or_default()
+            .push(job);
     }
 }

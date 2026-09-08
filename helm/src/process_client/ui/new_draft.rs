@@ -4,6 +4,9 @@ mod input;
 mod launch;
 mod render;
 mod storage;
+mod workspaces;
+use super::state::Route;
+pub(super) use workspaces::WorkspacePicker;
 
 use super::*;
 use serde::{Deserialize, Serialize};
@@ -38,12 +41,70 @@ pub(super) struct Saved {
 pub(super) struct Draft {
     pub(super) saved: Saved,
     composer: composer::Composer,
-    route: usize,
+    pub(super) route: Route,
     pub(super) busy: bool,
     _lock: std::fs::File,
 }
 
 impl Saved {
+    fn validate_identity(&self) -> Result<()> {
+        anyhow::ensure!(
+            !self.id.is_nil() && !self.turn.is_nil(),
+            "Invalid saved draft identity; original retained"
+        );
+        if let Some(start) = &self.start {
+            let (session, command, workspace) = match start {
+                VesselCommand::Start {
+                    session_id,
+                    command_id,
+                    workspace,
+                }
+                | VesselCommand::StartConfigured {
+                    session_id,
+                    command_id,
+                    workspace,
+                    ..
+                } => (*session_id, *command_id, workspace),
+                _ => anyhow::bail!("Unsupported saved start envelope; original retained"),
+            };
+            anyhow::ensure!(
+                session == self.id && !command.is_nil() && workspace == &self.workspace,
+                "Saved start identity mismatch; original retained"
+            );
+        }
+        anyhow::ensure!(
+            !self.start_attempted || self.start.is_some(),
+            "Saved attempted start envelope missing; original retained"
+        );
+        if let Some(process) = &self.process {
+            anyhow::ensure!(
+                process.session_id == self.id,
+                "Saved process identity mismatch; original retained"
+            );
+        }
+        if let Some(submit) = &self.submit {
+            anyhow::ensure!(
+                submit.mutation_id() == Some(self.turn)
+                    && matches!(
+                        submit,
+                        VoyageCommand::Submit { .. } | VoyageCommand::SubmitContent { .. }
+                    ),
+                "Saved first-turn identity mismatch; original retained"
+            );
+        }
+        anyhow::ensure!(
+            !self.attempted || (self.submit.is_some() && self.process.is_some()),
+            "Saved attempted turn envelope missing; original retained"
+        );
+        if let Some(receipt) = &self.receipt {
+            anyhow::ensure!(
+                receipt["command_id"] == self.turn.to_string() && self.process.is_some(),
+                "Saved receipt identity mismatch; original retained"
+            );
+        }
+        Ok(())
+    }
+
     fn retain_policy(&mut self) {
         if let Some(config) = &self.config {
             self.explicit = config.policy_explicit.clone();
@@ -77,8 +138,63 @@ impl Saved {
 }
 
 impl App {
+    /// Caller must abort/observe old route tasks before reactivation. Reload the
+    /// durable transition because a stale completion event may have been dropped.
+    pub(super) fn reactivate_drafts(&mut self, route: Route) -> Result<()> {
+        anyhow::ensure!(self.clients.current(route), "Draft activation is stale");
+        for draft in self
+            .new_drafts
+            .values_mut()
+            .filter(|draft| draft.route.id == route.id)
+        {
+            if let Some(saved) = storage::reload(draft.saved.id)? {
+                anyhow::ensure!(
+                    saved.route == storage::route(&self.clients[route])?,
+                    "Saved draft connection identity changed; original retained"
+                );
+                draft.saved = saved;
+                draft.composer = super::attachments::restore_draft(
+                    draft.saved.text.clone(),
+                    draft.saved.markers.clone(),
+                    &draft.saved.images,
+                )?;
+            }
+            draft.route = route;
+            draft.busy = false;
+        }
+        self.recover_new_drafts()?;
+        Ok(())
+    }
+
+    /// Call only after every aborted first-send task has been joined. Aborting
+    /// a handle alone does not establish that the last durable write completed.
+    pub(super) fn cancel_new_drafts(&mut self, connection: Uuid) -> Result<()> {
+        for draft in self
+            .new_drafts
+            .values_mut()
+            .filter(|draft| draft.route.id == connection)
+        {
+            if let Some(saved) = storage::reload(draft.saved.id)? {
+                anyhow::ensure!(
+                    saved.route == draft.saved.route,
+                    "Saved draft route identity changed"
+                );
+                draft.saved = saved;
+                draft.composer = super::attachments::restore_draft(
+                    draft.saved.text.clone(),
+                    draft.saved.markers.clone(),
+                    &draft.saved.images,
+                )?;
+            }
+            draft.busy = false;
+        }
+        Ok(())
+    }
+
     pub(super) fn recover_new_drafts(&mut self) -> Result<()> {
-        self.new_drafts = storage::recover(&self.clients)?;
+        // Locked in-memory drafts are skipped; preserve all unsent text.
+        self.new_drafts
+            .extend(storage::recover(self.clients.iter())?);
         Ok(())
     }
 
@@ -87,21 +203,53 @@ impl App {
             .active_draft
             .and_then(|id| self.new_drafts.get(&id).map(|d| d.route))
             .or_else(|| self.selected.map(|t| t.route))
-            .unwrap_or(0);
-        let client = &self.clients[route];
+            .or_else(|| self.clients.first_route())
+            .context("No Vessel connection is available")?;
+        self.create_on_route(route, workspace)
+    }
+
+    pub(super) fn create_on_route(&mut self, route: Route, workspace: Option<&str>) -> Result<()> {
         anyhow::ensure!(
-            client.access_file.is_none(),
-            "This connection grants access to an existing voyage; choose a Vessel connection to create one"
+            self.clients.current(route),
+            "Reconnect this Vessel before creating a draft"
         );
-        let workspace = match workspace {
-            Some(path) => PathBuf::from(path),
-            None if self.active_draft.is_some() => self.new_drafts
-                [&self.active_draft.expect("active draft")]
-                .saved
-                .workspace
-                .clone(),
-            None if client.is_local() => std::env::current_dir()?,
-            None => anyhow::bail!("remote creation needs /new /absolute/workspace"),
+        let client = &self.clients[route];
+        let workspace = if client.is_local() {
+            match workspace {
+                Some(path) => PathBuf::from(path),
+                None => self
+                    .active_draft
+                    .and_then(|id| self.new_drafts.get(&id))
+                    .filter(|draft| draft.route == route)
+                    .map(|draft| draft.saved.workspace.clone())
+                    .unwrap_or(std::env::current_dir()?),
+            }
+        } else {
+            let choices = workspaces::authorized(client)?;
+            match workspace {
+                Some(path) => workspaces::select(&choices, path)?.path.clone(),
+                None => {
+                    let preferred = self
+                        .active_draft
+                        .and_then(|id| self.new_drafts.get(&id))
+                        .filter(|draft| draft.route == route)
+                        .and_then(|draft| choices.iter().find(|w| w.path == draft.saved.workspace))
+                        .map(|w| w.id)
+                        .or_else(|| {
+                            self.vessels.as_ref().and_then(|manager| {
+                                manager
+                                    .borrow()
+                                    .records()
+                                    .iter()
+                                    .find(|c| c.id == route.id)
+                                    .and_then(|c| c.workspace_preference)
+                            })
+                        })
+                        .or_else(|| client.managed().and_then(|c| c.workspace_preference));
+                    self.workspace_picker = Some(WorkspacePicker::new(route, choices, preferred));
+                    return Ok(());
+                }
+            }
         };
         anyhow::ensure!(
             workspace.is_absolute(),
@@ -170,6 +318,14 @@ impl App {
     }
 
     pub(super) fn send_draft(&mut self, id: Uuid) -> Result<()> {
+        self.drive_draft(id, false)
+    }
+
+    pub(super) fn recover_draft(&mut self, id: Uuid) -> Result<()> {
+        self.drive_draft(id, true)
+    }
+
+    fn drive_draft(&mut self, id: Uuid, observe_only: bool) -> Result<()> {
         self.ensure_paste_finished(super::paste::Destination::Draft(id))?;
         let draft = self.new_drafts.get_mut(&id).context("draft unavailable")?;
         anyhow::ensure!(!draft.busy, "First send is already being checked");
@@ -179,17 +335,28 @@ impl App {
         );
         anyhow::ensure!(draft.composer.text.len() <= 65536, "draft limit is 64 KiB");
         super::attachments::validate_set(&draft.saved.images)?;
+        anyhow::ensure!(
+            self.clients.current(draft.route),
+            "This draft belongs to an inactive connection. Reconnect its original Vessel access to recover; no command was redirected"
+        );
         let client = self.clients[draft.route].clone();
         if draft.saved.start.is_none() {
+            if observe_only {
+                return Ok(());
+            }
             let command_id = Uuid::new_v4();
             let workspace = draft.saved.workspace.clone();
-            draft.saved.start = Some(if let Some(config) = &draft.saved.launch_config()? {
+            draft.saved.start = Some(if client.is_local() && draft.saved.config.is_some() {
+                let config = draft
+                    .saved
+                    .launch_config()?
+                    .context("local configuration missing")?;
                 VesselCommand::StartConfigured {
                     command_id,
                     session_id: id,
                     workspace: workspace.clone(),
                     config_path: super::super::frontend::launch::persist(
-                        config,
+                        &config,
                         &workspace,
                         &client.directory,
                     )?,
@@ -210,19 +377,25 @@ impl App {
         draft.busy = true;
         let mut saved = draft.saved.clone();
         let sender = self.sender.clone();
+        let route = draft.route;
         self.status = "Starting your voyage…".into();
-        tokio::spawn(async move {
+        let job = tokio::spawn(async move {
             let _lock = lock;
-            let result = launch::advance(&client, &mut saved)
-                .await
-                .map_err(|e| e.to_string());
+            let result = if observe_only {
+                launch::observe(&client, &mut saved).await
+            } else {
+                launch::advance(&client, &mut saved).await
+            }
+            .map_err(|e| e.to_string());
             let _ = sender
                 .send(Update::FirstSend {
+                    route,
                     saved: Box::new(saved),
                     result,
                 })
                 .await;
         });
+        self.route_tasks.entry(route.id).or_default().push(job);
         Ok(())
     }
 
@@ -289,11 +462,11 @@ impl App {
                 if self.active_draft == Some(id) { self.active_draft = None; self.selected = Some(target); }
                 self.update(Update::Command { target, command_id, refused: false, result: Ok(receipt) });
             }
-            Ok(None) => self.status = "First send is not confirmed. Helm continues setup and checks delivery automatically. Your text is preserved.".into(),
+            Ok(None) => self.status = "First send is not confirmed. Helm checks receipts without replay. If creation is confirmed but no turn was attempted, press Enter to continue; your exact text is preserved.".into(),
             Err(error) => self.status = if draft.saved.start.is_none() {
                 format!("{} · Voyage not started. Your draft is editable.", safe(&error))
             } else {
-                format!("{} · Text and identity saved. Helm continues setup and checks delivery automatically.", safe(&error))
+                format!("{} · Text and exact command identity saved. Helm observes recovery without replay.", safe(&error))
             },
         }
     }
@@ -304,6 +477,10 @@ pub(in crate::process_client) async fn start_plain(
     config: crate::Config,
     prompt: String,
 ) -> Result<ProcessInfo> {
+    anyhow::ensure!(
+        client.is_local(),
+        "Plain configured launch is local only; remote settings remain host-owned"
+    );
     let workspace = config.resolve_workspace(None)?;
     let mut saved = Saved {
         id: Uuid::new_v4(),
@@ -326,7 +503,13 @@ pub(in crate::process_client) async fn start_plain(
         confirmation: None,
     };
     saved.retain_policy();
-    let mut draft = storage::create(saved, 0)?;
+    let mut draft = storage::create(
+        saved,
+        Route {
+            id: client.id(),
+            generation: client.generation(),
+        },
+    )?;
     let config_path = super::super::frontend::launch::persist(
         draft.saved.config.as_ref().expect("local config"),
         &draft.saved.workspace,

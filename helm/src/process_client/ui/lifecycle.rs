@@ -14,6 +14,10 @@ impl App {
         name: Option<String>,
         preserve_draft: bool,
     ) -> Result<()> {
+        ensure!(
+            self.clients.current(target.route),
+            "Vessel disconnected; reconnect before changing remote work"
+        );
         let view = self
             .views
             .get_mut(&target)
@@ -47,7 +51,7 @@ impl App {
         let client = self.clients[target.route].clone();
         let sender = self.sender.clone();
         self.command_checks.insert((target, command_id), None);
-        tokio::spawn(async move {
+        let job = tokio::spawn(async move {
             let result = client
                 .request(VesselCommand::Branch {
                     command_id,
@@ -87,6 +91,10 @@ impl App {
                 }
             }
         });
+        self.route_tasks
+            .entry(target.route.id)
+            .or_default()
+            .push(job);
         Ok(())
     }
 }

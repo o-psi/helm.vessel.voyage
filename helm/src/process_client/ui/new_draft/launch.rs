@@ -6,31 +6,66 @@ pub(super) async fn advance(
     client: &Client,
     saved: &mut Saved,
 ) -> Result<Option<serde_json::Value>> {
+    advance_mode(client, saved, false).await
+}
+
+pub(super) async fn observe(
+    client: &Client,
+    saved: &mut Saved,
+) -> Result<Option<serde_json::Value>> {
+    advance_mode(client, saved, true).await
+}
+
+async fn advance_mode(
+    client: &Client,
+    saved: &mut Saved,
+    observe_only: bool,
+) -> Result<Option<serde_json::Value>> {
     if let Some(receipt) = &saved.receipt {
         return Ok(Some(receipt.clone()));
     }
     if saved.process.is_none() {
-        // Start is exactly deduplicated by Vessel. An uncertain admission retains
-        // its original identity and can never silently allocate a replacement.
-        let recovering = saved.start_attempted;
-        saved.start_attempted = true;
-        storage::save(saved)?;
-        let result = client
-            .request(saved.start.clone().context("start identity missing")?)
-            .await;
-        if let Err(error) = &result
-            && !recovering
-            && error
-                .downcast_ref::<crate::process_client::transport::Refusal>()
-                .is_some()
-        {
-            saved.start = None;
-            saved.start_attempted = false;
+        // Recovery is observation only, not even an exact Start replay. A
+        // registration may establish that the intended session now exists; an
+        // absent registration cannot establish that an uncertain Start failed.
+        let result = if saved.start_attempted {
+            client
+                .request(VesselCommand::Inspect {
+                    session_id: saved.id,
+                })
+                .await
+        } else {
+            if observe_only {
+                return Ok(None);
+            }
+            if let Err(error) = workspaces::validate_live(client, saved).await {
+                // Capabilities are read-only and no Start has been attempted.
+                // Keep text editable when scope or host readiness needs repair.
+                saved.start = None;
+                storage::save(saved)?;
+                return Err(error);
+            }
+            saved.start_attempted = true;
             storage::save(saved)?;
-        }
+            let result = client
+                .request(saved.start.clone().context("start identity missing")?)
+                .await;
+            if result.as_ref().err().is_some_and(|error| {
+                error
+                    .downcast_ref::<crate::process_client::transport::Refusal>()
+                    .is_some()
+            }) {
+                // A definite first-attempt refusal is the only safe reset.
+                saved.start = None;
+                saved.start_attempted = false;
+                storage::save(saved)?;
+            }
+            result
+        };
         let process: ProcessInfo = serde_json::from_value(result?)?;
         ensure!(
-            process.session_id == saved.id,
+            process.session_id == saved.id
+                && (client.is_local() || process.workspace == saved.workspace),
             "creation response identity mismatch"
         );
         saved.process = Some(process);
@@ -42,9 +77,8 @@ pub(super) async fn advance(
             .voyage(
                 saved.id,
                 process.incarnation,
-                VoyageCommand::Resolve {
+                VoyageCommand::Receipt {
                     command_id: saved.turn,
-                    original: saved.submit.clone().map(Box::new),
                 },
             )
             .await?;
@@ -52,6 +86,9 @@ pub(super) async fn advance(
             return retain_receipt(saved, receipt);
         }
         // An unresolved original is never resent, even on an explicit retry.
+        return Ok(None);
+    }
+    if observe_only {
         return Ok(None);
     }
     if saved.submit.is_none() {
@@ -83,7 +120,7 @@ pub(super) async fn advance(
     saved.attempted = true;
     storage::save(saved)?;
     // attempted + frozen command and bytes were saved before any upload. A crash
-    // from here recovers with Resolve only; it never repeats this sequence.
+    // from here recovers with Receipt only; it never repeats this sequence.
     let receipt = super::super::attachments::upload_then_submit(
         client,
         saved.id,

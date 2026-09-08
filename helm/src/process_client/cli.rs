@@ -171,10 +171,7 @@ pub async fn run(args: ConnectArgs) -> Result<()> {
         if args.command.is_some() {
             clients.push(local::connect(directory, !args.no_start).await?);
         } else {
-            let client = Client {
-                directory: directory.clone(),
-                access_file: None,
-            };
+            let client = Client::local(directory.clone());
             clients.push(client);
             if !args.no_start {
                 tokio::spawn(async move {
@@ -185,10 +182,7 @@ pub async fn run(args: ConnectArgs) -> Result<()> {
     }
     ensure!(args.access_file.len() <= 16, "at most 16 grant routes");
     for path in args.access_file {
-        clients.push(Client {
-            directory: PathBuf::new(),
-            access_file: Some(path),
-        });
+        clients.push(Client::access(path));
     }
     if let Some(command) = args.command {
         ensure!(

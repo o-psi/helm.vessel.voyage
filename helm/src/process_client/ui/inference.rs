@@ -338,6 +338,7 @@ impl App {
                     .and_then(|r| r.map_err(|e| e.to_string()));
                     let _ = sender
                         .send(Update::InferenceModels {
+                            route: Some(target.route),
                             id,
                             context: None,
                             generation: None,
@@ -366,6 +367,7 @@ impl App {
                     }
                     let _ = sender
                         .send(Update::InferenceModels {
+                            route: None,
                             id,
                             context,
                             generation: Some(id),

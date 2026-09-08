@@ -46,7 +46,7 @@ impl App {
                 return Ok(true);
             }
             if key.code == KeyCode::F(1) {
-                self.status = "Draft commands: /model [NAME], /thinking [VALUE], /service [VALUE], /access MODE, /workspace PATH, /new [PATH], /discard. Enter sends; Tab changes view. First sends recover automatically.".into();
+                self.status = "Draft commands: /vessels, /model [NAME], /thinking [VALUE], /service [VALUE], /access MODE, /workspace PATH, /new [PATH], /discard. Enter sends; Tab changes view. Receipt checks are automatic; no creation or message is replayed on reconnect.".into();
                 return Ok(true);
             }
             if key.code == KeyCode::F(5) {
@@ -92,7 +92,7 @@ impl App {
         }
         let draft = self.new_drafts.get_mut(&id).context("draft unavailable")?;
         if draft.saved.start.is_some() || draft.busy {
-            self.status = "First send pending. Text and settings are frozen; Helm continues setup and checks delivery automatically.".into();
+            self.status = "First send pending. Text and settings are frozen; Helm observes receipts without replay; Enter can continue a confirmed creation.".into();
             return Ok(true);
         }
         match event {
@@ -150,12 +150,16 @@ impl App {
                 false,
             );
         }
+        if text == "/vessels" {
+            self.open_vessels();
+            return Ok(());
+        }
         if text == "/quit" {
             self.quit = true;
             return Ok(());
         }
         if text == "/help" {
-            self.status = "Draft commands: /model [NAME], /thinking [VALUE], /service [VALUE], /access read-only|approval|unrestricted, /workspace PATH, /new [PATH], /discard. Enter sends; Tab changes view. First sends recover automatically.".into();
+            self.status = "Draft commands: /vessels, /model [NAME], /thinking [VALUE], /service [VALUE], /access read-only|approval|unrestricted, /workspace PATH, /new [PATH], /discard. Enter sends; Tab changes view. Receipt checks are automatic; no creation or message is replayed on reconnect.".into();
         } else {
             let draft = self.new_drafts.get_mut(&id).context("draft unavailable")?;
             anyhow::ensure!(
@@ -191,10 +195,15 @@ impl App {
                     path.is_absolute(),
                     "workspace must be absolute on the executing host"
                 );
+                let client = &self.clients[draft.route];
+                if !client.is_local() {
+                    let choices = workspaces::authorized(client)?;
+                    workspaces::select(&choices, workspace)?;
+                }
                 draft.saved.workspace = path;
             } else if text != "/help" && text != "/new" && !text.starts_with("/new ") {
                 anyhow::bail!(
-                    "This is a local draft. /help lists commands available before first send"
+                    "This is a Helm draft. /help lists commands available before first send"
                 );
             }
             self.status = "Draft settings saved. Send a message to start the voyage.".into();

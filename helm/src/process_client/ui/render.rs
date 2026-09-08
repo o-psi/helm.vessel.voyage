@@ -107,7 +107,13 @@ fn sidebar_state(view: &super::state::View) -> (&'static str, Color, bool) {
 }
 
 pub fn draw(frame: &mut Frame<'_>, app: &App) {
+    app.vessel_sidebar_button.set(Rect::default());
     draw_inner(frame, app);
+    app.draw_vessel_control(frame);
+    app.draw_workspace_picker(frame, frame.area());
+    if let Some(manager) = &app.vessels {
+        manager.borrow_mut().render(frame, frame.area());
+    }
 }
 
 fn draw_inner(frame: &mut Frame<'_>, app: &App) {
@@ -344,13 +350,15 @@ fn sidebar(frame: &mut Frame<'_>, app: &App, area: Rect) {
     .split(area);
     frame.render_widget(
         Paragraph::new(vec![
-            Line::styled("HELM", Style::default().add_modifier(Modifier::BOLD)),
+            Line::styled("Vessels  [Ctrl+G]", accent().add_modifier(Modifier::BOLD)),
             Line::default(),
             Line::styled("Ctrl+N  New voyage", accent()),
             Line::default(),
         ]),
         rows[0],
     );
+    app.vessel_sidebar_button
+        .set(Rect::new(rows[0].x, rows[0].y, rows[0].width, 1));
     app.draw_draft_links(
         frame,
         Rect::new(

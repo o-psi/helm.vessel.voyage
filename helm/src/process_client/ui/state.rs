@@ -4,9 +4,24 @@ use std::time::Instant;
 use uuid::Uuid;
 use voyage_protocol::vessel::ProcessInfo;
 
+/// An immutable connection plus one observation activation. Never a vector position.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Route {
+    pub id: Uuid,
+    pub generation: u64,
+}
+impl Route {
+    pub fn of(client: &crate::process_client::transport::Client) -> Self {
+        Self {
+            id: client.id(),
+            generation: client.generation(),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Target {
-    pub route: usize,
+    pub route: Route,
     pub session: Uuid,
 }
 
@@ -294,7 +309,11 @@ impl super::App {
         let mut targets: Vec<_> = self
             .views
             .iter()
-            .filter(|(_, view)| !view.deleted() && view.archived() == self.archives)
+            .filter(|(target, view)| {
+                !view.deleted()
+                    && view.archived() == self.archives
+                    && self.vessel_filter.is_none_or(|id| target.route.id == id)
+            })
             .map(|(target, _)| *target)
             .collect();
         targets.sort_by_key(|target| {

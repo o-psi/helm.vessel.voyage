@@ -1,5 +1,6 @@
 //! Helm's process clients hold presentation state and never construct an executor.
 pub mod cli;
+pub mod connections;
 pub mod local;
 mod sse;
 pub mod transport;

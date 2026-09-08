@@ -23,12 +23,24 @@ fn root() -> Result<PathBuf> {
 }
 
 pub(super) fn route(client: &Client) -> Result<String> {
-    Ok(serde_json::to_string(&(
-        &client.directory,
-        // Retain the reserved null slot to preserve saved local/HTTPS route identities.
+    Ok(format!("connection:{}", client.id()))
+}
+
+// Exact explicit legacy route only; never infer authority from an endpoint.
+// Old SSH's non-null reserved slot remains unsupported and preserved.
+fn legacy_route(client: &Client) -> Result<Option<String>> {
+    if client
+        .managed()
+        .is_some_and(|connection| connection.legacy_route.is_none())
+    {
+        return Ok(None);
+    }
+    let legacy = client.legacy_route();
+    Ok(Some(serde_json::to_string(&(
+        &legacy.directory,
         Option::<&str>::None,
-        &client.access_file,
-    ))?)
+        &legacy.access_file,
+    ))?))
 }
 
 fn lock(root: &Path, id: Uuid) -> Result<Option<File>> {
@@ -48,6 +60,7 @@ fn lock(root: &Path, id: Uuid) -> Result<Option<File>> {
 }
 
 pub(super) fn save(saved: &Saved) -> Result<()> {
+    saved.validate_identity()?;
     let root = root()?;
     let mut file = tempfile::NamedTempFile::new_in(&root)?;
     let bytes = serde_json::to_vec(saved)?;
@@ -63,11 +76,10 @@ pub(super) fn save(saved: &Saved) -> Result<()> {
     Ok(())
 }
 
-pub(super) fn create(saved: Saved, route: usize) -> Result<Draft> {
+pub(super) fn create(saved: Saved, route: Route) -> Result<Draft> {
     let lock = lock(&root()?, saved.id)?.context("draft is open in another Helm")?;
-    if !saved.text.is_empty() || !saved.images.is_empty() {
-        save(&saved)?;
-    }
+    // Even an empty workspace choice is a durable Helm draft, not a voyage.
+    save(&saved)?;
     Ok(Draft {
         saved,
         route,
@@ -77,9 +89,26 @@ pub(super) fn create(saved: Saved, route: usize) -> Result<Draft> {
     })
 }
 
-pub(super) fn recover(clients: &[Client]) -> Result<BTreeMap<Uuid, Draft>> {
+pub(super) fn recover<'a>(
+    clients: impl Iterator<Item = &'a Client>,
+) -> Result<BTreeMap<Uuid, Draft>> {
     let root = root()?;
-    let routes = clients.iter().map(route).collect::<Result<Vec<_>>>()?;
+    let routes = clients
+        .map(|client| {
+            Ok((
+                Route {
+                    id: client.id(),
+                    generation: client.generation(),
+                },
+                route(client)?,
+                legacy_route(client)?,
+                client
+                    .managed()
+                    .and_then(|c| c.legacy_route.as_ref())
+                    .map(|legacy| format!("connection:{}", legacy.id())),
+            ))
+        })
+        .collect::<Result<Vec<_>>>()?;
     let mut drafts = BTreeMap::new();
     for entry in std::fs::read_dir(&root)? {
         let path = entry?.path();
@@ -101,9 +130,10 @@ pub(super) fn recover(clients: &[Client]) -> Result<BTreeMap<Uuid, Draft>> {
             2 * voyage_protocol::vessel::MAX_VESSEL_BODY,
         )?;
         let mut saved: Saved = serde_json::from_slice(&bytes).map_err(|_| {
-            anyhow::anyhow!("Invalid saved new-voyage image draft; original file preserved")
+            anyhow::anyhow!("Invalid saved new-voyage draft; original file preserved")
         })?;
         ensure!(saved.id == id, "draft identity mismatch");
+        saved.validate_identity()?;
         if saved.finished {
             continue;
         }
@@ -112,9 +142,34 @@ pub(super) fn recover(clients: &[Client]) -> Result<BTreeMap<Uuid, Draft>> {
             drafts.len() < 4096,
             "too many local drafts to recover; archive draft files before continuing"
         );
-        let Some(route) = routes.iter().position(|r| r == &saved.route) else {
+        let matching: Vec<_> = routes
+            .iter()
+            .filter(|(_, stable, legacy, startup)| {
+                &saved.route == stable
+                    || legacy.as_ref() == Some(&saved.route)
+                    || startup.as_ref() == Some(&saved.route)
+            })
+            .collect();
+        // Ambiguous aliases must never select whichever route is listed first.
+        let [matched] = matching.as_slice() else {
             continue;
         };
+        let (route, stable, _, _) = *matched;
+        let route = *route;
+        if saved.route != *stable {
+            // Migration changes ONLY the route key under the original lock.
+            // Original command IDs, envelopes, expiry and receipts are untouched.
+            // Retain byte-exact pre-migration input alongside the stable record.
+            let backup = root.join(format!("{id}.legacy"));
+            if !backup.try_exists()? {
+                let mut original = tempfile::NamedTempFile::new_in(&root)?;
+                original.write_all(&bytes)?;
+                original.as_file().sync_all()?;
+                original.persist_noclobber(backup)?;
+            }
+            saved.route = stable.clone();
+            save(&saved)?;
+        }
         let composer = super::super::attachments::restore_draft(
             saved.text.clone(),
             saved.markers.clone(),
@@ -134,4 +189,20 @@ pub(super) fn recover(clients: &[Client]) -> Result<BTreeMap<Uuid, Draft>> {
         );
     }
     Ok(drafts)
+}
+
+/// Read a transition saved before an asynchronous completion was discarded.
+pub(super) fn reload(id: Uuid) -> Result<Option<Saved>> {
+    let path = root()?.join(format!("{id}.json"));
+    if !path.try_exists()? {
+        return Ok(None);
+    }
+    let bytes =
+        super::super::drafts::read_private(&path, 2 * voyage_protocol::vessel::MAX_VESSEL_BODY)?;
+    let saved: Saved = serde_json::from_slice(&bytes)
+        .map_err(|_| anyhow::anyhow!("Invalid saved new-voyage draft; original file preserved"))?;
+    ensure!(saved.id == id, "Saved draft identity mismatch");
+    saved.validate_identity()?;
+    super::super::attachments::validate_set(&saved.images)?;
+    Ok(Some(saved))
 }
