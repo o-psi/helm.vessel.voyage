@@ -80,7 +80,9 @@ impl App {
                     .intersects(KeyModifiers::ALT | KeyModifiers::SHIFT)
             {
                 let text = self.new_drafts[&id].composer.text.clone();
-                if text.trim_start().starts_with('/') {
+                if text.trim_start().starts_with('/')
+                    && self.new_drafts[&id].saved.images.is_empty()
+                {
                     self.draft_command(id, text.trim())?;
                 } else {
                     self.send_new_draft()?;
@@ -122,21 +124,15 @@ impl App {
                 KeyCode::Delete => draft.composer.delete(),
                 KeyCode::Home => draft.composer.line_start(),
                 KeyCode::End => draft.composer.line_end(),
-                KeyCode::Left => {
-                    draft.composer.cursor = draft.composer.text[..draft.composer.cursor]
-                        .char_indices()
-                        .next_back()
-                        .map_or(0, |(i, _)| i)
-                }
-                KeyCode::Right => {
-                    if let Some(ch) = draft.composer.text[draft.composer.cursor..].chars().next() {
-                        draft.composer.cursor += ch.len_utf8();
-                    }
-                }
+                KeyCode::Left => draft.composer.move_left(),
+                KeyCode::Right => draft.composer.move_right(),
                 _ => return Ok(true),
             },
             _ => return Ok(true),
         }
+        super::super::attachments::sync_images(&draft.composer, &mut draft.saved.images)?;
+        draft.saved.markers =
+            (!draft.saved.images.is_empty()).then(|| draft.composer.markers.clone());
         draft.saved.text = draft.composer.text.clone();
         storage::save(&draft.saved)?;
         Ok(true)

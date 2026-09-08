@@ -100,7 +100,7 @@ pub(super) fn recover(clients: &[Client]) -> Result<BTreeMap<Uuid, Draft>> {
             &path,
             2 * voyage_protocol::vessel::MAX_VESSEL_BODY,
         )?;
-        let saved: Saved = serde_json::from_slice(&bytes).map_err(|_| {
+        let mut saved: Saved = serde_json::from_slice(&bytes).map_err(|_| {
             anyhow::anyhow!("Invalid saved new-voyage image draft; original file preserved")
         })?;
         ensure!(saved.id == id, "draft identity mismatch");
@@ -115,9 +115,13 @@ pub(super) fn recover(clients: &[Client]) -> Result<BTreeMap<Uuid, Draft>> {
         let Some(route) = routes.iter().position(|r| r == &saved.route) else {
             continue;
         };
-        let mut composer = composer::Composer::default();
-        composer.text = saved.text.clone();
-        composer.cursor = composer.text.len();
+        let composer = super::super::attachments::restore_draft(
+            saved.text.clone(),
+            saved.markers.clone(),
+            &saved.images,
+        )?;
+        saved.text = composer.text.clone();
+        saved.markers = (!saved.images.is_empty()).then(|| composer.markers.clone());
         drafts.insert(
             id,
             Draft {

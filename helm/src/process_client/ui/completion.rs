@@ -435,7 +435,7 @@ impl App {
         if self
             .selected
             .and_then(|t| self.views.get(&t))
-            .is_some_and(|v| v.pending.is_some() && !v.images.is_empty())
+            .is_some_and(|v| !v.images.is_empty())
         {
             return Ok(false);
         }
@@ -467,8 +467,7 @@ impl App {
                 {
                     let target = self.selected.expect("completion target");
                     let view = self.views.get_mut(&target).expect("completion view");
-                    view.draft.text = text.clone();
-                    view.draft.cursor = text.len();
+                    view.draft.set_text(text.clone());
                     drafts::save(&self.clients[target.route], view)?;
                 }
             }

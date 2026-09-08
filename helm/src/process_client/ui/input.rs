@@ -3,7 +3,7 @@ use super::*;
 impl App {
     pub(super) fn input(&mut self, event: Event) -> Result<()> {
         self.sync_interactions();
-        if self.attachment_input(&event)? {
+        if self.paste_input(&event)? {
             return Ok(());
         }
         match &event {
@@ -198,17 +198,8 @@ impl App {
                 KeyCode::Delete => view.draft.delete(),
                 KeyCode::Home => view.draft.line_start(),
                 KeyCode::End => view.draft.line_end(),
-                KeyCode::Left => {
-                    view.draft.cursor = view.draft.text[..view.draft.cursor]
-                        .char_indices()
-                        .next_back()
-                        .map_or(0, |(index, _)| index)
-                }
-                KeyCode::Right => {
-                    if let Some(ch) = view.draft.text[view.draft.cursor..].chars().next() {
-                        view.draft.cursor += ch.len_utf8();
-                    }
-                }
+                KeyCode::Left => view.draft.move_left(),
+                KeyCode::Right => view.draft.move_right(),
                 KeyCode::Up => view.history.navigate(&mut view.draft, true),
                 KeyCode::Down => view.history.navigate(&mut view.draft, false),
                 KeyCode::PageUp => view.scroll = view.scroll.saturating_add(10),
@@ -226,6 +217,7 @@ impl App {
             },
             _ => return Ok(()),
         }
+        super::attachments::sync_images(&view.draft, &mut view.images)?;
         drafts::save(&self.clients[target.route], view)
     }
 }

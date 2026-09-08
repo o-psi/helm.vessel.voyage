@@ -409,26 +409,32 @@ impl App {
                                 ));
                         if rejected
                             && !pending.preserve_draft
+                            && view.images.is_empty()
                             && (view.draft.text.is_empty() || view.draft.text.trim() == "/receipt")
                         {
-                            view.draft.text = pending.draft.clone();
-                            view.draft.cursor = view.draft.text.len();
+                            view.draft.set_text(pending.draft.clone());
                         }
-                        if !rejected
-                            && !pending.preserve_draft
-                            && !pending.draft.trim_start().starts_with('/')
-                        {
-                            view.history.record(&pending.draft);
+                        if !rejected && !pending.preserve_draft {
+                            if let Some(voyage_protocol::vessel::VoyageCommand::SubmitContent {
+                                content,
+                                ..
+                            }) = pending.original.as_deref()
+                            {
+                                view.history.record(&voyage_runtime::images::text(content));
+                            } else if !pending.draft.trim_start().starts_with('/') {
+                                view.history.record(&pending.draft);
+                            }
                         }
                         let same_image_draft = super::attachments::pending_matches(pending, view);
                         if !rejected
                             && !pending.preserve_draft
-                            && view.draft.text == pending.draft
-                            && (pending
-                                .original
-                                .as_deref()
-                                .is_none_or(|c| !super::attachments::is_image_submission(c))
-                                || same_image_draft)
+                            && (same_image_draft
+                                || (pending
+                                    .original
+                                    .as_deref()
+                                    .is_none_or(|c| !super::attachments::is_image_submission(c))
+                                    && view.images.is_empty()
+                                    && view.draft.text == pending.draft))
                         {
                             view.draft.take();
                         }

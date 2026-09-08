@@ -10,6 +10,7 @@ mod inference;
 mod input;
 mod interactions;
 mod lifecycle;
+mod paste;
 mod reconcile;
 mod transcript;
 mod updates;
@@ -44,7 +45,8 @@ use std::{
 use tokio::sync::mpsc;
 
 pub(super) struct App {
-    attachment_modal: Option<attachments::Modal>,
+    clipboard_pending: Option<paste::PendingPaste>,
+    clipboard_blocked: bool,
     clients: Vec<Client>,
     new_chat_config: Option<crate::Config>,
     views: BTreeMap<Target, View>,
@@ -122,7 +124,8 @@ pub async fn run_with_notice(
     let (sender, mut receiver) = mpsc::channel(64);
     let jobs = observe::spawn(&clients, sender.clone());
     let mut app = App {
-        attachment_modal: None,
+        clipboard_pending: None,
+        clipboard_blocked: false,
         clients,
         new_chat_config,
         views: BTreeMap::new(),
@@ -167,6 +170,7 @@ pub async fn run_with_notice(
     let mut repaint = tokio::time::interval(Duration::from_millis(100));
     let result = async {
         while !app.quit {
+            app.poll_clipboard();
             app.sync_completion();
             app.refresh_transcript();
             tokio::select! {
@@ -199,10 +203,11 @@ pub async fn run_with_notice(
         for (target, view) in &app.views { drafts::save(&app.clients[target.route], view)?; }
         Ok(())
     }.await;
+    let clipboard_cleanup = app.finish_clipboard().await;
     for job in jobs {
         job.abort();
     }
-    result
+    result.and(clipboard_cleanup)
 }
 
 impl App {

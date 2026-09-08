@@ -1,3 +1,4 @@
+//! Rich draft editing shared with the normal composer paste path.
 use super::*;
 
 impl App {
@@ -12,7 +13,6 @@ impl App {
             .saved
             .images)
     }
-
     pub(in crate::process_client::ui) fn ensure_draft_images_editable(
         &self,
         id: Uuid,
@@ -24,52 +24,37 @@ impl App {
         );
         Ok(())
     }
-
-    pub(in crate::process_client::ui) fn set_new_draft_images(
+    pub(in crate::process_client::ui) fn new_draft_composer_mut(
         &mut self,
         id: Uuid,
+    ) -> Option<&mut composer::Composer> {
+        self.new_drafts
+            .get_mut(&id)
+            .map(|draft| &mut draft.composer)
+    }
+    pub(in crate::process_client::ui) fn copy_new_draft_images(
+        &self,
+        id: Uuid,
+    ) -> Result<(composer::Composer, Vec<super::super::attachments::Image>)> {
+        let draft = self.new_drafts.get(&id).context("Draft unavailable")?;
+        Ok((draft.composer.clone(), draft.saved.images.clone()))
+    }
+    pub(in crate::process_client::ui) fn retain_new_draft_images(
+        &mut self,
+        id: Uuid,
+        composer: composer::Composer,
         images: Vec<super::super::attachments::Image>,
     ) -> Result<()> {
         self.ensure_draft_images_editable(id)?;
+        super::super::attachments::content(&composer, &images)?;
         let draft = self.new_drafts.get_mut(&id).context("Draft unavailable")?;
         let mut saved = draft.saved.clone();
         saved.images = images;
-        saved.text = draft.composer.text.clone();
+        saved.text = composer.text.clone();
+        saved.markers = (!saved.images.is_empty()).then(|| composer.markers.clone());
         storage::save(&saved)?;
         draft.saved = saved;
+        draft.composer = composer;
         Ok(())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn attachment_legacy_saved_draft_omits_empty_images() {
-        let saved = Saved {
-            id: Uuid::from_u128(1),
-            route: "local".into(),
-            workspace: "/tmp".into(),
-            config: None,
-            explicit: Default::default(),
-            selection: None,
-            confirmation: None,
-            text: " keep\n".into(),
-            images: Vec::new(),
-            start: None,
-            start_attempted: false,
-            process: None,
-            turn: Uuid::from_u128(2),
-            submit: None,
-            attempted: false,
-            finished: false,
-            receipt: None,
-        };
-        let value = serde_json::to_value(&saved).unwrap();
-        assert!(value.get("images").is_none());
-        let recovered: Saved = serde_json::from_value(value).unwrap();
-        assert!(recovered.images.is_empty());
-        assert_eq!(recovered.text, saved.text);
     }
 }

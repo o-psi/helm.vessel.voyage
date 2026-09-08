@@ -3,7 +3,6 @@ use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect},
     style::{Color, Style},
-    text::Text,
     widgets::{Block, Borders, Paragraph},
 };
 
@@ -16,7 +15,7 @@ impl App {
         let rows = Layout::vertical([
             Constraint::Length(4),
             Constraint::Min(2),
-            Constraint::Length(7),
+            Constraint::Length(7 + draft.saved.images.len() as u16),
             Constraint::Length(4),
         ])
         .split(area);
@@ -48,11 +47,17 @@ impl App {
             .borders(Borders::ALL)
             .title(format!(" First message · {} ", self.attachment_summary()));
         let inner = block.inner(rows[2]);
+        let details = self.attachment_details();
+        let detail_rows = (details.len() as u16).min(inner.height.saturating_sub(2));
         let body = Rect {
-            height: inner.height.saturating_sub(1),
+            height: inner.height.saturating_sub(1 + detail_rows),
             ..inner
         };
         frame.render_widget(block, rows[2]);
+        frame.render_widget(
+            Paragraph::new(details.join("\n")).style(Style::default().fg(Color::Cyan)),
+            Rect::new(inner.x, body.bottom(), inner.width, detail_rows),
+        );
         self.draw_inference_controls(
             frame,
             Rect::new(inner.x, inner.bottom().saturating_sub(1), inner.width, 1),
@@ -64,7 +69,7 @@ impl App {
         let scroll = row.saturating_sub(body.height.saturating_sub(1));
         frame.render_widget(
             Paragraph::new(presentation::wrap(
-                Text::raw(safe(&draft.composer.text)),
+                super::super::attachments::styled_draft(&draft.composer),
                 body.width,
             ))
             .scroll((scroll, 0)),

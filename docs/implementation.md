@@ -13,36 +13,26 @@ by Helm through a local or remote Vessel. A local runtime socket directly expose
 to Helm, a TUI task per session, or agent loops inside Vessel do not satisfy it.
 Uncommitted experiments and historical issue closure are not implementation evidence.
 
-## Images and screenshots (#74)
+## Direct image paste (#74)
 
-The [image workflow](multimodal-implementation.md) now spans the connected Helm
-composer, independently deduplicated bounded uploads, authorized public/private
-Vessel routing, runtime admission, immutable session-scoped raster storage,
-canonical ordered references, resume/branch retention and native provider encoding.
-F6 add/remove preserves text, supports image-only first sends and retains private
-bytes across Helm restarts. Uncertain submissions resolve without replay. Explicit
-Linux screenshot confirmation obeys local policy and does not send automatically.
+The [image workflow](multimodal-implementation.md) now uses direct Ctrl+V/Alt+V
+clipboard acquisition and pasted image paths in the normal new/existing composer.
+This supersedes the earlier F6/modal interaction. The modal, its parser/rendering,
+and the in-app screenshot-capture helper were removed. Screenshots are captured
+with OS tools and pasted like any other clipboard image.
 
-Observed local verification: **44 unit tests passed** (19 Helm, 17 Voyage, 8
-protocol); strict Clippy across affected packages/all targets, development builds,
-changed-source formatting, Markdown links and diff checks passed. The supervised
-workflow passed separately against synthetic OpenAI Chat, Responses, Anthropic and
-ChatGPT OAuth endpoints, including malformed files, image-only/ordered sends,
-exact deduplication/conflicts, authorization and cross-session refusal, unsupported
-models, runtime suspension, branch persistence and provider-error privacy. A real
-controlling-PTY Helm workflow passed add/remove, metadata display, private draft
-permissions, restart without the original file, first/existing-session sends and
-screenshot confirmation cancellation. Fixture child cleanup was observed.
+The validated storage/transport/provider foundation remains: bounded authenticated
+uploads, metadata-only exact admission, SHA-bound private blobs, resume/branch
+retention and native encoders. The editor now owns inline image elements rather
+than interpreting label text as authority; caret edits, ordered multipart sends,
+legacy draft migration and asynchronous/cancellable input preserve user text and
+immutable pending command identities.
 
-Evidence is retained locally under `.local-git/evidence/issue-74/`, with final
-supervised runs `/tmp/voyage-images-jusg7ase`, `/tmp/voyage-images-p22kq0p_`,
-`/tmp/voyage-images-8kp0as1r`, `/tmp/voyage-images-1y1zhjrl` and PTY run
-`/tmp/hic-kenq7xr_`. These are offline Linux checks: no paid/live-provider calls,
-real operator desktop capture, deployed HTTPS test or native macOS/Windows claim.
-Screenshot subprocess fixtures verify bounds and cleanup without collecting
-personal pixels. Codex image input, active image steering, image-bearing owner
-transfer and non-Linux automatic capture refuse explicitly; see the workflow guide.
-Existing unrelated deleted scripts/tests and release artifacts were preserved.
+Verification commands and scope are recorded in the image guide. Unit and real-PTY
+fixtures use synthetic clipboard utilities/pixels and loopback providers, not the
+operator's clipboard or live accounts. Linux evidence does not establish native
+macOS/Windows/WSL behavior. Existing unrelated script/test deletions and release
+artifacts are preserved.
 
 ## Native Vessel coordination (#186)
 
