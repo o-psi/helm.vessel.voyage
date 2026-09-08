@@ -14,6 +14,8 @@ struct Draft {
     text: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     images: Vec<super::attachments::Image>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    markers: Option<Vec<crate::composer::ImageMarker>>,
     pending: Option<Pending>,
     #[serde(default)]
     acknowledged_completion: Option<uuid::Uuid>,
@@ -126,8 +128,7 @@ pub fn load(client: &Client, view: &mut View) -> Result<()> {
         .map_err(|_| anyhow::anyhow!("Invalid saved interface draft; original file preserved"))?;
     super::attachments::validate_set(&draft.images)?;
     view.images = draft.images;
-    view.draft.text = draft.text;
-    view.draft.cursor = view.draft.text.len();
+    view.draft = super::attachments::restore_draft(draft.text, draft.markers, &view.images)?;
     view.pending = draft.pending;
     view.acknowledged_completion = draft.acknowledged_completion;
     Ok(())
@@ -138,6 +139,7 @@ pub fn save(client: &Client, view: &View) -> Result<()> {
     let draft = Draft {
         text: view.draft.text.clone(),
         images: view.images.clone(),
+        markers: (!view.images.is_empty()).then(|| view.draft.markers.clone()),
         pending: view.pending.clone(),
         acknowledged_completion: view.acknowledged_completion,
     };

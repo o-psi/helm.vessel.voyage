@@ -33,6 +33,16 @@ impl App {
 
     fn send_command(&mut self) -> Result<()> {
         let target = self.selected.context("create or select a voyage first")?;
+        self.ensure_paste_finished(super::paste::Destination::Live(target))?;
+        if !self
+            .views
+            .get(&target)
+            .context("waiting for voyage")?
+            .images
+            .is_empty()
+        {
+            return self.send_image_turn(target);
+        }
         let draft = self
             .views
             .get(&target)
@@ -263,7 +273,7 @@ impl App {
                 prompt: draft.clone(),
             }
         };
-        let command = super::attachments::prepare(command, &view.images)?;
+        let command = super::attachments::prepare(command, &view.draft, &view.images)?;
         view.pending = Some(Pending {
             command_id,
             original: Some(Box::new(command.clone())),

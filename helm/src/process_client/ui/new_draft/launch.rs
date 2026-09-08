@@ -108,6 +108,11 @@ async fn advance_mode(
                 expires_at_ms: super::super::super::frontend::deadline()?,
                 prompt: saved.text.clone(),
             },
+            &super::super::attachments::restore_draft(
+                saved.text.clone(),
+                saved.markers.clone(),
+                &saved.images,
+            )?,
             &saved.images,
         )?);
     }

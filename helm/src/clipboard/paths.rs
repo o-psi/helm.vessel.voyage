@@ -14,7 +14,7 @@ pub(super) fn parse(text: &str) -> Option<Vec<PathBuf>> {
     // URI lists and Windows paths are line-oriented; backslashes are literal.
     if text.lines().all(|line| {
         let line = line.trim().trim_matches('"');
-        line.starts_with("file:") || windows_drive(line)
+        line.starts_with("file:") || windows_drive(line) || line.starts_with(r"\\")
     }) {
         for line in text.lines() {
             paths.push(one(line.trim().trim_matches('"'))?);
@@ -63,7 +63,7 @@ fn windows_drive(s: &str) -> bool {
     b.len() >= 3 && b[0].is_ascii_alphabetic() && b[1] == b':' && matches!(b[2], b'\\' | b'/')
 }
 fn one(s: &str) -> Option<PathBuf> {
-    if s.contains(['\0', '\n', '\r']) {
+    if s.chars().any(char::is_control) || (s.contains("://") && !s.starts_with("file:")) {
         return None;
     }
     if s.starts_with("file:") {
@@ -84,7 +84,7 @@ fn one(s: &str) -> Option<PathBuf> {
         }
         let path = url.to_file_path().ok()?;
         let value = path.to_str()?;
-        if value.contains('\0') {
+        if value.chars().any(char::is_control) {
             return None;
         }
         #[cfg(not(windows))]
@@ -92,6 +92,16 @@ fn one(s: &str) -> Option<PathBuf> {
             return one(&value[1..]);
         }
         return Some(path);
+    }
+    if s.starts_with(r"\\") {
+        #[cfg(windows)]
+        {
+            return Some(PathBuf::from(s));
+        }
+        #[cfg(not(windows))]
+        {
+            return None;
+        } // Never guess a remote UNC mount on Unix.
     }
     if windows_drive(s) {
         #[cfg(target_os = "linux")]
@@ -107,7 +117,24 @@ fn one(s: &str) -> Option<PathBuf> {
             return Some(PathBuf::from(s));
         }
     }
+    if let Some(tail) = s.strip_prefix("~/") {
+        return dirs::home_dir().map(|home| home.join(tail));
+    }
     if s.starts_with('/') || s.starts_with("./") || s.starts_with("../") {
+        return Some(PathBuf::from(s));
+    }
+    // One relative raster filename/path is a candidate, not arbitrary prose.
+    // The caller checks existence, real type and regular-file safety before attaching.
+    if PathBuf::from(s)
+        .extension()
+        .and_then(|x| x.to_str())
+        .is_some_and(|x| {
+            matches!(
+                x.to_ascii_lowercase().as_str(),
+                "png" | "jpg" | "jpeg" | "webp"
+            )
+        })
+    {
         return Some(PathBuf::from(s));
     }
     None
@@ -151,5 +178,30 @@ mod tests {
             parse("file:///C:/Users/a.png").unwrap(),
             vec![PathBuf::from("/mnt/c/Users/a.png")]
         );
+    }
+}
+
+#[cfg(test)]
+mod raster_path_tests {
+    use super::*;
+    #[test]
+    fn relative_rasters_are_candidates_but_protocols_and_controls_are_not() {
+        assert_eq!(
+            parse("photo.png").unwrap(),
+            vec![PathBuf::from("photo.png")]
+        );
+        assert_eq!(
+            parse("assets/photo.jpeg").unwrap(),
+            vec![PathBuf::from("assets/photo.jpeg")]
+        );
+        for text in [
+            "https://example.com/a.png",
+            "ftp://example.com/a.png",
+            "/tmp/a\u{1b}.png",
+            "file:///tmp/a%1bb.png",
+            "explain photo.png",
+        ] {
+            assert!(parse(text).is_none(), "{text:?}");
+        }
     }
 }

@@ -57,32 +57,31 @@ to switch requests when not editing. Clicks outside the sidebar do not move focu
 Pending or expired requests cannot submit another response; keyboard controls
 remain available.
 
-## Image drafts
+## Paste images directly
 
-In an existing-voyage or new-voyage composer, **Ctrl+I** opens the image modal.
-**F6** is an equivalent fallback for terminals that encode Ctrl+I as Tab; ordinary
-Tab navigation is unchanged. Enter a local image path (optionally `add PATH`) and
-press Enter, or enter `remove INDEX` using the displayed one-based index. Paths
-with spaces need no shell quoting. Files are read on the computer running Helm,
-even when the voyage runs remotely. Escape returns without replacing composer
-text or removing attachments.
+Copy an image or take an OS screenshot, then **Ctrl+V** or **Alt+V** in the normal
+composer. Both new and existing voyages accept images. A delivered Shift+Insert
+key also invokes paste. Terminal Ctrl+Shift+V/Cmd+V can be intercepted by the
+terminal; if an image-only paste produces nothing, use Alt+V.
 
-Up to four PNG, JPEG or WebP images may be attached, with a combined 2 MiB limit.
-The modal and saved transcript show names, media types, byte sizes and dimensions.
-An image-only first message is supported. Image steering into an active run is
-not supported: the send is refused and the full draft is kept.
+Images appear as owned **[Image N]** elements at the caret. Type before/after them;
+Left/Right crosses each element and Backspace/Delete removes it without losing
+surrounding text. Name, actual type, size and dimensions appear in normal composer
+rows. Literal lookalike text is not an attachment. Enter sends ordered text/images,
+including image-only first turns.
 
-The modal's `screenshot` command first shows a separate warning that the entire
-Helm-local display may contain secrets. Type **CAPTURE** and press Enter to
-confirm; Escape cancels. Capture uses Helm-local policy and the bounded native
-screenshot helper, not a remote tool or a shell command. It adds an attachment
-only: you must return to the composer and explicitly send. Capture currently
-blocks the UI during the helper's bounded capture window.
+Pasting exact local image paths, quoted/escaped paths, or local file URLs also
+attaches files; ordinary prose/URLs remain text. Clipboard and file reads happen
+on the Helm host, not the remote Vessel. Up to four PNG/JPEG/WebP images and 2 MiB
+combined are supported. Linux needs wl-clipboard (Wayland) or xclip (X11) for native
+clipboard acquisition; path paste works without those clipboard utilities.
 
-Images are saved in private Helm draft files with immutable upload UUIDs and
-SHA-256 digests, not canonical messages or pending public command envelopes.
-After saving the frozen draft and command identity, Helm uploads bounded files
-and submits metadata references. The images and text stay frozen while delivery
-is unresolved. Recovery checks the original command identity; it never repeats
-the submission or resumes uploads. A definite rejection keeps the complete draft
-for correction. Unfinished immutable uploads do not execute a turn.
+Reads are asynchronous: typing keeps its position relative to the pending paste,
+and Escape cancels. A send waits for the paste to finish/cancel. Private drafts
+retain bytes after the source clipboard/file disappears; older image drafts migrate
+without rewriting pending command identities. Delivery recovery never replays an
+uncertain submission. See [Images and pasted screenshots](../docs/multimodal-implementation.md)
+for platform caveats, resource limits and validation.
+
+There is no image modal, F6 image control, or in-app screenshot-capture command.
+Pasting a screenshot already in the clipboard needs no extra capture confirmation.

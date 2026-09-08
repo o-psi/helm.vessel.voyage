@@ -5,24 +5,24 @@ native-platform validation. Focused regression and explicitly enabled live check
 are described in [quality](quality.md). The [implementation ledger](implementation.md)
 records delivery evidence and its limits.
 
-## Images and screenshots
+## Direct image paste
 
-Connected Helm composers support PNG, JPEG and WebP attachments through **F6**
-(or Ctrl+I where distinct from Tab). Text, image-only first turns, attachment removal,
-private draft persistence and no-replay delivery recovery use the same supervised
-Vessel path. Bounded uploads are separate from metadata-only command admission;
-Voyage verifies signatures, complete rasters, dimensions and SHA-256 and retains
-private session-scoped blobs across resume and Vessel branching. Journal schema 9
-fences older text-only executables from rewriting image history.
+The normal new/existing Helm composers accept **Ctrl+V / Alt+V** clipboard input
+and pasted local image paths. Native clipboard acquisition is asynchronous and
+cancellable, with a left-biased caret anchor so continued typing retains the
+requested insertion location. Owned `[Image N]` elements support atomic cursor
+movement/removal and exact text/image interleaving. Normal metadata rows display
+name/type/size/dimensions. The image modal and in-app screenshot-capture flow have
+been removed; use OS screenshot tools and paste their results.
 
-Native Chat Completions, Responses, ChatGPT OAuth and Anthropic encode ordered
-content; unsupported/unknown models and Codex compatibility refuse images before
-dispatch. The composer caps attachments at four and 2 MiB total; retained image
-occurrences and serialized provider requests are also bounded. Linux screenshots
-require a separate explicit local confirmation and obey Helm-local policy. No
-capture is automatic and no image is sent merely by capturing it. See
-[Images and screenshots](multimodal-implementation.md) for commands, platform,
-transfer/steering limits and verification scope.
+Private drafts retain verified bytes and marker ownership, including legacy image
+draft migration without changing immutable pending commands. The existing bounded,
+authorized Vessel upload/admission path, session-scoped SHA-verified raster storage,
+resume/branch retention and native provider encoders remain in place. Unsupported
+models, active image steering and unsupported transports fail with the draft intact.
+Native clipboard reads are explicit local input, never background model tools.
+See [Images and pasted screenshots](multimodal-implementation.md) for platform,
+resource, terminal-key and verification details.
 
 ## Process ownership
 

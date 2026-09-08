@@ -45,7 +45,14 @@ impl Reader {
         command.env_clear();
         for key in [
             "PATH",
+            "LANG",
+            "LC_CTYPE",
             "SystemRoot",
+            "WINDIR",
+            "TEMP",
+            "TMP",
+            "WSL_INTEROP",
+            "WSL_DISTRO_NAME",
             "WAYLAND_DISPLAY",
             "DISPLAY",
             "XDG_RUNTIME_DIR",
@@ -204,6 +211,7 @@ fn text(bytes: Vec<u8>) -> Result<Content> {
 
 #[cfg(target_os = "linux")]
 async fn linux(r: &Reader) -> Result<Content> {
+    let mut available = false;
     for (program, list_args, wayland) in [
         ("wl-paste", vec!["--list-types"], true),
         (
@@ -215,6 +223,7 @@ async fn linux(r: &Reader) -> Result<Content> {
         let Some(types) = r.run(program, &list_args, TYPES).await? else {
             continue;
         };
+        available = true;
         let types =
             std::str::from_utf8(&types).map_err(|_| anyhow::anyhow!("Invalid clipboard types"))?;
         for (mime, extension) in [
@@ -222,6 +231,7 @@ async fn linux(r: &Reader) -> Result<Content> {
             ("image/jpeg", "jpg"),
             ("image/webp", "webp"),
             ("text/uri-list", ""),
+            ("x-special/gnome-copied-files", ""),
             ("text/plain;charset=utf-8", ""),
             ("UTF8_STRING", ""),
             ("text/plain", ""),
@@ -254,12 +264,12 @@ async fn linux(r: &Reader) -> Result<Content> {
                     bytes,
                 });
             }
-            if mime == "text/uri-list" {
+            if matches!(mime, "text/uri-list" | "x-special/gnome-copied-files") {
                 let value = std::str::from_utf8(&bytes)
                     .map_err(|_| anyhow::anyhow!("Invalid clipboard file list"))?;
                 let value = value
                     .lines()
-                    .filter(|l| !l.starts_with('#') && !l.is_empty())
+                    .filter(|l| !l.starts_with('#') && !l.is_empty() && *l != "copy" && *l != "cut")
                     .collect::<Vec<_>>()
                     .join("\n");
                 if let Some(paths) = pasted_paths(&value) {
@@ -270,6 +280,10 @@ async fn linux(r: &Reader) -> Result<Content> {
             return text(bytes);
         }
     }
+    ensure!(
+        available,
+        "Clipboard unavailable: check wl-paste/xclip, desktop access and copied contents; or paste an image path"
+    );
     Ok(Content::Empty)
 }
 
@@ -282,7 +296,7 @@ pub(crate) fn pasted_paths(text: &str) -> Option<Vec<PathBuf>> {
 async fn windows(r: &Reader) -> Result<Content> {
     // Constant scripts only. No clipboard content is ever interpreted as code.
     const FILES: &str = r#"$ErrorActionPreference='Stop'; Add-Type -AssemblyName System.Windows.Forms; $v=[Windows.Forms.Clipboard]::GetFileDropList(); if($v.Count -eq 0){exit 0}; $s=[string]::Join("`n",$v); $e=[Text.UTF8Encoding]::new($false); if($e.GetByteCount($s) -gt 65536){exit 2}; $b=$e.GetBytes($s); [Console]::OpenStandardOutput().Write($b,0,$b.Length)"#;
-    const PNG: &str = r#"$ErrorActionPreference='Stop'; Add-Type -AssemblyName System.Windows.Forms; Add-Type -TypeDefinition 'public class ClipboardBoundedStream : System.IO.MemoryStream { public override void Write(byte[] b,int o,int n) { if(n>2097152-Length) throw new System.IO.IOException(); base.Write(b,o,n); } public override void WriteByte(byte b) { if(Length>=2097152) throw new System.IO.IOException(); base.WriteByte(b); } }'; $i=[Windows.Forms.Clipboard]::GetImage(); if($null -eq $i){exit 0}; $s=[ClipboardBoundedStream]::new(); try { $i.Save($s,[Drawing.Imaging.ImageFormat]::Png); $s.Position=0; $s.CopyTo([Console]::OpenStandardOutput()) } finally { $s.Dispose(); $i.Dispose() }"#;
+    const PNG: &str = r#"$ErrorActionPreference='Stop'; Add-Type -AssemblyName System.Windows.Forms; Add-Type -TypeDefinition 'public class ClipboardBoundedStream : System.IO.MemoryStream { public override void Write(byte[] b,int o,int n) { if(n>2097152-Length) throw new System.IO.IOException(); base.Write(b,o,n); } public override void WriteByte(byte b) { if(Length>=2097152) throw new System.IO.IOException(); base.WriteByte(b); } }'; $i=[Windows.Forms.Clipboard]::GetImage(); if($null -eq $i){exit 0}; $w=[long]$i.Width; $h=[long]$i.Height; if($w -le 0 -or $h -le 0 -or $w -gt 8192 -or $h -gt 8192 -or ($w*$h) -gt 16777216){$i.Dispose(); exit 2}; $s=[ClipboardBoundedStream]::new(); try { $i.Save($s,[Drawing.Imaging.ImageFormat]::Png); $s.Position=0; $s.CopyTo([Console]::OpenStandardOutput()) } finally { $s.Dispose(); $i.Dispose() }"#;
     const STRING: &str = r#"$ErrorActionPreference='Stop'; Add-Type -AssemblyName System.Windows.Forms; $s=[Windows.Forms.Clipboard]::GetText(); $e=[Text.UTF8Encoding]::new($false); if($e.GetByteCount($s) -gt 65536){exit 2}; $b=$e.GetBytes($s); [Console]::OpenStandardOutput().Write($b,0,$b.Length)"#;
     for (script, limit, kind) in [(FILES, TEXT, 0), (PNG, IMAGE, 1), (STRING, TEXT, 2)] {
         let Some(bytes) = r
@@ -438,5 +452,68 @@ mod helper_tests {
         };
         let (result, ()) = tokio::join!(reader.run(program, &[], 9), cancel);
         assert!(result.is_err());
+    }
+}
+
+#[cfg(all(test, unix))]
+mod policy_tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+    #[tokio::test]
+    async fn explicit_read_only_input_obeys_hard_command_denial() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("clipboard-policy-fixture");
+        std::fs::write(&path, "#!/bin/sh\nprintf fixture").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let mut config = crate::Config::default();
+        config.access = Some(crate::config::AccessMode::ReadOnly);
+        let reader = Reader {
+            policy: crate::policy::Policy::new(&config, root.path().into()).unwrap(),
+            cancel: CancellationToken::new(),
+            deadline: Instant::now() + Duration::from_secs(1),
+        };
+        assert_eq!(
+            reader
+                .run(path.to_str().unwrap(), &[], 10)
+                .await
+                .unwrap()
+                .unwrap(),
+            b"fixture"
+        );
+        config.deny_commands.push("clipboard-policy-fixture".into());
+        let reader = Reader {
+            policy: crate::policy::Policy::new(&config, root.path().into()).unwrap(),
+            cancel: CancellationToken::new(),
+            deadline: Instant::now() + Duration::from_secs(1),
+        };
+        assert!(
+            reader
+                .run(path.to_str().unwrap(), &[], 10)
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("denied")
+        );
+    }
+    #[tokio::test]
+    async fn timeout_reaps_a_synthetic_helper() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("clipboard-timeout-fixture");
+        std::fs::write(&path, "#!/bin/sh\nwhile :; do :; done").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let reader = Reader {
+            policy: crate::policy::Policy::new(&crate::Config::default(), root.path().into())
+                .unwrap(),
+            cancel: CancellationToken::new(),
+            deadline: Instant::now() + Duration::from_millis(30),
+        };
+        assert!(
+            reader
+                .run(path.to_str().unwrap(), &[], 10)
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("timed out")
+        );
     }
 }

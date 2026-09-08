@@ -1,164 +1,188 @@
-# Images and screenshots
+# Images and pasted screenshots
 
-Implemented for [issue #74](https://github.com/o-psi/voyage/issues/74). Image input
-uses Helm's connected TUI, public Vessel routing, and a separately supervised
-Voyage. This is native multimodal input, not an image path embedded in a prompt.
+Image input is part of the **normal Helm composer**, not a dialog. The input path
+is local Helm acquisition → authenticated Vessel upload → private Voyage storage
+→ ordered provider content. See [issue #74](https://github.com/o-psi/voyage/issues/74).
 
-## Operator workflow
+## Paste into the input box
 
-1. In an existing-voyage or new-voyage composer, press **F6** (or **Ctrl+I** on
-   terminals that distinguish it from Tab).
-2. Enter a local PNG, JPEG or WebP path and press Enter. Paths containing spaces
-   need no shell quoting. Files are read on the **Helm host**, including when the
-   executing Vessel is remote. The modal shows name, actual media type, byte size
-   and dimensions. Enter `remove INDEX` to remove a displayed attachment.
-3. Escape returns to the composer without changing its text. Enter sends text and
-   attached images; a completely image-only first turn is supported. The composer
-   sends text followed by images in attachment order. The public API also supports
-   arbitrary ordered text/image interleaving.
+1. Copy an image, or take a screenshot with the operating system's screenshot tool.
+2. In either a new-voyage or existing-voyage composer, press **Ctrl+V** or **Alt+V**.
+   A delivered Shift+Insert key also invokes paste.
+3. The image appears as an owned **`[Image N]`** element at the cursor. Continue
+   typing before or after it. The composer also shows name, actual type, byte size
+   and dimensions in ordinary rows, without replacing the conversation.
+4. Press Enter to send. Image-only first messages work.
 
-Draft bytes are retained privately: changing or removing the original file does
-not change the draft. A pending image send freezes the complete draft. Reconnecting
-resolves its original command ID; it never replays an uncertain submission or
-resumes uploads automatically. Rejection retains the draft for correction and a
-new explicit send. Image steering during an active run is refused without consuming
-text or attachments; wait for completion before sending images.
+Left/Right cross image elements atomically. Backspace/Delete removes an adjacent
+owned element and its private draft attachment without deleting surrounding text.
+Typing the literal characters `[Image 1]` does **not** create an attachment. Image
+numbering follows document order. Sends retain true text/image interleaving; marker
+labels themselves are not inserted into the model's authored text.
 
-### Screenshots
+You can also paste an exact local image path, a quoted/escaped path containing
+spaces, or local `file://` URLs. Multiple explicit paths/URI-list entries are bounded
+by the same four-image limit. Terminal drag-and-drop works when the terminal sends
+usable path text. Missing paths remain text; existing malformed/unsafe raster files
+fail without replacing the draft. HTTP(S) URLs are not downloaded and ordinary
+prose is not treated as an attachment. Relative raster paths and `~/` paths are
+supported; WSL drive conversion assumes `/mnt/<drive>`. UNC strings are not mapped
+to guessed Unix network mounts.
 
-Enter `screenshot` in the image modal, review the full-display privacy warning,
-and type **CAPTURE** to confirm. Escape cancels the confirmation. Capture adds an
-image to the draft only; sending remains a separate action. Visible secrets cannot
-be removed by text redaction, so review the screen before confirming.
+**There is no image modal, F6 attachment workflow, `remove INDEX` command, or
+in-app `screenshot`/CAPTURE flow.** Capturing the screen is an OS action; pasting an
+already captured image does not capture anything new or require another capture
+confirmation.
 
-Capture is Helm-local and uses its invocation configuration when present, otherwise
-its local default configuration. It rechecks local policy, refuses read-only mode
-and denied commands, and refuses required process isolation rather than bypassing
-it to access the desktop. It never uses a remote runtime's credentials or shell.
-Linux Wayland uses `/usr/bin/grim`; Linux X11 uses `/usr/bin/maim`. A missing utility,
-missing display, desktop refusal, or unsupported platform produces an actionable
-error without changing the draft. Non-Linux automatic capture is unsupported.
+### Terminal paste versus native clipboard access
 
-Capture uses fixed arguments, suppresses subprocess diagnostics, bounds output and
-CPU/memory, restricts inherited environment to desktop variables, and observes child termination on failure or timeout. The UI currently
-waits synchronously for at most the five-second capture window; Escape cancellation
-is available **before** capture, not during that window. No capture is automatic.
+Ctrl+V/Alt+V are application clipboard actions when the terminal delivers those
+keys. Ctrl+Shift+V, Cmd+V or a terminal's Paste menu may instead send bracketed
+**text** paste. Helm handles that text directly and recognizes image paths in it.
+An exactly empty bracketed-paste event attempts native clipboard acquisition.
+Some terminals emit no event at all for an image-only clipboard; use Alt+V in that
+case. Normal nonempty text paste never reads an unrelated clipboard image.
+
+Clipboard reads happen on the **Helm host**, even when the executing Vessel is
+remote. Running Helm itself inside SSH does not magically forward the SSH client's
+image clipboard: use a local Helm connected to the remote Vessel, a deliberately
+configured clipboard/display bridge, or a path accessible to the Helm process.
+
+## Responsive acquisition and recovery
+
+Native reads run asynchronously. You can keep typing while a read completes; a
+left-biased editor anchor preserves the requested insertion location and rebases
+with subsequent edits. **Escape cancels** acquisition and retains the draft.
+Replacing/discarding the whole draft invalidates the pending insertion instead of
+pasting into a different message. A read pins its original voyage/draft identity.
+Sending that draft is refused until acquisition finishes or cancellation completes.
+Closing Helm cancels and waits for its clipboard reader; it does not cancel a voyage.
+
+Validated bytes are saved privately, not left dependent on the source clipboard
+or file. Drafts recover even if the original image disappears. Older text-plus-image
+records are migrated to owned inline elements; their immutable pending commands,
+IDs, image bytes and SHA-256 references are not rewritten. A pending image send
+freezes the complete draft. Reconnect checks the original command identity, without
+replaying uncertain submission or uploads. Rejection keeps the complete editable
+draft for a new explicit send.
+
+Plain prompt-history recall retains authored text, not image ownership. It is
+suppressed while the current composer owns images so it cannot silently replace
+an image draft. Durable draft/resume recovery retains the actual images.
+
+## Native clipboard backends
+
+| Host | Acquisition |
+|---|---|
+| Linux Wayland | `wl-paste` MIME discovery, then PNG/JPEG/WebP, file URI lists or UTF-8 text |
+| Linux X11 | `xclip` TARGETS discovery with the same supported content categories |
+| macOS | `osascript` PNG clipboard conversion into unique private temporary storage; `pbpaste` text fallback |
+| Windows / WSL | Static noninteractive PowerShell for clipboard file lists, bounded PNG output or text |
+
+Linux supports `text/uri-list` and GNOME copied-file lists; pasting a cut-file list
+does not move or delete the original files. Unknown/empty clipboard contents,
+missing helpers, denied commands, invalid data, overflow and timeouts produce a
+visible error while retaining existing text and images. Install **wl-clipboard**
+for Wayland or **xclip** for X11 when needed.
+
+Acquisition is an explicit local **input** operation and works in read-only mode;
+it does not grant the model permission to run clipboard tools. It rechecks local
+policy and command denials. Required process isolation refuses native helper access
+rather than silently bypassing desktop isolation. Helper environments contain only
+needed connection/platform variables, never provider credentials or loader injection
+variables; stderr is suppressed. Helpers have one shared five-second deadline,
+bounded output, and observed kill/reap cleanup on cancellation, overflow or timeout.
+No clipboard is read in the background or on ordinary text paste.
+
+Linux fixtures establish the tested behavior below. macOS/Windows/WSL backend code
+is present, but this work does **not** claim native platform certification or remove
+existing platform restrictions elsewhere in Helm/Vessel private storage and transport.
 
 ## Limits
 
 | Boundary | Limit |
 |---|---|
-| Supported files | Single-frame PNG, JPEG, WebP; actual signature and full raster verified |
-| One image / total images in a turn | 2 MiB / 2 MiB |
-| Images / ordered parts per turn | 4 / 16 |
-| Authored turn text | 64 KiB |
-| Dimensions | At most 8192 on either axis and 16,777,216 pixels |
-| Decoded raster buffer | At most 64 MiB; decoder bookkeeping is additional |
+| Supported images | Fully decoded single-frame PNG, JPEG, WebP; signatures override extensions |
+| Image bytes / total images per turn | 2 MiB / 2 MiB |
+| Images / ordered content parts per turn | 4 / 16 |
+| Composer / authored text | 64 KiB |
+| Dimensions | At most 8192 per axis and 16,777,216 pixels |
+| Decoded raster output | At most 64 MiB; decoder bookkeeping is additional |
 | Progressive JPEG work | At most 32 scans |
-| Retained image occurrences in one provider request | 4, totaling at most 2 MiB; repeated references count again |
-| Serialized provider request | 8 MiB including tools, text escaping and encoded images |
-| Public and private wire envelope | Existing 4 MiB limit, unchanged |
-| Private image database | 64 MiB including database overhead; at most 128 immutable uploads |
+| Clipboard metadata / text/file lists | 32 KiB / 64 KiB |
+| Clipboard helper lifetime | One shared five-second deadline across fallbacks |
+| Images retained in one provider request | 4 occurrences, totaling at most 2 MiB; duplicates count again |
+| Final serialized provider request | 8 MiB including escaping, tools and encoded images |
+| Public/private transport envelope | Existing 4 MiB limit |
+| Private image database | 64 MiB including overhead; at most 128 immutable uploads |
 | Private Helm draft | 8 MiB |
 
 If retained images exceed a request limit, compact older image turns or start a new
-voyage. Unreferenced uploads are bounded by the session store limit and retained
-until session deletion; removing a draft attachment does not delete a blob already
-uploaded. Clear/compact does not silently reclaim blobs needed by retained evidence.
+voyage. Removing an inline element removes it from the draft, not from an already
+accepted turn. Uploaded blobs remain bounded and retained until session deletion;
+clear/compact does not silently reclaim evidence-bearing blobs.
 
-## Transport, admission and storage
+## Transport, persistence and providers
 
-`UploadImage` transfers a bounded canonical-base64 file through authenticated Vessel
-routing. It requires Execute authority on both public and private routes. Voyage
-fully decodes and verifies the raster and stores it in a private session-bound
-SQLite database under `journal/images/`. A single SQLite transaction either retains
-an entire upload or retains none; no partially finalized blob is exposed. Repeating
-an upload UUID is valid only for exactly the same principal, name and bytes.
+`UploadImage` independently deduplicates bounded bytes by upload UUID, principal,
+name and exact contents. Execute authorization is enforced on both public Vessel
+and private runtime routes. Voyage verifies the signature, full raster, dimensions,
+pixel count and size before atomically retaining the private blob.
 
-`SubmitContent` contains only ordered text and authoritative image references.
-References include UUID, SHA-256, name, verified type/size/dimensions, never a path
-or image bytes. The executing owner resolves references within the addressed
-session and verifies bytes, digest and metadata before new admission. Cross-session,
-missing and corrupt references are refused explicitly.
+`SubmitContent` carries ordered text and image references: UUID, SHA-256, label,
+actual media type, size and dimensions. There are no file paths or image bytes in
+turn command reservations. The owner resolves references only within the session
+and refuses missing/corrupt/cross-session images. Existing text-only wire encoding
+and digests remain unchanged. Exact receipts resolve before current-model or expiry
+checks; changing content under an existing command ID is not a retry.
 
-This split keeps image bytes out of the 128 KiB command-reservation journal. Existing
-text-only Submit/Steer wire encoding and turn digests are unchanged. Ordered content
-and immutable image identity participate in exact command binding and admission.
-An existing exact receipt is resolved before current-model or expiry checks; changing
-content under an existing command ID is not a retry. Older peers reject the added
-operations instead of silently dropping images. Runtime health advertises
-`upload_image` and `submit_content`.
+Canonical checkpoints retain ordered references; hydration is transient and excluded
+from serialization and Debug. Resume reopens the private store; Vessel branching
+copies verified bytes into the destination before publishing its snapshot. Deletion
+removes the image store before reporting observed cleanup. Ordinary observations,
+transcripts, exports and diagnostic records contain no image bytes.
 
-Canonical checkpoints preserve ordered references. Provider hydration is transient
-and excluded from serialization and Debug. Resume reopens the private store;
-branch creation copies verified bytes into the destination's own store before
-publishing its snapshot. Deletion removes the image store before reporting observed
-cleanup. Ordinary history, transcripts, exports and diagnostics carry metadata only.
+Journal schema 9 prevents older text-only runtimes from silently rewriting image
+history. An idle v8 owner promotes its schema under its execution fence; older
+schemas require the explicit quiescent upgrade. Image-bearing owner transfer,
+legacy JSON-store image branching, and the separate outbound enrollment relay are
+not enabled by these public image operations and refuse unsupported paths.
 
-Journal schema **9** prevents an older text-only runtime from opening and silently
-rewriting image history. An idle v8 owner promotes its journal under the execution
-fence when images are first used; older schemas require the existing explicit
-quiescent upgrade. Image-bearing owner transfer and legacy JSON-store branching
-are refused explicitly until they can retain blobs safely. Use Vessel branching
-for image-bearing voyages. Outbound enrollment relay execution is a separate
-surface and does not expose these image operations.
+Native OpenAI Chat Completions uses `text`/`image_url`; Responses and native ChatGPT
+OAuth use `input_text`/`input_image`; Anthropic uses text and base64 image-source
+blocks. Codex compatibility refuses image input. Exact selected-model capabilities
+are checked before admission and image-bearing dispatch, including retained history;
+unknown/explicitly text-only models fail closed. Image steering during an active
+run is refused with the draft intact.
 
-## Providers and privacy
-
-Native OpenAI Chat Completions uses ordered `text`/`image_url` blocks. Responses
-and native ChatGPT OAuth use `input_text`/`input_image` blocks. Anthropic uses
-`text` and base64 `image` source blocks. The optional Codex compatibility bridge
-refuses images before dispatch.
-
-Capability admission uses exact selected-model metadata, with a conservative exact-ID
-fallback for known image-capable models when modalities are absent. Explicit text-only
-metadata overrides that fallback; unknown models fail closed with guidance. Native
-adapters refresh capability metadata before image-bearing dispatch, including retained
-history and continuation. Supported wire format is not a claim of account entitlement.
-
-Both initial provider failures and errors arriving later in a stream omit provider
-error text on image-bearing requests, including errors that echo base64. Configured
-secrets in text parts are redacted; secrets split across parts cause refusal rather
-than leakage. Pixel content itself is never text-redacted. Private image stores and
-private draft files must not be copied into ordinary diagnostic bundles.
-
-Wire formats were checked against the official
-[OpenAI image guide](https://platform.openai.com/docs/guides/images-vision) and
-[Anthropic vision guide](https://docs.anthropic.com/en/docs/build-with-claude/vision).
+Initial and streamed errors for image-bearing provider requests omit provider error
+text, including echoed base64. Configured secrets in text parts are redacted; secrets
+spanning parts cause refusal. Pixel contents cannot be text-redacted, so review what
+you copy before pasting/sending. Private drafts/blob stores must not be included in
+ordinary diagnostic bundles.
 
 ## Verification
 
-Targeted checks are local and use synthetic images and loopback providers:
-
 ```sh
-cargo test -p voyage-protocol --locked content:: --lib
-cargo test -p voyage --locked --lib
-cargo test -p helm --locked --lib
+cargo test -p helm -p voyage -p voyage-protocol --lib --locked
 cargo clippy -p helm -p vessel -p voyage -p voyage-protocol --all-targets --locked -- -D warnings
 cargo build -p helm -p vessel -p voyage --locked
-python3 voyage/tests/images_workflow.py --bin-dir target/debug
 python3 voyage/tests/images_composer.py --bin-dir target/debug
+python3 voyage/tests/images_workflow.py --bin-dir target/debug
+# Repeat the supervised workflow with --provider openai-responses,
+# --provider anthropic, and --provider chatgpt-oauth for the other native fixtures.
 ```
 
-The unit checks exercise PNG/JPEG/WebP decoding, truncation (including fake JPEG
-terminators), oversized dimensions, animation refusal, corrupt checksums, file
-symlink/FIFO refusal, immutable storage conflicts, reopening and branch copies,
-serialization/Debug privacy, provider encoding, capability refusal, aggregate and
-serialized request limits, error sanitization, composer removal and recovery,
-upload-before-submit ordering, and screenshot confirmation/output/timeout handling.
+Unit checks cover raster validation/storage, provider encoding/privacy, atomic inline
+editing, literal lookalikes, caret anchors, ordered sends, legacy draft migration,
+clipboard parsing/output bounds/cancellation, and no-replay dispatch recovery.
+Real controlling-PTY checks use private fake clipboard helpers and synthetic pixels:
+no access to the operator's actual clipboard or display is required. They exercise
+normal/direct paste, typing during acquisition, keyboard deletion, file paths,
+private restart recovery, image-only/existing-session sends and failure preservation.
+Supervised provider fixtures cover authorization, exact deduplication, ordered content,
+resume/branch retention, limits, unsupported models and error privacy.
 
-The supervised workflow check exercises authenticated uploads, cross-session refusal,
-image-only admission, exact duplicate/conflicting commands, ordered content, retained
-images across process suspension, unsupported models before dispatch, branch image
-retention, and provider-error privacy through actual Vessel and Voyage processes.
-
-The controlling-PTY composer check exercises F6 add/remove, metadata display,
-text preservation, private-file permissions, restart recovery after deleting the
-source image, text+image and image-only first sends, existing-session sends,
-screenshot confirmation cancellation, and observed child cleanup. Unit fixtures
-also exercise uncertain-send recovery without resubmission.
-
-These are **offline Linux** checks, not paid/live-provider certification, a deployed
-HTTPS-route test, or native macOS/Windows evidence. Automatic desktop capture is not
-exercised against the operator's real screen by these checks; subprocess fixtures
-verify bounded capture and cleanup without collecting personal pixels.
+These checks are offline Linux evidence, not paid/live-provider certification,
+real desktop-clipboard testing, deployed HTTPS verification or native macOS/Windows
+validation.

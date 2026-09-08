@@ -12,20 +12,21 @@ Replace UUID, revision, deadline and digest placeholders with actual observation
 workspace paths refer to the executing host. Configure that host's provider before
 submitting work; see [Configuration](configuration.md).
 
-## Attach images in the composer
+## Paste images in the composer
 
-Press **F6**, enter a Helm-local PNG/JPEG/WebP path, then press Enter. The modal
-shows the actual type, size and dimensions. `remove INDEX` removes an attachment;
-Escape returns without losing draft text. Enter in the composer sends the turn,
-including image-only first turns. Maximum: four images, 2 MiB combined. Pending
-image sends retain their immutable payload and resolve without automatic replay.
+Copy an image (including an OS screenshot), then press **Ctrl+V** or **Alt+V** in
+Helm's normal input box. The image becomes an inline `[Image N]` element at the
+caret. Backspace/Delete removes an adjacent owned element. Enter sends text and
+images in order; image-only first turns work. **No modal or capture confirmation
+is needed.** Exact local image paths and file URLs can also be pasted directly.
 
-The modal command `screenshot` opens a separate full-display privacy warning; type
-`CAPTURE` to add a bounded local screenshot to the draft. Capture is not send.
-Read-only or denied local policy refuses capture. Linux needs grim (Wayland) or
-maim (X11); other platforms must attach a manually captured file. See
-[Images and screenshots](multimodal-implementation.md) for all limits and recovery
-semantics. Plain/line-oriented commands do not provide an image-picker flag.
+Clipboard reads happen on the Helm host, even for remote voyages. Linux needs
+wl-clipboard (Wayland) or xclip (X11); missing helpers give guidance while retaining
+the draft. Acquisition is asynchronous and Escape cancels it. Existing limits are
+four images, 2 MiB combined, with immutable private draft and no-replay recovery.
+See [Images and pasted screenshots](multimodal-implementation.md) for shortcuts,
+platform caveats, path parsing, limits and verification. Plain/line-oriented commands
+do not provide a native image clipboard UI.
 
 ## Independent local voyages
 

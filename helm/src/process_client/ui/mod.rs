@@ -10,6 +10,7 @@ mod inference;
 mod input;
 mod interactions;
 mod lifecycle;
+mod paste;
 mod reconcile;
 mod routes;
 mod transcript;
@@ -46,7 +47,6 @@ use std::{
 use tokio::sync::mpsc;
 
 pub(super) struct App {
-    attachment_modal: Option<attachments::Modal>,
     vessels: Option<std::cell::RefCell<vessels::Manager>>,
     vessel_button: std::cell::Cell<ratatui::layout::Rect>,
     vessel_filter: Option<uuid::Uuid>,
@@ -55,6 +55,8 @@ pub(super) struct App {
     retired_observers: Vec<tokio::task::JoinHandle<()>>,
     route_tasks: BTreeMap<uuid::Uuid, Vec<tokio::task::JoinHandle<()>>>,
     pending_activations: BTreeMap<uuid::Uuid, Client>,
+    clipboard_pending: Option<paste::PendingPaste>,
+    clipboard_blocked: bool,
     new_chat_config: Option<crate::Config>,
     views: BTreeMap<Target, View>,
     selected: Option<Target>,
@@ -148,10 +150,11 @@ pub async fn run_with_notice(
     let selected =
         session.and_then(|session| clients.first_route().map(|route| Target { route, session }));
     let mut app = App {
-        attachment_modal: None,
         vessels: manager.ok().map(std::cell::RefCell::new),
         vessel_button: Default::default(),
         vessel_filter: None,
+        clipboard_pending: None,
+        clipboard_blocked: false,
         clients,
         observers: BTreeMap::new(),
         retired_observers: Vec::new(),
@@ -202,6 +205,7 @@ pub async fn run_with_notice(
     let mut repaint = tokio::time::interval(Duration::from_millis(100));
     let result = async {
         while !app.quit {
+            app.poll_clipboard();
             app.sync_completion();
             app.refresh_transcript();
             tokio::select! {
@@ -234,6 +238,7 @@ pub async fn run_with_notice(
         for (target, view) in &app.views { drafts::save(&app.clients[target.route], view)?; }
         Ok(())
     }.await;
+    let clipboard_cleanup = app.finish_clipboard().await;
     for (_, job) in std::mem::take(&mut app.observers) {
         job.abort();
         app.retired_observers.push(job);
@@ -247,7 +252,7 @@ pub async fn run_with_notice(
     for job in app.retired_observers {
         let _ = job.await;
     }
-    result
+    result.and(clipboard_cleanup)
 }
 
 impl App {

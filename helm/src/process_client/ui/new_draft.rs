@@ -24,6 +24,8 @@ pub(super) struct Saved {
     selection: Option<voyage_runtime::policy_profile::selection::SelectionRequest>,
     confirmation: Option<String>,
     text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    markers: Option<Vec<composer::ImageMarker>>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     images: Vec<super::attachments::Image>,
     pub(super) start: Option<VesselCommand>,
@@ -237,8 +239,13 @@ impl App {
             workspace.is_absolute(),
             "workspace must be absolute on the executing host"
         );
-        if let Some((&id, _)) = self.new_drafts.iter().find(|(_, d)| {
-            d.route == route
+        if let Some((&id, _)) = self.new_drafts.iter().find(|(candidate, d)| {
+            let reading = self
+                .clipboard_pending
+                .as_ref()
+                .is_some_and(|p| p.destination == super::paste::Destination::Draft(**candidate));
+            !reading
+                && d.route == route
                 && d.saved.workspace == workspace
                 && d.saved.start.is_none()
                 && d.composer.text.is_empty()
@@ -258,6 +265,7 @@ impl App {
             },
             text: String::new(),
             images: Vec::new(),
+            markers: None,
             start: None,
             start_attempted: false,
             process: None,
@@ -302,6 +310,7 @@ impl App {
     }
 
     fn drive_draft(&mut self, id: Uuid, observe_only: bool) -> Result<()> {
+        self.ensure_paste_finished(super::paste::Destination::Draft(id))?;
         let draft = self.new_drafts.get_mut(&id).context("draft unavailable")?;
         anyhow::ensure!(!draft.busy, "First send is already being checked");
         anyhow::ensure!(
@@ -345,6 +354,8 @@ impl App {
             });
         }
         draft.saved.text = draft.composer.text.clone();
+        draft.saved.markers =
+            (!draft.saved.images.is_empty()).then(|| draft.composer.markers.clone());
         storage::save(&draft.saved)?;
         let lock = draft._lock.try_clone()?;
         draft.busy = true;
@@ -407,8 +418,10 @@ impl App {
                 }
                 handoff.images = draft.saved.images.clone();
                 if handoff.draft.text.is_empty() {
-                    handoff.draft.text = draft.saved.text.clone();
-                    handoff.draft.cursor = handoff.draft.text.len();
+                    match super::attachments::restore_draft(draft.saved.text.clone(), draft.saved.markers.clone(), &handoff.images) {
+                        Ok(composer) => handoff.draft = composer,
+                        Err(_) => { self.status = "First-send image draft invalid; recovery data retained".into(); return; }
+                    }
                 }
                 if handoff.pending.is_none() {
                     handoff.pending = Some(state::Pending { command_id: draft.saved.turn, incarnation: process.incarnation, draft: draft.saved.text.clone(), preserve_draft: false, original: draft.saved.submit.clone().map(Box::new), receipt_only: false });
@@ -460,6 +473,7 @@ pub(in crate::process_client) async fn start_plain(
         config: Some(config),
         text: prompt,
         images: Vec::new(),
+        markers: None,
         start: None,
         start_attempted: false,
         process: None,

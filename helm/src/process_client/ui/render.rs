@@ -108,7 +108,6 @@ fn sidebar_state(view: &super::state::View) -> (&'static str, Color, bool) {
 
 pub fn draw(frame: &mut Frame<'_>, app: &App) {
     draw_inner(frame, app);
-    app.draw_attachments(frame);
     app.draw_vessel_control(frame);
     app.draw_workspace_picker(frame, frame.area());
     if let Some(manager) = &app.vessels {
@@ -210,7 +209,11 @@ fn draw_inner(frame: &mut Frame<'_>, app: &App) {
         } else {
             app.completion_height()
         }),
-        Constraint::Length(if overlay || reviewing { 1 } else { 6 }),
+        Constraint::Length(if overlay || reviewing {
+            1
+        } else {
+            6 + app.attachment_details().len() as u16
+        }),
         Constraint::Length(if status.is_empty() { 1 } else { 3 }),
     ])
     .split(main);
@@ -523,8 +526,10 @@ fn composer(frame: &mut Frame<'_>, app: &App, area: Rect) {
     let inner = border.inner(box_area);
     frame.render_widget(border, box_area);
     let draft = view.map_or("", |v| v.draft.text.as_str());
+    let details = app.attachment_details();
+    let detail_rows = (details.len() as u16).min(inner.height.saturating_sub(2));
     let body = Rect {
-        height: inner.height.saturating_sub(1),
+        height: inner.height.saturating_sub(1 + detail_rows),
         ..inner
     };
     let cursor = view.map(|v| {
@@ -536,9 +541,16 @@ fn composer(frame: &mut Frame<'_>, app: &App, area: Rect) {
     let text = if draft.is_empty() {
         Text::styled("Ask anything, or describe what you want to do...", muted())
     } else {
-        presentation::wrap(Text::raw(safe(draft)), body.width)
+        presentation::wrap(
+            super::attachments::styled_draft(&view.expect("nonempty draft").draft),
+            body.width,
+        )
     };
     frame.render_widget(Paragraph::new(text).scroll((scroll, 0)), body);
+    frame.render_widget(
+        Paragraph::new(details.join("\n")).style(Style::default().fg(Color::Cyan)),
+        Rect::new(inner.x, body.bottom(), inner.width, detail_rows),
+    );
     app.draw_inference_controls(
         frame,
         Rect::new(inner.x, inner.bottom().saturating_sub(1), inner.width, 1),

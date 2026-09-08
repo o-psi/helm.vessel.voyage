@@ -1,6 +1,4 @@
 //! Private Helm image drafts; canonical commands contain metadata references only.
-mod input;
-mod render;
 #[cfg(test)]
 mod tests;
 
@@ -54,7 +52,7 @@ fn valid_name(name: &str) -> bool {
 }
 
 impl Image {
-    fn metadata(&self) -> ImageAttachment {
+    pub(super) fn metadata(&self) -> ImageAttachment {
         ImageAttachment {
             id: self.upload_id,
             name: self.name.clone(),
@@ -66,7 +64,7 @@ impl Image {
         }
     }
 
-    fn from_bytes(name: String, bytes: &[u8]) -> Result<Self> {
+    pub(super) fn from_bytes(name: String, bytes: &[u8]) -> Result<Self> {
         ensure!(
             valid_name(&name),
             "Image filename is not a safe display label"
@@ -89,7 +87,7 @@ impl Image {
         })
     }
 
-    fn from_path(path: &Path) -> Result<Self> {
+    pub(super) fn from_path(path: &Path) -> Result<Self> {
         let name = path
             .file_name()
             .and_then(|s| s.to_str())
@@ -138,20 +136,20 @@ impl Image {
         }
     }
 
-    fn label(&self, index: usize) -> String {
+    pub(super) fn label(&self, index: usize) -> String {
         let media = match self.media_type {
             ImageMediaType::Png => "image/png",
             ImageMediaType::Jpeg => "image/jpeg",
             ImageMediaType::WebP => "image/webp",
         };
         format!(
-            "{}. {} · {} · {} bytes · {}×{}",
+            "[Image {}] {} · {} bytes · {}×{} · {}",
             index + 1,
-            safe(&self.name),
             media,
             self.byte_size,
             self.width,
-            self.height
+            self.height,
+            safe(&self.name)
         )
     }
 }
@@ -193,8 +191,43 @@ fn wire_bound(command: &VoyageCommand) -> Result<()> {
     Ok(())
 }
 
-/// Called before saving pending identity. Text-only serialization is unchanged.
-pub(super) fn prepare(command: VoyageCommand, images: &[Image]) -> Result<VoyageCommand> {
+/// Resolve only owned inline markers; literal lookalikes remain authored text.
+pub(super) fn content(draft: &composer::Composer, images: &[Image]) -> Result<Vec<ContentPart>> {
+    composer::validate_markers(&draft.text, &draft.markers).map_err(anyhow::Error::msg)?;
+    ensure!(
+        draft.markers.len() == images.len(),
+        "Image draft marker count mismatch"
+    );
+    ensure!(
+        draft
+            .markers
+            .iter()
+            .zip(images)
+            .all(|(m, i)| m.id == i.upload_id),
+        "Image draft identity/order mismatch"
+    );
+    let mut parts = Vec::new();
+    for part in draft.ordered_parts() {
+        parts.push(match part {
+            composer::ComposerPart::Text(text) => ContentPart::Text { text },
+            composer::ComposerPart::Image(id) => ContentPart::Image {
+                attachment: images
+                    .iter()
+                    .find(|image| image.upload_id == id)
+                    .context("Image marker has no private attachment")?
+                    .metadata(),
+            },
+        });
+    }
+    Ok(parts)
+}
+
+/// Text-only serialization remains byte-for-byte unchanged.
+pub(super) fn prepare(
+    command: VoyageCommand,
+    draft: &composer::Composer,
+    images: &[Image],
+) -> Result<VoyageCommand> {
     if images.is_empty() {
         return Ok(command);
     }
@@ -203,20 +236,14 @@ pub(super) fn prepare(command: VoyageCommand, images: &[Image]) -> Result<Voyage
             command_id,
             expected_revision,
             expires_at_ms,
-            prompt,
+            ..
         } => {
-            ensure!(prompt.len() <= 64 * 1024, "Draft limit is 64 KiB");
             validate_set(images)?;
+            let content = content(draft, images)?;
+            voyage_runtime::images::validate_parts(&content)?;
             for image in images {
                 wire_bound(&image.upload_command())?;
             }
-            let mut content = Vec::with_capacity(images.len() + 1);
-            if !prompt.is_empty() {
-                content.push(ContentPart::Text { text: prompt });
-            }
-            content.extend(images.iter().map(|image| ContentPart::Image {
-                attachment: image.metadata(),
-            }));
             let command = VoyageCommand::SubmitContent {
                 command_id,
                 expected_revision,
@@ -227,11 +254,81 @@ pub(super) fn prepare(command: VoyageCommand, images: &[Image]) -> Result<Voyage
             Ok(command)
         }
         VoyageCommand::Steer { .. } => anyhow::bail!(
-            "Image steering is unsupported. Wait for the active run to finish or remove images; full draft preserved"
+            "Image steering is unsupported. Wait for the active run to finish; full draft preserved"
         ),
-        // Slash controls do not upload or consume attachments.
         other => Ok(other),
     }
+}
+
+/// Migrate old modal drafts without rewriting any immutable pending command.
+pub(super) fn restore_draft(
+    text: String,
+    markers: Option<Vec<composer::ImageMarker>>,
+    images: &[Image],
+) -> Result<composer::Composer> {
+    validate_set(images)?;
+    let mut draft = composer::Composer::default();
+    draft.set_text(text);
+    match markers {
+        Some(markers) => draft.restore_markers(markers).map_err(anyhow::Error::msg)?,
+        None => {
+            for image in images {
+                draft.insert_image(image.upload_id);
+            }
+        }
+    }
+    content(&draft, images)?;
+    Ok(draft)
+}
+
+/// Keyboard deletion removes the owned blob from the private draft, and moving
+/// insertion points changes image order without changing immutable upload IDs.
+pub(super) fn sync_images(draft: &composer::Composer, images: &mut Vec<Image>) -> Result<()> {
+    composer::validate_markers(&draft.text, &draft.markers).map_err(anyhow::Error::msg)?;
+    ensure!(
+        draft
+            .markers
+            .iter()
+            .all(|marker| images.iter().any(|image| image.upload_id == marker.id)),
+        "Image marker has no private attachment"
+    );
+    images.retain(|image| draft.markers.iter().any(|m| m.id == image.upload_id));
+    images.sort_by_key(|image| {
+        draft
+            .markers
+            .iter()
+            .position(|m| m.id == image.upload_id)
+            .unwrap_or(usize::MAX)
+    });
+    Ok(())
+}
+
+pub(super) fn insert_images(
+    draft: &mut composer::Composer,
+    images: &mut Vec<Image>,
+    added: Vec<Image>,
+    mut at: usize,
+) -> Result<()> {
+    let mut all = images.clone();
+    all.extend(added.iter().cloned());
+    validate_set(&all)?;
+    for image in added {
+        let id = image.upload_id;
+        draft.insert_image_at(at, id);
+        at = draft
+            .markers
+            .iter()
+            .find(|m| m.id == id)
+            .context("Image insertion failed")?
+            .end;
+        images.push(image);
+    }
+    sync_images(draft, images)?;
+    ensure!(
+        draft.text.len() <= 65536,
+        "Composer limit is 64 KiB; image paste not applied"
+    );
+    Ok(())
 }
 
 pub(super) fn is_image_submission(command: &VoyageCommand) -> bool {
@@ -241,20 +338,13 @@ pub(super) fn is_image_submission(command: &VoyageCommand) -> bool {
 /// Consume attachments only if the entire frozen draft still matches. Keeping
 /// unmatched recovery data is preferable to clearing a newer local draft.
 pub(super) fn pending_matches(pending: &state::Pending, view: &View) -> bool {
-    if pending.draft != view.draft.text {
-        return false;
-    }
-    let Some(VoyageCommand::SubmitContent { content, .. }) = pending.original.as_deref() else {
+    let Some(VoyageCommand::SubmitContent {
+        content: original, ..
+    }) = pending.original.as_deref()
+    else {
         return false;
     };
-    let refs: Vec<_> = content
-        .iter()
-        .filter_map(|part| match part {
-            ContentPart::Image { attachment } => Some(attachment.clone()),
-            _ => None,
-        })
-        .collect();
-    refs == view.images.iter().map(Image::metadata).collect::<Vec<_>>()
+    content(&view.draft, &view.images).is_ok_and(|current| current == *original)
 }
 
 fn verify_upload(image: &Image, response: serde_json::Value) -> Result<()> {
@@ -336,133 +426,56 @@ where
     send(command).await
 }
 
-#[derive(Clone, Copy)]
-enum Destination {
-    Live(Target),
-    Draft(Uuid),
-}
-
-pub(super) struct Modal {
-    destination: Destination,
-    input: composer::Composer,
-    confirm_screenshot: bool,
-}
-
-fn push_image(images: &mut Vec<Image>, image: Image) -> Result<()> {
-    ensure!(
-        images.len() < MAX_IMAGES,
-        "At most four images may be attached"
-    );
-    let total = images.iter().map(|i| i.byte_size).sum::<u64>();
-    ensure!(
-        total + image.byte_size <= MAX_BYTES as u64,
-        "Images together must not exceed 2 MiB"
-    );
-    images.push(image);
-    Ok(())
-}
-
-fn edit(images: &mut Vec<Image>, input: &str) -> Result<()> {
-    let input = input.trim();
-    ensure!(
-        !input.is_empty(),
-        "Enter a local image path or remove INDEX"
-    );
-    if let Some(index) = input.strip_prefix("remove ") {
-        let index: usize = index
-            .trim()
-            .parse()
-            .context("Use remove followed by a one-based image index")?;
-        ensure!(
-            index > 0 && index <= images.len(),
-            "Image index is out of range"
-        );
-        images.remove(index - 1);
-        Ok(())
-    } else {
-        ensure!(
-            images.len() < MAX_IMAGES,
-            "At most four images may be attached"
-        );
-        let path = input.strip_prefix("add ").unwrap_or(input);
-        push_image(images, Image::from_path(Path::new(path))?)
-    }
-}
-
 impl App {
-    fn attachment_images(&self, destination: Destination) -> Result<&[Image]> {
-        match destination {
-            Destination::Live(target) => Ok(&self
-                .views
-                .get(&target)
-                .context("Selected voyage unavailable")?
-                .images),
-            Destination::Draft(id) => self.new_draft_images(id),
+    pub(super) fn attachment_details(&self) -> Vec<String> {
+        let images = if let Some(id) = self.active_draft {
+            self.new_draft_images(id).unwrap_or(&[])
+        } else {
+            self.selected
+                .and_then(|t| self.views.get(&t))
+                .map_or(&[][..], |v| v.images.as_slice())
+        };
+        images
+            .iter()
+            .enumerate()
+            .map(|(n, image)| image.label(n))
+            .collect()
+    }
+    pub(super) fn attachment_summary(&self) -> String {
+        "Paste: Ctrl+V / Alt+V · image paths also work".into()
+    }
+}
+
+/// Owned images are styled editor elements, never parsed from lookalike text.
+pub(super) fn styled_draft(draft: &composer::Composer) -> ratatui::text::Text<'static> {
+    use ratatui::{
+        style::{Color, Modifier, Style},
+        text::{Line, Span, Text},
+    };
+    let mut lines = vec![Line::default()];
+    let mut end = 0;
+    for marker in &draft.markers {
+        append_text(&mut lines, &safe(&draft.text[end..marker.start]));
+        lines.last_mut().expect("line").spans.push(Span::styled(
+            draft.text[marker.start..marker.end].to_owned(),
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ));
+        end = marker.end;
+    }
+    append_text(&mut lines, &safe(&draft.text[end..]));
+    Text::from(lines)
+}
+fn append_text(lines: &mut Vec<ratatui::text::Line<'static>>, text: &str) {
+    for (n, line) in text.split('\n').enumerate() {
+        if n > 0 {
+            lines.push(ratatui::text::Line::default());
         }
-    }
-
-    fn ensure_images_editable(&self, destination: Destination) -> Result<()> {
-        match destination {
-            Destination::Live(target) => {
-                let view = self.views.get(&target).context("Voyage unavailable")?;
-                ensure!(
-                    view.pending.is_none(),
-                    "Delivery pending; attachments are frozen"
-                );
-                ensure!(
-                    !view.deleted() && !view.archived(),
-                    "This voyage is not editable"
-                );
-                Ok(())
-            }
-            Destination::Draft(id) => self.ensure_draft_images_editable(id),
-        }
-    }
-
-    fn save_attachment_edit(&mut self, destination: Destination, images: Vec<Image>) -> Result<()> {
-        self.ensure_images_editable(destination)?;
-        validate_set(&images)?;
-        match destination {
-            Destination::Live(target) => {
-                let view = self.views.get_mut(&target).context("Voyage unavailable")?;
-                let old = std::mem::replace(&mut view.images, images);
-                if let Err(error) = drafts::save(&self.clients[target.route], view) {
-                    view.images = old;
-                    return Err(error.context("Attachment edit was not saved"));
-                }
-            }
-            Destination::Draft(id) => self.set_new_draft_images(id, images)?,
-        }
-        self.status = "Attachments saved locally · composer text preserved · nothing sent".into();
-        Ok(())
-    }
-
-    fn change_attachment(&mut self, destination: Destination, input: &str) -> Result<()> {
-        // Check frozen state before reading a file or changing the draft.
-        self.ensure_images_editable(destination)?;
-        let mut images = self.attachment_images(destination)?.to_vec();
-        edit(&mut images, input)?;
-        self.save_attachment_edit(destination, images)
-    }
-
-    fn capture_attachment(&mut self, destination: Destination) -> Result<()> {
-        self.ensure_images_editable(destination)?;
-        let mut images = self.attachment_images(destination)?.to_vec();
-        ensure!(
-            images.len() < MAX_IMAGES,
-            "Remove an image before taking a screenshot"
-        );
-        ensure!(
-            images.iter().map(|i| i.byte_size).sum::<u64>() < MAX_BYTES as u64,
-            "Remove an image to make room for a screenshot"
-        );
-        // Only reachable after a separate displayed warning and typed CAPTURE.
-        // Helper rechecks Helm-local Config policy and bounds capture to 5s/2MiB.
-        let bytes = crate::screenshot::capture(true, self.new_chat_config.as_ref())?;
-        push_image(
-            &mut images,
-            Image::from_bytes("screenshot.png".into(), &bytes)?,
-        )?;
-        self.save_attachment_edit(destination, images)
+        lines
+            .last_mut()
+            .expect("line")
+            .spans
+            .push(ratatui::text::Span::raw(line.to_owned()));
     }
 }

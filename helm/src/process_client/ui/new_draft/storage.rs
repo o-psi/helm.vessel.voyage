@@ -170,9 +170,13 @@ pub(super) fn recover<'a>(
             saved.route = stable.clone();
             save(&saved)?;
         }
-        let mut composer = composer::Composer::default();
-        composer.text = saved.text.clone();
-        composer.cursor = composer.text.len();
+        let composer = super::super::attachments::restore_draft(
+            saved.text.clone(),
+            saved.markers.clone(),
+            &saved.images,
+        )?;
+        saved.text = composer.text.clone();
+        saved.markers = (!saved.images.is_empty()).then(|| composer.markers.clone());
         drafts.insert(
             id,
             Draft {
