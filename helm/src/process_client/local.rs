@@ -27,10 +27,7 @@ pub fn check_private_directory(_path: &Path) -> Result<()> {
 }
 
 pub async fn connect(directory: std::path::PathBuf, auto_start: bool) -> Result<Client> {
-    let client = Client {
-        directory,
-        access_file: None,
-    };
+    let client = Client::local(directory);
     if client.directory.exists() {
         check_private_directory(&client.directory)?;
         if client.request(VesselCommand::Capabilities).await.is_ok() {
