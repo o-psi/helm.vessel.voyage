@@ -356,7 +356,7 @@ impl Supervisor {
     async fn remember_name(&self, session: Uuid, incarnation: Uuid, name: &str) -> Result<()> {
         ensure!(
             !name.is_empty()
-                && name.len() <= 256
+                && name.len() <= 512
                 && !name.chars().any(|character| character.is_control()),
             "invalid public voyage name"
         );

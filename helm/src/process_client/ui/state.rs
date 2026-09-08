@@ -210,6 +210,11 @@ impl View {
         }
     }
     pub fn title(&self) -> String {
+        // Archived owners no longer participate in snapshot refresh. Their final
+        // metadata must take precedence over any retained live snapshot.
+        if let Some(name) = self.process.archive.as_ref().and_then(|a| a.name.as_ref()) {
+            return name.clone();
+        }
         let name = self
             .snapshot
             .as_ref()

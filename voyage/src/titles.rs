@@ -7,7 +7,7 @@ use crate::{
 const EXCERPT_CHARS: usize = 6000;
 const MESSAGE_CHARS: usize = 1500;
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct TitleResult {
     pub title: Option<String>,
     pub usage: Usage,

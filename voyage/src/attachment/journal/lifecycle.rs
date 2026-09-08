@@ -223,7 +223,14 @@ impl Journal {
                     Session::new(saved.session.workspace.clone(), saved.session.model.clone());
                 branch.id = *branch_id;
                 branch.parent_id = Some(guard.session_id);
-                branch.name = name.clone();
+                // Session::new used a different UUID; rebuild title provenance
+                // for the final branch identity, preserving explicit names.
+                branch.name = None;
+                branch.title_state = None;
+                branch.clear_conversation();
+                if let Some(name) = name {
+                    branch.set_name(name.clone());
+                }
                 branch.messages = saved.session.messages.clone();
                 for message in &mut branch.messages {
                     message.provider_state = None;

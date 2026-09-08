@@ -88,6 +88,7 @@ impl Journal {
         portable.created_at = saved.session.created_at;
         portable.model_history = saved.session.model_history.clone();
         portable.name = saved.session.name.clone();
+        portable.title_state = saved.session.title_state.clone();
         portable.messages = saved.session.messages.clone();
         portable.usage = saved.session.usage.clone();
         for message in &mut portable.messages {
