@@ -194,12 +194,16 @@ terminal.
 
 Sidebar voyages show explicit state labels and colours: running is dark blue,
 idle/finished is green, needs attention is orange, and failed is red. Suspended
-and cancelled voyages are grey and occupy two terminal rows (status and title);
-other entries occupy three, with a muted separator in the padding row. Long titles
-are clipped to one row. Unread is an additional marker, not a replacement for state.
-Selection uses bold text and a `>` marker without replacing the state colour.
-Input and unresolved cleanup take attention precedence; disconnected or unavailable
-owners are explicitly labelled rather than inferred to be finished. Actual process
+and cancelled voyages are grey and occupy two terminal rows (combined state/title
+and a divider); other entries occupy three (state, title, divider). Muted horizontal
+rules separate every pair of entries, including compact ones. Long titles are clipped
+to one row. Unread is an additional marker, not a replacement for state.
+Selection uses bold text and a subtle background, without an arrow or replacing
+the state colour. Compact entries omit the route label; Actions → Details retains
+the Vessel identity.
+Input and unresolved cleanup after a run stops take attention precedence;
+cleanup obligations recorded during active work do not change Running to attention.
+Disconnected or unavailable owners are explicitly labelled rather than inferred to be finished. Actual process
 suspension is compact even after successful completion; failed and cancelled run
 outcomes retain their own labels across suspension.
 Each sidebar voyage has a clickable **⋮** Actions button. Mouse hover highlights

@@ -66,7 +66,10 @@ fn sidebar_state(view: &super::state::View) -> (&'static str, Color, bool) {
         if !snapshot.decisions.is_empty() {
             return ("Needs attention · input", attention, false);
         }
-        if snapshot.pending_cleanup_run.is_some() {
+        // Cleanup obligations are recorded before work starts.
+        if snapshot.pending_cleanup_run.is_some()
+            && snapshot.run.as_ref().is_none_or(|run| !run.active())
+        {
             return ("Needs attention · cleanup", attention, false);
         }
         if let Some(run) = &snapshot.run {
@@ -361,19 +364,26 @@ fn sidebar(frame: &mut Frame<'_>, app: &App, area: Rect) {
         .map(|target| {
             let view = &app.views[target];
             let (label, color, compact) = sidebar_state(view);
-            // Fixed status/title rows; List clips wide Unicode names by cell width.
-            let mut lines = vec![
-                Line::from(format!(
+            // Compact entries reserve their second row for the same divider.
+            let mut lines = if compact {
+                vec![Line::from(format!(
                     "{}{} · {}",
                     label,
                     if view.unread { " · Unread" } else { "" },
-                    app.route_label(target.route),
-                )),
-                Line::from(safe(&view.title())),
-            ];
-            if !compact {
-                lines.push(Line::default());
-            }
+                    safe(&view.title()),
+                ))]
+            } else {
+                vec![
+                    Line::from(format!(
+                        "{}{} · {}",
+                        label,
+                        if view.unread { " · Unread" } else { "" },
+                        app.route_label(target.route),
+                    )),
+                    Line::from(safe(&view.title())),
+                ]
+            };
+            lines.push(Line::default());
             heights.push(lines.len() as u16);
             ListItem::new(lines).style(Style::default().fg(color))
         })
@@ -381,9 +391,11 @@ fn sidebar(frame: &mut Frame<'_>, app: &App, area: Rect) {
     let index = targets.iter().position(|t| Some(*t) == app.selected);
     let mut list_state = ListState::default().with_selected(index);
     frame.render_stateful_widget(
-        List::new(entries)
-            .highlight_symbol("> ")
-            .highlight_style(Style::default().add_modifier(Modifier::BOLD)),
+        List::new(entries).highlight_style(
+            Style::default()
+                .bg(Color::Rgb(30, 35, 45))
+                .add_modifier(Modifier::BOLD),
+        ),
         list_area,
         &mut list_state,
     );
@@ -397,7 +409,7 @@ fn sidebar(frame: &mut Frame<'_>, app: &App, area: Rect) {
         if height > rows[1].bottom() - y {
             break;
         }
-        let button = Rect::new(list_area.right(), y, 3, height.min(2));
+        let button = Rect::new(list_area.right(), y, 3, height.saturating_sub(1));
         let area = Rect::new(rows[1].x, y, rows[1].width, height);
         let over_button = app
             .sidebar
@@ -428,7 +440,7 @@ fn sidebar(frame: &mut Frame<'_>, app: &App, area: Rect) {
             ),
             button,
         );
-        if height == 3 && index + 1 < targets.len() {
+        if index + 1 < targets.len() {
             // Reuse the padding row without changing list or hit geometry. Draw
             // after selection/hover so the rule stays muted across the full row.
             frame.render_widget(
