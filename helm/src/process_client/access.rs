@@ -194,17 +194,24 @@ pub(super) async fn bounded(
 }
 pub(super) async fn envelope(response: reqwest::Response) -> Result<serde_json::Value> {
     let (status, bytes) = bounded(response).await?;
+    // A reverse proxy failure is not a receipt for the submitted command, even
+    // if its body happens to resemble a protocol error envelope.
+    ensure!(
+        !status.is_server_error(),
+        "Vessel or proxy failure (HTTP {}); command delivery may be unknown",
+        status.as_u16()
+    );
     let parsed = serde_json::from_slice::<VesselResponse>(&bytes);
     if let Ok(reply) = &parsed {
         if reply.protocol != VESSEL_API_VERSION {
             return Err(ConnectionFailure::Version.into());
         }
+        if reply.outcome_unknown {
+            anyhow::bail!(
+                "Vessel command outcome unknown; original command identity must be retained"
+            );
+        }
         if let Some(error) = &reply.error {
-            if reply.outcome_unknown {
-                anyhow::bail!(
-                    "Vessel command outcome unknown; original command identity must be retained"
-                );
-            }
             if let Some(error) = classified(error) {
                 // Preserve both downcasts: command handlers use Refusal to clear
                 // only definitely rejected deliveries; the panel uses the reason.
