@@ -11,8 +11,20 @@ impl Supervisor {
         &self,
         id: Uuid,
         token: String,
+        expected_vessel_id: Option<Uuid>,
         command: VesselCommand,
     ) -> Result<Value> {
+        let identity = crate::process::identity::public(&self.directory)?.vessel_id;
+        if let Some(expected) = expected_vessel_id {
+            ensure!(expected == identity, "Vessel identity changed");
+        }
+        if store::connection_path(&self.directory, id).exists() {
+            ensure!(
+                expected_vessel_id == Some(identity),
+                "workspace access requires pinned Vessel identity"
+            );
+            return self.connected(id, &token, command).await;
+        }
         let grant = store::authenticate(&self.directory, id, &token)?;
         if let Ok(registration) = self.registration(grant.session_id).await {
             ensure!(
@@ -38,7 +50,7 @@ impl Supervisor {
                 self.observe_assignment(&grant, assignment_id, true).await
             }
             VesselCommand::Capabilities => Ok(
-                json!({"protocol":VESSEL_API_VERSION,"version":env!("CARGO_PKG_VERSION"),"vessel_id":crate::process::identity::public(&self.directory)?.vessel_id,"principal_id":grant.principal_id,"session_id":grant.session_id,"grant_revision":grant.revision,"rights":grant.rights,"expires_at_ms":grant.expires_at_ms,"features":["scoped_catalogue","voyage_operations","sse_events","grant_revocation"]}),
+                json!({"protocol":VESSEL_API_VERSION,"version":env!("CARGO_PKG_VERSION"),"vessel_id":crate::process::identity::public(&self.directory)?.vessel_id,"principal_id":grant.principal_id,"scope":"session","session_id":grant.session_id,"grant_revision":grant.revision,"rights":grant.rights,"expires_at_ms":grant.expires_at_ms,"features":["scoped_catalogue","voyage_operations","sse_events","grant_revocation"]}),
             ),
             VesselCommand::Catalogue => {
                 has(ProcessRight::Observe)?;

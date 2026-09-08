@@ -137,6 +137,7 @@ impl Supervisor {
                     Uuid::new_v4().simple(),
                     Uuid::new_v4().simple()
                 )),
+                connection_binding: None,
                 parent_grant: Some(assignment.source_grant.clone()),
                 participant_binding: Some(ParticipantGrantBinding {
                     binding_id: binding.binding_id,
@@ -191,6 +192,7 @@ impl Supervisor {
                 revoked: false,
                 enrollment: grant.enrollment.clone(),
                 token_hash: store::hash(&Uuid::new_v4().to_string()),
+                connection_binding: None,
                 parent_grant: Some(assignment.source_grant.clone()),
                 participant_binding: Some(ParticipantGrantBinding {
                     binding_id: binding.binding_id,

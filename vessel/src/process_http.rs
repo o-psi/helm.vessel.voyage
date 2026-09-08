@@ -52,12 +52,23 @@ pub(super) async fn events(
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     };
     if request.protocol != VESSEL_API_VERSION
-        || request.subscriptions.len() != 1
+        || request.subscriptions.is_empty()
+        || request.subscriptions.len() > 32
+        || request.subscriptions.iter().enumerate().any(|(i, item)| {
+            item.session_id.is_nil()
+                || request.subscriptions[..i]
+                    .iter()
+                    .any(|prior| prior.session_id == item.session_id)
+        })
         || headers.get_all("authorization").iter().count() != 1
         || headers.get_all("x-voyage-grant").iter().count() != 1
     {
         return StatusCode::BAD_REQUEST.into_response();
     }
+    let expected_vessel_id = match expected_vessel(&headers) {
+        Ok(id) => id,
+        Err(response) => return response,
+    };
     let Some(token) = headers
         .get("authorization")
         .and_then(|value| value.to_str().ok())
@@ -77,19 +88,17 @@ pub(super) async fn events(
     let Ok(permit) = EVENT_CAPACITY.try_acquire() else {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     };
-    let mut subscription = request
-        .subscriptions
-        .into_iter()
-        .next()
-        .expect("one subscription");
+    let mut subscriptions = request.subscriptions;
     let stream = async_stream::stream! {
         let _permit = permit;
         loop {
+          for subscription in &mut subscriptions {
             let response = vessel::process::exchange(
                 &directory,
                 &VesselRequest {
                     protocol: VESSEL_API_VERSION,
                     command: VesselCommand::Granted {
+                        expected_vessel_id,
                         grant_id,
                         token: token.clone(),
                         command: Box::new(VesselCommand::Voyage(VoyageRequest {
@@ -142,15 +151,12 @@ pub(super) async fn events(
                     error,
                     outcome_unknown,
                 };
-                let Ok(data) = serde_json::to_string(&event) else { break; };
+                let Ok(data) = serde_json::to_string(&event) else { return; };
                 yield Ok::<Event, std::convert::Infallible>(Event::default().event("update").data(data));
             }
-            if terminal {
-                break;
-            }
-            if !changed {
-                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-            }
+            if terminal { return; }
+          }
+          tokio::time::sleep(std::time::Duration::from_secs(1)).await;
         }
     };
     Sse::new(stream)
@@ -176,6 +182,10 @@ pub(super) async fn command(
     {
         return StatusCode::BAD_REQUEST.into_response();
     }
+    let expected_vessel_id = match expected_vessel(&headers) {
+        Ok(id) => id,
+        Err(response) => return response,
+    };
     let Some(token) = headers
         .get("authorization")
         .and_then(|v| v.to_str().ok())
@@ -197,6 +207,7 @@ pub(super) async fn command(
         &VesselRequest {
             protocol: VESSEL_API_VERSION,
             command: VesselCommand::Granted {
+                expected_vessel_id,
                 grant_id,
                 token: token.to_owned(),
                 command: Box::new(request.command),
@@ -221,6 +232,79 @@ pub(super) async fn command(
             result: serde_json::Value::Null,
             error: Some("process gateway unsupported on this platform".into()),
             outcome_unknown: false,
+        }
+    };
+    Json(response).into_response()
+}
+
+fn expected_vessel(headers: &HeaderMap) -> Result<Option<Uuid>, Response> {
+    let count = headers.get_all("x-voyage-vessel").iter().count();
+    if count == 0 {
+        return Ok(None);
+    }
+    if count != 1 {
+        return Err(StatusCode::BAD_REQUEST.into_response());
+    }
+    headers
+        .get("x-voyage-vessel")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| Uuid::parse_str(v).ok())
+        .filter(|v| !v.is_nil())
+        .map(Some)
+        .ok_or_else(|| StatusCode::BAD_REQUEST.into_response())
+}
+
+/// Public discovery exposes identity and protocol, never workspaces or secrets.
+pub(super) async fn pair_capabilities(State(state): State<AppState>) -> Response {
+    let Some(directory) = state.process_directory else {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    };
+    match vessel::process::pairing::preflight(&directory) {
+        Ok(value) => Json(value).into_response(),
+        Err(_) => StatusCode::SERVICE_UNAVAILABLE.into_response(),
+    }
+}
+
+pub(super) async fn pair(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<vessel::process::pairing::PairRequest>,
+) -> Response {
+    let Some(directory) = state.process_directory else {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    };
+    let Some(enrollment) = state.enrollment else {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    };
+    let expected_vessel_id = match expected_vessel(&headers) {
+        Ok(id) => id,
+        Err(response) => return response,
+    };
+    let response = match vessel::process::pairing::redeem(
+        &directory,
+        enrollment.origin(),
+        expected_vessel_id,
+        request,
+    ) {
+        Ok(credential) => VesselResponse {
+            protocol: VESSEL_API_VERSION,
+            result: serde_json::to_value(credential).unwrap_or(serde_json::Value::Null),
+            error: None,
+            outcome_unknown: false,
+        },
+        // Publication may have durably consumed the invitation. Retain the exact
+        // request identity rather than minting a replacement after a lost reply.
+        Err(error) => {
+            let refusal = error.downcast_ref::<vessel::process::pairing::PairRefusal>();
+            VesselResponse {
+                protocol: VESSEL_API_VERSION,
+                result: serde_json::Value::Null,
+                error: Some(refusal.map_or_else(
+                    || "pairing unavailable; retry only the identical pairing request".into(),
+                    ToString::to_string,
+                )),
+                outcome_unknown: refusal.is_none(),
+            }
         }
     };
     Json(response).into_response()

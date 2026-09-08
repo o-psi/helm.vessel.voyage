@@ -26,3 +26,6 @@ mod participant;
 mod recover_command;
 
 mod api;
+
+pub mod pair_cli;
+pub mod pairing;

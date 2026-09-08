@@ -329,10 +329,14 @@ impl Supervisor {
             command @ VesselCommand::Grant { .. } => self.grant(command).await,
             command @ VesselCommand::RevokeGrant { .. } => self.revoke_grant(command).await,
             VesselCommand::Granted {
+                expected_vessel_id,
                 grant_id,
                 token,
                 command,
-            } => self.granted(grant_id, token, *command).await,
+            } => {
+                self.granted(grant_id, token, expected_vessel_id, *command)
+                    .await
+            }
             command @ VesselCommand::StartOutbound { .. } => self.start_outbound(command).await,
             command @ VesselCommand::ManagedImport { .. } => self.initialize_managed(command).await,
             VesselCommand::Capabilities => Ok(

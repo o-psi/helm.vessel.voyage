@@ -1,8 +1,8 @@
 //! Public Vessel service API. Versioning is independent of private runtime IPC.
 //! No runtime command, runtime token or runtime response is part of this contract.
 pub use crate::process::{
-    AccessCredential, EnrollmentIdentity, LocalAccessCredential, ProcessInfo, ProcessRight,
-    ProcessState,
+    AccessCredential, ApprovedWorkspace, ConnectionGrant, EnrollmentIdentity,
+    LocalAccessCredential, ProcessInfo, ProcessRight, ProcessState, WorkspaceCredential,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -12,6 +12,8 @@ use uuid::Uuid;
 pub const VESSEL_API_VERSION: u32 = 1;
 pub const MAX_VESSEL_BODY: usize = 4 * 1024 * 1024;
 pub const COMMAND_PATH: &str = "/v1/vessel/command";
+pub const PAIR_PATH: &str = "/v1/vessel/pair";
+pub const PAIR_CAPABILITIES_PATH: &str = "/v1/vessel/pair/capabilities";
 pub const EVENTS_PATH: &str = "/v1/vessel/events";
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -335,7 +337,7 @@ pub enum TerminalAction {
     Resize { columns: u16, rows: u16 },
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 pub enum VesselCommand {
     /// Local transport relays may wake only a positively suspended owner.
@@ -429,6 +431,8 @@ pub enum VesselCommand {
         expected_revision: u64,
     },
     Granted {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        expected_vessel_id: Option<Uuid>,
         grant_id: Uuid,
         token: String,
         command: Box<VesselCommand>,
@@ -506,7 +510,7 @@ pub struct VesselRequest {
     pub command: VesselCommand,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct VesselResponse {
     pub protocol: u32,
     pub result: Value,
@@ -530,6 +534,25 @@ impl std::fmt::Debug for VoyageCommand {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("VoyageCommand")
             .field("command_id", &self.mutation_id())
+            .finish_non_exhaustive()
+    }
+}
+
+// Granted envelopes and grant/pairing results can contain credentials. Never let
+// enclosing request/response diagnostics expose bearer tokens or private input.
+impl std::fmt::Debug for VesselCommand {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("VesselCommand")
+            .field("variant", &std::mem::discriminant(self))
+            .finish_non_exhaustive()
+    }
+}
+impl std::fmt::Debug for VesselResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("VesselResponse")
+            .field("protocol", &self.protocol)
+            .field("has_error", &self.error.is_some())
+            .field("outcome_unknown", &self.outcome_unknown)
             .finish_non_exhaustive()
     }
 }

@@ -71,6 +71,12 @@ enum Command {
     /// Issue an explicit scoped credential through the local supervisor.
     #[cfg(target_os = "linux")]
     ProcessGrant(vessel::process::grant_cli::GrantArgs),
+    /// Approve a principal-bound workspace invitation, written only to a private file.
+    #[cfg(target_os = "linux")]
+    PairInvite(vessel::process::pair_cli::PairInviteArgs),
+    /// Revoke a workspace connection and its derived runtime authority.
+    #[cfg(target_os = "linux")]
+    RevokeConnection(vessel::process::pair_cli::RevokeConnectionArgs),
     /// Revoke a scoped credential; current dispatch checks fail closed immediately.
     #[cfg(target_os = "linux")]
     ProcessRevoke {
@@ -141,6 +147,8 @@ async fn main() -> Result<()> {
         #[cfg(target_os = "linux")]
         Some(Command::ProcessGrant(_)) => {}
         #[cfg(target_os = "linux")]
+        Some(Command::PairInvite(_)) | Some(Command::RevokeConnection(_)) => {}
+        #[cfg(target_os = "linux")]
         Some(Command::ProcessRevoke {
             directory,
             grant,
@@ -188,8 +196,11 @@ async fn main() -> Result<()> {
         _ => {}
     }
     #[cfg(target_os = "linux")]
-    if let Some(Command::ProcessGrant(args)) = cli.command {
-        return vessel::process::grant_cli::issue(args).await;
+    match cli.command {
+        Some(Command::ProcessGrant(args)) => return vessel::process::grant_cli::issue(args).await,
+        Some(Command::PairInvite(args)) => return vessel::process::pair_cli::invite(args),
+        Some(Command::RevokeConnection(args)) => return vessel::process::pair_cli::revoke(args),
+        _ => {}
     }
     let enrollment =
         if let (Some(directory), Some(origin)) = (&cli.attachment_directory, &cli.public_origin) {
@@ -248,6 +259,22 @@ async fn main() -> Result<()> {
         enrollment: enrollment.clone(),
     };
     let app = Router::new()
+        .route(
+            voyage_protocol::vessel::PAIR_PATH,
+            axum::routing::post(process_http::pair)
+                .layer(axum::extract::DefaultBodyLimit::max(4096))
+                .layer(middleware::from_fn_with_state(
+                    state.clone(),
+                    process_http::boundary,
+                )),
+        )
+        .route(
+            voyage_protocol::vessel::PAIR_CAPABILITIES_PATH,
+            get(process_http::pair_capabilities).layer(middleware::from_fn_with_state(
+                state.clone(),
+                process_http::boundary,
+            )),
+        )
         .route(
             voyage_protocol::vessel::COMMAND_PATH,
             axum::routing::post(process_http::command)

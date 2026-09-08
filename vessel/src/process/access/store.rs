@@ -90,10 +90,8 @@ pub(super) fn authenticate(root: &Path, id: Uuid, token: &str) -> Result<Process
     Ok(grant)
 }
 pub(super) fn current(grant: &ProcessGrant) -> Result<()> {
-    ensure!(
-        !grant.revoked && grant.expires_at_ms > now()?,
-        "grant revoked or expired"
-    );
+    ensure!(!grant.revoked, "access revoked");
+    ensure!(grant.expires_at_ms > now()?, "access expired");
     if let Some(identity) = &grant.enrollment {
         enrollment(identity)?;
     }
@@ -132,4 +130,63 @@ pub(super) fn credential_path(root: &Path, id: Uuid) -> PathBuf {
     directory(root)
         .join("credentials")
         .join(format!("{id}.json"))
+}
+
+pub(crate) fn connection_path(root: &Path, id: Uuid) -> PathBuf {
+    directory(root)
+        .join("connections")
+        .join(format!("{id}.json"))
+}
+
+pub(super) fn authenticate_connection(
+    root: &Path,
+    id: Uuid,
+    token: &str,
+) -> Result<ConnectionGrant> {
+    use subtle::ConstantTimeEq;
+    ensure!(token.len() == 64, "access denied");
+    let grant: ConnectionGrant = load(&connection_path(root, id))?;
+    ensure!(
+        bool::from(hash(token).as_bytes().ct_eq(grant.token_hash.as_bytes())),
+        "access denied"
+    );
+    current_connection(root, &grant)?;
+    ensure!(grant.grant_id == id, "connection identity mismatch");
+    Ok(grant)
+}
+
+pub(crate) fn current_connection(root: &Path, grant: &ConnectionGrant) -> Result<()> {
+    ensure!(
+        grant.schema_version == 1
+            && !grant.grant_id.is_nil()
+            && !grant.principal_id.is_nil()
+            && grant.revision > 0,
+        "invalid connection authority"
+    );
+    ensure!(!grant.revoked, "access revoked");
+    ensure!(grant.expires_at_ms > now()?, "access expired");
+    ensure!(
+        grant.vessel_id == super::super::identity::public(root)?.vessel_id,
+        "Vessel identity changed"
+    );
+    ensure!(
+        !grant.workspaces.is_empty() && grant.workspaces.len() <= 32,
+        "invalid workspace scope"
+    );
+    let latest: ConnectionGrant = load(&connection_path(root, grant.grant_id))?;
+    ensure!(!latest.revoked, "access revoked");
+    ensure!(latest.expires_at_ms > now()?, "access expired");
+    ensure!(
+        latest.schema_version == 1
+            && latest.grant_id == grant.grant_id
+            && latest.principal_id == grant.principal_id
+            && latest.vessel_id == grant.vessel_id
+            && latest.revision == grant.revision
+            && !latest.revoked
+            && latest.expires_at_ms == grant.expires_at_ms
+            && latest.rights == grant.rights
+            && latest.workspaces == grant.workspaces,
+        "connection authority changed"
+    );
+    Ok(())
 }

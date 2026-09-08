@@ -1,4 +1,5 @@
 //! Explicit bearer grants supplement account-owner access; execution policy stays local.
+mod connection;
 mod routing;
 pub(super) mod store;
 use super::{registry, service::Supervisor};
@@ -56,6 +57,9 @@ impl Supervisor {
         );
         ensure!(
             !rights.is_empty()
+                && !rights
+                    .iter()
+                    .any(|right| matches!(right, ProcessRight::Catalogue | ProcessRight::Create))
                 && rights.len() <= 8
                 && rights
                     .iter()
@@ -96,6 +100,7 @@ impl Supervisor {
             revoked: false,
             enrollment: enrollment.clone(),
             token_hash: store::hash(&credential.token),
+            connection_binding: None,
             parent_grant: None,
             participant_binding: None,
         };

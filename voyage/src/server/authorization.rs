@@ -153,6 +153,44 @@ fn read_current(path: &Path, binding: &GrantBinding, session: uuid::Uuid) -> Res
             "enrolled machine revoked or replaced"
         );
     }
+    if let Some(connection) = &grant.connection_binding {
+        let root = path
+            .parent()
+            .and_then(Path::parent)
+            .and_then(Path::parent)
+            .ok_or_else(|| anyhow::anyhow!("missing connection authority root"))?;
+        let original: voyage_protocol::process::ConnectionGrant = load_private(
+            &root
+                .join("access/connections")
+                .join(format!("{}.json", connection.grant_id)),
+        )?;
+        #[derive(serde::Deserialize)]
+        struct Identity {
+            vessel_id: uuid::Uuid,
+        }
+        let identity: Identity = load_private(&root.join("identity/key.json"))?;
+        ensure!(
+            original.schema_version == 1
+                && original.grant_id == connection.grant_id
+                && original.principal_id == connection.principal_id
+                && original.principal_id == grant.principal_id
+                && original.revision == connection.revision
+                && original.vessel_id == identity.vessel_id
+                && !original.revoked
+                && original.expires_at_ms > now
+                && grant.expires_at_ms <= original.expires_at_ms
+                && original
+                    .workspaces
+                    .iter()
+                    .any(|w| w.path == grant.workspace)
+                && std::fs::canonicalize(&grant.workspace)? == grant.workspace
+                && grant
+                    .rights
+                    .iter()
+                    .all(|right| original.rights.contains(right)),
+            "workspace authority revoked, stale, expired or out of scope"
+        );
+    }
     if let Some(parent) = &grant.parent_grant {
         let root = path
             .parent()
