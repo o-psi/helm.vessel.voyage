@@ -1,5 +1,6 @@
 //! One inference action path for composer controls and slash commands.
 //! Catalog entries are suggestions, never claims of model/account support.
+mod access;
 mod render;
 use super::{
     App, Event, KeyCode, KeyModifiers, Result, drafts,
@@ -114,6 +115,7 @@ pub(super) fn parse(text: &str) -> Option<(Field, &str)> {
 #[derive(Default)]
 pub(super) struct Controls {
     picker: Option<Picker>,
+    access: access::AccessControls,
     catalogs: std::collections::BTreeMap<Uuid, DraftCatalog>,
     draft_generations: std::collections::BTreeMap<Uuid, Uuid>,
     draft_checks: std::collections::BTreeMap<Uuid, std::time::Instant>,
@@ -205,7 +207,7 @@ impl Picker {
 }
 impl App {
     pub(super) fn inference_picker_open(&self) -> bool {
-        self.inference.picker.is_some()
+        self.inference.picker.is_some() || self.inference.access.draft.is_some()
     }
 
     fn inference_destination(&self) -> Option<Destination> {
@@ -673,6 +675,9 @@ impl App {
     }
     pub(super) fn inference_input(&mut self, event: &Event) -> Result<bool> {
         use crossterm::event::{KeyEventKind, MouseButton, MouseEventKind};
+        if self.composer_access_input(event)? {
+            return Ok(true);
+        }
         if let Event::Resize(..) = event {
             self.inference.visible.set(false);
             self.inference.hits.borrow_mut().clear();

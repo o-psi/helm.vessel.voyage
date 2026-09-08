@@ -212,3 +212,38 @@ impl App {
         Ok(())
     }
 }
+
+impl App {
+    pub(in crate::process_client::ui) fn draft_access(&self, id: Uuid) -> Result<String> {
+        let draft = self.new_drafts.get(&id).context("draft unavailable")?;
+        let config = draft
+            .saved
+            .config
+            .as_ref()
+            .context("Remote drafts use executing-host policy")?;
+        Ok(config.access_mode().to_string())
+    }
+
+    pub(in crate::process_client::ui) fn set_draft_access(
+        &mut self,
+        id: Uuid,
+        mode: crate::config::AccessMode,
+    ) -> Result<()> {
+        let draft = self.new_drafts.get_mut(&id).context("draft unavailable")?;
+        anyhow::ensure!(
+            draft.saved.start.is_none() && !draft.busy,
+            "Waiting for first-send confirmation before changing this draft"
+        );
+        let mut saved = draft.saved.clone();
+        let config = saved
+            .config
+            .as_mut()
+            .context("Remote drafts use executing-host policy")?;
+        config.access = Some(mode);
+        saved.explicit.access = Some(mode);
+        storage::save(&saved)?;
+        draft.saved = saved;
+        self.status = "Draft access saved · message preserved".into();
+        Ok(())
+    }
+}

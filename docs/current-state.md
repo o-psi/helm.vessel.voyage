@@ -30,7 +30,12 @@ an explicit absolute workspace with `/new /absolute/path`. Session-scoped grant
 connections cannot create another voyage. Explicit `connect new`, resume and
 branch retain their existing intentional session semantics.
 
-The composer has clickable Model, Thinking and Service selectors, with matching
+The composer has four clickable controls: Model, Thinking, Service and Access.
+Access shows the current mode and opens the existing voyage access confirmation
+flow, or a keyboard picker for local drafts, without replacing message text.
+Remote drafts retain executing-host policy and cannot edit access locally;
+first-send-pending drafts remain frozen. `/access` remains available.
+The inference selectors have matching
 `/model`, `/thinking` and `/service` commands. Selectors support search, keyboard
 selection and cancellation while preserving composer text. Local drafts carry
 explicit selections into creation; remote drafts retain executing-host defaults.

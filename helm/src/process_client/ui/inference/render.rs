@@ -8,6 +8,8 @@ use ratatui::{
 
 impl App {
     pub(in crate::process_client::ui) fn clear_inference_hits(&self) {
+        self.inference.access.hit.set(None);
+        self.inference.access.visible.set(false);
         self.inference.visible.set(false);
         self.inference.hits.borrow_mut().clear();
         self.inference.choices.borrow_mut().clear();
@@ -23,11 +25,13 @@ impl App {
         let settings = self.inference_settings(destination).ok();
         let fields = [Field::Model, Field::Thinking, Field::Service];
         let columns = Layout::horizontal([
-            Constraint::Percentage(40),
             Constraint::Percentage(30),
-            Constraint::Percentage(30),
+            Constraint::Percentage(25),
+            Constraint::Percentage(25),
+            Constraint::Percentage(20),
         ])
         .split(area);
+        self.draw_access_control(frame, columns[3], destination);
         for (field, area) in fields.into_iter().zip(columns.iter().copied()) {
             let value = settings
                 .as_ref()
@@ -58,6 +62,7 @@ impl App {
         }
     }
     pub(in crate::process_client::ui) fn draw_inference_picker(&self, frame: &mut Frame<'_>) {
+        self.draw_draft_access(frame);
         let Some(picker) = &self.inference.picker else {
             return;
         };
