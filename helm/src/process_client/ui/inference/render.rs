@@ -29,14 +29,29 @@ impl App {
         ])
         .split(area);
         for (field, area) in fields.into_iter().zip(columns.iter().copied()) {
-            let value = settings
-                .as_ref()
-                .map(|s| match field {
-                    Field::Model => s.model.as_str(),
-                    Field::Thinking => s.reasoning_effort.as_deref().unwrap_or("default"),
-                    Field::Service => s.service_tier.as_deref().unwrap_or("default"),
-                })
-                .unwrap_or("unavailable");
+            let value =
+                settings
+                    .as_ref()
+                    .map(|s| match field {
+                        Field::Model => s.model.as_str(),
+                        Field::Thinking => s.reasoning_effort.as_deref().unwrap_or(
+                            if s.reasoning_efforts.is_empty() {
+                                "Not configurable"
+                            } else {
+                                "default"
+                            },
+                        ),
+                        Field::Service => {
+                            s.service_tier
+                                .as_deref()
+                                .unwrap_or(if s.service_tiers.is_empty() {
+                                    "Not configurable"
+                                } else {
+                                    "default"
+                                })
+                        }
+                    })
+                    .unwrap_or("unavailable");
             let hover = self
                 .sidebar
                 .pointer

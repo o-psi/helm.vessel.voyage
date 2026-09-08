@@ -75,8 +75,6 @@ pub(super) struct Controls {
 struct Picker {
     id: Uuid,
     destination: Destination,
-    incarnation: Option<Uuid>,
-    revision: Option<u64>,
     original: Settings,
     field: Field,
     query: String,
@@ -140,7 +138,7 @@ impl App {
         let (field, value) = parse(text).context("invalid inference command")?;
         self.inference.choices.borrow_mut().clear();
         let original = self.inference_settings(destination)?;
-        let (incarnation, revision) = match destination {
+        match destination {
             Destination::Live(target) => {
                 let view = &self.views[&target];
                 ensure!(
@@ -151,19 +149,9 @@ impl App {
                     view.pending.is_none(),
                     "Inference not sent: another command is pending; Helm checks it automatically. Text preserved"
                 );
-                (
-                    Some(view.process.incarnation),
-                    Some(
-                        view.snapshot
-                            .as_ref()
-                            .context("snapshot unavailable")?
-                            .revision,
-                    ),
-                )
             }
             Destination::Draft(id) => {
                 self.ensure_draft_inference_editable(id)?;
-                (None, None)
             }
         };
         let mut options = match field {
@@ -172,6 +160,11 @@ impl App {
             Field::Service => original.service_tiers.clone(),
         };
         if field != Field::Model {
+            ensure!(
+                !options.is_empty() || !value.is_empty(),
+                "{} is not configurable through this provider transport; provider default is retained",
+                field.name()
+            );
             options.insert(0, "default".into());
         }
         let mut seen = std::collections::BTreeSet::new();
@@ -181,11 +174,9 @@ impl App {
                 && !value.chars().any(char::is_whitespace)
                 && seen.insert(value.clone())
         });
-        let picker = Picker {
+        let mut picker = Picker {
             id: Uuid::new_v4(),
             destination,
-            incarnation,
-            revision,
             original,
             field,
             query: String::new(),
@@ -208,6 +199,9 @@ impl App {
             },
             preserve_draft,
         };
+        if field == Field::Service {
+            picker.notice = format!("Priority may increase cost. {}", picker.notice);
+        }
         if !value.is_empty() {
             return self.select_inference(picker, value);
         }
@@ -326,8 +320,12 @@ impl App {
         self.apply_inference(picker, settings)
     }
     fn apply_inference(&mut self, picker: Picker, settings: Settings) -> Result<()> {
+        let latest = self.inference_settings(picker.destination)?;
         ensure!(
-            self.inference_settings(picker.destination)? == picker.original,
+            latest.model == picker.original.model
+                && latest.reasoning_effort == picker.original.reasoning_effort
+                && latest.service_tier == picker.original.service_tier
+                && latest.provider == picker.original.provider,
             "Inference settings changed while selecting; reopen the selector. Nothing sent; text preserved"
         );
         match picker.destination {
@@ -346,11 +344,9 @@ impl App {
                     "Another command is pending; Helm checks it automatically. Text preserved"
                 );
                 let snapshot = view.snapshot.as_ref().context("snapshot unavailable")?;
-                ensure!(
-                    Some(snapshot.revision) == picker.revision
-                        && Some(view.process.incarnation) == picker.incarnation,
-                    "Voyage changed while selecting; reopen the selector. Nothing sent; text preserved"
-                );
+                // This is a session-scoped setting, not a live-resource action.
+                // Use the latest observed revision after confirming the selected
+                // values did not change; ordinary checkpoints need not close a picker.
                 let command_id = Uuid::new_v4();
                 let expires_at_ms = u64::try_from(
                     std::time::SystemTime::now()

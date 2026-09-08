@@ -116,7 +116,7 @@ for existing behavior.
   executing-host settings. Surface refusal without claiming a change.
 - **Pending and recovery:** durably retain the pending action and preserve composer
   text across disconnect/restart. Distinguish pending from confirmed settings and
-  prevent conflicting edits while the outcome is unknown. F4 reconciles the
+  prevent conflicting edits while the outcome is unknown. Helm automatically reconciles the
   original action without replaying it or replacing its identity. Definite refusal
   preserves text and returns to an actionable editing state.
 - **Active turns:** accepted changes apply to the next turn only. Say so while a
@@ -124,7 +124,7 @@ for existing behavior.
 
 Manual acceptance must cover click/slash parity, search and keyboard cancellation,
 default clearing, model-reset confirm/cancel, live versus unknown capabilities,
-runtime refusal, durable pending recovery with F4, and active-turn timing. Preserve
+runtime refusal, automatic durable pending recovery, and active-turn timing. Preserve
 a nonempty composer throughout; record actual results separately from this plan.
 
 ### Reconcile inventory completeness
