@@ -111,6 +111,7 @@ impl App {
             .filter(|(t, ..)| t.route.id != id);
         for (target, view) in &mut self.views {
             if target.route.id == id {
+                view.connection_unavailable = true;
                 view.error = Some(
                     "Disconnected · remote work continues; drafts and pending receipts retained"
                         .into(),

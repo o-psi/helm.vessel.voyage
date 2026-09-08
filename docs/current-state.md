@@ -291,7 +291,10 @@ history, using the current Vessel runtime binary. Conversation summaries label s
 Finished for 24 hours after its durable completion timestamp, then Settled; the sidebar
 uses the state and compact suspension presentation described above. Failed,
 cancelled and cleanup-pending outcomes remain distinct. Bounded one-shot helpers
-serve suspended observations without waking an executor. Initialization and
+serve suspended observations without waking an executor. Supervisor-owned reads
+and scoped stop checks use the currently configured runtime binary, not a retired
+executable saved before an upgrade; this does not change the persisted owner
+incarnation or its cleanup proof. Initialization and
 management-only processes retire after a short idle grace; volatile private workflow
 preparation retains its existing bounded lifetime. Root terminals close before
 suspension; terminal metadata does not imply a live process across turns.

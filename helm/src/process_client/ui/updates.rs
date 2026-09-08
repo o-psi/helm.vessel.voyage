@@ -186,6 +186,7 @@ impl App {
                         session: process.session_id,
                     };
                     if let Some(view) = self.views.get_mut(&target) {
+                        view.connection_unavailable = false;
                         if view.process.incarnation != process.incarnation {
                             view.snapshot = None;
                             view.terminals = Default::default();
@@ -310,6 +311,7 @@ impl App {
                         view.snapshot = Some(snapshot);
                         view.observed = Some(Instant::now());
                         view.error = None;
+                        view.connection_unavailable = false;
                         if recovering_route && self.selected == Some(target) {
                             self.status = "Connected. Voyage state refreshed.".into();
                         }
@@ -324,6 +326,7 @@ impl App {
                 self.status = format!("{} unavailable: {}", self.route_label(route), safe(&error));
                 for (target, view) in &mut self.views {
                     if target.route == route {
+                        view.connection_unavailable = true;
                         view.error =
                             Some("Connection unavailable; runtime state is unknown".into());
                     }

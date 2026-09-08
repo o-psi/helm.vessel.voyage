@@ -7,6 +7,51 @@ use uuid::Uuid;
 use voyage_protocol::process::*;
 
 impl Supervisor {
+    // The persisted executable identifies the old execution owner, not the
+    // version a clean read-only helper must use after a supervisor upgrade.
+    // Keep this override ephemeral: never rewrite ownership or incarnation.
+    fn current_observer_registration(
+        &self,
+        registration: &ProcessRegistration,
+    ) -> ProcessRegistration {
+        let mut observer = registration.clone();
+        observer.executable = Some(self.binary.clone());
+        observer
+    }
+
+    async fn observe_current(
+        &self,
+        directory: &Path,
+        registration: &ProcessRegistration,
+        command: RuntimeCommand,
+        authorization: Option<GrantBinding>,
+    ) -> Result<RuntimeResponse> {
+        observe(
+            directory,
+            &self.current_observer_registration(registration),
+            command,
+            authorization,
+        )
+        .await
+    }
+
+    pub(super) async fn forward_current(
+        &self,
+        directory: &Path,
+        registration: &ProcessRegistration,
+        command: RuntimeCommand,
+        authorization: Option<GrantBinding>,
+    ) -> Result<RuntimeResponse> {
+        // Live IPC keeps the original token/incarnation. If the owner retires
+        // before forwarding, the positively fenced fallback uses current code.
+        routing::forward_authorized(
+            directory,
+            &self.current_observer_registration(registration),
+            command,
+            authorization,
+        )
+        .await
+    }
     pub(super) async fn stop(
         &self,
         session: Uuid,
@@ -27,13 +72,14 @@ impl Supervisor {
         let directory = registry::directory(&self.directory, session);
         if super::recovery::suspended(&directory, &registration) {
             if authorization.is_some() {
-                let checked = observe(
-                    &directory,
-                    &registration,
-                    RuntimeCommand::Stop,
-                    authorization.clone(),
-                )
-                .await?;
+                let checked = self
+                    .observe_current(
+                        &directory,
+                        &registration,
+                        RuntimeCommand::Stop,
+                        authorization.clone(),
+                    )
+                    .await?;
                 ensure!(
                     checked.error.is_none(),
                     "suspended lifecycle authority refused"
@@ -72,7 +118,7 @@ impl Supervisor {
         registry::save(&directory, &registration)?;
         registrations.insert(session, registration.clone());
         drop(registrations);
-        routing::forward_authorized(
+        self.forward_current(
             &directory,
             &registration,
             RuntimeCommand::Stop,
@@ -150,7 +196,7 @@ impl Supervisor {
             let directory = registry::directory(&self.directory, session);
             if super::recovery::suspended(&directory, &registration) {
                 let read = || {
-                    observe(
+                    self.observe_current(
                         &directory,
                         &registration,
                         RuntimeCommand::Events {
@@ -180,17 +226,18 @@ impl Supervisor {
                 }
                 return Ok(response);
             }
-            return routing::forward_authorized(
-                &directory,
-                &registration,
-                RuntimeCommand::Events {
-                    after,
-                    limit,
-                    wait_ms,
-                },
-                authorization,
-            )
-            .await;
+            return self
+                .forward_current(
+                    &directory,
+                    &registration,
+                    RuntimeCommand::Events {
+                        after,
+                        limit,
+                        wait_ms,
+                    },
+                    authorization,
+                )
+                .await;
         }
         let lock = self.lifecycle_lock(session).await?;
         let _guard = lock.lock().await;
@@ -213,9 +260,9 @@ impl Supervisor {
                 // when the retired executable predates Resolve. The current
                 // one-shot runtime takes the existing execution/startup fences;
                 // it never starts an agent or changes the incarnation.
-                let mut observer = registration.clone();
-                observer.executable = Some(self.binary.clone());
-                let mut response = observe(&directory, &observer, command, authorization).await?;
+                let mut response = self
+                    .observe_current(&directory, &registration, command, authorization)
+                    .await?;
                 if resumed {
                     response.resumed_from = Some(incarnation);
                 }
@@ -262,13 +309,14 @@ impl Supervisor {
                 registration = self.registration(session).await?;
                 resumed = true;
             }
-            let response = routing::forward_authorized(
-                &directory,
-                &registration,
-                command.clone(),
-                authorization.clone(),
-            )
-            .await;
+            let response = self
+                .forward_current(
+                    &directory,
+                    &registration,
+                    command.clone(),
+                    authorization.clone(),
+                )
+                .await;
             match response {
                 Ok(response)
                     if response.error.is_none()

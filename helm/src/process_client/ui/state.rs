@@ -216,6 +216,8 @@ pub struct View {
     pub viewed_completion: std::cell::Cell<Option<Uuid>>,
     pub observed: Option<Instant>,
     pub error: Option<String>,
+    /// A route-level transport failure, distinct from a conversation read failure.
+    pub connection_unavailable: bool,
     pub rendered: std::cell::RefCell<Option<(u16, ratatui::text::Text<'static>)>>,
 }
 
@@ -251,6 +253,7 @@ impl View {
             viewed_completion: Default::default(),
             observed: None,
             error: None,
+            connection_unavailable: false,
             rendered: Default::default(),
         }
     }

@@ -117,3 +117,33 @@ SSE checks exercised multiple sessions, not a >32-session load test. Application
 workspace policy is not an OS sandbox. Cloudflare evidence applies to the tested
 route, not every proxy or Access configuration. Browser-based execution remains
 outside this work.
+
+## Post-release upgrade regression (#195)
+
+The first installed check established catalogue access and new-session behavior,
+but did not verify reading a pre-upgrade suspended conversation through the new
+workspace credential. The user then observed that conversation as Disconnected:
+its catalogue entry was reachable, while snapshot/history observation selected the
+retired runtime, which did not understand the new workspace authority record.
+The earlier catalogue/SSE transport checks were not sufficient evidence that this
+specific old conversation's snapshot could be read.
+
+The affected live deployment was repaired by an explicitly authorized restart of
+its positively suspended owner using the installed runtime. No turn was submitted,
+its UUID and two existing messages were preserved, and its history was successfully
+read again after re-suspension.
+
+The general source fix selects the supervisor's configured current runtime for
+clean suspended observations and scoped stop checks. The override is ephemeral:
+it does not rewrite the saved executable/incarnation, start an agent for a read,
+or bypass cleanup/authority fences. Helm now separates a conversation-read error
+from route-level disconnection.
+
+A mixed-version fixture reproduced the failure with a retired runtime and a new
+workspace grant. With the fix, snapshot, history, events and scoped clean-stop
+checks passed without waking an execution owner, changing its stored executable
+or incarnation, or adding provider requests. An actual PTY also showed Needs
+attention rather than Disconnected for the read failure and displayed the original
+history once the corrected supervisor was introduced. Strict all-target Helm/Vessel
+Clippy and builds passed. This source fix is published for subsequent upgrades;
+the immediate deployment repair did not reset pairing or require reinstalling BP.

@@ -31,7 +31,11 @@ fn state(view: &super::state::View) -> &'static str {
             "Recovering"
         }
     } else if view.error.is_some() {
-        "Reconnecting"
+        if view.connection_unavailable {
+            "Reconnecting"
+        } else {
+            "Conversation unavailable"
+        }
     } else if view
         .snapshot
         .as_ref()
@@ -60,7 +64,15 @@ fn sidebar_state(view: &super::state::View) -> (&'static str, Color, bool) {
         return ("Status unavailable", attention, false);
     }
     if view.error.is_some() {
-        return ("Disconnected", attention, false);
+        return (
+            if view.connection_unavailable {
+                "Disconnected"
+            } else {
+                "Needs attention"
+            },
+            attention,
+            false,
+        );
     }
     if let Some(snapshot) = &view.snapshot {
         if !snapshot.decisions.is_empty() {

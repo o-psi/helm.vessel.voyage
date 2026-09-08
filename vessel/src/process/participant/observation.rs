@@ -51,15 +51,17 @@ impl Supervisor {
             }
         };
         let directory = registry::directory(&self.directory, registration.session_id);
-        let snapshot =
-            match routing::forward(&directory, &registration, RuntimeCommand::Snapshot).await {
-                Ok(response) if response.error.is_none() => response.result,
-                _ => {
-                    assignment.observation.state = "cleanup_unknown".into();
-                    store::save_bounded(&path, &assignment, 2 * 1024 * 1024)?;
-                    return Ok(serde_json::to_value(assignment.observation)?);
-                }
-            };
+        let snapshot = match self
+            .forward_current(&directory, &registration, RuntimeCommand::Snapshot, None)
+            .await
+        {
+            Ok(response) if response.error.is_none() => response.result,
+            _ => {
+                assignment.observation.state = "cleanup_unknown".into();
+                store::save_bounded(&path, &assignment, 2 * 1024 * 1024)?;
+                return Ok(serde_json::to_value(assignment.observation)?);
+            }
+        };
         if let Some(run_id) = snapshot["run"]["run_id"]
             .as_str()
             .and_then(|id| Uuid::parse_str(id).ok())
@@ -77,7 +79,9 @@ impl Supervisor {
                     })
                     .clone();
                 store::save_bounded(&path, &assignment, 2 * 1024 * 1024)?;
-                let _ = routing::forward(&directory, &registration, command).await?;
+                let _ = self
+                    .forward_current(&directory, &registration, command, None)
+                    .await?;
                 assignment.observation.state = "cancellation_requested".into();
             } else {
                 assignment.observation.state = state.to_owned();
@@ -92,7 +96,9 @@ impl Supervisor {
                     }
                     // Child result and cleanup evidence are durable before its process is stopped.
                     store::save_bounded(&path, &assignment, 2 * 1024 * 1024)?;
-                    let _ = routing::forward(&directory, &registration, RuntimeCommand::Stop).await;
+                    let _ = self
+                        .forward_current(&directory, &registration, RuntimeCommand::Stop, None)
+                        .await;
                 }
             }
         } else {
@@ -103,7 +109,9 @@ impl Supervisor {
             if cancel || binding.cancel_existing {
                 // No admitted run plus closed binding prevents a later assignment dispatch.
                 if cancel || binding.cancel_existing {
-                    let _ = routing::forward(&directory, &registration, RuntimeCommand::Stop).await;
+                    let _ = self
+                        .forward_current(&directory, &registration, RuntimeCommand::Stop, None)
+                        .await;
                     let stopped = tokio::time::timeout(std::time::Duration::from_secs(5), async {
                         loop {
                             if routing::inspect(&directory, &registration).await.state
