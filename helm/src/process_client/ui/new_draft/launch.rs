@@ -62,14 +62,17 @@ pub(super) async fn advance(
             snapshot["session_id"] == saved.id.to_string(),
             "snapshot identity mismatch"
         );
-        saved.submit = Some(super::super::attachments::prepare(VoyageCommand::Submit {
-            command_id: saved.turn,
-            expected_revision: snapshot["revision"]
-                .as_u64()
-                .context("snapshot revision missing")?,
-            expires_at_ms: super::super::super::frontend::deadline()?,
-            prompt: saved.text.clone(),
-        }, &saved.images)?);
+        saved.submit = Some(super::super::attachments::prepare(
+            VoyageCommand::Submit {
+                command_id: saved.turn,
+                expected_revision: snapshot["revision"]
+                    .as_u64()
+                    .context("snapshot revision missing")?,
+                expires_at_ms: super::super::super::frontend::deadline()?,
+                prompt: saved.text.clone(),
+            },
+            &saved.images,
+        )?);
     }
     let recovering = saved.attempted;
     saved.attempted = true;
@@ -77,9 +80,14 @@ pub(super) async fn advance(
     // attempted + frozen command and bytes were saved before any upload. A crash
     // from here recovers with Resolve only; it never repeats this sequence.
     let receipt = super::super::attachments::upload_then_submit(
-        client, saved.id, process.incarnation, saved.turn,
-        saved.submit.clone().context("first turn missing")?, &saved.images,
-    ).await;
+        client,
+        saved.id,
+        process.incarnation,
+        saved.turn,
+        saved.submit.clone().context("first turn missing")?,
+        &saved.images,
+    )
+    .await;
     match receipt {
         Ok(value) if value["status"] == "unknown" => Ok(None),
         Ok(value) => retain_receipt(saved, value),

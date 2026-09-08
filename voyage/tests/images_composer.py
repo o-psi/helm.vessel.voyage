@@ -20,6 +20,7 @@ import signal
 import stat
 import struct
 import subprocess
+import sys
 import tempfile
 import termios
 import threading
@@ -30,22 +31,12 @@ import urllib.request
 def launch_pty(argv, env, cwd, trace):
     master, slave = os.openpty()
     fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH', 35, 100, 0, 0))
-    pid = os.fork()
-    if pid == 0:
-        try:
-            os.close(master)
-            os.setsid()
-            fcntl.ioctl(slave, termios.TIOCSCTTY, 0)
-            for fd in (0, 1, 2):
-                os.dup2(slave, fd)
-            if slave > 2:
-                os.close(slave)
-            os.chdir(cwd)
-            os.execve(argv[0], argv, env)
-        finally:
-            os._exit(127)
+    # Start a fresh single-threaded helper before acquiring the controlling TTY;
+    # never run Python after forking this multi-threaded fixture process.
+    process = subprocess.Popen([sys.executable, str(Path(__file__).resolve()), '_pty_exec', *argv],
+        env=env, cwd=cwd, stdin=slave, stdout=slave, stderr=slave, start_new_session=True)
     os.close(slave)
-    state = {'pid': pid, 'fd': master, 'output': bytearray(), 'status': None}
+    state = {'pid': process.pid, 'process': process, 'fd': master, 'output': bytearray(), 'status': None}
     def drain():
         with trace.open('wb') as output:
             while True:
@@ -125,6 +116,7 @@ def stop_pty(pty, wait_for):
         pid, status = os.waitpid(pty['pid'], os.WNOHANG)
         if pid:
             pty['status'] = status
+            pty['process'].returncode = os.waitstatus_to_exitcode(status)
             return True
         return False
     try:
@@ -359,4 +351,7 @@ def main():
 
 
 if __name__ == '__main__':
+    if len(sys.argv) > 2 and sys.argv[1] == '_pty_exec':
+        fcntl.ioctl(0, termios.TIOCSCTTY, 0)
+        os.execve(sys.argv[2], sys.argv[2:], os.environ)
     main()

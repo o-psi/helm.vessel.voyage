@@ -8,6 +8,7 @@ pub mod extensions;
 pub mod file_publication;
 pub mod github;
 pub mod host_resources;
+pub mod images;
 pub mod inference;
 pub mod launch_config;
 pub mod local_provider;

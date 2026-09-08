@@ -28,7 +28,8 @@ pub(crate) mod storage;
 #[cfg(windows)]
 use std::sync::Arc;
 
-const SCHEMA_VERSION: i64 = 8;
+// Version 9 prevents older text-only runtimes from opening image-bearing history.
+const SCHEMA_VERSION: i64 = 9;
 mod withdrawal;
 pub use withdrawal::{
     RemoteConsentRun, RemoteConsentStatus, RemoteGrantObserver, WithdrawalPreview,
@@ -143,7 +144,7 @@ pub struct VersionedSession {
 
 /// Transport adapters validate expiry/authentication before invoking the journal;
 /// expiry is checked again here immediately before durable admission.
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 pub struct TurnAdmission {
     // Presentation metadata must not change the established command digest.
     #[serde(skip_serializing)]
@@ -155,6 +156,8 @@ pub struct TurnAdmission {
     pub expected_revision: u64,
     pub expires_at_ms: i64,
     pub prompt: String,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub parts: Vec<voyage_protocol::content::ContentPart>,
 }
 
 pub struct Admission {
@@ -236,7 +239,7 @@ impl Journal {
             .optional()?;
         if let Some(version) = version {
             ensure!(
-                matches!(version, 2 | 3 | 4 | 5 | 6 | 7 | SCHEMA_VERSION),
+                matches!(version, 2 | 3 | 4 | 5 | 6 | 7 | 8 | SCHEMA_VERSION),
                 "unsupported attachment journal schema"
             );
         } else {
@@ -563,9 +566,18 @@ impl Journal {
             "nil command authority identity"
         );
         ensure!(
-            !request.prompt.trim().is_empty() && request.prompt.len() <= MAX_PROMPT,
+            (!request.prompt.trim().is_empty() || !request.parts.is_empty())
+                && request.prompt.len() <= MAX_PROMPT,
             "invalid prompt size"
         );
+        if !request.parts.is_empty() {
+            crate::images::validate_parts(&request.parts)?;
+            self.require_image_schema(guard)?;
+            ensure!(
+                crate::images::text(&request.parts) == request.prompt,
+                "content text projection mismatch"
+            );
+        }
         let digest = Sha256::digest(serde_json::to_vec(request)?).to_vec();
         let tx = self
             .connection
@@ -639,6 +651,7 @@ impl Journal {
         }
         let mut message = Message::new(Role::User, &request.prompt);
         message.operator_name = request.operator_name.clone();
+        message.parts = request.parts.clone();
         current.session.messages.push(message);
         update_session(&tx, &current)?;
         let run = RunRecord {
@@ -1541,3 +1554,71 @@ mod import_status;
 mod tombstones;
 
 mod cleanup;
+
+impl Journal {
+    pub(crate) fn hydrate_images(&self, session: &mut Session) -> Result<()> {
+        if session.messages.iter().all(|m| m.parts.is_empty()) {
+            return Ok(());
+        }
+        let store = crate::images::Store::open(&self.directory, session.id)?;
+        for message in &mut session.messages {
+            for part in &message.parts {
+                if let voyage_protocol::content::ContentPart::Image { attachment } = part {
+                    message
+                        .image_data
+                        .insert(attachment.id, store.resolve(attachment)?);
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+impl Journal {
+    pub(crate) fn put_image(
+        &mut self,
+        guard: &ExecutionGuard,
+        principal: Uuid,
+        id: Uuid,
+        name: &str,
+        bytes: &[u8],
+    ) -> Result<voyage_protocol::content::ImageAttachment> {
+        self.check_guard(guard, guard.session_id)?;
+        lifecycle::ensure_admissible(&self.connection, guard.session_id)?;
+        self.require_image_schema(guard)?;
+        let mut images = crate::images::Store::open(&self.directory, guard.session_id)?;
+        images.put(principal, id, name, bytes)
+    }
+}
+
+impl Journal {
+    /// Existing v8 text-only journals opt into v9 under their lifetime owner fence.
+    /// Other legacy schemas still need the explicit quiescent migration path.
+    fn require_image_schema(&mut self, guard: &ExecutionGuard) -> Result<()> {
+        self.check_guard(guard, guard.session_id)?;
+        if self.opened_schema == SCHEMA_VERSION {
+            return Ok(());
+        }
+        ensure!(
+            self.opened_schema == 8,
+            "images require an explicit quiescent journal upgrade"
+        );
+        let tx = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        check_transaction_schema(&tx, self.opened_schema)?;
+        let active: u64 =
+            tx.query_row("SELECT count(*) FROM runs WHERE active=1", [], |r| r.get(0))?;
+        ensure!(
+            active == 0,
+            "finish the current run before attaching images"
+        );
+        tx.execute(
+            "UPDATE attachment_schema SET version=?1 WHERE id=1",
+            [SCHEMA_VERSION],
+        )?;
+        commit(tx, &self.commit_fence)?;
+        self.opened_schema = SCHEMA_VERSION;
+        Ok(())
+    }
+}

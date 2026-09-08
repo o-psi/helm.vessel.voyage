@@ -95,14 +95,13 @@ pub(super) fn recover(clients: &[Client]) -> Result<BTreeMap<Uuid, Draft>> {
         let Some(lock) = lock(&root, id)? else {
             continue;
         };
-        let metadata = std::fs::symlink_metadata(&path)?;
-        ensure!(
-            metadata.is_file()
-                && !metadata.file_type().is_symlink()
-                && metadata.len() <= (2 * voyage_protocol::vessel::MAX_VESSEL_BODY) as u64,
-            "invalid new-voyage draft file"
-        );
-        let saved: Saved = serde_json::from_slice(&std::fs::read(path)?)?;
+        let bytes = super::super::drafts::read_private(
+            &path,
+            2 * voyage_protocol::vessel::MAX_VESSEL_BODY,
+        )?;
+        let saved: Saved = serde_json::from_slice(&bytes).map_err(|_| {
+            anyhow::anyhow!("Invalid saved new-voyage image draft; original file preserved")
+        })?;
         ensure!(saved.id == id, "draft identity mismatch");
         if saved.finished {
             continue;

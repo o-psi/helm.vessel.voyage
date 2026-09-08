@@ -49,6 +49,10 @@ impl Journal {
         lifecycle::ensure_admissible(&tx, guard.session_id)?;
         let mut saved = read_session(&tx, guard.session_id)?;
         ensure!(
+            saved.session.messages.iter().all(|m| m.parts.is_empty()),
+            "Owner transfer of image-bearing voyages is unavailable; export metadata or continue on this Vessel"
+        );
+        ensure!(
             saved.revision == *expected_revision,
             "session revision conflict"
         );
@@ -171,7 +175,10 @@ impl Journal {
         let mut restored: Session = serde_json::from_value(portable.session)?;
         ensure!(
             restored.id == session
-                && restored.messages.iter().all(|m| m.provider_state.is_none())
+                && restored
+                    .messages
+                    .iter()
+                    .all(|m| m.provider_state.is_none() && m.parts.is_empty())
                 && restored.terminals.is_empty()
                 && restored.completion_runs.is_empty()
                 && restored.workflow_runs.is_empty(),

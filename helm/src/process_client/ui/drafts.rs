@@ -46,14 +46,9 @@ pub fn load(client: &Client, view: &mut View) -> Result<()> {
     if !path.try_exists()? {
         return Ok(());
     }
-    let metadata = std::fs::symlink_metadata(&path)?;
-    ensure!(
-        metadata.is_file()
-            && !metadata.file_type().is_symlink()
-            && metadata.len() <= MAX_DRAFT_BYTES as u64,
-        "invalid saved interface draft"
-    );
-    let draft: Draft = serde_json::from_slice(&std::fs::read(path)?)?;
+    let bytes = read_private(&path, MAX_DRAFT_BYTES)?;
+    let draft: Draft = serde_json::from_slice(&bytes)
+        .map_err(|_| anyhow::anyhow!("Invalid saved interface draft; original file preserved"))?;
     super::attachments::validate_set(&draft.images)?;
     view.images = draft.images;
     view.draft.text = draft.text;
@@ -83,6 +78,37 @@ pub fn save(client: &Client, view: &View) -> Result<()> {
     #[cfg(unix)]
     std::fs::File::open(path.parent().expect("view parent"))?.sync_all()?;
     Ok(())
+}
+
+/// Pin and bound the opened private file, not a prior pathname observation.
+#[cfg(unix)]
+pub(super) fn read_private(path: &std::path::Path, limit: usize) -> Result<Vec<u8>> {
+    use std::{
+        io::Read,
+        os::unix::fs::{MetadataExt, OpenOptionsExt},
+    };
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC)
+        .open(path)
+        .map_err(|_| anyhow::anyhow!("Cannot open private image draft"))?;
+    let metadata = file.metadata()?;
+    ensure!(
+        metadata.is_file()
+            && metadata.nlink() == 1
+            && metadata.uid() == unsafe { libc::geteuid() }
+            && metadata.mode() & 0o077 == 0
+            && metadata.len() <= limit as u64,
+        "Invalid private image draft file"
+    );
+    let mut bytes = Vec::new();
+    file.take(limit as u64 + 1).read_to_end(&mut bytes)?;
+    ensure!(bytes.len() <= limit, "Private image draft exceeds limit");
+    Ok(bytes)
+}
+#[cfg(not(unix))]
+pub(super) fn read_private(_path: &std::path::Path, _limit: usize) -> Result<Vec<u8>> {
+    anyhow::bail!("Private image draft storage unsupported on this platform")
 }
 
 #[cfg(test)]

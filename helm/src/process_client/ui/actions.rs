@@ -148,7 +148,10 @@ impl App {
             view.pending.is_none(),
             "Waiting for delivery confirmation; Helm checks automatically. Draft preserved"
         );
-        ensure!(!command_text.is_empty() || !view.images.is_empty(), "input is empty");
+        ensure!(
+            !command_text.is_empty() || !view.images.is_empty(),
+            "input is empty"
+        );
         ensure!(
             draft.len() <= 64 * 1024,
             "input limit is 64 KiB; draft preserved"
@@ -308,8 +311,14 @@ impl App {
         }
         tokio::spawn(async move {
             let mut result = super::attachments::upload_then_submit(
-                &client, target.session, incarnation, command_id, command.clone(), &images,
-            ).await;
+                &client,
+                target.session,
+                incarnation,
+                command_id,
+                command.clone(),
+                &images,
+            )
+            .await;
             // Bounded status recovery only. Never replay the submitted mutation.
             if resolving {
                 for _ in 1..3 {

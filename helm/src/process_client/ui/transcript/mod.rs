@@ -65,8 +65,10 @@ pub(super) struct Delivery {
 }
 impl Delivery {
     pub(super) fn matches(&self, message: &Message) -> bool {
-        message.role == "user" && message.message_index >= self.before
-            && message.content == self.text && message.parts == self.parts
+        message.role == "user"
+            && message.message_index >= self.before
+            && message.content == self.text
+            && message.parts == self.parts
     }
 }
 impl State {
@@ -167,16 +169,23 @@ mod attachment_tests {
     #[test]
     fn attachment_delivery_equality_requires_metadata_not_only_empty_text() {
         let attachment = ImageAttachment {
-            id: uuid::Uuid::from_u128(74), name: "image.png".into(),
-            media_type: ImageMediaType::Png, byte_size: 70, width: 1, height: 1,
-                sha256: "a".repeat(64),
+            id: uuid::Uuid::from_u128(74),
+            name: "image.png".into(),
+            media_type: ImageMediaType::Png,
+            byte_size: 70,
+            width: 1,
+            height: 1,
+            sha256: "a".repeat(64),
         };
         let mut message: Message = serde_json::from_value(serde_json::json!({
             "role": "user", "content": "", "message_index": 3
-        })).unwrap();
+        }))
+        .unwrap();
         assert!(message.parts.is_empty());
         let delivery = Delivery {
-            text: String::new(), before: 3, label: "Sending".into(),
+            text: String::new(),
+            before: 3,
+            label: "Sending".into(),
             parts: vec![ContentPart::Image { attachment }],
         };
         assert!(!delivery.matches(&message));
@@ -185,7 +194,9 @@ mod attachment_tests {
         message.message_index = 2;
         assert!(!delivery.matches(&message));
         message.message_index = 3;
-        let ContentPart::Image { attachment } = &mut message.parts[0] else { unreachable!() };
+        let ContentPart::Image { attachment } = &mut message.parts[0] else {
+            unreachable!()
+        };
         attachment.id = uuid::Uuid::from_u128(75);
         assert!(!delivery.matches(&message));
     }

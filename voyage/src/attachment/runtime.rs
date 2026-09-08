@@ -75,6 +75,40 @@ struct Store {
     turn: Weak<TurnToken>,
 }
 impl ManagedSessionOwner {
+    pub async fn put_image(
+        &self,
+        principal: Uuid,
+        id: Uuid,
+        name: String,
+        bytes: Vec<u8>,
+        authority: Option<Arc<dyn crate::policy::ExecutionAuthority>>,
+    ) -> anyhow::Result<voyage_protocol::content::ImageAttachment> {
+        let shared = self.store.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut store = shared
+                .lock()
+                .map_err(|_| anyhow::anyhow!("managed owner poisoned"))?;
+            if let Some(authority) = authority {
+                authority.check()?;
+            }
+            let Store { journal, guard, .. } = &mut *store;
+            journal.put_image(guard, principal, id, &name, &bytes)
+        })
+        .await?
+    }
+
+    pub async fn lookup_turn(&self, request: TurnAdmission) -> anyhow::Result<Option<RunRecord>> {
+        anyhow::ensure!(request.session_id == self.session_id, "session mismatch");
+        let shared = self.store.clone();
+        tokio::task::spawn_blocking(move || {
+            let store = shared
+                .lock()
+                .map_err(|_| anyhow::anyhow!("managed owner poisoned"))?;
+            store.journal.lookup_command(&request)
+        })
+        .await?
+    }
+
     pub async fn open(directory: PathBuf, session_id: Uuid) -> anyhow::Result<Self> {
         tokio::task::spawn_blocking(move || {
             let journal = Journal::open(directory)?;
@@ -383,7 +417,7 @@ impl ManagedSessionOwner {
                 run_id,
                 workspace,
                 model,
-                input: Some((session.messages, request.prompt)),
+                input: Some((session.messages, request.prompt, request.parts)),
                 steering_sender,
                 steering_receiver: Some(steering_receiver),
                 workflow_bindings: None,
@@ -422,7 +456,11 @@ pub struct RunOwner {
     run_id: Uuid,
     workspace: PathBuf,
     model: String,
-    input: Option<(Vec<Message>, String)>,
+    input: Option<(
+        Vec<Message>,
+        String,
+        Vec<voyage_protocol::content::ContentPart>,
+    )>,
     steering_sender: SteeringSender,
     steering_receiver: Option<SteeringReceiver>,
 }
@@ -650,7 +688,7 @@ impl RunOwner {
         let external_input = input.is_some();
         drop(input);
         let input = self.steering_receiver.take();
-        let (_history, prompt) = self.input.take().ok_or(CheckpointError)?;
+        let (_history, prompt, parts) = self.input.take().ok_or(CheckpointError)?;
         let workflow_bindings = self.workflow_bindings.take();
         let result = if cancel.is_cancelled() {
             Err(AgentError::Cancelled)
@@ -673,7 +711,9 @@ impl RunOwner {
                 let session = self
                     .storage(|store| {
                         let run = store.journal.run(store.run_id)?;
-                        Ok(store.journal.load_session(run.session_id)?.session)
+                        let mut session = store.journal.load_session(run.session_id)?.session;
+                        store.journal.hydrate_images(&mut session)?;
+                        Ok(session)
                     })
                     .await?;
                 let scope = agent.prepare_run_with_id(&session, self.run_id).await?;
@@ -690,7 +730,10 @@ impl RunOwner {
                 // and trusted metadata instead of recreating accepted history.
                 let mut history = session.messages;
                 let accepted = history.pop().ok_or(CheckpointError)?;
-                if accepted.role != crate::model::Role::User || accepted.content != prompt {
+                if accepted.role != crate::model::Role::User
+                    || accepted.content != prompt
+                    || accepted.parts != parts
+                {
                     return Err(CheckpointError.into());
                 }
                 agent
@@ -809,7 +852,7 @@ impl RunCheckpoint for ManagedRunCheckpoint {
                 authority.check()?;
             }
             steering::authorize(store, &token)?;
-            store.journal.checkpoint_reconciled_with_clock(
+            let result = store.journal.checkpoint_reconciled_with_clock(
                 &store.guard,
                 store.run_id,
                 &messages,
@@ -819,7 +862,11 @@ impl RunCheckpoint for ManagedRunCheckpoint {
                     None => SystemClock.now_ms(),
                 },
                 true,
-            )
+            )?;
+            let mut session = store.journal.load_session(store.session_id)?.session;
+            session.messages = result;
+            store.journal.hydrate_images(&mut session)?;
+            Ok(session.messages)
         })
         .await
     }

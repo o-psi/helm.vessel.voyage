@@ -8,7 +8,7 @@ use uuid::Uuid;
 pub const PROCESS_PROTOCOL: u32 = 1;
 pub const MAX_PROCESS_FRAME: usize = 4 * 1024 * 1024;
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 pub enum RuntimeCommand {
     Clear {
@@ -119,6 +119,19 @@ pub enum RuntimeCommand {
         offset: u64,
         limit: u32,
     },
+    /// Bounded immutable upload, independently deduplicated by upload_id. No execution.
+    UploadImage {
+        upload_id: Uuid,
+        name: String,
+        data_base64: String,
+    },
+    /// Ordered content references. Image bytes never enter command reservations.
+    SubmitContent {
+        command_id: Uuid,
+        expected_revision: u64,
+        expires_at_ms: u64,
+        content: Vec<crate::content::ContentPart>,
+    },
     Submit {
         command_id: Uuid,
         expected_revision: u64,
@@ -217,6 +230,7 @@ impl RuntimeCommand {
             | Self::Configure { command_id, .. }
             | Self::Relinquish { command_id, .. }
             | Self::WorkflowSubmit { command_id, .. }
+            | Self::SubmitContent { command_id, .. }
             | Self::Submit { command_id, .. }
             | Self::Cancel { command_id, .. }
             | Self::Steer { command_id, .. }
@@ -361,4 +375,13 @@ impl From<&ProcessRegistration> for ProcessInfo {
 
 fn unknown_outcome() -> bool {
     true
+}
+
+// Upload bytes must never enter diagnostics via enclosing request Debug derives.
+impl std::fmt::Debug for RuntimeCommand {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RuntimeCommand")
+            .field("command_id", &self.mutation_id())
+            .finish_non_exhaustive()
+    }
 }

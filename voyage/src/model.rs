@@ -25,7 +25,7 @@ pub struct SteeringReceipt {
     pub status: SteeringStatus,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Message {
     /// Trusted local operator attribution; never inferred from authored text.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -35,6 +35,10 @@ pub struct Message {
     pub created_at: Option<chrono::DateTime<chrono::Utc>>,
     pub role: Role,
     pub content: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub parts: Vec<voyage_protocol::content::ContentPart>,
+    #[serde(skip)]
+    pub image_data: std::collections::BTreeMap<uuid::Uuid, Vec<u8>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_call_id: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -57,6 +61,8 @@ impl Message {
             created_at: Some(chrono::Utc::now()),
             role,
             content: content.into(),
+            parts: Vec::new(),
+            image_data: Default::default(),
             tool_call_id: None,
             tool_calls: Vec::new(),
             tool_success: None,
@@ -87,6 +93,8 @@ impl Message {
             created_at: Some(chrono::Utc::now()),
             role: Role::Tool,
             content: content.into(),
+            parts: Vec::new(),
+            image_data: Default::default(),
             tool_call_id: Some(call_id.into()),
             tool_calls: Vec::new(),
             tool_success: Some(success),
@@ -134,4 +142,14 @@ pub struct ModelResponse {
 pub struct Usage {
     pub input_tokens: u64,
     pub output_tokens: u64,
+}
+
+impl std::fmt::Debug for Message {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Message")
+            .field("role", &self.role)
+            .field("content", &self.content)
+            .field("parts", &self.parts)
+            .finish_non_exhaustive()
+    }
 }

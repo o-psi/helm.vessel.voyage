@@ -1,7 +1,7 @@
 //! Multiplexed presentation; dropping this interface only drops observations.
 mod actions;
-mod attachments;
 mod archive;
+mod attachments;
 mod completion;
 mod controls;
 mod explore;

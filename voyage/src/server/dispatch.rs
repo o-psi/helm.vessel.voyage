@@ -22,7 +22,9 @@ pub(super) async fn dispatch(
         ensure!(
             !matches!(
                 command,
-                RuntimeCommand::Submit { .. }
+                RuntimeCommand::UploadImage { .. }
+                    | RuntimeCommand::SubmitContent { .. }
+                    | RuntimeCommand::Submit { .. }
                     | RuntimeCommand::WorkflowSubmit { .. }
                     | RuntimeCommand::OperatorTool { .. }
                     | RuntimeCommand::ExecuteTool { .. }
@@ -47,6 +49,7 @@ pub(super) async fn dispatch(
         | RuntimeCommand::Configure { command_id, .. }
         | RuntimeCommand::Relinquish { command_id, .. }
         | RuntimeCommand::WorkflowSubmit { command_id, .. }
+        | RuntimeCommand::SubmitContent { command_id, .. }
         | RuntimeCommand::Submit { command_id, .. }
         | RuntimeCommand::Cancel { command_id, .. }
         | RuntimeCommand::Steer { command_id, .. }

@@ -13,6 +13,7 @@ are not presented as usable commands.
 | [Configuration](configuration.md) | Current provider, policy and storage configuration |
 | [Operations](operations.md) | Connected HTTP(S) voyages, SSH compatibility and legacy chat/managed/worker procedures |
 | [Vessel coordination](vessel-coordination.md) | Native model inspection, steering, independent voyage creation and follow-up |
+| [Images and screenshots](multimodal-implementation.md) | Attaching images, private storage, provider support and limits |
 | [Process access](process-access.md) | Scoped grants, participant execution, signed owner transfer and recovery |
 | [Security](security.md) | Authority, credentials, disclosure and terminal safety |
 | [Development](development.md) | Source layout, build commands and contribution workflow |

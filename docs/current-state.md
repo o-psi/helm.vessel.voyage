@@ -5,6 +5,25 @@ native-platform validation. Focused regression and explicitly enabled live check
 are described in [quality](quality.md). The [implementation ledger](implementation.md)
 records delivery evidence and its limits.
 
+## Images and screenshots
+
+Connected Helm composers support PNG, JPEG and WebP attachments through **F6**
+(or Ctrl+I where distinct from Tab). Text, image-only first turns, attachment removal,
+private draft persistence and no-replay delivery recovery use the same supervised
+Vessel path. Bounded uploads are separate from metadata-only command admission;
+Voyage verifies signatures, complete rasters, dimensions and SHA-256 and retains
+private session-scoped blobs across resume and Vessel branching. Journal schema 9
+fences older text-only executables from rewriting image history.
+
+Native Chat Completions, Responses, ChatGPT OAuth and Anthropic encode ordered
+content; unsupported/unknown models and Codex compatibility refuse images before
+dispatch. The composer caps attachments at four and 2 MiB total; retained image
+occurrences and serialized provider requests are also bounded. Linux screenshots
+require a separate explicit local confirmation and obey Helm-local policy. No
+capture is automatic and no image is sent merely by capturing it. See
+[Images and screenshots](multimodal-implementation.md) for commands, platform,
+transfer/steering limits and verification scope.
+
 ## Process ownership
 
 Provider account exhaustion (`usage_limit_reached` or `insufficient_quota` in an

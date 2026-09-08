@@ -1,6 +1,6 @@
 //! Helm-owned proposals. No runtime exists until the user sends the first turn.
-mod input;
 mod images;
+mod input;
 mod launch;
 mod render;
 mod storage;

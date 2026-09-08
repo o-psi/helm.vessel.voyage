@@ -23,11 +23,14 @@ pub struct RunSummary {
 }
 
 fn fingerprint(message: &Message) -> String {
-    let bytes = serde_json::to_vec(&serde_json::json!({
+    let mut value = serde_json::json!({
         "role": message.role, "content": message.content,
         "tool_calls": message.tool_calls, "tool_call_id": message.tool_call_id,
-    }))
-    .expect("message fingerprint serialization");
+    });
+    if !message.parts.is_empty() {
+        value["parts"] = serde_json::json!(message.parts);
+    }
+    let bytes = serde_json::to_vec(&value).expect("message fingerprint serialization");
     hex::encode(Sha256::digest(bytes))
 }
 

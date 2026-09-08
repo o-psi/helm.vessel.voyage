@@ -24,6 +24,7 @@ mod observations;
 mod outbound;
 #[cfg(unix)]
 pub use outbound::{outbound_observe, outbound_relay};
+mod images;
 mod submission;
 pub mod suspended;
 mod suspension;

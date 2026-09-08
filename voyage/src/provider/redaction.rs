@@ -40,6 +40,16 @@ pub(crate) fn definition(
 /// tool arguments, identities, reasoning signatures, or unknown continuation.
 pub(crate) fn message(message: &mut Message, redactor: &Redactor) -> Result<(), ProviderError> {
     message.content = redactor.redact_public_prefix(&message.content);
+    for part in &mut message.parts {
+        if let voyage_protocol::content::ContentPart::Text { text } = part {
+            *text = redactor.redact_public_prefix(text);
+        }
+    }
+    if redactor.contains_secret(&crate::images::text(&message.parts)) {
+        return Err(ProviderError::Request(
+            "configured secret spans content parts; provider dispatch refused".into(),
+        ));
+    }
     if let Some(state) = &mut message.provider_state {
         // Responses owns this versioned local envelope. Its natural text is a
         // replay copy of assistant output, not an opaque continuation token.
@@ -94,4 +104,23 @@ pub(crate) fn message(message: &mut Message, redactor: &Redactor) -> Result<(), 
         ));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod image_tests {
+    use super::*;
+    #[test]
+    fn secrets_split_across_ordered_parts_are_not_dispatched() {
+        let redactor = Redactor::new(["private-token".into()]);
+        let mut message = Message::new(crate::model::Role::User, "private-token");
+        message.parts = vec![
+            voyage_protocol::content::ContentPart::Text {
+                text: "private-".into(),
+            },
+            voyage_protocol::content::ContentPart::Text {
+                text: "token".into(),
+            },
+        ];
+        assert!(super::message(&mut message, &redactor).is_err());
+    }
 }

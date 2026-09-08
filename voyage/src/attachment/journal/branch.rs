@@ -71,6 +71,21 @@ impl Journal {
                 && branch.workflow_runs.is_empty(),
             "branch retains live runtime state"
         );
+        // Persist destination-owned blobs before admitting the branch snapshot.
+        // A crash leaves only bounded unreferenced blobs; the idempotent import
+        // verifies/copies them again without rewriting canonical image identities.
+        if branch.messages.iter().any(|m| !m.parts.is_empty()) {
+            let images = crate::images::Store::open(&source.directory, *source_session_id)?;
+            let mut destination = crate::images::Store::open(&self.directory, *branch_id)?;
+            for part in branch.messages.iter().flat_map(|m| &m.parts) {
+                if let voyage_protocol::content::ContentPart::Image { attachment } = part {
+                    ensure!(
+                        images.copy_to(&mut destination, attachment)? == *attachment,
+                        "branch image identity changed"
+                    );
+                }
+            }
+        }
         let provenance = serde_json::to_string(initialization)?;
         let tx = self
             .connection

@@ -168,7 +168,8 @@ impl App {
             return Ok(());
         }
         if view.pending.is_some() && !view.images.is_empty() {
-            self.status = "Delivery pending · text and images frozen · checking automatically".into();
+            self.status =
+                "Delivery pending · text and images frozen · checking automatically".into();
             return Ok(());
         }
         match event {

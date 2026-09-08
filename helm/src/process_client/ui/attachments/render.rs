@@ -71,7 +71,7 @@ impl App {
                 Line::default(),
             ];
             match self.attachment_images(modal.destination) {
-                Ok(images) if images.is_empty() => lines.push(Line::from("No images attached.")),
+                Ok([]) => lines.push(Line::from("No images attached.")),
                 Ok(images) => lines.extend(
                     images
                         .iter()

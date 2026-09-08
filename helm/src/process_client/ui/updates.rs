@@ -262,11 +262,11 @@ impl App {
                             {
                                 *transcript = Default::default();
                             }
-                            if transcript.delivery.as_ref().is_some_and(|d| {
-                                snapshot.messages.iter().any(|m| {
-                                    d.matches(m)
-                                })
-                            }) {
+                            if transcript
+                                .delivery
+                                .as_ref()
+                                .is_some_and(|d| snapshot.messages.iter().any(|m| d.matches(m)))
+                            {
                                 transcript.delivery = None;
                             }
                             transcript.observe_growth(view.snapshot.as_ref().is_some_and(|old| {
@@ -421,15 +421,18 @@ impl App {
                             view.history.record(&pending.draft);
                         }
                         let same_image_draft = super::attachments::pending_matches(pending, view);
-                        if !rejected && !pending.preserve_draft && view.draft.text == pending.draft
-                            && (pending.original.as_deref().is_none_or(|c| !super::attachments::is_image_submission(c))
+                        if !rejected
+                            && !pending.preserve_draft
+                            && view.draft.text == pending.draft
+                            && (pending
+                                .original
+                                .as_deref()
+                                .is_none_or(|c| !super::attachments::is_image_submission(c))
                                 || same_image_draft)
                         {
                             view.draft.take();
                         }
-                        if !rejected && !pending.preserve_draft
-                            && same_image_draft
-                        {
+                        if !rejected && !pending.preserve_draft && same_image_draft {
                             view.images.clear();
                         }
                         if !rejected && let Some(archived) = value["archived"].as_bool() {

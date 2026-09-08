@@ -77,10 +77,40 @@ pub async fn markdown(client: &Client, session: Uuid, destination: &Path) -> Res
         let message: Value = serde_json::from_str(&encoded)?;
         writeln!(
             file,
-            "## {}\n\n{}\n",
-            super::safe(message["role"].as_str().context("message role missing")?),
-            message["content"].as_str().unwrap_or("")
+            "## {}\n",
+            super::safe(message["role"].as_str().context("message role missing")?)
         )?;
+        let parts: Vec<voyage_protocol::content::ContentPart> = message
+            .get("parts")
+            .filter(|value| !value.is_null())
+            .map(|value| serde_json::from_value(value.clone()))
+            .transpose()
+            .map_err(|_| anyhow::anyhow!("Invalid image metadata in transcript"))?
+            .unwrap_or_default();
+        if parts.is_empty() {
+            writeln!(file, "{}\n", message["content"].as_str().unwrap_or(""))?;
+        } else {
+            for part in parts {
+                match part {
+                    voyage_protocol::content::ContentPart::Text { text } => write!(file, "{text}")?,
+                    voyage_protocol::content::ContentPart::Image { attachment } => {
+                        // Export metadata only. Never resolve or embed the private blob.
+                        writeln!(
+                            file,
+                            "\n[Image {}: {} · {:?} · {} bytes · {}×{} · SHA-256 {}]\n",
+                            attachment.id,
+                            super::safe(&attachment.name),
+                            attachment.media_type,
+                            attachment.byte_size,
+                            attachment.width,
+                            attachment.height,
+                            attachment.sha256
+                        )?;
+                    }
+                }
+            }
+            writeln!(file)?;
+        }
         if let Some(calls) = message.get("tool_calls").filter(|value| !value.is_null()) {
             writeln!(
                 file,

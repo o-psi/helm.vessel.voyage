@@ -163,7 +163,7 @@ pub(super) async fn run(state: Arc<State>) -> Result<()> {
                                     Operation::Submit{session_id,expected_revision,prompt} if *session_id==session=>{
                                         let _admission=state.admission.lock().await;
                                         if state.shutdown.is_cancelled() { break; }
-                                        let request=TurnAdmission{operator_name:None,command_id:command.command_id,machine_id:binding.machine_id,principal_id:binding.owner_id,session_id:session,expected_revision:*expected_revision,expires_at_ms:command.expires_at_ms,prompt:prompt.clone()};
+                                        let request=TurnAdmission{parts:Vec::new(),operator_name:None,command_id:command.command_id,machine_id:binding.machine_id,principal_id:binding.owner_id,session_id:session,expected_revision:*expected_revision,expires_at_ms:command.expires_at_ms,prompt:prompt.clone()};
                                         match owner.admit_authorized(request,dispatch_authority.clone()).await {
                                             Ok(Admission::Existing(run))=>Reply::Run{session_id:run.session_id,run_id:run.id,state:public_state(run.state)},
                                             Ok(Admission::New(mut run))=>{

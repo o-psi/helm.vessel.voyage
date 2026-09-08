@@ -16,13 +16,36 @@ pub(super) async fn submit(
     authorization: super::authorization::Authorization,
     command: RuntimeCommand,
 ) -> Result<Value> {
-    let (command_id, expected_revision, expires_at_ms, prompt, operator) = match command {
+    let (command_id, expected_revision, expires_at_ms, prompt, operator, parts) = match command {
+        RuntimeCommand::SubmitContent {
+            command_id,
+            expected_revision,
+            expires_at_ms,
+            content,
+        } => {
+            ensure!(content.len() <= 16, "too many content parts");
+            (
+                command_id,
+                expected_revision,
+                expires_at_ms,
+                crate::images::text(&content),
+                None,
+                content,
+            )
+        }
         RuntimeCommand::Submit {
             command_id,
             expected_revision,
             expires_at_ms,
             prompt,
-        } => (command_id, expected_revision, expires_at_ms, prompt, None),
+        } => (
+            command_id,
+            expected_revision,
+            expires_at_ms,
+            prompt,
+            None,
+            Vec::new(),
+        ),
         RuntimeCommand::OperatorTool {
             command_id,
             expected_revision,
@@ -46,6 +69,7 @@ pub(super) async fn submit(
                 expires_at_ms,
                 prompt,
                 Some((name, arguments)),
+                Vec::new(),
             )
         }
         _ => anyhow::bail!("not submit"),
@@ -53,6 +77,22 @@ pub(super) async fn submit(
 
     let _admission = state.admission.lock().await;
     ensure!(!state.shutdown.is_cancelled(), "runtime stopping");
+    let request = TurnAdmission {
+        operator_name: operator.as_ref().map(|(name, _)| name.clone()),
+        command_id,
+        machine_id: authorization.actor.installation_id,
+        principal_id: authorization.actor.principal_id,
+        session_id: state.registration.session_id,
+        expected_revision,
+        expires_at_ms: i64::try_from(expires_at_ms)?,
+        prompt: prompt.clone(),
+        parts: parts.clone(),
+    };
+    if let Some(run) = state.owner.lookup_turn(request.clone()).await? {
+        return Ok(
+            json!({"command_id":command_id,"run_id":run.id,"status":"accepted","state":run.state,"duplicate":true}),
+        );
+    }
     let saved = state.owner.snapshot().await?;
     let mut config = state.config.read().await.clone();
     config.model = saved
@@ -68,16 +108,50 @@ pub(super) async fn submit(
     );
     crate::policy::Policy::new(&config, saved.session.workspace.clone())?;
     let submitted_prompt = prompt.clone();
-    let request = TurnAdmission {
-        operator_name: operator.as_ref().map(|(name, _)| name.clone()),
-        command_id,
-        machine_id: authorization.actor.installation_id,
-        principal_id: authorization.actor.principal_id,
-        session_id: state.registration.session_id,
-        expected_revision,
-        expires_at_ms: i64::try_from(expires_at_ms)?,
-        prompt,
-    };
+    if !parts.is_empty() {
+        crate::images::validate_parts(&parts)?;
+    }
+    let has_images = saved
+        .session
+        .messages
+        .iter()
+        .flat_map(|m| &m.parts)
+        .chain(&parts)
+        .any(|p| matches!(p, voyage_protocol::content::ContentPart::Image { .. }));
+    if has_images {
+        let known = state
+            .controls
+            .resolve_model(&config, &state.registration.workspace)
+            .await;
+        crate::provider::validate_image_capability(
+            &config.provider,
+            &config.model,
+            known.as_ref(),
+        )?;
+        let mut all = saved.session.messages.clone();
+        let mut newest = crate::model::Message::new(crate::model::Role::User, &prompt);
+        newest.parts = parts.clone();
+        all.push(newest);
+        let directory = state.directory.join("journal");
+        let session_id = state.registration.session_id;
+        tokio::task::spawn_blocking(move || -> Result<()> {
+            let store = crate::images::Store::open(&directory, session_id)?;
+            let mut total = 0u64;
+            let mut count = 0usize;
+            for message in &all {
+                for part in &message.parts {
+                    if let voyage_protocol::content::ContentPart::Image { attachment } = part {
+                        total = total.checked_add(attachment.byte_size).context("image request size overflow")?;
+                        count += 1;
+                        ensure!(total <= 2 * 1024 * 1024 && count <= 4,
+                            "retained images exceed request limit; compact older image turns or start a new voyage");
+                        store.resolve(attachment)?;
+                    }
+                }
+            }
+            Ok(())
+        }).await??;
+    }
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)?
         .as_millis();
@@ -85,7 +159,7 @@ pub(super) async fn submit(
         && u128::from(expires_at_ms) > now
         && u128::from(expires_at_ms) - now <= 300_000
         && !command_id.is_nil()
-        && !submitted_prompt.trim().is_empty()
+        && (!submitted_prompt.trim().is_empty() || !parts.is_empty())
         && submitted_prompt.len() <= 64 * 1024
         && state.owner.process_receipt(command_id).await?.is_none()
     {

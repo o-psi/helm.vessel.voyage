@@ -141,10 +141,17 @@ pub(crate) fn refuse_codex(request: &ModelRequest) -> Result<(), ProviderError> 
 /// Counts image occurrences across the entire request, including repeated UUIDs.
 pub(crate) fn validate_request(request: &ModelRequest) -> Result<(), ProviderError> {
     let mut total = 0usize;
+    let mut images = 0usize;
     for message in &request.messages {
         validate_message(message)?;
         for part in &message.parts {
             if let ContentPart::Image { attachment } = part {
+                images += 1;
+                if images > 4 {
+                    return Err(invalid(
+                        "request exceeds four image occurrences; compact older image turns",
+                    ));
+                }
                 let bytes = message
                     .image_data
                     .get(&attachment.id)
@@ -180,13 +187,13 @@ fn validate_message(message: &Message) -> Result<(), ProviderError> {
     validate_content(
         &message.parts,
         ContentLimits {
-            max_parts: 256,
-            max_text_bytes: MAX_REQUEST_BYTES,
-            max_images: 32,
+            max_parts: 16,
+            max_text_bytes: 64 * 1024,
+            max_images: 4,
             max_image_bytes: MAX_IMAGE_BYTES as u64,
             max_total_image_bytes: MAX_IMAGE_BYTES as u64,
             max_dimension: 8192,
-            max_pixels: 32_000_000,
+            max_pixels: 16 * 1024 * 1024,
         },
         true,
     )
@@ -338,6 +345,7 @@ mod tests {
         message.parts = vec![ContentPart::Image {
             attachment: ImageAttachment {
                 id,
+                sha256: "0".repeat(64),
                 name: "fixture.png".into(),
                 media_type: ImageMediaType::Png,
                 byte_size: size as u64,
@@ -473,7 +481,7 @@ mod tests {
         assert!(check_body(&body).is_ok());
         body["stream"] = json!(true);
         assert!(check_body(&body).is_err());
-        assert!(check_body(&json!("\0".repeat(MAX_REQUEST_BYTES / 6))).is_err());
+        assert!(check_body(&json!("\0".repeat(MAX_REQUEST_BYTES / 6 + 1))).is_err());
     }
     #[test]
     fn error_variants_never_retain_provider_text() {

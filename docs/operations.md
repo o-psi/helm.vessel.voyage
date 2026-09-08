@@ -12,6 +12,21 @@ Replace UUID, revision, deadline and digest placeholders with actual observation
 workspace paths refer to the executing host. Configure that host's provider before
 submitting work; see [Configuration](configuration.md).
 
+## Attach images in the composer
+
+Press **F6**, enter a Helm-local PNG/JPEG/WebP path, then press Enter. The modal
+shows the actual type, size and dimensions. `remove INDEX` removes an attachment;
+Escape returns without losing draft text. Enter in the composer sends the turn,
+including image-only first turns. Maximum: four images, 2 MiB combined. Pending
+image sends retain their immutable payload and resolve without automatic replay.
+
+The modal command `screenshot` opens a separate full-display privacy warning; type
+`CAPTURE` to add a bounded local screenshot to the draft. Capture is not send.
+Read-only or denied local policy refuses capture. Linux needs grim (Wayland) or
+maim (X11); other platforms must attach a manually captured file. See
+[Images and screenshots](multimodal-implementation.md) for all limits and recovery
+semantics. Plain/line-oriented commands do not provide an image-picker flag.
+
 ## Independent local voyages
 
 Keep all three executables beside one another. On Linux, connected mode can start

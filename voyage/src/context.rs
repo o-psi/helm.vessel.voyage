@@ -26,6 +26,7 @@ pub struct ContextReport {
 /// conservative estimator, not provider-reported usage or a universal tokenizer.
 pub fn estimate(request: &ModelRequest) -> usize {
     serialized_size(request)
+        .saturating_add(request.messages.iter().map(image_cost).sum::<usize>())
         .saturating_add(4096)
         .saturating_add(request.messages.len().saturating_mul(256))
         .saturating_add(request.tools.len().saturating_mul(256))
@@ -99,6 +100,7 @@ pub fn preflight(request: &mut ModelRequest, limit: usize) -> Result<ContextRepo
         if message.role != Role::System {
             removed_cost = removed_cost
                 .saturating_add(serialized_size(message))
+                .saturating_add(image_cost(message))
                 .saturating_add(257);
             omitted += 1;
         }
@@ -125,4 +127,19 @@ pub fn preflight(request: &mut ModelRequest, limit: usize) -> Result<ContextRepo
         limit,
         omitted_messages: omitted,
     })
+}
+
+fn image_cost(message: &crate::model::Message) -> usize {
+    message
+        .parts
+        .iter()
+        .filter_map(|part| match part {
+            voyage_protocol::content::ContentPart::Image { attachment } => Some(
+                (u64::from(attachment.width) * u64::from(attachment.height))
+                    .div_ceil(256)
+                    .saturating_add(4096) as usize,
+            ),
+            _ => None,
+        })
+        .fold(0usize, usize::saturating_add)
 }

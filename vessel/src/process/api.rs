@@ -187,6 +187,26 @@ pub(super) fn runtime(command: VoyageCommand) -> Result<RuntimeCommand> {
             offset,
             limit,
         },
+        VoyageCommand::UploadImage {
+            upload_id,
+            name,
+            data_base64,
+        } => RuntimeCommand::UploadImage {
+            upload_id,
+            name,
+            data_base64,
+        },
+        VoyageCommand::SubmitContent {
+            command_id,
+            expected_revision,
+            expires_at_ms,
+            content,
+        } => RuntimeCommand::SubmitContent {
+            command_id,
+            expected_revision,
+            expires_at_ms,
+            content,
+        },
         VoyageCommand::Submit {
             command_id,
             expected_revision,
@@ -477,7 +497,9 @@ pub(super) fn required_right(command: &VoyageCommand) -> Option<ProcessRight> {
         | VoyageCommand::RunOutput { .. }
         | VoyageCommand::Receipt { .. } => Some(ProcessRight::History),
         VoyageCommand::Decisions => Some(ProcessRight::Decide),
-        VoyageCommand::Submit { .. }
+        VoyageCommand::UploadImage { .. }
+        | VoyageCommand::SubmitContent { .. }
+        | VoyageCommand::Submit { .. }
         | VoyageCommand::ExecuteTool { .. }
         | VoyageCommand::OperatorTool { .. }
         | VoyageCommand::WorkflowInputs { .. }

@@ -11,6 +11,7 @@ pub use voyage_runtime::inference;
 pub use voyage_runtime::local_provider;
 mod composer;
 pub mod markdown;
+mod screenshot;
 pub use voyage_runtime::model;
 pub mod onboarding;
 pub mod plain_terminal;

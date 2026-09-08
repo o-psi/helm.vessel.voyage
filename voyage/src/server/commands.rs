@@ -34,6 +34,11 @@ pub(super) async fn dispatch_admitted(
     };
 
     match command {
+        RuntimeCommand::UploadImage {
+            upload_id,
+            name,
+            data_base64,
+        } => super::images::upload(state, authorization, upload_id, name, data_base64).await,
         RuntimeCommand::Resolve {
             command_id,
             original,
@@ -113,6 +118,8 @@ pub(super) async fn dispatch_admitted(
                 "message_chunk",
                 "run_output",
                 "submit",
+                "submit_content",
+                "upload_image",
                 "receipt",
                 "resolve",
                 "cancel",
@@ -232,7 +239,9 @@ pub(super) async fn dispatch_admitted(
             .process_receipt(command_id)
             .await?
             .unwrap_or(json!({"command_id":command_id,"status":"unknown"}))),
-        command @ (RuntimeCommand::Submit { .. } | RuntimeCommand::OperatorTool { .. }) => {
+        command @ (RuntimeCommand::SubmitContent { .. }
+        | RuntimeCommand::Submit { .. }
+        | RuntimeCommand::OperatorTool { .. }) => {
             super::submission::submit(state, authorization, command).await
         }
         RuntimeCommand::Steer {

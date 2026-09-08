@@ -458,7 +458,7 @@ impl App {
         );
         // Only reachable after a separate displayed warning and typed CAPTURE.
         // Helper rechecks Helm-local Config policy and bounds capture to 5s/2MiB.
-        let bytes = crate::screenshot::capture(true)?;
+        let bytes = crate::screenshot::capture(true, self.new_chat_config.as_ref())?;
         push_image(
             &mut images,
             Image::from_bytes("screenshot.png".into(), &bytes)?,

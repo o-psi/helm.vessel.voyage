@@ -89,6 +89,7 @@ impl Journal {
         // a payload-provided path while removing retained originals/resources.
         for path in [
             self.directory.join("imports"),
+            self.directory.join("images"),
             self.directory
                 .parent()
                 .context("journal parent missing")?

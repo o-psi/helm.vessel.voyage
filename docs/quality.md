@@ -159,3 +159,11 @@ and product-owner review separately. A build/package pass is not a ship-ready UX
 verdict. The full interface audit remains open on
 [#14](https://github.com/o-psi/voyage/issues/14); a completed feature slice does not
 close it. No automated test suite is introduced by this acceptance document.
+
+## Image input verification (#74)
+
+The explicitly scoped image checks and supervised workflow live alongside the
+account-limit checks; this does not recreate the removed broad test suites. See
+[Images and screenshots](multimodal-implementation.md#verification) for commands
+and limits. Fixtures use synthetic pixels and local provider responses only;
+no test captures the operator's actual desktop or spends live-provider budget.

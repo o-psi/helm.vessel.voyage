@@ -1,4 +1,4 @@
-//! Proposed multimodal turn contract. References contain no paths or image bytes.
+//! Ordered multimodal turn contract. References contain no paths or image bytes.
 //!
 //! Validation here checks metadata only. The executing runtime must separately
 //! authorize and resolve references, decode images with resource limits, verify
@@ -19,6 +19,8 @@ pub enum ContentPart {
 pub struct ImageAttachment {
     /// Opaque identifier scoped to its owning session; never a filesystem path.
     pub id: Uuid,
+    /// Immutable lowercase SHA-256 of the verified encoded raster bytes.
+    pub sha256: String,
     /// Display label only. Must never be used to resolve a file.
     pub name: String,
     pub media_type: ImageMediaType,
@@ -119,6 +121,11 @@ pub fn validate_content(
                     return Err(ContentError::TooManyImages);
                 }
                 if image.id.is_nil()
+                    || image.sha256.len() != 64
+                    || !image
+                        .sha256
+                        .bytes()
+                        .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
                     || image.name.trim().is_empty()
                     || image.name.len() > 255
                     || image.name.chars().any(|c| {
@@ -178,6 +185,7 @@ mod tests {
         ContentPart::Image {
             attachment: ImageAttachment {
                 id: Uuid::from_u128(1),
+                sha256: "0".repeat(64),
                 name: "screen.png".into(),
                 media_type: ImageMediaType::Png,
                 byte_size: 100,
@@ -347,5 +355,75 @@ mod tests {
         let mut value = serde_json::to_value(image()).unwrap();
         value["attachment"]["path"] = "/etc/passwd".into();
         assert!(serde_json::from_value::<ContentPart>(value).is_err());
+    }
+}
+
+#[cfg(test)]
+mod transport_tests {
+    use super::*;
+    use crate::{
+        process::RuntimeCommand,
+        vessel::{VoyageCommand, VoyageRequest},
+    };
+
+    #[test]
+    fn legacy_submit_encoding_is_unchanged() {
+        let id = Uuid::from_u128(1);
+        let command = RuntimeCommand::Submit {
+            command_id: id,
+            expected_revision: 2,
+            expires_at_ms: 3,
+            prompt: " a\n".into(),
+        };
+        assert_eq!(
+            serde_json::to_string(&command).unwrap(),
+            "{\"op\":\"submit\",\"command_id\":\"00000000-0000-0000-0000-000000000001\",\"expected_revision\":2,\"expires_at_ms\":3,\"prompt\":\" a\\n\"}"
+        );
+    }
+
+    #[test]
+    fn upload_bytes_never_appear_in_debug_and_do_not_reserve_turn_commands() {
+        let command = VoyageCommand::UploadImage {
+            upload_id: Uuid::from_u128(1),
+            name: "test.png".into(),
+            data_base64: "PRIVATE_BASE64_PIXELS".into(),
+        };
+        let request = VoyageRequest {
+            session_id: Uuid::from_u128(2),
+            incarnation: None,
+            command,
+        };
+        assert!(!format!("{request:?}").contains("PRIVATE_BASE64_PIXELS"));
+        assert_eq!(request.command.mutation_id(), None);
+        let encoded = serde_json::to_value(&request).unwrap();
+        assert_eq!(encoded["data_base64"], "PRIVATE_BASE64_PIXELS");
+        assert!(serde_json::from_value::<VoyageRequest>(encoded).is_ok());
+    }
+
+    #[test]
+    fn ordered_references_are_strict_and_authorized_as_execution() {
+        use crate::process::{ProcessRight, required_process_right};
+        let command = RuntimeCommand::SubmitContent {
+            command_id: Uuid::from_u128(1),
+            expected_revision: 2,
+            expires_at_ms: 3,
+            content: vec![
+                ContentPart::Text {
+                    text: "before".into(),
+                },
+                ContentPart::Text {
+                    text: "after".into(),
+                },
+            ],
+        };
+        assert_eq!(
+            required_process_right(&command),
+            Some(ProcessRight::Execute)
+        );
+        assert!(!command.observes_suspended());
+        assert!(command.mutation_id().is_some());
+        let mut value = serde_json::to_value(command).unwrap();
+        value["prompt"] = "ambiguous".into();
+        assert!(serde_json::from_value::<RuntimeCommand>(value).is_err());
     }
 }

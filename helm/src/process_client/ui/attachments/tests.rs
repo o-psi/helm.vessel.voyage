@@ -77,7 +77,7 @@ fn key(code: KeyCode) -> Event {
 fn attachment_private_roundtrip_redacts_debug_and_public_references() {
     let image = image();
     let recovered: Image = serde_json::from_slice(&serde_json::to_vec(&image).unwrap()).unwrap();
-    validate_set(&[recovered.clone()]).unwrap();
+    validate_set(std::slice::from_ref(&recovered)).unwrap();
     assert_eq!(recovered, image);
     let debug = format!("{image:?}");
     assert!(!debug.contains(&image.data_base64));
@@ -102,7 +102,7 @@ fn attachment_text_only_and_image_only_serialization() {
     );
     let image = image();
     for text in ["", " a\n"] {
-        let command = prepare(submit(text), &[image.clone()]).unwrap();
+        let command = prepare(submit(text), std::slice::from_ref(&image)).unwrap();
         assert!(
             !serde_json::to_string(&command)
                 .unwrap()
