@@ -45,6 +45,59 @@ fn state(view: &super::state::View) -> &'static str {
     }
 }
 
+/// Label, colour and compactness share one precedence order.
+fn sidebar_state(view: &super::state::View) -> (&'static str, Color, bool) {
+    use voyage_protocol::process::ProcessState;
+    let attention = Color::Rgb(230, 145, 45);
+    let running = Color::Rgb(65, 105, 170);
+    if view.process.archive.is_some() {
+        return ("Archived", Color::Gray, false);
+    }
+    if view.archived() || view.process.state == ProcessState::CleanupUnconfirmed {
+        return ("Needs attention · cleanup", attention, false);
+    }
+    if view.process.state == ProcessState::Unavailable {
+        return ("Status unavailable", attention, false);
+    }
+    if view.error.is_some() {
+        return ("Disconnected", attention, false);
+    }
+    if let Some(snapshot) = &view.snapshot {
+        if !snapshot.decisions.is_empty() {
+            return ("Needs attention · input", attention, false);
+        }
+        if snapshot.pending_cleanup_run.is_some() {
+            return ("Needs attention · cleanup", attention, false);
+        }
+        if let Some(run) = &snapshot.run {
+            match run.state.as_str() {
+                "failed" => return ("Failed", Color::Red, false),
+                "cancelled" => return ("Cancelled", Color::Gray, true),
+                "interrupted" | "awaiting_decision" => {
+                    return ("Needs attention", attention, false);
+                }
+                _ => {}
+            }
+        }
+    }
+    match view.process.state {
+        ProcessState::Suspended => ("Suspended", Color::Gray, true),
+        ProcessState::Starting => ("Running · starting", running, false),
+        ProcessState::Stopped | ProcessState::Relinquished => {
+            ("Status unavailable", attention, false)
+        }
+        _ => match view.snapshot.as_ref() {
+            None => ("Status unavailable", attention, false),
+            Some(snapshot) => match snapshot.run.as_ref().map(|run| run.state.as_str()) {
+                Some("accepted" | "running") => ("Running", running, false),
+                Some("cancel_requested") => ("Running · cancelling", running, false),
+                Some("completed") | None => ("Finished", Color::Green, false),
+                _ => ("Needs attention", attention, false),
+            },
+        },
+    }
+}
+
 pub fn draw(frame: &mut Frame<'_>, app: &App) {
     app.clear_inference_hits();
     app.sync_interactions();
@@ -307,35 +360,22 @@ fn sidebar(frame: &mut Frame<'_>, app: &App, area: Rect) {
         .iter()
         .map(|target| {
             let view = &app.views[target];
-            let mut title = presentation::wrap(
-                Text::raw(safe(&view.title())),
-                list_area.width.saturating_sub(2),
-            )
-            .lines;
-            if title.len() > 2 {
-                title.truncate(2);
-                if let Some(last) = title.last_mut() {
-                    let value = last.to_string();
-                    let mut value = value
-                        .chars()
-                        .take(list_area.width.saturating_sub(5) as usize)
-                        .collect::<String>();
-                    value.push_str("...");
-                    *last = Line::from(value);
-                }
-            }
-            let mut lines = vec![Line::styled(
-                format!(
-                    "{}  {}",
+            let (label, color, compact) = sidebar_state(view);
+            // Fixed status/title rows; List clips wide Unicode names by cell width.
+            let mut lines = vec![
+                Line::from(format!(
+                    "{}{} · {}",
+                    label,
+                    if view.unread { " · Unread" } else { "" },
                     app.route_label(target.route),
-                    if view.unread { "Unread" } else { state(view) }
-                ),
-                muted(),
-            )];
-            lines.extend(title);
-            lines.push(Line::default());
+                )),
+                Line::from(safe(&view.title())),
+            ];
+            if !compact {
+                lines.push(Line::default());
+            }
             heights.push(lines.len() as u16);
-            ListItem::new(lines)
+            ListItem::new(lines).style(Style::default().fg(color))
         })
         .collect::<Vec<_>>();
     let index = targets.iter().position(|t| Some(*t) == app.selected);
@@ -343,7 +383,7 @@ fn sidebar(frame: &mut Frame<'_>, app: &App, area: Rect) {
     frame.render_stateful_widget(
         List::new(entries)
             .highlight_symbol("> ")
-            .highlight_style(accent().add_modifier(Modifier::BOLD)),
+            .highlight_style(Style::default().add_modifier(Modifier::BOLD)),
         list_area,
         &mut list_state,
     );
@@ -368,7 +408,8 @@ fn sidebar(frame: &mut Frame<'_>, app: &App, area: Rect) {
             frame.buffer_mut().set_style(
                 area,
                 app.hover_style(area, false)
-                    .remove_modifier(Modifier::UNDERLINED),
+                    .remove_modifier(Modifier::UNDERLINED)
+                    .fg(sidebar_state(&app.views[target]).1),
             );
         }
         frame.render_widget(
@@ -387,7 +428,7 @@ fn sidebar(frame: &mut Frame<'_>, app: &App, area: Rect) {
             ),
             button,
         );
-        if index + 1 < targets.len() {
+        if height == 3 && index + 1 < targets.len() {
             // Reuse the padding row without changing list or hit geometry. Draw
             // after selection/hover so the rule stays muted across the full row.
             frame.render_widget(

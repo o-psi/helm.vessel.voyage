@@ -192,8 +192,16 @@ resizing. Release the mouse to finish; focus loss, terminal resize, keyboard inp
 and private-terminal handoff also end a drag. Mouse reporting requires a supporting
 terminal.
 
-Muted horizontal rules separate sidebar voyages in both current and archived lists,
-using the existing padding row without increasing entry height.
+Sidebar voyages show explicit state labels and colours: running is dark blue,
+idle/finished is green, needs attention is orange, and failed is red. Suspended
+and cancelled voyages are grey and occupy two terminal rows (status and title);
+other entries occupy three, with a muted separator in the padding row. Long titles
+are clipped to one row. Unread is an additional marker, not a replacement for state.
+Selection uses bold text and a `>` marker without replacing the state colour.
+Input and unresolved cleanup take attention precedence; disconnected or unavailable
+owners are explicitly labelled rather than inferred to be finished. Actual process
+suspension is compact even after successful completion; failed and cancelled run
+outcomes retain their own labels across suspension.
 Each sidebar voyage has a clickable **⋮** Actions button. Mouse hover highlights
 voyage rows, their separate Actions buttons, enabled action-menu entries and
 access-mode choices with a contrasting background, without changing keyboard
@@ -229,8 +237,9 @@ Each active voyage holds its exclusive session fence through turn execution and
 cleanup. After a terminal turn and positively observed cleanup, the process exits
 with an internal suspended disposition. The next submission automatically starts
 a new incarnation with the same session UUID, saved configuration and canonical
-history, using the current Vessel runtime binary. Helm labels successful completion
-Finished for 24 hours after its durable completion timestamp, then Settled. Failed,
+history, using the current Vessel runtime binary. Conversation summaries label successful completion
+Finished for 24 hours after its durable completion timestamp, then Settled; the sidebar
+uses the state and compact suspension presentation described above. Failed,
 cancelled and cleanup-pending outcomes remain distinct. Bounded one-shot helpers
 serve suspended observations without waking an executor. Initialization and
 management-only processes retire after a short idle grace; volatile private workflow
