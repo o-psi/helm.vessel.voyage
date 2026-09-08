@@ -20,7 +20,6 @@ pub async fn build_tools(
     config: &Config,
     subagents: Option<SubagentTool>,
     todos: Option<TodoTool>,
-    completion: Option<crate::completion::tool::CompletionTool>,
     resources: Option<&ManagedResources>,
     policy: &Policy,
 ) -> Result<ToolRegistry> {
@@ -34,9 +33,6 @@ pub async fn build_tools(
     }
     if let Some(tool) = todos {
         tools.register_todos(tool)?;
-    }
-    if let Some(tool) = completion {
-        tools.register_arc(Arc::new(tool))?;
     }
     if config.github_enabled && crate::github::Credential::from_config(config).is_some() {
         tools.register(crate::github::tool::GithubTool);

@@ -108,8 +108,13 @@ turns. Terminal metadata and canonical history remain durable.
 
 Register subagents, managed commands, terminals and completion obligations before
 they become independently active. Finishing a model turn is not proof that all
-owned work finished. Completion must reconcile the run's obligations with bounded
-waiting and actual evidence, retaining incomplete and unresolved outcomes.
+owned work finished. Completion observes current run-owned outcomes automatically,
+without a second model-authored sign-off or reconciliation turn. Completed records
+count directly; unfinished tasks and unsuccessful agents retain incomplete outcomes,
+and missing records or active agents remain unresolved. Bound owned-agent shutdown
+and recheck under the writer lease before recording the final decision. Preserve
+historical decisions and review evidence. Resource cleanup still requires observed
+results; a completed task status does not prove that its processes have stopped.
 
 Cancellation names the session and exact run. Persist cancellation intent, close
 new work admission and cancel owned work. Keep the owner fence until cleanup is

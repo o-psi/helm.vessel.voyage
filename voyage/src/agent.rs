@@ -261,8 +261,6 @@ pub enum AgentError {
     Inference(String),
     #[error(transparent)]
     Finalization(Box<FinalizationFailure>),
-    #[error("the fixed reconciliation deadline expired")]
-    ReconciliationExpired,
     #[error("completion ownership failed: {0}")]
     Completion(String),
     #[error(transparent)]
@@ -647,19 +645,13 @@ impl Agent {
             todos,
             agents,
             runtime,
-            reconciliation_timeout: Duration::from_secs(60),
             shutdown_timeout: Duration::from_secs(5),
         });
         self
     }
 
-    pub fn with_completion_deadlines(
-        mut self,
-        reconciliation: Duration,
-        shutdown: Duration,
-    ) -> Self {
+    pub fn with_completion_shutdown_timeout(mut self, shutdown: Duration) -> Self {
         if let Some(gate) = &mut self.completion_gate {
-            gate.reconciliation_timeout = reconciliation;
             gate.shutdown_timeout = shutdown;
         }
         self
@@ -1125,8 +1117,6 @@ impl Agent {
         history.push(prompt);
         let mut usage = Usage::default();
         let mut turn = 0usize;
-        let mut reconciliation: Option<String> = None;
-        let mut deadline = None;
         let mut sealed = false;
         let mut last_readiness = None;
         let mut partial_output = String::new();
@@ -1177,7 +1167,7 @@ impl Agent {
                     applied += 1;
                 }
             }
-            gate::guarded(self.checkpoint(checkpoint, &history, &usage), &cancel, deadline).await??;
+            gate::guarded(self.checkpoint(checkpoint, &history, &usage), &cancel).await??;
             if applied > 0 {
                 self.sink
                     .emit(AgentEvent::SteeringApplied {
@@ -1194,9 +1184,6 @@ impl Agent {
                 0,
                 Message::new(crate::model::Role::System, self.effective_system_prompt(workspace.as_deref(), &extension_guidance)),
             );
-            if let Some(update) = &reconciliation {
-                messages.insert(1, Message::new(crate::model::Role::System, update.clone()));
-            }
             let request = ModelRequest {
                 model: active_model.clone(),
                 messages,
@@ -1204,7 +1191,7 @@ impl Agent {
                 temperature: self.temperature,
                 max_tokens: (self.max_tokens > 0).then_some(self.max_tokens),
             };
-            let (response, permit) = gate::guarded(self.stream_with_retry(request, &cancel, checkpoint, &mut partial_output, context.completion.as_ref().map(|run| run.reference()).as_ref()), &cancel, deadline).await?
+            let (response, permit) = gate::guarded(self.stream_with_retry(request, &cancel, checkpoint, &mut partial_output, context.completion.as_ref().map(|run| run.reference()).as_ref()), &cancel).await?
                 .map_err(|error| error.with_recovery(&history, &usage))?;
             let had_streamed_text = !partial_output.is_empty();
             partial_output.clear();
@@ -1222,7 +1209,7 @@ impl Agent {
             let calls = assistant.tool_calls.clone();
             let answer = assistant.content.clone();
             history.push(assistant);
-            gate::guarded(self.checkpoint(checkpoint, &history, &usage), &cancel, deadline).await??;
+            gate::guarded(self.checkpoint(checkpoint, &history, &usage), &cancel).await??;
             if cancel.is_cancelled() {
                 return Err(AgentError::Cancelled);
             }
@@ -1233,7 +1220,7 @@ impl Agent {
                 gate::guarded(async {
                     tokio::time::timeout(self.context.timeout, checkpoint.unstreamed(&answer))
                         .await.map_err(|_| CheckpointError)?
-                }, &cancel, deadline).await??;
+                }, &cancel).await??;
             }
             if !answer.is_empty() {
                 self.sink
@@ -1256,7 +1243,7 @@ impl Agent {
                     }
                 }
                 if received_input > 0 {
-                    gate::guarded(self.checkpoint(checkpoint, &history, &usage), &cancel, deadline).await??;
+                    gate::guarded(self.checkpoint(checkpoint, &history, &usage), &cancel).await??;
                     self.sink
                         .emit(AgentEvent::SteeringApplied {
                             history: history.clone(),
@@ -1265,24 +1252,17 @@ impl Agent {
                     continue;
                 }
                 if let (Some(gate), Some(scope)) = (root_gate, &root_scope) {
-                    let mut lease = gate::guarded(gate.lease(scope), &cancel, deadline).await??;
+                    let mut lease = gate::guarded(gate.lease(scope), &cancel).await??;
                     last_readiness = Some(lease.readiness.clone());
                     let clean = lease.readiness.ready() && lease.readiness.incomplete == 0;
-                    if !lease.readiness.ready() && reconciliation.is_none() {
-                        reconciliation = Some(gate::reconciliation_prompt(&lease.readiness));
-                        deadline = Some(tokio::time::Instant::now() + gate.reconciliation_timeout);
-                        self.sink.emit(AgentEvent::CompletionState { phase: CompletionPhase::Reconciling, readiness: Some(lease.readiness.clone()), detail: Some("Final proposal withheld; one bounded reconciliation pass".into()) }).await;
-                        drop(lease);
-                        continue;
-                    }
                     if !clean {
                         drop(lease);
-                        gate::guarded(gate.shutdown_owned(scope), &cancel, deadline).await?;
-                        lease = gate::guarded(gate.lease(scope), &cancel, deadline).await??;
+                        gate::guarded(gate.shutdown_owned(scope), &cancel).await?;
+                        lease = gate::guarded(gate.lease(scope), &cancel).await??;
                         last_readiness = Some(lease.readiness.clone());
                     }
-                    // Keep the channel open throughout reconciliation. Only the
-                    // final decision closes it atomically, while store writers wait.
+                    // Finalization is local: no extra model pass for bookkeeping.
+                    // Close steering atomically while record writers are excluded.
                     if let Some(receiver) = &mut input {
                         let pending = receiver.drain_or_close();
                         if !pending.is_empty() {
@@ -1291,17 +1271,17 @@ impl Agent {
                                 history.push(message);
                             }
                             drop(lease);
-                            gate::guarded(self.checkpoint(checkpoint, &history, &usage), &cancel, deadline).await??;
+                            gate::guarded(self.checkpoint(checkpoint, &history, &usage), &cancel).await??;
                             self.sink.emit(AgentEvent::SteeringApplied { history: history.clone() }).await;
                             continue;
                         }
                     }
-                    gate::guarded(self.checkpoint(checkpoint, &history, &usage), &cancel, deadline).await??;
+                    gate::guarded(self.checkpoint(checkpoint, &history, &usage), &cancel).await??;
                     let readiness = lease.readiness.clone();
                     let clean = readiness.ready() && readiness.incomplete == 0;
                     let reason = (!clean).then(|| gate::incomplete_reason(&readiness));
                     let final_outcome = if clean { crate::completion::FinalOutcome::Completed } else { crate::completion::FinalOutcome::Incomplete };
-                    gate::guarded(lease.seal(final_outcome, reason.clone()), &cancel, deadline).await?
+                    gate::guarded(lease.seal(final_outcome, reason.clone()), &cancel).await?
                         .map_err(|error| AgentError::Completion(error.to_string()))?;
                     sealed = true;
                     if cancel.is_cancelled() { return Err(AgentError::Cancelled); }
@@ -1333,7 +1313,7 @@ impl Agent {
                 let result = tokio::select! {
                     biased;
                     _ = cancel.cancelled() => { self.sink.emit(AgentEvent::Cancelled).await; return Err(AgentError::Cancelled); }
-                    value = gate::guarded(self.tools.execute_with_workflow_secrets(&call.name, call.arguments, &context, bindings.as_ref()), &cancel, deadline) => value?,
+                    value = gate::guarded(self.tools.execute_with_workflow_secrets(&call.name, call.arguments, &context, bindings.as_ref()), &cancel) => value?,
                 };
                 tracing::info!(execution_id = %context.execution_id, tool = %call.name,
                     success = result.is_ok(), "tool execution finished");
@@ -1342,7 +1322,7 @@ impl Agent {
                     Err(error) => (error.to_string(), false),
                 };
                 history.push(Message::tool_result(&call.id, &content, success));
-                gate::guarded(self.checkpoint(checkpoint, &history, &usage), &cancel, deadline).await??;
+                gate::guarded(self.checkpoint(checkpoint, &history, &usage), &cancel).await??;
                 self.sink
                     .emit(AgentEvent::ToolFinished {
                         name: call.name,

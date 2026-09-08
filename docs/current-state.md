@@ -305,6 +305,21 @@ to root and subordinate work. Application policy is not an OS sandbox. Execution
 configuration is loaded and revalidated on the executing host; routing cannot
 broaden it. External content remains untrusted.
 
+At the model's final response, Voyage derives completion automatically from the
+run's recorded task and agent outcomes. Completed items need no separate review,
+fingerprint exchange or disposition call. Unfinished todos and unsuccessful agents
+remain incomplete; missing records and active agents remain unresolved. Remaining
+owned agents receive bounded shutdown and a fresh observation before the final
+decision is saved under the existing writer lock. Resource cleanup still requires
+actual observation before another turn can start. Completion does not ask the model
+for an extra reconciliation turn or impose a bookkeeping deadline.
+
+The standard tool registry no longer advertises the internal `completion` tool.
+Default instructions make todos and delegation discretionary when useful. Existing
+review records and sealed decisions remain readable without rewriting their history;
+Helm describes historical bookkeeping calls by operation rather than “Completion”.
+Recorded completion is not proof that an answer is semantically correct.
+
 Todos, subagents, terminal inventories and completion accounting are session-scoped.
 The subagent writer lease protects that session's persistent agent tree, so distinct
 voyages can execute and delegate concurrently in the same workspace. Writers of the

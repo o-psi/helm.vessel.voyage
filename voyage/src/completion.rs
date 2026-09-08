@@ -144,7 +144,8 @@ pub struct Readiness {
     pub fingerprint: String,
     pub total: usize,
     pub accounted: usize,
-    /// Accounted for is not synonymous with successfully completed.
+    /// Recorded outcomes are accounted automatically; this is not a claim of
+    /// semantic verification or successful completion.
     pub completed: usize,
     pub incomplete: usize,
     /// All accounted unfinished obligations, bounded by MAX_OBLIGATIONS.
@@ -480,6 +481,19 @@ impl RunLedger {
         agents: &AgentTree,
         max_unresolved: usize,
     ) -> Result<Readiness> {
+        self.snapshot_with_reviews(todos, agents, max_unresolved, false)
+    }
+
+    // Legacy sealed decisions used explicit model reviews. Keep their original
+    // interpretation available for historical validation, without requiring new
+    // runs to manufacture review records.
+    pub(super) fn snapshot_with_reviews(
+        &self,
+        todos: &TodoList,
+        agents: &AgentTree,
+        max_unresolved: usize,
+        require_reviews: bool,
+    ) -> Result<Readiness> {
         let mut snapshot = Readiness {
             run_id: self.run_id,
             revision: self.revision,
@@ -530,6 +544,16 @@ impl RunLedger {
             let unresolved = match (record, entry.dispositions.last()) {
                 (None, _) => Some(UnresolvedReason::MissingRecord),
                 (Some((_, true, _, _)), _) => Some(UnresolvedReason::ActiveAgent),
+                (Some((_, _, success, _)), _) if !require_reviews => {
+                    snapshot.accounted += 1;
+                    if success {
+                        snapshot.completed += 1;
+                    } else {
+                        snapshot.incomplete += 1;
+                        snapshot.incomplete_obligations.push(entry.obligation);
+                    }
+                    None
+                }
                 (Some(_), None) => Some(UnresolvedReason::NeedsDisposition),
                 (Some((current, _, _, _)), Some(d)) if current != d.reviewed => {
                     Some(UnresolvedReason::RecordChanged)

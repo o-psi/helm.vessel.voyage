@@ -123,7 +123,6 @@ pub async fn build_authorized_agent_bundle(
             config,
             Some(subagents.tool),
             Some(subagents.todos),
-            Some(subagents.completion_tool),
             Some(managed_resources.as_ref()),
             &context.policy,
         )
