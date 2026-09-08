@@ -2,7 +2,34 @@
 use super::*;
 use serde_json::{Value, json};
 use voyage_protocol::process::RuntimeCommand;
+// Settings receipts belong to this voyage's private journal. Conversation
+// checkpoints do not invalidate an Access review; settings changes do.
+fn ensure_access_revision(
+    connection: &rusqlite::Connection,
+    session: Uuid,
+    expected: u64,
+) -> Result<()> {
+    let current = read_session(connection, session)?.revision;
+    let changed: bool = connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM process_commands WHERE json_extract(request, '$.op') IN ('configure','set_access','set_inference','set_model') AND json_extract(receipt, '$.status')='applied' AND json_extract(receipt, '$.revision') > ?1)",
+        [i64::try_from(expected)?], |row| row.get(0),
+    )?;
+    ensure!(
+        expected <= current && !changed,
+        "access configuration changed; reopen Access to review its current state"
+    );
+    Ok(())
+}
 impl Journal {
+    pub(crate) fn check_access_revision(
+        &self,
+        guard: &ExecutionGuard,
+        expected: u64,
+    ) -> Result<()> {
+        self.check_guard(guard, guard.session_id)?;
+        ensure_access_revision(&self.connection, guard.session_id, expected)
+    }
+
     /// Startup caller holds the process startup lock; reading settings has no effects.
     pub(crate) fn initial_configuration(&self, session: Uuid) -> Result<Option<String>> {
         let exists:bool=self.connection.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='process_configuration')",[],|row|row.get(0))?;
@@ -114,10 +141,14 @@ impl Journal {
             "configuration requires idle voyage and observed cleanup"
         );
         let mut saved = read_session(&tx, guard.session_id)?;
-        ensure!(
-            saved.revision == *expected_revision,
-            "session revision conflict"
-        );
+        if access_only {
+            ensure_access_revision(&tx, guard.session_id, *expected_revision)?;
+        } else {
+            ensure!(
+                saved.revision == *expected_revision,
+                "session revision conflict"
+            );
+        }
         if access_only {
             ensure!(
                 saved

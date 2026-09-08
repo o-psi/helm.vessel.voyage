@@ -547,7 +547,11 @@ Voyage Actions also includes **Access**: Read only, Ask first, or Unrestricted.
 `/access unrestricted` open a confirmation for that mode. Slash completion offers
 all three. The chooser shows effective access and preserves the composer draft.
 Changes require executing-account owner authority and are allowed during an active
-run. New tool admissions use the updated mode; pending tool approvals are invalidated
+run. Conversation messages and tool-result checkpoints do not invalidate an open
+Access confirmation. The owner checks the reviewed revision against intervening
+access, inference, model or full-configuration changes, including changes arriving
+before durable acceptance; those still require reopening Access.
+New tool admissions use the updated mode; pending tool approvals are invalidated
 and stale admissions must retry. Already-started work and terminals are not stopped,
 but read-only mode refuses new terminal input. Idle changes still require observed
 cleanup and close retained terminals first. Ordinary configuration remains idle-only.

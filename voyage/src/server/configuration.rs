@@ -153,10 +153,17 @@ async fn configure_inner(
     )?;
     let launch =
         crate::launch_config::LaunchConfig::capture(&config, &state.registration.workspace)?;
-    ensure!(
-        state.owner.snapshot().await?.revision == *expected_revision,
-        "session revision conflict"
-    );
+    if access_only {
+        state
+            .owner
+            .check_access_revision(*expected_revision)
+            .await?;
+    } else {
+        ensure!(
+            state.owner.snapshot().await?.revision == *expected_revision,
+            "session revision conflict"
+        );
+    }
     if !inference_only && !active && !launch.matches_config(&*state.config.read().await)? {
         state
             .controls

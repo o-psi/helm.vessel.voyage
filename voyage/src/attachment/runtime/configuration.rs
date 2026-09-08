@@ -1,5 +1,16 @@
 use super::*;
 impl ManagedSessionOwner {
+    pub(crate) async fn check_access_revision(&self, expected: u64) -> anyhow::Result<()> {
+        let shared = self.store.clone();
+        tokio::task::spawn_blocking(move || {
+            let store = shared
+                .lock()
+                .map_err(|_| anyhow::anyhow!("owner poisoned"))?;
+            store.journal.check_access_revision(&store.guard, expected)
+        })
+        .await?
+    }
+
     pub(crate) async fn retain_initial_configuration(
         &self,
         config: &crate::Config,

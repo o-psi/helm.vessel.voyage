@@ -1,6 +1,6 @@
 //! Access is edited on the owner, never reconstructed from public configuration.
 use super::*;
-use anyhow::{Context, Result, ensure};
+use anyhow::{Context, Result};
 use crossterm::event::{Event, KeyCode, KeyModifiers, MouseButton, MouseEventKind};
 use ratatui::{
     Frame,
@@ -128,16 +128,14 @@ impl App {
             .views
             .get_mut(&menu.target)
             .context("voyage unavailable")?;
-        let snapshot = view.snapshot.as_ref().context("waiting for voyage state")?;
-        ensure!(
-            Some(snapshot.revision) == menu.revision,
-            "Voyage changed; reopen Access to review its current state"
-        );
+        // Preserve the reviewed revision. The owner atomically checks settings
+        // changes, rather than rejecting ordinary conversation progress.
+        let expected_revision = menu.revision.context("waiting for voyage state")?;
         let command_id = Uuid::new_v4();
         let access = MODES[menu.access_selected].1;
         let command = VoyageCommand::SetAccess {
             command_id,
-            expected_revision: snapshot.revision,
+            expected_revision,
             expires_at_ms: u64::try_from(
                 std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)?

@@ -106,10 +106,14 @@ impl LiveControls {
             u128::from(expiry) > now && u128::from(expiry) - now <= 300000,
             "invalid command deadline"
         );
-        ensure!(
-            owner.snapshot().await?.revision == expected,
-            "session revision conflict"
-        );
+        if matches!(command, RuntimeCommand::SetAccess { .. }) {
+            owner.check_access_revision(expected).await?;
+        } else {
+            ensure!(
+                owner.snapshot().await?.revision == expected,
+                "session revision conflict"
+            );
+        }
         self.shutdown_retained(owner).await
     }
     pub(crate) async fn retained_tool(&self) -> Option<crate::tools::ProcessTool> {
