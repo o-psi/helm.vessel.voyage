@@ -69,6 +69,9 @@ pub struct Session {
     pub updated_at: DateTime<Utc>,
     pub workspace: PathBuf,
     pub model: String,
+    /// Accepted next-turn model; do not rewrite provider replay while a turn is active.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_model: Option<String>,
     #[serde(default)]
     pub model_history: Vec<ModelChange>,
     #[serde(default)]
@@ -204,6 +207,7 @@ impl Session {
             updated_at: now,
             workspace,
             model,
+            pending_model: None,
             model_history: Vec::new(),
             completion_runs: Vec::new(),
             run_summaries: Vec::new(),

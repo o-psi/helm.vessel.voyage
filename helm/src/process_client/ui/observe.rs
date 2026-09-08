@@ -11,6 +11,10 @@ use tokio::sync::{Semaphore, mpsc};
 use voyage_protocol::vessel::{ProcessInfo, VesselCommand, VesselEventSubscription, VoyageCommand};
 
 pub enum Update {
+    InferenceModels {
+        id: uuid::Uuid,
+        result: Result<serde_json::Value, String>,
+    },
     FirstSend {
         saved: Box<super::new_draft::Saved>,
         result: Result<Option<serde_json::Value>, String>,

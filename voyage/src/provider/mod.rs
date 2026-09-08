@@ -1,6 +1,12 @@
 mod anthropic;
 mod catalog;
+mod inference;
 pub use catalog::{validate_model, validate_models, validate_models_for_display};
+pub(crate) use inference::validate_model_effort;
+pub use inference::{
+    inference_capabilities, inference_capabilities_with_model, validate_inference_settings,
+    validate_inference_settings_with_model,
+};
 mod chatgpt_oauth;
 mod codex_subscription;
 pub(crate) use codex_subscription::shutdown_owned as shutdown_compatibility;
@@ -211,6 +217,8 @@ pub fn from_config(
     config: &Config,
     workspace: std::path::PathBuf,
 ) -> Result<Box<dyn Provider>, ProviderError> {
+    validate_inference_settings(config)
+        .map_err(|error| ProviderError::Request(error.to_string()))?;
     match config.provider {
         ProviderKind::OpenaiResponses => Ok(Box::new(OpenAiResponsesProvider::new(
             config

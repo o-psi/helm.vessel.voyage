@@ -18,6 +18,7 @@ impl LiveControls {
             RuntimeCommand::Clear { command_id, .. }
             | RuntimeCommand::Compact { command_id, .. }
             | RuntimeCommand::SetModel { command_id, .. }
+            | RuntimeCommand::SetInference { command_id, .. }
             | RuntimeCommand::SetAccess { command_id, .. }
             | RuntimeCommand::Configure { command_id, .. }
             | RuntimeCommand::Archive { command_id, .. }
@@ -52,6 +53,11 @@ impl LiveControls {
                 ..
             }
             | RuntimeCommand::Compact {
+                expected_revision,
+                expires_at_ms,
+                ..
+            }
+            | RuntimeCommand::SetInference {
                 expected_revision,
                 expires_at_ms,
                 ..

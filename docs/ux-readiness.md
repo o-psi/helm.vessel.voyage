@@ -87,6 +87,45 @@ Every row still needs an explicit release decision and product-owner review.
 | J40 | Get help and diagnose an unavailable command | F1, `/help`, `--help`, `doctor`, manpage/completions | Partial evidence #143: guide and scrolling. Unknown commands, no selected voyage, disabled capabilities and next-step errors need review. |
 | J41 | Install, upgrade, roll back and manage the user service | `voyage-installer`, installer guide | Separate interface review: first install, upgrade failure, rollback, busy service and reboot evidence. Do not infer from package checksums. |
 
+### Inference selector acceptance (#177)
+
+Acceptance contract for J25 and J07/J12 recovery, associated with
+[#177](https://github.com/o-psi/voyage/issues/177). The selectors are implemented; this contract is not interaction-test evidence.
+See [current state](current-state.md) for behavior and verification limits.
+
+- **Discover and choose:** clickable **Model**, **Thinking** and **Service**
+  controls beside the composer show the selection and open a searchable modal.
+  Type to filter, Up/Down to navigate, Enter to select, and Esc to cancel without
+  changing settings or losing composer text.
+- **One path:** `/model`, `/thinking` and `/service` open the corresponding picker.
+  Typed arguments use the same validation, confirmation and submission path as
+  clicks; they do not bypass safeguards.
+- **Defaults and model changes:** `default` clears the corresponding explicit
+  override and inherits the applicable default, rather than sending a literal
+  provider value. Changing model with Thinking or Service overrides requires
+  explicit confirmation: reset both overrides atomically, or explicitly keep them
+  for runtime/provider compatibility validation. Show what will be cleared; cancel
+  retains the old model and overrides. Never silently reset them or silently carry
+  incompatible overrides to the new model.
+- **Capabilities:** offer choices from live capabilities for the selected
+  model/provider on the executing host. Distinguish unknown or unavailable data
+  from known unsupported choices. Unknown typed values remain subject to runtime
+  validation, not an assurance of support. Local configuration drafts show only
+  transport-known choices, not model/account support claims. Remote drafts retain
+  executing-host settings. Surface refusal without claiming a change.
+- **Pending and recovery:** durably retain the pending action and preserve composer
+  text across disconnect/restart. Distinguish pending from confirmed settings and
+  prevent conflicting edits while the outcome is unknown. Helm automatically reconciles the
+  original action without replaying it or replacing its identity. Definite refusal
+  preserves text and returns to an actionable editing state.
+- **Active turns:** accepted changes apply to the next turn only. Say so while a
+  turn is active; its model, thinking and service do not change midway.
+
+Manual acceptance must cover click/slash parity, search and keyboard cancellation,
+default clearing, model-reset confirm/cancel, live versus unknown capabilities,
+runtime refusal, automatic durable pending recovery, and active-turn timing. Preserve
+a nonempty composer throughout; record actual results separately from this plan.
+
 ### Reconcile inventory completeness
 
 Before each release, review both directions: every advertised user intention must

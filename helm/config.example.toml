@@ -1,6 +1,14 @@
 # Copy to ~/.config/helm/config.toml.
 provider = "openai-responses" # or "chatgpt-oauth" / "anthropic" / "openai-chat"
 model = "gpt-5"
+# Omit these keys for provider defaults (no override is sent).
+# Native Responses, ChatGPT OAuth Responses, and OpenAI chat transport options:
+# reasoning_effort = "medium" # none / minimal / low / medium / high / xhigh
+# service_tier = "auto" # auto / default / flex / scale / priority
+# These are request options, not promises of model support or account entitlement.
+# Advertised model efforts narrow the choices when catalog metadata is available.
+# Compatible endpoints may reject them. Anthropic and the Codex bridge reject
+# all explicit overrides. Empty strings and "provider-default" are not sentinels.
 api_key_env = "OPENAI_API_KEY"
 # codex_command = "codex" # only for the optional "codex-compatibility" bridge
 # base_url = "http://localhost:11434/v1"

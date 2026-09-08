@@ -115,6 +115,12 @@ pub struct Snapshot {
     pub name: Option<String>,
     pub model: String,
     #[serde(default)]
+    pub inference: Option<super::inference::Settings>,
+    #[serde(default)]
+    pub inference_next_turn: bool,
+    #[serde(default)]
+    pub inference_current: Option<super::inference::Settings>,
+    #[serde(default)]
     pub access: Option<String>,
     pub messages: Vec<Message>,
     pub run: Option<Run>,

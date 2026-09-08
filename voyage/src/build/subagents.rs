@@ -190,6 +190,7 @@ impl SubagentExecutor for CliSubagentExecutor {
             config.max_tokens,
             config.temperature,
         )
+        .with_inference_settings(config.reasoning_effort.clone(), config.service_tier.clone())
         .with_inference_accounting(accounting)
         .with_context_window(config.context_window)
         .with_retry_policy(RetryPolicy {

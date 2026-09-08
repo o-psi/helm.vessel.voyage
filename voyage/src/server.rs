@@ -47,6 +47,7 @@ pub struct ServeArgs {
 }
 struct ActiveRun {
     id: Uuid,
+    inference: serde_json::Value,
     cancel: CancellationToken,
     steering: Option<ManagedSteeringHandle>,
 }

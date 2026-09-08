@@ -110,6 +110,7 @@ impl Provider for ChatGptOAuth {
     }
 
     async fn complete(&self, request: ModelRequest) -> Result<ModelResponse, ProviderError> {
+        super::inference::validate_request(&crate::config::ProviderKind::ChatGptOauth, &request)?;
         let mut body = super::openai_responses::request_body(request, false)?;
         body.as_object_mut()
             .map(|value| value.remove("max_output_tokens"));
@@ -124,6 +125,7 @@ impl Provider for ChatGptOAuth {
     }
 
     async fn stream(&self, request: ModelRequest) -> Result<ProviderStream, ProviderError> {
+        super::inference::validate_request(&crate::config::ProviderKind::ChatGptOauth, &request)?;
         let mut body = super::openai_responses::request_body(request, true)?;
         body.as_object_mut()
             .map(|value| value.remove("max_output_tokens"));

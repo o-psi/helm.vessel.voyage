@@ -171,7 +171,7 @@ pub(super) async fn run(state: Arc<State>) -> Result<()> {
                                                 else {
                                                     let snapshot=owner.remote_snapshot(binding.clone(),authority.clone()).await;
                                                     let owner=owner.clone();let config=config.clone();let workspace=workspace.clone();let authority=dispatch_authority.clone();let execution_cancel=cancel.child_token();let interrupt=execution_cancel.clone();let cleanup=state.cleanup.clone();
-                                                    *state.active.lock().await=Some(ActiveRun{id:run.record().await?.id,cancel:cancel.clone(),steering:None});
+                                                    *state.active.lock().await=Some(ActiveRun{id:run.record().await?.id,inference:super::configuration::inference_snapshot(&config),cancel:cancel.clone(),steering:None});
                                                     active=Some(tokio::spawn(async move {crate::execution::execute_admitted(&owner,&mut run,&config,workspace,Arc::new(crate::agent::SilentSink),execution_cancel,async move{interrupt.cancelled().await},Some(authority),None,cleanup).await}));
                                                     snapshot.unwrap_or(Reply::Denied{code:DenialCode::Internal})
                                                 }

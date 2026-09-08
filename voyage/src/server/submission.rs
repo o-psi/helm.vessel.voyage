@@ -55,7 +55,11 @@ pub(super) async fn submit(
     ensure!(!state.shutdown.is_cancelled(), "runtime stopping");
     let saved = state.owner.snapshot().await?;
     let mut config = state.config.read().await.clone();
-    config.model = saved.session.model;
+    config.model = saved
+        .session
+        .pending_model
+        .clone()
+        .unwrap_or(saved.session.model);
     ensure!(
         cfg!(target_os = "linux")
             || (config.provider != crate::ProviderKind::CodexSubscription
@@ -147,6 +151,7 @@ pub(super) async fn submit(
     let cancel = CancellationToken::new();
     *state.active.lock().await = Some(ActiveRun {
         id: run_id,
+        inference: super::configuration::inference_snapshot(&config),
         cancel: cancel.clone(),
         steering: accepts_steering.then_some(steering),
     });

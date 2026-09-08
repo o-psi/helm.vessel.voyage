@@ -30,6 +30,29 @@ an explicit absolute workspace with `/new /absolute/path`. Session-scoped grant
 connections cannot create another voyage. Explicit `connect new`, resume and
 branch retain their existing intentional session semantics.
 
+The composer has clickable Model, Thinking and Service selectors, with matching
+`/model`, `/thinking` and `/service` commands. Selectors support search, keyboard
+selection and cancellation while preserving composer text. Local drafts carry
+explicit selections into creation; remote drafts retain executing-host defaults.
+Model changes with existing overrides require confirmation to clear or keep them.
+`default` clears an explicit Thinking or Service override.
+
+Inference changes travel through the public Vessel API to the owning Voyage as
+revision-bound, deduplicated commands. Vessel retains the immutable intent before
+forwarding; Voyage validates and persists the outcome and next-turn configuration.
+An active turn, including its tool continuations, retains its admitted settings.
+Confirmed changes survive runtime suspension and supervisor restart. Helm retains
+pending commands and reconciles their original identities after reconnect without
+replaying uncertain commands. Stale or unsupported changes preserve prior values.
+
+OpenAI Responses, Chat Completions and ChatGPT OAuth adapters encode supported
+explicit reasoning-effort and service-tier fields. Anthropic and the optional
+Codex compatibility bridge reject these overrides. Choices reflect transport
+capabilities, narrowed by available model metadata; they do not establish account
+entitlement, billing or acceptance by a live provider. No paid-provider verification
+is implied. Full interactive selector acceptance remains separate from source and
+offline process verification.
+
 First send saves stable session, start and turn command identities locally before
 requesting Vessel creation, then saves the exact revision-bound submission before
 sending it. This uses the existing deduplicated start and submit protocol; the two

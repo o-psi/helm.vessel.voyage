@@ -1,5 +1,5 @@
 //! Version adapter between the public Vessel API and private runtime IPC.
-use super::{routing, service::Supervisor};
+use super::{registry, routing, service::Supervisor};
 use anyhow::{Result, ensure};
 use serde_json::Value;
 use voyage_protocol::{
@@ -243,6 +243,21 @@ pub(super) fn runtime(command: VoyageCommand) -> Result<RuntimeCommand> {
             expires_at_ms,
             name,
         },
+        VoyageCommand::SetInference {
+            command_id,
+            expected_revision,
+            expires_at_ms,
+            model,
+            reasoning_effort,
+            service_tier,
+        } => RuntimeCommand::SetInference {
+            command_id,
+            expected_revision,
+            expires_at_ms,
+            model,
+            reasoning_effort,
+            service_tier,
+        },
         VoyageCommand::SetModel {
             command_id,
             expected_revision,
@@ -387,6 +402,42 @@ impl Supervisor {
             !exact || request.incarnation.is_some(),
             "operation requires observed incarnation"
         );
+        // Persist the immutable inference intent before forwarding. This is not
+        // an applied receipt: the owning Voyage remains the configuration authority.
+        // Resolution checks the same envelope but never dispatches it automatically.
+        let inference = match &request.command {
+            command @ VoyageCommand::SetInference { .. } => Some((command.clone(), true)),
+            VoyageCommand::Resolve {
+                command_id,
+                original: Some(original),
+            } if matches!(original.as_ref(), VoyageCommand::SetInference { .. }) => {
+                ensure!(
+                    original.mutation_id() == Some(*command_id),
+                    "resolution identity mismatch"
+                );
+                Some((original.as_ref().clone(), false))
+            }
+            _ => None,
+        };
+        if let Some((command, reserve)) = inference {
+            ensure!(
+                authorization.is_none(),
+                "inference settings require owner authority"
+            );
+            self.registration(request.session_id).await?;
+            let id = command.mutation_id().expect("inference mutation");
+            ensure!(!id.is_nil(), "nil command ID");
+            registry::command_record(
+                &self.directory,
+                id,
+                &VesselCommand::Voyage(VoyageRequest {
+                    session_id: request.session_id,
+                    incarnation: None,
+                    command,
+                }),
+                reserve,
+            )?;
+        }
         let command = runtime(request.command)?;
         let result = self
             .dispatch_session(
@@ -441,7 +492,9 @@ pub(super) fn required_right(command: &VoyageCommand) -> Option<ProcessRight> {
         | VoyageCommand::Archive { .. }
         | VoyageCommand::Delete { .. } => Some(ProcessRight::Lifecycle),
         VoyageCommand::Terminal { .. } => Some(ProcessRight::Terminal),
-        VoyageCommand::Configure { .. } | VoyageCommand::SetAccess { .. } => None,
+        VoyageCommand::Configure { .. }
+        | VoyageCommand::SetAccess { .. }
+        | VoyageCommand::SetInference { .. } => None,
         _ => None,
     }
 }

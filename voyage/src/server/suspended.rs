@@ -199,13 +199,18 @@ async fn inspect(
         RuntimeCommand::Health => Ok(json!({"pid":null,"session_id":registration.session_id,
             "incarnation":registration.incarnation,"suspended":true,
             "capabilities":["snapshot","history","message_chunk","run_output","submit",
-                "receipt","resolve","cancel","steer","rename","set_model","set_access","decisions",
+                "receipt","resolve","cancel","steer","rename","set_model","set_inference","set_access","decisions",
                 "respond","archive","delete","branch","clear","compact","events","controls",
                 "operator_tool","configure","workflow_submit","terminal","assignment_observe",
                 "relinquish","stop"],"outbound":null,"decisions":"bounded_120_seconds"})),
         RuntimeCommand::Snapshot => {
             let mut snapshot = owner.process_snapshot().await?;
-            let config = config(owner, registration, directory).await?;
+            let mut config = config(owner, registration, directory).await?;
+            let saved = owner.snapshot().await?.session;
+            config.model = saved.pending_model.unwrap_or(saved.model);
+            snapshot["inference"] = super::configuration::inference_snapshot(&config);
+            snapshot["inference_next_turn"] = json!(false);
+            snapshot["inference_current"] = Value::Null;
             snapshot["access"] =
                 crate::runtime_policy::RuntimePolicy::resolve(&config, &registration.workspace)
                     .ok()
@@ -256,15 +261,11 @@ async fn inspect(
         RuntimeCommand::Decisions => owner.decisions(registration.incarnation).await,
         RuntimeCommand::Controls { run_id, section } => {
             let mut config = config(owner, registration, directory).await?;
-            config.model = owner.snapshot().await?.session.model;
-            crate::build::set_resource_root(directory.join("resources"))?;
-            if section == "models" {
-                let value =
-                    serde_json::to_value(vec![crate::provider::ModelInfo::minimal(config.model)])?;
-                return Ok(
-                    json!({"run_id":null,"section":section,"value":value,"execution":"idle","source":"saved_configuration","refresh":"next_run"}),
-                );
+            {
+                let session = owner.snapshot().await?.session;
+                config.model = session.pending_model.unwrap_or(session.model);
             }
+            crate::build::set_resource_root(directory.join("resources"))?;
             controls::LiveControls::default()
                 .inspect_or_idle(run_id, &section, &config, &registration.workspace)
                 .await

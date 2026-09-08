@@ -219,8 +219,14 @@ impl Journal {
                         "invalid branch name"
                     );
                 }
-                let mut branch =
-                    Session::new(saved.session.workspace.clone(), saved.session.model.clone());
+                let mut branch = Session::new(
+                    saved.session.workspace.clone(),
+                    saved
+                        .session
+                        .pending_model
+                        .clone()
+                        .unwrap_or_else(|| saved.session.model.clone()),
+                );
                 branch.id = *branch_id;
                 branch.parent_id = Some(guard.session_id);
                 // Session::new used a different UUID; rebuild title provenance

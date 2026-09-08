@@ -30,6 +30,7 @@ pub(super) async fn dispatch(
                     | RuntimeCommand::SetAccess { .. }
                     | RuntimeCommand::Configure { .. }
                     | RuntimeCommand::SetModel { .. }
+                    | RuntimeCommand::SetInference { .. }
                     | RuntimeCommand::Clear { .. }
                     | RuntimeCommand::Compact { .. }
                     | RuntimeCommand::Steer { .. }
@@ -51,6 +52,7 @@ pub(super) async fn dispatch(
         | RuntimeCommand::Steer { command_id, .. }
         | RuntimeCommand::Rename { command_id, .. }
         | RuntimeCommand::SetModel { command_id, .. }
+        | RuntimeCommand::SetInference { command_id, .. }
         | RuntimeCommand::Respond { command_id, .. }
         | RuntimeCommand::Archive { command_id, .. }
         | RuntimeCommand::Delete { command_id, .. }
@@ -131,6 +133,7 @@ pub(super) fn validate_public(command: &RuntimeCommand, config: &Config) -> Resu
     if matches!(
         command,
         RuntimeCommand::SetModel { .. }
+            | RuntimeCommand::SetInference { .. }
             | RuntimeCommand::OperatorTool { .. }
             | RuntimeCommand::ExecuteTool { .. }
             | RuntimeCommand::Github { .. }

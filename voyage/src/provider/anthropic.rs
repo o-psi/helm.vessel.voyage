@@ -139,6 +139,7 @@ impl Provider for AnthropicProvider {
         Ok(models)
     }
     async fn complete(&self, request: ModelRequest) -> Result<ModelResponse, ProviderError> {
+        super::inference::validate_request(&crate::config::ProviderKind::Anthropic, &request)?;
         let system = request
             .messages
             .iter()
@@ -168,6 +169,7 @@ impl Provider for AnthropicProvider {
     }
 
     async fn stream(&self, request: ModelRequest) -> Result<ProviderStream, ProviderError> {
+        super::inference::validate_request(&crate::config::ProviderKind::Anthropic, &request)?;
         let system = request
             .messages
             .iter()

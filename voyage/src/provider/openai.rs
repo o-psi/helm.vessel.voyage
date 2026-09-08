@@ -31,7 +31,8 @@ impl OpenAiProvider {
         self.use_max_tokens = enabled;
         self
     }
-    fn body(&self, request: ModelRequest, streaming: bool) -> Value {
+    fn body(&self, request: ModelRequest, streaming: bool) -> Result<Value, ProviderError> {
+        super::inference::validate_request(&crate::config::ProviderKind::OpenaiChat, &request)?;
         let mut body = request_body(request, streaming);
         if self.use_max_tokens
             && let Some(value) = body
@@ -41,7 +42,7 @@ impl OpenAiProvider {
         {
             body["max_tokens"] = value;
         }
-        body
+        Ok(body)
     }
 }
 
@@ -57,7 +58,7 @@ impl Provider for OpenAiProvider {
             })
     }
     async fn complete(&self, request: ModelRequest) -> Result<ModelResponse, ProviderError> {
-        let body = self.body(request, false);
+        let body = self.body(request, false)?;
 
         let response = self
             .client
@@ -76,7 +77,7 @@ impl Provider for OpenAiProvider {
             .client
             .post(format!("{}/chat/completions", self.base_url))
             .apply_key(&self.api_key)
-            .json(&self.body(request, true))
+            .json(&self.body(request, true)?)
             .send()
             .await
             .map_err(map_transport)?;
@@ -95,6 +96,12 @@ fn request_body(request: ModelRequest, streaming: bool) -> Value {
     }
     if !tools.is_empty() {
         body["tools"] = json!(tools);
+    }
+    if let Some(value) = request.reasoning_effort {
+        body["reasoning_effort"] = json!(value);
+    }
+    if let Some(value) = request.service_tier {
+        body["service_tier"] = json!(value);
     }
     if let Some(value) = request.temperature {
         body["temperature"] = json!(value);

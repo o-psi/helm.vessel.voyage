@@ -43,12 +43,20 @@ impl App {
             .block(Block::default().borders(Borders::BOTTOM)),
             rows[0],
         );
-        frame.render_widget(Paragraph::new("Describe what you want to do.\n\nThis draft is saved on this computer.\n/model NAME · /access MODE · /workspace PATH · /help\n\nTab switches drafts and voyages. Ctrl+N opens a blank draft.").wrap(ratatui::widgets::Wrap { trim: false }), rows[1]);
+        frame.render_widget(Paragraph::new("Describe what you want to do.\n\nThis draft is saved on this computer.\n/model · /thinking · /service · /access MODE · /workspace PATH · /help\n\nTab switches drafts and voyages. Ctrl+N opens a blank draft.").wrap(ratatui::widgets::Wrap { trim: false }), rows[1]);
         let block = Block::default()
             .borders(Borders::ALL)
             .title(" First message ");
-        let body = block.inner(rows[2]);
+        let inner = block.inner(rows[2]);
+        let body = Rect {
+            height: inner.height.saturating_sub(1),
+            ..inner
+        };
         frame.render_widget(block, rows[2]);
+        self.draw_inference_controls(
+            frame,
+            Rect::new(inner.x, inner.bottom().saturating_sub(1), inner.width, 1),
+        );
         let (row, col) = composer::cursor_position(
             &safe(&draft.composer.text[..draft.composer.cursor]),
             body.width,

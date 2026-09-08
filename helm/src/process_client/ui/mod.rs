@@ -5,6 +5,7 @@ mod completion;
 mod controls;
 mod explore;
 mod export;
+mod inference;
 mod input;
 mod interactions;
 mod lifecycle;
@@ -59,6 +60,7 @@ pub(super) struct App {
     explore: Option<usize>,
     interactions: std::cell::RefCell<interactions::Review>,
     completion: completion::Completion,
+    inference: inference::Controls,
     sidebar: sidebar::Sidebar,
     terminal_request: Option<(Target, uuid::Uuid, uuid::Uuid, uuid::Uuid)>,
 }
@@ -138,6 +140,7 @@ pub async fn run_with_notice(
         interactions: Default::default(),
         terminal_request: None,
         completion: Default::default(),
+        inference: Default::default(),
         sidebar: Default::default(),
     };
     app.recover_new_drafts()?;

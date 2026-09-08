@@ -212,6 +212,10 @@ impl Provider for CodexSubscriptionProvider {
         Ok(models)
     }
     async fn complete(&self, request: ModelRequest) -> Result<ModelResponse, ProviderError> {
+        super::inference::validate_request(
+            &crate::config::ProviderKind::CodexSubscription,
+            &request,
+        )?;
         use futures_util::StreamExt;
         let mut stream = self.stream(request).await?;
         while let Some(event) = stream.next().await {
@@ -224,6 +228,10 @@ impl Provider for CodexSubscriptionProvider {
         ))
     }
     async fn stream(&self, request: ModelRequest) -> Result<ProviderStream, ProviderError> {
+        super::inference::validate_request(
+            &crate::config::ProviderKind::CodexSubscription,
+            &request,
+        )?;
         let state = self.state.clone();
         let program = self.program.clone();
         let args = self.args.clone();
