@@ -31,3 +31,6 @@ pub mod process;
 
 /// Public client-to-Vessel service contract.
 pub mod vessel;
+
+/// Ordered turn content metadata. Not yet accepted by submission transports.
+pub mod content;
