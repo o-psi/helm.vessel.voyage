@@ -1,141 +1,277 @@
-//! Grant credentials are read from private files and never appear in arguments.
-use anyhow::{Context, Result, ensure};
-use std::{io::Read, path::Path};
+//! Private human access credentials; never provider or model configuration.
+use anyhow::{Result, ensure};
+use serde::{Deserialize, Serialize};
+use std::{path::Path, time::Duration};
+use uuid::Uuid;
 use voyage_protocol::vessel::{
     AccessCredential, MAX_VESSEL_BODY, VESSEL_API_VERSION, VesselCommand, VesselEvent,
     VesselEventRequest, VesselRequest, VesselResponse,
 };
 
-fn credential(path: &Path) -> Result<AccessCredential> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
-        let mut file = std::fs::OpenOptions::new()
-            .read(true)
-            .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
-            .open(path)
-            .context("open private access credential")?;
-        let metadata = file.metadata()?;
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct WorkspaceCredential {
+    pub schema_version: u32,
+    pub kind: String,
+    pub endpoint: String,
+    pub grant_id: Uuid,
+    pub principal_id: Uuid,
+    pub vessel_id: Uuid,
+    pub token: String,
+}
+// Deliberately not Debug: even a diagnostic must not expose a token.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub(super) enum Credential {
+    Workspace(WorkspaceCredential),
+    Session(AccessCredential),
+}
+impl Credential {
+    pub fn parse(bytes: &[u8]) -> Result<Self> {
+        let value: Self = serde_json::from_slice(bytes)
+            .map_err(|_| anyhow::anyhow!("invalid private access credential"))?;
+        if let Self::Workspace(c) = &value {
+            ensure!(
+                c.schema_version == 1 && c.kind == "workspace",
+                "unsupported access credential version or kind"
+            );
+            ensure!(
+                !c.vessel_id.is_nil() && !c.principal_id.is_nil(),
+                "invalid credential identity"
+            );
+        }
         ensure!(
-            metadata.is_file()
-                && metadata.uid() == unsafe { libc::geteuid() }
-                && metadata.mode() & 0o077 == 0
-                && metadata.len() <= 16384,
-            "access credential must be an owned private file of at most 16 KiB"
+            !value.grant_id().is_nil()
+                && !value.token().is_empty()
+                && value.token().len() <= 4096
+                && value.token().bytes().all(|b| b.is_ascii_graphic()),
+            "invalid access credential"
         );
-        let mut bytes = Vec::new();
-        file.read_to_end(&mut bytes)?;
-        serde_json::from_slice(&bytes)
-            .map_err(|_| anyhow::anyhow!("invalid access credential file"))
+        endpoint(value.endpoint(), voyage_protocol::vessel::COMMAND_PATH)?;
+        Ok(value)
     }
-    #[cfg(not(unix))]
-    {
-        let _ = path;
-        anyhow::bail!("private access credential verification is unsupported on this platform")
+    pub fn endpoint(&self) -> &str {
+        match self {
+            Self::Workspace(c) => &c.endpoint,
+            Self::Session(c) => &c.endpoint,
+        }
+    }
+    pub fn grant_id(&self) -> Uuid {
+        match self {
+            Self::Workspace(c) => c.grant_id,
+            Self::Session(c) => c.grant_id,
+        }
+    }
+    fn token(&self) -> &str {
+        match self {
+            Self::Workspace(c) => &c.token,
+            Self::Session(c) => &c.token,
+        }
+    }
+    pub fn vessel_id(&self) -> Option<Uuid> {
+        match self {
+            Self::Workspace(c) => Some(c.vessel_id),
+            _ => None,
+        }
+    }
+    pub fn principal_id(&self) -> Option<Uuid> {
+        match self {
+            Self::Workspace(c) => Some(c.principal_id),
+            _ => None,
+        }
+    }
+    fn authorize(
+        &self,
+        builder: reqwest::RequestBuilder,
+        pin: Option<Uuid>,
+    ) -> Result<reqwest::RequestBuilder> {
+        ensure!(
+            pin.is_none() || self.vessel_id().is_none() || pin == self.vessel_id(),
+            "connection credential identity changed"
+        );
+        let builder = builder
+            .bearer_auth(self.token())
+            .header("x-voyage-grant", self.grant_id().to_string());
+        Ok(if let Some(id) = pin.or(self.vessel_id()) {
+            builder.header("x-voyage-vessel", id.to_string())
+        } else {
+            builder
+        })
     }
 }
 
-pub(super) async fn exchange(path: &Path, command: VesselCommand) -> Result<serde_json::Value> {
-    let credential = credential(path)?;
-    let mut endpoint = reqwest::Url::parse(&credential.endpoint)
-        .map_err(|_| anyhow::anyhow!("invalid grant endpoint"))?;
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum ConnectionFailure {
+    #[error("Access expired; obtain renewed access. Original recovery credentials are retained.")]
+    Expired,
+    #[error("Access revoked or refused; original recovery credentials are retained.")]
+    Revoked,
+    #[error("Vessel or principal identity changed; review as a new connection.")]
+    Identity,
+    #[error("Unsupported Vessel protocol or credential version.")]
+    Version,
+    #[error("Vessel offline or secure connection failed; command delivery may be unknown.")]
+    Offline,
+    #[error("Vessel redirect refused; use the approved HTTPS endpoint.")]
+    Redirect,
+}
+pub(super) fn credential(path: &Path) -> Result<Credential> {
+    Credential::parse(&super::connections::private::read_path(
+        path,
+        super::connections::private::CREDENTIAL_LIMIT,
+    )?)
+}
+pub(super) fn endpoint(base: &str, path: &str) -> Result<reqwest::Url> {
+    let mut endpoint =
+        reqwest::Url::parse(base).map_err(|_| anyhow::anyhow!("invalid Vessel endpoint"))?;
     ensure!(
         endpoint.username().is_empty()
             && endpoint.password().is_none()
             && endpoint.query().is_none()
             && endpoint.fragment().is_none(),
-        "grant endpoint must not contain credentials, query or fragment"
+        "Vessel endpoint must not contain credentials, query or fragment"
     );
     let loopback = endpoint.host_str().is_some_and(|host| {
         host.parse::<std::net::IpAddr>()
             .is_ok_and(|ip| ip.is_loopback())
     });
     ensure!(
-        endpoint.scheme() == "https" || (endpoint.scheme() == "http" && loopback),
-        "grant transport requires HTTPS except literal loopback development"
+        endpoint.host_str().is_some()
+            && (endpoint.scheme() == "https" || (endpoint.scheme() == "http" && loopback)),
+        "Vessel transport requires HTTPS except literal loopback development"
     );
-    endpoint.set_path(voyage_protocol::vessel::COMMAND_PATH);
-    let client = reqwest::Client::builder()
+    endpoint.set_path(path);
+    Ok(endpoint)
+}
+pub(super) fn http(streaming: bool) -> Result<reqwest::Client> {
+    let mut builder = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
-        .timeout(std::time::Duration::from_secs(15))
-        .build()?;
-    let mut response = client
-        .post(endpoint)
-        .bearer_auth(&credential.token)
-        .header("x-voyage-grant", credential.grant_id.to_string())
-        .json(&VesselRequest {
-            protocol: VESSEL_API_VERSION,
-            command,
-        })
-        .send()
-        .await
-        .map_err(|_| anyhow::anyhow!("grant connection failed; command delivery may be unknown"))?;
-    ensure!(
-        response.status().is_success(),
-        "grant gateway rejected request (HTTP {})",
-        response.status().as_u16()
-    );
+        .connect_timeout(Duration::from_secs(8));
+    if !streaming {
+        builder = builder.timeout(Duration::from_secs(15));
+    }
+    Ok(builder.build()?)
+}
+fn classified(text: &str) -> Option<ConnectionFailure> {
+    let text = text.to_ascii_lowercase();
+    if text.contains("expir") {
+        Some(ConnectionFailure::Expired)
+    } else if text.contains("revok") {
+        Some(ConnectionFailure::Revoked)
+    } else if text.contains("identity") || text.contains("pinned") {
+        Some(ConnectionFailure::Identity)
+    } else if text.contains("protocol") || text.contains("version") {
+        Some(ConnectionFailure::Version)
+    } else {
+        None
+    }
+}
+pub(super) async fn bounded(
+    mut response: reqwest::Response,
+) -> Result<(reqwest::StatusCode, Vec<u8>)> {
+    let status = response.status();
+    if status.is_redirection() {
+        return Err(ConnectionFailure::Redirect.into());
+    }
     let mut bytes = Vec::new();
-    while let Some(chunk) = response.chunk().await.map_err(|_| {
-        anyhow::anyhow!("grant response interrupted; command delivery may be unknown")
-    })? {
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|_| ConnectionFailure::Offline)?
+    {
         ensure!(
             bytes.len().saturating_add(chunk.len()) <= MAX_VESSEL_BODY,
-            "grant response exceeds frame limit"
+            "Vessel response exceeds frame limit"
         );
         bytes.extend_from_slice(&chunk);
     }
-    let response: VesselResponse = serde_json::from_slice(&bytes)
-        .map_err(|_| anyhow::anyhow!("invalid grant response; command delivery may be unknown"))?;
-    ensure!(
-        response.protocol == VESSEL_API_VERSION,
-        "unsupported grant protocol"
-    );
-    if let Some(error) = response.error {
-        if response.outcome_unknown {
-            anyhow::bail!("Vessel command outcome unknown: {}", super::safe(&error));
-        }
-        return Err(
-            super::transport::Refusal(format!("Vessel refused: {}", super::safe(&error))).into(),
-        );
-    }
-    Ok(response.result)
+    Ok((status, bytes))
 }
-
-pub(super) async fn events(
-    path: &Path,
+pub(super) async fn envelope(response: reqwest::Response) -> Result<serde_json::Value> {
+    let (status, bytes) = bounded(response).await?;
+    let parsed = serde_json::from_slice::<VesselResponse>(&bytes);
+    if let Ok(reply) = &parsed {
+        if reply.protocol != VESSEL_API_VERSION {
+            return Err(ConnectionFailure::Version.into());
+        }
+        if let Some(error) = &reply.error {
+            if reply.outcome_unknown {
+                anyhow::bail!(
+                    "Vessel command outcome unknown; original command identity must be retained"
+                );
+            }
+            if let Some(error) = classified(error) {
+                return Err(error.into());
+            }
+            // Do not echo untrusted HTTP error text (it may include the submitted secret).
+            if status == reqwest::StatusCode::UNAUTHORIZED
+                || status == reqwest::StatusCode::FORBIDDEN
+            {
+                return Err(ConnectionFailure::Revoked.into());
+            }
+            return Err(super::transport::Refusal("Vessel refused the request".into()).into());
+        }
+    }
+    if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+        return Err(ConnectionFailure::Revoked.into());
+    }
+    ensure!(
+        status.is_success(),
+        "Vessel request failed (HTTP {}); command delivery may be unknown",
+        status.as_u16()
+    );
+    Ok(parsed
+        .map_err(|_| anyhow::anyhow!("invalid Vessel response; command delivery may be unknown"))?
+        .result)
+}
+pub(super) async fn exchange_credential(
+    credential: &Credential,
+    pin: Option<Uuid>,
+    command: VesselCommand,
+) -> Result<serde_json::Value> {
+    let request = credential.authorize(
+        http(false)?.post(endpoint(
+            credential.endpoint(),
+            voyage_protocol::vessel::COMMAND_PATH,
+        )?),
+        pin,
+    )?;
+    envelope(
+        request
+            .json(&VesselRequest {
+                protocol: VESSEL_API_VERSION,
+                command,
+            })
+            .send()
+            .await
+            .map_err(|_| ConnectionFailure::Offline)?,
+    )
+    .await
+}
+pub(super) async fn events_credential(
+    credential: &Credential,
+    pin: Option<Uuid>,
     request: VesselEventRequest,
 ) -> Result<futures_util::stream::BoxStream<'static, Result<VesselEvent>>> {
-    let credential = credential(path)?;
-    let mut endpoint = reqwest::Url::parse(&credential.endpoint)
-        .map_err(|_| anyhow::anyhow!("invalid grant endpoint"))?;
-    ensure!(
-        endpoint.username().is_empty()
-            && endpoint.password().is_none()
-            && endpoint.query().is_none()
-            && endpoint.fragment().is_none(),
-        "grant endpoint must not contain credentials, query or fragment"
-    );
-    let loopback = endpoint.host_str().is_some_and(|host| {
-        host.parse::<std::net::IpAddr>()
-            .is_ok_and(|ip| ip.is_loopback())
-    });
-    ensure!(
-        endpoint.scheme() == "https" || (endpoint.scheme() == "http" && loopback),
-        "grant transport requires HTTPS except literal loopback development"
-    );
-    endpoint.set_path(voyage_protocol::vessel::EVENTS_PATH);
-    let response = reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .connect_timeout(std::time::Duration::from_secs(8))
-        .build()?
-        .post(endpoint)
-        .header(reqwest::header::ACCEPT, "text/event-stream")
-        .bearer_auth(&credential.token)
-        .header("x-voyage-grant", credential.grant_id.to_string())
+    let request = credential
+        .authorize(
+            http(true)?
+                .post(endpoint(
+                    credential.endpoint(),
+                    voyage_protocol::vessel::EVENTS_PATH,
+                )?)
+                .header(reqwest::header::ACCEPT, "text/event-stream"),
+            pin,
+        )?
         .json(&request)
-        .send()
+        .send();
+    let response = tokio::time::timeout(Duration::from_secs(15), request)
         .await
-        .map_err(|_| anyhow::anyhow!("grant event connection failed"))?;
+        .map_err(|_| ConnectionFailure::Offline)?
+        .map_err(|_| ConnectionFailure::Offline)?;
+    if !response.status().is_success() {
+        envelope(response).await?;
+        anyhow::bail!("Vessel event stream refused");
+    }
     Ok(super::sse::decode(response))
 }

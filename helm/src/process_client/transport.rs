@@ -11,6 +11,9 @@ use voyage_protocol::vessel::{
 pub struct Client {
     pub directory: PathBuf,
     pub access_file: Option<PathBuf>,
+    id: super::connections::ConnectionId,
+    generation: u64,
+    managed: Option<super::connections::Connection>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -18,10 +21,102 @@ pub struct Client {
 pub struct Refusal(pub String);
 
 impl Client {
+    pub fn local(directory: PathBuf) -> Self {
+        let route = super::connections::LegacyRoute {
+            directory: directory.clone(),
+            access_file: None,
+        };
+        Self {
+            directory,
+            access_file: None,
+            id: route.id(),
+            generation: 0,
+            managed: None,
+        }
+    }
+    pub fn access(path: PathBuf) -> Self {
+        let route = super::connections::LegacyRoute {
+            directory: PathBuf::new(),
+            access_file: Some(path.clone()),
+        };
+        Self {
+            directory: route.directory.clone(),
+            access_file: Some(path),
+            id: route.id(),
+            generation: 0,
+            managed: None,
+        }
+    }
+    /// Preserve the exact legacy directory slot for explicitly configured clients.
+    pub fn access_with_directory(path: PathBuf, directory: PathBuf) -> Self {
+        let route = super::connections::LegacyRoute {
+            directory: directory.clone(),
+            access_file: Some(path.clone()),
+        };
+        Self {
+            directory,
+            access_file: Some(path),
+            id: route.id(),
+            generation: 0,
+            managed: None,
+        }
+    }
+    pub(super) fn from_connection(
+        connection: super::connections::Connection,
+        path: PathBuf,
+    ) -> Self {
+        Self {
+            directory: PathBuf::new(),
+            access_file: Some(path),
+            id: connection.id,
+            generation: 0,
+            managed: Some(connection),
+        }
+    }
+    pub fn id(&self) -> super::connections::ConnectionId {
+        self.id
+    }
+    pub fn generation(&self) -> u64 {
+        self.generation
+    }
+    pub fn with_generation(mut self, generation: u64) -> Self {
+        self.generation = generation;
+        self
+    }
+    pub fn managed(&self) -> Option<&super::connections::Connection> {
+        self.managed.as_ref()
+    }
+    pub fn legacy_route(&self) -> super::connections::LegacyRoute {
+        self.managed
+            .as_ref()
+            .and_then(|c| c.legacy_route.clone())
+            .unwrap_or_else(|| super::connections::LegacyRoute {
+                directory: self.directory.clone(),
+                access_file: self.access_file.clone(),
+            })
+    }
+    fn pin(&self) -> Option<uuid::Uuid> {
+        self.managed.as_ref().map(|c| c.vessel_id)
+    }
+    fn read_access(&self, path: &std::path::Path) -> Result<super::access::Credential> {
+        let credential = super::access::credential(path)?;
+        if let Some(connection) = &self.managed {
+            super::connections::validate_credential(connection, &credential)?;
+        }
+        Ok(credential)
+    }
+
     pub fn is_local(&self) -> bool {
         self.access_file.is_none()
     }
     pub fn label(&self) -> String {
+        if let Some(c) = &self.managed {
+            return if c.alias.is_empty() {
+                c.endpoint.clone()
+            } else {
+                c.alias.clone()
+            };
+        }
         self.access_file
             .as_ref()
             .map(|p| {
@@ -47,7 +142,8 @@ impl Client {
             subscriptions,
         };
         if let Some(path) = &self.access_file {
-            return super::access::events(path, request).await;
+            let credential = self.read_access(path)?;
+            return super::access::events_credential(&credential, self.pin(), request).await;
         }
         super::local::events(&self.directory, request).await
     }
@@ -63,7 +159,8 @@ impl Client {
     #[cfg(unix)]
     async fn exchange(&self, command: VesselCommand) -> Result<Value> {
         if let Some(path) = &self.access_file {
-            return super::access::exchange(path, command).await;
+            let credential = self.read_access(path)?;
+            return super::access::exchange_credential(&credential, self.pin(), command).await;
         }
         super::local::exchange(&self.directory, command).await
     }

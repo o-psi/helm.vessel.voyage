@@ -56,10 +56,7 @@ pub(super) async fn run(source: &Client, args: MoveArgs) -> Result<Value> {
     } else {
         None
     };
-    let destination = Client {
-        directory: args.destination_directory.clone(),
-        access_file: None,
-    };
+    let destination = Client::local(args.destination_directory.clone());
     let source_id: VesselIdentity =
         serde_json::from_value(source.request(VesselCommand::Identity).await?)?;
     let destination_id: VesselIdentity =
