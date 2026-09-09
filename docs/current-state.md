@@ -506,6 +506,10 @@ configuration; no runtime is created merely by connecting or choosing a workspac
 See [Vessel connections](vessel-connections.md) for the owner invitation flow,
 rights, migration, expiry, recovery and tunnel requirements. This is human-client
 pairing; model delegation uses separately accepted participant bindings.
+The executing owner can list workspace grants with `vessel list-connections`,
+including offline, revoked and expired access, without printing credentials.
+Lost-installation recovery uses explicit old-grant revocation and new pairing;
+it does not transfer an old installation's identity or replay lost commands.
 
 ## Model-driven Vessel coordination
 

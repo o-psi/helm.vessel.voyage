@@ -63,6 +63,9 @@ enum Command {
     /// Approve a principal-bound workspace invitation, written only to a private file.
     #[cfg(target_os = "linux")]
     PairInvite(vessel::process::pair_cli::PairInviteArgs),
+    /// List workspace connection scope and revocation IDs without credentials.
+    #[cfg(target_os = "linux")]
+    ListConnections(vessel::process::pair_cli::ListConnectionsArgs),
     /// Revoke a workspace connection and its derived runtime authority.
     #[cfg(target_os = "linux")]
     RevokeConnection(vessel::process::pair_cli::RevokeConnectionArgs),
@@ -185,6 +188,7 @@ async fn main() -> Result<()> {
     match cli.command {
         Some(Command::ProcessGrant(args)) => return vessel::process::grant_cli::issue(args).await,
         Some(Command::PairInvite(args)) => return vessel::process::pair_cli::invite(args),
+        Some(Command::ListConnections(args)) => return vessel::process::pair_cli::list(args),
         Some(Command::RevokeConnection(args)) => return vessel::process::pair_cli::revoke(args),
         _ => {}
     }

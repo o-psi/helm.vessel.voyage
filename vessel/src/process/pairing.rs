@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
     fs::{File, OpenOptions},
+    io::Read,
     os::unix::fs::{MetadataExt, OpenOptionsExt},
     path::{Path, PathBuf},
 };
@@ -154,6 +155,165 @@ pub fn preflight(root: &Path) -> Result<Value> {
 }
 fn secret() -> String {
     format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple())
+}
+
+/// Deliberately separate from ConnectionGrant: secret-bearing fields are never
+/// part of the inventory output, including if the grant format grows later.
+#[derive(Deserialize, Serialize)]
+struct ConnectionSummary {
+    schema_version: u32,
+    grant_id: Uuid,
+    principal_id: Uuid,
+    vessel_id: Uuid,
+    revision: u64,
+    rights: Vec<ProcessRight>,
+    expires_at_ms: u64,
+    revoked: bool,
+    workspaces: Vec<ApprovedWorkspace>,
+}
+
+/// Verify an existing directory without creating it or repairing permissions.
+fn inventory_directory(path: &Path) -> Result<bool> {
+    let metadata = match std::fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(_) => anyhow::bail!("connection inventory directory unavailable"),
+    };
+    ensure!(
+        metadata.is_dir()
+            && metadata.uid() == unsafe { libc::geteuid() }
+            && metadata.mode() & 0o077 == 0,
+        "unsafe connection inventory directory"
+    );
+    Ok(true)
+}
+
+fn inventory_record(path: &Path) -> Result<ConnectionSummary> {
+    let file = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK)
+        .open(path)?;
+    let metadata = file.metadata()?;
+    ensure!(
+        metadata.is_file()
+            && metadata.nlink() == 1
+            && metadata.uid() == unsafe { libc::geteuid() }
+            && metadata.mode() & 0o077 == 0
+            && metadata.len() <= 16_384,
+        "invalid private connection record"
+    );
+    let mut bytes = Vec::new();
+    file.take(16_385).read_to_end(&mut bytes)?;
+    ensure!(bytes.len() <= 16_384, "connection record exceeds limit");
+    Ok(serde_json::from_slice(&bytes)?)
+}
+
+/// Local owner-only observations, serialized with invitation/redemption/revocation
+/// writers. Never opens the secret-bearing pairing journal or creates a lock.
+pub fn inventory(root: &Path) -> Result<Value> {
+    ensure!(
+        root.is_absolute() && std::fs::canonicalize(root)? == root,
+        "inventory requires a canonical absolute state directory"
+    );
+    ensure!(
+        inventory_directory(root)?,
+        "Vessel state directory unavailable"
+    );
+    let empty = || json!({"schema_version":1,"connections":[]});
+    if !inventory_directory(&root.join("access"))? {
+        return Ok(empty());
+    }
+    let connections = root.join("access/connections");
+    if !inventory_directory(&connections)? {
+        return Ok(empty());
+    }
+    ensure!(
+        inventory_directory(&directory(root))?,
+        "connection inventory lock unavailable"
+    );
+    let lock = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK)
+        .open(directory(root).join("lock"))
+        .map_err(|_| anyhow::anyhow!("connection inventory lock unavailable"))?;
+    let metadata = lock.metadata()?;
+    ensure!(
+        metadata.is_file()
+            && metadata.nlink() == 1
+            && metadata.uid() == unsafe { libc::geteuid() }
+            && metadata.mode() & 0o077 == 0,
+        "unsafe connection inventory lock"
+    );
+    lock.try_lock_shared()
+        .map_err(|_| anyhow::anyhow!("pairing busy; retry connection inventory"))?;
+    let mut summaries = Vec::new();
+    let entries = std::fs::read_dir(&connections)?;
+    // Bound all entries, including interrupted atomic-write files.
+    for (index, entry) in entries.enumerate() {
+        ensure!(
+            index < LIMIT * 2,
+            "connection inventory entry limit exceeded"
+        );
+        let entry = entry?;
+        let name = entry.file_name();
+        let name = name
+            .to_str()
+            .ok_or_else(|| anyhow::anyhow!("invalid connection inventory filename"))?;
+        if name
+            .strip_prefix(".pending-")
+            .is_some_and(|id| Uuid::parse_str(id).is_ok())
+        {
+            continue;
+        }
+        let id = name
+            .strip_suffix(".json")
+            .and_then(|id| Uuid::parse_str(id).ok())
+            .filter(|id| name == format!("{id}.json"))
+            .ok_or_else(|| anyhow::anyhow!("invalid connection inventory filename"))?;
+        ensure!(
+            summaries.len() < LIMIT,
+            "connection inventory capacity exceeded"
+        );
+        // Check type before opening: a FIFO must not block an operator command.
+        ensure!(
+            entry.file_type()?.is_file(),
+            "invalid private connection record"
+        );
+        let summary = inventory_record(&entry.path())
+            .map_err(|_| anyhow::anyhow!("invalid private connection record"))?;
+        ensure!(
+            summary.schema_version == 1
+                && summary.grant_id == id
+                && !id.is_nil()
+                && !summary.principal_id.is_nil()
+                && !summary.vessel_id.is_nil()
+                && summary.revision > 0
+                && summary.expires_at_ms > 0
+                && !summary.rights.is_empty()
+                && summary.rights.len() <= 10
+                && summary
+                    .rights
+                    .iter()
+                    .enumerate()
+                    .all(|(i, right)| !summary.rights[..i].contains(right))
+                && !summary.workspaces.is_empty()
+                && summary.workspaces.len() <= 32
+                && summary.workspaces.iter().enumerate().all(|(i, workspace)| {
+                    !workspace.id.is_nil()
+                        && workspace.path.is_absolute()
+                        && !workspace.name.is_empty()
+                        && workspace.name.len() <= 256
+                        && !workspace.name.chars().any(char::is_control)
+                        && summary.workspaces[..i]
+                            .iter()
+                            .all(|prior| prior.id != workspace.id && prior.path != workspace.path)
+                }),
+            "invalid connection inventory metadata"
+        );
+        summaries.push(summary);
+    }
+    summaries.sort_by_key(|summary| summary.grant_id);
+    Ok(json!({"schema_version":1,"connections":summaries}))
 }
 
 /// Local account-owner only. The returned invitation must be written privately.

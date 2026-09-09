@@ -49,6 +49,24 @@ pub struct RevokeConnectionArgs {
     pub command_id: Uuid,
 }
 
+#[derive(Args)]
+pub struct ListConnectionsArgs {
+    /// Existing private state owned by the executing account; never initialized.
+    #[arg(long)]
+    pub directory: PathBuf,
+}
+
+pub fn list(args: ListConnectionsArgs) -> Result<()> {
+    let result = pairing::inventory(&args.directory)?;
+    let output = serde_json::to_string(&result)?;
+    ensure!(
+        output.len() <= 16 * 1024 * 1024,
+        "connection inventory exceeds limit"
+    );
+    println!("{output}");
+    Ok(())
+}
+
 pub fn invite(args: PairInviteArgs) -> Result<()> {
     let parent = args
         .output

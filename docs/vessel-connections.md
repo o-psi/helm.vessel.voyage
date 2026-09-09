@@ -132,6 +132,42 @@ and expiry invalidate subsequent admissions and the existing runtime authority
 watcher; cleanup still requires actual observation. Disconnecting is deliberately
 different from revoking execution authority.
 
+## Lost installation or credentials
+
+If the original Helm still has its private connection records, use the panel's
+retained-connection recovery. If those files are lost, pair the replacement Helm
+as a new installation. Its new public principal UUID does not inherit old access.
+
+On the executing Vessel host, the state-owning account can discover existing
+workspace grants even when the old Helm is offline:
+
+```sh
+vessel list-connections --directory /absolute/private/vessel-state
+```
+
+The command returns JSON containing grant and principal UUIDs, Vessel UUID,
+revision, approved workspaces, rights, expiry and revocation state. It includes
+expired and revoked records, sorted by grant UUID. It omits credentials and their
+hashes, invitation codes, provider data and conversation contents. The directory
+must already exist and be canonical, private and owned by the current account.
+An existing unpaired directory returns an empty list without creating access state.
+Unsafe or malformed records fail the whole listing without partial output;
+concurrent pairing changes can return a bounded busy error that can be retried.
+Inventory is bounded to 4,096 grants and 16 MiB of output. It does not grant access.
+
+Identify the lost installation's grants using its recorded principal and approved
+scope, then run `vessel revoke-connection` above for each intended grant using its
+observed revision. The server stores no friendly device name: workspace scope
+alone may not distinguish installations. Do not guess or revoke unrelated access.
+If the revision changed, list again and review before issuing a new command ID.
+For a lost revocation reply, retry the original command ID and exact arguments.
+
+Pair the replacement using a new invitation and explicitly review its scope.
+Old grants remain independent until revoked or expired. This does not recover
+lost local drafts or pending delivery records, replay their commands, or delete
+remote conversations. Session-only sharing grants use their separate
+[process-access revocation](process-access.md) workflow.
+
 ## Storage and trust boundaries
 
 The manager uses the private `helm-connections` directory alongside the local
@@ -140,6 +176,11 @@ address book, private immutable credentials, pending pairing records and recover
 records are separate from provider configuration. Updates use locks, per-record
 revision checks and atomic writes; unsafe ownership, permissions or symlinks are
 refused rather than silently repaired.
+
+This is filesystem protection, not application-level encryption at rest. Processes
+running as the owning account can read the credentials; backup copies need the
+same protection. Additional credential encryption and key custody remain open
+under [issue #10](https://github.com/o-psi/voyage/issues/10).
 
 Human connections do not automatically populate `[vessel.remotes]` or grant a
 model coordination authority. That configuration belongs to the executing host
