@@ -11,6 +11,7 @@ are not presented as usable commands.
 | [Implementation](implementation.md) | Work needed to deliver the target, in dependency order |
 | [Current state](current-state.md) | What the existing code implements and what remains unfinished |
 | [Configuration](configuration.md) | Current provider, policy and storage configuration |
+| [Provider accounts plan](provider-accounts-plan.md) | Proposed multiple accounts, Vessel enrollment and Helm selection; not implemented |
 | [Operations](operations.md) | Connected HTTP(S) voyages and legacy chat/managed/worker procedures |
 | [Vessel connections](vessel-connections.md) | In-app connection manager, remembered Vessels, pairing, workspaces and access recovery |
 | [Connection verification](vessel-connections-verification.md) | Observed Linux UI, protocol, recovery, transport and deployment checks |
