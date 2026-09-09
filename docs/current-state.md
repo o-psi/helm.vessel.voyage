@@ -312,6 +312,13 @@ voyages must be restored before rename, branch or delete. Successful deletion
 shuts down the runtime, retains its receipt with cleanup evidence, and removes
 the tombstone from Helm's voyage lists without reusing its identity.
 
+Actions and runtime question/permission requests share the [right-panel controls](ui-right-panels.md):
+rounded chrome, padded content, hover/selection/disabled styles, and mouse buttons
+for confirmation, back/close, scrolling and text paste/clear. A heading Actions
+button remains available when voyage navigation is hidden. Access review scrolls
+in narrow layouts and enables confirmation only at the end of its disclosure.
+Esc still skips a question, denies permission, or backs out of a custom editor.
+
 Typing `/` in the Helm composer opens a filtered command menu above the input.
 Up/Down select and Tab completes a command, then shows contextual arguments.
 Enter dispatches the typed command; Escape dismisses completion, restoring normal

@@ -36,14 +36,11 @@ impl App {
         else {
             return Ok(true);
         };
-        // An unconfirmed response cannot be replaced by another action.
-        if view.pending.is_some() || decision.expires_at_ms <= super::now_ms() {
-            return Ok(true);
-        }
+        let enabled = view.pending.is_none() && decision.expires_at_ms > super::now_ms();
         let kind = decision.request["kind"].as_str().unwrap_or("");
         if let Event::Paste(text) = event {
             let answer = review.answers.entry((target, decision_id)).or_default();
-            if kind == "question" && answer.editing {
+            if enabled && kind == "question" && answer.editing {
                 let text: String = super::super::safe(text)
                     .chars()
                     .filter(|c| !c.is_control())
@@ -88,6 +85,9 @@ impl App {
                 review.hits.clear();
                 let code = match control {
                     Control::Choice(option) => {
+                        if !enabled {
+                            return Ok(true);
+                        }
                         let answer = review.answers.entry((target, decision_id)).or_default();
                         answer.option = option;
                         answer.editing = kind == "question" && option.is_none();
@@ -98,6 +98,22 @@ impl App {
                     Control::Cancel => KeyCode::Esc,
                     Control::Previous => KeyCode::Left,
                     Control::Next => KeyCode::Right,
+                    Control::ScrollUp => KeyCode::PageUp,
+                    Control::ScrollDown => KeyCode::PageDown,
+                    Control::Clear => {
+                        if enabled {
+                            let answer = review.answers.entry((target, decision_id)).or_default();
+                            if answer.editing {
+                                answer.text = Default::default();
+                            }
+                        }
+                        return Ok(true);
+                    }
+                    Control::Paste => {
+                        drop(review);
+                        self.begin_panel_paste()?;
+                        return Ok(true);
+                    }
                 };
                 KeyEvent::new(code, KeyModifiers::NONE)
             }
@@ -112,7 +128,8 @@ impl App {
             .answers
             .get(&(target, decision_id))
             .is_some_and(|a| a.editing);
-        if !editing
+        if enabled
+            && !editing
             && matches!(key.code, KeyCode::Left | KeyCode::Right)
             && snapshot.decisions.len() > 1
         {
@@ -141,7 +158,7 @@ impl App {
             review.follow_selection = false;
             return Ok(true);
         }
-        if !matches!(kind, "question" | "approval") {
+        if !enabled || !matches!(kind, "question" | "approval") {
             return Ok(true);
         }
         let options = if kind == "question" {
@@ -166,10 +183,10 @@ impl App {
                     json!({"status":"cancelled"})
                 })
             }
-            KeyCode::Up | KeyCode::Down if !answer.editing => {
+            KeyCode::Up | KeyCode::Down | KeyCode::Tab | KeyCode::BackTab if !answer.editing => {
                 let count = options + usize::from(kind == "question");
                 let index = answer.option.unwrap_or(options).min(count - 1);
-                let next = if key.code == KeyCode::Up {
+                let next = if matches!(key.code, KeyCode::Up | KeyCode::BackTab) {
                     (index + count - 1) % count
                 } else {
                     (index + 1) % count

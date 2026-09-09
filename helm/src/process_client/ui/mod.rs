@@ -26,6 +26,7 @@ mod observe;
 mod panels;
 mod presentation;
 mod render;
+mod right_panel;
 mod sidebar;
 mod state;
 mod terminals;

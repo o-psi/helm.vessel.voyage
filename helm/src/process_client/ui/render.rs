@@ -136,6 +136,7 @@ fn draw_inner(frame: &mut Frame<'_>, app: &App) {
     app.clear_inference_hits();
     app.sync_interactions();
     app.sidebar.hits.borrow_mut().clear();
+    app.sidebar.action_trigger.set(None);
     app.sidebar.visible.set(None);
     app.draft_hits.borrow_mut().clear();
     let area = frame.area();
@@ -279,6 +280,12 @@ fn draw_inner(frame: &mut Frame<'_>, app: &App) {
         ),
         rows[0],
     );
+    if columns[0].width == 0 && !sidebar_open && view.is_some() {
+        app.draw_action_trigger(
+            frame,
+            Rect::new(rows[0].right().saturating_sub(9), rows[0].y + 1, 9, 1),
+        );
+    }
     if terminals_open {
         super::terminals::draw(frame, app, rows[1]);
     } else {

@@ -14,6 +14,7 @@ pub(super) enum Destination {
 pub(super) struct PendingPaste {
     pub(super) destination: Destination,
     id: Uuid,
+    panel: Option<(super::right_panel::Editor, String)>,
     cancel: CancellationToken,
     task: tokio::task::JoinHandle<()>,
     result: tokio::sync::oneshot::Receiver<Result<Prepared, String>>,
@@ -306,12 +307,62 @@ impl App {
         self.clipboard_pending = Some(PendingPaste {
             destination,
             id,
+            panel: None,
             cancel,
             task,
             result,
         });
         self.sidebar.focus = sidebar::Focus::Composer;
         self.status = "Reading paste… Esc cancels. You can keep typing.".into();
+        Ok(())
+    }
+
+    pub(super) fn cancel_panel_paste_on_input(&self, event: &Event) {
+        let changes_panel = matches!(event, Event::Key(_) | Event::Paste(_) | Event::Resize(_, _))
+            || matches!(event, Event::Mouse(mouse) if matches!(mouse.kind, crossterm::event::MouseEventKind::Down(_)));
+        if changes_panel
+            && let Some(pending) = &self.clipboard_pending
+            && pending.panel.is_some()
+        {
+            pending.cancel.cancel();
+        }
+    }
+
+    pub(super) fn begin_panel_paste(&mut self) -> Result<()> {
+        let (editor, before) = self.panel_editor().context("Text field is not editable")?;
+        ensure!(
+            !self.clipboard_blocked,
+            "Clipboard helper cleanup unconfirmed; restart Helm"
+        );
+        ensure!(
+            self.clipboard_pending.is_none(),
+            "Clipboard read already in progress"
+        );
+        let cancel = CancellationToken::new();
+        let token = cancel.clone();
+        let config = self.new_chat_config.clone();
+        let (sender, result) = tokio::sync::oneshot::channel();
+        let task = tokio::spawn(async move {
+            let result: Result<Prepared> = async {
+                let content = crate::clipboard::read(config, token.clone()).await?;
+                ensure!(!token.is_cancelled(), "Clipboard read cancelled");
+                match content {
+                    crate::clipboard::Content::Text(text) => Ok(Prepared::Text(text)),
+                    _ => anyhow::bail!("This field accepts clipboard text only"),
+                }
+            }
+            .await;
+            let _ = sender.send(result.map_err(|error| error.to_string()));
+        });
+        self.clipboard_pending = Some(PendingPaste {
+            destination: Destination::Live(editor.target()),
+            id: Uuid::new_v4(),
+            panel: Some((editor, before)),
+            cancel,
+            task,
+            result,
+        });
+        self.status = "Reading panel text… another action cancels the paste".into();
         Ok(())
     }
 
@@ -334,6 +385,30 @@ impl App {
         }
         let pending = self.clipboard_pending.take().expect("matching paste");
         let destination = pending.destination;
+        if let Some((editor, before)) = pending.panel {
+            if result
+                .as_ref()
+                .is_err_and(|error| error.contains("cleanup failed"))
+            {
+                self.clipboard_blocked = true;
+            }
+            let applied = if pending.cancel.is_cancelled() {
+                Err(anyhow::anyhow!(
+                    "Clipboard paste cancelled; field preserved"
+                ))
+            } else {
+                match result {
+                    Ok(Prepared::Text(text)) => self.apply_panel_text(editor, &before, text),
+                    Ok(_) => Err(anyhow::anyhow!("This field accepts text only")),
+                    Err(error) => Err(anyhow::anyhow!(error)),
+                }
+            };
+            self.status = match applied {
+                Ok(()) => "Pasted into panel; review before confirming".into(),
+                Err(error) => format!("Paste failed: {}", safe(&error.to_string())),
+            };
+            return;
+        }
         let anchor = self
             .paste_composer_mut(destination)
             .and_then(|d| d.take_paste_range());
@@ -389,7 +464,9 @@ impl App {
     pub(super) async fn finish_clipboard(&mut self) -> Result<()> {
         if let Some(mut pending) = self.clipboard_pending.take() {
             pending.cancel.cancel();
-            if let Some(composer) = self.paste_composer_mut(pending.destination) {
+            if pending.panel.is_none()
+                && let Some(composer) = self.paste_composer_mut(pending.destination)
+            {
                 composer.clear_paste_anchor();
             }
             // The clipboard reader reaps its helpers before completing.

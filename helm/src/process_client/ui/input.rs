@@ -2,6 +2,7 @@ use super::*;
 
 impl App {
     pub(super) fn input(&mut self, event: Event) -> Result<()> {
+        self.cancel_panel_paste_on_input(&event);
         if matches!(event, Event::Resize(..)) {
             self.resize_previews()?;
         }

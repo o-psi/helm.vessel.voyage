@@ -16,6 +16,10 @@ enum Control {
     Cancel,
     Previous,
     Next,
+    ScrollUp,
+    ScrollDown,
+    Paste,
+    Clear,
 }
 
 struct AnswerDraft {
@@ -115,5 +119,34 @@ impl super::App {
             review.follow_selection = true;
         }
         review.focused = next.is_some();
+    }
+}
+
+impl super::App {
+    pub(super) fn question_editor(&self) -> Option<(super::right_panel::Editor, String)> {
+        let review = self.interactions.borrow();
+        let (target, id) = review.displayed?;
+        if !review.focused || review.selected != review.displayed || self.selected != Some(target) {
+            return None;
+        }
+        let view = self.views.get(&target)?;
+        let decision = view
+            .snapshot
+            .as_ref()?
+            .decisions
+            .iter()
+            .find(|d| d.decision_id == id)?;
+        let answer = review.answers.get(&(target, id))?;
+        if view.pending.is_some()
+            || decision.expires_at_ms <= now_ms()
+            || !answer.editing
+            || decision.request["kind"].as_str() != Some("question")
+        {
+            return None;
+        }
+        Some((
+            super::right_panel::Editor::Question(target, id),
+            answer.text.text.clone(),
+        ))
     }
 }

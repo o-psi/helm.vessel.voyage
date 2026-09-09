@@ -7,6 +7,12 @@ impl App {
         if self.help || self.explore.is_some() {
             return Ok(false);
         }
+        let paste_click = matches!(event, Event::Mouse(mouse) if mouse.kind == MouseEventKind::Down(MouseButton::Left)
+            && self.sidebar.controls.borrow().iter().any(|(rect, code)| *code == KeyCode::Insert && rect.contains((mouse.column, mouse.row).into())));
+        if self.sidebar.menu.is_some() && paste_click {
+            self.begin_panel_paste()?;
+            return Ok(true);
+        }
         if let Some(mut menu) = self.sidebar.menu.take() {
             let result = self.action_menu_input(&mut menu, event);
             match result {
@@ -21,6 +27,16 @@ impl App {
         }
         if let Event::Mouse(mouse) = event {
             if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
+                if let Some(hit) = self.sidebar.action_trigger.get()
+                    && hit.area.contains((mouse.column, mouse.row).into())
+                    && self
+                        .views
+                        .get(&hit.target)
+                        .is_some_and(|view| view.process.incarnation == hit.incarnation)
+                {
+                    self.open_actions(hit.target);
+                    return Ok(true);
+                }
                 let hit = self
                     .sidebar
                     .hits
@@ -138,6 +154,61 @@ impl App {
     }
 
     fn action_menu_input(&mut self, menu: &mut Menu, event: &Event) -> Result<bool> {
+        if matches!(event, Event::Resize(..)) {
+            menu.follow_selection.set(true);
+            self.sidebar.visible.set(None);
+            self.sidebar.menu_hits.borrow_mut().clear();
+            self.sidebar.controls.borrow_mut().clear();
+            return Ok(false);
+        }
+        let translated;
+        let event = if let Event::Mouse(mouse) = event {
+            if self.sidebar.visible.get() != Some((menu.target, menu.incarnation, menu.editor))
+                || !self
+                    .sidebar
+                    .area
+                    .get()
+                    .contains((mouse.column, mouse.row).into())
+            {
+                return Ok(false);
+            }
+            let code = match mouse.kind {
+                MouseEventKind::Down(MouseButton::Left) => self
+                    .sidebar
+                    .controls
+                    .borrow()
+                    .iter()
+                    .find(|(rect, _)| rect.contains((mouse.column, mouse.row).into()))
+                    .map(|(_, code)| *code),
+                MouseEventKind::ScrollUp => Some(KeyCode::PageUp),
+                MouseEventKind::ScrollDown => Some(KeyCode::PageDown),
+                _ => None,
+            };
+            if let Some(code) = code {
+                translated = Event::Key(crossterm::event::KeyEvent::new(code, KeyModifiers::NONE));
+                &translated
+            } else {
+                event
+            }
+        } else {
+            event
+        };
+        if matches!(event, Event::Key(key) if key.kind == crossterm::event::KeyEventKind::Release) {
+            return Ok(false);
+        }
+        if let Event::Key(key) = event
+            && matches!(key.code, KeyCode::PageUp | KeyCode::PageDown)
+        {
+            let (current, max) = self.sidebar.scroll_bounds.get();
+            menu.follow_selection.set(false);
+            menu.scroll.set(if key.code == KeyCode::PageUp {
+                current.saturating_sub(3)
+            } else {
+                current.saturating_add(3).min(max)
+            });
+            self.sidebar.visible.set(None);
+            return Ok(false);
+        }
         if matches!(
             menu.editor,
             Some(Action::Access | Action::ReadOnly | Action::Approval | Action::Unrestricted)
@@ -179,6 +250,7 @@ impl App {
                     "Input limit is 256 bytes"
                 );
                 menu.text.insert_str(&text);
+                menu.follow_selection.set(true);
             }
             return Ok(false);
         }
@@ -197,6 +269,8 @@ impl App {
             return Ok(false);
         }
         if key.code == KeyCode::Esc {
+            self.sidebar.visible.set(None);
+            menu.scroll.set(0);
             if menu.editor.take().is_some() {
                 menu.error.clear();
                 return Ok(false);
@@ -206,14 +280,20 @@ impl App {
         }
         if menu.editor == Some(Action::Details) {
             match key.code {
-                KeyCode::Up | KeyCode::PageUp => menu.scroll = menu.scroll.saturating_sub(1),
-                KeyCode::Down | KeyCode::PageDown => menu.scroll = menu.scroll.saturating_add(1),
+                KeyCode::Up | KeyCode::PageUp => {
+                    menu.scroll.set(menu.scroll.get().saturating_sub(1))
+                }
+                KeyCode::Down | KeyCode::PageDown => {
+                    menu.scroll.set(menu.scroll.get().saturating_add(1))
+                }
                 _ => {}
             }
             return Ok(key.code == KeyCode::Enter);
         }
         if let Some(action) = menu.editor {
+            menu.follow_selection.set(true);
             match key.code {
+                KeyCode::Null => menu.text = Composer::default(),
                 KeyCode::Enter => {
                     if let Some(reason) = self.action_reason(menu, action) {
                         anyhow::bail!(reason);
@@ -277,11 +357,11 @@ impl App {
         }
         match key.code {
             KeyCode::Left => return Ok(true),
-            KeyCode::Up => {
+            KeyCode::Up | KeyCode::BackTab => {
                 menu.selected =
                     (menu.selected.min(actions.len() - 1) + actions.len() - 1) % actions.len()
             }
-            KeyCode::Down => menu.selected = (menu.selected + 1) % actions.len(),
+            KeyCode::Down | KeyCode::Tab => menu.selected = (menu.selected + 1) % actions.len(),
             KeyCode::Right if actions[menu.selected.min(actions.len() - 1)] == Action::Access => {
                 return self.activate_action(menu, Action::Access);
             }
@@ -289,6 +369,12 @@ impl App {
                 return self.activate_action(menu, actions[menu.selected.min(actions.len() - 1)]);
             }
             _ => {}
+        }
+        if matches!(
+            key.code,
+            KeyCode::Up | KeyCode::Down | KeyCode::Tab | KeyCode::BackTab
+        ) {
+            menu.follow_selection.set(true);
         }
         Ok(false)
     }
@@ -305,6 +391,8 @@ impl App {
             Action::Rename | Action::Branch | Action::Delete | Action::Details => {
                 self.sidebar.visible.set(None);
                 menu.editor = Some(action);
+                menu.scroll.set(0);
+                menu.follow_selection.set(true);
                 menu.error.clear();
                 menu.text = Composer::default();
                 menu.revision = self

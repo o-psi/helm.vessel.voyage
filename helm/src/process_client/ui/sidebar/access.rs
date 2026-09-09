@@ -2,7 +2,11 @@
 use super::*;
 use anyhow::{Context, Result};
 use crossterm::event::{Event, KeyCode, KeyModifiers, MouseButton, MouseEventKind};
-use ratatui::{Frame, style::Style, widgets::Paragraph};
+use ratatui::{
+    Frame,
+    text::{Line, Text},
+    widgets::Paragraph,
+};
 use voyage_protocol::vessel::VoyageCommand;
 
 const MODES: [(Action, &str, &str); 3] = [
@@ -48,6 +52,7 @@ impl App {
     }
     pub(super) fn begin_access(&self, menu: &mut Menu) {
         menu.editor = Some(Action::Access);
+        menu.scroll.set(0);
         menu.error.clear();
         let snapshot = self
             .views
@@ -73,17 +78,25 @@ impl App {
                 KeyCode::Esc | KeyCode::Left => {
                     menu.editor = if choosing { None } else { Some(Action::Access) };
                     menu.error.clear();
+                    menu.scroll.set(0);
                     self.sidebar.visible.set(None);
                     return Ok(false);
                 }
-                KeyCode::Up if choosing => menu.access_selected = (menu.access_selected + 2) % 3,
-                KeyCode::Down if choosing => menu.access_selected = (menu.access_selected + 1) % 3,
+                KeyCode::Up | KeyCode::BackTab if choosing => {
+                    menu.follow_selection.set(true);
+                    menu.access_selected = (menu.access_selected + 2) % 3
+                }
+                KeyCode::Down | KeyCode::Tab if choosing => {
+                    menu.follow_selection.set(true);
+                    menu.access_selected = (menu.access_selected + 1) % 3
+                }
                 KeyCode::Enter
                     if self.sidebar.visible.get()
                         == Some((menu.target, menu.incarnation, menu.editor)) =>
                 {
                     if choosing {
                         menu.editor = Some(MODES[menu.access_selected].0);
+                        menu.scroll.set(0);
                         self.sidebar.visible.set(None);
                     } else {
                         self.apply_access(menu)?;
@@ -111,12 +124,17 @@ impl App {
             if let Some(index) = index {
                 menu.access_selected = index;
                 menu.editor = Some(MODES[index].0);
+                menu.scroll.set(0);
                 self.sidebar.visible.set(None);
             }
         }
         Ok(false)
     }
     fn apply_access(&mut self, menu: &Menu) -> Result<()> {
+        anyhow::ensure!(
+            self.sidebar.scroll_bounds.get().0 == self.sidebar.scroll_bounds.get().1,
+            "Read to the end of the access review before confirming"
+        );
         if let Some(reason) = self.action_reason(menu, Action::Access) {
             anyhow::bail!(reason);
         }
@@ -164,51 +182,44 @@ impl App {
         let label = current
             .and_then(|mode| MODES.iter().find(|(_, value, _)| *value == mode))
             .map_or("Unavailable", |(action, _, _)| action.label());
-        frame.render_widget(
-            Paragraph::new(format!("Current access: {label}")),
-            Rect::new(body.x, body.y, body.width, 1),
+        let title = self.views.get(&menu.target).map_or_else(
+            || "Unavailable voyage".into(),
+            |view| super::super::safe(&view.title()),
         );
+        let mut lines = super::super::presentation::wrap(
+            Text::raw(format!("{title}\nCurrent access: {label}\n")),
+            body.width,
+        )
+        .lines;
+        if !menu.error.is_empty() {
+            lines.extend(
+                super::super::presentation::wrap(
+                    Text::raw(format!("{}\n", super::super::safe(&menu.error))),
+                    body.width,
+                )
+                .lines,
+            );
+        }
+        let mut ranges = Vec::new();
         if menu.editor == Some(Action::Access) {
-            if body.y.saturating_add(2 + menu.access_selected as u16) >= body.bottom() {
-                self.sidebar.visible.set(None);
-            }
             for (index, (action, _, _)) in MODES.iter().enumerate() {
-                let y = body.y.saturating_add(2 + index as u16);
-                if y >= body.bottom() {
-                    break;
-                }
-                let row = Rect::new(body.x, y, body.width, 1);
-                let selected = index == menu.access_selected;
-                frame.render_widget(
-                    Paragraph::new(format!(
-                        "{}{}",
-                        if selected { "> " } else { "  " },
-                        action.label()
-                    ))
-                    .style(
-                        (if selected {
-                            crate::theme::Role::Selection.style()
-                        } else {
-                            crate::theme::Role::Primary.style()
-                        })
-                        .patch(
-                            if self.sidebar.visible.get()
-                                == Some((menu.target, menu.incarnation, menu.editor))
-                            {
-                                self.hover_style(row, true)
+                let start = lines.len();
+                lines.extend(
+                    super::super::presentation::wrap(
+                        Text::raw(format!(
+                            "{}{}",
+                            if index == menu.access_selected {
+                                "> "
                             } else {
-                                Style::default()
+                                "  "
                             },
-                        ),
-                    ),
-                    row,
+                            action.label()
+                        )),
+                        body.width,
+                    )
+                    .lines,
                 );
-                self.sidebar.menu_hits.borrow_mut().push((
-                    row,
-                    menu.target,
-                    menu.incarnation,
-                    index,
-                ));
+                ranges.push((start, lines.len(), index));
             }
         } else {
             let (action, _, description) = MODES[menu.access_selected];
@@ -216,23 +227,60 @@ impl App {
                 "Change access to {}?\n\n{description}\n\nApplies to subsequent tool calls, including active local agents. Pending approvals are denied; retry those actions under the new mode. Already-started work and private terminals are not undone or stopped. Existing folder limits, blocked commands and machine policy still apply. Idle changes close retained terminals.",
                 action.label()
             );
-            let area = Rect::new(
-                body.x,
-                body.y.saturating_add(2),
-                body.width,
-                body.height.saturating_sub(2),
-            );
-            let wrapped =
-                super::super::presentation::wrap(ratatui::text::Text::raw(text), area.width);
-            if wrapped.lines.len() > usize::from(area.height) {
-                self.sidebar.visible.set(None);
-                frame.render_widget(
-                    Paragraph::new("Enlarge the terminal to review this access change."),
-                    area,
-                );
-            } else {
-                frame.render_widget(Paragraph::new(wrapped), area);
+            lines.push(Line::default());
+            lines.extend(super::super::presentation::wrap(Text::raw(text), body.width).lines);
+        }
+        let max = lines
+            .len()
+            .saturating_sub(body.height as usize)
+            .min(u16::MAX as usize) as u16;
+        let mut scroll = menu.scroll.get().min(max);
+        if menu.editor == Some(Action::Access)
+            && menu.follow_selection.replace(false)
+            && let Some((start, _, _)) = ranges
+                .iter()
+                .find(|(_, _, index)| *index == menu.access_selected)
+        {
+            if *start < scroll as usize {
+                scroll = *start as u16;
+            } else if *start >= scroll as usize + body.height as usize {
+                scroll = start
+                    .saturating_sub(body.height.saturating_sub(1) as usize)
+                    .min(max as usize) as u16;
             }
         }
+        menu.scroll.set(scroll);
+        self.sidebar.scroll_bounds.set((scroll, max));
+        let enabled = self.action_reason(menu, Action::Access).is_none();
+        for (start, end, index) in ranges {
+            let top = start.max(scroll as usize);
+            let bottom = end.min(scroll as usize + body.height as usize);
+            if top < bottom {
+                let rect = Rect::new(
+                    body.x,
+                    body.y + (top - scroll as usize) as u16,
+                    body.width,
+                    (bottom - top) as u16,
+                );
+                let style = super::super::right_panel::control_style(
+                    self.sidebar.pointer,
+                    rect,
+                    index == menu.access_selected,
+                    enabled,
+                );
+                for line in &mut lines[top..bottom] {
+                    *line = line.clone().style(style);
+                }
+                if enabled {
+                    self.sidebar.menu_hits.borrow_mut().push((
+                        rect,
+                        menu.target,
+                        menu.incarnation,
+                        index,
+                    ));
+                }
+            }
+        }
+        frame.render_widget(Paragraph::new(lines).scroll((scroll, 0)), body);
     }
 }

@@ -14,7 +14,7 @@ pub(super) enum Focus {
     Voyages,
     Button,
 }
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum Action {
     Access,
     ReadOnly,
@@ -52,7 +52,8 @@ pub(super) struct Menu {
     selected: usize,
     access_selected: usize,
     actions: Vec<Action>,
-    scroll: u16,
+    scroll: std::cell::Cell<u16>,
+    follow_selection: std::cell::Cell<bool>,
     editor: Option<Action>,
     revision: Option<u64>,
     text: Composer,
@@ -71,10 +72,14 @@ pub(super) struct Sidebar {
     pub focus: Focus,
     pub pointer: Option<ratatui::layout::Position>,
     pub hits: std::cell::RefCell<Vec<Hit>>,
+    pub action_trigger: std::cell::Cell<Option<Hit>>,
     pub menu: Option<Menu>,
     // Cleared every frame and bound to the exact menu target and incarnation.
     pub visible: std::cell::Cell<Option<(Target, Uuid, Option<Action>)>>,
     menu_hits: std::cell::RefCell<Vec<(Rect, Target, Uuid, usize)>>,
+    controls: std::cell::RefCell<Vec<(Rect, crossterm::event::KeyCode)>>,
+    area: std::cell::Cell<Rect>,
+    scroll_bounds: std::cell::Cell<(u16, u16)>,
 }
 impl App {
     // Resolve against current geometry; hover never changes keyboard selection.
@@ -139,7 +144,8 @@ impl App {
             selected: 0,
             access_selected: 0,
             actions: self.sidebar_actions(target),
-            scroll: 0,
+            scroll: std::cell::Cell::new(0),
+            follow_selection: std::cell::Cell::new(true),
             editor: None,
             revision: None,
             text: Composer::default(),
@@ -313,5 +319,49 @@ impl Resize {
                 false
             }
         }
+    }
+}
+
+impl App {
+    pub(super) fn action_editor(&self) -> Option<(super::right_panel::Editor, String)> {
+        let menu = self.sidebar.menu.as_ref()?;
+        let action = menu.editor?;
+        if !matches!(action, Action::Rename | Action::Branch | Action::Delete)
+            || self.sidebar.visible.get() != Some((menu.target, menu.incarnation, menu.editor))
+            || self.action_reason(menu, action).is_some()
+        {
+            return None;
+        }
+        Some((
+            super::right_panel::Editor::Action(menu.target, menu.incarnation, action),
+            menu.text.text.clone(),
+        ))
+    }
+}
+
+impl App {
+    pub(super) fn draw_action_trigger(&self, frame: &mut ratatui::Frame<'_>, area: Rect) {
+        let Some(target) = self.selected else {
+            return;
+        };
+        let Some(view) = self.views.get(&target) else {
+            return;
+        };
+        frame.render_widget(ratatui::widgets::Clear, area);
+        frame.render_widget(
+            ratatui::widgets::Paragraph::new("[Actions]").style(super::right_panel::control_style(
+                self.sidebar.pointer,
+                area,
+                false,
+                true,
+            )),
+            area,
+        );
+        self.sidebar.action_trigger.set(Some(Hit {
+            area,
+            button: area,
+            target,
+            incarnation: view.process.incarnation,
+        }));
     }
 }
