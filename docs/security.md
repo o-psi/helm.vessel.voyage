@@ -37,8 +37,8 @@ Helm does not change the voyage's provider account or billing boundary.
 Separate provider credentials, client authentication, workspace pairing and session-sharing
 grants. Use protected local credential storage or named environment bindings.
 Never put secrets in URLs, command arguments, published fixtures or documentation.
-Treat stored provider continuation as private local runtime data. Native transports
-and the optional external compatibility bridge remain distinct capabilities.
+Treat stored provider continuation as private local runtime data. Provider
+transports are native; the external Codex bridge has been removed.
 
 Authorize catalogue, history, event replay, decisions and mutation separately as
 needed. Do not reveal existing private sessions merely because a client connects
@@ -91,9 +91,9 @@ Optional required isolation adds a Linux x86_64 bubblewrap boundary at subproces
 launch in Voyage, independently of approvals. It uses pinned root mounts,
 namespaces, seccomp, filtered environments and inherited resource limits, and
 refuses launch when setup fails. See [configuration](configuration.md#optional-linux-process-isolation)
-for the explicit network grants, per-process and same-UID limit scopes, separate
-compatibility-bridge grants and local diagnostic probe. Native HTTP provider
-requests are not tool subprocesses and retain their executing-host credentials.
+for the explicit network grants, per-process and same-UID limit scopes, and local
+diagnostic probe. Native HTTP provider requests are not tool subprocesses and
+retain their executing-host credentials.
 This implementation does not establish macOS or Windows containment, an aggregate
 descendant budget, or an endpoint network allowlist.
 New subprocess launches narrow their pinned mounts when the current dispatch is

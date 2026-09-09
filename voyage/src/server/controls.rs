@@ -139,14 +139,13 @@ impl LiveControls {
         // Native discovery must use next-turn config, not an active agent whose
         // provider/account was captured at admission.
         let context = crate::provider::inference_context(config).await;
-        let result =
-            if section == "models" && config.provider != crate::ProviderKind::CodexSubscription {
-                idle::inspect(self, section, config, workspace).await?
-            } else if self.active.read().await.is_some() {
-                self.inspect(run, section).await?
-            } else {
-                idle::inspect(self, section, config, workspace).await?
-            };
+        let result = if section == "models" {
+            idle::inspect(self, section, config, workspace).await?
+        } else if self.active.read().await.is_some() {
+            self.inspect(run, section).await?
+        } else {
+            idle::inspect(self, section, config, workspace).await?
+        };
         if section == "models" {
             let models = serde_json::from_value(result["value"].clone())?;
             // OAuth refresh may rotate the credential during discovery. Never
@@ -158,10 +157,7 @@ impl LiveControls {
                     Some((context, std::time::Instant::now(), models));
             } else {
                 *self.model_catalog.write().await = None;
-                ensure!(
-                    config.provider == crate::ProviderKind::CodexSubscription,
-                    "model discovery account context changed; retry discovery"
-                );
+                anyhow::bail!("model discovery account context changed; retry discovery");
             }
         }
         Ok(result)

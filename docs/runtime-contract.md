@@ -109,7 +109,6 @@ OpenAI Responses incomplete event produce an **incomplete** run, not successful
 completion. Malformed or unsupported terminal signals fail the run. Streamed text
 remains provisional, and tools from truncated output are not dispatched. Native
 Chat and Anthropic compatible endpoints must supply their finish/stop reason.
-The optional compatibility bridge retains its separate transport contract.
 
 Transient provider failures retry only before any text or tool fragment arrives,
 within `provider_retry_attempts`. Exponential delays use equal jitter between half

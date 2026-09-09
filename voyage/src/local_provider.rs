@@ -208,7 +208,7 @@ pub fn diagnostics(config: &Config) -> Value {
     json!({
         "transport": config.provider_profile().id,
         "endpoint": config.base_url.as_deref().or(match config.provider { ProviderKind::OpenaiChat | ProviderKind::OpenaiResponses => Some("https://api.openai.com/v1"), ProviderKind::Anthropic => Some("https://api.anthropic.com/v1"), _ => None }),
-        "credential_source": if matches!(config.provider, ProviderKind::ChatGptOauth | ProviderKind::CodexSubscription) { config.provider_profile().credential.to_owned() } else if config.api_key_required { format!("environment:{}",config.api_key_env) } else { "none".into() },
+        "credential_source": if matches!(config.provider, ProviderKind::ChatGptOauth) { config.provider_profile().credential.to_owned() } else if config.api_key_required { format!("environment:{}",config.api_key_env) } else { "none".into() },
         "chat_token_limit_parameter": if config.chat_use_max_tokens { "max_tokens" } else { "max_completion_tokens" },
         "discovery": "not_probed; use helm local-provider probe explicitly",
     })

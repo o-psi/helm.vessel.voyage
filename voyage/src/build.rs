@@ -141,7 +141,7 @@ pub async fn build_authorized_agent_bundle(
         context.policy.check_execution_authority()?;
         stage = "provider configuration";
         let agent = Agent::new(
-            provider::from_config(config, context.policy.workspace().to_owned())?,
+            provider::from_config(config)?,
             tools,
             context,
             sink.unwrap_or_else(|| Arc::new(SilentEvents)),
@@ -181,10 +181,9 @@ pub async fn build_authorized_agent_bundle(
                 None => true,
             };
             let resources = managed_resources.shutdown_observed(true).await.is_ok();
-            let compatibility = provider::shutdown_compatibility().await.is_ok();
             Err(BuildFailure {
                 stage,
-                cleanup_observed: children && resources && compatibility,
+                cleanup_observed: children && resources,
             })
         }
     }

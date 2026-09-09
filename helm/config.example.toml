@@ -7,10 +7,9 @@ model = "gpt-5"
 # service_tier = "auto" # auto / default / flex / scale / priority
 # These are request options, not promises of model support or account entitlement.
 # Advertised model efforts narrow the choices when catalog metadata is available.
-# Compatible endpoints may reject them. Anthropic and the Codex bridge reject
+# Compatible endpoints may reject them. Anthropic rejects
 # all explicit overrides. Empty strings and "provider-default" are not sentinels.
 api_key_env = "OPENAI_API_KEY"
-# codex_command = "codex" # only for the optional "codex-compatibility" bridge
 # base_url = "http://localhost:11434/v1"
 # chatgpt_base_url is intentionally separate; normally leave it unset.
 # Optional operator limits; 0 (the default) adds no Helm token cap.
@@ -58,7 +57,7 @@ redact_values = []
 
 # Optional OS process isolation on the executing Linux x86_64 host.
 # Requires /usr/bin/bwrap and working unprivileged user namespaces; no fallback.
-# Default is off. See docs/configuration.md for limits and separate bridge grants.
+# Default is off. See docs/configuration.md for limits and network grants.
 # [sandbox]
 # mode = "required"
 # network = "denied"

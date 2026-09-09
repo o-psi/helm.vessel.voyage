@@ -48,7 +48,6 @@ pub struct Accounting {
     store: Arc<Mutex<Store>>,
     project: Option<Uuid>,
     provider: String,
-    compatibility: bool,
     agent: Option<Uuid>,
 }
 impl Accounting {
@@ -92,7 +91,6 @@ impl Accounting {
             store: Self::shared().await?,
             project: None,
             provider: profile.id.into(),
-            compatibility: profile.compatibility_bridge,
             agent: None,
         };
         let workspace = workspace.to_owned();
@@ -108,7 +106,6 @@ impl Accounting {
             store: Self::shared().await?,
             project: None,
             provider: profile.id.into(),
-            compatibility: profile.compatibility_bridge,
             agent: Some(agent),
         })
     }
@@ -131,7 +128,6 @@ impl Accounting {
         purpose: Purpose,
     ) -> Result<Permit> {
         let expected = self.project;
-        let native = !self.compatibility;
         let attribution = Attribution {
             session: reference.session_id,
             run: reference.run_id,
@@ -146,7 +142,7 @@ impl Accounting {
                 expected.is_none_or(|expected| expected == project),
                 Failure::Invalid
             );
-            store.admit_native(&attribution, native)
+            store.admit(&attribution)
         })
         .await
     }

@@ -156,8 +156,8 @@ legacy JSON-store image branching are not enabled by these public image operatio
 
 Native OpenAI Chat Completions uses `text`/`image_url`; Responses and native ChatGPT
 OAuth use `input_text`/`input_image`; Anthropic uses text and base64 image-source
-blocks. Codex compatibility refuses image input. Exact selected-model capabilities
-are checked before admission and image-bearing dispatch, including retained history;
+blocks. Exact selected-model capabilities are checked before admission and
+image-bearing dispatch, including retained history;
 unknown/explicitly text-only models fail closed. Image steering during an active
 run is refused with the draft intact.
 

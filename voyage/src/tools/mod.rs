@@ -7,8 +7,6 @@ pub(crate) mod reliability_tests;
 mod report;
 pub use report::ToolReport;
 mod process;
-#[cfg(target_os = "linux")]
-pub(crate) use process::SessionIdentity;
 mod questions;
 pub(crate) mod schema;
 mod shell;

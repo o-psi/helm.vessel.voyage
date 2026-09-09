@@ -101,10 +101,8 @@ pub(super) async fn submit(
         .clone()
         .unwrap_or(saved.session.model);
     ensure!(
-        cfg!(target_os = "linux")
-            || (config.provider != crate::ProviderKind::CodexSubscription
-                && config.mcp_servers.is_empty()),
-        "owned provider/MCP process observation unsupported on this platform"
+        cfg!(target_os = "linux") || config.mcp_servers.is_empty(),
+        "owned MCP process observation unsupported on this platform"
     );
     crate::policy::Policy::new(&config, saved.session.workspace.clone())?;
     let submitted_prompt = prompt.clone();
@@ -225,8 +223,7 @@ pub(super) async fn submit(
             Ok(())
         },
     ))?;
-    let accepts_steering =
-        operator.is_none() && config.provider != crate::ProviderKind::CodexSubscription;
+    let accepts_steering = operator.is_none();
     let cancel = CancellationToken::new();
     *state.active.lock().await = Some(ActiveRun {
         id: run_id,

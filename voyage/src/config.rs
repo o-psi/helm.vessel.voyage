@@ -19,8 +19,6 @@ pub enum ProviderKind {
     ChatGptOauth,
     #[serde(rename = "anthropic")]
     Anthropic,
-    #[serde(rename = "codex-compatibility", alias = "codex-subscription")]
-    CodexSubscription,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
@@ -28,7 +26,6 @@ pub enum ProviderKind {
 pub enum ProviderAccess {
     NativePublicApi,
     NativeChatgptOauth,
-    ExternalCompatibilityBridge,
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
@@ -37,7 +34,6 @@ pub struct ProviderProfile {
     pub access: ProviderAccess,
     pub credential: &'static str,
     pub billing: &'static str,
-    pub compatibility_bridge: bool,
 }
 
 impl ProviderKind {
@@ -48,35 +44,24 @@ impl ProviderKind {
                 access: ProviderAccess::NativePublicApi,
                 credential: "OPENAI_API_KEY (or api_key_env override)",
                 billing: "OpenAI API usage is billed separately from ChatGPT subscriptions",
-                compatibility_bridge: false,
             },
             Self::OpenaiChat => ProviderProfile {
                 id: "openai-chat",
                 access: ProviderAccess::NativePublicApi,
                 credential: "API key named by api_key_env",
                 billing: "Billing is determined by the configured OpenAI-compatible endpoint",
-                compatibility_bridge: false,
             },
             Self::ChatGptOauth => ProviderProfile {
                 id: "chatgpt-oauth",
                 access: ProviderAccess::NativeChatgptOauth,
                 credential: "Vessel-managed ChatGPT OAuth tokens; run `vessel auth login`",
                 billing: "Uses the authenticated ChatGPT subscription and its plan limits",
-                compatibility_bridge: false,
             },
             Self::Anthropic => ProviderProfile {
                 id: "anthropic",
                 access: ProviderAccess::NativePublicApi,
                 credential: "ANTHROPIC_API_KEY (or api_key_env override)",
                 billing: "Anthropic API usage is billed by Anthropic",
-                compatibility_bridge: false,
-            },
-            Self::CodexSubscription => ProviderProfile {
-                id: "codex-compatibility",
-                access: ProviderAccess::ExternalCompatibilityBridge,
-                credential: "this legacy bridge delegates authentication to `codex login`; Helm does not read an API key",
-                billing: "This bridge uses the account and entitlement selected by the external Codex CLI",
-                compatibility_bridge: true,
             },
         }
     }
@@ -158,7 +143,6 @@ pub struct Config {
     pub inherit_env: Vec<String>,
     pub redact_values: Vec<String>,
     pub mcp_servers: BTreeMap<String, McpServerConfig>,
-    pub codex_command: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -196,7 +180,6 @@ pub enum ConfigValueKind {
     McpServers,
     Sandbox,
     Vessel,
-    Executable,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -387,11 +370,6 @@ pub const CONFIG_OVERRIDE_SPECS: &[ConfigOverrideSpec] = &[
         description: "MCP server configuration",
         kind: ConfigValueKind::McpServers,
     },
-    ConfigOverrideSpec {
-        key: "codex_command",
-        description: "Compatibility bridge executable",
-        kind: ConfigValueKind::Executable,
-    },
 ];
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -481,7 +459,6 @@ impl Default for Config {
             policy_defaults: None,
             policy_explicit: Default::default(),
             mcp_servers: BTreeMap::new(),
-            codex_command: "codex".into(),
         }
     }
 }
@@ -551,13 +528,9 @@ impl Config {
 
     /// Returns a secret only for transports whose authentication the native runtime owns.
     pub fn api_key_for_redaction(&self) -> Option<String> {
-        (self.api_key_required
-            && !matches!(
-                self.provider,
-                ProviderKind::CodexSubscription | ProviderKind::ChatGptOauth
-            ))
-        .then(|| self.api_key().ok())
-        .flatten()
+        (self.api_key_required && !matches!(self.provider, ProviderKind::ChatGptOauth))
+            .then(|| self.api_key().ok())
+            .flatten()
     }
 
     pub fn timeout(&self) -> Duration {
@@ -604,7 +577,6 @@ impl Config {
                 }
                 ProviderKind::Anthropic => {}
                 ProviderKind::ChatGptOauth => {}
-                ProviderKind::CodexSubscription => {}
             }
         }
         self.apply_provider_defaults();
@@ -739,10 +711,6 @@ impl Config {
             || self.provider_retry_max_ms < self.provider_retry_initial_ms
         {
             bail!("provider retry delays must be positive and max must be >= initial");
-        }
-        if self.provider == ProviderKind::CodexSubscription && self.codex_command.trim().is_empty()
-        {
-            bail!("codex_command cannot be empty for the codex-compatibility provider");
         }
         for name in &self.inherit_env {
             let upper = name.to_ascii_uppercase();

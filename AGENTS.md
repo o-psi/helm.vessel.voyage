@@ -60,7 +60,7 @@ into current runtime instructions. Browser console work remains deferred.
   presentation cannot broaden it. Preserve runtime authority checks and scoped
   grant revocation.
 - Keep provider credentials on the executing machine. Native providers must remain
-  independent of Codex; the optional compatibility bridge is distinct. Preserve
+  independent of Codex; do not reintroduce the removed external bridge. Preserve
   credential/billing distinctions. Do not centralize credentials across Vessels.
 - Apply local roots, command denials, approvals, cancellation and resource limits to
   tools and subordinate work. Application policy is not an OS sandbox. Unattended

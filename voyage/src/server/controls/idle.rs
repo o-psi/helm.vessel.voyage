@@ -22,15 +22,10 @@ pub(super) async fn inspect(
         },
         "policy" => serde_json::to_value(resolved.policy().effective())?,
         "models" => {
-            ensure!(
-                cfg!(target_os = "linux")
-                    || config.provider != crate::ProviderKind::CodexSubscription,
-                "compatibility process observation requires Linux"
-            );
             let reservation =
                 crate::host_resources::Reservation::acquire("executors", uuid::Uuid::new_v4(), 1)?;
             let discovery = async {
-                let provider = crate::provider::from_config(resolved.config(), workspace.clone())?;
+                let provider = crate::provider::from_config(resolved.config())?;
                 Ok::<_, anyhow::Error>(
                     tokio::time::timeout(
                         std::time::Duration::from_secs(20).min(config.timeout()),
@@ -40,11 +35,7 @@ pub(super) async fn inspect(
                 )
             }
             .await;
-            let cleanup = crate::provider::shutdown_compatibility().await;
-            if cleanup.is_ok() {
-                reservation.release_observed()?;
-            }
-            cleanup?;
+            reservation.release_observed()?;
             let mut models = discovery?;
             if !models.iter().any(|model| model.id == config.model) {
                 models.push(crate::provider::ModelInfo::minimal(config.model.clone()));

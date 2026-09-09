@@ -11,8 +11,6 @@ pub use inference::{
     validate_inference_settings_with_model,
 };
 mod chatgpt_oauth;
-mod codex_subscription;
-pub(crate) use codex_subscription::shutdown_owned as shutdown_compatibility;
 pub(crate) mod discovery;
 mod openai;
 mod openai_responses;
@@ -35,7 +33,6 @@ pub use anthropic::AnthropicProvider;
 pub use chatgpt_oauth::{
     ChatGptOauthProvider, ChatGptTokenStore, DeviceAuthorization, OAuthEndpoints, TokenStatus,
 };
-pub use codex_subscription::CodexSubscriptionProvider;
 pub use openai::OpenAiProvider;
 pub use openai_responses::OpenAiResponsesProvider;
 
@@ -286,10 +283,7 @@ pub trait Provider: Send + Sync {
     }
 }
 
-pub fn from_config(
-    config: &Config,
-    workspace: std::path::PathBuf,
-) -> Result<Box<dyn Provider>, ProviderError> {
+pub fn from_config(config: &Config) -> Result<Box<dyn Provider>, ProviderError> {
     validate_config_endpoints(config)?;
     validate_inference_settings(config)
         .map_err(|error| ProviderError::Request(error.to_string()))?;
@@ -325,10 +319,6 @@ pub fn from_config(
                 .map_err(|e| ProviderError::Authentication(e.to_string()))?,
             config.base_url.clone(),
         ))),
-        ProviderKind::CodexSubscription => Ok(Box::new(
-            CodexSubscriptionProvider::new(config.codex_command.clone(), workspace)
-                .with_sandbox(&config.sandbox)?,
-        )),
     }
 }
 
@@ -340,7 +330,6 @@ pub(crate) fn validate_config_endpoints(config: &Config) -> Result<(), ProviderE
             config.base_url.as_deref()
         }
         ProviderKind::ChatGptOauth => config.chatgpt_base_url.as_deref(),
-        ProviderKind::CodexSubscription => None,
     };
     if let Some(endpoint) = endpoint {
         validate_native_endpoint(endpoint)?;

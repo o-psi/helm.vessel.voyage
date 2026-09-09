@@ -31,10 +31,6 @@ pub struct Settings {
     /// RLIMIT_NPROC counts every process of the real UID, including outside Helm.
     pub uid_processes: u64,
     pub temporary_bytes: u64,
-    /// Separate read-only transport grants; never tool roots.
-    pub bridge_read: Vec<PathBuf>,
-    pub bridge_inherit_env: Vec<String>,
-    pub bridge_network: Network,
 }
 impl Default for Settings {
     fn default() -> Self {
@@ -47,9 +43,6 @@ impl Default for Settings {
             open_files: 1024,
             uid_processes: 4096,
             temporary_bytes: 256 * 1024 * 1024,
-            bridge_read: vec![],
-            bridge_inherit_env: vec!["PATH".into(), "LANG".into()],
-            bridge_network: Network::Denied,
         }
     }
 }
@@ -81,16 +74,6 @@ impl Settings {
             return Err(Error::Invalid(
                 "finite positive limits required (open_files 32..1048576)",
             ));
-        }
-        if self.bridge_read.len() > 64
-            || self.bridge_inherit_env.len() > 64
-            || self.bridge_inherit_env.iter().any(|x| {
-                x.is_empty()
-                    || x.len() > 128
-                    || !x.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
-            })
-        {
-            return Err(Error::Invalid("invalid bridge grants"));
         }
         Ok(())
     }
@@ -155,11 +138,6 @@ impl Sandbox {
             let _ = (command, cwd, read_only);
             Err(Error::Unsupported)
         }
-    }
-    pub fn bridge(settings: &Settings) -> Result<Self, Error> {
-        let mut bridge = settings.clone();
-        bridge.network = settings.bridge_network;
-        Self::new(&bridge, &settings.bridge_read, &[])
     }
 }
 

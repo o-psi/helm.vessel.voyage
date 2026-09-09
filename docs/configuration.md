@@ -116,9 +116,9 @@ Native ChatGPT discovery uses the executing account's authenticated catalog:
 establish reasoning defaults, project service defaults or account entitlements.
 Those remain unknown rather than being inferred from model names or plan labels.
 OpenAI-compatible endpoints are not assumed to share OpenAI's backend defaults.
-Anthropic and the optional Codex compatibility bridge still reject these generic
-explicit overrides; their different thinking/tier configuration is not silently
-translated. Compatibility catalog metadata cannot broaden adapter support.
+Anthropic rejects these generic explicit overrides; its different thinking/tier
+configuration is not silently translated. Catalog metadata cannot broaden adapter
+support.
 
 The shared resolution distinguishes unknown, unsupported, and model-advertised
 choices; explicit requests; advertised defaults; resolved wire values; source and
@@ -173,11 +173,19 @@ from the active turn's frozen settings. Rejections preserve effective settings.
 | `openai-chat` | Native compatible Chat Completions; endpoint-defined API credentials. |
 | `chatgpt-oauth` | Native experimental subscription transport; Vessel-managed OAuth tokens. |
 | `anthropic` | Native Messages; normally `ANTHROPIC_API_KEY`. |
-| `codex-compatibility` | Optional external `codex app-server` bridge using its sign-in. |
 
-Native providers do not require a Codex executable. Config aliases `openai` and
-`openai-compatible` select `openai-chat`; `codex-subscription` selects the optional
-bridge. Provider aliases are not additional CLI `--provider` choices.
+All providers are native and do not require a Codex executable. Config aliases
+`openai` and `openai-compatible` select `openai-chat`. Provider aliases are not
+additional CLI `--provider` choices.
+
+The external Codex bridge has been removed. Old provider values
+`codex-compatibility` and `codex-subscription` are rejected, not silently migrated.
+Choose a native provider explicitly and configure its credentials. Remove the
+obsolete `codex_command` setting and any `[sandbox]` keys `bridge_read`,
+`bridge_inherit_env`, and `bridge_network`; the latter are no longer accepted.
+Existing native OAuth logins and explicit `vessel auth import-codex` credential-file
+import are unchanged; neither launches Codex.
+
 API access and subscription access use separate credentials and billing; a
 subscription does not supply API credits. This is a transport-selection boundary,
 not a statement of current provider pricing or model availability.
@@ -310,12 +318,9 @@ count limit covers the same real UID, including processes outside this sandbox.
 The temporary storage limit covers its private tmpfs. These are not aggregate
 descendant memory or CPU budgets.
 
-The optional Codex compatibility bridge has separate `bridge_read`,
-`bridge_inherit_env` and `bridge_network` grants inside `[sandbox]`. They do not add
-tool roots. Required mode does not automatically expose provider login stores or
-grant bridge network access. Native HTTP providers remain outside tool subprocess
-isolation and keep credentials on the executing host. Required isolation on other
-platforms is unsupported and fails closed.
+Native HTTP providers remain outside tool subprocess isolation and keep credentials
+on the executing host. Required isolation on other platforms is unsupported and
+fails closed.
 
 Named profiles are explicit, private choices. Create/inspect a candidate, preview
 its exact revision and digest for the actual workspace, then select it at launch:

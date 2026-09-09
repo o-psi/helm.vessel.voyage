@@ -41,8 +41,6 @@ pub enum Failure {
     Stale,
     #[error("inference operation identity conflicts with its immutable receipt")]
     Conflict,
-    #[error("inference allowances require a native provider")]
-    Compatibility,
     #[error("historical usage snapshot changed; refresh from its first page before continuing")]
     HistoryChanged,
 }
@@ -531,9 +529,6 @@ impl Store {
         Ok(receipt)
     }
     pub fn admit(&mut self, attribution: &Attribution) -> Result<Permit> {
-        self.admit_native(attribution, true)
-    }
-    pub fn admit_native(&mut self, attribution: &Attribution, native: bool) -> Result<Permit> {
         ensure!(
             !attribution.session.is_nil()
                 && !attribution.run.is_nil()
@@ -556,10 +551,6 @@ impl Store {
         let retained = details < MAX_DETAILS && ordinary_capacity(&tx)?;
         for scope in scopes {
             let state = status(&tx, scope)?;
-            ensure!(
-                native || (state.limit.is_none() && state.warning.is_none()),
-                Failure::Compatibility
-            );
             ensure!(
                 retained || (state.limit.is_none() && state.warning.is_none()),
                 Failure::Capacity

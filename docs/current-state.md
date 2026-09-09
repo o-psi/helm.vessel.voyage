@@ -120,8 +120,8 @@ resolver distinguishes transport-only suggestions, advertised support, unsupport
 settings and unknown account entitlement. Inherited catalog defaults are sent on the
 wire when available; missing defaults remain provider-managed, not guessed. Explicit
 ChatGPT `default` suppresses catalog tier selection and is omitted on the wire;
-OpenAI API `default` is sent explicitly. Anthropic and the optional Codex bridge
-reject these generic overrides rather than silently discard them.
+OpenAI API `default` is sent explicitly. Anthropic rejects these generic overrides
+rather than silently discarding them.
 
 Discovery is bounded and scoped to provider, endpoint and credential/account,
 with five-minute freshness and 30-second automatic failure backoff. Snapshots schedule
@@ -171,8 +171,8 @@ checkpoint ownership and host reservations until cleanup is observed. A failed
 cancellation monitor explains an interruption but does not permanently poison
 cleanup: its original in-flight database read is retained until observed, and
 outstanding checkpoint callbacks continue to hold the run fence. Cleanup observes
-subordinate tasks, tools, root terminals, runtime controls and compatibility
-processes. Finished terminals are explicitly closed before the run blocker clears.
+subordinate tasks, tools, root terminals and runtime controls. Finished terminals
+are explicitly closed before the run blocker clears.
 
 Cleanup makes at most three attempts per failed component, with paced retries.
 An overdue task keeps its original handle; observation never launches a duplicate
@@ -423,8 +423,7 @@ with highlighted choices, Up/Down selection, Enter confirmation and Esc to deny
 or skip. Custom answers use an explicit editor; conversation drafts are preserved.
 Left/Right navigates simultaneous requests and PageUp/PageDown reads long details.
 Steering is durable and delivered at a supported safe model boundary. Operator
-runs do not accept steering. Native providers remain distinct from the optional
-compatibility provider and its narrower capabilities.
+runs do not accept steering.
 
 Helm exposes named interactive terminals through the persistent F3 action. The
 browser lists observed state and host, selects with Up/Down, and attaches with
@@ -562,9 +561,10 @@ attestations or an arbitrary public-command escape hatch. See
 
 Native OpenAI Chat, OpenAI Responses, Anthropic and ChatGPT OAuth transports retain
 streaming/tool behavior. Native API providers do not require Codex. OAuth and API
-billing remain distinct; the optional compatibility bridge executes its own
-app-server. Linux cleanup observes its original process session. MCP stdio and Streamable HTTP tools run in Voyage, with bounded transports,
-offline dynamic input/output schema validation and snapshotted capability manifests.
+billing remain distinct. The external Codex compatibility provider has been removed;
+see [configuration](configuration.md#providers-and-authentication) for migration.
+MCP stdio and Streamable HTTP tools run in Voyage, with bounded transports, offline
+dynamic input/output schema validation and snapshotted capability manifests.
 Stdio retains observed child-session cleanup; HTTP retirement does not attest to
 remote effect cleanup. Ordered typed results and private session-owned artifacts
 survive history and local branches. Vessel authorizes artifact downloads, and Helm
@@ -578,8 +578,7 @@ Optional `[sandbox].mode = "required"` adds Linux x86_64 bubblewrap isolation fo
 Voyage subprocesses; default off mode retains application policy alone. Required
 mode fails closed, and live read-only dispatch narrows new subprocess mounts.
 Existing processes retain their original mounts. Native HTTP model transports are
-separate from tool isolation; the optional compatibility bridge needs explicit
-transport grants. See [configuration](configuration.md#optional-linux-process-isolation)
+separate from tool isolation. See [configuration](configuration.md#optional-linux-process-isolation)
 for readiness diagnostics, network grants and resource-limit scope. Execution
 configuration is loaded and revalidated on the executing host; routing cannot
 broaden it. External content remains untrusted.

@@ -76,7 +76,6 @@ fn builtin_images(provider: &ProviderKind, model: &str) -> bool {
                 | "claude-sonnet-4-20250514"
                 | "claude-opus-4-20250514"
         ),
-        ProviderKind::CodexSubscription => false,
     }
 }
 /// Selected endpoint/model metadata overrides the conservative exact-ID fallback.
@@ -87,11 +86,6 @@ pub fn validate_image_capability(
     model: &str,
     known: Option<&ModelInfo>,
 ) -> Result<(), ProviderError> {
-    if matches!(provider, ProviderKind::CodexSubscription) {
-        return Err(invalid(
-            "Codex subscription transport does not support image input; choose a native image-capable provider",
-        ));
-    }
     let supported = match known {
         Some(info) if info.id != model => false,
         Some(info) if !info.input_modalities.is_empty() => {
@@ -129,12 +123,6 @@ pub(crate) async fn preflight(
             .as_ref()
             .and_then(|models| models.iter().find(|m| m.id == request.model));
         validate_image_capability(kind, &request.model, known)?;
-    }
-    Ok(())
-}
-pub(crate) fn refuse_codex(request: &ModelRequest) -> Result<(), ProviderError> {
-    if has_images(request) {
-        validate_image_capability(&ProviderKind::CodexSubscription, &request.model, None)?;
     }
     Ok(())
 }
@@ -447,10 +435,6 @@ mod tests {
         known.input_modalities = vec!["image".into()];
         assert!(validate_image_capability(&p, "custom", Some(&known)).is_ok());
         assert!(validate_image_capability(&p, "other", Some(&known)).is_err());
-        assert!(
-            validate_image_capability(&ProviderKind::CodexSubscription, "custom", Some(&known))
-                .is_err()
-        );
     }
     #[test]
     fn full_history_aggregate_counts_repeated_images() {
@@ -474,7 +458,6 @@ mod tests {
             m.role = role;
             assert!(content(&m, Wire::Responses).is_err());
         }
-        assert!(refuse_codex(&request(vec![image_message(3)])).is_err());
     }
     #[test]
     fn encoded_limit_counts_whole_body_and_escaping() {

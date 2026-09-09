@@ -65,8 +65,6 @@ pub(crate) enum ProviderArg {
     #[value(name = "chatgpt-oauth")]
     ChatGptOauth,
     Anthropic,
-    #[value(name = "codex-compatibility", alias = "codex-subscription")]
-    CodexCompatibility,
 }
 
 impl From<ProviderArg> for helm::ProviderKind {
@@ -76,7 +74,6 @@ impl From<ProviderArg> for helm::ProviderKind {
             ProviderArg::OpenaiChat => Self::OpenaiChat,
             ProviderArg::ChatGptOauth => Self::ChatGptOauth,
             ProviderArg::Anthropic => Self::Anthropic,
-            ProviderArg::CodexCompatibility => Self::CodexSubscription,
         }
     }
 }

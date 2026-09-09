@@ -15,8 +15,7 @@ pub(super) async fn reject_constructed(
         None => false,
     };
     let terminal = controls.shutdown_retained(owner).await.is_ok();
-    let compatibility = crate::provider::shutdown_compatibility().await.is_ok();
-    let observed = children && resources && terminal && compatibility;
+    let observed = children && resources && terminal;
     let actual = run.fail_before_execution().await?;
     if observed {
         reservation.release_observed()?;

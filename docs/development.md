@@ -55,7 +55,7 @@ cargo check --workspace --all-targets --all-features --locked
 
 Model calls require separately configured credentials and authorization. Help,
 configuration inspection and `helm doctor` do not require dispatching a model.
-Keep native provider integration independent of the optional compatibility bridge.
+All provider transports are native; do not reintroduce an external Codex bridge.
 
 ## Working on a change
 

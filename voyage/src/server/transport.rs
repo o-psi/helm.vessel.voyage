@@ -138,7 +138,6 @@ pub(super) async fn listen(directory: PathBuf, state: Arc<State>) -> Result<()> 
         .wait(std::time::Duration::from_secs(60), 1)
         .await;
     let retained = state.controls.shutdown_retained(&state.owner).await;
-    let compatibility = crate::provider::shutdown_compatibility().await;
     let snapshot = state.owner.process_snapshot().await?;
     let session_resources = state.owner.session_resources().await?;
     let observed = run_cleanup
@@ -146,7 +145,6 @@ pub(super) async fn listen(directory: PathBuf, state: Arc<State>) -> Result<()> 
         && session_resources.as_array().is_some_and(Vec::is_empty)
         && cleanup.is_ok()
         && handlers.is_ok()
-        && compatibility.is_ok()
         && snapshot["pending_cleanup_run"].is_null();
     if observed {
         use std::io::Write;

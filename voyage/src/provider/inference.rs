@@ -18,7 +18,7 @@ fn transport_options(
         ProviderKind::ChatGptOauth => (EFFORTS, &["default", "flex", "priority"]),
         // These adapters do not encode explicit overrides. Catalog metadata cannot
         // broaden adapter support (Anthropic's thinking semantics are different).
-        ProviderKind::Anthropic | ProviderKind::CodexSubscription => (&[], &[]),
+        ProviderKind::Anthropic => (&[], &[]),
     }
 }
 
@@ -240,7 +240,6 @@ pub async fn inference_context(config: &Config) -> Option<[u8; 32]> {
             // leaves this private digest; logout/missing credentials invalidate it.
             hash.update(tokens.account_id.as_bytes());
         }
-        ProviderKind::CodexSubscription => return None,
         _ => hash.update(config.api_key().ok()?.as_bytes()),
     }
     Some(hash.finalize().into())

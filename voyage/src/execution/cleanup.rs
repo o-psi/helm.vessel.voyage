@@ -118,9 +118,6 @@ impl PendingCleanup {
                 },
             ));
         }
-        components.push(Component::new("Compatibility processes", || async {
-            crate::provider::shutdown_compatibility().await.is_ok()
-        }));
         Self {
             checkpoint,
             _resources: resources,
