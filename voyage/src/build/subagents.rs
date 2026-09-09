@@ -82,6 +82,7 @@ struct CliSubagentExecutor {
     workspace: PathBuf,
     runtime: OnceLock<Weak<SubagentRuntime>>,
     worktrees: Option<WorktreeManager>,
+    worktree_error: Option<String>,
     pub model: Arc<RwLock<String>>,
 }
 #[async_trait]
@@ -198,6 +199,7 @@ impl SubagentExecutor for CliSubagentExecutor {
             SubagentTool::new(runtime, child_policy, child_budget)
                 .with_parent(context.id)
                 .with_worktrees(child_worktrees)
+                .with_worktree_error(self.worktree_error.clone())
         });
         // Worktree-isolated children still coordinate through the parent's workspace plan.
         // Keying todos by the temporary worktree would silently fork task state.
@@ -340,7 +342,14 @@ pub async fn build_subagents_managed(
         workspace,
     )?;
     let todos = todo_tool(workspace, coordinator.clone());
-    let worktrees = worktree_manager(workspace, &workspace_key).map(|manager| {
+    let (worktrees, worktree_error) = match worktree_manager(workspace, &workspace_key) {
+        Ok(manager) => (manager, None),
+        Err(error) => (
+            None,
+            Some(format!("Git worktree initialization failed: {error:#}")),
+        ),
+    };
+    let worktrees = worktrees.map(|manager| {
         if parent_policy.ceiling_present() {
             manager.with_environment(tool_environment(config))
         } else {
@@ -357,6 +366,7 @@ pub async fn build_subagents_managed(
         workspace: workspace.to_path_buf(),
         runtime: OnceLock::new(),
         worktrees: worktrees.clone(),
+        worktree_error: worktree_error.clone(),
         model: model.clone(),
     });
     let store = crate::subagent::AgentTreeStore::new(
@@ -381,7 +391,9 @@ pub async fn build_subagents_managed(
         .runtime
         .set(Arc::downgrade(&runtime))
         .map_err(|_| anyhow::anyhow!("subagent runtime already initialized"))?;
-    let tool = SubagentTool::new(runtime.clone(), policy, budget).with_worktrees(worktrees);
+    let tool = SubagentTool::new(runtime.clone(), policy, budget)
+        .with_worktrees(worktrees)
+        .with_worktree_error(worktree_error);
     Ok(SubagentBundle {
         coordinator,
         todos,
@@ -391,17 +403,12 @@ pub async fn build_subagents_managed(
     })
 }
 
-fn worktree_manager(workspace: &std::path::Path, workspace_key: &str) -> Option<WorktreeManager> {
-    let repository = if workspace.join(".git").exists() {
-        workspace.to_path_buf()
-    } else if workspace.join(".local-git/worktree.git/HEAD").is_file() {
-        workspace.join(".local-git/worktree.git")
-    } else {
-        return None;
-    };
-    WorktreeManager::new(
-        repository,
+fn worktree_manager(
+    workspace: &std::path::Path,
+    workspace_key: &str,
+) -> Result<Option<WorktreeManager>> {
+    WorktreeManager::discover(
+        workspace,
         resource_root().join("worktrees").join(workspace_key),
     )
-    .ok()
 }

@@ -28,8 +28,8 @@ pub(crate) mod storage;
 #[cfg(windows)]
 use std::sync::Arc;
 
-// Version 10 prevents older runtimes from rewriting typed tool-result history.
-const SCHEMA_VERSION: i64 = 10;
+// Version 11 fences older writers before persisting structured outcome metadata.
+const SCHEMA_VERSION: i64 = 11;
 mod reconciliation;
 pub use reconciliation::{LocalReconcileOutcome, LocalReconcileRequest};
 const STEERING_SCHEMA_VERSION: i64 = 4;
@@ -246,7 +246,7 @@ impl Journal {
             .optional()?;
         if let Some(version) = version {
             ensure!(
-                matches!(version, 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | SCHEMA_VERSION),
+                matches!(version, 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | SCHEMA_VERSION),
                 "unsupported attachment journal schema"
             );
         } else {
@@ -467,6 +467,11 @@ impl Journal {
     pub fn create_session(&mut self, session: &Session) -> Result<()> {
         self.check_schema()?;
         ensure!(!session.id.is_nil(), "nil session identity");
+        ensure!(
+            self.opened_schema == SCHEMA_VERSION
+                || session.messages.iter().all(|m| m.tool_outcome.is_none()),
+            "outcome metadata requires an explicit quiescent journal upgrade"
+        );
         let encoded = snapshot(session)?;
         let tx = self
             .connection
@@ -817,7 +822,7 @@ impl Journal {
         self.check_guard(guard, run.session_id)?;
         if messages
             .iter()
-            .any(|m| !m.parts.is_empty() || m.tool_output.is_some())
+            .any(|m| !m.parts.is_empty() || m.tool_output.is_some() || m.tool_outcome.is_some())
         {
             self.require_content_schema(guard, true)?;
         }
@@ -1603,7 +1608,7 @@ impl Journal {
 }
 
 impl Journal {
-    /// Existing v8/v9 journals opt into typed content under their lifetime owner fence.
+    /// Existing v8/v9/v10 journals opt into typed content under their lifetime owner fence.
     /// Other legacy schemas still need the explicit quiescent migration path.
     fn require_image_schema(&mut self, guard: &ExecutionGuard) -> Result<()> {
         self.require_content_schema(guard, false)
@@ -1619,7 +1624,7 @@ impl Journal {
             return Ok(());
         }
         ensure!(
-            matches!(self.opened_schema, 8 | 9),
+            matches!(self.opened_schema, 8..=10),
             "typed content requires an explicit quiescent journal upgrade"
         );
         let tx = self

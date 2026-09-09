@@ -1,6 +1,11 @@
+pub(crate) mod action_schema;
 mod filesystem;
 pub mod mcp;
 mod output;
+#[cfg(test)]
+pub(crate) mod reliability_tests;
+mod report;
+pub use report::ToolReport;
 mod process;
 #[cfg(target_os = "linux")]
 pub(crate) use process::SessionIdentity;
@@ -344,6 +349,16 @@ pub trait Tool: Send + Sync {
             .await
             .map(voyage_protocol::tool_result::ToolOutput::text)
     }
+    /// One dispatch only: legacy typed tools adapt without executing twice.
+    async fn execute_report(
+        &self,
+        arguments: Value,
+        context: &ToolContext,
+    ) -> Result<ToolReport, ToolError> {
+        self.execute_output(arguments, context)
+            .await
+            .map(ToolReport::output)
+    }
     /// Trusted one-shot implementations may consume a current-run environment.
     /// The typed result cannot carry captured output or arbitrary diagnostic text.
     async fn execute_secret_environment(
@@ -541,6 +556,18 @@ impl ToolRegistry {
         context: &ToolContext,
         bindings: Option<&crate::workflow::secrets::RunBindings>,
     ) -> Result<voyage_protocol::tool_result::ToolOutput, ToolError> {
+        self.execute_report_with_workflow_secrets(name, arguments, context, bindings)
+            .await
+            .map(|report| report.output)
+    }
+
+    pub async fn execute_report_with_workflow_secrets(
+        &self,
+        name: &str,
+        arguments: Value,
+        context: &ToolContext,
+        bindings: Option<&crate::workflow::secrets::RunBindings>,
+    ) -> Result<ToolReport, ToolError> {
         self.contracts
             .get(name)
             .ok_or_else(|| ToolError::Failed(format!("unknown tool `{name}`")))?
@@ -637,34 +664,58 @@ impl ToolRegistry {
                 .map_err(|e| e.redacted(&context.redactor))?;
             // Only fixed enum/status metadata reaches serialization; no raw tool
             // string or secret-dependent redaction can corrupt this envelope.
-            return serde_json::to_string(&outcome)
-                .map(voyage_protocol::tool_result::ToolOutput::text)
-                .map_err(|_| ToolError::Failed("one-shot shell outcome encoding failed".into()));
+            let text = serde_json::to_string(&outcome)
+                .map_err(|_| ToolError::Failed("one-shot shell outcome encoding failed".into()))?;
+            let code = match outcome {
+                SecretShellOutcome::Exited { code } => Some(code),
+                SecretShellOutcome::Signalled => None,
+            };
+            return Ok(ToolReport::command(text, code, false));
         }
         let result = self
             .tools
             .get(name)
             .ok_or_else(|| ToolError::Failed(format!("unknown tool `{name}`")))?
-            .execute_output(arguments, &dispatch)
+            .execute_report(arguments, &dispatch)
             .await;
-        let mut output = result.map_err(|error| error.redacted(&context.redactor))?;
-        if !output.is_error {
-            self.validate_output(name, output.structured_content.as_ref())?;
+        let mut report = result.map_err(|error| error.redacted(&context.redactor))?;
+        if !report.output.is_error
+            && self
+                .validate_output(name, report.output.structured_content.as_ref())
+                .is_err()
+        {
+            report.limit(
+                voyage_protocol::tool_result::IncompleteReason::Withheld,
+                "Tool returned invalid structured output; output withheld. Do not replay effects.",
+            );
         }
-        if name == "questions" {
-            output = voyage_protocol::tool_result::ToolOutput::text(questions::redact_result(
-                &output.text_fallback(),
-                &context.redactor,
-            )?);
+        let redaction = if name == "questions" {
+            questions::redact_result(&report.output.text_fallback(), &context.redactor).map(
+                |text| {
+                    report.output = voyage_protocol::tool_result::ToolOutput::text(text);
+                },
+            )
         } else {
-            output::redact(&mut output, &context.redactor)?;
+            output::redact(&mut report.output, &context.redactor)
+        };
+        if redaction.is_err() {
+            report.limit(
+                voyage_protocol::tool_result::IncompleteReason::Withheld,
+                "Tool output withheld by confidentiality checks; effects were not replayed.",
+            );
         }
-        if output.text_fallback().len() > context.max_output_bytes {
-            return Err(ToolError::Failed(
-                "tool result exceeds configured max_output_bytes".into(),
-            ));
+        if report.output.text_fallback().len() > context.max_output_bytes {
+            report.limit(
+                voyage_protocol::tool_result::IncompleteReason::OutputLimit,
+                "Tool output exceeds the configured budget; effects were not replayed.",
+            );
         }
-        Ok(output)
+        // Even diagnostics must obey tiny budgets, without dropping known exit facts.
+        if report.output.text_fallback().len() > context.max_output_bytes {
+            report.output = voyage_protocol::tool_result::ToolOutput::text("");
+        }
+        report.synchronize();
+        Ok(report)
     }
 }
 

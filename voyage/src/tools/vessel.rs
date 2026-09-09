@@ -1,6 +1,10 @@
 //! Native model-facing coordination over the public Vessel protocol.
 //! The trusted host supplies routes; the model never supplies credentials or URLs.
 mod journal;
+mod output;
+use output::output;
+#[cfg(test)]
+mod tests;
 mod transport;
 
 use super::{Tool, ToolContext, ToolError};
@@ -231,67 +235,111 @@ impl Action {
     }
 }
 
-fn action_schemas() -> Vec<Value> {
-    let variants: &[(&str, &[&str])] = &[
-        ("routes", &[]),
-        ("operations", &[]),
-        ("capabilities", &[]),
-        ("controls", &["session_id", "section"]),
-        ("list", &[]),
-        ("search", &["query"]),
-        ("inspect", &["session_id"]),
-        ("history", &["session_id"]),
-        ("follow", &["session_id"]),
-        ("wait", &["session_id"]),
-        ("receipt", &["command_id"]),
-        ("create", &["command_id", "session_id", "workspace", "task"]),
-        (
-            "submit",
-            &["session_id", "command_id", "expected_revision", "prompt"],
-        ),
-        (
-            "steer",
-            &[
-                "session_id",
-                "incarnation",
-                "run_id",
-                "command_id",
-                "expected_revision",
-                "prompt",
-            ],
-        ),
-        (
-            "cancel",
-            &[
-                "session_id",
-                "incarnation",
-                "run_id",
-                "command_id",
-                "expected_revision",
-            ],
-        ),
-        (
-            "rename",
-            &["session_id", "command_id", "expected_revision", "name"],
-        ),
-        (
-            "archive",
-            &["session_id", "command_id", "expected_revision"],
-        ),
-        (
-            "restore",
-            &["session_id", "command_id", "expected_revision"],
-        ),
-    ];
-    variants
-        .iter()
-        .map(|(action, fields)| {
-            let required: Vec<_> = std::iter::once("action")
-                .chain(fields.iter().copied())
-                .collect();
-            json!({"properties":{"action":{"const":action}},"required":required})
-        })
-        .collect()
+fn input_schema() -> Value {
+    let mut schema = super::action_schema::schema(
+        json!({
+            "target":{"type":"string"},
+            "session_id":{"type":["string","null"],"format":"uuid"},
+            "command_id":{"type":"string","format":"uuid"},
+            "incarnation":{"type":"string","format":"uuid"},
+            "run_id":{"type":["string","null"],"format":"uuid"},
+            "expected_revision":{"type":["integer","null"],"minimum":0,"maximum":u64::MAX},
+            "offset":{"type":"integer","minimum":0,"maximum":usize::MAX},
+            "after":{"type":"integer","minimum":0,"maximum":u64::MAX},
+            "limit":{"type":"integer","minimum":1,"maximum":128},
+            "wait_ms":{"type":"integer","minimum":0,"maximum":30000},
+            "section":{"enum":["models","policy"]},
+            "query":{"type":"string","pattern":"\\S","maxLength":4096,"description":"Nonblank; at most 4096 UTF-8 bytes."},
+            "workspace":{"type":"string"},"config_path":{"type":["string","null"]},
+            "task":{"type":"string","pattern":"\\S","maxLength":65536,"description":"Nonblank; at most 65536 UTF-8 bytes."},
+            "prompt":{"type":"string","pattern":"\\S","maxLength":65536,"description":"Nonblank; at most 65536 UTF-8 bytes."},
+            "name":{"type":"string","pattern":"\\S","maxLength":256,"description":"Nonblank; at most 256 UTF-8 bytes."}
+        }),
+        &["target"],
+        &[
+            ("routes", &[], &[]),
+            ("capabilities", &[], &[]),
+            ("controls", &["session_id", "section"], &["run_id"]),
+            ("operations", &[], &["offset", "limit"]),
+            ("list", &[], &["offset", "limit"]),
+            ("search", &["query"], &["offset", "limit"]),
+            ("inspect", &["session_id"], &[]),
+            (
+                "history",
+                &["session_id"],
+                &["offset", "limit", "expected_revision"],
+            ),
+            ("follow", &["session_id"], &["after", "limit", "wait_ms"]),
+            ("wait", &["session_id"], &["after", "limit", "wait_ms"]),
+            ("receipt", &["command_id"], &["session_id"]),
+            (
+                "create",
+                &["command_id", "session_id", "workspace", "task"],
+                &["config_path"],
+            ),
+            (
+                "submit",
+                &["session_id", "command_id", "expected_revision", "prompt"],
+                &[],
+            ),
+            (
+                "steer",
+                &[
+                    "session_id",
+                    "incarnation",
+                    "run_id",
+                    "command_id",
+                    "expected_revision",
+                    "prompt",
+                ],
+                &[],
+            ),
+            (
+                "cancel",
+                &[
+                    "session_id",
+                    "incarnation",
+                    "run_id",
+                    "command_id",
+                    "expected_revision",
+                ],
+                &[],
+            ),
+            (
+                "rename",
+                &["session_id", "command_id", "expected_revision", "name"],
+                &[],
+            ),
+            (
+                "archive",
+                &["session_id", "command_id", "expected_revision"],
+                &[],
+            ),
+            (
+                "restore",
+                &["session_id", "command_id", "expected_revision"],
+                &[],
+            ),
+        ],
+    );
+    for branch in schema["oneOf"].as_array_mut().unwrap() {
+        let action = branch["properties"]["action"]["const"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        if matches!(action.as_str(), "steer" | "cancel") {
+            branch["properties"]["run_id"]["type"] = json!("string");
+        }
+        if !matches!(action.as_str(), "history")
+            && branch["properties"].get("expected_revision").is_some()
+        {
+            branch["properties"]["expected_revision"]["type"] = json!("integer");
+        }
+        if action != "receipt" && branch["properties"].get("session_id").is_some() {
+            branch["properties"]["session_id"]["type"] = json!("string");
+        }
+    }
+    schema
 }
 
 #[async_trait]
@@ -302,20 +350,20 @@ impl Tool for VesselTool {
             annotations: None,
             name: "vessel".into(),
             description: "Coordinate any voyage authorized by configured Vessel routes, not just related voyages. Public HTTP only; no credentials, terminal access, approval responses, shell, or provider configuration exposed. Ordinary tool policy approvals still apply. routes identifies the owning voyage and configured target aliases. inspect returns registration and current snapshot; list/search page catalogue metadata (search is not full-text history). history pages canonical conversation. follow/wait read bounded events after a cursor; a timeout is not completion. Mutations require a stable caller-generated command_id; reuse it only for the identical request. Durable intents precede effects; unknown outcomes are never replayed. operations pages durable local intent IDs; receipt with session_id queries the server; without it reads the local journal. Create starts a session then submits required initial task; its start command ID is session_id. Use a fresh session ID. Target defaults to local; remote grants enforce their actual rights. No implicit startup, recovery, deletion, or authority broadening.".into(),
-            input_schema: json!({"type":"object","additionalProperties":false,"required":["action"],"properties":{
-                "action":{"type":"string","enum":["routes","operations","controls","capabilities","list","search","inspect","history","follow","wait","receipt","create","submit","steer","cancel","rename","archive","restore"]},
-                "target":{"type":"string","description":"Trusted configured route alias; default local"},
-                "session_id":{"type":"string","format":"uuid"},"command_id":{"type":"string","format":"uuid"},"incarnation":{"type":"string","format":"uuid"},"run_id":{"type":"string","format":"uuid"},
-                "expected_revision":{"type":"integer","minimum":0},"offset":{"type":"integer","minimum":0},"after":{"type":"integer","minimum":0},"limit":{"type":"integer","minimum":1,"maximum":128,"default":50},"wait_ms":{"type":"integer","minimum":0,"maximum":30000,"default":0},
-                "section":{"type":"string","enum":["models","policy"]},"query":{"type":"string"},"workspace":{"type":"string"},"config_path":{"type":"string"},"task":{"type":"string","description":"Required initial task for create"},"prompt":{"type":"string"},"name":{"type":"string","minLength":1,"maxLength":256}
-            },"oneOf": action_schemas()})
+            input_schema: input_schema(),
         }
     }
-    async fn execute(
+    async fn execute(&self, arguments: Value, context: &ToolContext) -> Result<String, ToolError> {
+        self.execute_report(arguments, context)
+            .await
+            .map(|report| report.output.text_fallback())
+    }
+    async fn execute_report(
         &self,
         mut arguments: Value,
         context: &ToolContext,
-    ) -> Result<String, ToolError> {
+    ) -> Result<super::ToolReport, ToolError> {
+        let request = arguments.clone();
         if !self.settings.enabled {
             return Err(ToolError::Denied("Vessel coordination is disabled".into()));
         }
@@ -329,6 +377,45 @@ impl Tool for VesselTool {
         };
         let action: Action = serde_json::from_value(arguments.clone())
             .map_err(|e| invalid(&format!("invalid Vessel action arguments: {e}")))?;
+        super::action_schema::reject_extra_fields(&arguments, &action)?;
+        match &action {
+            Action::Search { query, .. } => text(query, 4096)?,
+            Action::Create {
+                workspace,
+                config_path,
+                task,
+                command_id,
+                session_id,
+            } => {
+                text(task, 65536)?;
+                if !workspace.is_absolute()
+                    || config_path.as_ref().is_some_and(|p| !p.is_absolute())
+                {
+                    return Err(invalid("create paths must be absolute target-host paths"));
+                }
+                if command_id == session_id {
+                    return Err(invalid("create command_id and session_id must differ"));
+                }
+            }
+            Action::Submit { prompt, .. } | Action::Steer { prompt, .. } => text(prompt, 65536)?,
+            Action::Rename { name, .. } => text(name, 256)?,
+            _ => (),
+        }
+        match &action {
+            Action::Operations { limit, .. }
+            | Action::List { limit, .. }
+            | Action::Search { limit, .. }
+            | Action::History { limit, .. } => {
+                page(*limit)?;
+            }
+            Action::Follow { limit, wait_ms, .. } | Action::Wait { limit, wait_ms, .. } => {
+                page(*limit)?;
+                if *wait_ms > 30000 {
+                    return Err(invalid("wait_ms must be 0..30000"));
+                }
+            }
+            _ => (),
+        }
         self.settings
             .validate()
             .map_err(|_| failed("invalid trusted Vessel route settings"))?;
@@ -352,6 +439,7 @@ impl Tool for VesselTool {
             return output(
                 json!({"self_session_id":self.context.as_ref().map(|c|c.session_id),"local_configured":self.local().is_ok(),"targets":std::iter::once("local".to_owned()).chain(self.settings.remotes.keys().filter(|k| k.as_str() != "local").cloned()).collect::<Vec<_>>(),"transport":"public_http","remote_scope":"configured grant rights","automatic_start":false}),
                 context,
+                &request,
             );
         }
         let access = if target == "local" {
@@ -386,7 +474,7 @@ impl Tool for VesselTool {
                 }
                 _ => unreachable!(),
             };
-            return output(result, context);
+            return output(result, context, &request);
         }
         let mut transport = transport::Transport::open(local, access)?;
         // Validate delegation before persisting intent or starting a process.
@@ -437,7 +525,7 @@ impl Tool for VesselTool {
             let root = journal::root(local, owner.session_id)?;
             let intent = json!({"version":1,"target":target,"request":arguments});
             match journal::admit(&root, id, &intent)? {
-                journal::Admission::Existing(result) => return output(result, context),
+                journal::Admission::Existing(result) => return output(result, context, &request),
                 journal::Admission::Fresh => (),
             }
             Some((root, id))
@@ -462,9 +550,9 @@ impl Tool for VesselTool {
             // Apply secret redaction before durable result storage as well as model output.
             let value = redact(value, context)?;
             journal::finish(&root, id, &value)?;
-            output(value, context)
+            output(value, context, &request)
         } else {
-            output(result?, context)
+            output(result?, context, &request)
         }
     }
 }
@@ -507,14 +595,6 @@ fn redact(value: Value, context: &ToolContext) -> Result<Value, ToolError> {
         ),
         v => v,
     })
-}
-fn output(value: Value, context: &ToolContext) -> Result<String, ToolError> {
-    let encoded = serde_json::to_string(&redact(value, context)?)
-        .map_err(|_| failed("Vessel result encoding failed"))?;
-    if encoded.len() > context.max_output_bytes {
-        return Ok(json!({"status":"output_limit","detail":"Response exceeds output budget; request a smaller page. Mutation results remain in the journal; do not replay."}).to_string());
-    }
-    Ok(encoded)
 }
 async fn voyage(
     t: &transport::Transport,

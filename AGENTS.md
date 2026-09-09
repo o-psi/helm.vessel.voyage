@@ -87,7 +87,9 @@ versioned installation, upgrades, rollback and user-service provisioning.
 Native private-storage changes require platform-specific security verification.
 
 Use normal Git in ordinary clones. In this workspace `.git` is reserved; use
-`./scripts/local-git` and do not initialize replacement metadata. See
+`./scripts/local-git` and do not initialize replacement metadata. If the wrapper
+is absent, use `git --git-dir=.local-git/worktree.git --work-tree=.` from the
+checkout root against the existing metadata; do not restore deleted scripts implicitly. See
 [docs/local-git.md](docs/local-git.md). Use `--repo o-psi/voyage` with `gh` as needed.
 Never reset, clean, force-push, stage unrelated files or overwrite concurrent edits
 implicitly. Keep validation local rather than duplicating it in hosted CI.

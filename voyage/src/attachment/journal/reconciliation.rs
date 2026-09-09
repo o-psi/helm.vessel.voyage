@@ -185,10 +185,14 @@ impl Journal {
         );
         let ids = unresolved(&current.session.messages)?;
         for id in &ids {
-            current
-                .session
-                .messages
-                .push(Message::tool_result(id, UNKNOWN_RESULT, false));
+            let mut message = Message::tool_result(id, UNKNOWN_RESULT, false);
+            if self.opened_schema == SCHEMA_VERSION {
+                message.tool_outcome = Some(voyage_protocol::tool_result::ToolOutcome {
+                    execution: voyage_protocol::tool_result::ExecutionOutcome::Unknown,
+                    ..Default::default()
+                });
+            }
+            current.session.messages.push(message);
         }
         let revision = current
             .revision

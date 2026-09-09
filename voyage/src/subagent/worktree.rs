@@ -28,6 +28,16 @@ pub struct IntegrationPlan {
     pub conflicts: ConflictReport,
 }
 impl WorktreeManager {
+    pub fn discover(workspace: &Path, root: PathBuf) -> Result<Option<Self>> {
+        let repository = if workspace.join(".git").exists() {
+            workspace.to_path_buf()
+        } else if workspace.join(".local-git/worktree.git").exists() {
+            workspace.join(".local-git/worktree.git")
+        } else {
+            return Ok(None);
+        };
+        Self::new(repository, root).map(Some)
+    }
     pub fn new(repository: PathBuf, root: PathBuf) -> Result<Self> {
         let repository = repository
             .canonicalize()
@@ -36,6 +46,49 @@ impl WorktreeManager {
             repository.join(".git").exists() || repository.join("HEAD").exists(),
             "not a Git repository"
         );
+        let metadata = repository.join(".git");
+        if metadata.is_dir() {
+            anyhow::ensure!(
+                metadata.join("HEAD").is_file(),
+                "Git metadata is missing HEAD"
+            );
+        } else if metadata.is_file() {
+            use std::io::Read;
+            let mut options = std::fs::OpenOptions::new();
+            options.read(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC);
+            }
+            let file = options
+                .open(&metadata)
+                .context("cannot open Git worktree pointer")?;
+            anyhow::ensure!(
+                file.metadata()?.is_file(),
+                "Git worktree pointer is not a regular file"
+            );
+            let mut pointer = String::new();
+            file.take(8193)
+                .read_to_string(&mut pointer)
+                .context("cannot read bounded Git worktree pointer")?;
+            anyhow::ensure!(
+                pointer.len() <= 8192,
+                "Git worktree pointer exceeds 8192 bytes"
+            );
+            anyhow::ensure!(
+                pointer
+                    .trim()
+                    .strip_prefix("gitdir: ")
+                    .is_some_and(|p| !p.is_empty()),
+                "invalid Git worktree pointer"
+            );
+        } else {
+            anyhow::ensure!(
+                repository.join("HEAD").is_file(),
+                "alternate Git metadata is missing HEAD"
+            );
+        }
         if root.exists() {
             anyhow::ensure!(
                 root.canonicalize()? != repository,

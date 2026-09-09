@@ -5,6 +5,17 @@ native-platform validation. Focused regression and explicitly enabled live check
 are described in [quality](quality.md). The [implementation ledger](implementation.md)
 records delivery evidence and its limits.
 
+## Tool reliability
+
+Native action schemas reject irrelevant per-action keys before execution. Shell
+policy uses bounded syntax-aware inspection, including literal heredoc handling,
+without bypassing roots, command denials or approvals. New persisted tool outcomes
+distinguish command exit, policy refusal, execution error and incomplete output;
+Helm displays these distinctions with legacy-history fallbacks. Bounded Vessel
+inspection preserves coordination/cleanup observations or explicitly withholds a
+snapshot that cannot fit. See [tool validation and outcomes](runtime-contract.md#tool-validation-and-outcomes)
+for supported syntax, compatibility and platform limits.
+
 ## Terminal color adaptation
 
 Full-screen Helm and private-terminal chrome use passive terminal color detection

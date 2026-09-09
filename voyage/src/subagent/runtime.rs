@@ -108,10 +108,16 @@ pub enum SubagentEventKind {
 
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum RuntimeError {
-    #[error("unknown subagent {0}")]
+    #[error("unknown subagent {0}; use list or archive to discover the exact ID")]
     Unknown(AgentId),
-    #[error("subagent {0} is no longer active")]
+    #[error(
+        "subagent {0} is terminal; use status or wait to read its result, and spawn for new work"
+    )]
     Terminal(AgentId),
+    #[error(
+        "subagent {0} is archived; status or wait can read its result; use spawn for genuinely new work, not follow_up"
+    )]
+    Archived(AgentId),
     #[error("invalid request: {0}")]
     Invalid(String),
     #[error("persistence failed: {0}")]
@@ -977,10 +983,13 @@ impl SubagentRuntime {
             ));
         }
         let message = message.into();
-        let record = self.get_retained(id).await.map_err(|error| match error {
-            RuntimeError::Unknown(_) => RuntimeError::Invalid("agent is archived or unknown; use spawn for new work and reference its original ID".into()),
-            other => other,
-        })?;
+        let record = match self.get_retained(id).await {
+            Ok(record) => record,
+            Err(RuntimeError::Unknown(_)) if self.archived(id).await?.is_some() => {
+                return Err(RuntimeError::Archived(id));
+            }
+            Err(error) => return Err(error),
+        };
         if !record.status.is_terminal() {
             self.send_as(
                 caller,
@@ -1026,7 +1035,7 @@ impl SubagentRuntime {
         let control = match self.control(id).await {
             Ok(control) => control,
             Err(RuntimeError::Unknown(_)) if self.archived(id).await?.is_some() => {
-                return Err(RuntimeError::Terminal(id));
+                return Err(RuntimeError::Archived(id));
             }
             Err(error) => return Err(error),
         };
@@ -1056,7 +1065,7 @@ impl SubagentRuntime {
         let c = match self.control(id).await {
             Ok(c) => c,
             Err(RuntimeError::Unknown(_)) if self.archived(id).await?.is_some() => {
-                return Err(RuntimeError::Terminal(id));
+                return Err(RuntimeError::Archived(id));
             }
             Err(error) => return Err(error),
         };

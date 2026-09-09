@@ -134,8 +134,8 @@ impl Capture {
 }
 const MAX_CAPTURE_BYTES: usize = 8 * 1024 * 1024;
 
-#[derive(Deserialize)]
-#[serde(tag = "action", rename_all = "snake_case")]
+#[derive(Deserialize, Serialize)]
+#[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
 enum Args {
     Start {
         command: String,
@@ -197,7 +197,18 @@ impl Tool for ProcessTool {
             annotations: None,
         name: "process".into(),
         description: "Manage multiple persistent PTY-backed terminals with stable IDs and optional names, cwd, and environment. Start, read, write, resize, interrupt, rename, list, or terminate. Human attachment permanently disables model capture and input for that terminal; reads report a privacy gap. Start a new terminal for model-observed work. When a human using Helm's full-screen interface needs this program, tell them to press F3, select its name, and press Enter. Ctrl+] returns to Helm. Do not imply that a separate terminal window has opened. Passwords belong only in that private terminal, never in chat. Use shell for isolated one-shot commands.".into(),
-        input_schema: json!({"type":"object","properties":{"action":{"enum":["start","read","write","resize","interrupt","rename","select","terminate","list"]},"command":{"type":"string"},"id":{"type":["string","null"]},"name":{"type":["string","null"]},"current_name":{"type":["string","null"]},"cwd":{"type":"string"},"env":{"type":"object"},"data":{"type":"string"},"rows":{"type":"integer","minimum":1},"cols":{"type":"integer","minimum":1}},"required":["action"]}),
+        input_schema: super::action_schema::schema(json!({
+            "command":{"type":"string"},"id":{"type":["string","null"],"format":"uuid"},
+            "name":{"type":["string","null"]},"current_name":{"type":["string","null"]},
+            "cwd":{"type":["string","null"]},"env":{"type":"object","additionalProperties":{"type":"string"}},
+            "data":{"type":"string"},"rows":{"type":"integer","minimum":1,"maximum":65535},"cols":{"type":"integer","minimum":1,"maximum":65535}
+        }), &[], &[
+            ("start", &["command"], &["name","cwd","env","rows","cols"]),
+            ("read", &[], &["id","name"]), ("write", &["data"], &["id","name"]),
+            ("resize", &["rows","cols"], &["id","name"]), ("interrupt", &[], &["id","name"]),
+            ("terminate", &[], &["id","name"]), ("select", &[], &["id","name"]),
+            ("rename", &[], &["id","current_name","name"]), ("list", &[], &[]),
+        ]),
     }
     }
 
@@ -205,8 +216,9 @@ impl Tool for ProcessTool {
         for policy in self.origin_policies.lock().map_err(failed)?.iter() {
             policy.check_current().map_err(failed)?;
         }
-        let args: Args = serde_json::from_value(value)
+        let args: Args = serde_json::from_value(value.clone())
             .map_err(|e| ToolError::InvalidArguments(e.to_string()))?;
+        super::action_schema::reject_extra_fields(&value, &args)?;
         if self.shutting_down.load(Ordering::SeqCst)
             && !matches!(args, Args::Read { .. } | Args::List)
         {
@@ -223,6 +235,9 @@ impl Tool for ProcessTool {
                 rows,
                 cols,
             } => {
+                #[cfg(windows)]
+                return Err(ToolError::Denied("CMD terminal command policy analysis is not supported; POSIX syntax analysis cannot authorize cmd.exe".into()));
+                #[cfg(not(windows))]
                 match ctx.policy.command(&command) {
                     Decision::Deny(reason) => return Err(ToolError::Denied(reason)),
                     Decision::Ask(reason) => ctx
@@ -825,3 +840,30 @@ fn interrupt_process_group(process_id: Option<u32>) {
 fn interrupt_process_group(_: Option<u32>) {}
 #[cfg(not(unix))]
 fn terminate_process_group(_: Option<u32>) {}
+
+#[cfg(test)]
+mod schema_tests {
+    use super::*;
+    #[test]
+    fn process_schema_is_action_specific() {
+        let schema = ProcessTool::default().definition().input_schema;
+        let compiled = crate::tools::schema::CompiledSchema::compile(&schema).unwrap();
+        for value in [
+            json!({"action":"start","command":"pwd","cwd":null}),
+            json!({"action":"resize","rows":24,"cols":80}),
+            json!({"action":"write","data":"text"}),
+            json!({"action":"rename","name":null}),
+        ] {
+            compiled.validate(&value).unwrap();
+            serde_json::from_value::<Args>(value).unwrap();
+        }
+        for value in [
+            json!({"action":"read","data":"wrong"}),
+            json!({"action":"start"}),
+            json!({"action":"resize","rows":65536,"cols":80}),
+            json!({"action":"start","command":"pwd","env":{"KEY":1}}),
+        ] {
+            assert!(compiled.validate(&value).is_err());
+        }
+    }
+}

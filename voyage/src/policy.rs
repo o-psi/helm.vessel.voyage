@@ -1,4 +1,5 @@
 mod live;
+mod shell;
 pub use live::LiveAccess;
 use std::path::{Component, Path, PathBuf};
 
@@ -223,16 +224,17 @@ impl Policy {
     }
 
     pub fn command(&self, command: &str) -> Decision {
-        let parsed = shell_words::split(command).unwrap_or_default();
-        if parsed.is_empty() {
-            return Decision::Deny("command could not be parsed safely".into());
-        }
+        let analysis = match shell::analyze(command) {
+            Ok(analysis) => analysis,
+            Err(reason) => return Decision::Deny(format!("shell policy: {reason}")),
+        };
+        let parsed = analysis.words;
         if let Err(error) =
             self.check_command_denials(&parsed.iter().map(String::as_str).collect::<Vec<_>>())
         {
             return Decision::Deny(error.to_string());
         }
-        let risky = looks_risky(command, &parsed);
+        let risky = !analysis.simple || looks_risky(command, &parsed);
         match (self.access_mode(), risky) {
             (AccessMode::ReadOnly, _) => {
                 Decision::Deny("commands are disabled in read-only access mode".into())

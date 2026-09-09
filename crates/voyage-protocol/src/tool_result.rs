@@ -89,3 +89,63 @@ impl ToolOutput {
         })
     }
 }
+
+/// Additive sibling metadata on messages, not a field of strict ToolOutput.
+/// None on an old message means unclassified, not verified success/completeness.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ToolOutcome {
+    pub execution: ExecutionOutcome,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<CommandOutcome>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub incomplete: Option<IncompleteReason>,
+}
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ExecutionOutcome {
+    #[default]
+    Succeeded,
+    ExecutionError,
+    PolicyRefused,
+    Cancelled,
+    Unknown,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum CommandOutcome {
+    Exited { code: i64 },
+    Signalled,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum IncompleteReason {
+    OutputLimit,
+    CaptureLimit,
+    Withheld,
+}
+impl ToolOutcome {
+    /// Coarse compatibility flag; structured command and completeness facts remain
+    /// independent. This never asserts rollback, cleanup or independent-work completion.
+    pub fn success(&self) -> bool {
+        self.execution == ExecutionOutcome::Succeeded
+            && self.incomplete.is_none()
+            && matches!(
+                self.command,
+                None | Some(CommandOutcome::Exited { code: 0 })
+            )
+    }
+    pub fn label(&self) -> &'static str {
+        match self.execution {
+            ExecutionOutcome::PolicyRefused => "Refused",
+            ExecutionOutcome::Cancelled => "Cancelled",
+            ExecutionOutcome::Unknown => "Unconfirmed",
+            ExecutionOutcome::ExecutionError => "Execution error",
+            ExecutionOutcome::Succeeded => match self.command {
+                Some(CommandOutcome::Exited { code }) if code != 0 => "Command failed",
+                Some(CommandOutcome::Signalled) => "Command signalled",
+                _ if self.incomplete.is_some() => "Output incomplete",
+                _ => "Done",
+            },
+        }
+    }
+}

@@ -266,3 +266,98 @@ Long-lived event waits do not hold admission/dispatch locks or stall the listene
 Suspension and mutation dispatch are mutually exclusive. Accepted request handlers
 are drained on retirement, and queued sockets receive explicit non-dispatch where
 possible; unavoidable connection loss is handled by durable resolution.
+
+## Tool validation and outcomes
+
+Tool execution belongs to Voyage; Helm displays observations and Vessel routes
+commands without broadening execution authority.
+
+### Shell policy
+
+Shell policy analyzes the original script with a bounded tree-sitter Bash grammar
+and an explicit supported-node subset. It does not execute parsing probes or
+rewrite source. Syntax recovery/missing nodes, unsupported constructs and exhausted
+budgets refuse execution in every access mode. Limits are 1 MiB source, 100,000
+visited nodes, 128 AST levels, eight nested shell-script analyses and 250 ms total
+analysis time. Parser recognition is not a claim that all Bash syntax is supported
+by the executing `sh`.
+
+Quoted heredoc bodies are literal data: unmatched quotes and command-looking text
+inside them do not invalidate the script or become executable commands. Supported
+substitutions in unquoted bodies and commands after the heredoc are inspected.
+Sequential heredoc commands, escaped delimiters and tab-stripping heredocs are
+supported. Multiple heredoc redirects queued on one command are currently refused
+by the grammar rather than partially analyzed.
+Literal command and argument basenames retain command-denial checks. Literal
+nested shell `-c` scripts are inspected; dynamic executable names, dynamic command
+forwarding, `eval`/`source`, shell script/stdin entry points and unsupported expansion
+forms are refused with specific guidance. A valid shell script may therefore still
+receive an explicit unsupported-syntax refusal. Use simpler explicit commands;
+never reinterpret a refusal as authorization to run the same effect another way.
+
+Only confidently read-only single commands avoid prompts in approval mode.
+Compound scripts, heredocs, redirects and substitutions require approval there.
+Unrestricted mode skips ordinary prompts, not syntax checks, command denials,
+roots or administrator ceilings. Application policy cannot interpret arbitrary
+Python/program semantics and is not an OS sandbox. The POSIX analyzer does not
+authorize Windows `cmd.exe` PTY commands; that path explicitly refuses until a
+separate dialect-aware implementation is verified. Linux evidence does not
+establish native Windows/macOS behavior.
+
+### Action schemas
+
+Vessel, process and subagent tool schemas declare the complete allowed key set
+per action. Irrelevant fields are rejected, not ignored. For example, `create`
+does not accept `name`, and `inspect` does not accept `limit`. Todo actions retain
+separate create/status/evidence operations. Optional nullable fields follow the
+runtime's actual argument types.
+
+Vessel validates pure text/path/page bounds before transport or intent admission.
+Nonblank text limits are **UTF-8 bytes**: query 4,096; task/prompt 65,536; rename 256.
+JSON Schema character limits alone cannot enforce byte limits; runtime validation
+remains authoritative. UUID formats also require runtime parsing.
+
+Oversized inspection retains the registration and coordination snapshot while
+omitting transcript/live-text payloads explicitly. Cleanup fields are not silently
+removed. A revision-bound `history` request retrieves persisted messages; the
+native tool has no paged live-text action. If the remaining identity/state still
+cannot fit, no partial snapshot is returned. Other reads get a valid smaller-page
+hint only when the action supports it. Limited mutation presentation retains a
+receipt-read hint, never a replacement mutation. Full redacted mutation results
+remain in the durable operation journal.
+
+### Structured outcomes and compatibility
+
+New tool messages carry optional `tool_outcome` alongside unchanged canonical text
+and `tool_output`. Execution outcome, observed command exit/signal and output
+incompleteness are independent. A shell that successfully observes exit 7 has a
+successful *execution observation* and a failed *command*. Capture limits can
+coexist with either exit result. Policy refusal is distinct from an execution
+error; a timeout is unconfirmed, not proof of rollback or cleanup.
+
+The compatibility success/error flag is false for nonzero exits, signals,
+refusals, execution errors, cancellation, unknown outcomes and incomplete output.
+Helm uses typed labels/counts first and conservative legacy text fallbacks. Raw
+subprocess diagnostics are not injected into activity labels. A successful Vessel
+call still does not mean independent work has completed.
+
+Outcome metadata survives canonical message serialization and full/bounded public
+history projection. Absent metadata means legacy/unclassified, not verified
+complete. Managed journal schema 11 fences older writers before new outcomes are persisted,
+using the existing owner-fenced content upgrade path from schemas 8/9/10.
+Existing strict `ToolOutput` wire objects are unchanged; old public message readers
+that ignore optional message fields can decode the added sibling, but older JSON export/import writers
+may discard it. This is not a lossless JSON downgrade guarantee. No automatic retry or
+uncertain-effect reconciliation policy is changed.
+
+Malformed unified diffs, header-only input and non-diff text are refused before
+target writes. Both file headers and at least one hunk are required. Diagnostics explain
+headers, body prefixes, hunk counts and newline requirements without echoing file
+contents or repairing patches. Stale hashes and valid-but-nonapplying patches
+remain distinct failures. A corrected existing-file patch needs a fresh
+`read_file` SHA-256.
+
+See [configuration](configuration.md#execution-policy-and-limits) for policy and
+[Git workflow](local-git.md) for wrapper-free repository access. Focused offline
+checks accompanying these code changes do not recreate the removed broad suites
+or certify live providers or native platforms.

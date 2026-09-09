@@ -41,6 +41,15 @@ impl Tool for Shell {
         }
     }
     async fn execute(&self, value: Value, ctx: &ToolContext) -> Result<String, ToolError> {
+        self.execute_report(value, ctx)
+            .await
+            .map(|r| r.output.text_fallback())
+    }
+    async fn execute_report(
+        &self,
+        value: Value,
+        ctx: &ToolContext,
+    ) -> Result<super::ToolReport, ToolError> {
         let args: Args = serde_json::from_value(value)
             .map_err(|e| ToolError::InvalidArguments(e.to_string()))?;
         if !args.workflow_secrets.is_empty() {
@@ -101,7 +110,12 @@ impl Tool for Shell {
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
-        Ok(truncate(combined.into_bytes(), ctx.max_output_bytes))
+        let incomplete = combined.len() > ctx.max_output_bytes;
+        Ok(super::ToolReport::command(
+            truncate(combined.into_bytes(), ctx.max_output_bytes),
+            output.status.code().map(i64::from),
+            incomplete,
+        ))
     }
 
     async fn execute_secret_environment(

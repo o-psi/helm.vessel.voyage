@@ -1393,18 +1393,20 @@ impl Agent {
                 let result = tokio::select! {
                     biased;
                     _ = cancel.cancelled() => { self.sink.emit(AgentEvent::Cancelled).await; return Err(AgentError::Cancelled); }
-                    value = gate::guarded(self.tools.execute_output_with_workflow_secrets(&call.name, call.arguments, &context, bindings.as_ref()), &cancel) => value?,
+                    value = gate::guarded(self.tools.execute_report_with_workflow_secrets(&call.name, call.arguments, &context, bindings.as_ref()), &cancel) => value?,
                 };
+                let mut report = match result {
+                    Ok(report) => report,
+                    Err(error) => crate::tools::ToolReport::error(error),
+                };
+                report.synchronize();
+                let success = report.outcome.success();
                 tracing::info!(execution_id = %context.execution_id, tool = %call.name,
-                    success = result.is_ok(), "tool execution finished");
-                let output = match result {
-                    Ok(value) => value,
-                    Err(error) => { let mut value = voyage_protocol::tool_result::ToolOutput::text(error.to_string()); value.is_error = true; value },
-                };
-                let content = output.text_fallback();
-                let success = !output.is_error;
+                    success, outcome = ?report.outcome, "tool execution finished");
+                let content = report.output.text_fallback();
                 let mut message = Message::tool_result(&call.id, &content, success);
-                message.tool_output = Some(Box::new(output));
+                message.tool_output = Some(Box::new(report.output));
+                message.tool_outcome = Some(report.outcome);
                 history.push(message);
                 gate::guarded(self.checkpoint(checkpoint, &mut history, &usage), &cancel).await??;
                 self.sink

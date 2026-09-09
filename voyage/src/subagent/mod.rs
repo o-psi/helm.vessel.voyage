@@ -4,6 +4,8 @@ mod history;
 mod history_storage;
 pub use history::{HistoryCursor, HistoryNotice, HistoryReplay, HistoryStatus};
 mod persistence;
+#[cfg(test)]
+mod reliability_tests;
 mod runtime;
 mod tool;
 mod worktree;

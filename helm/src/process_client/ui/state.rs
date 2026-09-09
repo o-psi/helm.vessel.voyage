@@ -41,6 +41,8 @@ pub struct Message {
     pub tool_success: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_output: Option<voyage_protocol::tool_result::ToolOutput>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_outcome: Option<voyage_protocol::tool_result::ToolOutcome>,
     #[serde(default)]
     pub steering: serde_json::Value,
     #[serde(default)]

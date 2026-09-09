@@ -16,6 +16,20 @@ repository:
 ./scripts/local-git commit -m "Describe the change"
 ```
 
+If the wrapper is absent, use its explicit invocation against the **existing**
+metadata from the checkout root (not ordinary Git discovery):
+
+```sh
+git --git-dir=.local-git/worktree.git --work-tree=. status --short --branch
+git --git-dir=.local-git/worktree.git --work-tree=. diff
+git --git-dir=.local-git/worktree.git --work-tree=. diff --cached
+```
+
+The same prefix supports normal add/commit/fetch/merge/push commands. A missing
+wrapper does not authorize restoring deleted scripts or initializing metadata.
+Inspect both index and worktree changes; path-scoped commits must not include
+someone else's staged edits.
+
 Inspect status/diffs before editing and stage only the authorized change. Do not
 reset, clean, force-push or overwrite concurrent work. Preserve unfinished branches,
 worktrees, release artifacts and evidence. A documentation rewrite does not authorize

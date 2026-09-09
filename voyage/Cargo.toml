@@ -58,6 +58,8 @@ vt100 = "0.15"
 zeroize = "1.9"
 unicode-width = "0.2"
 unicode-segmentation = "1.12"
+tree-sitter = "0.25.10"
+tree-sitter-bash = "0.25.1"
 
 
 [target.'cfg(windows)'.dependencies]

@@ -97,8 +97,29 @@ impl Tool for ApplyPatch {
                 .require_approved()?,
             _ => {}
         }
-        let patch = diffy::Patch::from_str(&args.patch)
-            .map_err(|e| ToolError::InvalidArguments(format!("invalid unified diff: {e}")))?;
+        if !args.patch.ends_with('\n')
+            || !(args.patch.starts_with("--- ") || args.patch.starts_with("diff --git "))
+        {
+            return Err(invalid_patch(
+                "missing unified-diff headers or final newline",
+            ));
+        }
+        let patch = diffy::Patch::from_str(&args.patch).map_err(|error| {
+            let reason = if error
+                .to_string()
+                .contains("Hunk header does not match hunk")
+            {
+                "hunk header counts do not match the body"
+            } else {
+                "malformed unified diff"
+            };
+            invalid_patch(reason)
+        })?;
+        if patch.original().is_none() || patch.modified().is_none() || patch.hunks().is_empty() {
+            return Err(invalid_patch(
+                "both file headers and at least one hunk are required",
+            ));
+        }
         let updated = diffy::apply(&original, &patch)
             .map_err(|e| ToolError::Failed(format!("patch does not apply cleanly: {e}")))?;
         let parent = path
@@ -294,4 +315,11 @@ fn failed(error: impl std::fmt::Display) -> ToolError {
 }
 fn denied(error: impl std::fmt::Display) -> ToolError {
     ToolError::Denied(error.to_string())
+}
+
+fn invalid_patch(reason: &str) -> ToolError {
+    // Only authored categories enter this diagnostic, never patch/file contents.
+    ToolError::InvalidArguments(format!(
+        "invalid unified diff: {reason}; no target file was written. Supply a single-file diff with --- / +++ headers and @@ -old_start,old_count +new_start,new_count @@ hunks. Prefix body lines with space, - or +; hunk counts must match the body and patch lines must end with newlines. Do not include Markdown fences or patch-tool wrappers. Prepare a new patch using a fresh read_file SHA-256 for an existing file; no automatic correction or retry was performed."
+    ))
 }

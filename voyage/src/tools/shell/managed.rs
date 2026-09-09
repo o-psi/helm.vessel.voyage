@@ -13,7 +13,7 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 enum Output {
-    Public(String),
+    Public(crate::tools::ToolReport),
     Private(SecretShellOutcome),
 }
 
@@ -108,6 +108,15 @@ impl Tool for ManagedShell {
         Shell.definition()
     }
     async fn execute(&self, value: Value, ctx: &ToolContext) -> Result<String, ToolError> {
+        self.execute_report(value, ctx)
+            .await
+            .map(|r| r.output.text_fallback())
+    }
+    async fn execute_report(
+        &self,
+        value: Value,
+        ctx: &ToolContext,
+    ) -> Result<crate::tools::ToolReport, ToolError> {
         match self.execute_mode(value, ctx, None).await? {
             Output::Public(output) => Ok(output),
             Output::Private(_) => Err(ToolError::Failed("unexpected private shell outcome".into())),
@@ -445,7 +454,14 @@ mod linux {
                                     String::from_utf8_lossy(&stdout.bytes),
                                     String::from_utf8_lossy(&stderr.bytes)
                                 );
-                                Output::Public(truncate(combined.into_bytes(), limit))
+                                Output::Public(crate::tools::ToolReport::command(
+                                    truncate(combined.as_bytes().to_vec(), limit),
+                                    status
+                                        .signal()
+                                        .is_none()
+                                        .then(|| i64::from(status.exit_code())),
+                                    combined.len() > limit,
+                                ))
                             } else {
                                 Output::Private(if status.signal().is_some() {
                                     SecretShellOutcome::Signalled
@@ -462,7 +478,7 @@ mod linux {
                         {
                             if child.wait().is_ok() {
                                 job.observed.store(true, Ordering::Release);
-                                return Ok(Output::Public(String::new()));
+                                return Ok(Output::Public(crate::tools::ToolReport::text("")));
                             }
                             break Err(ToolError::Failed("managed shell child reap failed".into()));
                         }

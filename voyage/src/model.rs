@@ -37,6 +37,8 @@ pub struct Message {
     pub content: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_output: Option<Box<voyage_protocol::tool_result::ToolOutput>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_outcome: Option<voyage_protocol::tool_result::ToolOutcome>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub parts: Vec<voyage_protocol::content::ContentPart>,
     #[serde(skip)]
@@ -64,6 +66,7 @@ impl Message {
             role,
             content: content.into(),
             tool_output: None,
+            tool_outcome: None,
             parts: Vec::new(),
             image_data: Default::default(),
             tool_call_id: None,
@@ -97,6 +100,7 @@ impl Message {
             role: Role::Tool,
             content: content.into(),
             tool_output: None,
+            tool_outcome: None,
             parts: Vec::new(),
             image_data: Default::default(),
             tool_call_id: Some(call_id.into()),

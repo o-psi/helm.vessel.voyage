@@ -28,9 +28,16 @@ pub(super) fn project_interrupted_calls(messages: &mut Vec<Message>) {
 
 fn append_unknown_results(messages: &mut Vec<Message>, pending: &mut Vec<String>) {
     for id in pending.drain(..) {
-        messages.push(Message::tool_result(id,
+        let mut message = Message::tool_result(
+            id,
             "No durable tool result is available from the interrupted run. The outcome is unknown; the operation may have taken effect. Inspect current state before deciding whether to retry. Helm has not replayed this call.",
-            false));
+            false,
+        );
+        message.tool_outcome = Some(voyage_protocol::tool_result::ToolOutcome {
+            execution: voyage_protocol::tool_result::ExecutionOutcome::Unknown,
+            ..Default::default()
+        });
+        messages.push(message);
     }
 }
 

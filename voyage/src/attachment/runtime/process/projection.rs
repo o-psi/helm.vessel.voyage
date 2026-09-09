@@ -13,7 +13,7 @@ pub(super) fn text_prefix(text: &str, limit: usize) -> (&str, bool) {
     (&text[..end], end < text.len())
 }
 pub(super) fn full(message: &Message) -> Value {
-    json!({"role":message.role,"content":message.content,"parts":message.parts,"tool_output":message.tool_output,"created_at":message.created_at,"operator_name":message.operator_name,"tool_calls":message.tool_calls,"tool_call_id":message.tool_call_id,"tool_success":message.tool_success,"steering":message.steering})
+    json!({"role":message.role,"content":message.content,"parts":message.parts,"tool_output":message.tool_output,"created_at":message.created_at,"operator_name":message.operator_name,"tool_calls":message.tool_calls,"tool_call_id":message.tool_call_id,"tool_outcome":message.tool_outcome,"tool_success":message.tool_success,"steering":message.steering})
 }
 fn bounded(message: &Message, index: usize) -> Result<Value> {
     let mut value = full(message);
@@ -24,7 +24,7 @@ fn bounded(message: &Message, index: usize) -> Result<Value> {
     }
     let (content, truncated) = text_prefix(&message.content, 4096);
     Ok(
-        json!({"role":message.role,"content":content,"created_at":message.created_at,"operator_name":message.operator_name,"content_truncated":truncated,"content_bytes":message.content.len(),"tool_calls":[],"tool_calls_omitted":!message.tool_calls.is_empty(),"tool_call_id":message.tool_call_id,"steering":message.steering,"tool_success":message.tool_success,"message_index":index,"projection_truncated":true,"complete_message":"message_chunk"}),
+        json!({"role":message.role,"content":content,"created_at":message.created_at,"operator_name":message.operator_name,"content_truncated":truncated,"content_bytes":message.content.len(),"tool_calls":[],"tool_calls_omitted":!message.tool_calls.is_empty(),"tool_call_id":message.tool_call_id,"steering":message.steering,"tool_outcome":message.tool_outcome,"tool_success":message.tool_success,"message_index":index,"projection_truncated":true,"complete_message":"message_chunk"}),
     )
 }
 pub(super) fn page(messages: &[Message], offset: usize, limit: usize) -> Result<Vec<Value>> {
@@ -131,4 +131,23 @@ pub(super) fn turns(session: &crate::session::Session) -> Vec<Value> {
     session.run_summaries.iter().rev().take(1024).rev().map(|s| json!({
         "run_id":s.run_id,"phase":s.phase,"failure_summary":failure_summary(s.detail.as_deref()),"message_start":s.message_start,"message_end":s.message_end,"started_at":s.started_at,"finished_at":s.finished_at
     })).collect()
+}
+
+#[cfg(test)]
+mod reliability_tests {
+    use super::*;
+    #[test]
+    fn typed_outcome_survives_full_and_bounded_projection() {
+        let mut message = Message::tool_result("call", "x".repeat(40000), false);
+        message.tool_outcome = Some(voyage_protocol::tool_result::ToolOutcome {
+            command: Some(voyage_protocol::tool_result::CommandOutcome::Exited { code: 7 }),
+            incomplete: Some(voyage_protocol::tool_result::IncompleteReason::CaptureLimit),
+            ..Default::default()
+        });
+        let a = full(&message);
+        let b = bounded(&message, 3).unwrap();
+        assert_eq!(a["tool_outcome"], b["tool_outcome"]);
+        assert_eq!(b["projection_truncated"], true);
+        assert_eq!(b["tool_call_id"], "call");
+    }
 }

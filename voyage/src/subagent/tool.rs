@@ -18,6 +18,7 @@ pub struct SubagentTool {
     budget: AgentBudget,
     parent_id: Option<AgentId>,
     worktrees: Option<WorktreeManager>,
+    worktree_error: Option<String>,
 }
 impl SubagentTool {
     pub fn new(runtime: Arc<SubagentRuntime>, policy: AgentPolicy, budget: AgentBudget) -> Self {
@@ -27,10 +28,15 @@ impl SubagentTool {
             budget,
             parent_id: None,
             worktrees: None,
+            worktree_error: None,
         }
     }
     pub fn with_parent(mut self, parent_id: AgentId) -> Self {
         self.parent_id = Some(parent_id);
+        self
+    }
+    pub fn with_worktree_error(mut self, error: Option<String>) -> Self {
+        self.worktree_error = error;
         self
     }
     pub fn with_worktrees(mut self, worktrees: Option<WorktreeManager>) -> Self {
@@ -39,8 +45,8 @@ impl SubagentTool {
     }
 }
 
-#[derive(Deserialize)]
-#[serde(tag = "action", rename_all = "snake_case")]
+#[derive(Deserialize, serde::Serialize)]
+#[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
 enum Args {
     Spawn {
         name: String,
@@ -109,13 +115,33 @@ impl Tool for SubagentTool {
             output_schema: None,
             annotations: None,
         name:"subagent".into(), description:"Spawn and supervise bounded background Helm agents. Spawn independent agents before waiting. Set worktree=true for isolated Git coding work. Worktree commit, integration, and cleanup are guarded and refuse dirty or conflicting changes. Finished agents archive automatically. Use archive (after/limit pagination) to find old IDs, then status or wait to read their results. Archived records cannot be restarted; use spawn for new work. Actions: spawn, status, list, archive, wait, wait_many, cancel, message, follow_up, worktree_status, worktree_conflicts, commit, integrate, cleanup.".into(),
-        input_schema:json!({"type":"object","required":["action"],"properties":{"action":{"enum":["spawn","status","list","archive","wait","wait_many","cancel","message","follow_up","worktree_status","worktree_conflicts","commit","integrate","cleanup"]},"id":{"type":"string","format":"uuid"},"ids":{"type":"array","items":{"type":"string","format":"uuid"},"minItems":1},"other_id":{"type":"string","format":"uuid"},"parent_id":{"type":"string","format":"uuid"},"after":{"type":"string","format":"uuid"},"limit":{"type":"integer","minimum":1,"maximum":100},"name":{"type":"string"},"task":{"type":"string"},"message":{"type":"string"},"worktree":{"type":"boolean"},"target":{"type":"string"}},"additionalProperties":false}),
+        input_schema:crate::tools::action_schema::schema(json!({
+            "id":{"type":"string","format":"uuid"},"other_id":{"type":"string","format":"uuid"},
+            "parent_id":{"type":["string","null"],"format":"uuid"},"after":{"type":["string","null"],"format":"uuid"},
+            "ids":{"type":"array","items":{"type":"string","format":"uuid"},"minItems":1},
+            "name":{"type":"string","pattern":"\\S"},"task":{"type":"string","pattern":"\\S"},"message":{"type":"string"},"target":{"type":"string"},
+            "worktree":{"type":"boolean"},"limit":{"type":"integer","minimum":1,"maximum":100}
+        }), &[], &[
+            ("spawn", &["name","task"], &["worktree"]), ("status", &["id"], &[]), ("list", &[], &["parent_id"]),
+            ("archive", &[], &["after","limit"]), ("wait", &["id"], &[]), ("wait_many", &["ids"], &[]),
+            ("cancel", &["id"], &[]), ("message", &["id","message"], &[]), ("follow_up", &["id","message"], &[]),
+            ("worktree_status", &["id"], &[]), ("worktree_conflicts", &["id","other_id"], &[]),
+            ("commit", &["id","message"], &[]), ("integrate", &["id","target"], &[]), ("cleanup", &["id"], &[]),
+        ]),
     }
     }
     async fn execute(&self, arguments: Value, context: &ToolContext) -> Result<String, ToolError> {
         context.policy.check_current().map_err(failed)?;
-        let args: Args = serde_json::from_value(arguments)
+        let args: Args = serde_json::from_value(arguments.clone())
             .map_err(|e| ToolError::InvalidArguments(e.to_string()))?;
+        crate::tools::action_schema::reject_extra_fields(&arguments, &args)?;
+        if let Args::Spawn { name, task, .. } = &args
+            && (name.trim().is_empty() || task.trim().is_empty())
+        {
+            return Err(ToolError::InvalidArguments(
+                "spawn name and task must be nonblank".into(),
+            ));
+        }
         let value = match args {
             Args::Spawn {
                 name,
@@ -129,7 +155,7 @@ impl Tool for SubagentTool {
                     context
                         .policy
                         .check_delegated_workspace(&destination)
-                        .map_err(failed)?;
+                        .map_err(|error| ToolError::Denied(format!("{error}; planned worktree: {}. An operator must provision and delegate its parent directory in both allow_read and allow_write; access mode alone does not grant roots. No worktree was created.", destination.display())))?;
                     let command = manager
                         .create_command(&worktree_name, "HEAD")
                         .map_err(failed)?;
@@ -299,7 +325,7 @@ impl SubagentTool {
         self.worktrees
             .as_ref()
             .map(|manager| manager.clone().with_policy(context.policy.clone()))
-            .ok_or_else(|| ToolError::Failed("workspace is not a supported Git repository".into()))
+            .ok_or_else(|| ToolError::Failed(self.worktree_error.clone().unwrap_or_else(|| "no Git repository found: expected .git or .local-git/worktree.git; worktree=false does not provide isolated coding".into())))
     }
 
     async fn lease(&self, id: AgentId) -> Result<super::WorktreeLease, ToolError> {
@@ -337,4 +363,23 @@ fn failed(error: impl std::fmt::Display) -> ToolError {
 }
 fn json_error(error: serde_json::Error) -> ToolError {
     ToolError::Failed(error.to_string())
+}
+
+#[cfg(test)]
+mod schema_tests {
+    use super::*;
+    #[test]
+    fn subagent_rejects_irrelevant_fields() {
+        for value in [
+            json!({"action":"spawn","name":"n","task":"t","limit":1}),
+            json!({"action":"message","id":Uuid::new_v4()}),
+            json!({"action":"list","worktree":true}),
+        ] {
+            assert!(serde_json::from_value::<Args>(value).is_err());
+        }
+        assert!(
+            serde_json::from_value::<Args>(json!({"action":"archive","after":null,"limit":10}))
+                .is_ok()
+        );
+    }
 }

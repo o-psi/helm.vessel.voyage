@@ -250,6 +250,31 @@ secret-like inherited names are refused. Keep credentials out of child environme
 values too. `redact_values` supplies additional literal output redactions.
 See [Security](security.md) for enforcement and cleanup limits.
 
+### Subagent worktree roots
+
+Unrestricted mode does not delegate arbitrary worktree paths. Isolated subagents
+require the planned workspace to be covered by **both** parent `allow_read` and
+`allow_write`, including canonical-path/symlink checks and inherited ceilings.
+Voyage plans worktrees under its session resource directory:
+`resources/worktrees/<workspace-hash>/<name>-<uuid>`. A refused launch reports the
+planned destination before creating the worktree.
+
+An operator may provision the narrowly scoped worktree parent directory and add
+that existing path to both lists in an executing-host private configuration,
+preserving other settings. Apply configuration with idle `/configure` after
+cleanup is observed, or select it at launch. Access-mode changes alone do not
+change these roots. Do not grant the entire session storage directory merely to
+make worktrees available, and never relocate work to evade a refusal.
+
+Repository discovery supports ordinary clones, linked worktrees and this
+checkout's `.local-git/worktree.git` metadata. Missing repositories and malformed
+metadata have distinct diagnostics. Archived subagent IDs remain readable with
+`status`/`wait`; they are not restartable. Use `spawn` for genuinely new work, not
+an automatic replay of uncertain effects.
+
+See [tool validation and outcomes](runtime-contract.md#tool-validation-and-outcomes) for command parsing,
+action schemas and result classifications.
+
 ### Optional Linux process isolation
 
 `[sandbox]` selects an additional OS boundary on the executing Voyage host.
@@ -487,7 +512,7 @@ failed calls can retain bounded unreferenced blobs until explicit session deleti
 there is no automatic eviction of referenced data. Delete purges the artifact
 store. Cross-Vessel owner transfer and legacy JSON import of binary-bearing histories
 fail explicitly, as image-bearing transfers already do, rather than create dangling
-references. Typed-result persistence upgrades journal schema 8/9 to 10 under the
+references. Typed-result persistence upgrades journal schema 8/9/10 to 11 under the
 runtime ownership fence; older runtimes refuse the upgraded journal.
 
 These storage and process behaviors require actual native verification. Current

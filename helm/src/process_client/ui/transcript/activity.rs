@@ -147,15 +147,20 @@ fn vessel_outcome(call: &ToolCall, result: &Message) -> Option<&'static str> {
         .and_then(outcome)
 }
 fn failed(call: &ToolCall, result: &Message) -> bool {
-    result.tool_success == Some(false)
-        || vessel_outcome(call, result) == Some("Refused")
-        || (call.name == "shell"
-            && result
-                .content
-                .lines()
-                .next()
-                .and_then(|line| line.strip_prefix("exit: "))
-                .is_some_and(|code| code != "0"))
+    result.tool_outcome.as_ref().map_or_else(
+        || {
+            result.tool_success == Some(false)
+                || vessel_outcome(call, result) == Some("Refused")
+                || (call.name == "shell"
+                    && result
+                        .content
+                        .lines()
+                        .next()
+                        .and_then(|line| line.strip_prefix("exit: "))
+                        .is_some_and(|code| code != "0"))
+        },
+        |outcome| !outcome.success() || vessel_outcome(call, result) == Some("Refused"),
+    )
 }
 pub(super) fn flush(
     output: &mut Vec<Row>,
@@ -191,7 +196,31 @@ pub(super) fn flush(
         // Keep the gap outside the clickable accordion heading.
         super::layout::entry_gap(output, Key::Activity(id));
         let outcome = if failures > 0 {
-            format!(" · {failures} failed")
+            {
+                let mut categories = std::collections::BTreeMap::<&str, usize>::new();
+                for (call, result, _) in &entries {
+                    if let Some(result) = result
+                        && failed(call, result)
+                    {
+                        let label = result.tool_outcome.as_ref().map_or("Failed", |o| {
+                            if o.success() {
+                                vessel_outcome(call, result).unwrap_or("Failed")
+                            } else {
+                                o.label()
+                            }
+                        });
+                        *categories.entry(label).or_default() += 1;
+                    }
+                }
+                format!(
+                    " · {}",
+                    categories
+                        .into_iter()
+                        .map(|(label, count)| format!("{count} {label}"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            }
         } else {
             String::new()
         };
@@ -210,14 +239,34 @@ pub(super) fn flush(
     if !accordion || expanded {
         for (call, result, active) in entries {
             let status = match result {
-                Some(r) if failed(call, r) => "Failed",
+                Some(r) if r.tool_outcome.as_ref().is_some_and(|o| !o.success()) => {
+                    r.tool_outcome.as_ref().unwrap().label()
+                }
                 Some(r) if vessel_outcome(call, r).is_some() => vessel_outcome(call, r).unwrap(),
+                Some(r) if failed(call, r) => "Failed",
                 Some(r) if r.tool_success == Some(true) => "Done",
                 Some(_) => "Received",
                 None if active => "Working",
                 None => "Unconfirmed",
             };
-            let outcome = if call.name == "shell" {
+            let outcome = if let Some(outcome) = result.and_then(|r| r.tool_outcome.as_ref()) {
+                let exit = match outcome.command {
+                    Some(voyage_protocol::tool_result::CommandOutcome::Exited { code })
+                        if code != 0 =>
+                    {
+                        format!(" (exit {code})")
+                    }
+                    _ => String::new(),
+                };
+                format!(
+                    "{exit}{}",
+                    if outcome.incomplete.is_some() && outcome.label() != "Output incomplete" {
+                        " · output incomplete"
+                    } else {
+                        ""
+                    }
+                )
+            } else if call.name == "shell" {
                 result
                     .and_then(|r| r.content.lines().next())
                     .and_then(|l| l.strip_prefix("exit: "))
@@ -228,7 +277,9 @@ pub(super) fn flush(
                 String::new()
             };
             let style = match status {
-                "Failed" => crate::theme::Role::Failed.style(),
+                "Failed" | "Execution error" | "Command failed" | "Command signalled" => {
+                    crate::theme::Role::Failed.style()
+                }
                 "Working" => crate::theme::Role::Running.style(),
                 "Done" => crate::theme::Role::Completed.style(),
                 _ => crate::theme::Role::Muted.style(),
@@ -296,4 +347,124 @@ pub(super) fn separator(turn: &Turn, label: &str, width: u16) -> String {
     let remaining =
         usize::from(width).saturating_sub(unicode_width::UnicodeWidthStr::width(text.as_str()));
     format!("{text}{}\n", "─".repeat(remaining))
+}
+
+#[cfg(test)]
+mod reliability_tests {
+    use super::*;
+    use serde_json::json;
+    use voyage_protocol::tool_result::{
+        CommandOutcome, ExecutionOutcome, IncompleteReason, ToolOutcome,
+    };
+    #[test]
+    fn typed_labels_render_without_raw_result_payloads() {
+        let snapshot:Snapshot=serde_json::from_value(json!({"session_id":uuid::Uuid::new_v4(),"revision":1,"name":null,"model":"fixture","messages":[],"run":null})).unwrap();
+        let call = ToolCall {
+            id: "call".into(),
+            name: "shell".into(),
+            arguments: json!({"command":"fixture"}),
+        };
+        for (outcome, label) in [
+            (
+                ToolOutcome {
+                    command: Some(CommandOutcome::Exited { code: 7 }),
+                    ..Default::default()
+                },
+                "Command failed (exit 7)",
+            ),
+            (
+                ToolOutcome {
+                    execution: ExecutionOutcome::PolicyRefused,
+                    ..Default::default()
+                },
+                "Refused",
+            ),
+            (
+                ToolOutcome {
+                    incomplete: Some(IncompleteReason::OutputLimit),
+                    ..Default::default()
+                },
+                "Output incomplete",
+            ),
+            (
+                ToolOutcome {
+                    command: Some(CommandOutcome::Exited { code: 8 }),
+                    incomplete: Some(IncompleteReason::CaptureLimit),
+                    ..Default::default()
+                },
+                "Command failed (exit 8) · output incomplete",
+            ),
+            (
+                ToolOutcome {
+                    execution: ExecutionOutcome::Unknown,
+                    ..Default::default()
+                },
+                "Unconfirmed",
+            ),
+        ] {
+            let message = Message {
+                role: "tool".into(),
+                tool_call_id: Some("call".into()),
+                content: "RAW SUBPROCESS DIAGNOSTIC".into(),
+                tool_success: Some(false),
+                tool_outcome: Some(outcome),
+                ..Default::default()
+            };
+            let mut rows = vec![];
+            let mut calls = vec![(0, &call)];
+            flush(
+                &mut rows,
+                &mut calls,
+                &[message],
+                &snapshot,
+                &State::default(),
+                120,
+            );
+            let rendered = rows
+                .iter()
+                .map(|r| r.line.to_string())
+                .collect::<Vec<_>>()
+                .join("\n");
+            assert!(rendered.contains(label), "{rendered}");
+            assert!(!rendered.contains("RAW SUBPROCESS"));
+        }
+    }
+    #[test]
+    fn legacy_and_remote_refusal_remain_visible() {
+        let shell = ToolCall {
+            id: "call".into(),
+            name: "shell".into(),
+            arguments: json!({}),
+        };
+        let old = Message {
+            content: "exit: 2\nstdout:\n\nstderr:\n".into(),
+            tool_success: Some(true),
+            ..Default::default()
+        };
+        assert!(failed(&shell, &old));
+        let vessel = ToolCall {
+            id: "call".into(),
+            name: "vessel".into(),
+            arguments: json!({}),
+        };
+        let refused = Message {
+            content: json!({"status":"refused"}).to_string(),
+            tool_success: Some(true),
+            tool_outcome: Some(ToolOutcome::default()),
+            ..Default::default()
+        };
+        assert!(failed(&vessel, &refused));
+        assert_eq!(vessel_outcome(&vessel, &refused), Some("Refused"));
+        #[derive(serde::Deserialize)]
+        struct OldMessage {
+            content: String,
+            tool_output: Option<voyage_protocol::tool_result::ToolOutput>,
+        }
+        let message = json!({"role":"tool","content":"unchanged","tool_output":{"content":[{"type":"text","text":"unchanged"}],"is_error":false},"tool_outcome":{"execution":"succeeded"}});
+        let old: OldMessage = serde_json::from_value(message.clone()).unwrap();
+        assert_eq!(old.content, "unchanged");
+        assert!(old.tool_output.is_some());
+        let new: Message = serde_json::from_value(message).unwrap();
+        assert!(new.tool_outcome.unwrap().success());
+    }
 }

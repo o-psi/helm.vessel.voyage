@@ -6,7 +6,7 @@ pub(super) fn input_schema() -> Value {
     let properties = json!({
         "action":{"type":"string","enum":["create","list","edit","status","block","dependencies","assign","note","progress","evidence","reorder","remove","archive","clear_completed"],"description":"Choose one action; send only its allowed fields."},
         "id":{"type":"string","format":"uuid","description":"Existing todo ID; absent for create/list/clear_completed."},
-        "title":{"type":["string","null"],"description":"Required nonempty title for create; optional replacement for edit."},
+        "title":{"type":["string","null"],"pattern":"\\S","description":"Required nonempty title for create; optional replacement for edit."},
         "description":{"type":["string","null"],"description":"Create defaults to empty text; edit omission/null preserves it."},
         "priority":{"type":["string","null"],"enum":["low","normal","high","critical",null],"description":"Create defaults to normal; edit omission/null preserves it."},
         "status":{"type":["string","null"],"enum":["pending","in_progress","blocked","completed","cancelled",null],"description":"Required for status; optional list filter. Blocking needs block with blockers first."},
@@ -15,7 +15,7 @@ pub(super) fn input_schema() -> Value {
         "blockers":{"type":"array","items":{"type":"string"},"description":"Block reasons. Omission or [] clears reasons and reopens blocked work as pending."},
         "add":{"type":"array","items":{"type":"string","format":"uuid"},"description":"Dependencies to add; defaults to []."},
         "remove":{"type":"array","items":{"type":"string","format":"uuid"},"description":"Dependencies to remove; defaults to []."},
-        "text":{"type":"string","description":"Required nonempty entry for note/progress/evidence; not accepted by status."},
+        "text":{"type":"string","pattern":"\\S","description":"Required nonempty entry for note/progress/evidence; not accepted by status."},
         "author":{"type":["string","null"],"description":"Optional attribution for note/progress/evidence; defaults to null."},
         "include_archived":{"type":"boolean","description":"List archived records too; defaults to false."}
     });
