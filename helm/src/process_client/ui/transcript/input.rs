@@ -25,6 +25,7 @@ impl App {
         let mut state = view.transcript.borrow_mut();
         if matches!(event, Event::Resize(..)) {
             state.hits.clear();
+            state.last_click = None;
         }
         if state.search.is_some() {
             match event {
@@ -64,6 +65,12 @@ impl App {
                 _ => {}
             }
             return true;
+        }
+        if !matches!(event, Event::Mouse(mouse) if matches!(mouse.kind,
+            MouseEventKind::Down(crossterm::event::MouseButton::Left)
+            | MouseEventKind::Up(crossterm::event::MouseButton::Left)))
+        {
+            state.last_click = None;
         }
         let mut older = false;
         match event {
@@ -110,15 +117,12 @@ impl App {
                         .hits
                         .iter()
                         .find(|(rect, _)| rect.contains((mouse.column, mouse.row).into()))
-                        .map(|(_, id)| *id);
-                    let Some(id) = hit else {
+                        .map(|(_, key)| key.clone());
+                    let Some(key) = hit else {
+                        state.last_click = None;
                         return false;
                     };
-                    let expanded = state.expanded.get(&id).copied().unwrap_or(state.details);
-                    state.expanded.insert(id, !expanded);
-                    let top = state.top;
-                    state.remember(top);
-                    state.dirty = true;
+                    state.click(key, mouse.column, mouse.row, std::time::Instant::now());
                 }
                 MouseEventKind::ScrollUp => {
                     older = state.top == 0;
@@ -142,5 +146,69 @@ impl App {
             state.remember(0);
         }
         true
+    }
+}
+
+impl super::State {
+    fn click(&mut self, key: super::Key, column: u16, row: u16, now: std::time::Instant) {
+        match &key {
+            super::Key::ActivityHeader(id) => {
+                let expanded = self.expanded.get(id).copied().unwrap_or(self.details);
+                self.expanded.insert(*id, !expanded);
+                self.last_click = None;
+            }
+            super::Key::Tool(id) => {
+                let double = self
+                    .last_click
+                    .as_ref()
+                    .is_some_and(|(previous, x, y, at)| {
+                        previous == &key
+                            && *x == column
+                            && *y == row
+                            && now.saturating_duration_since(*at)
+                                <= std::time::Duration::from_millis(500)
+                    });
+                if !double {
+                    self.last_click = Some((key, column, row, now));
+                    return;
+                }
+                self.last_click = None;
+                if !self.tool_expanded.remove(id) {
+                    self.tool_expanded.insert(id.clone());
+                }
+            }
+            _ => return,
+        }
+        self.remember(self.top);
+        self.dirty = true;
+    }
+}
+
+#[cfg(test)]
+mod detail_checks {
+    use super::super::{Key, State};
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn double_click_is_independent_and_group_click_stays_single() {
+        let mut state = State::default();
+        let now = Instant::now();
+        let a = Key::Tool("a".into());
+        let b = Key::Tool("b".into());
+        state.click(a.clone(), 5, 4, now);
+        assert!(state.tool_expanded.is_empty());
+        state.click(a.clone(), 5, 4, now + Duration::from_millis(100));
+        assert!(state.tool_expanded.contains("a"));
+        state.click(b.clone(), 5, 5, now);
+        state.click(b.clone(), 5, 5, now + Duration::from_millis(600));
+        assert!(!state.tool_expanded.contains("b"));
+        state.click(b, 5, 5, now + Duration::from_millis(700));
+        assert!(state.tool_expanded.contains("b"));
+        state.click(a.clone(), 5, 4, now);
+        state.click(a, 5, 4, now + Duration::from_millis(100));
+        assert!(!state.tool_expanded.contains("a"));
+        assert!(state.tool_expanded.contains("b"));
+        state.click(Key::ActivityHeader(0), 5, 3, now);
+        assert_eq!(state.expanded.get(&0), Some(&true));
     }
 }

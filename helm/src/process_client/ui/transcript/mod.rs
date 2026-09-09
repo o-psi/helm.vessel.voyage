@@ -12,6 +12,7 @@ pub(super) enum Key {
     MessageHeading(usize),
     Activity(usize),
     ActivityHeader(usize),
+    Tool(String),
     Turn(uuid::Uuid),
     Live(uuid::Uuid),
     Pending,
@@ -39,7 +40,9 @@ pub(in crate::process_client::ui) struct State {
     new_output: bool,
     pub details: bool,
     expanded: std::collections::BTreeMap<usize, bool>,
-    hits: Vec<(ratatui::layout::Rect, usize)>,
+    hits: Vec<(ratatui::layout::Rect, Key)>,
+    tool_expanded: std::collections::BTreeSet<String>,
+    last_click: Option<(Key, u16, u16, std::time::Instant)>,
     pub requested_from: Option<usize>,
     pub attempted: Option<u64>,
     pub attempted_from: Option<usize>,
@@ -152,11 +155,7 @@ impl State {
         }
         self.messages.sort_by_key(|m| m.message_index);
         // New incomplete messages still require hydration at the new revision.
-        if self
-            .messages
-            .iter()
-            .all(|m| !m.projection_truncated || m.role == "tool")
-        {
+        if self.messages.iter().all(|m| !m.projection_truncated) {
             self.loaded_revision = Some(snapshot.revision);
         }
     }

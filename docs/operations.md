@@ -89,8 +89,15 @@ answers and recorded run outcomes have distinct labels. Up to three consecutive
 tool calls show compact action details and outcomes directly: commands, paths,
 search terms and edit sizes. Four or more calls form one accordion; click its
 header to expand that group, or use **Ctrl+T** to expand/collapse all groups.
-Narrative updates and turn boundaries separate groups. Raw result payloads,
-program input and environment values stay out of the activity view.
+Narrative updates and turn boundaries separate groups. **Double-click an individual
+call** to expand its saved arguments and result inline; double-click again to
+collapse it. Scroll with the wheel or PageUp/PageDown to read long details. The
+summary reports logical detail lines (arguments, result and labels), not wrapped
+screen rows. A `+` after the count means the history projection is still partial;
+Helm loads the saved message without executing the tool again. Output truncated
+or withheld at its source cannot be recovered by expansion and remains labelled
+incomplete when recorded metadata identifies it. Program input and environment
+values remain withheld; terminal control characters are sanitized.
 
 Completed, interrupted and incomplete turns end with a separator. New runtimes
 record start and finish timestamps and show elapsed time there. Older histories

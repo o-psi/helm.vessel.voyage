@@ -531,7 +531,7 @@ pub(in crate::process_client::ui) fn draw(frame: &mut Frame<'_>, app: &App, area
         .enumerate()
         .map(|(y, row)| {
             let mut line = row.line.clone();
-            if matches!(row.key, Key::ActivityHeader(_)) {
+            if matches!(row.key, Key::ActivityHeader(_) | Key::Tool(_)) {
                 let rect = Rect::new(area.x, area.y + y as u16, area.width, 1);
                 if app.sidebar.pointer.is_some_and(|p| rect.contains(p)) {
                     line = line.style(crate::theme::Role::Hover.style());
@@ -551,8 +551,13 @@ pub(in crate::process_client::ui) fn draw(frame: &mut Frame<'_>, app: &App, area
         .take(height)
         .enumerate()
         .filter_map(|(y, row)| {
-            if let Key::ActivityHeader(id) = row.key {
-                Some((Rect::new(area.x, area.y + y as u16, area.width, 1), id))
+            if matches!(row.key, Key::ActivityHeader(_) | Key::Tool(_))
+                && !row.line.to_string().trim().is_empty()
+            {
+                Some((
+                    Rect::new(area.x, area.y + y as u16, area.width, 1),
+                    row.key.clone(),
+                ))
             } else {
                 None
             }

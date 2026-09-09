@@ -49,7 +49,7 @@ pub(super) async fn load(
                 message.message_index == offset && offset < total,
                 "History order changed"
             );
-            if message.projection_truncated && message.role != "tool" {
+            if message.projection_truncated {
                 let mut encoded = String::new();
                 loop {
                     let cursor = encoded.len() as u64;
@@ -166,10 +166,7 @@ impl App {
                 });
             }
         }
-        let needs = snapshot
-            .messages
-            .iter()
-            .any(|m| m.projection_truncated && m.role != "tool")
+        let needs = snapshot.messages.iter().any(|m| m.projection_truncated)
             || state.requested_from.is_some();
         let revision = snapshot.revision;
         let from = state

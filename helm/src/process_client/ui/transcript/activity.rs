@@ -1,4 +1,4 @@
-//! Public action summaries; arguments and results are never rendered as payloads.
+//! Compact action summaries with opt-in, sanitized saved call details.
 use super::super::{
     presentation,
     state::{Snapshot, ToolCall, Turn},
@@ -118,6 +118,44 @@ fn description(call: &ToolCall) -> String {
         ),
         _ => presentation::label(&call.name),
     }
+}
+// Use logical lines, not terminal-width-dependent wraps. Private program input and
+// environment values remain withheld even in the explicitly expanded view.
+fn details(call: &ToolCall, result: Option<&Message>) -> String {
+    let mut text = String::from("Arguments:\n");
+    if let Some(fields) = call.arguments.as_object() {
+        for (name, value) in fields {
+            let value = if call.name == "process" && matches!(name.as_str(), "data" | "env") {
+                "[withheld]".to_owned()
+            } else if let Some(text) = value.as_str() {
+                text.to_owned()
+            } else {
+                serde_json::to_string_pretty(value).unwrap_or_default()
+            };
+            text.push_str(&format!("{name}: {value}\n"));
+        }
+    } else {
+        text.push_str(&serde_json::to_string_pretty(&call.arguments).unwrap_or_default());
+        text.push('\n');
+    }
+    text.push_str("Result:\n");
+    match result {
+        Some(message) => {
+            text.push_str(&message.content);
+            if message.projection_truncated {
+                text.push_str("\n[Partial history projection; full details are loading. Ctrl+Home retries; restore archived voyages to load.] ");
+            }
+            if message
+                .tool_outcome
+                .as_ref()
+                .is_some_and(|o| o.incomplete.is_some())
+            {
+                text.push_str("\n[Output incomplete or withheld at source; expansion shows only saved output.]");
+            }
+        }
+        None => text.push_str("[No recorded result yet.]"),
+    }
+    safe(&text)
 }
 // A successful tool invocation can still report a refused or uncertain Vessel
 // command. Do not label admission as completed independent work.
@@ -284,24 +322,45 @@ pub(super) fn flush(
                 "Done" => crate::theme::Role::Completed.style(),
                 _ => crate::theme::Role::Muted.style(),
             };
+            let key = Key::Tool(call.id.clone());
+            let expanded = state.tool_expanded.contains(&call.id);
+            let detail = details(call, result);
+            let count = detail.lines().count();
+            let partial = result.is_some_and(|r| r.projection_truncated);
             let text = Text::from(Line::from(vec![
                 Span::styled(format!("{status}{outcome} · "), style),
                 Span::raw(compact(
                     &description(call),
                     usize::from(width).saturating_mul(2).saturating_sub(24),
                 )),
+                Span::styled(
+                    format!(
+                        " · {}{count}{} detail lines · Double-click to {}",
+                        if expanded { "▼ " } else { "▶ " },
+                        if partial { "+" } else { "" },
+                        if expanded { "collapse" } else { "expand" }
+                    ),
+                    crate::theme::Role::Muted.style(),
+                ),
             ]));
-            super::layout::entry_gap(output, Key::Activity(id));
+            super::layout::entry_gap(output, key.clone());
             super::layout::rows(
                 output,
-                Key::Activity(id),
+                key.clone(),
                 crate::markdown::wrap_text(text, width.into()),
             );
+            if expanded {
+                super::layout::rows(
+                    output,
+                    key.clone(),
+                    crate::markdown::wrap_text(Text::raw(detail), width.into()),
+                );
+            }
             if let Some(result) = result.and_then(|message| message.tool_output.as_ref()) {
                 for artifact in result.artifacts() {
                     note(
                         output,
-                        Key::Activity(id),
+                        key.clone(),
                         format!(
                             "  Attachment · {} · {} · {} bytes",
                             compact(&artifact.name, 80),
@@ -312,7 +371,7 @@ pub(super) fn flush(
                     );
                     note(
                         output,
-                        Key::Activity(id),
+                        key.clone(),
                         format!(
                             "  Artifact {} · save with helm connect artifact",
                             artifact.id
@@ -356,6 +415,69 @@ mod reliability_tests {
     use voyage_protocol::tool_result::{
         CommandOutcome, ExecutionOutcome, IncompleteReason, ToolOutcome,
     };
+    #[test]
+    fn detail_counts_expansion_privacy_and_narrow_wrapping() {
+        let snapshot: Snapshot = serde_json::from_value(json!({"session_id":uuid::Uuid::new_v4(),"revision":1,"name":null,"model":"fixture","messages":[],"run":null})).unwrap();
+        let call = ToolCall {
+            id: "call".into(),
+            name: "process".into(),
+            arguments: json!({"action":"write","data":"PRIVATE INPUT","env":{"TOKEN":"PRIVATE ENV"},"name":"demo"}),
+        };
+        let result = Message {
+            role: "tool".into(),
+            tool_call_id: Some("call".into()),
+            content: "first\nsecond\nthird\u{1b}\u{202e}".into(),
+            ..Default::default()
+        };
+        let detail = details(&call, Some(&result));
+        assert!(!detail.contains("PRIVATE"));
+        assert!(!detail.contains('\u{1b}'));
+        assert!(!detail.contains('\u{202e}'));
+        for width in [24, 80, 160] {
+            let mut state = State::default();
+            for expanded in [false, true] {
+                if expanded {
+                    state.tool_expanded.insert(call.id.clone());
+                }
+                let mut rows = vec![];
+                flush(
+                    &mut rows,
+                    &mut vec![(0, &call)],
+                    std::slice::from_ref(&result),
+                    &snapshot,
+                    &state,
+                    width,
+                );
+                let rendered = rows
+                    .iter()
+                    .map(|r| r.line.to_string())
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                assert!(
+                    rendered
+                        .split_whitespace()
+                        .collect::<String>()
+                        .contains(&format!("{}detaillines", detail.lines().count()))
+                );
+                assert_eq!(rendered.contains("first"), expanded);
+                assert!(!rendered.contains("PRIVATE"));
+                assert!(rows.iter().all(|r| r.line.width() <= width as usize));
+                assert!(rows.iter().all(|r| r.key == Key::Tool(call.id.clone())));
+            }
+        }
+        let partial = Message {
+            projection_truncated: true,
+            tool_outcome: Some(ToolOutcome {
+                incomplete: Some(IncompleteReason::OutputLimit),
+                ..Default::default()
+            }),
+            ..result
+        };
+        let text = details(&call, Some(&partial));
+        assert!(text.contains("Partial history projection"));
+        assert!(text.contains("incomplete or withheld at source"));
+    }
+
     #[test]
     fn typed_labels_render_without_raw_result_payloads() {
         let snapshot:Snapshot=serde_json::from_value(json!({"session_id":uuid::Uuid::new_v4(),"revision":1,"name":null,"model":"fixture","messages":[],"run":null})).unwrap();
