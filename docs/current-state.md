@@ -21,6 +21,11 @@ submission and confirmation controls. Tab/Shift+Tab traverse that scope; ordinar
 composer completion and voyage switching retain their own routing. See
 [scoped interaction](ui-interaction.md).
 
+The conversation footer combines send hints and navigation shortcuts on one row,
+shortening shortcuts as space decreases. Routine connection-refresh notices are
+hidden. Pending and next-turn hints remain visible; other notices share that row
+when they fit, otherwise using up to three footer rows in total.
+
 Normal new/existing composers support grapheme-aware editing and selection with
 bounded text undo/redo. Attachment ownership changes establish an undo boundary;
 deleted image labels cannot return without their owned attachment. See

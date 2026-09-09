@@ -213,12 +213,14 @@ fn draw_inner(frame: &mut Frame<'_>, app: &App) {
     let status = if status.starts_with("Your workspace is ready.")
         || status.starts_with("Overview ready.")
         || status.starts_with("Back in Helm.")
+        || status == "Connected. Voyage state refreshed."
     {
         String::new()
     } else {
         status
     };
     let preview_rows = app.preview_rows(main.width.saturating_sub(2), main.height);
+    let footer = footer(app, main.width, reviewing, overlay, &status);
     let rows = Layout::vertical([
         Constraint::Length(3),
         Constraint::Min(4),
@@ -230,9 +232,9 @@ fn draw_inner(frame: &mut Frame<'_>, app: &App) {
         Constraint::Length(if overlay || reviewing {
             1
         } else {
-            6 + app.attachment_details().len() as u16 + preview_rows
+            5 + app.attachment_details().len() as u16 + preview_rows
         }),
-        Constraint::Length(if status.is_empty() { 1 } else { 3 }),
+        Constraint::Length(footer.lines.len().min(3) as u16),
     ])
     .split(main);
     let title = view.map_or_else(|| "New conversation".into(), |v| safe(&v.title()));
@@ -308,24 +310,7 @@ fn draw_inner(frame: &mut Frame<'_>, app: &App) {
     } else {
         composer(frame, app, rows[3], preview_rows);
     }
-    let shortcuts = if reviewing {
-        "Ctrl+C Leave"
-    } else if main.width >= 80 {
-        "F1 Help   F3 Console   F5 Archives   F9 Actions   Ctrl+C Leave"
-    } else if main.width >= 60 {
-        "F1 Help  F3 Console  F5 Archives  F9 Actions"
-    } else {
-        "F1 Help F3 Console F9 Menu"
-    };
-    frame.render_widget(
-        Paragraph::new({
-            let mut text = Text::from(Line::styled(shortcuts, muted()));
-            text.lines
-                .extend(presentation::wrap(Text::raw(status), rows[4].width).lines);
-            text
-        }),
-        rows[4],
-    );
+    frame.render_widget(Paragraph::new(footer), rows[4]);
     super::interactions::draw(
         frame,
         app,
@@ -333,6 +318,51 @@ fn draw_inner(frame: &mut Frame<'_>, app: &App) {
     );
     app.draw_actions(frame, panes[1]);
     app.draw_inference_picker(frame);
+}
+
+fn footer(app: &App, width: u16, reviewing: bool, overlay: bool, status: &str) -> Text<'static> {
+    let view = app.selected.and_then(|key| app.views.get(&key));
+    let pending = view.is_some_and(|view| view.pending.is_some());
+    let active = view
+        .and_then(|view| view.snapshot.as_ref())
+        .is_some_and(|snapshot| snapshot.inference_next_turn);
+    let hint = if reviewing || overlay {
+        ""
+    } else if pending {
+        "Pending · Checking automatically · Text preserved"
+    } else if active {
+        "Next-turn settings · Enter Send · / Commands"
+    } else if width >= 60 {
+        "Enter Send · Alt+Enter New line · / Commands"
+    } else {
+        "Enter Send · / Commands"
+    };
+    let mut line = Line::styled(hint.to_owned(), muted());
+    for shortcuts in [
+        "F1 Help · F3 Console · F5 Archives · F9 Actions · Ctrl+C Leave",
+        "F1 Help · F3 Console · F9 Actions",
+        "F1 Help",
+    ] {
+        let shortcuts = if reviewing { "Ctrl+C Leave" } else { shortcuts };
+        let separator = if hint.is_empty() { "" } else { " · " };
+        let suffix = format!("{separator}{shortcuts}");
+        if line.width() + Line::raw(suffix.clone()).width() <= width as usize {
+            line.spans.push(Span::styled(suffix, muted()));
+            break;
+        }
+    }
+    let mut text = presentation::wrap(Text::from(line), width);
+    if !status.is_empty() {
+        let notice = Line::raw(status.to_owned());
+        if text.lines.len() == 1 && text.lines[0].width() + 3 + notice.width() <= width as usize {
+            text.lines[0].spans.push(Span::styled(" · ", muted()));
+            text.lines[0].spans.extend(notice.spans);
+        } else {
+            text.lines
+                .extend(presentation::wrap(Text::from(notice), width).lines);
+        }
+    }
+    text
 }
 
 fn sidebar(frame: &mut Frame<'_>, app: &App, area: Rect) {
@@ -535,10 +565,7 @@ fn sidebar(frame: &mut Frame<'_>, app: &App, area: Rect) {
 fn composer(frame: &mut Frame<'_>, app: &App, area: Rect, preview_rows: u16) {
     let view = app.selected.and_then(|t| app.views.get(&t));
     let pending = view.is_some_and(|v| v.pending.is_some());
-    let box_area = Rect {
-        height: area.height.saturating_sub(1),
-        ..area
-    };
+    let box_area = area;
     let border = Block::default()
         .borders(Borders::ALL)
         .title(app.attachment_summary())
@@ -591,20 +618,6 @@ fn composer(frame: &mut Frame<'_>, app: &App, area: Rect, preview_rows: u16) {
     app.draw_inference_controls(
         frame,
         Rect::new(inner.x, inner.bottom().saturating_sub(1), inner.width, 1),
-    );
-    let active = view
-        .and_then(|v| v.snapshot.as_ref())
-        .is_some_and(|s| s.inference_next_turn);
-    frame.render_widget(
-        Paragraph::new(if pending {
-            "Pending · Checking automatically · Text preserved"
-        } else if active {
-            "Next-turn settings · Enter Send · / Commands"
-        } else {
-            "Enter Send · Alt+Enter New line · / Commands"
-        })
-        .style(muted()),
-        Rect::new(area.x, area.bottom().saturating_sub(1), area.width, 1),
     );
     if let Some((row, column)) = cursor
         && app.sidebar.menu.is_none()
