@@ -57,12 +57,19 @@ pub enum ProviderError {
     },
     #[error("provider temporarily unavailable: {0}")]
     Unavailable(String),
+    #[error("{source}")]
+    RetryAfter {
+        source: Box<ProviderError>,
+        delay: std::time::Duration,
+    },
     #[error("provider request timed out: {0}")]
     Timeout(String),
     #[error("provider request failed: {0}")]
     Request(String),
     #[error("invalid provider response: {0}")]
     InvalidResponse(String),
+    #[error("Provider stopped before completing its response.")]
+    Incomplete,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -194,6 +201,9 @@ pub fn normalize_models(models: &mut Vec<ModelInfo>) {
 
 impl ProviderError {
     pub fn is_retryable(&self) -> bool {
+        if let Self::RetryAfter { source, .. } = self {
+            return source.is_retryable();
+        }
         matches!(
             self,
             Self::RateLimit { .. } | Self::Unavailable(_) | Self::Timeout(_)
@@ -202,9 +212,51 @@ impl ProviderError {
     pub fn retry_after(&self) -> Option<std::time::Duration> {
         match self {
             Self::RateLimit { retry_after, .. } => *retry_after,
+            Self::RetryAfter { delay, .. } => Some(*delay),
             _ => None,
         }
     }
+
+    pub(crate) fn public_failure_reason(&self) -> &'static str {
+        match self {
+            Self::RetryAfter { source, .. } => source.public_failure_reason(),
+            Self::Authentication(_) => {
+                "Provider authentication failed. Check credentials on the executing machine."
+            }
+            Self::UsageLimit => USAGE_LIMIT_MESSAGE,
+            Self::RateLimit { .. } => "Provider rate limit prevented completion.",
+            Self::Unavailable(_) => "Provider temporarily unavailable.",
+            Self::Timeout(_) => "Provider request timed out.",
+            Self::Request(_) => "Provider rejected the request.",
+            Self::InvalidResponse(_) => "Provider returned an invalid or incomplete response.",
+            Self::Incomplete => "Provider stopped before completing its response.",
+        }
+    }
+}
+
+/// RFC 9110 section 10.2.3 permits either delay-seconds or an HTTP-date.
+/// Overflowing valid seconds must not turn a long server wait into an early retry.
+pub(crate) fn parse_retry_after(
+    value: &str,
+    now: std::time::SystemTime,
+) -> Option<std::time::Duration> {
+    let value = value.trim();
+    if !value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Some(std::time::Duration::from_secs(
+            value.parse().unwrap_or(u64::MAX),
+        ));
+    }
+    httpdate::parse_http_date(value)
+        .ok()
+        .map(|date| date.duration_since(now).unwrap_or_default())
+}
+
+pub(crate) fn response_retry_after(response: &reqwest::Response) -> Option<std::time::Duration> {
+    response
+        .headers()
+        .get(reqwest::header::RETRY_AFTER)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| parse_retry_after(value, std::time::SystemTime::now()))
 }
 
 #[async_trait]
@@ -367,12 +419,7 @@ pub(crate) async fn checked_json(
 ) -> Result<serde_json::Value, ProviderError> {
     reject_redirect(&response)?;
     let status = response.status();
-    let retry_after = response
-        .headers()
-        .get(reqwest::header::RETRY_AFTER)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.parse::<u64>().ok())
-        .map(std::time::Duration::from_secs);
+    let retry_after = response_retry_after(&response);
     let body = response
         .text()
         .await
@@ -406,7 +453,14 @@ pub(crate) async fn checked_json(
             retry_after,
         })
     } else if status.as_u16() == 408 || status.as_u16() == 409 || status.as_u16() >= 500 {
-        Err(ProviderError::Unavailable(format!("HTTP {status}: {body}")))
+        let error = ProviderError::Unavailable(format!("HTTP {status}: {body}"));
+        Err(match retry_after {
+            Some(delay) => ProviderError::RetryAfter {
+                source: Box::new(error),
+                delay,
+            },
+            None => error,
+        })
     } else {
         Err(ProviderError::Request(format!("HTTP {status}: {body}")))
     }

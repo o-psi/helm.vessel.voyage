@@ -322,7 +322,13 @@ already dispatched effects. Linux ceiling enforcement is not claimed for other O
 subagent concurrency bound different resources. `max_tokens = 0` and
 `context_window = 0` add no operator token cap; provider-specific requirements still
 apply. `provider_retry_attempts`, `provider_retry_initial_ms` and
-`provider_retry_max_ms` bound retries before streamed content arrives. Optional
+`provider_retry_max_ms` bound retries before streamed content arrives. Exponential
+waits use half-to-full equal jitter. Explicit `Retry-After` seconds or HTTP dates
+are honored for throttling and transient service errors; a server delay above the
+configured maximum returns a failure instead of retrying early. Cancellation
+interrupts the wait, and exhausted accounts are not retried. Missing usage remains
+unknown in inference history. See the [runtime contract](runtime-contract.md#provider-outcomes-retries-and-accounting)
+for completion signals and replay boundaries. Optional
 `helm inference` limits count dispatch attempts, not money or complete token cost.
 
 ## Storage and diagnostics

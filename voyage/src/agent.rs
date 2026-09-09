@@ -300,12 +300,26 @@ impl From<crate::context::ContextError> for AgentError {
 }
 
 impl AgentError {
+    pub(crate) fn is_incomplete(&self) -> bool {
+        match self {
+            Self::Finalization(failure) => failure.source.is_incomplete(),
+            Self::Provider(ProviderError::Incomplete) => true,
+            _ => false,
+        }
+    }
     /// Only locally authored text may cross the public failure surface.
     pub(crate) fn public_failure_reason(&self) -> &'static str {
         match self {
             Self::Finalization(failure) => failure.source.public_failure_reason(),
-            Self::Provider(ProviderError::UsageLimit) => crate::provider::USAGE_LIMIT_MESSAGE,
-            _ => "provider or runtime failed",
+            Self::Provider(error) => error.public_failure_reason(),
+            Self::Inference(_) => "Local inference admission or accounting failed.",
+            Self::Completion(_) => "Completion records could not be verified.",
+            Self::Context(_) => "Configured context limit prevented the request.",
+            Self::Policy(_) => "Execution policy prevented the run.",
+            Self::WorkspaceInstructions(_) => "Workspace instructions could not be loaded.",
+            Self::Cancelled => "run cancelled",
+            Self::Checkpoint(_) => "durable checkpoint failed",
+            Self::UsageOverflow => "Provider usage accounting overflowed.",
         }
     }
 
@@ -1253,7 +1267,12 @@ impl Agent {
                 .ok_or(AgentError::UsageOverflow)?;
             self.inference_finish(permit.as_ref(), crate::inference::AttemptOutcome::Completed).await?;
             let mut assistant = response.message;
-            tool_replay::normalize(&mut assistant.tool_calls)?;
+            if let Err(error) = tool_replay::normalize(&mut assistant.tool_calls) {
+                // Account for the completed provider response without accepting
+                // ambiguous calls into canonical history or dispatching effects.
+                gate::guarded(self.checkpoint(checkpoint, &mut history, &usage), &cancel).await??;
+                return Err(error.into());
+            }
             let calls = assistant.tool_calls.clone();
             let answer = assistant.content.clone();
             history.push(assistant);
@@ -1405,8 +1424,19 @@ impl Agent {
                             last_readiness = Some(lease.readiness.clone());
                             let _ = lease
                                 .seal(
-                                    crate::completion::FinalOutcome::Interrupted,
-                                    Some("root run interrupted before acceptance".into()),
+                                    if source.is_incomplete() {
+                                        crate::completion::FinalOutcome::Incomplete
+                                    } else {
+                                        crate::completion::FinalOutcome::Interrupted
+                                    },
+                                    Some(
+                                        if source.is_incomplete() {
+                                            "provider output incomplete"
+                                        } else {
+                                            "root run interrupted before acceptance"
+                                        }
+                                        .into(),
+                                    ),
                                 )
                                 .await;
                         }
@@ -1417,7 +1447,7 @@ impl Agent {
                     if checkpoint.is_none() && !partial_output.is_empty() {
                         history.push(Message::new(crate::model::Role::Assistant, partial_output));
                     }
-                    self.sink.emit(AgentEvent::CompletionState { phase: CompletionPhase::Interrupted, readiness: last_readiness.clone(), detail: Some(format!("Run interrupted; owned child shutdown observed: {}; remaining IDs: {:?}", shutdown.observation_complete, shutdown.remaining)) }).await;
+                    self.sink.emit(AgentEvent::CompletionState { phase: if source.is_incomplete() { CompletionPhase::Incomplete } else { CompletionPhase::Interrupted }, readiness: last_readiness.clone(), detail: Some(format!("Run not completed; owned child shutdown observed: {}; remaining IDs: {:?}", shutdown.observation_complete, shutdown.remaining)) }).await;
                     Err(AgentError::Finalization(Box::new(FinalizationFailure {
                         source: Box::new(source),
                         recovery: CanonicalRecovery {

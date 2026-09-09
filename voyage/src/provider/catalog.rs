@@ -199,18 +199,18 @@ pub(crate) async fn json(
         429 => {
             return Err(ProviderError::RateLimit {
                 message: "model endpoint rate limited".into(),
-                retry_after: response
-                    .headers()
-                    .get(reqwest::header::RETRY_AFTER)
-                    .and_then(|v| v.to_str().ok())
-                    .and_then(|v| v.parse::<u64>().ok())
-                    .map(std::time::Duration::from_secs),
+                retry_after: super::response_retry_after(&response),
             });
         }
         408 | 409 | 500..=599 => {
-            return Err(ProviderError::Unavailable(format!(
-                "model endpoint HTTP {code}"
-            )));
+            let error = ProviderError::Unavailable(format!("model endpoint HTTP {code}"));
+            return Err(match super::response_retry_after(&response) {
+                Some(delay) => ProviderError::RetryAfter {
+                    source: Box::new(error),
+                    delay,
+                },
+                None => error,
+            });
         }
         _ => {
             return Err(ProviderError::Request(format!(

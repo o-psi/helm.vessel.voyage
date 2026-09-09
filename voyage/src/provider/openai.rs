@@ -136,6 +136,7 @@ struct StreamAssembly {
     calls: Vec<CallAssembly>,
     usage: Usage,
     saw_finish: bool,
+    finish_reason: Option<String>,
 }
 #[derive(Default)]
 struct CallAssembly {
@@ -213,6 +214,10 @@ fn apply_stream_chunk(
         .is_some_and(|value| !value.is_null())
     {
         assembly.saw_finish = true;
+        assembly.finish_reason = value
+            .pointer("/choices/0/finish_reason")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
     }
     if let Some(text) = delta.get("content").and_then(Value::as_str) {
         assembly.content.push_str(text);
@@ -256,6 +261,7 @@ fn apply_stream_chunk(
     Ok(events)
 }
 fn finish_stream(assembly: StreamAssembly) -> Result<ModelResponse, ProviderError> {
+    validate_finish_reason(assembly.finish_reason.as_deref())?;
     let calls = assembly
         .calls
         .into_iter()
@@ -384,6 +390,11 @@ fn encode_message(message: &Message) -> Result<Value, ProviderError> {
 }
 
 fn decode_response(value: Value) -> Result<ModelResponse, ProviderError> {
+    validate_finish_reason(
+        value
+            .pointer("/choices/0/finish_reason")
+            .and_then(Value::as_str),
+    )?;
     let raw = value
         .pointer("/choices/0/message")
         .ok_or_else(|| ProviderError::InvalidResponse("missing choices[0].message".into()))?;
@@ -448,4 +459,14 @@ fn decode_response(value: Value) -> Result<ModelResponse, ProviderError> {
         },
         usage,
     })
+}
+
+fn validate_finish_reason(reason: Option<&str>) -> Result<(), ProviderError> {
+    match reason {
+        Some("stop" | "tool_calls") => Ok(()),
+        Some("length" | "content_filter") => Err(ProviderError::Incomplete),
+        _ => Err(ProviderError::InvalidResponse(
+            "missing or unsupported OpenAI finish reason".into(),
+        )),
+    }
 }

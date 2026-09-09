@@ -38,6 +38,11 @@ pub(super) fn normalize(calls: &mut Vec<ToolCall>) -> Result<(), ProviderError> 
     let mut identities = BTreeMap::new();
     // Validate the whole batch before changing it or dispatching its first tool.
     for call in calls.iter() {
+        if call.name.trim().is_empty() || call.name.chars().any(char::is_control) {
+            return Err(ProviderError::InvalidResponse(
+                "tool name is empty or contains control characters".into(),
+            ));
+        }
         if call.id.trim().is_empty()
             || call.id.len() > 1024
             || call.id.chars().any(char::is_control)

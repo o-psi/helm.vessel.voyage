@@ -54,6 +54,11 @@ fn unresolved(messages: &[Message]) -> Result<Vec<String>> {
                     pending.is_empty(),
                     "cannot append outcomes after later assistant history"
                 );
+                // Provider call IDs belong to one response, not the entire
+                // conversation. Completed historical batches cannot make a
+                // fresh interrupted call with the same ID unrecoverable.
+                seen.clear();
+                resolved.clear();
                 for call in &message.tool_calls {
                     ensure!(
                         valid_id(&call.id)
@@ -247,5 +252,41 @@ impl Journal {
             revision,
             tool_call_ids: ids,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn call() -> Message {
+        let mut message = Message::new(Role::Assistant, "");
+        message.tool_calls.push(crate::model::ToolCall {
+            id: "reused".into(),
+            name: "shell".into(),
+            arguments: serde_json::json!({"command":"work"}),
+        });
+        message
+    }
+
+    #[test]
+    fn reconcile_reused_identity_only_in_latest_unresolved_response() {
+        let history = vec![
+            call(),
+            Message::tool_result("reused", "finished", true),
+            Message::new(Role::User, "next run"),
+            call(),
+        ];
+        assert_eq!(unresolved(&history).unwrap(), ["reused"]);
+    }
+
+    #[test]
+    fn ambiguous_batches_and_history_after_unresolved_work_still_fail() {
+        let mut duplicate = call();
+        duplicate.tool_calls.push(duplicate.tool_calls[0].clone());
+        assert!(unresolved(&[duplicate]).is_err());
+        assert!(unresolved(&[call(), call()]).is_err());
+        assert!(unresolved(&[call(), Message::new(Role::User, "later input")]).is_err());
+        assert!(unresolved(&[call(), Message::tool_result("other", "wrong", true)]).is_err());
     }
 }

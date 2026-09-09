@@ -283,6 +283,11 @@ pub(crate) fn redact(error: ProviderError) -> ProviderError {
     match error {
         ProviderError::Authentication(_) => ProviderError::Authentication(MESSAGE.into()),
         ProviderError::UsageLimit => ProviderError::UsageLimit,
+        ProviderError::Incomplete => ProviderError::Incomplete,
+        ProviderError::RetryAfter { source, delay } => ProviderError::RetryAfter {
+            source: Box::new(redact(*source)),
+            delay,
+        },
         ProviderError::RateLimit { retry_after, .. } => ProviderError::RateLimit {
             message: MESSAGE.into(),
             retry_after,
@@ -493,6 +498,10 @@ mod tests {
             ProviderError::Timeout(secret.into()),
             ProviderError::Request(secret.into()),
             ProviderError::InvalidResponse(secret.into()),
+            ProviderError::RetryAfter {
+                source: Box::new(ProviderError::Unavailable(secret.into())),
+                delay,
+            },
             ProviderError::RateLimit {
                 message: secret.into(),
                 retry_after: Some(delay),

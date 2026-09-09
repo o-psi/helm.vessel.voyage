@@ -776,6 +776,9 @@ impl RunOwner {
             }
             Err(AgentError::Cancelled) => (RunState::Cancelled, Some("run cancelled")),
             Err(AgentError::Checkpoint(_)) => (RunState::Failed, Some("durable checkpoint failed")),
+            Err(error) if error.is_incomplete() => {
+                (RunState::Incomplete, Some(error.public_failure_reason()))
+            }
             Err(error) => (RunState::Failed, Some(error.public_failure_reason())),
         };
         let classification = result

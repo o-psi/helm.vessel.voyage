@@ -70,8 +70,22 @@ pub(super) fn failure_summary(reason: Option<&str>) -> Option<&str> {
             | "Runtime startup failed during provider configuration."
             | "Operator action failed during setup."
             | "Operator tool failed."
-            | "Operator action failed during finalization."),
+            | "Operator action failed during finalization."
+            | "Provider authentication failed. Check credentials on the executing machine."
+            | "Provider rate limit prevented completion."
+            | "Provider temporarily unavailable."
+            | "Provider request timed out."
+            | "Provider rejected the request."
+            | "Provider returned an invalid or incomplete response."
+            | "Provider stopped before completing its response."
+            | "Local inference admission or accounting failed."
+            | "Completion records could not be verified."
+            | "Configured context limit prevented the request."
+            | "Execution policy prevented the run."
+            | "Workspace instructions could not be loaded."
+            | "Provider usage accounting overflowed."),
         ) => Some(reason),
+        Some("durable checkpoint failed") => Some("Durable checkpoint failed."),
         Some("local runtime construction or output failed") => Some("Runtime startup failed."),
         Some(crate::provider::USAGE_LIMIT_MESSAGE) => Some(crate::provider::USAGE_LIMIT_MESSAGE),
         Some("provider or runtime failed") => Some("Provider or runtime failed."),

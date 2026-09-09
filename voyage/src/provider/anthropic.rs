@@ -237,6 +237,7 @@ impl Provider for AnthropicProvider {
 
 #[derive(Default)]
 struct StreamAssembly {
+    stop_reason: Option<String>,
     service_tier: Option<String>,
     content: String,
     calls: Vec<CallAssembly>,
@@ -244,6 +245,7 @@ struct StreamAssembly {
 }
 #[derive(Default)]
 struct CallAssembly {
+    started: bool,
     id: String,
     name: String,
     arguments: String,
@@ -296,6 +298,9 @@ fn apply_stream_event(value: &Value, assembly: &mut StreamAssembly) -> Vec<Provi
                 .unwrap_or(0)
         }
         Some("message_delta") => {
+            if let Some(reason) = value.pointer("/delta/stop_reason").and_then(Value::as_str) {
+                assembly.stop_reason = Some(reason.to_owned());
+            }
             assembly.usage.output_tokens = value
                 .pointer("/usage/output_tokens")
                 .and_then(Value::as_u64)
@@ -309,6 +314,7 @@ fn apply_stream_event(value: &Value, assembly: &mut StreamAssembly) -> Vec<Provi
                 assembly.calls.push(CallAssembly::default());
             }
             let call = &mut assembly.calls[index];
+            call.started = true;
             call.id = value
                 .pointer("/content_block/id")
                 .and_then(Value::as_str)
@@ -359,10 +365,11 @@ fn apply_stream_event(value: &Value, assembly: &mut StreamAssembly) -> Vec<Provi
     events
 }
 fn finish_stream(assembly: StreamAssembly) -> Result<ModelResponse, ProviderError> {
+    validate_stop_reason(assembly.stop_reason.as_deref())?;
     let calls = assembly
         .calls
         .into_iter()
-        .filter(|call| !call.name.is_empty())
+        .filter(|call| call.started)
         .map(|c| {
             if c.id.is_empty() || c.name.is_empty() {
                 return Err(ProviderError::InvalidResponse(
@@ -432,6 +439,7 @@ fn encode_messages(messages: &[Message]) -> Result<Vec<Value>, ProviderError> {
 }
 
 fn decode_response(value: Value) -> Result<ModelResponse, ProviderError> {
+    validate_stop_reason(value.get("stop_reason").and_then(Value::as_str))?;
     let blocks = value
         .get("content")
         .and_then(Value::as_array)
@@ -485,4 +493,16 @@ fn decode_response(value: Value) -> Result<ModelResponse, ProviderError> {
                 .unwrap_or(0),
         },
     })
+}
+
+fn validate_stop_reason(reason: Option<&str>) -> Result<(), ProviderError> {
+    match reason {
+        Some("end_turn" | "tool_use" | "stop_sequence") => Ok(()),
+        Some("max_tokens" | "pause_turn" | "refusal" | "model_context_window_exceeded") => {
+            Err(ProviderError::Incomplete)
+        }
+        _ => Err(ProviderError::InvalidResponse(
+            "missing or unsupported Anthropic stop reason".into(),
+        )),
+    }
 }

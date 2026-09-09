@@ -40,6 +40,7 @@ portable-pty = "0.9"
 diffy = "0.4"
 sha2 = "0.10"
 hex = "0.4"
+httpdate = "1.0"
 crc32fast = "1"
 # Strict JPEG validation supplements the permissive image adapter.
 zune-core = "0.5"

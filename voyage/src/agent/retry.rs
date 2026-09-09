@@ -21,3 +21,26 @@ pub(super) fn jittered(ceiling: Duration, sample: u32) -> Duration {
         (nanos % 1_000_000_000) as u32,
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn equal_jitter_preserves_bounds_even_at_duration_extremes() {
+        for ceiling in [
+            Duration::ZERO,
+            Duration::from_nanos(1),
+            Duration::from_millis(500),
+            Duration::MAX,
+        ] {
+            let lower = jittered(ceiling, 0);
+            assert_eq!(lower.as_nanos(), ceiling.as_nanos() / 2);
+            assert_eq!(jittered(ceiling, u32::MAX), ceiling);
+            for sample in [1, u32::MAX / 2, u32::MAX - 1] {
+                let wait = jittered(ceiling, sample);
+                assert!(wait >= lower && wait <= ceiling);
+            }
+        }
+    }
+}

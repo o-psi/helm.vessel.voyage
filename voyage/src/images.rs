@@ -560,7 +560,10 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn store_reopen_conflicts_scope_corruption_and_branch_copy() {
+        use std::os::unix::fs::PermissionsExt;
         let root = tempfile::tempdir().unwrap();
+        // The store requires a private parent regardless of the caller's umask.
+        std::fs::set_permissions(root.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
         let session = Uuid::new_v4();
         let principal = Uuid::new_v4();
         let id = Uuid::new_v4();
@@ -588,6 +591,8 @@ mod tests {
         let store = Store::open(root.path(), session).unwrap();
         assert_eq!(store.resolve(&meta).unwrap(), bytes);
         let branch_root = tempfile::tempdir().unwrap();
+        std::fs::set_permissions(branch_root.path(), std::fs::Permissions::from_mode(0o700))
+            .unwrap();
         let mut branch = Store::open(branch_root.path(), Uuid::new_v4()).unwrap();
         assert!(branch.resolve(&meta).is_err());
         assert_eq!(store.copy_to(&mut branch, &meta).unwrap(), meta);

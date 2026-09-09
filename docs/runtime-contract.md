@@ -101,6 +101,46 @@ switching its target. Sanitize untrusted terminal text in all ordinary UI paths;
 only the controlled terminal-screen renderer interprets terminal output. Keep
 provider/subprocess diagnostics out of the TUI's display stream.
 
+## Provider outcomes, retries and accounting
+
+Native provider completion requires a supported terminal signal. OpenAI Chat
+output limits/content filtering, Anthropic output limits/pause/refusal, and an
+OpenAI Responses incomplete event produce an **incomplete** run, not successful
+completion. Malformed or unsupported terminal signals fail the run. Streamed text
+remains provisional, and tools from truncated output are not dispatched. Native
+Chat and Anthropic compatible endpoints must supply their finish/stop reason.
+The optional compatibility bridge retains its separate transport contract.
+
+Transient provider failures retry only before any text or tool fragment arrives,
+within `provider_retry_attempts`. Exponential delays use equal jitter between half
+and all of the configured delay ceiling. An explicit `Retry-After` uses the server's
+delay without jitter, including HTTP-date values and service-unavailable responses.
+A delay above `provider_retry_max_ms` stops with the original failure category;
+it is never shortened to retry early. Cancellation interrupts retry waits. Account
+exhaustion and authentication failures do not retry. These bounds apply to retry
+attempts, not ordinary successful model/tool cycles.
+
+Tool identities are checked across the complete response before dispatch. Exact
+ID/name/semantic-JSON duplicates execute once; conflicting identities or malformed
+names reject the batch without effects. IDs reused in a later response or run are
+fresh calls. Durable command deduplication is a separate contract: replaying an
+accepted command observes its original run, including after suspension. Neither
+contract provides global exactly-once external effects.
+
+Interrupted calls without durable results block another run until explicit local
+reconciliation. Reconciliation appends unknown failed results and preserves the
+original terminal outcome; it never repeats the effects. Its identity checks are
+also response-local, so reuse in a previously completed response cannot prevent
+recovery. Conflicts within the unresolved batch still refuse reconciliation.
+
+The inference ledger attributes every admitted attempt and keeps missing usage
+unknown. Reported usage from failed or incomplete streams remains there; completed
+responses rejected by tool preflight also retain their totals in the canonical run
+record. Usage is not a pricing or billing ledger. Public failure summaries identify
+the authored failure category without exposing provider bodies, credentials or
+subprocess diagnostics. Failure of a checkpoint retains recovery obligations and
+cannot authorize a provider/tool replay.
+
 ## Completion, cancellation and recovery
 
 Root terminals close before turn suspension; they have no implied lifetime between

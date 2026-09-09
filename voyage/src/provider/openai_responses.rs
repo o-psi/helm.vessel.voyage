@@ -512,7 +512,7 @@ where
                     "response.output_item.added"=>if event.pointer("/item/type").and_then(Value::as_str)==Some("function_call"){let index=output_index(&event);let call=assembly.calls.entry(index).or_default();call.id=event.pointer("/item/call_id").and_then(Value::as_str).unwrap_or_default().into();call.name=event.pointer("/item/name").and_then(Value::as_str).unwrap_or_default().into();yield ProviderStreamEvent::Delta(ProviderDelta::ToolCall{index,id:Some(call.id.clone()),name:Some(call.name.clone()),arguments:String::new()});},
                     "response.function_call_arguments.delta"=>{let index=output_index(&event);let call=assembly.calls.entry(index).or_default();let delta=event.get("delta").and_then(Value::as_str).unwrap_or_default();call.arguments.push_str(delta);yield ProviderStreamEvent::Delta(ProviderDelta::ToolCall{index,id:None,name:None,arguments:delta.into()});},
                     "response.output_item.done"=>merge_output_item(&event,&mut assembly)?,
-                    "response.completed"=>{if let Some(response)=event.get("response"){merge_final(response,&mut assembly)?;}yield ProviderStreamEvent::Completed(finish(assembly)?);return},
+                    "response.completed"=>{if let Some(response)=event.get("response"){validate_status(response)?;merge_final(response,&mut assembly)?;}yield ProviderStreamEvent::Completed(finish(assembly)?);return},
                     "response.failed"|"response.incomplete"|"response.cancelled"|"error"=>Err(decode_stream_error(&event))?,
                     _=>{}
                 }
@@ -631,6 +631,7 @@ fn finish(assembly: Assembly) -> Result<ModelResponse, ProviderError> {
 }
 
 pub(crate) fn decode_response(value: Value) -> Result<ModelResponse, ProviderError> {
+    validate_status(&value)?;
     let mut assembly = Assembly {
         service_tier: super::reported_service_tier(value.get("service_tier")),
         usage: value.get("usage").map(decode_usage).unwrap_or_default(),
@@ -746,13 +747,24 @@ fn decode_stream_error(value: &Value) -> ProviderError {
         })
         .to_owned();
     match code {
+        _ if kind == "response.incomplete" => ProviderError::Incomplete,
+        "usage_limit_reached" | "insufficient_quota" => ProviderError::UsageLimit,
         "rate_limit_exceeded" => ProviderError::RateLimit {
             message,
             retry_after: None,
         },
         "server_error" | "service_unavailable" => ProviderError::Unavailable(message),
-        _ if kind == "response.incomplete" => ProviderError::InvalidResponse(message),
         _ => ProviderError::Request(message),
+    }
+}
+
+fn validate_status(value: &Value) -> Result<(), ProviderError> {
+    match value.get("status").and_then(Value::as_str) {
+        None | Some("completed") => Ok(()),
+        Some("incomplete") => Err(ProviderError::Incomplete),
+        _ => Err(ProviderError::InvalidResponse(
+            "response did not complete".into(),
+        )),
     }
 }
 fn map_transport(error: reqwest::Error) -> ProviderError {

@@ -3687,6 +3687,7 @@ dependencies = [
  "dirs",
  "futures-util",
  "hex",
+ "httpdate",
  "image",
  "libc",
  "log",

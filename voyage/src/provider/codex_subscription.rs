@@ -624,7 +624,8 @@ fn classify_turn_error(value: &Value, status: &str) -> ProviderError {
         .pointer("/params/turn/error/codexErrorInfo")
         .and_then(Value::as_str)
     {
-        Some("rateLimitExceeded" | "usageLimitExceeded") => {
+        Some("usageLimitExceeded") => return ProviderError::UsageLimit,
+        Some("rateLimitExceeded") => {
             return ProviderError::RateLimit {
                 message,
                 retry_after: None,
@@ -640,7 +641,9 @@ fn classify_turn_error(value: &Value, status: &str) -> ProviderError {
 }
 fn classify_message(message: String) -> ProviderError {
     let lower = message.to_ascii_lowercase();
-    if lower.contains("usage limit") || lower.contains("rate limit") {
+    if lower.contains("usage limit") {
+        ProviderError::UsageLimit
+    } else if lower.contains("rate limit") {
         ProviderError::RateLimit {
             message,
             retry_after: None,
