@@ -127,9 +127,6 @@ pub async fn execute_admitted_with_controls(
         }
     };
     let prepared = async {
-        if authority.is_some() {
-            run.configure_remote_redaction(redactor(config)).await?;
-        }
         let record = run.record().await?;
         crate::participant::ParticipantTool::configured(
             owner.clone(),

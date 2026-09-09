@@ -11,9 +11,8 @@ loopback HTTP endpoint. Helm discovers the endpoint and bearer credential from t
 owned private `process-http.json` record. Commands use bounded POST requests and
 incoming durable invalidations use SSE. Vessel verifies runtime identity, serializes
 competing starts and supports explicit stop/restart.
-These account-authorized operations are separate from the existing HTTP management,
-enrollment, presence and opt-in outbound compatibility relay. The separate scoped
-HTTP process gateway binds explicit grants and current enrollment epochs. Participant
+The separate scoped HTTP process gateway supports human workspace pairing and
+session grants with current revision, expiration and revocation checks. Participant
 bindings, signed owner transfer and explicit recovery use the same supervisor. See
 [current implementation](../docs/current-state.md) and
 [process access setup](../docs/process-access.md).
@@ -25,21 +24,21 @@ cargo build --workspace --locked
 ./target/debug/vessel local-serve --directory /absolute/private-vessel \
   --voyage-binary "$PWD/target/debug/voyage"
 # Separate HTTP management/gateway service:
-./target/debug/vessel --bind 127.0.0.1:9480 --database vessel.db
+./target/debug/vessel --bind 127.0.0.1:9480 --database vessel.db \
+  --process-directory /absolute/private-vessel \
+  --public-origin https://vessel.example.com
 ```
 
 Set `VESSEL_OPERATOR_TOKEN` securely in the environment to enable authenticated
 status and diagnostics. Prefer it over a token in command arguments. Use the
-[operations guide](../docs/operations.md) for enrollment, TLS, presence and the
-explicit `--remote-execution` relay. `--coordination-control` enables control
-metadata and nomination leases, not task execution.
+[process access guide](../docs/process-access.md) for scoped grants and TLS proxy
+setup. Outbound worker mode, enrollment and its relay/control API are retired.
 
 The `/health` and `/ready` endpoints report process/database state; `/metrics`
 reports limited service metadata. `/ui` and `/v1/diagnostics` require operator
 authentication when configured. The web page is a status view, not an execution
-console. Enrollment and presence do not share private sessions or grant tool
-execution, and providers and credentials stay on the executing host. For the process supervisor,
-Helm detaches without cancelling voyages. Supervisor stop does not intentionally
+console. Providers and credentials stay on the executing host. For the process
+supervisor, Helm detaches without cancelling voyages. Supervisor stop does not intentionally
 kill independent runtimes; machine reboot still ends processes. Linux service
 installation is documented in the [installer guide](../installer/README.md).
 

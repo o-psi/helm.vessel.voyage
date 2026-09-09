@@ -18,10 +18,10 @@ Helm disconnect does not cancel a voyage. Session is the technical name for a
 voyage, conversation is its history, and a run is one execution within it.
 Configuration drafts are not sessions. A repository or project map is optional.
 
-This is first-release development. Helm chat/run/managed/workflow and outbound
-worker adapters use Vessel-supervised independent `voyage` processes. Preserve
-that boundary; do not reintroduce embedded executors. Vessel's enrollment relay
-and scoped process gateway remain distinct authority surfaces.
+This is first-release development. Helm chat/run/managed/workflow use Vessel-supervised
+independent `voyage` processes. Preserve that boundary; do not reintroduce embedded
+executors. Human Vessel connections, scoped process grants and participant bindings
+remain distinct authority surfaces. Outbound worker mode is retired; do not reintroduce it.
 Describe current behavior using [docs/current-state.md](docs/current-state.md)
 and code; label target capabilities explicitly. Do not inject planned capabilities
 into current runtime instructions. Browser console work remains deferred.
@@ -57,8 +57,8 @@ into current runtime instructions. Browser console work remains deferred.
   atomic checkpoints and canonical text. Never claim a dead process survived restart
   or replay uncertain external effects automatically.
 - The voyage process enforces local execution policy; Vessel routing and Helm
-  presentation cannot broaden it. Preserve runtime authority checks and the
-  outbound relay's transport-lease contract.
+  presentation cannot broaden it. Preserve runtime authority checks and scoped
+  grant revocation.
 - Keep provider credentials on the executing machine. Native providers must remain
   independent of Codex; the optional compatibility bridge is distinct. Preserve
   credential/billing distinctions. Do not centralize credentials across Vessels.

@@ -39,7 +39,7 @@ endpoints, credentials, policy and remembered chat preferences are covered in
 [example configuration](config.example.toml).
 
 [Operations](../docs/operations.md) covers session controls, managed sessions,
-connected local/remote voyages, supervised outbound workers, diagnostics and
+connected local/remote voyages, diagnostics and
 recovery. `helm connect` needs the companion `vessel` and `voyage` executables. See
 [security](../docs/security.md) for execution and privacy boundaries and
 [development](../docs/development.md) for repository work. Automated tests and

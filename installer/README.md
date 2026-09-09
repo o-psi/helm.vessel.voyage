@@ -3,7 +3,7 @@
 The Linux installer installs a complete release: `helm`, `vessel`, `voyage` and
 `voyage-installer`. With no action it opens an interactive review/apply/cancel
 wizard. The review is a dry run; applying performs the displayed installation.
-Provider setup and remote enrollment are separate operations. Existing
+Provider setup and remote Vessel pairing are separate operations. Existing
 configuration, credentials and voyage data are preserved.
 
 ## Install from a local release

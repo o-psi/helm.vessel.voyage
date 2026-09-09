@@ -29,12 +29,6 @@ pub struct GrantArgs {
     pub rights: Vec<String>,
     #[arg(long, default_value_t = 86400)]
     pub ttl_seconds: u64,
-    #[arg(long,requires_all=["machine","machine_epoch"])]
-    pub enrollment_database: Option<PathBuf>,
-    #[arg(long,requires_all=["enrollment_database","machine_epoch"])]
-    pub machine: Option<Uuid>,
-    #[arg(long,requires_all=["enrollment_database","machine"])]
-    pub machine_epoch: Option<u64>,
 }
 
 pub async fn issue(args: GrantArgs) -> Result<()> {
@@ -79,14 +73,6 @@ pub async fn issue(args: GrantArgs) -> Result<()> {
             .iter()
             .map(|right| serde_json::from_value(serde_json::Value::String(right.clone())))
             .collect::<std::result::Result<Vec<ProcessRight>, _>>()?;
-        let enrollment = match (args.enrollment_database, args.machine, args.machine_epoch) {
-            (Some(database_path), Some(machine_id), Some(epoch)) => Some(EnrollmentIdentity {
-                database_path: std::fs::canonicalize(database_path)?,
-                machine_id,
-                epoch,
-            }),
-            _ => None,
-        };
         let request = VesselRequest {
             protocol: voyage_protocol::vessel::VESSEL_API_VERSION,
             command: VesselCommand::Grant {
@@ -106,7 +92,6 @@ pub async fn issue(args: GrantArgs) -> Result<()> {
                 expires_at_ms: super::access::store::now()?
                     .checked_add(args.ttl_seconds * 1000)
                     .ok_or_else(|| anyhow::anyhow!("expiry overflow"))?,
-                enrollment,
                 endpoint: args
                     .endpoint
                     .ok_or_else(|| anyhow::anyhow!("endpoint required"))?,

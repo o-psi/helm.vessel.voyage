@@ -1,9 +1,6 @@
 mod auth;
-mod coordination_http;
-mod enrollment_inspection_http;
 mod http_boundary;
 mod process_http;
-mod remote_http;
 use anyhow::Result;
 use axum::{
     Json, Router,
@@ -35,23 +32,14 @@ struct Cli {
     bind: String,
     #[arg(long, default_value = "vessel.db")]
     database: PathBuf,
-    /// Private enrollment authority directory; enables authenticated attachment presence.
-    #[arg(long, requires = "public_origin")]
-    attachment_directory: Option<PathBuf>,
     /// Expose the authenticated process gateway to a private local supervisor.
-    #[arg(long, requires = "attachment_directory")]
+    #[arg(long, requires = "public_origin")]
     process_directory: Option<PathBuf>,
     /// Canonical HTTPS origin served by a TLS proxy on this host.
-    #[arg(long, requires = "attachment_directory")]
+    #[arg(long, requires = "process_directory")]
     public_origin: Option<String>,
-    /// Enable authenticated relay to explicitly running dedicated Helm remote workers.
-    #[arg(long, requires = "attachment_directory")]
-    remote_execution: bool,
-    /// Enable durable coordination metadata and nomination leases; never task execution.
-    #[arg(long, requires = "attachment_directory")]
-    coordination_control: bool,
     /// Allow HTTP only for literal loopback development origins.
-    #[arg(long, requires = "attachment_directory")]
+    #[arg(long, requires = "public_origin")]
     allow_insecure_loopback: bool,
     /// Secret required for the operator web console (or VESSEL_OPERATOR_TOKEN).
     #[arg(long, env = "VESSEL_OPERATOR_TOKEN")]
@@ -64,7 +52,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Manage provider credentials for this local executing account (not Vessel enrollment).
+    /// Manage provider credentials for this local executing account.
     Auth {
         #[command(subcommand)]
         command: auth::AuthCommand,
@@ -120,10 +108,7 @@ struct AppState {
     process_directory: Option<PathBuf>,
     database: Arc<Mutex<Connection>>,
     operator_token_hash: Option<String>,
-    attachment: Option<vessel::attachment_transport::AttachmentApi>,
-    remote: Option<remote_http::RemoteApi>,
-    control: Option<vessel::enrollment_http::EnrollmentApi>,
-    enrollment: Option<vessel::enrollment_http::EnrollmentApi>,
+    public_origin: Option<String>,
 }
 type ApiResult<T> = Result<Json<T>, (StatusCode, Json<ApiError>)>;
 
@@ -203,61 +188,27 @@ async fn main() -> Result<()> {
         Some(Command::RevokeConnection(args)) => return vessel::process::pair_cli::revoke(args),
         _ => {}
     }
-    let enrollment =
-        if let (Some(directory), Some(origin)) = (&cli.attachment_directory, &cli.public_origin) {
-            let address: std::net::SocketAddr = cli.bind.parse().map_err(|_| {
-                anyhow::anyhow!("enrollment listener requires a literal loopback bind address")
-            })?;
-            anyhow::ensure!(
-                address.ip().is_loopback(),
-                "enrollment listener must be loopback behind a local TLS proxy"
-            );
-            let token = cli
-                .operator_token
-                .as_deref()
-                .ok_or_else(|| anyhow::anyhow!("enrollment requires an operator credential"))?;
-            anyhow::ensure!(
-                token.len() >= 32 && token.len() <= 1024 && !token.chars().any(char::is_control),
-                "enrollment requires a 32-1024 byte operator credential without controls"
-            );
-            let store = vessel::enrollment::EnrollmentStore::open(
-                directory,
-                origin,
-                cli.allow_insecure_loopback,
-            )?;
-            let mut api = vessel::enrollment_http::EnrollmentApi::new(store, token)?;
-            if cli.coordination_control {
-                api.enable_control()?;
-            }
-            Some(api)
-        } else {
-            None
-        };
-    let remote = if cli.remote_execution {
-        Some(remote_http::RemoteApi::new(
-            enrollment
-                .clone()
-                .ok_or_else(|| anyhow::anyhow!("enrollment required"))?,
+    let public_origin = if let Some(origin) = &cli.public_origin {
+        let address: std::net::SocketAddr = cli.bind.parse().map_err(|_| {
+            anyhow::anyhow!("process gateway requires a literal loopback bind address")
+        })?;
+        anyhow::ensure!(
+            address.ip().is_loopback(),
+            "process gateway must be loopback behind a local TLS proxy"
+        );
+        Some(vessel::origin::validate_origin(
+            origin,
+            cli.allow_insecure_loopback,
         )?)
     } else {
         None
-    };
-    let attachment = match &remote {
-        Some(remote) => Some(remote.attachment()),
-        None => enrollment
-            .clone()
-            .map(vessel::attachment_transport::AttachmentApi::presence)
-            .transpose()?,
     };
     let database = open_database(&cli.database)?;
     let state = AppState {
         process_directory: cli.process_directory.clone(),
         database: Arc::new(Mutex::new(database)),
         operator_token_hash: cli.operator_token.as_deref().map(token_hash),
-        attachment: attachment.clone(),
-        remote,
-        control: enrollment.clone().filter(|api| api.control_enabled()),
-        enrollment: enrollment.clone(),
+        public_origin,
     };
     let app = Router::new()
         .route(
@@ -298,68 +249,21 @@ async fn main() -> Result<()> {
                     process_http::boundary,
                 )),
         )
-        .route(
-            "/v2/enrollment/machines",
-            axum::routing::post(enrollment_inspection_http::machines)
-                .layer(axum::extract::DefaultBodyLimit::max(4096))
-                .layer(middleware::from_fn_with_state(
-                    state.clone(),
-                    enrollment_inspection_http::private_response,
-                )),
-        )
-        .route(
-            "/v2/enrollment/audit",
-            axum::routing::post(enrollment_inspection_http::audit)
-                .layer(axum::extract::DefaultBodyLimit::max(4096))
-                .layer(middleware::from_fn_with_state(
-                    state.clone(),
-                    enrollment_inspection_http::private_response,
-                )),
-        )
         .route("/health", get(health))
         .route("/ready", get(readiness))
         .route("/metrics", get(metrics))
         .route("/v1/diagnostics", get(diagnostics))
         .route("/ui", get(operator_dashboard))
-        .route(
-            "/v2/coordination/command",
-            axum::routing::post(coordination_http::command),
-        )
-        .route(
-            "/v2/coordination/{installation}/{session}",
-            get(coordination_http::inspect),
-        )
-        .route(
-            "/v1/remote/{machine}/command",
-            axum::routing::post(remote_http::command),
-        )
-        .route("/v1/remote/{machine}/events", get(remote_http::watch))
         .layer(axum::extract::DefaultBodyLimit::max(
-            voyage_protocol::attachment::MAX_FRAME_BYTES,
+            voyage_protocol::vessel::MAX_VESSEL_BODY,
         ))
         .layer(middleware::from_fn(correlate))
         .with_state(state);
-    let app = if let Some(enrollment) = enrollment {
-        app.merge(enrollment.router())
-    } else {
-        app
-    };
-    let app = if let Some(attachment) = &attachment {
-        app.merge(attachment.clone().router())
-    } else {
-        app
-    };
-    // Include enrollment and attachment routers in the same receive boundary.
     let app = app.layer(middleware::from_fn(http_boundary::boundary));
     let listener = tokio::net::TcpListener::bind(&cli.bind).await?;
-    tracing::info!(address = %cli.bind, attachment_presence = attachment.is_some(), remote_execution = cli.remote_execution, "Vessel ready");
+    tracing::info!(address = %cli.bind, process_gateway = cli.process_directory.is_some(), "Vessel ready");
     axum::serve(listener, app)
-        .with_graceful_shutdown(async move {
-            shutdown_signal().await;
-            if let Some(attachment) = attachment {
-                attachment.shutdown().await;
-            }
-        })
+        .with_graceful_shutdown(shutdown_signal())
         .await?;
     Ok(())
 }
@@ -405,8 +309,8 @@ async fn readiness(State(state): State<AppState>) -> ApiResult<HealthResponse> {
 
 async fn metrics(State(state): State<AppState>) -> String {
     format!(
-        "# HELP voyage_connectivity_enabled Whether attachment presence is enabled (not remote execution).\n# TYPE voyage_connectivity_enabled gauge\nvoyage_connectivity_enabled {}\n",
-        u8::from(state.attachment.is_some())
+        "# HELP voyage_connectivity_enabled Whether the scoped process gateway is configured.\n# TYPE voyage_connectivity_enabled gauge\nvoyage_connectivity_enabled {}\n",
+        u8::from(state.process_directory.is_some())
     )
 }
 
@@ -415,18 +319,9 @@ async fn diagnostics(
     headers: HeaderMap,
 ) -> UiResult<Json<serde_json::Value>> {
     operator_auth(&state, &headers)?;
-    let connections = match &state.attachment {
-        Some(api) => api.connections().await,
-        None => Vec::new(),
-    };
     Ok(Json(serde_json::json!({
         "version": env!("CARGO_PKG_VERSION"),
-        "connectivity": if state.remote.is_some() { "outbound_managed_sessions" } else if state.attachment.is_some() { "presence_only" } else { "unavailable" },
-        "legacy_state": "not_loaded",
-        "attachment": if state.remote.is_some() { "managed_execution" } else if state.attachment.is_some() { "presence_only" } else { "disabled" },
-        "remote_execution": if state.remote.is_some() { "enabled" } else { "unavailable" },
-        "coordination_control": if state.control.is_some() { "configured" } else { "unavailable" },
-        "connections": connections,
+        "process_gateway": if state.process_directory.is_some() { "configured" } else { "unavailable" },
     })))
 }
 
@@ -529,14 +424,10 @@ async fn operator_dashboard(
     headers: HeaderMap,
 ) -> UiResult<Html<String>> {
     operator_auth(&state, &headers)?;
-    let status = if state.attachment.is_some() {
-        if state.remote.is_some() {
-            "Dedicated remote workers are available through authenticated /v1/remote operator endpoints. Local approval and cleanup remain on Helm."
-        } else {
-            "Authenticated Helm attachment presence is enabled. Remote execution is unavailable."
-        }
+    let status = if state.process_directory.is_some() {
+        "The scoped process gateway is configured. Voyage execution and approvals remain on the executing machine."
     } else {
-        "Helm connectivity is unavailable until enrollment is configured. Remote execution is unavailable."
+        "The scoped process gateway is unavailable until a process directory and public origin are configured."
     };
     Ok(Html(format!(
         "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width\"><title>Vessel</title></head><body><main><h1>Vessel</h1><p>{status}</p><p><a href=\"/v1/diagnostics\">Connection diagnostics</a></p></main></body></html>"
@@ -548,7 +439,6 @@ fn token_hash(token: &str) -> String {
 }
 
 // Do not deserialize, migrate, or overwrite the retired control_plane snapshot.
-// Future attachment storage needs an explicit new schema and migration decision.
 fn open_database(path: &std::path::Path) -> Result<Connection> {
     Ok(Connection::open(path)?)
 }

@@ -131,7 +131,6 @@ impl Supervisor {
                 rights: grant.rights.clone(),
                 expires_at_ms: grant.expires_at_ms.min(binding.expires_at_ms),
                 revoked: false,
-                enrollment: grant.enrollment.clone(),
                 token_hash: store::hash(&format!(
                     "{}{}",
                     Uuid::new_v4().simple(),
@@ -190,7 +189,6 @@ impl Supervisor {
                 rights: grant.rights.clone(),
                 expires_at_ms: grant.expires_at_ms.min(binding.expires_at_ms),
                 revoked: false,
-                enrollment: grant.enrollment.clone(),
                 token_hash: store::hash(&Uuid::new_v4().to_string()),
                 connection_binding: None,
                 parent_grant: Some(assignment.source_grant.clone()),

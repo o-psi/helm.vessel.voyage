@@ -90,16 +90,16 @@ Those limits are explicit rather than alternate embedded execution fallbacks.
 | Step | Implemented source and behavior |
 | --- | --- |
 | 1. Contracts | `crates/voyage-protocol/src/process/`: bounded versioned requests, exact session/incarnation/run identities, caller-bound immutable receipts and durable rejection, metadata event cursors/replay gaps, lifecycle, scoped grants and participant/transfer contracts. |
-| 2. Independent owner | `voyage/`: independent lifetime owner, canonical journals/checkpoints/decisions, original-UUID JSON and managed migration, run/session cleanup and host resource accounting. Ordinary/managed/workflow/outbound Helm entrypoints now use Vessel; the embedded TUI and executor wrappers are removed. |
+| 2. Independent owner | `voyage/`: independent lifetime owner, canonical journals/checkpoints/decisions, original-UUID JSON and managed migration, run/session cleanup and host resource accounting. Ordinary/managed/workflow Helm entrypoints now use Vessel; the embedded TUI and executor wrappers are removed. |
 | 3. Supervision | `vessel/src/process/`: serialized independent launch, startup preflight, authenticated health, positive stop/restart/recovery, capacity and Linux service provisioning. Unavailable owners remain fenced. Recovery exposes pending run/resource IDs and distinguishes operator attestation. |
 | 4. Multiplexing Helm | `helm/src/process_client/`: local HTTP and scoped HTTPS command/SSE routes, per-voyage drafts/history navigation/cursors/scroll/pending identities, plain and one-shot clients, durable decisions, runtime controls, real operator tools/workflows/GitHub operations, private PTY attachment and revision-bound exports. |
-| 5. Remote lifecycle | Human in-app connection manager, private remembered routes, principal-bound workspace pairing/creation, exact first-send resolution, host-private session sharing grants and HTTP gateway; current rights/workspace/epoch/revocation checks; branch, archive/restore, confirmed clear/delete, compaction and next-turn model/configuration. Credentials remain on the execution host. |
+| 5. Remote lifecycle | Human in-app connection manager, private remembered routes, principal-bound workspace pairing/creation, exact first-send resolution, host-private session sharing grants and HTTP gateway; current rights/workspace/revocation checks; branch, archive/restore, confirmed clear/delete, compaction and next-turn model/configuration. Credentials remain on the execution host. |
 | 6. Participants and owner moves | Explicit receiver bindings, bounded disclosed context, distinct subordinate sessions, immutable assignment/result/cleanup obligations, cancellation tombstones and idle reconciliation. Pinned signing identities, destination readiness, permanent source fencing and verified checkpoint courier implement explicit owner movement without timeout takeover. |
 
 The Linux installer now has real review/apply, upgrade and rollback paths; the
 browser execution console remains deferred. Native process-service
-paths outside Linux fail explicitly. The outbound enrollment compatibility route
-retains its narrower grant/lease semantics inside a supervised voyage.
+paths outside Linux fail explicitly. Outbound worker mode and its enrollment relay
+are retired; human remote connections and participant execution use the scoped gateway.
 
 ## Code disposition and runtime ownership
 
@@ -124,9 +124,9 @@ session executor. Shared code must not become competing session ownership.
 | `helm/src/terminal.rs`, `helm/src/subagent/`, `helm/src/supervision.rs`, `helm/src/todo.rs`, `helm/src/completion/`; resource tracking in `helm/src/managed.rs` | **Move and adapt** resource ownership and reconciliation into `voyage/`, retaining cleanup obligations and workspace arbitration. Agent supervision here is distinct from Vessel's new process supervision. | Voyage owns tools, subordinate agents, terminals and cleanup for its session. Vessel manages the voyage process lifecycle. |
 | Decision bridges and execution callbacks in `helm/src/tui.rs` and `helm/src/tui_runtime.rs` | **Split and replace** in-process channels with durable runtime decisions and protocol commands/events. Move decision authority into `voyage/`; retain prompts and response controls in Helm. | Voyage validates and resolves decisions; Helm presents them and sends precisely targeted responses through Vessel. |
 | `helm/src/workflow/`, `helm/src/github/`, `helm/src/extensions/` | **Split by responsibility**: move execution services and their policy/resource dependencies into `voyage/`; retain operator views and commands in Helm. | Voyage executes supported operations; Helm requests and renders them. Preserve existing workflows through the new boundary. |
-| `helm/src/tui/`, rendering in `helm/src/tui.rs`, `helm/src/markdown.rs`, `helm/src/onboarding/`, `helm/src/voyage.rs`, `helm/src/voyage_client.rs` | **Keep and adapt** interface code in `helm/`: navigation, drafts, rendering, connection setup and Vessel clients. Replace embedded runtime access and old Helm-participant assumptions. The current `voyage.rs` contains configuration drafts, not the execution runtime. | Helm owns operator interaction and local view state, never canonical session execution. |
-| `helm/src/managed.rs`, `helm/src/remote_worker.rs`, execution entrypoints in `helm/src/main.rs`; relay paths in `vessel/src/attachment_transport.rs` | **Reuse internals, replace entrypoints and topology** with the voyage executable and Vessel routing. Retire the dedicated Helm worker and direct in-process chat execution once equivalent supported workflows are connected. | All session execution runs in voyage processes; Helm clients reach them through Vessel. |
-| `vessel/src/` management, enrollment and transport code | **Keep and adapt** applicable authentication, grants and transport machinery; **build** process launch, discovery, incarnation tracking, health, stop and recovery in `vessel/`. | Vessel supervises and exposes independent voyage processes without hosting their agent loops or canonical transcripts. |
+| `helm/src/tui/`, rendering in `helm/src/tui.rs`, `helm/src/markdown.rs`, `helm/src/onboarding/`, `helm/src/voyage.rs` | **Keep and adapt** interface code in `helm/`: navigation, drafts, rendering, connection setup and Vessel clients. Replace embedded runtime access and old Helm-participant assumptions. The current `voyage.rs` contains configuration drafts, not the execution runtime. | Helm owns operator interaction and local view state, never canonical session execution. |
+| `helm/src/managed.rs`, execution entrypoints in `helm/src/main.rs` | **Keep supervised clients** using the voyage executable and Vessel routing. Dedicated outbound workers and their relay are retired; direct in-process chat execution is removed. | All session execution runs in voyage processes; Helm clients reach them through Vessel. |
+| `vessel/src/` management, pairing and transport code | **Keep and adapt** applicable authentication, grants and transport machinery; **build** process launch, discovery, incarnation tracking, health, stop and recovery in `vessel/`. | Vessel supervises and exposes independent voyage processes without hosting their agent loops or canonical transcripts. |
 | `crates/voyage-protocol/`, `crates/voyage-storage/` | **Keep shared primitives** and evolve contracts at both ends. Share wire types and private-storage mechanisms, not live executors or competing session writers. | Each process uses primitives within its authority; canonical checkpoint writes remain voyage-owned. |
 | Workspace manifests, `installer/` and release scripts | **Extend** build, packaging and service setup for the voyage binary and Vessel supervision. Linux installation, upgrades, rollback and service provisioning are implemented; reboot/logout and non-Linux deployment evidence remain separate. | Provision distinct executables and supported service lifetimes; starting Helm must not become the voyage lifetime boundary. |
 
@@ -150,8 +150,7 @@ unknown command outcomes and unsupported capabilities. A decoded frame is not an
 authenticated or authorized command.
 
 Resolve concrete endpoint authentication, service configuration and credential
-ownership here. The existing outbound Helm worker protocol can supply reusable
-code, but is not the new topology. Check both ends of any wire change.
+ownership here. Check both ends of any wire change.
 
 Exit evidence: a reviewed contract and cross-component examples for normal requests,
 stale/duplicate requests, denial, disconnect, replay gap and ambiguous delivery.
@@ -289,7 +288,9 @@ its additional evidence before being advertised.
 Temporary offline probes exercised real Helm, Vessel and voyage binaries and
 private SQLite stores. Native-provider responses came only from local HTTP fixtures;
 compatibility/MCP processes were local fixtures. These are manual observations,
-not a recreated regression suite or a claim about live provider quality.
+not a recreated regression suite or a claim about live provider quality. These
+observations belong to the revisions linked below. Outbound-worker observations
+describe the subsequently retired mode, not a supported first-release path.
 
 | Area | Observed behavior |
 | --- | --- |

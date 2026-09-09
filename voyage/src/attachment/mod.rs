@@ -1,18 +1,10 @@
-//! Attachment foundations. No network entry point is enabled by this module.
-//!
-//! Until all local CLI/TUI writers use the coordinator, these foundations must not
-//! be used to expose remote execution. See docs/security.md.
+//! Canonical session persistence and ownership.
 pub mod journal;
 
 pub mod runtime;
 
-pub mod sharing;
-
-pub mod client;
+pub mod origin;
 
 pub mod migration;
 
-/// Explicit enrollment lifecycle CLI; no execution transport.
-pub mod cli;
 pub mod local_actor;
-pub mod transport;

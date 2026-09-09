@@ -1,10 +1,5 @@
-//! Reusable management-plane authorities. HTTP adapters must authenticate operator
-//! requests before calling administrative APIs; storage alone is not HTTP auth.
-pub mod enrollment;
-
-pub mod enrollment_http;
-
-pub mod attachment_transport;
+//! Vessel supervises independent voyage processes and exposes scoped access.
+pub mod origin;
 
 #[cfg(target_os = "linux")]
 pub mod process;

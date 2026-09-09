@@ -174,8 +174,7 @@ handles still requires evidence-based explicit recovery. Restart never converts
 legacy uncertainty into observed cleanup. Construction failures before the cleanup
 coordinator is installed retain their existing conservative recovery behavior.
 
-Helm chat, one-shot runs, connected clients, workflows, managed sessions and the
-outbound worker adapter use **Helm → Vessel → voyage**. Vessel launches a separate
+Helm chat, one-shot runs, connected clients, workflows and managed sessions use **Helm → Vessel → voyage**. Vessel launches a separate
 long-lived process for each session. Only that voyage constructs the executor,
 loads execution-host credentials, admits turns and writes canonical checkpoints.
 Helm links shared configuration and presentation types but has no embedded agent
@@ -195,7 +194,7 @@ bound to one session, principal, workspace, rights, revision and expiry. Explici
 owner-approved pairing grants permit catalogue access and creation across selected
 canonical workspaces, with separate rights and runtime-checked revocation/expiry.
 They do not grant OS account or host-administrator authority. SSH transport is
-removed. Enrollment-bound legacy grants also verify the current machine epoch.
+removed.
 Provider credentials are never copied between Vessels by these transports.
 
 Vessel retains private supervision metadata, serializes starts,
@@ -506,7 +505,7 @@ configuration; no runtime is created merely by connecting or choosing a workspac
 
 See [Vessel connections](vessel-connections.md) for the owner invitation flow,
 rights, migration, expiry, recovery and tunnel requirements. This is human-client
-pairing, not outbound worker enrollment or automatic model delegation.
+pairing; model delegation uses separately accepted participant bindings.
 
 ## Model-driven Vessel coordination
 
@@ -592,7 +591,7 @@ transitions and lifecycle operations observe required cleanup. A separate privat
 channel binds exact run and terminal identity; its writes are never journalled or
 replayed. Saved terminal records do not resurrect processes after restart.
 
-## Participants, transfer and outbound compatibility
+## Participants and transfer
 
 Participant execution requires an explicit locally accepted binding, bounded
 context disclosure and a current parent grant. The receiver creates a distinct
@@ -608,16 +607,12 @@ stops before the destination verifies the checkpoint and activates a new generat
 A private courier journal makes exact retries reviewable. Reservations do not
 permit timeout takeover. Providers, credentials and live process state do not move.
 
-`helm remote-worker` activates a supervised outbound voyage and exits. A separate
-transport-only relay retains the enrollment connection without owning the canonical
-session or an agent loop. Turns wake independent voyage workers; fenced one-shot
-helpers serve suspended remote observations. Private IPC carries the current,
-bounded transport lease into each worker: authority loss cancels work and cleanup
-must be observed before suspension. This differs from an ordinary
-Helm interface disconnect, which does not cancel. Local consent withdrawal and
-legacy recovery run through the voyage executable. Enrollment alone does not share
-an existing session. The Vessel web page remains a status page; a browser execution
-console is deferred.
+Outbound worker mode and its enrollment relay are retired. There is no compatibility
+API or automatic conversion of worker installations. Retired worker registrations,
+bound journals and enrollment-bearing session grants are rejected; their private
+data is not deleted. Remote human Helm
+connections and participant execution use the scoped Vessel gateway. The browser
+execution console remains deferred.
 
 Declarative extensions, repository onboarding, configuration drafts and local
 credential enrollment retain their explicit operator workflows. See
@@ -647,6 +642,3 @@ workflow; the chooser does not silently activate them. Unrestricted does not rem
 folder limits, blocked commands or administrator policy. Built-in tools remain
 available for later access changes; MCP servers omitted when a run starts in
 read-only mode are not started by a mid-run access change.
-
-Outbound enrollment-relay commands retain their separate remote-owner receipt
-and transport-lease authority; local `Resolve` refuses remote-bound sessions.

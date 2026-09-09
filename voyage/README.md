@@ -27,7 +27,7 @@ The runtime library supplies shared configuration and data types to Helm; Helm n
 longer constructs a session executor. Additional process operations cover lifecycle,
 configuration, workflow/operator tools, private terminal attachment, scoped grants,
 participant assignments and positively fenced owner transfer. Administrative
-`recover`, `legacy-recover`, `upgrade-journal`, `remote-consent` and `host-resources`
+`recover`, `legacy-recover`, `upgrade-journal` and `host-resources`
 commands preserve explicit recovery and attestation boundaries without model calls.
 See [current state](../docs/current-state.md), [operations](../docs/operations.md),
 [configuration](../docs/configuration.md), [process access](../docs/process-access.md)

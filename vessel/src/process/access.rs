@@ -18,7 +18,6 @@ impl Supervisor {
             workspace,
             rights,
             expires_at_ms,
-            enrollment,
             endpoint,
         } = &command
         else {
@@ -72,10 +71,7 @@ impl Supervisor {
         if let Some(existing) = _serial.get(session_id) {
             ensure!(existing.workspace == workspace, "grant workspace mismatch");
         }
-        if let Some(identity) = enrollment {
-            store::enrollment(identity)?;
-        }
-        let endpoint = crate::enrollment::validate_origin(endpoint, true)
+        let endpoint = crate::origin::validate_origin(endpoint, true)
             .map_err(|_| anyhow::anyhow!("grant endpoint requires HTTPS or literal loopback"))?;
         let token = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
         let credential = if recorded && store::credential_path(&self.directory, *grant_id).exists()
@@ -98,7 +94,6 @@ impl Supervisor {
             rights: rights.clone(),
             expires_at_ms: *expires_at_ms,
             revoked: false,
-            enrollment: enrollment.clone(),
             token_hash: store::hash(&credential.token),
             connection_binding: None,
             parent_grant: None,

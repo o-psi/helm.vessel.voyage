@@ -7,24 +7,12 @@ struct Cli {
 }
 #[derive(Subcommand)]
 enum Command {
-    /// Maintain an outbound enrollment transport without an idle execution owner.
-    OutboundRelay {
-        directory: std::path::PathBuf,
-        #[arg(long)]
-        voyage_binary: Option<std::path::PathBuf>,
-    },
-    /// Read a leased remote observation without starting an execution runtime.
-    OutboundObserve {
-        directory: std::path::PathBuf,
-    },
     /// Run one supervisor-registered session owner.
     Serve(voyage::server::ServeArgs),
     /// Read one suspended-session observation without starting an execution runtime.
     ObserveSuspended(voyage::server::suspended::Args),
     /// Inspect or reconcile an unavailable incarnation under its exclusive fence.
     Recover(voyage::server::recovery::RecoverArgs),
-    /// Inspect or withdraw a dedicated outbound execution grant.
-    RemoteConsent(voyage::server::remote_consent::Args),
     /// Reconcile abandoned work in a legacy installation without replay.
     LegacyRecover(voyage::server::legacy_recovery::LegacyRecoverArgs),
     /// Upgrade an existing quiescent journal under its ownership guards.
@@ -44,32 +32,6 @@ enum Command {
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     match cli.command {
-        Command::OutboundRelay {
-            directory,
-            voyage_binary,
-        } => {
-            #[cfg(unix)]
-            {
-                voyage::server::outbound_relay(directory, voyage_binary).await
-            }
-            #[cfg(not(unix))]
-            {
-                let _ = (directory, voyage_binary);
-                anyhow::bail!("outbound relay unsupported on this platform")
-            }
-        }
-        Command::OutboundObserve { directory } => {
-            #[cfg(unix)]
-            {
-                voyage::server::outbound_observe(directory).await
-            }
-            #[cfg(not(unix))]
-            {
-                let _ = directory;
-                anyhow::bail!("outbound observation unsupported on this platform")
-            }
-        }
-        Command::RemoteConsent(args) => voyage::server::remote_consent::run(args).await,
         Command::LegacyRecover(args) => {
             println!("{}", voyage::server::legacy_recovery::recover(args).await?);
             Ok(())

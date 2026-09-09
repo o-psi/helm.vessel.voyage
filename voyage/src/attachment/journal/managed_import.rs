@@ -9,7 +9,6 @@ impl Journal {
         transfer: Uuid,
         revision: u64,
         workspace: &Path,
-        allow_remote: bool,
     ) -> Result<()> {
         if self.json_import_finalized(session, transfer)? {
             let provenance: String = self.connection.query_row(
@@ -92,22 +91,6 @@ impl Journal {
                     && session_resources::pending(&source.connection, session)? == 0,
                 "managed source requires observed cleanup"
             );
-            let remote: bool = source.connection.query_row(
-                "SELECT EXISTS(SELECT 1 FROM remote_session WHERE session_id=?1)",
-                [session.to_string()],
-                |r| r.get(0),
-            )?;
-            ensure!(
-                !remote || allow_remote,
-                "remote relay journals require outbound migration"
-            );
-            if remote {
-                let count: i64 =
-                    source
-                        .connection
-                        .query_row("SELECT count(*) FROM sessions", [], |r| r.get(0))?;
-                ensure!(count == 1, "outbound migration requires dedicated journal");
-            }
         }
         self.connection.execute_batch("CREATE TABLE IF NOT EXISTS managed_import(session_id TEXT PRIMARY KEY,provenance TEXT NOT NULL)")?;
         let prior: Option<String> = self
@@ -163,22 +146,6 @@ impl Journal {
                         ),
                         [session.to_string()],
                     )?;
-                }
-                if allow_remote {
-                    for table in [
-                        "remote_session",
-                        "remote_cleanup_attestations",
-                        "remote_text",
-                        "remote_receipts",
-                        "remote_events",
-                        "remote_tools",
-                        "remote_withdrawal",
-                    ] {
-                        tx.execute(
-                            &format!("INSERT INTO {table} SELECT * FROM legacy.{table}"),
-                            [],
-                        )?;
-                    }
                 }
                 // These runtime tables are absent from older journals; when present
                 // preserve only rows attributed to the selected canonical session.
@@ -253,9 +220,6 @@ impl Journal {
             "UPDATE steering SET record=json_set(record,'$.request.text','') WHERE session_id=?1",
             [session.to_string()],
         )?;
-        if allow_remote {
-            tx.execute("DELETE FROM remote_events", [])?;
-        }
         let decisions: bool = tx.query_row(
             "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE name='process_decisions')",
             [],

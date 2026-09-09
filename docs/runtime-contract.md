@@ -266,6 +266,3 @@ Long-lived event waits do not hold admission/dispatch locks or stall the listene
 Suspension and mutation dispatch are mutually exclusive. Accepted request handlers
 are drained on retirement, and queued sockets receive explicit non-dispatch where
 possible; unavoidable connection loss is handled by durable resolution.
-
-Outbound enrollment-relay commands retain their separate remote-owner receipt
-and transport-lease authority; local `Resolve` refuses remote-bound sessions.

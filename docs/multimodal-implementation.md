@@ -151,9 +151,8 @@ transcripts, exports and diagnostic records contain no image bytes.
 
 Journal schema 9 prevents older text-only runtimes from silently rewriting image
 history. An idle v8 owner promotes its schema under its execution fence; older
-schemas require the explicit quiescent upgrade. Image-bearing owner transfer,
-legacy JSON-store image branching, and the separate outbound enrollment relay are
-not enabled by these public image operations and refuse unsupported paths.
+schemas require the explicit quiescent upgrade. Image-bearing owner transfer and
+legacy JSON-store image branching are not enabled by these public image operations and refuse unsupported paths.
 
 Native OpenAI Chat Completions uses `text`/`image_url`; Responses and native ChatGPT
 OAuth use `input_text`/`input_image`; Anthropic uses text and base64 image-source

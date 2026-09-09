@@ -57,7 +57,7 @@ pub(super) async fn listen(directory: PathBuf, state: Arc<State>) -> Result<()> 
     loop {
         tokio::select! {
             _=idle.tick() => {
-                if suspensions.is_empty() && !matches!(state.registration.initialize, Some(voyage_protocol::process::RuntimeInitialization::Outbound { .. })) {
+                if suspensions.is_empty() {
                     let state = state.clone();
                     suspensions.spawn(async move { super::suspension::suspend(&state).await });
                 }
@@ -133,13 +133,6 @@ pub(super) async fn listen(directory: PathBuf, state: Arc<State>) -> Result<()> 
         while clients.join_next().await.is_some() {}
     })
     .await;
-    let relay = match state.outbound_task.lock().await.take() {
-        Some(task) => matches!(
-            tokio::time::timeout(std::time::Duration::from_secs(75), task).await,
-            Ok(Ok(_))
-        ),
-        None => true,
-    };
     let run_cleanup = state
         .cleanup
         .wait(std::time::Duration::from_secs(60), 1)
@@ -148,8 +141,7 @@ pub(super) async fn listen(directory: PathBuf, state: Arc<State>) -> Result<()> 
     let compatibility = crate::provider::shutdown_compatibility().await;
     let snapshot = state.owner.process_snapshot().await?;
     let session_resources = state.owner.session_resources().await?;
-    let observed = relay
-        && run_cleanup
+    let observed = run_cleanup
         && retained.is_ok()
         && session_resources.as_array().is_some_and(Vec::is_empty)
         && cleanup.is_ok()

@@ -1,5 +1,4 @@
 //! Private workflow input restoration and bounded cancellation notices.
-use crate::attachment_ui::attachment_notice;
 use anyhow::Result;
 // A stalled terminal (or full stderr pipe) must not obstruct cancellation after
 // native mode restoration. The process exits after this bounded best effort.
@@ -25,9 +24,17 @@ pub(crate) async fn prepare_workflow(
             };
             // A stalled terminal may hold stderr's lock. Restoration has already
             // completed; bound the notice and never await a blocked input thread.
-            attachment_notice(message).await;
+            notice(message).await;
             std::process::exit(status)
         }
         result => result,
     }
+}
+
+async fn notice(message: &'static str) {
+    let _ = tokio::time::timeout(
+        std::time::Duration::from_millis(100),
+        tokio::task::spawn_blocking(move || eprintln!("{message}")),
+    )
+    .await;
 }

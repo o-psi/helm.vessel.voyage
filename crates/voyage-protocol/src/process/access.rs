@@ -1,4 +1,4 @@
-//! Explicit session grants. Enrollment membership alone is never an execution grant.
+//! Explicit session grants, distinct from workspace connection authority.
 use super::RuntimeCommand;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -29,14 +29,6 @@ pub struct GrantBinding {
     pub principal_id: Uuid,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct EnrollmentIdentity {
-    pub database_path: PathBuf,
-    pub machine_id: Uuid,
-    pub epoch: u64,
-}
-
 /// Host-private authority record; never include this record in public snapshots.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -49,7 +41,6 @@ pub struct ProcessGrant {
     pub rights: Vec<ProcessRight>,
     pub expires_at_ms: u64,
     pub revoked: bool,
-    pub enrollment: Option<EnrollmentIdentity>,
     pub token_hash: String,
     #[serde(default)]
     pub parent_grant: Option<GrantBinding>,

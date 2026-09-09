@@ -1,8 +1,7 @@
 # Operating the current implementation
 
 Helm interfaces reach independent voyage processes through Vessel. Ordinary chat,
-one-shot runs, managed sessions and the outbound compatibility adapter share that
-process boundary. See [Current state](current-state.md) and the
+one-shot runs and managed sessions share that process boundary. See [Current state](current-state.md) and the
 [Architecture](architecture.md). Scoped grants, participants and signed owner moves
 are documented in [process access](process-access.md).
 
@@ -381,99 +380,3 @@ dropping an execution future does not prove its work stopped. Journal schema is
 currently 8. Stop owners and resolve interrupted work before explicitly running
 `helm managed --directory "$STORE" upgrade`. Keep private backups; never remove
 cleanup or ownership records to force admission.
-
-## Supervised outbound compatibility relay
-
-The compatibility relay exposes one dedicated supervised voyage through an outgoing
-enrollment connection. `helm remote-worker` starts it through local Vessel and exits. Enrollment
-and presence alone grant no execution or access to existing private sessions.
-Configure a private Vessel authority directory, operator token and canonical HTTPS
-origin behind a TLS proxy on the Vessel host. Supply the token through the
-`VESSEL_OPERATOR_TOKEN` environment variable rather than putting it in shell history.
-
-```sh
-vessel --bind 127.0.0.1:9480 --database /absolute/vessel.db \
-  --attachment-directory /absolute/vessel-authority \
-  --public-origin https://vessel.example --remote-execution
-helm attachment --directory /absolute/enrollment --origin https://vessel.example \
-  enroll --invitation-id INVITATION_UUID
-helm attachment --directory /absolute/enrollment status
-helm --config /absolute/provider.toml --workspace /absolute/project remote-worker \
-  --directory /absolute/remote-installation --enrollment-directory /absolute/enrollment \
-  --origin https://vessel.example
-```
-
-The authenticated operator creates an invitation with
-`POST /v2/enrollment/invitations`, JSON body `{"ttl_ms":300000}`,
-`Content-Type: application/json` and `x-voyage-request: 2`. Use an authenticated
-HTTP client that supplies the operator credential privately; do not place it in
-URL parameters or command arguments. Invitation TTL must be 1–900,000 ms. The
-response contains `id`, the secret `key`, and `expires_at_ms`. Distribute the ID and
-one-use key through a private channel, not chat or logs. Invitation creation does
-not itself enroll a machine. Current enrollment administration also supports
-`POST /v2/enrollment/revoke` with `machine_id`, `expected_epoch` and a stable
-`transaction_id`; revocation is an explicit exact-epoch action.
-
-Obtain an invitation and its one-use secret from the authenticated Vessel operator.
-Enter the secret only at the hidden prompt; automation uses `--invitation-key-stdin`
-with private piped input. HTTPS is required outside explicitly allowed literal
-loopback development origins. The voyage connects outbound and needs no inbound task port.
-The runtime creates a new dedicated session and later reopens only its exact binding;
-it cannot relabel an existing private journal. Workspace/model bindings stay fixed.
-Providers, credentials, execution policy and cleanup remain on the executing host.
-
-Authenticated operator routes are `POST /v1/remote/MACHINE_UUID/command` and
-`GET /v1/remote/MACHINE_UUID/events?session_id=SESSION_UUID&after=0&limit=32`.
-POST requires `x-voyage-request: 2`; supplied browser origin/site headers must pass
-origin checks. The command envelope carries a UUID, expiry and operation: `list`,
-`inspect`, `submit` against an expected revision, or `cancel` for an exact run.
-For example, the following request body inspects an existing session; substitute
-actual UUIDs and an expiry in Unix milliseconds within five minutes:
-
-```json
-{
-  "command_id": "COMMAND_UUID",
-  "expires_at_ms": 1234567890000,
-  "operation": {"type": "inspect", "session_id": "SESSION_UUID"}
-}
-```
-
-For submission, use `{"type":"submit","session_id":"SESSION_UUID",`
-`"expected_revision":0,"prompt":"Describe the workspace"}` as the operation.
-The numeric revision must come from the current inspection. A cancel operation
-contains `type`, `session_id` and `run_id`; a list contains `type`, `after` and
-`limit`. These are operation payloads, not additional enabled CLI commands.
-Preserve the entire envelope on uncertain retries. Inspection returns metadata,
-usage and cleanup, not canonical history or provider continuation. Replay uses its
-own contiguous public cursor; `snapshot_required` means inspect and resume there.
-These compatibility routes do not provide create/history/model/root editing or
-approval delegation. The separate scoped process gateway provides explicitly
-granted history, lifecycle/model and decision operations; host/root configuration
-requires local account-owner access. Disconnecting an HTTP observer does
-not cancel execution; losing the
-worker's Vessel link conservatively cancels it and stops dispatch.
-
-## Withdraw and recover a remote grant
-
-```sh
-helm remote-consent --directory /absolute/remote-installation inspect
-helm remote-consent --directory /absolute/remote-installation preview \
-  --session-id SESSION_UUID --operation-id OPERATION_UUID --expected-revision GRANT_REVISION
-helm remote-consent --directory /absolute/remote-installation withdraw \
-  --session-id SESSION_UUID --operation-id OPERATION_UUID --expected-revision GRANT_REVISION \
-  --confirm CONFIRMATION_DIGEST
-helm remote-worker --directory /absolute/remote-installation --recover
-```
-
-Review the preview's destination and identity before withdrawal. Grant revision is
-separate from session revision. Withdrawal permanently fences this grant's later
-remote admission, reads and event publication, and requests cancellation. It cannot
-recall already delivered/queued bytes. Preserve the exact withdrawal for receipt
-recovery after uncertain acknowledgment. Restart cannot restore the retired grant;
-future authorization needs a deliberate new dedicated installation and empty session.
-
-Remote recovery is local and never reconnects. Its `--acknowledge-cleanup RUN_UUID`
-and `--reconcile-tools RUN_UUID --expected-revision REVISION` options have the same
-attestation/uncertainty meaning as managed recovery. Check pending cleanup locally
-because withdrawal prevents a final public event. See [Security](security.md) for
-trust boundaries and [Quality](quality.md) for the current verification status.

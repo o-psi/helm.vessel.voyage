@@ -137,28 +137,6 @@ impl Supervisor {
             .clone())
     }
 
-    pub(super) async fn wake(&self, session: Uuid) -> Result<serde_json::Value> {
-        let lock = self.lifecycle_lock(session).await?;
-        let _guard = lock.lock().await;
-        let registration = self.registration(session).await?;
-        let directory = registry::directory(&self.directory, session);
-        let info = routing::inspect(&directory, &registration).await;
-        if info.state == ProcessState::Live {
-            return Ok(serde_json::to_value(info)?);
-        }
-        if info.state == ProcessState::Unavailable {
-            self.recover_abandoned(session, registration.incarnation)
-                .await?;
-        } else {
-            ensure!(
-                info.state == ProcessState::Suspended,
-                "owner cannot be resumed from its current lifecycle state"
-            );
-        }
-        self.restart(Uuid::new_v4(), session, registration.incarnation)
-            .await
-    }
-
     pub(super) async fn forward_resuming(
         &self,
         session: Uuid,

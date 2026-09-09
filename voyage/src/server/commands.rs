@@ -112,7 +112,7 @@ pub(super) async fn dispatch_admitted(
             wait_ms,
         } => super::observations::observe(state, after, limit, wait_ms).await,
         RuntimeCommand::Health => {
-            let mut capabilities = vec![
+            let capabilities = vec![
                 "snapshot",
                 "read_artifact",
                 "history",
@@ -146,26 +146,8 @@ pub(super) async fn dispatch_admitted(
                 "relinquish",
                 "stop",
             ];
-            if matches!(
-                state.registration.initialize,
-                Some(voyage_protocol::process::RuntimeInitialization::Outbound { .. })
-            ) {
-                capabilities.retain(|capability| {
-                    !matches!(
-                        *capability,
-                        "submit"
-                            | "steer"
-                            | "set_model"
-                            | "set_access"
-                            | "operator_tool"
-                            | "set_inference"
-                            | "configure"
-                            | "workflow_submit"
-                    )
-                });
-            }
             Ok(
-                json!({"pid":std::process::id(),"session_id":state.registration.session_id,"incarnation":state.registration.incarnation,"capabilities":capabilities,"outbound":state.outbound_status.lock().await.clone(),"decisions":"bounded_120_seconds"}),
+                json!({"pid":std::process::id(),"session_id":state.registration.session_id,"incarnation":state.registration.incarnation,"capabilities":capabilities,"decisions":"bounded_120_seconds"}),
             )
         }
         RuntimeCommand::Snapshot => {
@@ -202,7 +184,6 @@ pub(super) async fn dispatch_admitted(
             .ok()
             .and_then(|p| serde_json::to_value(p.policy().access_mode()).ok())
             .unwrap_or(serde_json::Value::Null);
-            snapshot["outbound"] = state.outbound_status.lock().await.clone();
             snapshot["decisions"] = state
                 .owner
                 .decisions(state.registration.incarnation)

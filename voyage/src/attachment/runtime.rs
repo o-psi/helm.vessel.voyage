@@ -126,26 +126,6 @@ impl ManagedSessionOwner {
         })
         .await?
     }
-    /// Build a current-grant observer before starting remote execution. Its reads
-    /// cooperate with this owner's commits without weakening cross-process fences.
-    pub async fn remote_grant_observer(
-        &self,
-        binding: super::journal::RemoteBinding,
-    ) -> anyhow::Result<super::journal::RemoteGrantObserver> {
-        let shared = self.store.clone();
-        tokio::task::spawn_blocking(move || {
-            let mut store = shared
-                .lock()
-                .map_err(|_| anyhow::anyhow!("managed owner poisoned"))?;
-            anyhow::ensure!(
-                store.turn.upgrade().is_none(),
-                "grant observer requires idle owner"
-            );
-            let session = store.session_id;
-            store.journal.remote_grant_observer(binding, session)
-        })
-        .await?
-    }
     pub fn session_id(&self) -> Uuid {
         self.session_id
     }
@@ -209,119 +189,6 @@ impl ManagedSessionOwner {
             anyhow::ensure!(store.turn.upgrade().is_none(), "managed turn still owned");
             let Store { journal, guard, .. } = &mut *store;
             journal.reconcile_local_tools(guard, &request)
-        })
-        .await?
-    }
-    /// Observe a dedicated remote projection under this session's existing connection.
-    pub async fn remote_snapshot(
-        &self,
-        binding: super::journal::RemoteBinding,
-        authority: Arc<dyn crate::policy::ExecutionAuthority>,
-    ) -> anyhow::Result<voyage_protocol::stream::Reply> {
-        let shared = self.store.clone();
-        tokio::task::spawn_blocking(move || {
-            let store = shared
-                .lock()
-                .map_err(|_| anyhow::anyhow!("managed owner poisoned"))?;
-            authority.check()?;
-            let result = store.journal.remote_snapshot(&binding, store.session_id)?;
-            authority.check()?;
-            Ok(result)
-        })
-        .await?
-    }
-    pub async fn remote_replay(
-        &self,
-        binding: super::journal::RemoteBinding,
-        after: u64,
-        limit: usize,
-        authority: Arc<dyn crate::policy::ExecutionAuthority>,
-    ) -> anyhow::Result<super::journal::RemoteReplay> {
-        let shared = self.store.clone();
-        tokio::task::spawn_blocking(move || {
-            let store = shared
-                .lock()
-                .map_err(|_| anyhow::anyhow!("managed owner poisoned"))?;
-            authority.check()?;
-            let result = store
-                .journal
-                .remote_replay(&binding, store.session_id, after, limit)?;
-            authority.check()?;
-            Ok(result)
-        })
-        .await?
-    }
-    /// The deadline and authority are sampled after waiting for this owner's connection,
-    /// inside the new-receipt transaction; existing receipts still recheck authority.
-    pub async fn remote_cancel(
-        &self,
-        binding: super::journal::RemoteBinding,
-        command: voyage_protocol::attachment::Command,
-        authority: Arc<dyn crate::policy::ExecutionAuthority>,
-    ) -> anyhow::Result<super::journal::RemoteCancelReceipt> {
-        self.remote_cancel_clock(binding, command, authority, Arc::new(SystemClock))
-            .await
-    }
-    async fn remote_cancel_clock(
-        &self,
-        binding: super::journal::RemoteBinding,
-        command: voyage_protocol::attachment::Command,
-        authority: Arc<dyn crate::policy::ExecutionAuthority>,
-        clock: Arc<dyn RuntimeClock>,
-    ) -> anyhow::Result<super::journal::RemoteCancelReceipt> {
-        anyhow::ensure!(
-            matches!(&command.operation, voyage_protocol::attachment::Operation::Cancel {session_id,..} if *session_id == self.session_id),
-            "managed owner session mismatch"
-        );
-        let shared = self.store.clone();
-        tokio::task::spawn_blocking(move || {
-            let mut store = shared
-                .lock()
-                .map_err(|_| anyhow::anyhow!("managed owner poisoned"))?;
-            authority.check()?;
-            store
-                .journal
-                .remote_cancel_with_clock(&binding, &command, || {
-                    authority.check()?;
-                    clock.now_ms()
-                })
-        })
-        .await?
-    }
-    pub async fn attest_remote_cleanup(
-        &self,
-        binding: super::journal::RemoteBinding,
-        run_id: Uuid,
-        actor: super::local_actor::LocalActor,
-    ) -> anyhow::Result<()> {
-        let shared = self.store.clone();
-        tokio::task::spawn_blocking(move || {
-            let mut store = shared
-                .lock()
-                .map_err(|_| anyhow::anyhow!("managed owner poisoned"))?;
-            anyhow::ensure!(store.turn.upgrade().is_none(), "managed turn still owned");
-            let Store { journal, guard, .. } = &mut *store;
-            journal.attest_remote_cleanup(guard, &binding, run_id, &actor)
-        })
-        .await?
-    }
-    pub async fn reconcile_remote_tools(
-        &self,
-        binding: super::journal::RemoteBinding,
-        request: super::journal::LocalReconcileRequest,
-    ) -> anyhow::Result<super::journal::LocalReconcileOutcome> {
-        anyhow::ensure!(
-            request.session_id == self.session_id,
-            "managed owner session mismatch"
-        );
-        let shared = self.store.clone();
-        tokio::task::spawn_blocking(move || {
-            let mut store = shared
-                .lock()
-                .map_err(|_| anyhow::anyhow!("managed owner poisoned"))?;
-            anyhow::ensure!(store.turn.upgrade().is_none(), "managed turn still owned");
-            let Store { journal, guard, .. } = &mut *store;
-            journal.reconcile_remote_tools(guard, &request, &binding)
         })
         .await?
     }
@@ -568,18 +435,6 @@ impl RunOwner {
         .await
         .map_err(|_| CheckpointError)?
     }
-    pub async fn configure_remote_redaction(
-        &self,
-        redactor: Arc<crate::tools::Redactor>,
-    ) -> Result<(), CheckpointError> {
-        self.storage(move |store| {
-            store
-                .journal
-                .configure_remote_redaction(&store.guard, store.run_id, redactor)
-        })
-        .await
-    }
-
     /// Convenience entrypoint; duplicates remain readable without execution ownership.
     pub async fn admit(directory: PathBuf, request: TurnAdmission) -> anyhow::Result<Admission> {
         Self::admit_with_clock(directory, request, Arc::new(SystemClock)).await

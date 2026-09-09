@@ -147,7 +147,7 @@ missing session ID into unrestricted access.
 The executing account owner creates/approves a pairing invitation, using a local
 administrative action or a narrowly scoped authenticated approval page. Helm's
 connection panel redeems it over HTTPS. Design this as a distinct human-client
-pairing flow, not outbound-worker enrollment or participant-Vessel execution.
+pairing flow; participant-Vessel execution uses its own accepted binding.
 
 Invitations must be short-lived, one-time, rate-limited and bound to the intended
 Vessel, principal and reviewed workspace/rights scope. Use a private connection

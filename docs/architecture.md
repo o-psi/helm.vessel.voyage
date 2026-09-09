@@ -103,8 +103,7 @@ assignment and cannot become a second canonical session owner.
 The initial implementation must establish the single-owner process boundary and
 mixed local/remote management. Participant execution and moving a voyage to another
 Vessel require additional explicit contracts and evidence. Exact inter-Vessel
-routing, discovery and transport negotiation are implementation decisions; the
-current outbound Helm attachment protocol does not implement this target topology.
+routing, discovery and transport negotiation are implementation decisions.
 Do not silently invent a central mandatory Vessel or automatic owner failover.
 
 ## Lifecycle and failure isolation

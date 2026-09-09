@@ -31,7 +31,6 @@ pub use voyage_runtime::titles;
 pub use voyage_runtime::todo;
 pub use voyage_runtime::tools;
 pub mod voyage;
-pub mod voyage_client;
 pub use voyage_runtime::workflow;
 
 pub use agent::{Agent, AgentEvent, AgentOutcome, EventSink};

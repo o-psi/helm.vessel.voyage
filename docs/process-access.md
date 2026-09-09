@@ -28,19 +28,16 @@ start. Commands use bounded POST requests. Helm opens an authenticated SSE respo
 for durable invalidations, then retrieves canonical snapshots and output through
 ordinary commands. A grant credential for remote HTTPS access instead binds one
 principal, session UUID, canonical workspace, explicit rights and expiration.
-Enrollment alone never grants process execution. An optional machine/epoch binding
-also checks the existing enrollment database at admission and execution dispatch.
 
 Run the private loopback HTTP service before enabling the scoped HTTPS gateway. The
-gateway uses the existing enrollment listener behind a local HTTPS proxy:
+gateway runs a separate listener behind a local HTTPS proxy:
 
 ```sh
 vessel local-serve --directory /home/alice/.local/state/voyage/vessel \
   --voyage-binary /home/alice/.local/bin/voyage
 
-# Set VESSEL_OPERATOR_TOKEN through the service's private environment.
+# Optional status/diagnostics access uses VESSEL_OPERATOR_TOKEN in a private environment.
 vessel --bind 127.0.0.1:8080 \
-  --attachment-directory /home/alice/.local/state/voyage/enrollment \
   --process-directory /home/alice/.local/state/voyage/vessel \
   --public-origin https://vessel.example.com
 ```
@@ -98,8 +95,8 @@ vessel process-revoke --directory /home/alice/.local/state/voyage/vessel \
   --command-id 44444444-4444-4444-8444-444444444444
 ```
 
-Runtime admission and ongoing execution recheck grant revision, expiry, revocation
-and optional enrollment epoch. Revocation requests cancellation of owned execution;
+Runtime admission and ongoing execution recheck grant revision, expiry and revocation.
+Revocation requests cancellation of owned execution;
 cleanup is recorded only after it is observed. A revoked client cannot infer that a
 previously transmitted command was refused: retrieve its durable receipt using
 currently authorized access. Reusing an ID with a changed payload is rejected.
@@ -362,8 +359,7 @@ new API. Old public endpoints and the pre-HTTP local socket fallback are not ser
 Already-running voyage processes retain private protocol v1 and do
 not need to be killed for the public API change. Pending Helm operation payloads
 retain their serialized names, command IDs, revisions and deadlines, so recovery
-continues to resolve the original command rather than replay it. Enrollment-relay
-wire protocols and transport-lease authority are separate and unchanged.
+continues to resolve the original command rather than replay it.
 
 Supervisor registrations and command IDs, grant hashes/credentials, accepted
 participant bindings/assignments, trusted Vessel keys, signed transfer preparations

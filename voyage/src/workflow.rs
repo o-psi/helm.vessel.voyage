@@ -38,7 +38,6 @@ pub const RESERVED: &[&str] = &[
     "config",
     "doctor",
     "auth",
-    "attachment",
     "onboard",
     "extension",
     "inference",
@@ -68,8 +67,6 @@ pub const RESERVED: &[&str] = &[
     "log-format",
     "version",
     "managed",
-    "remote-worker",
-    "remote-consent",
 ];
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]

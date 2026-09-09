@@ -108,24 +108,6 @@ impl Journal {
         guard: &ExecutionGuard,
         request: &LocalReconcileRequest,
     ) -> Result<LocalReconcileOutcome> {
-        self.reconcile_tools_authorized(guard, request, None)
-    }
-    /// Local-only recovery of a dedicated remote run. The receipt records the
-    /// verified installation actor, not an impersonated remote principal.
-    pub fn reconcile_remote_tools(
-        &mut self,
-        guard: &ExecutionGuard,
-        request: &LocalReconcileRequest,
-        binding: &super::remote::RemoteBinding,
-    ) -> Result<LocalReconcileOutcome> {
-        self.reconcile_tools_authorized(guard, request, Some(binding))
-    }
-    fn reconcile_tools_authorized(
-        &mut self,
-        guard: &ExecutionGuard,
-        request: &LocalReconcileRequest,
-        binding: Option<&super::remote::RemoteBinding>,
-    ) -> Result<LocalReconcileOutcome> {
         self.check_guard(guard, request.session_id)?;
         ensure!(
             self.opened_schema >= 6,
@@ -136,24 +118,12 @@ impl Journal {
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         check_transaction_schema(&tx, self.opened_schema)?;
         let run = read_run(&tx, request.run_id)?;
-        if let Some(binding) = binding {
-            super::remote::require(&tx, binding, request.session_id)?;
-            ensure!(
-                run.session_id == request.session_id
-                    && run.machine_id == binding.machine_id
-                    && run.principal_id == binding.owner_id
-                    && request.installation_id == binding.local_installation_id
-                    && request.principal_id == binding.local_principal_id,
-                "remote recovery attribution mismatch"
-            );
-        } else {
-            ensure!(
-                run.session_id == request.session_id
-                    && run.machine_id == request.installation_id
-                    && run.principal_id == request.principal_id,
-                "reconciliation actor or run mismatch"
-            );
-        }
+        ensure!(
+            run.session_id == request.session_id
+                && run.machine_id == request.installation_id
+                && run.principal_id == request.principal_id,
+            "reconciliation actor or run mismatch"
+        );
         let existing: Option<(String, String)> = tx.query_row(
             "SELECT session_id,record FROM local_tool_reconciliations WHERE run_id=?1 AND length(CAST(record AS BLOB))<=?2",
             params![request.run_id.to_string(), MAX_RECEIPT], |r| Ok((r.get(0)?,r.get(1)?)),

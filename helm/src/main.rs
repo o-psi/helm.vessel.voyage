@@ -7,38 +7,21 @@ use std::{
 };
 use tracing_subscriber::EnvFilter;
 use voyage_runtime::build::redactor;
-mod attachment_ui;
 mod auth;
 mod catalogue;
 mod cli;
 mod diagnostics;
 mod logging;
 mod workflow_input;
-use attachment_ui::{attachment_connect, attachment_interrupt, attachment_notice};
 use catalogue::list_sessions;
 use cli::*;
 use diagnostics::{doctor, list_models, print_config};
 use logging::{command_uses_full_screen_tui, tui_log_file};
 use workflow_input::prepare_workflow;
 mod managed;
-mod remote_consent;
-mod remote_worker;
 #[tokio::main]
 async fn main() -> Result<()> {
-    let mut cli = match Cli::try_parse() {
-        Ok(cli) => cli,
-        Err(error)
-            if std::env::args_os().any(|arg| arg == "attachment")
-                && !matches!(
-                    error.kind(),
-                    clap::error::ErrorKind::DisplayHelp | clap::error::ErrorKind::DisplayVersion
-                ) =>
-        {
-            eprintln!("invalid attachment arguments; use helm attachment --help");
-            std::process::exit(2);
-        }
-        Err(error) => error.exit(),
-    };
+    let mut cli = Cli::parse();
     if matches!(&cli.command, Some(Command::Connect(_))) {
         let creating = matches!(&cli.command, Some(Command::Connect(args))
             if args.command.as_ref().is_some_and(helm::process_client::cli::ConnectedCommand::uses_host_workspace));
@@ -122,48 +105,9 @@ async fn main() -> Result<()> {
                         | Command::Github(_)
                 )
             ) || matches!(&cli.command, Some(Command::Workflow(args)) if matches!(args.command, helm::workflow::WorkflowCommand::Run(_)))
-                || matches!(&cli.command, Some(Command::Managed(args)) if !args.administrative())
-                || matches!(&cli.command, Some(Command::RemoteWorker(args)) if !args.recover),
+                || matches!(&cli.command, Some(Command::Managed(args)) if !args.administrative()),
             "policy selection requires an execution or model-discovery invocation"
         );
-    }
-    // Enrollment never loads provider config or initializes runtime/session logs.
-    if let Some(Command::Attachment(args)) = cli.command {
-        if matches!(
-            &args.command,
-            helm::attachment::cli::AttachmentCommand::Connect(_)
-        ) {
-            return attachment_connect(args).await;
-        }
-        let prompt = helm::attachment::cli::prompt::PromptControl::default();
-        return tokio::select! { biased;
-            _=attachment_interrupt()=>{
-                let notice = if prompt.cancel_and_restore().is_err(){"attachment terminal restoration failed"}else{"attachment operation interrupted; inspect status and resume pending work"};
-                attachment_notice(notice).await;std::process::exit(130)
-            },
-            result=helm::attachment::cli::run_with_prompt(args,prompt.clone())=>match result {
-                Err(helm::attachment::cli::CliError::Cancelled)=>{attachment_notice("attachment input cancelled").await;std::process::exit(130)},
-                other=>other.map_err(anyhow::Error::from),
-            },
-        };
-    }
-    if matches!(&cli.command, Some(Command::RemoteConsent(_))) {
-        let Some(Command::RemoteConsent(args)) = cli.command else {
-            unreachable!()
-        };
-        return remote_consent::run(args)
-            .await
-            .map_err(remote_consent::safe_error);
-    }
-    if matches!(&cli.command,Some(Command::RemoteWorker(args)) if args.recover) {
-        let Some(Command::RemoteWorker(args)) = cli.command else {
-            unreachable!()
-        };
-        return remote_worker::recover(args).await.map_err(|_| {
-            anyhow::anyhow!(
-                "remote recovery failed; inspect the dedicated installation and exact run"
-            )
-        });
     }
     if matches!(&cli.command, Some(Command::Managed(args)) if args.administrative()) {
         let Some(Command::Managed(args)) = cli.command else {
@@ -434,17 +378,9 @@ async fn main() -> Result<()> {
         Command::Managed(args) => managed::run(args, Some(config), cli.workspace, model_overridden)
             .await
             .map_err(managed::safe_error),
-        Command::RemoteConsent(_) => {
-            unreachable!("administrative command handled before provider setup")
-        }
-        Command::RemoteWorker(args) => remote_worker::run(args, config, cli.workspace)
-            .await
-            .map_err(|_| {
-                anyhow::anyhow!("remote worker stopped; inspect dedicated local session state")
-            }),
         Command::Models { json } => list_models(&config, cli.workspace, json).await,
         Command::Doctor => doctor(&config, cli.workspace).await,
-        Command::Attachment(_) | Command::LocalProvider { .. } => {
+        Command::LocalProvider { .. } => {
             unreachable!("handled before runtime initialization")
         }
         Command::Sessions => list_sessions().await,

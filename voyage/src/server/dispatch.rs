@@ -15,31 +15,6 @@ pub(super) async fn dispatch(
         _ => &command,
     };
     validate_public(public, &*state.config.read().await)?;
-    if matches!(
-        state.registration.initialize,
-        Some(voyage_protocol::process::RuntimeInitialization::Outbound { .. })
-    ) {
-        ensure!(
-            !matches!(
-                command,
-                RuntimeCommand::UploadImage { .. }
-                    | RuntimeCommand::SubmitContent { .. }
-                    | RuntimeCommand::Submit { .. }
-                    | RuntimeCommand::WorkflowSubmit { .. }
-                    | RuntimeCommand::OperatorTool { .. }
-                    | RuntimeCommand::ExecuteTool { .. }
-                    | RuntimeCommand::Github { .. }
-                    | RuntimeCommand::SetAccess { .. }
-                    | RuntimeCommand::Configure { .. }
-                    | RuntimeCommand::SetModel { .. }
-                    | RuntimeCommand::SetInference { .. }
-                    | RuntimeCommand::Clear { .. }
-                    | RuntimeCommand::Compact { .. }
-                    | RuntimeCommand::Steer { .. }
-            ),
-            "outbound execution requires its current remote connection grant"
-        );
-    }
     let command_id = match &command {
         RuntimeCommand::Clear { command_id, .. }
         | RuntimeCommand::Compact { command_id, .. }

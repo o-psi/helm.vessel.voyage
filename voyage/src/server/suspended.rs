@@ -151,14 +151,6 @@ fn authenticate(registration: &ProcessRegistration, request: &RuntimeRequest) ->
 }
 
 #[cfg(unix)]
-pub(super) fn check_suspended(
-    directory: &std::path::Path,
-    registration: &ProcessRegistration,
-) -> Result<()> {
-    check_retired(directory, registration, true)
-}
-
-#[cfg(unix)]
 fn check_retired(
     directory: &std::path::Path,
     registration: &ProcessRegistration,
@@ -202,7 +194,7 @@ async fn inspect(
                 "receipt","resolve","cancel","steer","rename","set_model","set_inference","set_access","decisions",
                 "respond","archive","delete","branch","clear","compact","events","controls",
                 "operator_tool","configure","workflow_submit","terminal","assignment_observe",
-                "relinquish","stop"],"outbound":null,"decisions":"bounded_120_seconds"})),
+                "relinquish","stop"],"decisions":"bounded_120_seconds"})),
         RuntimeCommand::Snapshot => {
             let mut snapshot = owner.process_snapshot().await?;
             let mut config = config(owner, registration, directory).await?;
@@ -216,7 +208,6 @@ async fn inspect(
                     .ok()
                     .and_then(|p| serde_json::to_value(p.policy().access_mode()).ok())
                     .unwrap_or(Value::Null);
-            snapshot["outbound"] = Value::Null;
             snapshot["decisions"] = owner.decisions(registration.incarnation).await?;
             snapshot["suspended"] = json!(true);
             Ok(snapshot)

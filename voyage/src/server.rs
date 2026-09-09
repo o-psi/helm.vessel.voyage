@@ -19,12 +19,8 @@ pub mod controls;
 mod decisions;
 mod dispatch;
 mod github;
-mod observations;
-#[cfg(unix)]
-mod outbound;
-#[cfg(unix)]
-pub use outbound::{outbound_observe, outbound_relay};
 mod images;
+mod observations;
 mod submission;
 pub mod suspended;
 mod suspension;
@@ -67,8 +63,6 @@ struct State {
     suspend_requested: std::sync::atomic::AtomicBool,
     shutdown: CancellationToken,
     archive_receipt: Mutex<Option<serde_json::Value>>,
-    outbound_task: Mutex<Option<tokio::task::JoinHandle<Result<()>>>>,
-    outbound_status: Mutex<serde_json::Value>,
 }
 pub async fn serve(args: ServeArgs) -> Result<()> {
     #[cfg(not(unix))]
@@ -241,28 +235,7 @@ pub async fn serve(args: ServeArgs) -> Result<()> {
             suspend_requested: std::sync::atomic::AtomicBool::new(false),
             shutdown: CancellationToken::new(),
             archive_receipt: Mutex::new(None),
-            outbound_task: Mutex::new(None),
-            outbound_status: Mutex::new(serde_json::Value::Null),
         });
-        if matches!(
-            state.registration.initialize,
-            Some(voyage_protocol::process::RuntimeInitialization::Outbound { .. })
-        ) {
-            *state.outbound_status.lock().await = serde_json::json!({"state":"connecting"});
-            let relay = state.clone();
-            *state.outbound_task.lock().await = Some(tokio::spawn(async move {
-                let result = outbound::run(relay.clone()).await;
-                if result.is_err() {
-                    relay.shutdown.cancel();
-                }
-                *relay.outbound_status.lock().await = if result.is_ok() {
-                    serde_json::json!({"state":"stopped","grant":"inactive"})
-                } else {
-                    serde_json::json!({"state":"unavailable","grant":"inactive","detail":"relay ended; inspect local consent and explicitly restart to reconnect"})
-                };
-                result
-            }));
-        }
         transport::listen(directory, state).await
     }
 }
@@ -270,5 +243,3 @@ pub async fn serve(args: ServeArgs) -> Result<()> {
 pub mod recovery;
 
 pub mod legacy_recovery;
-
-pub mod remote_consent;

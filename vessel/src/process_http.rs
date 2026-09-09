@@ -1,4 +1,4 @@
-//! Authenticated grant gateway. This adapter never upgrades enrollment to execution authority.
+//! Authenticated scoped process gateway; runtime execution policy stays local.
 use super::*;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use voyage_protocol::vessel::{
@@ -14,14 +14,14 @@ pub(super) async fn boundary(
     request: Request<Body>,
     next: Next,
 ) -> Response {
-    let Some(enrollment) = &state.enrollment else {
+    let Some(origin) = &state.public_origin else {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     };
     if request.headers().get_all("origin").iter().count() > 1
         || request
             .headers()
             .get("origin")
-            .is_some_and(|origin| origin.to_str().ok() != Some(enrollment.origin()))
+            .is_some_and(|supplied| supplied.to_str().ok() != Some(origin.as_str()))
     {
         return StatusCode::FORBIDDEN.into_response();
     }
@@ -273,39 +273,35 @@ pub(super) async fn pair(
     let Some(directory) = state.process_directory else {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     };
-    let Some(enrollment) = state.enrollment else {
+    let Some(origin) = state.public_origin else {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     };
     let expected_vessel_id = match expected_vessel(&headers) {
         Ok(id) => id,
         Err(response) => return response.into_response(),
     };
-    let response = match vessel::process::pairing::redeem(
-        &directory,
-        enrollment.origin(),
-        expected_vessel_id,
-        request,
-    ) {
-        Ok(credential) => VesselResponse {
-            protocol: VESSEL_API_VERSION,
-            result: serde_json::to_value(credential).unwrap_or(serde_json::Value::Null),
-            error: None,
-            outcome_unknown: false,
-        },
-        // Publication may have durably consumed the invitation. Retain the exact
-        // request identity rather than minting a replacement after a lost reply.
-        Err(error) => {
-            let refusal = error.downcast_ref::<vessel::process::pairing::PairRefusal>();
-            VesselResponse {
+    let response =
+        match vessel::process::pairing::redeem(&directory, &origin, expected_vessel_id, request) {
+            Ok(credential) => VesselResponse {
                 protocol: VESSEL_API_VERSION,
-                result: serde_json::Value::Null,
-                error: Some(refusal.map_or_else(
-                    || "pairing unavailable; retry only the identical pairing request".into(),
-                    ToString::to_string,
-                )),
-                outcome_unknown: refusal.is_none(),
+                result: serde_json::to_value(credential).unwrap_or(serde_json::Value::Null),
+                error: None,
+                outcome_unknown: false,
+            },
+            // Publication may have durably consumed the invitation. Retain the exact
+            // request identity rather than minting a replacement after a lost reply.
+            Err(error) => {
+                let refusal = error.downcast_ref::<vessel::process::pairing::PairRefusal>();
+                VesselResponse {
+                    protocol: VESSEL_API_VERSION,
+                    result: serde_json::Value::Null,
+                    error: Some(refusal.map_or_else(
+                        || "pairing unavailable; retry only the identical pairing request".into(),
+                        ToString::to_string,
+                    )),
+                    outcome_unknown: refusal.is_none(),
+                }
             }
-        }
-    };
+        };
     Json(response).into_response()
 }

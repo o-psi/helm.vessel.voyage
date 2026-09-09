@@ -15,7 +15,7 @@ A supervisor's routing decision is not a substitute for runtime admission.
 
 Authority is the intersection of the authenticated principal's capabilities,
 current session access, accepted Vessel membership, local grants, policy ceilings,
-resource limits and any required exact-action approval. Discovery, enrollment,
+resource limits and any required exact-action approval. Discovery, pairing,
 feature negotiation and saved configuration drafts confer none of these grants
 by themselves. A remote client cannot supply a path or provider credential to
 replace a machine's locally accepted execution binding.
@@ -34,7 +34,7 @@ credentials must not be centralized in another Vessel, forwarded between machine
 put in supervisor metadata or delivered to the model. Reconnecting from another
 Helm does not change the voyage's provider account or billing boundary.
 
-Separate provider credentials, client authentication, enrollment and session-sharing
+Separate provider credentials, client authentication, workspace pairing and session-sharing
 grants. Use protected local credential storage or named environment bindings.
 Never put secrets in URLs, command arguments, published fixtures or documentation.
 Treat stored provider continuation as private local runtime data. Native transports
@@ -64,7 +64,7 @@ grants; there is no SSH account-authority transport.
 
 Pending runtime decisions have exact targeting, durable receipts, single-response
 semantics and bounded expiry. Local policy remains the execution ceiling. Scoped process grants bind principal, workspace, session, rights, revision and
-expiry; current grant/enrollment state is checked at dispatch and during execution.
+expiry; current grant state is checked at dispatch and during execution.
 Private credential files are separate from provider keys. History and responder
 authority are distinct rights; see [process access](process-access.md). Shared
 OS accounts and arbitrary code running as that user remain within the cooperating
@@ -81,8 +81,6 @@ The current access modes are read-only, approval and unrestricted. Unrestricted
 removes ordinary approval prompts but retains roots, explicit command denials and
 special exact-review publication requirements. Unattended work follows the
 configured unattended policy and cannot silently assume interactive approval.
-The current dedicated remote worker has additional capability restrictions; see
-[operations](operations.md).
 
 Filesystem tools check canonical allowed roots. Subprocesses use the configured
 filtered environment. Linux policy resolution checks the administrator ceiling;
@@ -101,13 +99,6 @@ descendant budget, or an endpoint network allowlist.
 New subprocess launches narrow their pinned mounts when the current dispatch is
 read-only. Changing access does not retroactively remount an already-running
 process; stop it before relying on a narrower OS boundary for that process.
-
-The current worker connects outbound to Vessel. Do not expose a new inbound Helm
-task port or forward its provider credentials. Enrollment/presence alone do not
-share sessions or start execution. The remote HTTP surface requires an explicitly
-started dedicated worker and current authorization. Its connection-loss and
-withdrawal behavior must remain intact until deliberately replaced by the new
-supervision contract.
 
 ## Untrusted content and private terminal input
 
@@ -160,7 +151,9 @@ enrollment and attachment transports, operator routes, pairing and scoped grant
 routing, corresponding runtime authorization, Helm's Vessel clients, provider
 credential storage/configuration, installer service defaults and locked dependency
 advisories. This was source review plus targeted local adverse-input experiments,
-not exhaustive fuzzing or an independent penetration test.
+not exhaustive fuzzing or an independent penetration test. Enrollment, attachment
+and outbound operator routes reviewed at that baseline were subsequently retired
+under #9; their historical evidence does not verify the remaining gateway.
 
 Attackers considered: unauthenticated internet clients; clients with narrow or
 revoked grants; hostile browser origins; a configured HTTP proxy; and unsafe
@@ -190,7 +183,7 @@ Mixed local/remote clients disable proxies for literal-loopback endpoints while
 retaining remote HTTPS proxy support. Relevant code:
 [Helm local transport](https://github.com/o-psi/voyage/blob/main/helm/src/process_client/local.rs),
 [scoped access](https://github.com/o-psi/voyage/blob/main/helm/src/process_client/access.rs),
-[operator discovery](https://github.com/o-psi/voyage/blob/main/helm/src/voyage_client.rs), and
+[operator discovery](https://github.com/o-psi/voyage/blob/39fc67d5a5b7a296d9ed80bbede7a5d53c630d3d/helm/src/voyage_client.rs), and
 [Vessel forwarding](https://github.com/o-psi/voyage/blob/main/vessel/src/process/exchange.rs).
 
 **VSA-02.** The baseline accepted 64 incomplete JSON bodies; a separate malformed
@@ -198,9 +191,9 @@ pairing request changed from HTTP 422 to 503 and remained unavailable after an
 11-second wait. None of the stalled requests received a response. The new
 [HTTP receive boundary](https://github.com/o-psi/voyage/blob/main/vessel/src/http_boundary.rs) applies to the complete
 merged gateway router, admits at most 64 in-flight requests and allows ten seconds
-total to collect a bounded body. It retains route-specific limits: 4 MiB for
-process commands/events, 4 KiB for pairing and enrollment inspection, 16 KiB for
-enrollment proofs/administration, and 256 KiB otherwise. Expired body collection
+total to collect a bounded body. The remaining routes allow 4 MiB for
+process commands/events and other management requests, and 4 KiB for pairing.
+Enrollment-specific body limits were removed with those routes. Expired body collection
 returns 408 before dispatch; oversized bodies return 413. The deadline does not
 wrap an admitted command or an SSE response stream. Existing downstream command
 receipts and uncertain-delivery behavior are unchanged. All gateway responses are
@@ -209,8 +202,7 @@ non-cacheable, and request tracing uses route templates rather than raw URL path
 This is not a connection-level or distributed denial-of-service defense. A
 sustained attacker can still compete for bounded capacity; incomplete TCP headers,
 TLS negotiation and slow downstream readers need proxy/network controls. Request
-capacity is separate from the existing 64-stream SSE bound and bounded WebSocket
-transport. Vessel's deliberately uncapped authorized voyage creation is unchanged
+capacity is separate from the existing 64-stream SSE bound. Vessel's deliberately uncapped authorized voyage creation is unchanged
 (#157); grant creation rights only to principals trusted with the host's resource
 and provider-use budget.
 
@@ -258,8 +250,9 @@ cancellation when it fails. This is not proof that already dispatched effects ha
 been undone. Terminal authority requires both terminal and execution rights.
 Public event projection carries invalidation metadata rather than canonical text.
 
-Enrollment uses signed, origin-bound proofs and bounded replay records. Its
-credential is separate from process execution grants. Remote clients reject
+At the audited baseline, enrollment used signed, origin-bound proofs and bounded
+replay records with a credential separate from process execution grants. That
+enrollment surface is now retired. Remote clients reject
 redirects and require trusted HTTPS, with explicit literal-loopback development
 exceptions. No TLS certificate-verification bypass was found in these paths.
 The installer provisions an ordinary-user `local-serve` service with `UMask=0077`,
@@ -338,9 +331,10 @@ hashes and these checks with synthetic clients:
    or network restrictions so an anonymous flood cannot prevent operator recovery.
 3. Allowlist only the required routes. Ordinary paired Helm connections need the
    four `/v1/vessel/command`, `/events`, `/pair` and `/pair/capabilities` routes
-   under that prefix. Enrollment, compatibility workers, coordination, diagnostics,
-   `/ui`, `/metrics` and readiness endpoints should be exposed only when required
-   and with their appropriate authentication/network restrictions.
+   under that prefix. Diagnostics, `/ui`, `/metrics` and readiness endpoints should
+   be exposed only when required and with their appropriate authentication/network
+   restrictions. The retired enrollment, worker and coordination-control endpoints
+   are not served.
 4. Verify pairing, wrong credentials, duplicate authentication headers, foreign
    origins, rights/scope refusal and revocation through the actual proxy. Confirm
    command-body limits and streaming updates beyond receive deadlines; disable

@@ -5,13 +5,6 @@ use uuid::Uuid;
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum RuntimeInitialization {
-    Outbound {
-        enrollment_directory: PathBuf,
-        origin: String,
-        allow_insecure_loopback: bool,
-        source_directory: Option<PathBuf>,
-        expected_revision: Option<u64>,
-    },
     ManagedImport {
         transfer_id: Uuid,
         source_directory: PathBuf,

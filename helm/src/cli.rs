@@ -1,5 +1,5 @@
 //! Command-line grammar and explicit configuration selection.
-use crate::{managed, remote_consent, remote_worker};
+use crate::managed;
 use clap::{Parser, Subcommand};
 use clap_complete::Shell;
 use helm::config::AccessMode;
@@ -103,12 +103,6 @@ pub(crate) enum Command {
     Onboard(helm::onboarding::OnboardArgs),
     /// Use private local sessions with an authoritative SQLite journal.
     Managed(managed::Args),
-    /// Activate one dedicated supervised voyage with an outbound enrollment relay.
-    RemoteWorker(remote_worker::Args),
-    /// Inspect and permanently withdraw a dedicated remote grant locally.
-    RemoteConsent(remote_consent::Args),
-    /// Manage dedicated Vessel enrollment; no worker is started.
-    Attachment(helm::attachment::cli::AttachmentArgs),
     Run {
         #[arg(required = true)]
         prompt: Vec<String>,

@@ -1,5 +1,4 @@
-//! Common management-plane response types. Legacy pairing/task wire types are retired.
-//! Attachment command-domain foundations are defined separately; transport is not enabled.
+//! Shared Vessel service and independent voyage runtime contracts.
 
 use serde::{Deserialize, Serialize};
 
@@ -13,18 +12,6 @@ pub struct HealthResponse {
 pub struct ApiError {
     pub error: String,
 }
-
-pub mod attachment;
-
-pub mod enrollment;
-
-/// Strict wire codec foundations; no network adapter or authentication is enabled.
-pub mod stream;
-
-/// Typed bounded observations; no execution authority.
-pub mod events;
-
-pub mod control;
 
 /// Versioned independent runtime and local supervisor transport.
 pub mod process;

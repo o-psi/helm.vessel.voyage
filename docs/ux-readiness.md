@@ -80,7 +80,7 @@ Every row still needs an explicit release decision and product-owner review.
 | J33 | Review and change sharing/access | Scoped access files, protocol grants/revocation, administration | Gap: no first-class TUI scope/share/revoke flow. Verify observe-only denial and executing-host credentials. See #79. |
 | J34 | Trust a Vessel and move an owner | `connect admin identity/trust/move` | Gap: trust/file/courier CLI; source/destination, interrupted transfer and single-owner recovery need designed screens. |
 | J35 | Add/remove participants and reconcile assignments | `connect admin accept-participant/remove-participant/assignment`, runtime tools | Gap: no participant/assignment workspace; unknown admission must block unsafe reassignment. See #77. |
-| J36 | Enroll or withdraw outbound execution | `attachment`, `remote-worker`, `remote-consent` | Review/gap: separate CLI flow, distinct transport lease semantics, pending enrollment and withdrawal recovery. |
+| J36 | Retired outbound worker mode | None | Removed from first-release scope under #9; human connections and participant execution retain their own authority. |
 | J37 | Import legacy sessions and inspect managed work | `connect import`, `managed`, resume/import paths | Review/gap: expert migration inputs, fingerprint/source conflict, partial migration and original-history preservation. |
 | J38 | Configure extensions, MCP, onboarding and inference allowances | `extension`, `onboard`, `inference`, configuration/runtime tools | Gap: no complete integrated discovery/configuration/revocation UI. Expand each advertised subcommand before claiming family-wide readiness. |
 | J39 | Review and publish GitHub work | `github`, runtime publication decisions | Review/gap: exact content/target review and lost publication response across CLI/runtime interaction surfaces. |
@@ -155,7 +155,7 @@ J08/J09/J12/J13. Controls/operator execution map to J20–J25/J32/J38; configura
 and lifecycle map to J21/J25–J28/J31. Workflow, GitHub and assignment commands map
 to J24/J39/J35. Terminal operations map to J17–J19. Vessel catalogue/start/import/
 branch/stop/restart/recovery map to J01–J06/J26/J31/J37. Grants, trust, participant,
-transfer and outbound commands map to J02/J33–J36. Internal forwarding and chunk
+and transfer commands map to J02/J33–J35. Internal forwarding and chunk
 transport do not need standalone buttons, but their failures still need a journey.
 
 Browser execution console, image/voice capabilities and native platforms must not

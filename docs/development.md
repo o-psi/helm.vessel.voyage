@@ -23,9 +23,9 @@ operator interfaces. Paths in backticks require the source checkout.
 | `voyage/src/terminal.rs`, `voyage/src/subagent/`, `voyage/src/todo.rs`, `voyage/src/completion/` | Resources, task state and completion accounting |
 | `voyage/src/policy_profile/`, `voyage/src/runtime_policy.rs` | Local policy, administrator ceilings and profile transitions |
 | `voyage/src/github/`, `voyage/src/workflow/`, `voyage/src/extensions/`, `voyage/src/inference/` | Execution services and shared legacy operator workflows |
-| `helm/src/managed.rs`, `helm/src/remote_worker.rs` | Thin supervised managed and outbound-worker clients |
+| `helm/src/managed.rs` | Thin supervised managed client |
 | `vessel/src/process/` | Linux launch, private registry, routing and conservative stop/restart |
-| `vessel/src/main.rs` and HTTP/transport modules | Management, enrollment, scoped process gateway and compatibility relay |
+| `vessel/src/main.rs` and HTTP/transport modules | Management, human pairing and scoped process gateway |
 | `crates/voyage-protocol/src/vessel.rs` | Public Vessel operations, service responses and SSE contract |
 | `crates/voyage-protocol/src/process/` | Private runtime IPC and shared identity/authority data |
 | `vessel/src/process/api.rs` | Public-to-private operation adapter and public response normalization |

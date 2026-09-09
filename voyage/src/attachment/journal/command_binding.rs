@@ -14,12 +14,6 @@ impl Journal {
     ) -> Result<serde_json::Value> {
         self.check_guard(guard, guard.session_id)?;
         ensure!(!id.is_nil() && !principal.is_nil(), "nil command actor");
-        // The outbound enrollment relay has a separate command/lease authority
-        // and receipt namespace. This local protocol cannot close its commands.
-        ensure!(
-            super::remote::binding(&self.connection)?.is_none(),
-            "outbound command delivery must be resolved by its remote owner"
-        );
         if let Some(original) = original {
             ensure!(
                 original.mutation_id() == Some(id),

@@ -204,7 +204,7 @@ pub fn invite(
                 .all(|(i, r)| !rights[..i].contains(r)),
         "invalid rights"
     );
-    let endpoint = crate::enrollment::validate_origin(endpoint, true)
+    let endpoint = crate::origin::validate_origin(endpoint, true)
         .map_err(|_| anyhow::anyhow!("endpoint requires HTTPS or literal loopback"))?;
     // Retain redemption material until grant expiry; never evict live retry evidence.
     state.invitations.retain(|p| {
@@ -260,7 +260,7 @@ pub fn redeem(
             && request.code.len() == 64,
         PairRefusal::Denied
     );
-    let origin = crate::enrollment::validate_origin(origin, true)
+    let origin = crate::origin::validate_origin(origin, true)
         .map_err(|_| anyhow::anyhow!(PairRefusal::Denied))?;
     let _lock = lock(root)?;
     let mut state = load(root)?;

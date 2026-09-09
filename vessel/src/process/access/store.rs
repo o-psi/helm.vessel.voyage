@@ -92,38 +92,6 @@ pub(super) fn authenticate(root: &Path, id: Uuid, token: &str) -> Result<Process
 pub(super) fn current(grant: &ProcessGrant) -> Result<()> {
     ensure!(!grant.revoked, "access revoked");
     ensure!(grant.expires_at_ms > now()?, "access expired");
-    if let Some(identity) = &grant.enrollment {
-        enrollment(identity)?;
-    }
-    Ok(())
-}
-pub(super) fn enrollment(identity: &EnrollmentIdentity) -> Result<()> {
-    ensure!(
-        identity.database_path.is_absolute() && !identity.machine_id.is_nil() && identity.epoch > 0,
-        "invalid enrollment binding"
-    );
-    let metadata = std::fs::symlink_metadata(&identity.database_path)?;
-    ensure!(
-        metadata.is_file()
-            && !metadata.file_type().is_symlink()
-            && metadata.uid() == unsafe { libc::geteuid() }
-            && metadata.mode() & 0o077 == 0,
-        "unsafe enrollment database"
-    );
-    let db = rusqlite::Connection::open_with_flags(
-        &identity.database_path,
-        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
-    )?;
-    db.busy_timeout(std::time::Duration::from_millis(100))?;
-    let (epoch, revoked): (i64, bool) = db.query_row(
-        "SELECT epoch,revoked FROM machines WHERE id=?1",
-        [identity.machine_id.to_string()],
-        |r| Ok((r.get(0)?, r.get(1)?)),
-    )?;
-    ensure!(
-        !revoked && u64::try_from(epoch)? == identity.epoch,
-        "enrolled machine revoked or replaced"
-    );
     Ok(())
 }
 pub(super) fn credential_path(root: &Path, id: Uuid) -> PathBuf {

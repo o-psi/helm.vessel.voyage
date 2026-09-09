@@ -82,7 +82,7 @@ impl StoredDraft {
         self.draft.validate()?;
         if let Some(origin) = &self.origin {
             ensure!(
-                crate::attachment::client::validate_origin(origin, true)
+                crate::attachment::origin::validate_origin(origin, true)
                     .is_ok_and(|value| value == *origin),
                 "invalid Vessel origin"
             );

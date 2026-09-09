@@ -30,13 +30,6 @@ use std::sync::Arc;
 
 // Version 10 prevents older runtimes from rewriting typed tool-result history.
 const SCHEMA_VERSION: i64 = 10;
-mod withdrawal;
-pub use withdrawal::{
-    RemoteConsentRun, RemoteConsentStatus, RemoteGrantObserver, WithdrawalPreview,
-    WithdrawalReceipt, WithdrawalRequest,
-};
-mod remote;
-pub use remote::{RemoteBinding, RemoteCancelReceipt, RemoteReplay};
 mod reconciliation;
 pub use reconciliation::{LocalReconcileOutcome, LocalReconcileRequest};
 const STEERING_SCHEMA_VERSION: i64 = 4;
@@ -77,7 +70,6 @@ fn commit(tx: Transaction<'_>, fence: &CommitFence) -> Result<()> {
 
 pub struct Journal {
     commit_fence: CommitFence,
-    remote_redactor: Option<std::sync::Arc<crate::tools::Redactor>>,
     connection: Connection,
     opened_schema: i64,
     directory: PathBuf,
@@ -224,6 +216,21 @@ impl Journal {
         let file = open_private_file(&database_path)?;
         drop(file);
         let mut connection = Connection::open(&database_path)?;
+        // Retired worker journals must never acquire ordinary local execution authority.
+        let retired: bool = connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='remote_session')",
+            [], |row| row.get(0),
+        )?;
+        if retired {
+            let bound: bool =
+                connection.query_row("SELECT EXISTS(SELECT 1 FROM remote_session)", [], |row| {
+                    row.get(0)
+                })?;
+            ensure!(
+                !bound,
+                "outbound worker journals are retired and cannot be opened"
+            );
+        }
         connection.busy_timeout(Duration::ZERO)?; // fail boundedly, never stall an async reactor
         #[cfg(windows)]
         storage::configure(&connection)?;
@@ -254,8 +261,6 @@ impl Journal {
             tx.execute_batch(steering::SCHEMA)?;
             tx.execute_batch(catalogue::SCHEMA)?;
             tx.execute_batch(reconciliation::SCHEMA)?;
-            tx.execute_batch(remote::SCHEMA)?;
-            tx.execute_batch(withdrawal::SCHEMA)?;
             tx.execute(
                 "INSERT INTO attachment_schema VALUES(1, ?1)",
                 [SCHEMA_VERSION],
@@ -283,7 +288,6 @@ impl Journal {
         storage::verify(&private_directory)?;
         Ok(Self {
             commit_fence: None,
-            remote_redactor: None,
             connection,
             opened_schema: version.unwrap_or(SCHEMA_VERSION),
             directory,
@@ -359,10 +363,6 @@ impl Journal {
         if self.opened_schema < 6 {
             tx.execute_batch(reconciliation::SCHEMA)?;
         }
-        if self.opened_schema < 7 {
-            tx.execute_batch(remote::SCHEMA)?;
-        }
-        tx.execute_batch(withdrawal::SCHEMA)?;
         tx.execute(
             "UPDATE attachment_schema SET version=?1 WHERE id=1",
             [SCHEMA_VERSION],
@@ -520,7 +520,6 @@ impl Journal {
     /// Authentication/sharing must still be checked by the caller on every retry.
     pub fn lookup_command(&self, request: &TurnAdmission) -> Result<Option<RunRecord>> {
         self.check_schema()?;
-        remote::validate_admission(&self.connection, request)?;
         if self.opened_schema >= STEERING_SCHEMA_VERSION {
             ensure!(
                 !steering::reserved_receipt_exists(&self.connection, request.command_id)?,
@@ -590,7 +589,6 @@ impl Journal {
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         check_transaction_schema(&tx, self.opened_schema)?;
-        remote::validate_admission(&tx, request)?;
         ensure!(
             !process::receipt_exists(&tx, request.command_id)?,
             "turn command collides with process command"
@@ -760,19 +758,13 @@ impl Journal {
             "UPDATE runs SET record=?1 WHERE id=?2",
             params![serde_json::to_string(&run)?, run.id.to_string()],
         )?;
-        let sequence = append_event_projected(
-            &tx,
-            &run,
-            EventKind::TextDelta(delta.to_owned()),
-            self.remote_redactor.as_deref(),
-        )?;
+        let sequence = append_event(&tx, &run, EventKind::TextDelta(delta.to_owned()))?;
         commit(tx, &self.commit_fence)?;
         Ok(sequence)
     }
 
     /// Persist the complete canonical provider/tool history before further effects.
     /// History is append-only within a run; no compaction or private history rewrite.
-    /// This local API is never an outbound projection.
     pub fn checkpoint_canonical(
         &mut self,
         guard: &ExecutionGuard,
@@ -900,12 +892,6 @@ impl Journal {
             .checked_add(output_delta)
             .context("session usage overflow")?;
         run.usage = usage.clone();
-        remote::canonical(
-            &tx,
-            &run,
-            &messages[previous..],
-            self.remote_redactor.as_deref(),
-        )?;
         // Canonical text is provisional. Only the runtime's explicit acceptance
         // hook may classify a final response; no-tool text alone is insufficient.
         run.final_checkpointed = false;
@@ -1208,12 +1194,7 @@ impl Journal {
             "UPDATE runs SET record=?1,active=0 WHERE id=?2",
             params![serde_json::to_string(&run)?, run.id.to_string()],
         )?;
-        append_event_projected(
-            &tx,
-            &run,
-            EventKind::Terminal(state),
-            self.remote_redactor.as_deref(),
-        )?;
+        append_event(&tx, &run, EventKind::Terminal(state))?;
         commit(tx, &self.commit_fence)?;
         Ok(run)
     }
@@ -1394,15 +1375,6 @@ fn read_run(db: &Connection, id: Uuid) -> Result<RunRecord> {
     Ok(run)
 }
 fn append_event(tx: &Transaction<'_>, run: &RunRecord, kind: EventKind) -> Result<u64> {
-    append_event_projected(tx, run, kind, None)
-}
-fn append_event_projected(
-    tx: &Transaction<'_>,
-    run: &RunRecord,
-    kind: EventKind,
-    redactor: Option<&crate::tools::Redactor>,
-) -> Result<u64> {
-    remote::observe(tx, run, &kind, redactor)?;
     let sequence: i64 = tx.query_row(
         "SELECT next_sequence FROM sessions WHERE id=?1",
         [run.session_id.to_string()],

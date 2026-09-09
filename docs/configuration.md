@@ -223,7 +223,7 @@ so existing logins remain usable without copying or re-importing credentials.
 Run `vessel auth` on the execution host as the account running Voyage; it is a
 local command and does not authenticate a remote Vessel from Helm. For a headless
 host, use `vessel auth login --device`. Provider credentials are separate from
-Vessel attachment/enrollment credentials. Helm only exposes read-only local
+Vessel connection and scoped session credentials. Helm only exposes read-only local
 credential diagnostics; Voyage loads and refreshes tokens on the executing host.
 `helm auth` is no longer supported; update scripts to call `vessel auth`.
 Status reports cached credentials, not a live provider validation. Logout removes
@@ -232,7 +232,7 @@ processes when changing accounts or logging out.
 
 Subscription transport uses an internal
 product endpoint and remains experimental. Never copy tokens into sessions,
-project configuration, command arguments or Vessel enrollment.
+project configuration, command arguments or Vessel connection credentials.
 
 ## Execution policy and limits
 
@@ -351,10 +351,8 @@ private operator data. No automatic log-retention guarantee is implied.
 Current owners store canonical data in `VESSEL_DIR/sessions/SESSION_UUID/journal/`
 with private identity and resource directories beside it. Managed installations use
 `STORE/vessel/sessions/SESSION_UUID/journal/`; their old `STORE/journal/journal.sqlite3`
-is a legacy import/recovery source (journal schema 8). Enrollment defaults
-to the data root's `attachment/`; its identities differ from provider credentials.
-Remote workers use a dedicated installation and fixed enrollment binding.
-Vessel's database and private attachment authority directory are separate again.
+is a legacy import/recovery source (journal schema 8). Vessel connection and
+scoped grant credentials are separate from provider credentials.
 Back up private stores consistently while their owners are stopped, and follow
 [Operations](operations.md) for explicit upgrade and recovery. Do not delete state
 or restore an older grant to bypass an unresolved operation.

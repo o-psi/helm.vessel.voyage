@@ -293,7 +293,6 @@ impl Supervisor {
                     rights,
                     expires_at_ms: grant.expires_at_ms,
                     revoked: false,
-                    enrollment: None,
                     token_hash: String::new(),
                     parent_grant: None,
                     participant_binding: None,

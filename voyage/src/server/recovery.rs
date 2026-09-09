@@ -65,23 +65,8 @@ pub async fn recover(args: RecoverArgs) -> Result<serde_json::Value> {
     }
     owner.recover_interrupted().await?;
     let actor = LocalActorStore::open(&directory.join("identity"))?.identity()?;
-    let binding = if matches!(
-        registration.initialize,
-        Some(voyage_protocol::process::RuntimeInitialization::Outbound { .. })
-    ) {
-        let journal = Journal::open(directory.join("journal"))?;
-        Some(journal.remote_local_binding(&actor)?.1)
-    } else {
-        None
-    };
     if let Some(run) = args.acknowledge_cleanup {
-        if let Some(binding) = &binding {
-            owner
-                .attest_remote_cleanup(binding.clone(), run, actor)
-                .await?;
-        } else {
-            owner.attest_local_cleanup(run, actor).await?;
-        }
+        owner.attest_local_cleanup(run, actor).await?;
     }
     for resource in &args.acknowledge_resources {
         owner.attest_session_resource(*resource, actor).await?;
@@ -96,11 +81,7 @@ pub async fn recover(args: RecoverArgs) -> Result<serde_json::Value> {
                 .expected_revision
                 .context("tool reconciliation requires expected revision")?,
         };
-        if let Some(binding) = binding {
-            owner.reconcile_remote_tools(binding, request).await?;
-        } else {
-            owner.reconcile_local_tools(request).await?;
-        }
+        owner.reconcile_local_tools(request).await?;
     }
     let snapshot = owner.process_snapshot().await?;
     let resources = owner.session_resources().await?;

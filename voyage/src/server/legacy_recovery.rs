@@ -12,8 +12,6 @@ pub struct LegacyRecoverArgs {
     pub reconcile_tools: Option<Uuid>,
     #[arg(long)]
     pub expected_revision: Option<u64>,
-    #[arg(long)]
-    pub remote: bool,
 }
 pub async fn recover(args: LegacyRecoverArgs) -> Result<serde_json::Value> {
     ensure!(
@@ -24,24 +22,10 @@ pub async fn recover(args: LegacyRecoverArgs) -> Result<serde_json::Value> {
     );
     let actor = LocalActorStore::open(&args.directory)?.identity()?;
     let journal_dir = args.directory.join("journal");
-    let binding = if args.remote {
-        let journal = Journal::open(journal_dir.clone())?;
-        let (session, binding) = journal.remote_local_binding(&actor)?;
-        ensure!(session == args.session, "remote session identity mismatch");
-        Some(binding)
-    } else {
-        None
-    };
     let owner = ManagedSessionOwner::open(journal_dir, args.session).await?;
     let recovered = owner.recover_interrupted().await?;
     if let Some(run) = args.acknowledge_cleanup {
-        if let Some(binding) = &binding {
-            owner
-                .attest_remote_cleanup(binding.clone(), run, actor)
-                .await?;
-        } else {
-            owner.attest_local_cleanup(run, actor).await?;
-        }
+        owner.attest_local_cleanup(run, actor).await?;
     }
     let reconciliation = if let Some(run) = args.reconcile_tools {
         let request = crate::attachment::journal::LocalReconcileRequest {
@@ -53,11 +37,7 @@ pub async fn recover(args: LegacyRecoverArgs) -> Result<serde_json::Value> {
                 .expected_revision
                 .context("reconciliation revision required")?,
         };
-        Some(if let Some(binding) = binding {
-            owner.reconcile_remote_tools(binding, request).await?
-        } else {
-            owner.reconcile_local_tools(request).await?
-        })
+        Some(owner.reconcile_local_tools(request).await?)
     } else {
         None
     };

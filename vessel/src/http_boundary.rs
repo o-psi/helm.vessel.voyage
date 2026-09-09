@@ -17,12 +17,8 @@ const RECEIVE_TIMEOUT: Duration = Duration::from_secs(10);
 fn body_limit(path: &str) -> usize {
     match path {
         COMMAND_PATH | EVENTS_PATH => MAX_VESSEL_BODY,
-        PAIR_PATH | "/v2/enrollment/machines" | "/v2/enrollment/audit" => 4096,
-        "/v2/enrollment/invitations"
-        | "/v2/enrollment/challenge"
-        | "/v2/enrollment/complete"
-        | "/v2/enrollment/revoke" => voyage_protocol::enrollment::MAX_PROOF_BYTES,
-        _ => voyage_protocol::attachment::MAX_FRAME_BYTES,
+        PAIR_PATH => 4096,
+        _ => MAX_VESSEL_BODY,
     }
 }
 

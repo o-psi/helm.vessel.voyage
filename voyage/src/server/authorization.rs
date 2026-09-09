@@ -113,7 +113,6 @@ pub(super) fn authorize_parts(
 
 #[cfg(unix)]
 fn read_current(path: &Path, binding: &GrantBinding, session: uuid::Uuid) -> Result<ProcessGrant> {
-    use std::os::unix::fs::MetadataExt;
     let grant: ProcessGrant = load_private(path)?;
     let now: u64 = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)?
@@ -128,31 +127,6 @@ fn read_current(path: &Path, binding: &GrantBinding, session: uuid::Uuid) -> Res
             && grant.expires_at_ms > now,
         "session authority revoked, stale or expired"
     );
-    if let Some(identity) = &grant.enrollment {
-        let metadata = std::fs::symlink_metadata(&identity.database_path)?;
-        ensure!(
-            identity.database_path.is_absolute()
-                && metadata.is_file()
-                && !metadata.file_type().is_symlink()
-                && metadata.uid() == unsafe { libc::geteuid() }
-                && metadata.mode() & 0o077 == 0,
-            "unsafe enrollment authority database"
-        );
-        let db = rusqlite::Connection::open_with_flags(
-            &identity.database_path,
-            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
-        )?;
-        db.busy_timeout(std::time::Duration::from_millis(100))?;
-        let (epoch, revoked): (i64, bool) = db.query_row(
-            "SELECT epoch,revoked FROM machines WHERE id=?1",
-            [identity.machine_id.to_string()],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )?;
-        ensure!(
-            !revoked && u64::try_from(epoch)? == identity.epoch,
-            "enrolled machine revoked or replaced"
-        );
-    }
     if let Some(connection) = &grant.connection_binding {
         let root = path
             .parent()

@@ -1,8 +1,8 @@
 //! Public Vessel service API. Versioning is independent of private runtime IPC.
 //! No runtime command, runtime token or runtime response is part of this contract.
 pub use crate::process::{
-    AccessCredential, ApprovedWorkspace, ConnectionGrant, EnrollmentIdentity,
-    LocalAccessCredential, ProcessInfo, ProcessRight, ProcessState, WorkspaceCredential,
+    AccessCredential, ApprovedWorkspace, ConnectionGrant, LocalAccessCredential, ProcessInfo,
+    ProcessRight, ProcessState, WorkspaceCredential,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -346,10 +346,6 @@ pub enum TerminalAction {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 pub enum VesselCommand {
-    /// Local transport relays may wake only a positively suspended owner.
-    Wake {
-        session_id: Uuid,
-    },
     Recover {
         command_id: Uuid,
         session_id: Uuid,
@@ -428,7 +424,6 @@ pub enum VesselCommand {
         workspace: PathBuf,
         rights: Vec<ProcessRight>,
         expires_at_ms: u64,
-        enrollment: Option<EnrollmentIdentity>,
         endpoint: String,
     },
     RevokeGrant {
@@ -462,17 +457,6 @@ pub enum VesselCommand {
         session_id: Uuid,
         workspace: PathBuf,
         config_path: PathBuf,
-    },
-    StartOutbound {
-        command_id: Uuid,
-        session_id: Uuid,
-        workspace: PathBuf,
-        config_path: PathBuf,
-        enrollment_directory: PathBuf,
-        origin: String,
-        allow_insecure_loopback: bool,
-        source_directory: Option<PathBuf>,
-        expected_revision: Option<u64>,
     },
     ManagedImport {
         command_id: Uuid,

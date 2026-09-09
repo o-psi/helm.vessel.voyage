@@ -17,12 +17,6 @@ pub(super) async fn initialize(
         return Ok(());
     };
     match initialization {
-        initialization @ RuntimeInitialization::Outbound { .. } => {
-            #[cfg(unix)]
-            super::outbound::initialize(directory, registration, workspace, initialization)?;
-            #[cfg(not(unix))]
-            anyhow::bail!("outbound process transport unsupported on this platform");
-        }
         RuntimeInitialization::ManagedImport {
             transfer_id,
             source_directory,
@@ -35,7 +29,6 @@ pub(super) async fn initialize(
                 *transfer_id,
                 *expected_revision,
                 workspace,
-                false,
             )?;
         }
         RuntimeInitialization::Participant {
@@ -148,10 +141,6 @@ pub(super) fn prepare_identity(
     let source_directory = match &registration.initialize {
         Some(RuntimeInitialization::ManagedImport {
             source_directory, ..
-        })
-        | Some(RuntimeInitialization::Outbound {
-            source_directory: Some(source_directory),
-            ..
         }) => source_directory,
         _ => return Ok(()),
     };
