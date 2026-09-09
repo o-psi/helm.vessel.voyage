@@ -1,3 +1,4 @@
+mod managed;
 use anyhow::{Context, Result, bail};
 use std::{
     path::{Path, PathBuf},
@@ -8,6 +9,8 @@ use std::{
 pub struct WorktreeManager {
     repository: PathBuf,
     root: PathBuf,
+    managed: Option<managed::ManagedRoot>,
+    legacy_root: Option<PathBuf>,
     environment: Option<std::collections::BTreeMap<String, String>>,
     policy: Option<std::sync::Arc<crate::policy::Policy>>,
 }
@@ -98,9 +101,18 @@ impl WorktreeManager {
         Ok(Self {
             repository,
             root,
+            managed: None,
+            legacy_root: None,
             environment: None,
             policy: None,
         })
+    }
+    fn owns_path(&self, path: &Path) -> bool {
+        path.parent() == Some(self.root.as_path())
+            || self
+                .legacy_root
+                .as_deref()
+                .is_some_and(|root| path.parent() == Some(root))
     }
     pub fn with_policy(mut self, policy: std::sync::Arc<crate::policy::Policy>) -> Self {
         self.policy = Some(policy);
@@ -158,7 +170,11 @@ impl WorktreeManager {
             policy
                 .check_command_denials(&arguments.iter().map(String::as_str).collect::<Vec<_>>())?;
         }
-        std::fs::create_dir_all(&self.root)?;
+        if let Some(managed) = &self.managed {
+            managed.prepare(self)?;
+        } else {
+            std::fs::create_dir_all(&self.root)?;
+        }
         anyhow::ensure!(
             !path.exists(),
             "worktree path already exists: {}",
@@ -194,7 +210,7 @@ impl WorktreeManager {
     pub fn commit(&self, lease: &WorktreeLease, message: &str) -> Result<String> {
         self.check_scope(&lease.path, true)?;
         anyhow::ensure!(
-            lease.path.starts_with(&self.root),
+            self.owns_path(&lease.path),
             "refusing worktree outside managed root"
         );
         anyhow::ensure!(
@@ -232,7 +248,7 @@ impl WorktreeManager {
     pub fn remove(&self, lease: &WorktreeLease) -> Result<()> {
         self.check_scope(&lease.path, true)?;
         anyhow::ensure!(
-            lease.path.starts_with(&self.root),
+            self.owns_path(&lease.path),
             "refusing worktree outside managed root"
         );
         anyhow::ensure!(

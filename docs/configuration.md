@@ -260,19 +260,34 @@ See [Security](security.md) for enforcement and cleanup limits.
 
 ### Subagent worktree roots
 
-Unrestricted mode does not delegate arbitrary worktree paths. Isolated subagents
-require the planned workspace to be covered by **both** parent `allow_read` and
-`allow_write`, including canonical-path/symlink checks and inherited ceilings.
-Voyage plans worktrees under its session resource directory:
-`resources/worktrees/<workspace-hash>/<name>-<uuid>`. A refused launch reports the
-planned destination before creating the worktree.
+Managed coding worktrees are allocated beneath the authorized workspace at
+`.voyage-worktrees/<voyage-scope-hash>/<name>-<uuid>`. The scope is derived from the
+voyage's stable resource identity: concurrent voyages use separate directories,
+and nested agents reuse their owning voyage's manager. Private history, credentials,
+and resource ledgers stay in session storage; that storage is **not** delegated.
 
-An operator may provision the narrowly scoped worktree parent directory and add
-that existing path to both lists in an executing-host private configuration,
-preserving other settings. Apply configuration with idle `/configure` after
-cleanup is observed, or select it at launch. Access-mode changes alone do not
-change these roots. Do not grant the entire session storage directory merely to
-make worktrees available, and never relocate work to evade a refusal.
+Workspace-only read/write authority is sufficient for ordinary isolated coding.
+The planned directory must still be covered by **both** parent read and write
+roots, including canonical-path checks and inherited administrator ceilings.
+Read-only mode, command denials and approval requirements still apply. Placement
+is deterministic, not a fallback search after a refusal; no extra roots are granted.
+
+Each scope contains a runtime-owned `.gitignore` excluding its contents from the
+enclosing repository. No project ignore file or Git exclude configuration is edited.
+Tracked files in `.voyage-worktrees`, symlinked allocation directories, and existing
+scope directories with a missing or changed ownership/ignore marker cause refusal
+without overwriting their contents. Interrupted initialization may require operator
+reconciliation; do not delete an area that contains retained work. Empty scope
+metadata remains after cleanup and does not dirty the project.
+
+New allocations use this layout after the executing Voyage binary is upgraded
+and a fresh runtime is started. Existing retained worktrees in session storage are
+not moved or deleted; commit/integration/cleanup still require their original
+explicit read/write delegation. Do not grant the entire session storage directory.
+An active runtime keeps its existing manager until it finishes; this change does
+not restart running work. Isolated checkouts start at committed `HEAD`, not a copy
+of uncommitted parent edits. Dirty or conflicting parent work still blocks managed
+integration rather than being overwritten.
 
 Repository discovery supports ordinary clones, linked worktrees and this
 checkout's `.local-git/worktree.git` metadata. Missing repositories and malformed

@@ -489,9 +489,12 @@ Dropped requests, cancellation, authority invalidation and expiry clear pending
 requests durably and emit observation updates. A reconnect can observe the same
 unexpired request while its execution is still waiting; it does not replay work.
 Waits are bounded by the configured command timeout, capped at 120 seconds. New
-worktrees still require explicit parent read/write roots before creation; choosing
-worktree isolation does not grant access to a new directory. Finished workers
-owning worktrees remain retained for commit, integration and cleanup, even when
+worktrees are placed under `.voyage-worktrees/<voyage-scope-hash>` inside the
+workspace, with self-ignored scope metadata, so ordinary workspace read/write
+authority covers isolated coding. Allocation still checks parent roots, symlinks,
+command policy and inherited ceilings; it never delegates private session storage.
+Retained worktrees from older runtimes keep their paths and authority requirements.
+Finished workers owning worktrees remain retained for commit, integration and cleanup, even when
 all ancestors have finished. Successful cleanup clears ownership and permits
 normal archival; dirty worktrees are not silently discarded.
 

@@ -342,7 +342,7 @@ pub async fn build_subagents_managed(
         workspace,
     )?;
     let todos = todo_tool(workspace, coordinator.clone());
-    let (worktrees, worktree_error) = match worktree_manager(workspace, &workspace_key) {
+    let (worktrees, worktree_error) = match worktree_manager(workspace) {
         Ok(manager) => (manager, None),
         Err(error) => (
             None,
@@ -403,12 +403,6 @@ pub async fn build_subagents_managed(
     })
 }
 
-fn worktree_manager(
-    workspace: &std::path::Path,
-    workspace_key: &str,
-) -> Result<Option<WorktreeManager>> {
-    WorktreeManager::discover(
-        workspace,
-        resource_root().join("worktrees").join(workspace_key),
-    )
+fn worktree_manager(workspace: &std::path::Path) -> Result<Option<WorktreeManager>> {
+    WorktreeManager::discover_managed(workspace, &resource_root())
 }

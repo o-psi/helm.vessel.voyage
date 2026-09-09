@@ -114,7 +114,7 @@ impl Tool for SubagentTool {
         ToolDefinition {
             output_schema: None,
             annotations: None,
-        name:"subagent".into(), description:"Spawn and supervise bounded background Helm agents. Spawn independent agents before waiting. Set worktree=true for isolated Git coding work. Worktree commit, integration, and cleanup are guarded and refuse dirty or conflicting changes. Finished agents archive automatically. Use archive (after/limit pagination) to find old IDs, then status or wait to read their results. Archived records cannot be restarted; use spawn for new work. Actions: spawn, status, list, archive, wait, wait_many, cancel, message, follow_up, worktree_status, worktree_conflicts, commit, integrate, cleanup.".into(),
+        name:"subagent".into(), description:"Spawn and supervise bounded background Helm agents. Spawn independent agents before waiting. Set worktree=true for isolated Git coding work in a voyage-scoped directory beneath the workspace; no extra filesystem roots are granted. Worktree commit, integration, and cleanup are guarded and refuse dirty or conflicting changes. Finished agents archive automatically. Use archive (after/limit pagination) to find old IDs, then status or wait to read their results. Archived records cannot be restarted; use spawn for new work. Actions: spawn, status, list, archive, wait, wait_many, cancel, message, follow_up, worktree_status, worktree_conflicts, commit, integrate, cleanup.".into(),
         input_schema:crate::tools::action_schema::schema(json!({
             "id":{"type":"string","format":"uuid"},"other_id":{"type":"string","format":"uuid"},
             "parent_id":{"type":["string","null"],"format":"uuid"},"after":{"type":["string","null"],"format":"uuid"},
@@ -155,7 +155,7 @@ impl Tool for SubagentTool {
                     context
                         .policy
                         .check_delegated_workspace(&destination)
-                        .map_err(|error| ToolError::Denied(format!("{error}; planned worktree: {}. An operator must provision and delegate its parent directory in both allow_read and allow_write; access mode alone does not grant roots. No worktree was created.", destination.display())))?;
+                        .map_err(|error| ToolError::Denied(format!("{error}; planned worktree: {}. The planned directory must remain inside both parent read and write roots; check workspace policy and symlinked directories. Access mode alone does not grant roots. No worktree was created.", destination.display())))?;
                     let command = manager
                         .create_command(&worktree_name, "HEAD")
                         .map_err(failed)?;
