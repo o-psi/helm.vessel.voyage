@@ -169,6 +169,7 @@ impl SubagentExecutor for CliSubagentExecutor {
         };
         let tool_context = ToolContext {
             github: crate::github::Credential::from_config(&config),
+            artifact_scope: config.artifact_scope.clone(),
             completion: context.completion.clone(),
             policy,
             approver,

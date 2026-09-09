@@ -208,6 +208,10 @@ pub async fn serve(args: ServeArgs) -> Result<()> {
         owner
             .retain_initial_configuration(&config, &registration.workspace)
             .await?;
+        config.artifact_scope = Some(crate::artifacts::Scope {
+            directory: directory.join("journal"),
+            session: registration.session_id,
+        });
         config.vessel_context = Some(crate::tools::VesselContext {
             session_id: registration.session_id,
             directory: directory

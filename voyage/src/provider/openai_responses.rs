@@ -614,6 +614,7 @@ fn finish(assembly: Assembly) -> Result<ModelResponse, ProviderError> {
     Ok(ModelResponse {
         service_tier: assembly.service_tier,
         message: Message {
+            tool_output: None,
             parts: Vec::new(),
             image_data: Default::default(),
             operator_name: None,

@@ -45,7 +45,7 @@ pub async fn build_tools(
     }
     if config.access_mode() == AccessMode::ReadOnly {
         // Do not even start external MCP servers in read-only mode: their
-        // initialization and tool contracts are outside Helm's authority model.
+        // initialization and tool contracts are outside Voyage's authority model.
         // Live process runtimes retain built-ins behind per-dispatch policy checks
         // so an access upgrade does not need to rebuild the running agent.
         if config.live_access.is_none() {
@@ -62,15 +62,29 @@ pub async fn build_tools(
             environment.extend(server.env.clone());
             let start = || {
                 policy.check_current()?;
-                crate::tools::mcp::McpServer::start_scoped(
-                    name,
-                    &server.command,
-                    &server.args,
-                    &environment,
-                    policy,
-                )
-                .map(Arc::new)
-                .with_context(|| format!("failed to start MCP server `{name}`"))
+                let started = if let Some(url) = &server.url {
+                    let credential = server
+                        .bearer_token_env
+                        .as_ref()
+                        .map(|key| {
+                            std::env::var(key).map_err(|_| {
+                                anyhow::anyhow!("MCP HTTP credential environment reference is missing or invalid")
+                            })
+                        })
+                        .transpose()?;
+                    crate::tools::mcp::McpServer::start_http(name, url, credential.as_deref(), policy)
+                } else {
+                    crate::tools::mcp::McpServer::start_scoped(
+                        name,
+                        &server.command,
+                        &server.args,
+                        &environment,
+                        policy,
+                    )
+                };
+                started
+                    .map(Arc::new)
+                    .with_context(|| format!("failed to start MCP server `{name}`"))
             };
             // Admission and observer registration are atomic with spawn. A
             // cancelled child initialization cannot hide a server from cleanup.
@@ -90,9 +104,9 @@ pub async fn build_tools(
                 .with_context(|| format!("MCP server `{name}` discovery timed out"))?
                 .with_context(|| format!("failed to discover tools from MCP server `{name}`"))?;
             for tool in discovered {
-                tools
-                    .register_arc(tool)
-                    .with_context(|| format!("MCP server `{name}` exposed a duplicate tool"))?;
+                tools.register_arc(tool).with_context(|| {
+                    format!("MCP server `{name}` exposed an invalid or duplicate tool")
+                })?;
             }
         }
         policy.check_current()?;

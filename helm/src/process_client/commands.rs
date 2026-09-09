@@ -8,6 +8,13 @@ pub(super) async fn execute(
     command: ConnectedCommand,
 ) -> Result<serde_json::Value> {
     let (session, command) = match command {
+        ConnectedCommand::Artifact {
+            session,
+            artifact,
+            path,
+        } => {
+            return super::artifacts::download(client, session, artifact, &path).await;
+        }
         ConnectedCommand::Export { session, path } => {
             return super::export::markdown(client, session, &path).await;
         }

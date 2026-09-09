@@ -28,8 +28,8 @@ pub(crate) mod storage;
 #[cfg(windows)]
 use std::sync::Arc;
 
-// Version 9 prevents older text-only runtimes from opening image-bearing history.
-const SCHEMA_VERSION: i64 = 9;
+// Version 10 prevents older runtimes from rewriting typed tool-result history.
+const SCHEMA_VERSION: i64 = 10;
 mod withdrawal;
 pub use withdrawal::{
     RemoteConsentRun, RemoteConsentStatus, RemoteGrantObserver, WithdrawalPreview,
@@ -239,7 +239,7 @@ impl Journal {
             .optional()?;
         if let Some(version) = version {
             ensure!(
-                matches!(version, 2 | 3 | 4 | 5 | 6 | 7 | 8 | SCHEMA_VERSION),
+                matches!(version, 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | SCHEMA_VERSION),
                 "unsupported attachment journal schema"
             );
         } else {
@@ -421,6 +421,13 @@ impl Journal {
         session: &Session,
         provenance: &super::migration::Provenance,
     ) -> Result<(u64, bool)> {
+        ensure!(
+            session.messages.iter().all(|m| m
+                .tool_output
+                .as_ref()
+                .is_none_or(|o| o.artifacts().next().is_none())),
+            "Legacy import cannot transfer tool artifacts; continue on the owning Vessel"
+        );
         let encoded = snapshot(session)?;
         ensure!(
             session.id == provenance.session_id && session.revision == provenance.source_revision,
@@ -816,6 +823,12 @@ impl Journal {
     ) -> Result<Vec<Message>> {
         let run = self.run(run_id)?;
         self.check_guard(guard, run.session_id)?;
+        if messages
+            .iter()
+            .any(|m| !m.parts.is_empty() || m.tool_output.is_some())
+        {
+            self.require_content_schema(guard, true)?;
+        }
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -1557,6 +1570,32 @@ mod cleanup;
 
 impl Journal {
     pub(crate) fn hydrate_images(&self, session: &mut Session) -> Result<()> {
+        for message in &session.messages {
+            if let Some(output) = &message.tool_output {
+                ensure!(
+                    output.text_fallback() == message.content,
+                    "stored tool result text integrity failure"
+                );
+            }
+        }
+        if session.messages.iter().any(|m| {
+            m.tool_output
+                .as_ref()
+                .is_some_and(|o| o.artifacts().next().is_some())
+        }) {
+            let store = crate::artifacts::Store::open(&self.directory, session.id)
+                .map_err(|_| anyhow::anyhow!("session artifact storage unavailable"))?;
+            for reference in session
+                .messages
+                .iter()
+                .filter_map(|m| m.tool_output.as_ref())
+                .flat_map(|o| o.artifacts())
+            {
+                store
+                    .resolve(reference)
+                    .map_err(|_| anyhow::anyhow!("session artifact reference integrity failure"))?;
+            }
+        }
         if session.messages.iter().all(|m| m.parts.is_empty()) {
             return Ok(());
         }
@@ -1592,26 +1631,37 @@ impl Journal {
 }
 
 impl Journal {
-    /// Existing v8 text-only journals opt into v9 under their lifetime owner fence.
+    /// Existing v8/v9 journals opt into typed content under their lifetime owner fence.
     /// Other legacy schemas still need the explicit quiescent migration path.
     fn require_image_schema(&mut self, guard: &ExecutionGuard) -> Result<()> {
+        self.require_content_schema(guard, false)
+    }
+
+    fn require_content_schema(
+        &mut self,
+        guard: &ExecutionGuard,
+        allow_owned_run: bool,
+    ) -> Result<()> {
         self.check_guard(guard, guard.session_id)?;
         if self.opened_schema == SCHEMA_VERSION {
             return Ok(());
         }
         ensure!(
-            self.opened_schema == 8,
-            "images require an explicit quiescent journal upgrade"
+            matches!(self.opened_schema, 8 | 9),
+            "typed content requires an explicit quiescent journal upgrade"
         );
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         check_transaction_schema(&tx, self.opened_schema)?;
-        let active: u64 =
-            tx.query_row("SELECT count(*) FROM runs WHERE active=1", [], |r| r.get(0))?;
+        let active: u64 = tx.query_row(
+            "SELECT count(*) FROM runs WHERE active=1 AND (?1=0 OR session_id!=?2)",
+            params![allow_owned_run, guard.session_id.to_string()],
+            |r| r.get(0),
+        )?;
         ensure!(
             active == 0,
-            "finish the current run before attaching images"
+            "typed content upgrade requires exclusive session execution"
         );
         tx.execute(
             "UPDATE attachment_schema SET version=?1 WHERE id=1",

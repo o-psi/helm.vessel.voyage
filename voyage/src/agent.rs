@@ -1393,15 +1393,19 @@ impl Agent {
                 let result = tokio::select! {
                     biased;
                     _ = cancel.cancelled() => { self.sink.emit(AgentEvent::Cancelled).await; return Err(AgentError::Cancelled); }
-                    value = gate::guarded(self.tools.execute_with_workflow_secrets(&call.name, call.arguments, &context, bindings.as_ref()), &cancel) => value?,
+                    value = gate::guarded(self.tools.execute_output_with_workflow_secrets(&call.name, call.arguments, &context, bindings.as_ref()), &cancel) => value?,
                 };
                 tracing::info!(execution_id = %context.execution_id, tool = %call.name,
                     success = result.is_ok(), "tool execution finished");
-                let (content, success) = match result {
-                    Ok(value) => (value, true),
-                    Err(error) => (error.to_string(), false),
+                let output = match result {
+                    Ok(value) => value,
+                    Err(error) => { let mut value = voyage_protocol::tool_result::ToolOutput::text(error.to_string()); value.is_error = true; value },
                 };
-                history.push(Message::tool_result(&call.id, &content, success));
+                let content = output.text_fallback();
+                let success = !output.is_error;
+                let mut message = Message::tool_result(&call.id, &content, success);
+                message.tool_output = Some(Box::new(output));
+                history.push(message);
                 gate::guarded(self.checkpoint(checkpoint, &mut history, &usage), &cancel).await??;
                 self.sink
                     .emit(AgentEvent::ToolFinished {

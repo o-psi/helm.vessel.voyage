@@ -223,6 +223,13 @@ mod unix {
         let session: Session =
             serde_json::from_slice(&original).context("invalid original session")?;
         ensure!(
+            session.messages.iter().all(|m| m
+                .tool_output
+                .as_ref()
+                .is_none_or(|o| o.artifacts().next().is_none())),
+            "Legacy JSON import cannot transfer tool artifacts; continue on the owning Vessel"
+        );
+        ensure!(
             session.id == request.session_id && session.revision == request.expected_revision,
             "source identity or revision mismatch"
         );

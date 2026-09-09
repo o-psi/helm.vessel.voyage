@@ -201,6 +201,12 @@ pub enum VoyageCommand {
         offset: u64,
         limit: u32,
     },
+    /// Read immutable session-owned artifact bytes; requires history authority.
+    ReadArtifact {
+        artifact_id: Uuid,
+        offset: u64,
+        limit: u32,
+    },
     /// Bounded immutable upload, independently deduplicated by upload_id. No execution.
     UploadImage {
         upload_id: Uuid,

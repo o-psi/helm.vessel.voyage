@@ -193,6 +193,8 @@ fn default_cols() -> u16 {
 impl Tool for ProcessTool {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
+            output_schema: None,
+            annotations: None,
         name: "process".into(),
         description: "Manage multiple persistent PTY-backed terminals with stable IDs and optional names, cwd, and environment. Start, read, write, resize, interrupt, rename, list, or terminate. Human attachment permanently disables model capture and input for that terminal; reads report a privacy gap. Start a new terminal for model-observed work. When a human using Helm's full-screen interface needs this program, tell them to press F3, select its name, and press Enter. Ctrl+] returns to Helm. Do not imply that a separate terminal window has opened. Passwords belong only in that private terminal, never in chat. Use shell for isolated one-shot commands.".into(),
         input_schema: json!({"type":"object","properties":{"action":{"enum":["start","read","write","resize","interrupt","rename","select","terminate","list"]},"command":{"type":"string"},"id":{"type":["string","null"]},"name":{"type":["string","null"]},"current_name":{"type":["string","null"]},"cwd":{"type":"string"},"env":{"type":"object"},"data":{"type":"string"},"rows":{"type":"integer","minimum":1},"cols":{"type":"integer","minimum":1}},"required":["action"]}),

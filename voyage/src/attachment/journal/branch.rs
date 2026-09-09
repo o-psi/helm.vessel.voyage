@@ -86,6 +86,25 @@ impl Journal {
                 }
             }
         }
+        if branch.messages.iter().any(|m| {
+            m.tool_output
+                .as_ref()
+                .is_some_and(|o| o.artifacts().next().is_some())
+        }) {
+            let artifacts = crate::artifacts::Store::open(&source.directory, *source_session_id)?;
+            let mut destination = crate::artifacts::Store::open(&self.directory, *branch_id)?;
+            for reference in branch
+                .messages
+                .iter()
+                .filter_map(|m| m.tool_output.as_ref())
+                .flat_map(|o| o.artifacts())
+            {
+                ensure!(
+                    artifacts.copy_to(&mut destination, reference)? == *reference,
+                    "branch artifact identity changed"
+                );
+            }
+        }
         let provenance = serde_json::to_string(initialization)?;
         let tx = self
             .connection

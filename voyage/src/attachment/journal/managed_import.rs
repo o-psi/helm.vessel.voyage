@@ -71,6 +71,13 @@ impl Journal {
         if !retired {
             let saved = source.load_session(session)?;
             ensure!(
+                saved.session.messages.iter().all(|m| m
+                    .tool_output
+                    .as_ref()
+                    .is_none_or(|o| o.artifacts().next().is_none())),
+                "Legacy managed import cannot transfer tool artifacts; continue on the owning Vessel"
+            );
+            ensure!(
                 saved.revision == revision && saved.session.workspace.canonicalize()? == workspace,
                 "managed source revision or workspace changed"
             );

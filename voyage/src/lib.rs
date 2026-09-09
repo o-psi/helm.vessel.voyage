@@ -37,3 +37,5 @@ pub mod server;
 pub mod participant;
 
 pub mod sandbox;
+
+pub mod artifacts;

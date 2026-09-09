@@ -103,6 +103,8 @@ pub struct Questions;
 impl Tool for Questions {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
+            output_schema: None,
+            annotations: None,
             name: "questions".into(),
             description: "Ask the user one multiple-choice clarification question (2–8 options). A custom text answer is always available. Returns selected (zero-based index and answer), custom, cancelled, or unavailable. Supported in the full-screen TUI; other/unattended frontends return unavailable. Answers are sent to the model and saved in session history: never request secrets or use this as a security approval. Do not invent an answer when cancelled or unavailable.".into(),
             input_schema: json!({"type":"object","properties":{

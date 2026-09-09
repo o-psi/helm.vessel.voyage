@@ -71,6 +71,7 @@ pub(super) async fn submit(
         steering: None,
     });
     let context = crate::tools::ToolContext {
+        artifact_scope: config.artifact_scope.clone(),
         github: crate::github::Credential::from_config(resolved.config()),
         completion: None,
         policy: Arc::new(resolved.policy().clone()),

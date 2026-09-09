@@ -90,6 +90,7 @@ impl Journal {
         for path in [
             self.directory.join("imports"),
             self.directory.join("images"),
+            self.directory.join("artifacts"),
             self.directory
                 .parent()
                 .context("journal parent missing")?

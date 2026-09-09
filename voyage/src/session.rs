@@ -646,8 +646,11 @@ impl SessionStore {
         name: Option<String>,
     ) -> Result<(Self, Session)> {
         anyhow::ensure!(
-            source.messages.iter().all(|m| m.parts.is_empty()),
-            "Image-bearing voyages must be branched through Vessel to retain managed images"
+            source.messages.iter().all(|m| m.parts.is_empty()
+                && m.tool_output
+                    .as_ref()
+                    .is_none_or(|o| o.artifacts().next().is_none())),
+            "Voyages with binary attachments must be branched through Vessel to retain managed artifacts"
         );
         let now = Utc::now();
         let mut branch = source.clone();

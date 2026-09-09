@@ -187,6 +187,7 @@ async fn configure_inner(
         config.live_access = Some(live.clone());
     }
     config.vessel_context = current.vessel_context.clone();
+    config.artifact_scope = current.artifact_scope.clone();
     *current = config;
     Ok(receipt)
 }

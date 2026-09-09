@@ -71,3 +71,9 @@ enabled = true
 
 [vessel.remotes]
 # build = "/absolute/private/build-vessel-access.json"
+
+# Streamable HTTP MCP (Voyage-owned). Use HTTPS except literal loopback IP HTTP.
+# MCP_REMOTE_TOKEN is an explicit HTTP-only reference to an executing-host env value.
+# [mcp_servers.remote]
+# url = "https://tools.example.com/mcp"
+# bearer_token_env = "MCP_REMOTE_TOKEN"

@@ -94,6 +94,9 @@ pub struct Config {
     /// Process-local access updates; never persisted or delegated as authority.
     #[serde(skip)]
     pub live_access: Option<std::sync::Arc<crate::policy::LiveAccess>>,
+    /// Runtime-owned artifact storage; never accepted from configuration.
+    #[serde(skip)]
+    pub artifact_scope: Option<crate::artifacts::Scope>,
     /// Locally accepted participant endpoints; credential contents never enter model context.
     pub participants: Vec<voyage_protocol::process::ParticipantEndpoint>,
     /// Chat-only preference recording; never carried to workers or runtime config files.
@@ -160,7 +163,12 @@ pub struct Config {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct McpServerConfig {
+    #[serde(default)]
     pub command: String,
+    #[serde(default)]
+    pub url: Option<String>,
+    #[serde(default)]
+    pub bearer_token_env: Option<String>,
     #[serde(default)]
     pub args: Vec<String>,
     #[serde(default)]
@@ -468,6 +476,7 @@ impl Default for Config {
             inherit_env: vec!["PATH".into(), "LANG".into(), "LC_ALL".into(), "TERM".into()],
             redact_values: Vec::new(),
             live_access: None,
+            artifact_scope: None,
             policy_profile: None,
             policy_defaults: None,
             policy_explicit: Default::default(),
@@ -495,6 +504,11 @@ impl Config {
             )
         {
             *value = "[REDACTED]".into();
+        }
+        for server in displayed.mcp_servers.values_mut() {
+            if server.url.is_some() {
+                server.url = Some("[REDACTED]".into());
+            }
         }
         // Redact structurally before serialization so escaping, short values,
         // and empty bindings cannot evade the diagnostic boundary.
@@ -652,6 +666,7 @@ impl Config {
         // retain it so the next rebuild checks the same profile and transition.
         updated.vessel_context = self.vessel_context.clone();
         updated.live_access = self.live_access.clone();
+        updated.artifact_scope = self.artifact_scope.clone();
         updated.chat_preferences = self.chat_preferences.clone();
         updated.policy_profile = self.policy_profile.clone();
         updated.policy_explicit = self.policy_explicit.clone();
@@ -665,6 +680,24 @@ impl Config {
     }
 
     pub fn validate(&self) -> Result<()> {
+        for server in self.mcp_servers.values() {
+            if let Some(url) = &server.url {
+                crate::tools::mcp::validate_http_endpoint(url)?;
+                if !server.command.is_empty() || !server.args.is_empty() {
+                    bail!("MCP HTTP server cannot also configure a stdio command or arguments");
+                }
+            } else if server.command.trim().is_empty() || server.bearer_token_env.is_some() {
+                bail!("MCP stdio requires command; bearer_token_env requires url");
+            }
+            if server.bearer_token_env.as_ref().is_some_and(|name| {
+                name.is_empty()
+                    || !name.bytes().enumerate().all(|(i, b)| {
+                        b == b'_' || b.is_ascii_alphabetic() || (i > 0 && b.is_ascii_digit())
+                    })
+            }) {
+                bail!("MCP bearer_token_env must be an environment variable name");
+            }
+        }
         self.vessel.validate()?;
         self.sandbox.validate()?;
         crate::provider::validate_inference_settings(self)?;

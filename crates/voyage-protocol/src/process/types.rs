@@ -119,6 +119,12 @@ pub enum RuntimeCommand {
         offset: u64,
         limit: u32,
     },
+    /// Read immutable session-owned artifact bytes; requires history authority.
+    ReadArtifact {
+        artifact_id: Uuid,
+        offset: u64,
+        limit: u32,
+    },
     /// Bounded immutable upload, independently deduplicated by upload_id. No execution.
     UploadImage {
         upload_id: Uuid,
@@ -257,6 +263,7 @@ impl RuntimeCommand {
                 | Self::History { .. }
                 | Self::MessageChunk { .. }
                 | Self::RunOutput { .. }
+                | Self::ReadArtifact { .. }
                 | Self::Receipt { .. }
                 | Self::Resolve { .. }
                 | Self::Events { .. }

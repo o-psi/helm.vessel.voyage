@@ -372,3 +372,20 @@ files between unrelated installations or edit cleanup/transfer state to bypass a
 fence. Unknown owners and unresolved obligations retain capacity. Defaults bound
 connections to 64, grants/bindings/assignments/transfer retention to 4,096 entries
 where applicable, and lifecycle command retention to 65,536 records.
+
+## Tool artifacts
+
+`read_artifact` is an additive public voyage operation with `artifact_id`, `offset`
+and `limit` fields. It requires `History` authority at both Vessel and the runtime,
+uses the selected session's private store, and never accepts a filesystem path.
+Responses contain immutable `metadata`, `offset`, `next_offset`, `eof` and
+`data_base64`, with at most 65,536 decoded bytes per response. The same operation
+works through suspended observation without starting an agent. Older peers reject
+this unknown operation; clients must not substitute a tool call or retry effects.
+
+Canonical public messages can include optional `tool_output` with ordered typed
+content and opaque artifact references. Existing text projections remain available,
+and bounded history pages still provide `message_chunk` for complete messages.
+`helm connect artifact SESSION ARTIFACT PATH` verifies a full download and creates
+a new local file. See [MCP tools and artifacts](configuration.md#mcp-tools-and-artifacts)
+for ownership, retention, validation and platform limits.

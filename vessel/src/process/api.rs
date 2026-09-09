@@ -187,6 +187,15 @@ pub(super) fn runtime(command: VoyageCommand) -> Result<RuntimeCommand> {
             offset,
             limit,
         },
+        VoyageCommand::ReadArtifact {
+            artifact_id,
+            offset,
+            limit,
+        } => RuntimeCommand::ReadArtifact {
+            artifact_id,
+            offset,
+            limit,
+        },
         VoyageCommand::UploadImage {
             upload_id,
             name,
@@ -495,6 +504,7 @@ pub(super) fn required_right(command: &VoyageCommand) -> Option<ProcessRight> {
         | VoyageCommand::History { .. }
         | VoyageCommand::MessageChunk { .. }
         | VoyageCommand::RunOutput { .. }
+        | VoyageCommand::ReadArtifact { .. }
         | VoyageCommand::Receipt { .. } => Some(ProcessRight::History),
         VoyageCommand::Decisions => Some(ProcessRight::Decide),
         VoyageCommand::UploadImage { .. }

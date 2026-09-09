@@ -87,6 +87,7 @@ pub async fn build_authorized_agent_bundle(
         };
         let context = ToolContext {
             github: crate::github::Credential::from_config(config),
+            artifact_scope: config.artifact_scope.clone(),
             completion: None,
             policy,
             approver,
@@ -210,6 +211,19 @@ pub fn redactor(config: &Config) -> Arc<Redactor> {
                 .mcp_servers
                 .values()
                 .flat_map(|server| server.env.values().cloned()),
+        )
+        .chain(
+            config
+                .mcp_servers
+                .values()
+                .filter_map(|server| server.url.clone()),
+        )
+        .chain(
+            config
+                .mcp_servers
+                .values()
+                .filter_map(|server| server.bearer_token_env.as_ref())
+                .filter_map(|name| std::env::var(name).ok()),
         )
         .chain(config.api_key_for_redaction())
         .chain(crate::github::credential_redactions(config));

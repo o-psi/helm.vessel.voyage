@@ -534,8 +534,13 @@ attestations or an arbitrary public-command escape hatch. See
 Native OpenAI Chat, OpenAI Responses, Anthropic and ChatGPT OAuth transports retain
 streaming/tool behavior. Native API providers do not require Codex. OAuth and API
 billing remain distinct; the optional compatibility bridge executes its own
-app-server. Linux cleanup observes its original process session. MCP stdio tools
-retain their bounded transports and observed child-session cleanup.
+app-server. Linux cleanup observes its original process session. MCP stdio and Streamable HTTP tools run in Voyage, with bounded transports,
+offline dynamic input/output schema validation and snapshotted capability manifests.
+Stdio retains observed child-session cleanup; HTTP retirement does not attest to
+remote effect cleanup. Ordered typed results and private session-owned artifacts
+survive history and local branches. Vessel authorizes artifact downloads, and Helm
+shows metadata and verifies downloaded bytes. See [MCP tools and artifacts](configuration.md#mcp-tools-and-artifacts)
+for concurrency, schema limits, supported content and transfer limitations.
 
 The live registry supplies tools and runtime instructions. Local roots, command
 denials, approvals, cancellation, administrator ceilings and resource limits apply

@@ -358,3 +358,140 @@ Vessel's database and private attachment authority directory are separate again.
 Back up private stores consistently while their owners are stopped, and follow
 [Operations](operations.md) for explicit upgrade and recovery. Do not delete state
 or restore an older grant to bypass an unresolved operation.
+
+## MCP tools and artifacts
+
+Voyage owns MCP connections, discovered tools, argument validation and cleanup.
+Vessel supervises the voyage process and authorizes observation/download requests;
+Helm presents its results. MCP supports stdio and Streamable HTTP using protocol
+version `2025-06-18`. Provider HTTP and the public Vessel HTTP API are separate
+transports.
+
+Configure either a command or a URL for each named server:
+
+```toml
+[mcp_servers.files]
+command = "mcp-server-filesystem"
+args = ["/approved/workspace"]
+
+[mcp_servers.remote]
+url = "https://tools.example.com/mcp"
+bearer_token_env = "MCP_REMOTE_TOKEN"
+```
+
+`bearer_token_env` explicitly grants the HTTP transport access to one executing-host
+environment variable. It is resolved directly on that machine and is not added
+to subprocess environments or persisted configuration. Do not put this variable
+in `inherit_env`; generic inherited tool environments refuse credential names.
+Credentials stay on that machine; Helm does not forward them. Endpoints require HTTPS; literal loopback IP HTTP is supported for
+local servers. Userinfo, query strings, fragments and redirects are refused.
+Hostnames over HTTP, legacy separate SSE endpoints, ambient HTTP proxies and
+OAuth discovery are not supported by this configured transport. Use an explicitly
+provisioned bearer credential where required. Configured stdio entries remain
+compatible; HTTP entries must not also specify a command or arguments.
+
+Read-only startup does not connect or launch MCP servers. Approval mode requires
+approval per MCP call; unrestricted mode still respects execution authority and
+configured limits. A server's annotations never grant permission or turn an MCP
+call into a trusted read-only tool. Stdio runs under the applicable subprocess
+policy; HTTP runs in Voyage's transport and is not confined by subprocess mounts.
+Required sandbox mode with denied network also refuses MCP HTTP startup.
+
+### Discovery and validation contract
+
+The live registry is the capability manifest: stable namespaced tool name,
+description, input schema, optional output schema and optional MCP annotations
+(title and read-only/destructive/idempotent/open-world hints). Registry entries
+are snapshotted at registration, names are collision checked, and declarations
+cannot authorize new capabilities. Declarative skill-package manifests and the
+extension SDK are separate contracts. Discovery supports bounded pagination,
+up to 4,096 tools and 128 pages, with repeated cursors refused. A new runtime
+rediscovers tools; unsolicited list-change notifications do not mutate a running
+registry.
+
+Voyage compiles input and output schemas locally at registration. Arguments are
+validated before approval and dispatch. Successful results with an output schema
+must contain matching `structuredContent`; schema failure after a call is a
+reported result failure and never triggers a retry. Schema constants and instance
+values are excluded from validation diagnostics. Known secrets in executable
+metadata refuse provider dispatch; natural descriptions receive a separate redacted
+projection.
+
+Supported JSON Schema drafts are 4, 6, 7, 2019-09 and 2020-12, within bounded
+local validation: 256 KiB per schema, 1 MiB per instance, 4,096 nodes and depth 48.
+Nonrecursive local JSON-pointer references are supported. Remote/file references,
+recursive/dynamic references, nested schema identifiers, unsupported required
+vocabularies and regex features
+requiring backtracking are refused explicitly. Formats remain annotations.
+Invalid or unsupported discovered schemas fail runtime construction rather than
+silently weakening validation.
+
+### Concurrency and failure contract
+
+Each foreground agent executes its returned tool calls sequentially. Each MCP
+connection has one in-flight RPC; queue wait counts toward the configured tool
+`command_timeout_secs`. Subagents construct their own registries and connections,
+and separate voyages execute independently. These limits do not promise a global
+machine-wide MCP scheduler or a configurable per-tool parallelism setting.
+
+Queued cancellation sends nothing. After possible dispatch, transport failure, timeout or
+dropped callers retire the connection; ordinary calls may send bounded best-effort
+cancellation. Initialization is never cancelled with an MCP notification. No
+transport reconnects or automatically resends effects. Late responses cannot
+revive a retired connection. Stdio cleanup observes owned local processes; HTTP
+cleanup retires the local connection and attempts bounded session DELETE when a
+session ID exists. Remote cancellation or DELETE never proves an external effect
+stopped. HTTP session expiry requires explicit new runtime initialization.
+
+JSON frames are limited to 1 MiB; SSE streams have bounded lines, event data,
+aggregate bytes and unrelated-message count. Nonmatching HTTP responses, malformed
+JSON/SSE, unsupported initialization and incomplete streams fail closed. Only ping
+is answered as a server request; servers cannot execute Voyage tools through the
+client connection.
+
+### Ordered results and downloads
+
+Tool results retain ordered text, images, audio, embedded text/binary resources,
+resource links, `structuredContent` and the MCP error flag. Unsupported block types
+are explicit failures. Optional presentation metadata such as icons and content
+annotations is not part of this result contract. Resource URIs are references and
+are never fetched automatically.
+
+Binary content is stored privately under its owning session. Canonical history
+contains immutable UUID/SHA-256/size/MIME references, never base64 payloads or local
+paths. Native provider tool outputs use a deterministic text projection containing
+all text, resource metadata and structured output; binary bytes are not automatically
+sent for model vision/audio interpretation. The complete typed result remains in
+history and authorized operators can download the original bytes. Helm shows
+attachment metadata beside tool activity.
+
+```sh
+helm connect artifact SESSION_UUID ARTIFACT_UUID ./result.bin
+```
+
+Use the normal `connect --access-file ...` selection for a remote Vessel. Download
+requires session-history authority, works after idle suspension without waking an
+agent, checks immutable metadata, size and SHA-256, and publishes to a new local
+file without overwriting it. Content is never automatically opened. The public
+`read_artifact` operation supports bounded 64 KiB chunks and uses opaque IDs scoped
+to the selected session.
+
+The private store permits up to 256 artifacts, 4 MiB per blob and a 64 MiB database;
+transport limits can impose smaller effective results. Image blocks additionally
+require actual PNG/JPEG/WebP validation under the existing 2 MiB image limit.
+Audio and other resource MIME types are server declarations, not executable-content
+trust. A result has at most 128 blocks. Configured known secrets in binary bytes,
+identifiers or structured output cause refusal; natural text is redacted before
+publication. This is known-value redaction, not arbitrary encoded-secret detection.
+
+Artifacts survive resume and local branching with their immutable IDs. Clear and
+failed calls can retain bounded unreferenced blobs until explicit session deletion;
+there is no automatic eviction of referenced data. Delete purges the artifact
+store. Cross-Vessel owner transfer and legacy JSON import of binary-bearing histories
+fail explicitly, as image-bearing transfers already do, rather than create dangling
+references. Typed-result persistence upgrades journal schema 8/9 to 10 under the
+runtime ownership fence; older runtimes refuse the upgraded journal.
+
+These storage and process behaviors require actual native verification. Current
+acceptance evidence is Linux with synthetic local peers; it does not establish
+native macOS/Windows private-storage behavior or live-provider results.

@@ -246,6 +246,30 @@ pub(super) fn flush(
                 Key::Activity(id),
                 crate::markdown::wrap_text(text, width.into()),
             );
+            if let Some(result) = result.and_then(|message| message.tool_output.as_ref()) {
+                for artifact in result.artifacts() {
+                    note(
+                        output,
+                        Key::Activity(id),
+                        format!(
+                            "  Attachment · {} · {} · {} bytes",
+                            compact(&artifact.name, 80),
+                            compact(&artifact.mime_type, 80),
+                            artifact.byte_size
+                        ),
+                        width,
+                    );
+                    note(
+                        output,
+                        Key::Activity(id),
+                        format!(
+                            "  Artifact {} · save with helm connect artifact",
+                            artifact.id
+                        ),
+                        width,
+                    );
+                }
+            }
         }
     }
     calls.clear();

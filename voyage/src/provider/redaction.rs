@@ -25,9 +25,25 @@ pub(crate) fn definition(
     redactor: &Redactor,
 ) -> Result<(), ProviderError> {
     definition.description = redactor.redact_public_prefix(&definition.description);
+    if let Some(title) = definition
+        .annotations
+        .as_mut()
+        .and_then(|hints| hints.title.as_mut())
+    {
+        *title = redactor.redact_public_prefix(title);
+    }
     if redactor.contains_secret(&definition.description)
         || redactor.contains_secret(&definition.name)
         || contains(&definition.input_schema, redactor)
+        || definition
+            .output_schema
+            .as_ref()
+            .is_some_and(|schema| contains(schema, redactor))
+        || definition
+            .annotations
+            .as_ref()
+            .and_then(|hints| hints.title.as_ref())
+            .is_some_and(|title| redactor.contains_secret(title))
     {
         return Err(ProviderError::InvalidResponse(
             "configured secret in executable tool metadata; provider dispatch refused".into(),
@@ -40,6 +56,15 @@ pub(crate) fn definition(
 /// tool arguments, identities, reasoning signatures, or unknown continuation.
 pub(crate) fn message(message: &mut Message, redactor: &Redactor) -> Result<(), ProviderError> {
     message.content = redactor.redact_public_prefix(&message.content);
+    if let Some(output) = &message.tool_output {
+        let value = serde_json::to_value(output)
+            .map_err(|_| ProviderError::Request("invalid tool result".into()))?;
+        if contains(&value, redactor) {
+            return Err(ProviderError::Request(
+                "configured secret in typed tool result; provider dispatch refused".into(),
+            ));
+        }
+    }
     for part in &mut message.parts {
         if let voyage_protocol::content::ContentPart::Text { text } = part {
             *text = redactor.redact_public_prefix(text);

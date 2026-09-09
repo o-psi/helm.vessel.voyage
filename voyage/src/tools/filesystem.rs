@@ -279,6 +279,8 @@ impl Tool for SearchFiles {
 
 fn definition(name: &str, description: &str, input_schema: Value) -> ToolDefinition {
     ToolDefinition {
+        output_schema: None,
+        annotations: None,
         name: name.into(),
         description: description.into(),
         input_schema,

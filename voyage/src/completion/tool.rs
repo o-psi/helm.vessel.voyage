@@ -65,6 +65,8 @@ fn failed(error: impl std::fmt::Display) -> ToolError {
 impl Tool for CompletionTool {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
+            output_schema: None,
+            annotations: None,
             name: "completion".into(),
             description: "Review only this run's obligations. Snapshot supplies fresh revision and fingerprint plus unresolved IDs; read accepts only action, kind and id. Read owned evidence/results before accounting. Adopt older todos or complete terminal agent subtrees explicitly; wait or cancel active work before adoption. Account using the exact fresh snapshot revision/fingerprint and a concrete evidence or impact reason. Preserve truthful blocked/deferred/failure outcomes. This does not complete, delete, archive or cancel work; mechanical accounting does not prove semantic correctness. Examples show argument shapes, not IDs or fingerprints to reuse.".into(),
             input_schema: input_schema(),

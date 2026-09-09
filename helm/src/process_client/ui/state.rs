@@ -39,6 +39,8 @@ pub struct Message {
     pub tool_call_id: Option<String>,
     #[serde(default)]
     pub tool_success: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_output: Option<voyage_protocol::tool_result::ToolOutput>,
     #[serde(default)]
     pub steering: serde_json::Value,
     #[serde(default)]

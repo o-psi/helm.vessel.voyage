@@ -25,6 +25,12 @@ pub struct ConnectArgs {
 
 #[derive(Subcommand)]
 pub enum ConnectedCommand {
+    /// Download a tool artifact from its owning voyage to a new local file.
+    Artifact {
+        session: Uuid,
+        artifact: Uuid,
+        path: PathBuf,
+    },
     /// Export complete public history at one revision to a new local Markdown file.
     Export { session: Uuid, path: PathBuf },
     /// Explicit account administration, participant bindings and signed owner moves.

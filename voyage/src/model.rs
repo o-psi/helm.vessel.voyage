@@ -35,6 +35,8 @@ pub struct Message {
     pub created_at: Option<chrono::DateTime<chrono::Utc>>,
     pub role: Role,
     pub content: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_output: Option<Box<voyage_protocol::tool_result::ToolOutput>>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub parts: Vec<voyage_protocol::content::ContentPart>,
     #[serde(skip)]
@@ -61,6 +63,7 @@ impl Message {
             created_at: Some(chrono::Utc::now()),
             role,
             content: content.into(),
+            tool_output: None,
             parts: Vec::new(),
             image_data: Default::default(),
             tool_call_id: None,
@@ -93,6 +96,7 @@ impl Message {
             created_at: Some(chrono::Utc::now()),
             role: Role::Tool,
             content: content.into(),
+            tool_output: None,
             parts: Vec::new(),
             image_data: Default::default(),
             tool_call_id: Some(call_id.into()),
@@ -116,6 +120,26 @@ pub struct ToolDefinition {
     pub name: String,
     pub description: String,
     pub input_schema: Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_schema: Option<Value>,
+    /// Untrusted descriptive hints, never execution-policy grants.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub annotations: Option<ToolAnnotations>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolAnnotations {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub read_only_hint: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub destructive_hint: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub idempotent_hint: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub open_world_hint: Option<bool>,
 }
 
 #[derive(Clone, Debug, Serialize)]

@@ -298,6 +298,8 @@ fn action_schemas() -> Vec<Value> {
 impl Tool for VesselTool {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
+            output_schema: None,
+            annotations: None,
             name: "vessel".into(),
             description: "Coordinate any voyage authorized by configured Vessel routes, not just related voyages. Public HTTP only; no credentials, terminal access, approval responses, shell, or provider configuration exposed. Ordinary tool policy approvals still apply. routes identifies the owning voyage and configured target aliases. inspect returns registration and current snapshot; list/search page catalogue metadata (search is not full-text history). history pages canonical conversation. follow/wait read bounded events after a cursor; a timeout is not completion. Mutations require a stable caller-generated command_id; reuse it only for the identical request. Durable intents precede effects; unknown outcomes are never replayed. operations pages durable local intent IDs; receipt with session_id queries the server; without it reads the local journal. Create starts a session then submits required initial task; its start command ID is session_id. Use a fresh session ID. Target defaults to local; remote grants enforce their actual rights. No implicit startup, recovery, deletion, or authority broadening.".into(),
             input_schema: json!({"type":"object","additionalProperties":false,"required":["action"],"properties":{

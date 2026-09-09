@@ -103,6 +103,7 @@ pub fn required_process_right(command: &RuntimeCommand) -> Option<ProcessRight> 
         | RuntimeCommand::History { .. }
         | RuntimeCommand::MessageChunk { .. }
         | RuntimeCommand::RunOutput { .. }
+        | RuntimeCommand::ReadArtifact { .. }
         | RuntimeCommand::Receipt { .. } => Some(ProcessRight::History),
         RuntimeCommand::Decisions => Some(ProcessRight::Decide),
         RuntimeCommand::UploadImage { .. }

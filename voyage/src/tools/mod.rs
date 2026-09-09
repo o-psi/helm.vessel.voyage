@@ -1,9 +1,11 @@
 mod filesystem;
 pub mod mcp;
+mod output;
 mod process;
 #[cfg(target_os = "linux")]
 pub(crate) use process::SessionIdentity;
 mod questions;
+pub(crate) mod schema;
 mod shell;
 mod todo;
 mod vessel;
@@ -292,6 +294,7 @@ impl Redactor {
 
 #[derive(Clone)]
 pub struct ToolContext {
+    pub artifact_scope: Option<crate::artifacts::Scope>,
     /// Dedicated capability, never forwarded to shell/MCP or serialized.
     pub github: Option<crate::github::Credential>,
     pub completion: Option<crate::completion::runtime::RunHandle>,
@@ -331,6 +334,16 @@ impl ToolContext {
 pub trait Tool: Send + Sync {
     fn definition(&self) -> ToolDefinition;
     async fn execute(&self, arguments: Value, context: &ToolContext) -> Result<String, ToolError>;
+    /// Ordered result contract; ordinary text tools retain their existing implementation.
+    async fn execute_output(
+        &self,
+        arguments: Value,
+        context: &ToolContext,
+    ) -> Result<voyage_protocol::tool_result::ToolOutput, ToolError> {
+        self.execute(arguments, context)
+            .await
+            .map(voyage_protocol::tool_result::ToolOutput::text)
+    }
     /// Trusted one-shot implementations may consume a current-run environment.
     /// The typed result cannot carry captured output or arbitrary diagnostic text.
     async fn execute_secret_environment(
@@ -345,9 +358,32 @@ pub trait Tool: Send + Sync {
     }
 }
 
+struct ToolContract {
+    definition: ToolDefinition,
+    input: schema::CompiledSchema,
+    output: Option<schema::CompiledSchema>,
+}
+
+impl ToolContract {
+    fn compile(definition: ToolDefinition) -> Result<Self, ToolError> {
+        let input = schema::CompiledSchema::compile(&definition.input_schema)?;
+        let output = definition
+            .output_schema
+            .as_ref()
+            .map(schema::CompiledSchema::compile)
+            .transpose()?;
+        Ok(Self {
+            definition,
+            input,
+            output,
+        })
+    }
+}
+
 #[derive(Default)]
 pub struct ToolRegistry {
     tools: BTreeMap<String, Arc<dyn Tool>>,
+    contracts: BTreeMap<String, ToolContract>,
     terminals: Option<ProcessTool>,
     mcp: Vec<mcp::McpLease>,
 }
@@ -401,21 +437,32 @@ impl ToolRegistry {
         self.register_arc(Arc::new(tool))
     }
     pub fn register<T: Tool + 'static>(&mut self, tool: T) {
-        self.tools.insert(tool.definition().name, Arc::new(tool));
+        let contract =
+            ToolContract::compile(tool.definition()).expect("built-in tool schema must compile");
+        let name = contract.definition.name.clone();
+        self.contracts.insert(name.clone(), contract);
+        self.tools.insert(name, Arc::new(tool));
     }
     pub fn register_arc(&mut self, tool: Arc<dyn Tool>) -> Result<(), ToolError> {
-        let name = tool.definition().name;
+        let definition = tool.definition();
+        let name = definition.name.clone();
         if self.tools.contains_key(&name) {
             return Err(ToolError::Failed(format!("duplicate tool name `{name}`")));
         }
+        let contract = ToolContract::compile(definition)?;
+        self.contracts.insert(name.clone(), contract);
         self.tools.insert(name, tool);
         Ok(())
     }
     pub fn definitions(&self) -> Vec<ToolDefinition> {
-        self.tools.values().map(|t| t.definition()).collect()
+        self.contracts
+            .values()
+            .map(|contract| contract.definition.clone())
+            .collect()
     }
     pub fn retain_allowed(&mut self, allowed: &std::collections::BTreeSet<String>) {
         self.tools.retain(|name, _| allowed.contains(name));
+        self.contracts.retain(|name, _| allowed.contains(name));
         if !allowed.contains("process") {
             self.terminals = None;
         }
@@ -436,7 +483,30 @@ impl ToolRegistry {
                     | "vessel"
             )
         });
+        self.contracts
+            .retain(|name, _| self.tools.contains_key(name));
     }
+    /// Check structured successful output against the snapshotted discovery contract.
+    pub(crate) fn validate_output(
+        &self,
+        name: &str,
+        value: Option<&Value>,
+    ) -> Result<(), ToolError> {
+        if let Some(schema) = self
+            .contracts
+            .get(name)
+            .and_then(|contract| contract.output.as_ref())
+        {
+            let value = value.ok_or_else(|| {
+                ToolError::Failed("tool omitted declared structured output".into())
+            })?;
+            schema.validate(value).map_err(|_| {
+                ToolError::Failed("tool output does not match its declared JSON Schema".into())
+            })?;
+        }
+        Ok(())
+    }
+
     pub async fn execute(
         &self,
         name: &str,
@@ -454,6 +524,28 @@ impl ToolRegistry {
         context: &ToolContext,
         bindings: Option<&crate::workflow::secrets::RunBindings>,
     ) -> Result<String, ToolError> {
+        let output = self
+            .execute_output_with_workflow_secrets(name, arguments, context, bindings)
+            .await?;
+        if output.is_error {
+            Err(ToolError::Failed(output.text_fallback()))
+        } else {
+            Ok(output.text_fallback())
+        }
+    }
+
+    pub async fn execute_output_with_workflow_secrets(
+        &self,
+        name: &str,
+        arguments: Value,
+        context: &ToolContext,
+        bindings: Option<&crate::workflow::secrets::RunBindings>,
+    ) -> Result<voyage_protocol::tool_result::ToolOutput, ToolError> {
+        self.contracts
+            .get(name)
+            .ok_or_else(|| ToolError::Failed(format!("unknown tool `{name}`")))?
+            .input
+            .validate(&arguments)?;
         // Bind every permission decision (including MCP approval) to one access generation.
         let mut dispatch_context = context.clone();
         dispatch_context.policy = Arc::new(context.policy.for_dispatch());
@@ -546,23 +638,33 @@ impl ToolRegistry {
             // Only fixed enum/status metadata reaches serialization; no raw tool
             // string or secret-dependent redaction can corrupt this envelope.
             return serde_json::to_string(&outcome)
+                .map(voyage_protocol::tool_result::ToolOutput::text)
                 .map_err(|_| ToolError::Failed("one-shot shell outcome encoding failed".into()));
         }
         let result = self
             .tools
             .get(name)
             .ok_or_else(|| ToolError::Failed(format!("unknown tool `{name}`")))?
-            .execute(arguments, &dispatch)
+            .execute_output(arguments, &dispatch)
             .await;
-        result
-            .and_then(|output| {
-                if name == "questions" {
-                    questions::redact_result(&output, &context.redactor)
-                } else {
-                    Ok(context.redactor.redact(output))
-                }
-            })
-            .map_err(|error| error.redacted(&context.redactor))
+        let mut output = result.map_err(|error| error.redacted(&context.redactor))?;
+        if !output.is_error {
+            self.validate_output(name, output.structured_content.as_ref())?;
+        }
+        if name == "questions" {
+            output = voyage_protocol::tool_result::ToolOutput::text(questions::redact_result(
+                &output.text_fallback(),
+                &context.redactor,
+            )?);
+        } else {
+            output::redact(&mut output, &context.redactor)?;
+        }
+        if output.text_fallback().len() > context.max_output_bytes {
+            return Err(ToolError::Failed(
+                "tool result exceeds configured max_output_bytes".into(),
+            ));
+        }
+        Ok(output)
     }
 }
 

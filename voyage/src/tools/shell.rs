@@ -31,6 +31,8 @@ struct Args {
 impl Tool for Shell {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
+            output_schema: None,
+            annotations: None,
             name: "shell".into(),
             description:
                 "Run a shell command in the workspace. Normally returns exit status, stdout and stderr. Optional workflow_secrets names explicitly bind current-run secret references to their documented HELM_WORKFLOW_* environment variables; these calls suppress stdout/stderr before capture and return only a fixed status/code. Unknown or stale references fail; no automatic inheritance."

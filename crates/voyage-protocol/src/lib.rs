@@ -37,3 +37,5 @@ pub mod content;
 
 /// Model/account-scoped inference observations.
 pub mod inference;
+
+pub mod tool_result;

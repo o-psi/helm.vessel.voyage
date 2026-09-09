@@ -13,7 +13,7 @@ pub(super) fn text_prefix(text: &str, limit: usize) -> (&str, bool) {
     (&text[..end], end < text.len())
 }
 pub(super) fn full(message: &Message) -> Value {
-    json!({"role":message.role,"content":message.content,"parts":message.parts,"created_at":message.created_at,"operator_name":message.operator_name,"tool_calls":message.tool_calls,"tool_call_id":message.tool_call_id,"tool_success":message.tool_success,"steering":message.steering})
+    json!({"role":message.role,"content":message.content,"parts":message.parts,"tool_output":message.tool_output,"created_at":message.created_at,"operator_name":message.operator_name,"tool_calls":message.tool_calls,"tool_call_id":message.tool_call_id,"tool_success":message.tool_success,"steering":message.steering})
 }
 fn bounded(message: &Message, index: usize) -> Result<Value> {
     let mut value = full(message);

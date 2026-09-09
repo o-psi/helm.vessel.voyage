@@ -146,6 +146,8 @@ impl From<StatusArg> for TodoStatus {
 impl Tool for TodoTool {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
+            output_schema: None,
+            annotations: None,
             name: "todo".into(),
             description: "Manage durable workspace tasks. Each action accepts only its branch's keys. Use block with id and blockers to explain blocked work; [] clears reasons and reopens blocked work. Record verification via evidence, not title/progress text. Status changes do not record evidence. Run completion uses recorded outcomes automatically; no separate completion sign-off is required. Remove/archive/clear_completed never erase run-owned obligations. clear_completed archives all completed items and accepts no id. Examples show shapes; copy actual IDs and record only real evidence.".into(),
             input_schema: schema::input_schema(),

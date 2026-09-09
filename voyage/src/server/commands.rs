@@ -114,6 +114,7 @@ pub(super) async fn dispatch_admitted(
         RuntimeCommand::Health => {
             let mut capabilities = vec![
                 "snapshot",
+                "read_artifact",
                 "history",
                 "message_chunk",
                 "run_output",
@@ -228,6 +229,24 @@ pub(super) async fn dispatch_admitted(
                 .owner
                 .process_message_chunk(index, offset, limit, expected_revision)
                 .await
+        }
+        RuntimeCommand::ReadArtifact {
+            artifact_id,
+            offset,
+            limit,
+        } => {
+            ensure!(
+                !state.owner.process_snapshot().await?["lifecycle"]["deleted"]
+                    .as_bool()
+                    .unwrap_or(false),
+                "session deleted"
+            );
+            crate::artifacts::Store::open(
+                &state.directory.join("journal"),
+                state.registration.session_id,
+            )?
+            .chunk(artifact_id, offset, limit as usize)
+            .map_err(|_| anyhow::anyhow!("artifact unavailable or invalid range"))
         }
         RuntimeCommand::RunOutput {
             run_id,

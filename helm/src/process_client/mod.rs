@@ -30,3 +30,5 @@ pub mod frontend;
 mod admin;
 
 pub mod export;
+
+mod artifacts;

@@ -1,10 +1,12 @@
-//! Model Context Protocol stdio tool discovery and invocation.
+//! Model Context Protocol stdio and Streamable HTTP discovery and invocation.
 //!
 //! Each server is isolated behind a serialized JSON-RPC transport. Server tools are
 //! namespaced (`mcp_<server>_<tool>`) so an untrusted server cannot shadow built-ins.
+mod http;
 use super::{Tool, ToolContext, ToolError};
 use crate::model::ToolDefinition;
 use async_trait::async_trait;
+pub use http::validate_http_endpoint;
 use serde_json::{Value, json};
 use std::{
     collections::BTreeMap,
@@ -25,9 +27,10 @@ pub struct McpServer {
     transport: Arc<Transport>,
 }
 struct Transport {
-    child: Mutex<Child>,
+    child: Option<Mutex<Child>>,
+    http: Option<http::HttpTransport>,
     stdin: Mutex<Option<ChildStdin>>,
-    stdout: Mutex<BufReader<ChildStdout>>,
+    stdout: Option<Mutex<BufReader<ChildStdout>>>,
     rpc: Arc<Mutex<()>>,
     closed: AtomicBool,
     stopping: tokio_util::sync::CancellationToken,
@@ -43,6 +46,43 @@ struct Transport {
 }
 
 impl McpServer {
+    pub fn start_http(
+        name: impl Into<String>,
+        endpoint: &str,
+        credential: Option<&str>,
+        policy: &crate::policy::Policy,
+    ) -> Result<Self, ToolError> {
+        policy
+            .check_current()
+            .map_err(|_| ToolError::Denied("MCP HTTP execution policy unavailable".into()))?;
+        let sandbox = policy.sandbox();
+        if sandbox.required() && sandbox.settings.network == crate::sandbox::Network::Denied {
+            return Err(ToolError::Denied(
+                "MCP HTTP is unavailable when required sandbox denies tool networking".into(),
+            ));
+        }
+        Ok(Self {
+            name: sanitize(&name.into()),
+            transport: Arc::new(Transport {
+                child: None,
+                http: Some(http::HttpTransport::new(endpoint, credential)?),
+                stdin: Mutex::new(None),
+                stdout: None,
+                rpc: Arc::new(Mutex::new(())),
+                closed: AtomicBool::new(false),
+                stopping: tokio_util::sync::CancellationToken::new(),
+                tools_available: AtomicBool::new(false),
+                outbound_partial: AtomicBool::new(false),
+                next_id: AtomicU64::new(1),
+                observed: AtomicBool::new(false),
+                #[cfg(not(target_os = "linux"))]
+                direct_observed: AtomicBool::new(false),
+                #[cfg(target_os = "linux")]
+                identity: None,
+            }),
+        })
+    }
+
     /// Acquire the scoped child before awaiting initialization so cleanup owns it.
     pub fn start_scoped(
         name: impl Into<String>,
@@ -108,9 +148,10 @@ impl McpServer {
         let server = Self {
             name,
             transport: Arc::new(Transport {
-                child: Mutex::new(child),
+                child: Some(Mutex::new(child)),
+                http: None,
                 stdin: Mutex::new(Some(stdin)),
-                stdout: Mutex::new(BufReader::new(stdout)),
+                stdout: Some(Mutex::new(BufReader::new(stdout))),
                 rpc: Arc::new(Mutex::new(())),
                 closed: AtomicBool::new(false),
                 stopping: tokio_util::sync::CancellationToken::new(),
@@ -136,7 +177,7 @@ impl McpServer {
             cancel: tokio_util::sync::CancellationToken::new(),
             armed: true,
         };
-        let response = self.transport.request("initialize", json!({"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"helm","version":env!("CARGO_PKG_VERSION")}})).await?;
+        let response = self.transport.request("initialize", json!({"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"voyage","version":env!("CARGO_PKG_VERSION")}})).await?;
         let Some(result) = response.get("result") else {
             self.transport.closed.store(true, Ordering::Release);
             return Err(failed("MCP initialization failed"));
@@ -179,11 +220,35 @@ impl McpServer {
         if !self.transport.tools_available.load(Ordering::Acquire) {
             return Ok(Vec::new());
         }
-        let response = self.transport.request("tools/list", json!({})).await?;
-        let tools = response
-            .pointer("/result/tools")
-            .and_then(Value::as_array)
-            .ok_or_else(|| failed("MCP tools/list response omitted result.tools"))?;
+        let mut tools = Vec::new();
+        let mut cursors = std::collections::BTreeSet::new();
+        let mut params = json!({});
+        let mut pages = 0usize;
+        loop {
+            if pages == MAX_UNRELATED_FRAMES {
+                return Err(failed("MCP discovery page limit exceeded"));
+            }
+            pages += 1;
+            let response = self.transport.request("tools/list", params).await?;
+            let page = response
+                .pointer("/result/tools")
+                .and_then(Value::as_array)
+                .ok_or_else(|| failed("MCP tools/list response omitted result.tools"))?;
+            if tools.len().saturating_add(page.len()) > 4096 {
+                return Err(failed("MCP discovery exceeds 4096 tools"));
+            }
+            tools.extend(page.iter().cloned());
+            match response.pointer("/result/nextCursor") {
+                None => break,
+                Some(Value::String(cursor)) if !cursor.is_empty() => {
+                    if !cursors.insert(cursor.clone()) {
+                        return Err(failed("MCP discovery cursor cycle or page limit exceeded"));
+                    }
+                    params = json!({"cursor":cursor});
+                }
+                _ => return Err(failed("MCP tools/list malformed nextCursor")),
+            }
+        }
         tools
             .iter()
             .map(|tool| {
@@ -199,10 +264,32 @@ impl McpServer {
                         .and_then(Value::as_str)
                         .unwrap_or("MCP tool")
                         .to_owned(),
+                    output_schema: tool
+                        .get("outputSchema")
+                        .map(|schema| {
+                            if !schema.is_object()
+                                || schema.get("type").and_then(Value::as_str) != Some("object")
+                            {
+                                return Err(failed("MCP tool requires an object outputSchema"));
+                            }
+                            Ok(schema.clone())
+                        })
+                        .transpose()?,
+                    annotations: tool
+                        .get("annotations")
+                        .map(|value| {
+                            serde_json::from_value(value.clone())
+                                .map_err(|_| failed("MCP malformed tool annotations"))
+                        })
+                        .transpose()?,
                     input_schema: tool
                         .get("inputSchema")
+                        .filter(|schema| {
+                            schema.is_object()
+                                && schema.get("type").and_then(Value::as_str) == Some("object")
+                        })
                         .cloned()
-                        .unwrap_or_else(|| json!({"type":"object"})),
+                        .ok_or_else(|| failed("MCP tool requires an object inputSchema"))?,
                 };
                 Ok(Arc::new(McpTool {
                     remote_name,
@@ -247,9 +334,25 @@ impl Tool for McpTool {
         self.definition.clone()
     }
     async fn execute(&self, arguments: Value, context: &ToolContext) -> Result<String, ToolError> {
+        let output = self.execute_output(arguments, context).await?;
+        if output.is_error {
+            Err(failed(output.text_fallback()))
+        } else {
+            Ok(output.text_fallback())
+        }
+    }
+    async fn execute_output(
+        &self,
+        arguments: Value,
+        context: &ToolContext,
+    ) -> Result<voyage_protocol::tool_result::ToolOutput, ToolError> {
+        if context.cancellation.is_cancelled() {
+            return Err(ToolError::Cancelled);
+        }
         let response = tokio::select! {
+            biased;
             _ = context.cancellation.cancelled() => return Err(ToolError::Cancelled),
-            result = tokio::time::timeout(context.timeout, self.transport.request("tools/call", json!({"name":self.remote_name,"arguments":arguments}))) => result.map_err(|_| ToolError::Timeout(context.timeout))??,
+            result = tokio::time::timeout(context.timeout, self.transport.request_with_policy("tools/call", json!({"name":self.remote_name,"arguments":arguments}), Some(context.policy.clone()))) => result.map_err(|_| ToolError::Timeout(context.timeout))??,
         };
         if let Some(error) = response.get("error") {
             return Err(failed(format!(
@@ -261,15 +364,7 @@ impl Tool for McpTool {
             .get("result")
             .filter(|value| value.is_object())
             .ok_or_else(|| failed("MCP tool response omitted an object result"))?;
-        let is_error = result.get("isError").and_then(Value::as_bool) == Some(true);
-        let output = extract_content(result);
-        if output.len() > context.max_output_bytes {
-            return Err(failed("MCP result exceeds configured max_output_bytes"));
-        }
-        if is_error {
-            return Err(failed(output));
-        }
-        Ok(output)
+        super::output::ingest(result.clone(), context)
     }
 }
 
@@ -311,9 +406,17 @@ impl Transport {
     async fn shutdown(&self) -> Result<(), ToolError> {
         self.closed.store(true, Ordering::Release);
         self.stopping.cancel();
+        if let Some(http) = &self.http {
+            http.shutdown().await?;
+            // Observation covers our HTTP lease only, never remote process exit or effects.
+            self.observed.store(true, Ordering::Release);
+            #[cfg(not(target_os = "linux"))]
+            self.direct_observed.store(true, Ordering::Release);
+            return Ok(());
+        }
         self.stdin.lock().await.take();
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        let mut child = self.child.lock().await;
+        let mut child = self.child.as_ref().expect("stdio child").lock().await;
         if self.observed.load(Ordering::Acquire) {
             return Ok(());
         }
@@ -355,6 +458,14 @@ impl Transport {
     }
 
     async fn request(self: &Arc<Self>, method: &str, params: Value) -> Result<Value, ToolError> {
+        self.request_with_policy(method, params, None).await
+    }
+    async fn request_with_policy(
+        self: &Arc<Self>,
+        method: &str,
+        params: Value,
+        policy: Option<Arc<crate::policy::Policy>>,
+    ) -> Result<Value, ToolError> {
         // A queued caller owns no I/O and can disappear without affecting the peer.
         if self.closed.load(Ordering::Acquire) {
             return Err(failed(
@@ -366,6 +477,11 @@ impl Transport {
             return Err(failed(
                 "MCP connection retired; restart the runtime before new calls",
             ));
+        }
+        if let Some(policy) = &policy {
+            policy.check_execution_authority().map_err(|_| {
+                ToolError::Denied("MCP execution authority changed while queued".into())
+            })?;
         }
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let frame =
@@ -381,8 +497,21 @@ impl Transport {
         let (sender, receiver) = tokio::sync::oneshot::channel();
         tokio::spawn(async move {
             let _guard = guard;
+            if let Some(policy) = &policy
+                && policy.check_execution_authority().is_err()
+            {
+                // Nothing was dispatched. Preserve the connection for a fresh authorized caller.
+                let _ = sender.send(Err(ToolError::Denied(
+                    "MCP execution authority changed before dispatch".into(),
+                )));
+                return;
+            }
             let mut sent = false;
             let operation = async {
+                if let Some(http) = &transport.http {
+                    sent = true;
+                    return http.request(&frame, id, initialize).await;
+                }
                 transport.write_frame(&frame).await?;
                 sent = true;
 
@@ -398,7 +527,7 @@ impl Transport {
                         return Err(failed("MCP unrelated-message limit exceeded"));
                     }
                     // Servers may ping during initialization and operation. Never
-                    // execute server requests as Helm tools or grant capabilities.
+                    // execute server requests as Voyage tools or grant capabilities.
                     if let Some(request_id) = value.get("id")
                         && let Some(method) = value.get("method").and_then(Value::as_str)
                     {
@@ -431,7 +560,7 @@ impl Transport {
                         std::time::Duration::from_millis(100),
                         transport.notify(
                             "notifications/cancelled",
-                            json!({"requestId":id,"reason":"Helm stopped waiting"}),
+                            json!({"requestId":id,"reason":"Voyage stopped waiting"}),
                         ),
                     )
                     .await;
@@ -464,7 +593,11 @@ impl Transport {
             .await
     }
     async fn send(&self, value: Value) -> Result<(), ToolError> {
-        self.write_frame(&encode_frame(&value)?).await
+        let frame = encode_frame(&value)?;
+        if let Some(http) = &self.http {
+            return http.send(&frame).await;
+        }
+        self.write_frame(&frame).await
     }
     async fn write_frame(&self, frame: &[u8]) -> Result<(), ToolError> {
         let mut stdin = self.stdin.lock().await;
@@ -491,7 +624,7 @@ impl Transport {
         Ok(())
     }
     async fn receive(&self) -> Result<Value, ToolError> {
-        let mut reader = self.stdout.lock().await;
+        let mut reader = self.stdout.as_ref().expect("stdio stdout").lock().await;
         let mut bytes = Vec::new();
         loop {
             let available = reader
@@ -562,20 +695,6 @@ fn encode_frame(value: &Value) -> Result<Vec<u8>, ToolError> {
     Ok(writer.0)
 }
 
-fn extract_content(result: &Value) -> String {
-    result
-        .get("content")
-        .and_then(Value::as_array)
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(|v| v.get("text").and_then(Value::as_str))
-                .collect::<Vec<_>>()
-                .join("\n")
-        })
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| result.to_string())
-}
 fn sanitize(name: &str) -> String {
     let value: String = name
         .chars()

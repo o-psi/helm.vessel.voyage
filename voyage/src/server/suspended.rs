@@ -240,6 +240,21 @@ async fn inspect(
                 .process_message_chunk(index, offset, limit, expected_revision)
                 .await
         }
+        RuntimeCommand::ReadArtifact {
+            artifact_id,
+            offset,
+            limit,
+        } => {
+            ensure!(
+                !owner.process_snapshot().await?["lifecycle"]["deleted"]
+                    .as_bool()
+                    .unwrap_or(false),
+                "session deleted"
+            );
+            crate::artifacts::Store::open(&directory.join("journal"), registration.session_id)?
+                .chunk(artifact_id, offset, limit as usize)
+                .map_err(|_| anyhow::anyhow!("artifact unavailable or invalid range"))
+        }
         RuntimeCommand::RunOutput {
             run_id,
             offset,
