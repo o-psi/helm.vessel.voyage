@@ -1,7 +1,8 @@
 use super::*;
 use ratatui::{
+    layout::Margin,
     style::Style,
-    widgets::{Clear, Paragraph},
+    widgets::{Block, BorderType, Borders, Clear, Paragraph},
 };
 use unicode_width::UnicodeWidthChar;
 
@@ -32,8 +33,26 @@ impl Manager {
             return;
         }
         self.sync_focus();
-        frame.render_widget(Clear, area);
         self.panel.hits.clear();
+        // Keep the current view visible around the modal, even in narrow layouts.
+        let width = area.width.saturating_sub(4).min(96);
+        let height = area.height.saturating_sub(2).min(30);
+        let modal = Rect::new(
+            area.x + (area.width - width) / 2,
+            area.y + (area.height - height) / 2,
+            width,
+            height,
+        );
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(crate::theme::Role::Focus.style())
+            .title(" Vessels ")
+            .title_bottom(" Esc Back / Close ");
+        let area = block.inner(modal).inner(Margin::new(1, 0));
+        frame.render_widget(Clear, modal);
+        frame.render_widget(block, modal);
+        // Wrapping, scrolling and mouse targets use the modal's content bounds.
         if area.width == 0 || area.height == 0 {
             return;
         }

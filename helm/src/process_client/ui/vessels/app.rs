@@ -26,6 +26,7 @@ impl App {
             manager.borrow_mut().open_panel();
         }
         self.sidebar.resize.clear();
+        self.sidebar.pointer = None;
     }
     pub(in crate::process_client::ui) fn vessel_input(
         &mut self,
@@ -125,7 +126,28 @@ impl App {
                 .set_state(route.id, route.generation, state);
         }
     }
+    pub(in crate::process_client::ui) fn vessel_hover_style(
+        &self,
+        rect: Rect,
+    ) -> ratatui::style::Style {
+        if !self.vessels_open()
+            && self
+                .sidebar
+                .pointer
+                .is_some_and(|point| rect.contains(point))
+        {
+            crate::theme::Role::Hover.style()
+        } else {
+            ratatui::style::Style::default()
+        }
+    }
     pub(in crate::process_client::ui) fn draw_vessel_control(&self, frame: &mut Frame<'_>) {
+        // The sidebar is primary; this button is only a fallback when it is hidden.
+        // Clear the previous target so resizing cannot leave an invisible button.
+        self.vessel_button.set(Rect::default());
+        if !self.vessel_sidebar_button.get().is_empty() {
+            return;
+        }
         let area = frame.area();
         let width = area.width.min(20);
         let rect = Rect::new(
@@ -141,7 +163,11 @@ impl App {
             " Vessels "
         };
         frame.render_widget(
-            Paragraph::new(label).style(crate::theme::Role::Selection.style()),
+            Paragraph::new(label).style(
+                crate::theme::Role::Selection
+                    .style()
+                    .patch(self.vessel_hover_style(rect)),
+            ),
             rect,
         );
     }

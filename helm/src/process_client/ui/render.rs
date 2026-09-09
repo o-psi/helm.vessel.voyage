@@ -367,7 +367,17 @@ fn sidebar(frame: &mut Frame<'_>, app: &App, area: Rect) {
     .split(area);
     frame.render_widget(
         Paragraph::new(vec![
-            Line::styled("Vessels  [Ctrl+G]", accent().add_modifier(Modifier::BOLD)),
+            Line::styled(
+                "Vessels  [Ctrl+G]",
+                accent()
+                    .add_modifier(Modifier::BOLD)
+                    .patch(app.vessel_hover_style(Rect::new(
+                        rows[0].x,
+                        rows[0].y,
+                        rows[0].width,
+                        1,
+                    ))),
+            ),
             Line::default(),
             Line::styled("Ctrl+N  New voyage", accent()),
             Line::default(),

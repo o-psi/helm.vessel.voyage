@@ -489,10 +489,13 @@ exact attended publication decisions and canonical session references.
 
 Normal interactive Helm startup loads remembered connections without shell flags.
 The visible **Vessels** control, Ctrl+G and `/vessels` open a private connection
-panel for pairing/import, authenticated review, aliases, autoconnect, live
+modal for pairing/import, authenticated review, aliases, autoconnect, live
 connect/disconnect, renewal/replacement and forgotten-access restoration. It stays
-available in narrow layouts. Remote setup input is intercepted before composer
-clipboard handling and never becomes a conversation message.
+centered over the current view and scrollable in narrow layouts. Remote setup input
+is intercepted before composer clipboard handling and never becomes a conversation
+message. The sidebar entry is the primary Vessels control; a top-right fallback
+button appears only when that entry is hidden. Ctrl+G remains available in either
+layout.
 
 Immutable connection UUIDs and activation generations replace positional routing.
 Disconnection observes task cleanup, retains exact pending identities and stops
