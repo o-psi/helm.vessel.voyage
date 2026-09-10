@@ -76,7 +76,8 @@ history allocation. Truecolor is a no-op. Other modes cost O(visible cells), not
 O(history). RGB/indexed conversions are cached locally per screen/profile, up to
 4,096 entries, cleared on overflow. This avoids a process-global cache lock and
 bounds retained memory; repeated adversarial cache misses still require conversion.
-No off-screen buffers or animation wakeups are added.
+No off-screen buffers are added. Optional [navigation effects](ui-components.md#effects-and-component-gallery)
+run before adaptation and temporarily use a faster refresh while active.
 
 ## Remaining scope and evidence limits
 

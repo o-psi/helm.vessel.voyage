@@ -58,10 +58,32 @@ not the private terminal wire contract or cell serialization costs.
 
 ## Effects and component gallery
 
-Do not add tachyonfx in this delivery. Focus, selection and statuses must remain
-immediately legible; there is no necessary animated state transition. Helm has no
-new effect wakeups, so no effects preference or reduced-motion switch is needed.
-The existing refresh interval is not a claim of smooth or optimized animation.
+TachyonFX navigation polish was added in [#225](https://github.com/o-psi/voyage/issues/225),
+following the original effects deferral in #196. Selecting a different visible
+voyage briefly settles its sidebar action button from white to its normal accent
+color (240 ms, ease-out). This deliberately small first effect leaves names,
+status labels, transcript text, layout, input and private terminals unchanged.
+It does not animate draft rows or simulate execution progress.
+
+`HELM_MOTION=auto` (default) enables this in color terminals; `HELM_MOTION=never`
+disables it. Monochrome (`HELM_COLOR=never`, or automatically detected no-color)
+also disables effects. Invalid motion values fail before terminal setup.
+There is no OS accessibility-preference detection; set the environment override
+when reduced motion is preferred.
+
+`helm/src/process_client/ui/effects.rs` owns one replaceable effect, using current
+sidebar hit rectangles. Hidden navigation, modal panels and terminal resize cancel
+it; rapid selection replaces rather than queues effects. The existing 100 ms
+refresh becomes approximately 33 ms only while an effect is active, then returns
+to 100 ms. Elapsed wall time advances the effect, so stalls do not stretch it.
+Effects run before terminal color adaptation, without off-screen buffers or
+changes to canonical content. This is not a cross-terminal frame-rate guarantee.
+
+Selected dependency: **tachyonfx 0.25.2**, MIT, published MSRV unspecified;
+default features disabled, only `std` and `std-duration` enabled. No DSL parser,
+web-time or sendable effects. It shares Ratatui core 0.1.2 with Helm, adding no
+second terminal backend. Its Unicode width requirement resolves 0.2.2; additional
+transitives are bon/bon-macros, prettyplease, compact_str 0.10 and micromath.
 
 Do not add tui-pantry or another gallery dependency to the shipped application.
 Temporary bounded buffer/PTy probes are sufficient for this component migration;
@@ -107,3 +129,21 @@ No package or release was produced. The checkout's pre-existing deletion of
 `scripts/release-documents.txt` and packaging/quality scripts was preserved, so
 archive guide inclusion was not verified. Source links and manifest dependency
 membership were checked; packaging is not reported as passing.
+
+### Navigation effects verification (#225)
+
+On Linux, `cargo check -p helm --locked` and `cargo build -p helm --locked`
+passed against the working checkout. Targeted rustfmt and diff whitespace checks
+passed. Dependency inspection confirmed one Ratatui core and the selected
+TachyonFX features. An ad-hoc buffer probe observed changing foreground colors
+while preserving symbols, modifiers, backgrounds and all cells outside the
+button; the effect finished after 264 ms of sampled steps and after a simulated
+five-second stall. Offline PTY smoke checks observed `HELM_MOTION=never` and
+monochrome `auto` enter/exit the TUI and restore the alternate screen on Ctrl+C;
+an invalid value failed before alternate-screen entry. No Vessel or provider was
+started for those probes.
+
+These are bounded implementation checks, not a recreated regression suite,
+interactive visual acceptance, an MSRV run, or native macOS/Windows/multiplexer
+certification. Builds included unrelated concurrent checkout edits; only the
+effects implementation and its dependency/documentation changes are delivered here.

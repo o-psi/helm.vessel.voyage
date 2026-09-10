@@ -19,6 +19,7 @@ mod updates;
 mod vessels;
 use crate::composer;
 mod drafts;
+mod effects;
 mod new_draft;
 pub(super) use new_draft::start_plain;
 mod notifications;
@@ -128,6 +129,7 @@ pub async fn run_with_notice(
         "connected TUI needs a terminal; use connect list/new/inspect/submit for plain operation"
     );
     let mut styles = crate::theme::TerminalStyles::from_env()?;
+    let mut effects = effects::Navigation::from_env(styles.allows_color_images())?;
     let previews =
         previews::State::new(styles.allows_color_images(), styles.allows_native_images())?;
     terminal::enable_raw_mode()?;
@@ -231,8 +233,10 @@ pub async fn run_with_notice(
                     app.reconcile_pending();
                     terminal.draw(|frame| {
                         render::draw(frame, &app);
+                        effects.draw(frame, &app);
                         styles.apply(frame.buffer_mut());
                     }).map(|_| ())?;
+                    repaint.reset_after(effects.repaint_after());
                 },
                 event = events.next() => match event {
                     Some(Ok(event)) => if let Err(error) = app.input(event) { app.status = safe(&error.to_string()); },

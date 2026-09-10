@@ -30,6 +30,8 @@ dirs = "6.0"
 futures-util = "0.3"
 async-stream = "0.3"
 ratatui = { version = "0.30", default-features = false, features = ["crossterm", "layout-cache", "underline-color"] }
+# Color-only navigation effects; no DSL parser or default features.
+tachyonfx = { version = "0.25.2", default-features = false, features = ["std", "std-duration"] }
 # Typed focus order only; no optional clipboard, filesystem or Markdown features.
 ratatui-interact = { version = "0.5.3", default-features = false }
 # Previews use existing raster codecs; no Chafa, active picker or image defaults.
