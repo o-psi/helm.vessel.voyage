@@ -8,7 +8,57 @@ pub(super) fn output(
     context: &ToolContext,
     request: &Value,
 ) -> Result<ToolReport, ToolError> {
-    let value = redact(value, context)?;
+    let mut value = redact(value, context)?;
+    let action = request["action"].as_str().unwrap_or("");
+    if action == "message"
+        && let Some(message) = value.as_object_mut().and_then(|v| v.remove("message"))
+    {
+        value["text"] =
+            json!(serde_json::to_string(&message).map_err(|_| failed("message encoding failed"))?);
+    }
+    if value.get("snapshot").is_some() && matches!(action, "inspect" | "details") {
+        let source = value;
+        let mut limit = request["limit"].as_u64().unwrap_or(50) as usize;
+        let mut bytes = super::inspection::preview_bytes();
+        loop {
+            value = if action == "inspect" {
+                super::inspection::overview(&source, request, bytes)
+            } else {
+                super::inspection::details(&source, request, limit, bytes)?
+            };
+            if value.to_string().len() <= context.max_output_bytes || (limit == 1 && bytes <= 64) {
+                break;
+            }
+            limit = (limit / 2).max(1);
+            bytes = (bytes / 2).max(64);
+        }
+    } else if matches!(action, "message" | "run_output") && value.get("text").is_some() {
+        let source = value;
+        let mut bytes = 4096;
+        loop {
+            value = super::inspection::text_page(&source, request, bytes)?;
+            if value.to_string().len() <= context.max_output_bytes || bytes <= 4 {
+                break;
+            }
+            bytes = (bytes / 2).max(4);
+        }
+    } else if matches!(action, "follow" | "wait") && value.get("cursor").is_some() {
+        let mut next = request.clone();
+        if value["replay_gap"] == true {
+            next = json!({"action":"inspect","session_id":request["session_id"]});
+            if let Some(target) = request.get("target") {
+                next["target"] = target.clone();
+            }
+        } else {
+            next["after"] = value["cursor"].clone();
+        }
+        value["next_read"] = next;
+    } else if action == "history" && value["messages"].is_array() {
+        value = super::history::page(value, request, context.max_output_bytes);
+    } else if action == "history_search" && value["entries"].is_array() {
+        value = super::history::search_page(value, request, context.max_output_bytes);
+    }
+
     let encoded =
         serde_json::to_string(&value).map_err(|_| failed("Vessel result encoding failed"))?;
     if encoded.len() <= context.max_output_bytes {
@@ -16,45 +66,37 @@ pub(super) fn output(
         if value["status"] == "outcome_unknown" {
             report.outcome.execution = ExecutionOutcome::Unknown;
         }
+        if value["status"] == "source_limit" {
+            report.outcome.incomplete = Some(IncompleteReason::OutputLimit);
+        } else if matches!(
+            value["status"].as_str(),
+            Some(
+                "source_changed" | "snapshot_unavailable" | "revision_changed" | "path_unavailable"
+            )
+        ) {
+            report.outcome.incomplete = Some(IncompleteReason::Withheld);
+        }
+        if value["unsearched_messages"].as_u64().is_some_and(|n| n > 0) {
+            report.outcome.incomplete = Some(IncompleteReason::Withheld);
+        }
         report.synchronize();
         return Ok(report);
     }
     let action = request["action"].as_str().unwrap_or("");
     let mut limited = json!({"status":"output_limit","complete":false,
         "detail":"Output is incomplete. Missing state or cleanup details are unknown, not clear. Do not replay effects."});
-    if action == "inspect" && value.get("snapshot").is_some() {
-        let mut snapshot = value["snapshot"].clone();
-        let mut omitted = Vec::new();
-        // Preserve every other snapshot field. If that cannot fit, return no
-        // partial authority-bearing snapshot rather than silently dropping blockers.
-        for key in ["messages", "turns"] {
-            if let Some(old) = snapshot.as_object_mut().and_then(|m| m.remove(key)) {
-                omitted.push(
-                    json!({"path":format!("/snapshot/{key}"),"count":old.as_array().map(Vec::len)}),
-                );
-            }
-        }
-        if let Some(run) = snapshot.get_mut("run").and_then(Value::as_object_mut) {
-            for key in ["partial_text", "live_text"] {
-                if let Some(old) = run.remove(key) {
-                    omitted.push(json!({"path":format!("/snapshot/run/{key}"),"bytes":old.as_str().map(str::len)}));
-                }
-            }
-        }
-        limited["registration"] = value["registration"].clone();
-        limited["snapshot"] = snapshot;
-        limited["omitted"] = json!(omitted);
-        let mut next =
-            json!({"action":"history","session_id":request["session_id"],"offset":0,"limit":1});
-        if let Some(revision) = value["snapshot"].get("revision") {
-            next["expected_revision"] = revision.clone();
-        }
+    if action == "inspect" {
+        let mut next = json!({"action":"details","session_id":request["session_id"],"limit":1});
         if let Some(target) = request.get("target") {
             next["target"] = target.clone();
         }
         limited["next_read"] = next;
         limited["detail"] = json!(
-            "Transcript/live text omitted. Read history for persisted messages; live text has no paged native-tool action. Retained cleanup fields are observations, not permission to resume work."
+            "The output budget cannot fit this observation. Read individual public snapshot fields through details; missing cleanup and state remain unknown."
+        );
+    } else if matches!(action, "details" | "history_search") {
+        limited["detail"] = json!(
+            "The output budget cannot fit even one field or a small text chunk with its identity. Increase the configured output budget; repeating this read unchanged cannot provide details."
         );
     } else if let Some(id) = request.get("command_id") {
         limited["command_id"] = id.clone();
@@ -76,9 +118,18 @@ pub(super) fn output(
         {
             next["expected_revision"] = revision.clone();
         }
+        if action == "history"
+            && request["limit"] == 1
+            && let Some(message_read) = value["messages"]
+                .as_array()
+                .and_then(|a| a.first())
+                .and_then(|m| m.get("read"))
+        {
+            next = message_read.clone();
+        }
         limited["next_read"] = next;
         limited["detail"] = json!(
-            "Request one entry. If a single entry still exceeds the budget, increase the configured output budget; do not repeat effects."
+            "Follow next_read for a smaller page or full-message chunks. For non-history single entries that still exceed the budget, increase the configured output budget; do not repeat effects."
         );
     } else {
         limited["detail"] = json!(
