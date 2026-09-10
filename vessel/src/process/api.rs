@@ -9,6 +9,7 @@ use voyage_protocol::{
 
 pub(super) fn runtime(command: VoyageCommand) -> Result<RuntimeCommand> {
     Ok(match command {
+        VoyageCommand::PrepareBrowser => RuntimeCommand::PrepareBrowser,
         VoyageCommand::Browser { operation } => RuntimeCommand::Browser { operation },
         VoyageCommand::Clear {
             command_id,
@@ -528,7 +529,9 @@ pub(super) fn required_right(command: &VoyageCommand) -> Option<ProcessRight> {
         | VoyageCommand::SetModel { .. }
         | VoyageCommand::Archive { .. }
         | VoyageCommand::Delete { .. } => Some(ProcessRight::Lifecycle),
-        VoyageCommand::Browser { .. } => Some(ProcessRight::Execute),
+        VoyageCommand::PrepareBrowser | VoyageCommand::Browser { .. } => {
+            Some(ProcessRight::Execute)
+        }
         VoyageCommand::Terminal { .. } => Some(ProcessRight::Terminal),
         VoyageCommand::Configure { .. }
         | VoyageCommand::SetAccess { .. }

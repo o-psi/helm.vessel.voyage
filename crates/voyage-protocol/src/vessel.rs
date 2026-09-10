@@ -102,6 +102,9 @@ pub struct VoyageReply {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 pub enum VoyageCommand {
+    /// Follow/resume the ordinary owner for an explicitly authorized local share.
+    /// No browser effect, sharing authority, or agent turn is created.
+    PrepareBrowser,
     Browser {
         operation: crate::browser::BrowserOperation,
     },

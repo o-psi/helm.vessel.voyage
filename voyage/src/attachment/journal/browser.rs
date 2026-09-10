@@ -62,6 +62,13 @@ impl Journal {
                 tx.execute("UPDATE process_session_resources SET state='observed' WHERE id=?1 AND session_id=?2 AND kind='browser_effect' AND state!='observed'",params![id,session.to_string()])?;
             }
         }
+        // Compaction may retire an entry in the same checkpoint that observes
+        // cleanup. Update its canonical resource obligation atomically as well.
+        if let Some(retired) = value["retired_entries"].as_object() {
+            for id in retired.keys() {
+                tx.execute("UPDATE process_session_resources SET state='observed' WHERE id=?1 AND session_id=?2 AND kind='browser_effect' AND state!='observed'", params![id, session.to_string()])?;
+            }
+        }
         tx.execute("INSERT INTO browser_state(session_id,state) VALUES(?1,?2) ON CONFLICT(session_id) DO UPDATE SET state=excluded.state", params![session.to_string(),state])?;
         commit(tx, &self.commit_fence)
     }

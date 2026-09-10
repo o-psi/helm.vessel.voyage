@@ -19,6 +19,18 @@ struct Entry {
     result: Option<BrowserResult>,
     result_hash: Option<String>,
 }
+// Payloads and cached replies are bounded independently from never-evicted identities.
+const MAX_RETIRED_REQUESTS: usize = 8192;
+const MAX_CACHED_COMMANDS: usize = 256;
+const MAX_COMMAND_IDENTITIES: usize = 65_792;
+// Keep capacity for a result and cleanup per outstanding request when admission stops.
+const COMMAND_RECOVERY_RESERVE: usize = 2 * MAX_BROWSER_REQUESTS;
+#[derive(Clone, Serialize, Deserialize)]
+struct RetiredEntry {
+    binding: BrowserBinding,
+    receipt: BrowserReceipt,
+    result_hash: Option<String>,
+}
 #[derive(Clone, Serialize, Deserialize)]
 struct Offer {
     binding: BrowserBinding,
@@ -32,6 +44,10 @@ struct Durable {
     commands: BTreeMap<Uuid, (String, BrowserReply)>,
     #[serde(default)]
     observations: BTreeMap<Uuid, Uuid>,
+    #[serde(default)]
+    retired_entries: BTreeMap<Uuid, RetiredEntry>,
+    #[serde(default)]
+    retired_commands: BTreeMap<Uuid, String>,
 }
 struct LiveRun {
     id: Uuid,
@@ -118,7 +134,45 @@ impl BrowserBroker {
             }),
         }))
     }
-    fn commit(&self, inner: &mut Inner, durable: Durable) -> Result<()> {
+    fn commit(&self, inner: &mut Inner, mut durable: Durable) -> Result<()> {
+        // Never retire live waiters, unknown cleanup, or an unconsumed capture. A
+        // retired request retains its original binding and receipt indefinitely.
+        let ids: Vec<_> = durable
+            .entries
+            .iter()
+            .filter_map(|(id, e)| {
+                (!inner.guards.contains_key(id)
+                    && !e.receipt.cleanup_pending
+                    && e.result.is_none()
+                    && !matches!(
+                        e.receipt.state,
+                        BrowserRequestState::Pending | BrowserRequestState::Dispatched
+                    ))
+                .then_some(*id)
+            })
+            .take(MAX_RETIRED_REQUESTS.saturating_sub(durable.retired_entries.len()))
+            .collect();
+        for id in ids {
+            let e = durable
+                .entries
+                .remove(&id)
+                .expect("selected retained entry");
+            durable.retired_entries.insert(
+                id,
+                RetiredEntry {
+                    binding: e.request.binding,
+                    receipt: e.receipt,
+                    result_hash: e.result_hash,
+                },
+            );
+        }
+        while durable.commands.len() > MAX_CACHED_COMMANDS {
+            let (id, (hash, _)) = durable
+                .commands
+                .pop_first()
+                .expect("nonempty command cache");
+            durable.retired_commands.insert(id, hash);
+        }
         Journal::open(self.directory.clone())?
             .browser_save(self.session, &serde_json::to_string(&durable)?)?;
         inner.durable = durable;
@@ -126,7 +180,11 @@ impl BrowserBroker {
     }
     fn expire(&self, inner: &mut Inner) -> Result<()> {
         let expired = inner.durable.offer.as_ref().is_some_and(|o| {
-            o.binding.expires_at_ms <= now() && o.control == BrowserControl::Shared
+            o.binding.expires_at_ms <= now()
+                && matches!(
+                    o.control,
+                    BrowserControl::Shared | BrowserControl::Human | BrowserControl::Private
+                )
         });
         let cancelled = inner.run.as_ref().is_some_and(|r| r.cancel.is_cancelled());
         if expired || cancelled {
@@ -248,12 +306,73 @@ impl BrowserBroker {
                 ensure!(*previous == hash, "browser command identity conflict");
                 return Ok(reply.clone());
             }
+            if let Some(previous) = inner.durable.retired_commands.get(&id) {
+                ensure!(*previous == hash, "browser command identity conflict");
+                anyhow::bail!(
+                    "browser command reply retired; query current status/receipt, never replay effects"
+                );
+            }
+            let recovery_id = match &operation {
+                BrowserOperation::Cleanup {
+                    request_id,
+                    observed: true,
+                    ..
+                } => Some(request_id),
+                BrowserOperation::Result { result, .. }
+                    if result.state != BrowserRequestState::Unresolved =>
+                {
+                    Some(&result.request_id)
+                }
+                _ => None,
+            };
+            let recovery = recovery_id.is_some_and(|id| {
+                inner
+                    .durable
+                    .entries
+                    .get(id)
+                    .is_some_and(|e| e.receipt.cleanup_pending)
+            });
+            let limit = MAX_COMMAND_IDENTITIES
+                - if recovery {
+                    0
+                } else {
+                    COMMAND_RECOVERY_RESERVE
+                };
             ensure!(
-                inner.durable.commands.len() < 4096,
-                "browser command receipt capacity reached; no eviction of exact identities"
+                inner.durable.commands.len() + inner.durable.retired_commands.len() < limit,
+                "browser command identity capacity reached; identities are never evicted (recovery reserve retained)"
             );
         }
         let mut d = inner.durable.clone();
+        let retired = match &operation {
+            BrowserOperation::Receipt { request_id, .. }
+            | BrowserOperation::Cleanup { request_id, .. } => d.retired_entries.get(request_id),
+            BrowserOperation::Result { result, .. } => d.retired_entries.get(&result.request_id),
+            _ => None,
+        };
+        if let Some(e) = retired {
+            ensure!(
+                d.offer.as_ref().is_some_and(|o| o.principal == principal) && e.binding == *binding,
+                "browser retired receipt authority mismatch"
+            );
+            if let BrowserOperation::Result { result, .. } = &operation {
+                ensure!(
+                    e.result_hash
+                        .as_ref()
+                        .is_some_and(|h| digest(result).is_ok_and(|hash| *h == hash)),
+                    "browser result retired or identity conflict; query receipt, cleanup already observed"
+                );
+            }
+            // Already positively quiescent; Cleanup cannot change website outcome.
+            let reply = BrowserReply::Receipt {
+                receipt: e.receipt.clone(),
+            };
+            if let Some(id) = command {
+                d.commands.insert(id, (hash, reply.clone()));
+            }
+            self.commit(&mut inner, d)?;
+            return Ok(reply);
+        }
         let reply = match operation {
             BrowserOperation::Offer { binding, .. } => {
                 ensure!(
@@ -275,12 +394,23 @@ impl BrowserBroker {
                         "browser belongs to another authenticated principal"
                     );
                     ensure!(
-                        o.control == BrowserControl::Revoked
-                            || o.binding.expires_at_ms <= now()
+                        matches!(
+                            o.control,
+                            BrowserControl::Revoked | BrowserControl::Disconnected
+                        ) || o.binding.expires_at_ms <= now()
                             || (same_executor(&o.binding, &binding)
-                                && epochs(&o.binding, &binding)),
+                                && (epochs(&o.binding, &binding)
+                                    || (binding.controller_epoch > o.binding.controller_epoch
+                                        && binding.capture_epoch > o.binding.capture_epoch))),
                         "browser already has a local executor"
                     );
+                    if same_executor(&o.binding, &binding) && o.control != BrowserControl::Shared {
+                        ensure!(
+                            binding.controller_epoch > o.binding.controller_epoch
+                                && binding.capture_epoch > o.binding.capture_epoch,
+                            "renewed sharing requires fresh controller and capture epochs"
+                        );
+                    }
                 }
                 fence(&mut d);
                 d.offer = Some(Offer {
@@ -303,8 +433,11 @@ impl BrowserBroker {
                         && binding.capture_epoch >= o.binding.capture_epoch,
                     "browser epoch stale"
                 );
-                if matches!(control, BrowserControl::Human | BrowserControl::Private)
-                    || (control == BrowserControl::Shared && o.control != BrowserControl::Shared)
+                if control != o.control
+                    && matches!(
+                        control,
+                        BrowserControl::Shared | BrowserControl::Human | BrowserControl::Private
+                    )
                 {
                     ensure!(
                         binding.controller_epoch > o.binding.controller_epoch
@@ -312,19 +445,24 @@ impl BrowserBroker {
                         "control transition requires fresh controller and capture epochs"
                     );
                 }
-                if control == BrowserControl::Shared {
-                    ensure!(
-                        o.control != BrowserControl::Disconnected
-                            && o.control != BrowserControl::Revoked,
-                        "disconnected browser requires explicit new offer"
-                    );
+                if matches!(
+                    control,
+                    BrowserControl::Shared | BrowserControl::Human | BrowserControl::Private
+                ) {
                     ensure!(
                         binding.expires_at_ms > now()
                             && binding.expires_at_ms <= now().saturating_add(MAX_BROWSER_LEASE_MS),
                         "browser lease invalid"
                     );
+                    ensure!(
+                        o.control != BrowserControl::Disconnected
+                            && o.control != BrowserControl::Revoked,
+                        "disconnected browser requires explicit new offer"
+                    );
                 }
-                if control != BrowserControl::Shared || !epochs(&o.binding, &binding) {
+                // Heartbeats in any unchanged mode do not establish a new privacy
+                // boundary. In particular, never erase queued captures on renew.
+                if control != o.control || !epochs(&o.binding, &binding) {
                     fence(&mut d);
                 }
                 d.offer = Some(Offer {
@@ -405,6 +543,11 @@ impl BrowserBroker {
                     .get(&request_id)
                     .context("browser execution authority no longer live")?;
                 guard.policy.check_execution_authority()?;
+                ensure!(
+                    e.request.action.observation_only()
+                        || guard.policy.access_mode() != crate::config::AccessMode::ReadOnly,
+                    "browser effects disabled in read-only mode before claim"
+                );
                 ensure!(!guard.cancellation.is_cancelled(), "browser call cancelled");
                 e.receipt.state = BrowserRequestState::Dispatched;
                 e.receipt.cleanup_pending = true;
@@ -657,6 +800,11 @@ impl BrowserBroker {
             !context.cancellation.is_cancelled(),
             "browser tool cancelled"
         );
+        ensure!(
+            inner.durable.commands.len() + inner.durable.retired_commands.len()
+                < MAX_COMMAND_IDENTITIES - COMMAND_RECOVERY_RESERVE,
+            "browser command admission full; cleanup capacity reserved"
+        );
         let run = inner
             .run
             .as_ref()
@@ -669,8 +817,9 @@ impl BrowserBroker {
             .context("browser not offered")?;
         Self::authorized(&inner.durable, o.principal, &o.binding, true)?;
         ensure!(
-            inner.durable.entries.len() < MAX_BROWSER_REQUESTS,
-            "browser request bound reached; retained exact receipts cannot be evicted"
+            inner.durable.entries.len() < MAX_BROWSER_REQUESTS
+                && inner.durable.retired_entries.len() < MAX_RETIRED_REQUESTS,
+            "browser live request or retired identity bound reached; exact identities cannot be evicted"
         );
         let mut binding = o.binding.clone();
         binding.run_id = Some(run.id);
@@ -680,7 +829,8 @@ impl BrowserBroker {
             .and_then(|id| Uuid::parse_str(id).ok())
             .unwrap_or_else(Uuid::new_v4);
         ensure!(
-            !inner.durable.entries.contains_key(&id),
+            !inner.durable.entries.contains_key(&id)
+                && !inner.durable.retired_entries.contains_key(&id),
             "browser tool identity already exists; query receipt, never repeat execution"
         );
         let target = target(&action);
@@ -743,6 +893,12 @@ impl BrowserBroker {
             e.result = None;
         }
         let reply = (e.receipt.clone(), e.result.take());
+        if !matches!(
+            reply.0.state,
+            BrowserRequestState::Pending | BrowserRequestState::Dispatched
+        ) {
+            inner.guards.remove(&id);
+        }
         if cancel
             || reply.1.is_some()
             || !matches!(
@@ -751,12 +907,6 @@ impl BrowserBroker {
             )
         {
             self.commit(&mut inner, d)?;
-        }
-        if !matches!(
-            reply.0.state,
-            BrowserRequestState::Pending | BrowserRequestState::Dispatched
-        ) {
-            inner.guards.remove(&id);
         }
         Ok(reply)
     }

@@ -3,6 +3,7 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+/// Full outstanding/payload-bearing entries, not a lifetime receipt count.
 pub const MAX_BROWSER_REQUESTS: usize = 128;
 pub const MAX_BROWSER_RESULT_BYTES: usize = 3 * 1024 * 1024;
 pub const MAX_BROWSER_LEASE_MS: u64 = 60_000;

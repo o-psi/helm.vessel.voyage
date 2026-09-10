@@ -2,8 +2,10 @@
 
 The browser executes beside Helm, not on the Voyage host. Voyage owns one normal
 agent loop, policy, canonical history and durable intent/reply state. The `browser`
-tool is registered at root-agent construction only when a browser has been explicitly
-shared. A configuration file cannot enable sharing. Subagents do not inherit the
+tool is registered at root-agent construction whenever the supervised runtime supplies
+its broker, including before a local browser is shared. Presence is capability, not
+authority: each invocation and claim checks live sharing. This allows sharing during
+an active run. A configuration file cannot enable sharing. Subagents do not inherit the
 browser tool. Local browser authorization remains independent of Voyage approval.
 
 ## Wire and fences
@@ -22,11 +24,23 @@ controller/capture epochs and lease expiry. An idle offer may have `run_id: null
 every dispatched request has the actual current run. Offer is an assertion of
 explicit **local sharing**, not a remote request to enable it. One executor is
 admitted, subject to prior unresolved-effect cleanup. Lease maximum is 60 seconds.
-Renewal is a Shared Control operation; human/private transitions and returns to
-Shared require strictly newer controller and capture epochs. Disconnected/revoked
+Renewal is a same-mode Control operation in Shared, Human or Private, with the same
+controller/capture epochs and a valid lease. It does not fence outstanding work or
+erase captures. Actual transitions into Shared/Human/Private require strictly newer
+controller and capture epochs. Expiry fences all three active modes. Disconnected/revoked
 bindings require an explicit new offer rather than automatic lease resurrection.
 
-Operations are Offer, Pending, Claim, Result, Control, Receipt and Cleanup. Pending
+After explicit local sharing consent, Helm first sends top-level
+`VoyageCommand::PrepareBrowser` (`{"op":"prepare_browser"}`, no fields). It requires
+Execute authority and follows/resumes the current owner through ordinary lifecycle
+fences, including unresolved-cleanup refusal. It creates no agent, browser effect,
+or sharing authority. The normal `VoyageReply.incarnation` supplies the fresh outer
+and Offer incarnation. `PrepareBrowser` is deliberately not an observation served
+by the suspended reader; it has no mutation UUID and needs no caller incarnation.
+Send Offer immediately after Prepare (before ordinary idle suspension), never reuse
+a pre-resume binding. Prepare must not be triggered before local sharing consent.
+
+Browser operations are Offer, Pending, Claim, Result, Control, Receipt and Cleanup. Pending
 is an immediate bounded fetch (1–16 requests, aggregate 3 MiB); use the same
 full-duplex connection for polling. Claim commits Dispatched and a canonical
 session-resource obligation **before** acknowledging permission to execute locally.
@@ -39,9 +53,11 @@ screenshot, upload_prepare, upload and download. Typed targets carry page and
 observation UUIDs; Voyage checks retained observations and the local executor must
 independently refuse stale targets. No JavaScript, CDP, shell, arbitrary local file
 paths or browser credentials are part of this contract. Read-only mode permits
-inspect, tabs list and screenshot only. Every effect asks the Voyage approver,
-bounded by tool timeout; local confirmation is separate and cannot be substituted
-by a remote approval response.
+inspect, tabs list and screenshot only. For effects, Approval access mode asks the
+Voyage approver with bounded cancellation/timeout; Unrestricted skips that ordinary
+remote approval. Execution authority is rechecked after any await and before enqueue
+and claim. Local confirmation is independent in every access mode and cannot be
+substituted by a remote approval response.
 
 ## Privacy, persistence and uncertainty
 
@@ -50,9 +66,35 @@ identities, reply hashes, control and explicit unresolved states. Dispatched req
 atomically maintain existing `process_session_resources` rows (`browser_effect`),
 so ordinary lifecycle readers retain cleanup obligations. Payloads are private;
 resource projections contain only identity and cleanup metadata. Identity conflicts
-refuse. Receipts are not evicted to make uncertain effects repeatable: bounds are
-128 retained requests, 4096 command receipts, 16 MiB browser checkpoint. Capacity
-exhaustion is explicit refusal. A new voyage has a new receipt scope.
+refuse. Settled entries without a live waiter, pending cleanup or unconsumed capture
+are compacted to metadata-only tombstones; action/upload payloads are discarded.
+Original bindings, action hashes, final receipts and any result hash remain exact.
+Cleanup retirement updates canonical resource rows atomically with the checkpoint.
+
+Exact bounds per voyage:
+
+- 128 full request entries and 8192 retired request identities. New enqueue stops
+  when either bound is reached. Unknown cleanup is never retired.
+- 256 full command reply cache entries, with other accepted command IDs reduced to
+  exact principal/operation SHA-256 tombstones. UUID ordering chooses cache retention,
+  not recency. No identity tombstone is evicted.
+- 65,536 ordinary command admissions; 256 additional identities are reserved only for
+  commands that positively settle an outstanding cleanup obligation (65,792 total).
+  New effects stop at the ordinary bound. Repeated non-settling cleanup cannot consume
+  that reserve. At one renewal every two seconds, the ordinary budget represents
+  about 36.4 hours **minus other commands**, not an unlimited lease lifetime.
+- The complete serialized browser checkpoint remains bounded to 16 MiB; large active
+  transfer payloads can reach this bound earlier. Pending fetch is at most 3 MiB;
+  observations retain at most 128 page identities.
+
+A replay of an exact retired command is explicitly refused as **reply retired**;
+changed reuse is an identity conflict. Neither dispatches anything. Read the original
+request Receipt, never retry the effect under a fresh identity. A retired request
+continues answering Receipt/Cleanup under its exact original binding; a duplicate
+Result must match its retained result hash. After cleanup-only retirement without a
+result hash, a late result is refused rather than inventing website success.
+Capacity exhaustion is explicit bounded refusal, never unsafe eviction. A new voyage
+has a new receipt scope. These are improved finite bounds, not unbounded storage.
 
 Cancellation, timeout, private takeover, lease loss and process restart fence pending
 work. Dispatched work becomes Unresolved; none of these events establishes effect
@@ -77,7 +119,8 @@ necessary when the owner itself is gone.
 ## Transfers and outputs
 
 The model's `upload_prepare { path }` resolves a Voyage-policy-readable regular
-file and, after remote disclosure approval, reads at most 2 MiB. Configured secrets
+file and, after remote policy authorization (approval in Approval mode), reads at
+most 2 MiB. Configured secrets
 are withheld. The wire action carries transfer UUID, display name, MIME and base64,
 never the remote path. The local executor independently approves/stages it and
 returns a grant identifier. `upload { target, element, grant_id }` is a separate

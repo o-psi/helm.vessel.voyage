@@ -34,6 +34,15 @@ pub(super) async fn dispatch_admitted(
     };
 
     match command {
+        RuntimeCommand::PrepareBrowser => {
+            if let Some(authority) = &authorization.authority {
+                authority.check()?;
+            }
+            // The supervisor has already followed/resumed the owner under its
+            // existing lifecycle fences. Do not offer, build an agent, or infer
+            // local consent here. The outer reply carries the current incarnation.
+            Ok(json!({"prepared": true}))
+        }
         RuntimeCommand::Browser { operation } => {
             if let Some(authority) = &authorization.authority {
                 authority.check()?;
