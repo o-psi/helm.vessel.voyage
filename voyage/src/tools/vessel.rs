@@ -1,5 +1,6 @@
 //! Native model-facing coordination over the public Vessel protocol.
 //! The trusted host supplies routes; the model never supplies credentials or URLs.
+mod history;
 mod inspection;
 mod journal;
 mod output;
@@ -163,6 +164,16 @@ enum Action {
         #[serde(default)]
         offset: usize,
     },
+    HistorySearch {
+        session_id: Uuid,
+        pattern: String,
+        role: Option<crate::model::Role>,
+        #[serde(default)]
+        offset: u64,
+        #[serde(default = "limit")]
+        limit: u32,
+        expected_revision: Option<u64>,
+    },
     History {
         session_id: Uuid,
         #[serde(default)]
@@ -264,6 +275,8 @@ fn input_schema() -> Value {
         json!({
             "target":{"type":"string"},
             "path":{"type":"string","maxLength":4096,"description":"JSON pointer into the public snapshot; empty lists available fields. Follow returned read requests."},
+            "pattern":{"type":"string","minLength":1,"maxLength":4096,"description":"Rust regex over redacted message content, separately per message. Inline flags such as (?i) supported; no look-around or backreferences."},
+            "role":{"enum":["user","assistant","tool","system",null]},
             "index":{"type":"integer","minimum":0,"maximum":u64::MAX},
             "session_id":{"type":["string","null"],"format":"uuid"},
             "command_id":{"type":"string","format":"uuid"},
@@ -301,6 +314,11 @@ fn input_schema() -> Value {
                 &["offset"],
             ),
             ("run_output", &["session_id", "run_id"], &["offset"]),
+            (
+                "history_search",
+                &["session_id", "pattern"],
+                &["role", "offset", "limit", "expected_revision"],
+            ),
             (
                 "history",
                 &["session_id"],
@@ -367,7 +385,7 @@ fn input_schema() -> Value {
         if matches!(action.as_str(), "steer" | "cancel" | "run_output") {
             branch["properties"]["run_id"]["type"] = json!("string");
         }
-        if !matches!(action.as_str(), "history" | "details")
+        if !matches!(action.as_str(), "history" | "details" | "history_search")
             && branch["properties"].get("expected_revision").is_some()
         {
             branch["properties"]["expected_revision"]["type"] = json!("integer");
@@ -386,7 +404,7 @@ impl Tool for VesselTool {
             output_schema: None,
             annotations: None,
             name: "vessel".into(),
-            description: "Coordinate any voyage authorized by configured Vessel routes, not just related voyages. Public HTTP only; no credentials, terminal access, approval responses, shell, or provider configuration exposed. Ordinary tool policy approvals still apply. routes identifies the owning voyage and configured target aliases. inspect returns a compact observed overview and exact drill-down requests. details pages public snapshot fields using returned JSON pointers; message reads a complete public message as JSON text chunks; run_output reads run text chunks. Follow next_read exactly; offsets for message/run_output count redacted UTF-8 bytes. These detail reads are bounded to 4 MiB source records; snapshots may have upstream omissions; list/search page catalogue metadata (search is not full-text history). history pages canonical conversation. follow/wait read bounded events after a cursor; a timeout is not completion. Mutations require a stable caller-generated command_id; reuse it only for the identical request. Durable intents precede effects; unknown outcomes are never replayed. operations pages durable local intent IDs; receipt with session_id queries the server; without it reads the local journal. Create starts a session then submits required initial task; its start command ID is session_id. Use a fresh session ID. Target defaults to local; remote grants enforce their actual rights. No implicit startup, recovery, deletion, or authority broadening.".into(),
+            description: "Coordinate any voyage authorized by configured Vessel routes, not just related voyages. Public HTTP only; no credentials, terminal access, approval responses, shell, or provider configuration exposed. Ordinary tool policy approvals still apply. routes identifies the owning voyage and configured target aliases. inspect returns a compact observed overview and exact drill-down requests. details pages public snapshot fields using returned JSON pointers; message reads a complete public message as JSON text chunks; run_output reads run text chunks. Follow next_read exactly; offsets for message/run_output count redacted UTF-8 bytes. These detail reads are bounded to 4 MiB source records; snapshots may have upstream omissions; list/search page catalogue metadata (search is not full-text history). history automatically fits canonical conversation pages to the output budget. history_search searches redacted message content with regex and optional role, returning matching-message pages and explicit unsearched entries; follow next_read even on empty match pages until has_more is false. Patterns use Rust regex with inline flags, no look-around/backreferences. It does not search attachment bytes or structured tool-call arguments. follow/wait read bounded events after a cursor; a timeout is not completion. Mutations require a stable caller-generated command_id; reuse it only for the identical request. Durable intents precede effects; unknown outcomes are never replayed. operations pages durable local intent IDs; receipt with session_id queries the server; without it reads the local journal. Create starts a session then submits required initial task; its start command ID is session_id. Use a fresh session ID. Target defaults to local; remote grants enforce their actual rights. No implicit startup, recovery, deletion, or authority broadening.".into(),
             input_schema: input_schema(),
         }
     }
@@ -417,6 +435,9 @@ impl Tool for VesselTool {
         super::action_schema::reject_extra_fields(&arguments, &action)?;
         match &action {
             Action::Search { query, .. } => text(query, 4096)?,
+            Action::HistorySearch { pattern, .. } => {
+                history::compile(pattern)?;
+            }
             Action::Details { path, .. }
                 if path.len() > 4096 || (!path.is_empty() && !path.starts_with('/')) =>
             {
@@ -450,7 +471,8 @@ impl Tool for VesselTool {
             | Action::List { limit, .. }
             | Action::Search { limit, .. }
             | Action::History { limit, .. }
-            | Action::Details { limit, .. } => {
+            | Action::Details { limit, .. }
+            | Action::HistorySearch { limit, .. } => {
                 page(*limit)?;
             }
             Action::Follow { limit, wait_ms, .. } | Action::Wait { limit, wait_ms, .. } => {
@@ -794,6 +816,26 @@ async fn perform(
         Action::RunOutput {
             session_id, run_id, ..
         } => inspection::read_text(t, session_id, None, Some(run_id), context).await,
+        Action::HistorySearch {
+            session_id,
+            pattern,
+            role,
+            offset,
+            limit,
+            expected_revision,
+        } => {
+            history::search(
+                t,
+                session_id,
+                &pattern,
+                role,
+                offset,
+                page(limit)?,
+                expected_revision,
+                context,
+            )
+            .await
+        }
         Action::History {
             session_id,
             offset,

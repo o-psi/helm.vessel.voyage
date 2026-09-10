@@ -54,28 +54,11 @@ pub(super) fn output(
         }
         value["next_read"] = next;
     } else if action == "history" && value["messages"].is_array() {
-        let revision = value["revision"].clone();
-        let base = value["message_offset"].as_u64().unwrap_or(0);
-        for (i, message) in value["messages"]
-            .as_array_mut()
-            .unwrap()
-            .iter_mut()
-            .enumerate()
-        {
-            let mut next = json!({"action":"message","session_id":request["session_id"],
-                "index":message["message_index"].as_u64().unwrap_or(base+i as u64),"expected_revision":revision});
-            if let Some(target) = request.get("target") {
-                next["target"] = target.clone();
-            }
-            message["read"] = next;
-        }
-        if value["has_more"] == true {
-            let mut next = request.clone();
-            next["offset"] = value["next_offset"].clone();
-            next["expected_revision"] = revision;
-            value["next_read"] = next;
-        }
+        value = super::history::page(value, request, context.max_output_bytes);
+    } else if action == "history_search" && value["entries"].is_array() {
+        value = super::history::search_page(value, request, context.max_output_bytes);
     }
+
     let encoded =
         serde_json::to_string(&value).map_err(|_| failed("Vessel result encoding failed"))?;
     if encoded.len() <= context.max_output_bytes {
@@ -93,6 +76,9 @@ pub(super) fn output(
         ) {
             report.outcome.incomplete = Some(IncompleteReason::Withheld);
         }
+        if value["unsearched_messages"].as_u64().is_some_and(|n| n > 0) {
+            report.outcome.incomplete = Some(IncompleteReason::Withheld);
+        }
         report.synchronize();
         return Ok(report);
     }
@@ -108,7 +94,7 @@ pub(super) fn output(
         limited["detail"] = json!(
             "The output budget cannot fit this observation. Read individual public snapshot fields through details; missing cleanup and state remain unknown."
         );
-    } else if action == "details" {
+    } else if matches!(action, "details" | "history_search") {
         limited["detail"] = json!(
             "The output budget cannot fit even one field or a small text chunk with its identity. Increase the configured output budget; repeating this read unchanged cannot provide details."
         );

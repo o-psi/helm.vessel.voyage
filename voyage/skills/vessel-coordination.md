@@ -38,6 +38,16 @@ revision does not freeze live activity. The latest assistant message may be from
 an earlier turn, and live text is provisional. Do not infer task success from idle
 state or progress from process liveness.
 
+Use `history_search` with a Rust regex `pattern` to find relevant message text
+before reading long histories; optional `role` narrows the search. `(?i)` enables
+case-insensitive matching. Results include an excerpt, full-message `read`, and
+nearby `context_read`. Follow `next_read` even on a zero-match page while `has_more`
+is true. Counts are per page. Retain any `unsearched` gaps across pages; a record
+that could not be searched prevents claiming no matches in the whole conversation.
+Search covers redacted message content, not attachment bytes or structured tool
+arguments. Catalogue `search` remains metadata-only. History pages automatically
+fit the output budget and provide exact forward and preceding-history reads.
+
 ## Choose the right operation
 
 - Use a subagent for bounded delegated work owned by this run, with its existing

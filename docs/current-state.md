@@ -16,7 +16,10 @@ provides a compact observed overview with progress excerpts and coordination/cle
 observations. Explicit detail reads page public snapshot fields;
 full-message and run-output reads expand text within a 4 MiB source bound, preserving
 redaction and exact continuations. An overview that cannot fit is withheld with a
-smaller detail-read request. See [Vessel coordination](vessel-coordination.md) and
+smaller detail-read request. History pages fit the output budget automatically;
+regex conversation search returns bounded matching-message pages with full-message
+and context reads, revision-bound continuations and explicit unsearched gaps.
+See [Vessel coordination](vessel-coordination.md) and
 [tool validation and outcomes](runtime-contract.md#tool-validation-and-outcomes)
 for supported syntax, compatibility and platform limits.
 

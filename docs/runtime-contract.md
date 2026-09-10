@@ -395,7 +395,11 @@ omitted rather than presented as empty. `details` pages public snapshot fields;
 revision-bound `history` and `message` expand canonical conversation, while
 `run_output` reads accumulated run text. Full-text reads assemble at most 4 MiB
 before redaction and page the redacted UTF-8 result. Source changes and limits
-are explicit incomplete observations. No state read grants execution authority.
+are explicit incomplete observations. History and regex-search pages preserve message indices and exact continuations
+when reduced to fit. Regex matches redacted content; a truncated projection is
+expanded before evaluation or explicitly reported unsearched. A zero-match page
+with more records or any unsearched gaps is not a complete negative search.
+No state read grants execution authority.
 See [Vessel coordination](vessel-coordination.md) for offsets and continuations.
 
 If even the overview's identity/state cannot fit, no partial overview is returned;

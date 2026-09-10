@@ -43,6 +43,7 @@ identity/version and actual route capabilities/rights.
 | `run_output` | `session_id`, `run_id` | `offset` |
 | `controls` | `session_id`, `section` (`models` or `policy`) | `run_id` |
 | `history` | `session_id` | `offset`, `limit`, `expected_revision` |
+| `history_search` | `session_id`, `pattern` | `role`, `offset`, `limit`, `expected_revision` |
 | `follow`, `wait` | `session_id` | `after`, `limit`, `wait_ms` |
 | `receipt` | `command_id` | `session_id` |
 | `create` | `command_id`, `session_id`, `workspace`, `task` | `config_path` |
@@ -83,9 +84,12 @@ output, decisions or other transient state: these reads are fresh observations.
 Use `controls` for dedicated model/policy metadata.
 
 Page sizes are 1–128 (default 50), with detail pages automatically reduced to fit
-the tool output budget. Search covers catalogue metadata, not full conversation
-text. `history` pages the public revision-bound projection and links every returned
-message to `message`. That action reads the complete public message as JSON text
+the tool output budget. The existing `search` action covers catalogue metadata.
+`history` automatically fits a page to the output budget, shortening large messages
+into explicit excerpts and reducing the page count when necessary. It preserves
+canonical message indices, `next_read` for the first unreturned message and
+`previous_read` for preceding messages. When a page fits, complete projected
+messages are preserved. Every returned message links to `message`. That action reads the complete public message as JSON text
 chunks, including fields omitted from the bounded history projection. Concatenate
 `data` before parsing JSON. `run_output` reads the chosen run's accumulated text.
 Their offsets count **redacted UTF-8 bytes**, and their exact `next_read` requests
@@ -95,6 +99,38 @@ budget requires it). Larger records return `source_limit`; a run growing during
 assembly returns `source_changed`. Neither is a complete read. Public snapshot
 fields can already be truncated upstream; use `message`/`run_output` for text
 expansion. These reads do not expose private terminal input or configuration secrets.
+
+`history_search` searches **one voyage's redacted message content**, including
+human/assistant text and textual tool results. It does not search attachment bytes
+or structured tool-call arguments; use the complete message read for those fields.
+Patterns are Rust regex, with Unicode and inline flags such as `(?i)` and `(?m)`;
+look-around and backreferences are unsupported. Patterns are 1–4096 UTF-8 bytes,
+with bounded nesting and compilation/cache memory. An optional `role` filters
+`user`, `assistant`, `tool` or `system`; omitted/null searches all roles. Matches
+never cross message boundaries. Empty patterns refuse; zero-width patterns work.
+
+Each call scans at most 32 messages, stopping at the requested matching-message
+limit or after processing 8 MiB of content (a final complete message can cross that
+threshold). It returns one entry per matching message, showing the first match's
+redacted byte offsets and a bounded excerpt. `read` expands that message and
+`context_read` opens nearby history. `matched_messages`, `unsearched_messages` and
+`scanned_messages` describe **this page**, not totals over the whole voyage.
+Output budgeting can reduce the match page; the continuation rewinds to the first
+withheld entry so it cannot lose a result. Follow `next_read` until `has_more` is
+false—even when a page has zero matches. Continuations retain the regex, role,
+route and observed revision. There is no full-text index or cross-voyage scan;
+select voyages with catalogue search and search each relevant history.
+
+A truncated history projection is expanded before matching, and redaction happens
+before regex evaluation and excerpt extraction. A full public message over the
+existing 4 MiB source limit produces an explicit `unsearched` entry; its prefix is
+not searched as if complete. Accumulate these gaps across pages: any gap prevents
+a claim that the complete conversation had no matches. Permission failures and
+revision changes stop the read rather than returning an apparently complete result.
+
+```json
+{"action":"history_search","session_id":"00112233-4455-4677-8899-aabbccddeeff","pattern":"(?i)error|quota","role":"tool","limit":10}
+```
 
 Event follow/wait uses a durable observation cursor and a 0–30,000 ms wait
 (default 0), bounded further by the executing tool timeout. Event replay gaps

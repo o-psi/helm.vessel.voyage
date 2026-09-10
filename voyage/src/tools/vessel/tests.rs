@@ -7,7 +7,7 @@ fn all_action_branches_match_serde_without_dispatch() {
     let compiled = CompiledSchema::compile(&schema).unwrap();
     let uuid = json!("00112233-4455-4677-8899-aabbccddeeff");
     let samples = json!({"target":"local","session_id":uuid,"command_id":uuid,"incarnation":uuid,"run_id":uuid,
-        "path":"","index":0,"expected_revision":1,"offset":0,"after":0,"limit":1,"wait_ms":0,"section":"models","query":"query","workspace":"/workspace","config_path":"/config","task":"task","prompt":"prompt","name":"name"});
+        "pattern":"error","role":"assistant","path":"","index":0,"expected_revision":1,"offset":0,"after":0,"limit":1,"wait_ms":0,"section":"models","query":"query","workspace":"/workspace","config_path":"/config","task":"task","prompt":"prompt","name":"name"});
     for branch in schema["oneOf"].as_array().unwrap() {
         let action = branch["properties"]["action"]["const"].clone();
         let mut minimal = json!({"action":action});
@@ -268,11 +268,11 @@ fn full_message_chunks_preserve_json_and_history_has_escape_from_large_entries()
     )
     .unwrap();
     let shown: Value = serde_json::from_str(&history.output.text_fallback()).unwrap();
-    assert_eq!(shown["next_read"]["action"], "message");
-    assert_eq!(shown["next_read"]["index"], 7);
+    assert_eq!(shown["messages"][0]["read"]["action"], "message");
+    assert_eq!(shown["messages"][0]["read"]["index"], 7);
     CompiledSchema::compile(&input_schema())
         .unwrap()
-        .validate(&shown["next_read"])
+        .validate(&shown["messages"][0]["read"])
         .unwrap();
 }
 
@@ -291,4 +291,61 @@ fn overview_labels_older_run_text_when_snapshot_has_only_tool_chatter() {
         shown["progress"]["run_text"]["read"]["action"],
         "run_output"
     );
+}
+
+#[test]
+fn history_pages_fit_and_preserve_every_message_boundary() {
+    let root = tempfile::tempdir().unwrap();
+    let mut ctx = crate::tools::reliability_tests::context(root.path());
+    ctx.max_output_bytes = 2048;
+    let id = Uuid::new_v4();
+    let source = json!({"revision":9,"message_offset":10,"total_messages":20,"has_more":false,
+        "messages":(10..20).map(|i|json!({"message_index":i,"role":"assistant","content":"🦀".repeat(4000)})).collect::<Vec<_>>()});
+    let request =
+        json!({"action":"history","session_id":id,"offset":10,"limit":10,"target":"remote"});
+    let report = output(source, &ctx, &request).unwrap();
+    let shown: Value = serde_json::from_str(&report.output.text_fallback()).unwrap();
+    let count = shown["messages"].as_array().unwrap().len();
+    assert!(count > 0 && count < 10);
+    assert_eq!(shown["next_read"]["offset"], 10 + count);
+    assert_eq!(shown["previous_read"]["offset"], 10 - count);
+    assert_eq!(shown["has_more"], true);
+    assert!(report.output.text_fallback().len() <= 2048);
+    let schema = CompiledSchema::compile(&input_schema()).unwrap();
+    for next in [
+        &shown["next_read"],
+        &shown["previous_read"],
+        &shown["messages"][0]["read"],
+    ] {
+        schema.validate(next).unwrap();
+        assert_eq!(next["target"], "remote");
+        assert_eq!(next["expected_revision"], 9);
+    }
+}
+
+#[test]
+fn search_output_rewinds_to_withheld_match_and_reports_unsearched_records() {
+    let root = tempfile::tempdir().unwrap();
+    let mut ctx = crate::tools::reliability_tests::context(root.path());
+    ctx.max_output_bytes = 2400;
+    let id = Uuid::new_v4();
+    let request = json!({"action":"history_search","session_id":id,"pattern":"error","limit":10,"target":"remote"});
+    let source = json!({"revision":9,"offset":0,"next_offset":32,"total_messages":100,
+        "entries":[{"kind":"unsearched","message_index":1,"reason":"source_limit"},
+            {"kind":"match","message_index":10,"excerpt":"x".repeat(512)},
+            {"kind":"match","message_index":20,"excerpt":"x".repeat(512)},
+            {"kind":"match","message_index":30,"excerpt":"x".repeat(512)}]});
+    let report = output(source, &ctx, &request).unwrap();
+    let shown: Value = serde_json::from_str(&report.output.text_fallback()).unwrap();
+    assert_eq!(shown["unsearched_messages"], 1);
+    assert!(report.outcome.incomplete.is_some());
+    assert!(shown["entries"].as_array().unwrap().len() < 4);
+    let next = shown["next_read"]["offset"].as_u64().unwrap();
+    assert!([10, 20, 30].contains(&next));
+    assert_eq!(shown["scanned_messages"], next);
+    assert_eq!(shown["next_read"]["pattern"], "error");
+    CompiledSchema::compile(&input_schema())
+        .unwrap()
+        .validate(&shown["next_read"])
+        .unwrap();
 }

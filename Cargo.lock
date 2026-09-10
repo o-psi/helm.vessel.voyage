@@ -3898,6 +3898,7 @@ dependencies = [
  "libc",
  "log",
  "portable-pty",
+ "regex",
  "reqwest",
  "rusqlite",
  "serde",
