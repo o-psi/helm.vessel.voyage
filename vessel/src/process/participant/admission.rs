@@ -247,6 +247,7 @@ impl Supervisor {
                 child,
                 registration.incarnation,
                 RuntimeCommand::Submit {
+                    coordination: None,
                     command_id: assignment.request.assignment_id,
                     expected_revision: 0,
                     expires_at_ms: assignment.request.expires_at_ms,

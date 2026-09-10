@@ -49,6 +49,7 @@ use std::{
 use tokio::sync::mpsc;
 
 pub(super) struct App {
+    coordination_request: Option<uuid::Uuid>,
     previews: previews::State,
     vessels: Option<std::cell::RefCell<vessels::Manager>>,
     vessel_button: std::cell::Cell<ratatui::layout::Rect>,
@@ -172,6 +173,7 @@ pub async fn run_with_notice(
         clients,
         observers: BTreeMap::new(),
         retired_observers: Vec::new(),
+        coordination_request: None,
         route_tasks: BTreeMap::new(),
         pending_activations: BTreeMap::new(),
         pending_disconnects: Default::default(),

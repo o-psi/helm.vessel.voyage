@@ -507,6 +507,7 @@ impl App {
         let command_id = Uuid::new_v4();
         let command = attachments::prepare(
             VoyageCommand::Submit {
+                coordination: None,
                 command_id,
                 expected_revision: snapshot.revision,
                 expires_at_ms: super::super::frontend::deadline()?,

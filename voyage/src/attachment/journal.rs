@@ -138,6 +138,8 @@ pub struct VersionedSession {
 /// expiry is checked again here immediately before durable admission.
 #[derive(Clone, Serialize)]
 pub struct TurnAdmission {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub coordination: Option<voyage_protocol::coordination::CoordinationSource>,
     // Presentation metadata must not change the established command digest.
     #[serde(skip_serializing)]
     pub operator_name: Option<String>,
@@ -531,6 +533,13 @@ impl Journal {
                 "turn command collides with steering receipt"
             );
         }
+        ensure!(
+            request
+                .coordination
+                .as_ref()
+                .is_none_or(|s| s.valid_for(request.command_id)),
+            "invalid coordination source"
+        );
         ensure!(request.prompt.len() <= MAX_PROMPT, "invalid prompt size");
         let digest = Sha256::digest(serde_json::to_vec(request)?).to_vec();
         let existing: Option<(Vec<u8>, String)> = self
@@ -570,6 +579,13 @@ impl Journal {
         clock: impl FnOnce() -> Result<i64>,
     ) -> Result<Admission> {
         self.check_guard(guard, request.session_id)?;
+        ensure!(
+            request
+                .coordination
+                .as_ref()
+                .is_none_or(|s| s.valid_for(request.command_id)),
+            "invalid coordination source"
+        );
         ensure!(
             !request.command_id.is_nil()
                 && !request.machine_id.is_nil()
@@ -660,6 +676,7 @@ impl Journal {
             current.session.switch_model(model)?;
         }
         let mut message = Message::new(Role::User, &request.prompt);
+        message.coordination = request.coordination.clone();
         message.operator_name = request.operator_name.clone();
         message.parts = request.parts.clone();
         current.session.messages.push(message);

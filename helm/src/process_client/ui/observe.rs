@@ -11,6 +11,11 @@ use tokio::sync::{Semaphore, mpsc};
 use voyage_protocol::vessel::{ProcessInfo, VesselCommand, VesselEventSubscription, VoyageCommand};
 
 pub enum Update {
+    Coordination {
+        origin: Target,
+        request: uuid::Uuid,
+        result: Result<Box<super::transcript::navigation::Located>, String>,
+    },
     Vessels(super::vessels::Event),
     DraftInferenceModels {
         id: uuid::Uuid,

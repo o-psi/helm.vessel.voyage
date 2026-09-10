@@ -15,6 +15,8 @@ pub struct SteeringActor {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SteeringAdmission {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub coordination: Option<voyage_protocol::coordination::CoordinationSource>,
     /// Stable idempotency key AND receipt identity. Cannot collide with turn IDs.
     pub receipt_id: Uuid,
     pub session_id: Uuid,
@@ -62,6 +64,7 @@ impl SteeringRecord {
         let mut message = Message::new(Role::User, &self.request.text);
         // Queue delivery and canonical verification must construct identical text
         // and metadata, even when separated by an arbitrarily long provider call.
+        message.coordination = self.request.coordination.clone();
         message.created_at = self.queued_at;
         message.steering = Some(SteeringReceipt {
             id: self.request.receipt_id,
@@ -90,6 +93,13 @@ fn status(value: &SteeringStatus) -> Result<&'static str> {
     }
 }
 fn validate(request: &SteeringAdmission) -> Result<()> {
+    ensure!(
+        request
+            .coordination
+            .as_ref()
+            .is_none_or(|s| s.valid_for(request.receipt_id)),
+        "invalid coordination source"
+    );
     ensure!(
         !request.receipt_id.is_nil()
             && !request.session_id.is_nil()

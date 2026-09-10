@@ -7,6 +7,7 @@ fn image() -> Image {
 }
 fn submit(text: &str) -> VoyageCommand {
     VoyageCommand::Submit {
+        coordination: None,
         command_id: Uuid::from_u128(74),
         expected_revision: 9,
         expires_at_ms: 100,
@@ -189,6 +190,7 @@ fn paste_limits_and_active_image_steering_preserve_staged_data() {
     insert_images(&mut draft, &mut images, vec![image()], 0).unwrap();
     let before = draft.text.clone();
     let command = VoyageCommand::Steer {
+        coordination: None,
         command_id: Uuid::new_v4(),
         expected_revision: 1,
         expires_at_ms: 100,

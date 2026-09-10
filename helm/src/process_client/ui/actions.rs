@@ -259,6 +259,7 @@ impl App {
             anyhow::bail!("unknown command; /help lists connected controls");
         } else if let Some(run) = snapshot.run.as_ref().filter(|run| run.active()) {
             VoyageCommand::Steer {
+                coordination: None,
                 command_id,
                 expected_revision,
                 expires_at_ms,
@@ -267,6 +268,7 @@ impl App {
             }
         } else {
             VoyageCommand::Submit {
+                coordination: None,
                 command_id,
                 expected_revision,
                 expires_at_ms,

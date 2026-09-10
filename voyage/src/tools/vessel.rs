@@ -538,7 +538,7 @@ impl Tool for VesselTool {
         let timeout = context.timeout.min(Duration::from_secs(35));
         let result = tokio::select! {
             _ = context.cancellation.cancelled() => Err(ToolError::Cancelled),
-            result = tokio::time::timeout(timeout, perform(action, &transport, context)) => result.unwrap_or(Err(ToolError::Timeout(timeout))),
+            result = tokio::time::timeout(timeout, perform(action, &transport, context, self.context.as_ref())) => result.unwrap_or(Err(ToolError::Timeout(timeout))),
         };
         if let Some((root, id)) = journal {
             let value = match result {
@@ -623,8 +623,40 @@ async fn perform(
     action: Action,
     t: &transport::Transport,
     context: &ToolContext,
+    owner: Option<&VesselContext>,
 ) -> Result<Value, ToolError> {
     check(context)?;
+    let coordination = if action.executes() && context.tool_call_id.is_some() {
+        let owner = owner.ok_or_else(|| failed("coordination requires an owning voyage"))?;
+        let local = transport::Transport::open(&owner.directory, None)?;
+        let capabilities = local.exchange(VesselCommand::Capabilities).await?;
+        let source = local
+            .exchange(VesselCommand::Inspect {
+                session_id: owner.session_id,
+            })
+            .await?;
+        let vessel_id = serde_json::from_value(capabilities["vessel_id"].clone())
+            .map_err(|_| failed("sender Vessel identity unavailable"))?;
+        let session_name = source["name"]
+            .as_str()
+            .map(str::to_owned)
+            .unwrap_or_else(|| format!("session-{}", &owner.session_id.to_string()[..8]));
+        let source = voyage_protocol::coordination::CoordinationSource {
+            vessel_id,
+            session_id: owner.session_id,
+            session_name,
+            tool_call_id: context.tool_call_id.clone().expect("checked call identity"),
+            command_id: action
+                .mutation_id()
+                .ok_or_else(|| failed("missing coordination command identity"))?,
+        };
+        if !source.valid_for(source.command_id) {
+            return Err(failed("invalid sender identity"));
+        }
+        Some(source)
+    } else {
+        None
+    };
     let expires_at_ms = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|_| failed("system clock unavailable"))?
@@ -810,6 +842,7 @@ async fn perform(
                 session_id,
                 None,
                 VoyageCommand::Submit {
+                    coordination,
                     command_id,
                     expected_revision: revision,
                     expires_at_ms,
@@ -833,6 +866,7 @@ async fn perform(
                 session_id,
                 None,
                 VoyageCommand::Submit {
+                    coordination,
                     command_id,
                     expected_revision,
                     expires_at_ms,
@@ -855,6 +889,7 @@ async fn perform(
                 session_id,
                 Some(incarnation),
                 VoyageCommand::Steer {
+                    coordination,
                     command_id,
                     expected_revision,
                     expires_at_ms,

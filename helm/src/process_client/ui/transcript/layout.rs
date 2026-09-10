@@ -8,7 +8,7 @@ use ratatui::{
     Frame,
     layout::Rect,
     style::{Modifier, Style},
-    text::{Line, Text},
+    text::{Line, Span, Text},
     widgets::Paragraph,
 };
 
@@ -220,18 +220,35 @@ fn build(view: &View, state: &State, width: u16) -> Vec<Row> {
                 .map(|t| format!("  {}", t.with_timezone(&chrono::Local).format("%H:%M")))
                 .unwrap_or_default();
             entry_gap(&mut out, Key::MessageHeading(message.message_index));
-            rows(
-                &mut out,
-                Key::MessageHeading(message.message_index),
-                Text::from(Line::styled(
-                    format!("{label}{time}"),
-                    heading().patch(if message.role == "user" {
-                        crate::theme::Role::Focus.style()
-                    } else {
-                        crate::theme::Role::Primary.style()
-                    }),
-                )),
-            );
+            if let Some(source) = &message.coordination {
+                rows(
+                    &mut out,
+                    Key::Sender(message.message_index),
+                    Text::from(Line::from(vec![
+                        Span::styled("Sent by ", heading()),
+                        Span::styled(
+                            safe(&source.session_name),
+                            crate::theme::Role::Focus
+                                .style()
+                                .add_modifier(ratatui::style::Modifier::UNDERLINED),
+                        ),
+                        Span::styled(time, heading()),
+                    ])),
+                );
+            } else {
+                rows(
+                    &mut out,
+                    Key::MessageHeading(message.message_index),
+                    Text::from(Line::styled(
+                        format!("{label}{time}"),
+                        heading().patch(if message.role == "user" {
+                            crate::theme::Role::Focus.style()
+                        } else {
+                            crate::theme::Role::Primary.style()
+                        }),
+                    )),
+                );
+            }
             let content = if message.operator_name.is_some() {
                 if message.role == "user" {
                     presentation::operator_message(&message.content)
@@ -531,8 +548,11 @@ pub(in crate::process_client::ui) fn draw(frame: &mut Frame<'_>, app: &App, area
         .enumerate()
         .map(|(y, row)| {
             let mut line = row.line.clone();
-            if matches!(row.key, Key::ActivityHeader(_) | Key::Tool(_)) {
-                let rect = Rect::new(area.x, area.y + y as u16, area.width, 1);
+            if matches!(
+                row.key,
+                Key::ActivityHeader(_) | Key::Tool(_) | Key::Sender(_)
+            ) {
+                let rect = hit_rect(row, area, y);
                 if app.sidebar.pointer.is_some_and(|p| rect.contains(p)) {
                     line = line.style(crate::theme::Role::Hover.style());
                 }
@@ -551,13 +571,12 @@ pub(in crate::process_client::ui) fn draw(frame: &mut Frame<'_>, app: &App, area
         .take(height)
         .enumerate()
         .filter_map(|(y, row)| {
-            if matches!(row.key, Key::ActivityHeader(_) | Key::Tool(_))
-                && !row.line.to_string().trim().is_empty()
+            if matches!(
+                row.key,
+                Key::ActivityHeader(_) | Key::Tool(_) | Key::Sender(_)
+            ) && !row.line.to_string().trim().is_empty()
             {
-                Some((
-                    Rect::new(area.x, area.y + y as u16, area.width, 1),
-                    row.key.clone(),
-                ))
+                Some((hit_rect(row, area, y), row.key.clone()))
             } else {
                 None
             }
@@ -651,5 +670,20 @@ mod attachment_tests {
         let mut out = Vec::new();
         content_rows(&mut out, Key::Message(0), &parts[1..2], 100);
         assert!(out.iter().any(|r| r.line.to_string().contains("image.png")));
+    }
+}
+
+fn hit_rect(row: &Row, area: Rect, y: usize) -> Rect {
+    if matches!(row.key, Key::Sender(_)) {
+        let offset = 8u16.min(area.width);
+        let width = row
+            .line
+            .spans
+            .get(1)
+            .map_or(0, |s| s.width())
+            .min(usize::from(area.width.saturating_sub(offset))) as u16;
+        Rect::new(area.x + offset, area.y + y as u16, width, 1)
+    } else {
+        Rect::new(area.x, area.y + y as u16, area.width, 1)
     }
 }

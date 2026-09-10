@@ -146,6 +146,7 @@ impl<'a> Connection<'a> {
         );
         let command = if active && steer {
             VoyageCommand::Steer {
+                coordination: None,
                 command_id,
                 expected_revision,
                 expires_at_ms,
@@ -158,6 +159,7 @@ impl<'a> Connection<'a> {
                 "voyage already has an active run; use chat to steer it"
             );
             VoyageCommand::Submit {
+                coordination: None,
                 command_id,
                 expected_revision,
                 expires_at_ms,

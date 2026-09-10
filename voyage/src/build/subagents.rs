@@ -169,6 +169,7 @@ impl SubagentExecutor for CliSubagentExecutor {
             Arc::new(UnattendedApprover { allow: false })
         };
         let tool_context = ToolContext {
+            tool_call_id: None,
             github: crate::github::Credential::from_config(&config),
             artifact_scope: config.artifact_scope.clone(),
             completion: context.completion.clone(),

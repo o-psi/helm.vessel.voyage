@@ -3,6 +3,7 @@ mod activity;
 mod history;
 mod input;
 mod layout;
+pub(in crate::process_client::ui) mod navigation;
 use super::state::Message;
 use ratatui::text::Line;
 
@@ -10,6 +11,7 @@ use ratatui::text::Line;
 pub(super) enum Key {
     Message(usize),
     MessageHeading(usize),
+    Sender(usize),
     Activity(usize),
     ActivityHeader(usize),
     Tool(String),
@@ -124,7 +126,8 @@ impl State {
                     .iter()
                     .find(|old| old.message_index == new.message_index)
                     .is_none_or(|old| {
-                        old.role == new.role
+                        old.coordination == new.coordination
+                            && old.role == new.role
                             && old.tool_call_id == new.tool_call_id
                             && old.parts == new.parts
                             && if new.projection_truncated {

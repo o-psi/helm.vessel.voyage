@@ -297,6 +297,8 @@ impl Redactor {
 
 #[derive(Clone)]
 pub struct ToolContext {
+    /// Canonical assistant call being dispatched; never supplied in tool arguments.
+    pub tool_call_id: Option<String>,
     pub artifact_scope: Option<crate::artifacts::Scope>,
     /// Dedicated capability, never forwarded to shell/MCP or serialized.
     pub github: Option<crate::github::Credential>,

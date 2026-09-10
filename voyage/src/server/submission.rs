@@ -16,6 +16,10 @@ pub(super) async fn submit(
     authorization: super::authorization::Authorization,
     command: RuntimeCommand,
 ) -> Result<Value> {
+    let coordination = match &command {
+        RuntimeCommand::Submit { coordination, .. } => coordination.clone(),
+        _ => None,
+    };
     let (command_id, expected_revision, expires_at_ms, prompt, operator, parts) = match command {
         RuntimeCommand::SubmitContent {
             command_id,
@@ -34,6 +38,7 @@ pub(super) async fn submit(
             )
         }
         RuntimeCommand::Submit {
+            coordination: _,
             command_id,
             expected_revision,
             expires_at_ms,
@@ -78,6 +83,7 @@ pub(super) async fn submit(
     let _admission = state.admission.lock().await;
     ensure!(!state.shutdown.is_cancelled(), "runtime stopping");
     let request = TurnAdmission {
+        coordination,
         operator_name: operator.as_ref().map(|(name, _)| name.clone()),
         command_id,
         machine_id: authorization.actor.installation_id,

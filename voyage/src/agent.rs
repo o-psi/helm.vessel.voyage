@@ -1399,6 +1399,7 @@ impl Agent {
                 });
             }
             for call in calls {
+                context.tool_call_id = Some(call.id.clone());
                 self.sink
                     .emit(AgentEvent::ToolStarted {
                         name: call.name.clone(),

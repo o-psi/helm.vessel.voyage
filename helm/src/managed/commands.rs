@@ -96,6 +96,7 @@ pub(super) async fn run(
                     session,
                     process.incarnation,
                     VoyageCommand::Submit {
+                        coordination: None,
                         command_id,
                         expected_revision,
                         expires_at_ms,

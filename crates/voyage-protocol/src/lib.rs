@@ -26,3 +26,6 @@ pub mod content;
 pub mod inference;
 
 pub mod tool_result;
+
+/// Voyage-to-voyage presentation provenance.
+pub mod coordination;

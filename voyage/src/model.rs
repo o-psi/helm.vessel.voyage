@@ -27,6 +27,8 @@ pub struct SteeringReceipt {
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Message {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub coordination: Option<voyage_protocol::coordination::CoordinationSource>,
     /// Trusted local operator attribution; never inferred from authored text.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub operator_name: Option<String>,
@@ -61,6 +63,7 @@ pub struct Message {
 impl Message {
     pub fn new(role: Role, content: impl Into<String>) -> Self {
         Self {
+            coordination: None,
             operator_name: None,
             created_at: Some(chrono::Utc::now()),
             role,
@@ -95,6 +98,7 @@ impl Message {
         success: bool,
     ) -> Self {
         Self {
+            coordination: None,
             operator_name: None,
             created_at: Some(chrono::Utc::now()),
             role: Role::Tool,

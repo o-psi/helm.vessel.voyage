@@ -131,6 +131,36 @@ are refused rather than bypassing that ceiling; policy-bounded subagents remain
 the delegation path in that case. Unknown cleanup is not a permission to
 recover, attest, or replay work.
 
+## Sender attribution and navigation
+
+New model-originated `create` initial tasks, `submit` messages and `steer` messages
+retain structured coordination metadata alongside canonical text: the sending
+Vessel/session UUIDs, the session name observed at send time, the command UUID and
+the actual assistant tool-call ID. The runtime supplies these values, not model
+arguments. Admission and steering application preserve them, including after
+suspension. Exact retries do not rewrite the original sender. This is presentation
+provenance, **not execution authority or a cryptographic identity assertion across
+Vessels**; existing route authentication, rights and target policy still apply.
+
+Helm labels these messages **Sent by _session name_** instead of **You**. Single-click
+the underlined name to open the sender's conversation at the exact sending `vessel`
+call, with its activity group and tool details expanded. Navigation matches stable
+identities, the command and tool-call ID—not names or message
+text. Renaming a session does not change old attribution or redirect the link.
+Copied canonical messages retain their original source link when a voyage is branched.
+Ordinary human submissions and legacy messages without provenance retain their
+existing labels; Helm does not guess senders from authored text. Operator-issued
+tool operations without an assistant call are not relabeled as model messages.
+
+Navigation only reads through connected, authorized Helm routes. It does not enroll
+a connection, restore an archive, restart a voyage or resubmit anything. An unavailable
+Vessel/session, denied history, archived/deleted sender, changed revision, missing or
+ambiguous call produces an explicit notice. Multiple connections to one Vessel use
+the receiving connection when possible; otherwise ambiguity is reported rather than
+silently choosing credentials. History is revision-fenced and paged, with a 30-second,
+16,384-message / 64 MiB reading budget. Calls absent from the owner's public canonical
+history (including subordinate-only activity) cannot be opened by this link.
+
 ## Platform and validation limits
 
 The transport uses bounded native HTTP requests to private local loopback discovery
@@ -154,3 +184,12 @@ The steering exercise also exposed and fixed regenerated message timestamps:
 durable admission now records the time once, so queued delivery and canonical
 application construct identical metadata. Legacy records keep absent timestamps
 rather than inventing a historical time.
+
+Issue #222 verification used development Linux binaries and a temporary synthetic
+provider fixture: native submit/create/steer attribution, ordinary-human fallback,
+exact duplicate preservation, suspension and supervisor restart, and a real Helm PTY
+sender click loading history beyond the recent 128-message snapshot and opening the
+original expanded call and activity group rather than a later duplicate. An archived
+sender was explicitly refused without restoration. The clicks issued no provider requests. All-target compilation also passed. These checks
+do not establish deployed remote-grant navigation or native macOS/Windows behavior;
+no general automated suite was recreated.

@@ -86,6 +86,7 @@ pub async fn build_authorized_agent_bundle(
             })
         };
         let context = ToolContext {
+            tool_call_id: None,
             github: crate::github::Credential::from_config(config),
             artifact_scope: config.artifact_scope.clone(),
             completion: None,

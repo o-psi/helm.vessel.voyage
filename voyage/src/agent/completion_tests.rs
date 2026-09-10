@@ -165,6 +165,7 @@ impl Fixture {
             ..Default::default()
         };
         let context = ToolContext {
+            tool_call_id: None,
             artifact_scope: None,
             github: None,
             completion: None,

@@ -27,6 +27,8 @@ pub struct Target {
 
 #[derive(Clone, Default, Deserialize, Serialize, PartialEq)]
 pub struct Message {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub coordination: Option<voyage_protocol::coordination::CoordinationSource>,
     #[serde(default)]
     pub message_index: usize,
     #[serde(default)]

@@ -40,6 +40,11 @@ impl App {
             view.transcript.borrow_mut().dirty = true;
         }
         match update {
+            Update::Coordination {
+                origin,
+                request,
+                result,
+            } => self.coordination_arrived(origin, request, result),
             Update::Vessels(event) => self.vessel_update(event),
             Update::DraftInferenceModels {
                 id,
@@ -111,11 +116,14 @@ impl App {
                     if state.attempted == Some(revision) {
                         state.loading = false;
                     }
-                    if view
-                        .snapshot
-                        .as_ref()
-                        .is_some_and(|s| s.revision == revision)
-                    {
+                    if view.snapshot.as_ref().is_some_and(|s| {
+                        // Sender navigation may have installed complete history
+                        // while an older suffix request was still in flight.
+                        s.revision == revision
+                            && !(state.loaded_revision == Some(revision)
+                                && state.messages.len() == s.total_messages
+                                && state.messages.first().is_none_or(|m| m.message_index == 0))
+                    }) {
                         match result {
                             Ok(messages) => {
                                 state.messages = messages;

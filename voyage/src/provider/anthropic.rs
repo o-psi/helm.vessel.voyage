@@ -393,6 +393,7 @@ fn finish_stream(assembly: StreamAssembly) -> Result<ModelResponse, ProviderErro
     Ok(ModelResponse {
         service_tier: assembly.service_tier,
         message: Message {
+            coordination: None,
             tool_outcome: None,
             tool_output: None,
             parts: Vec::new(),
@@ -472,6 +473,7 @@ fn decode_response(value: Value) -> Result<ModelResponse, ProviderError> {
     Ok(ModelResponse {
         service_tier: super::reported_service_tier(value.pointer("/usage/service_tier")),
         message: Message {
+            coordination: None,
             tool_outcome: None,
             tool_output: None,
             parts: Vec::new(),

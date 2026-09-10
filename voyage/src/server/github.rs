@@ -40,6 +40,7 @@ pub(super) async fn submit(
     let resolved =
         crate::runtime_policy::RuntimePolicy::resolve(&config, &state.registration.workspace)?;
     let request = TurnAdmission {
+        coordination: None,
         parts: Vec::new(),
         operator_name: None,
         command_id,
@@ -71,6 +72,7 @@ pub(super) async fn submit(
         steering: None,
     });
     let context = crate::tools::ToolContext {
+        tool_call_id: None,
         artifact_scope: config.artifact_scope.clone(),
         github: crate::github::Credential::from_config(resolved.config()),
         completion: None,

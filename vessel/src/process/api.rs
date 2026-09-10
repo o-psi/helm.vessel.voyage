@@ -217,11 +217,13 @@ pub(super) fn runtime(command: VoyageCommand) -> Result<RuntimeCommand> {
             content,
         },
         VoyageCommand::Submit {
+            coordination,
             command_id,
             expected_revision,
             expires_at_ms,
             prompt,
         } => RuntimeCommand::Submit {
+            coordination,
             command_id,
             expected_revision,
             expires_at_ms,
@@ -249,12 +251,14 @@ pub(super) fn runtime(command: VoyageCommand) -> Result<RuntimeCommand> {
             run_id,
         },
         VoyageCommand::Steer {
+            coordination,
             command_id,
             expected_revision,
             expires_at_ms,
             run_id,
             prompt,
         } => RuntimeCommand::Steer {
+            coordination,
             command_id,
             expected_revision,
             expires_at_ms,

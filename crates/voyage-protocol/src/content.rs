@@ -370,6 +370,7 @@ mod transport_tests {
     fn legacy_submit_encoding_is_unchanged() {
         let id = Uuid::from_u128(1);
         let command = RuntimeCommand::Submit {
+            coordination: None,
             command_id: id,
             expected_revision: 2,
             expires_at_ms: 3,

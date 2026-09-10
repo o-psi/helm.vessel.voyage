@@ -575,7 +575,12 @@ starts an independent voyage with an initial task. Steering admission retains on
 stable message timestamp through canonical application; legacy records retain
 absent times. Follow-up reads/waits and
 cancel, rename, archive and restore use the existing public lifecycle protocol.
-Vessel capabilities include software version and stable Vessel identity.
+Vessel capabilities include software version and stable Vessel identity. New
+model-originated coordination messages retain sender and exact tool-call provenance;
+Helm shows **Sent by _session name_**, with an underlined name that opens the sending
+call expanded through an authorized connected route. Legacy/human messages are not
+re-attributed. Unavailable or ambiguous source history is reported, not restored or
+replayed automatically.
 
 There is no related-voyages-only restriction. Actual execution policy and route
 rights still apply. Mutation intents and exact wire requests are retained before

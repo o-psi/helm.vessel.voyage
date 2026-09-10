@@ -171,6 +171,7 @@ async fn advance_mode(
         );
         saved.submit = Some(super::super::attachments::prepare(
             VoyageCommand::Submit {
+                coordination: None,
                 command_id: saved.turn,
                 expected_revision: snapshot["revision"]
                     .as_u64()

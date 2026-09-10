@@ -10,6 +10,7 @@ pub(crate) fn context(root: &std::path::Path) -> ToolContext {
         ..Default::default()
     };
     ToolContext {
+        tool_call_id: None,
         artifact_scope: None,
         github: None,
         completion: None,
@@ -223,6 +224,7 @@ fn canonical_journal_reopen_preserves_outcomes_and_fences_old_writers() {
     let guard = journal.acquire_execution(session.id).unwrap();
     let now = chrono::Utc::now().timestamp_millis();
     let request = TurnAdmission {
+        coordination: None,
         operator_name: None,
         command_id: uuid::Uuid::new_v4(),
         machine_id: uuid::Uuid::new_v4(),

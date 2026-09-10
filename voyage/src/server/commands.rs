@@ -245,6 +245,7 @@ pub(super) async fn dispatch_admitted(
             super::submission::submit(state, authorization, command).await
         }
         RuntimeCommand::Steer {
+            coordination,
             command_id,
             expected_revision,
             expires_at_ms,
@@ -253,6 +254,7 @@ pub(super) async fn dispatch_admitted(
         } => {
             let _admission = state.admission.lock().await;
             let request = SteeringAdmission {
+                coordination,
                 receipt_id: command_id,
                 session_id: state.registration.session_id,
                 run_id,

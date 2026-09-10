@@ -221,6 +221,8 @@ pub enum VoyageCommand {
         content: Vec<crate::content::ContentPart>,
     },
     Submit {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        coordination: Option<crate::coordination::CoordinationSource>,
         command_id: Uuid,
         expected_revision: u64,
         expires_at_ms: u64,
@@ -241,6 +243,8 @@ pub enum VoyageCommand {
         run_id: Uuid,
     },
     Steer {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        coordination: Option<crate::coordination::CoordinationSource>,
         command_id: Uuid,
         expected_revision: u64,
         expires_at_ms: u64,

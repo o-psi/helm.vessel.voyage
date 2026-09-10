@@ -13,7 +13,7 @@ pub(super) fn text_prefix(text: &str, limit: usize) -> (&str, bool) {
     (&text[..end], end < text.len())
 }
 pub(super) fn full(message: &Message) -> Value {
-    json!({"role":message.role,"content":message.content,"parts":message.parts,"tool_output":message.tool_output,"created_at":message.created_at,"operator_name":message.operator_name,"tool_calls":message.tool_calls,"tool_call_id":message.tool_call_id,"tool_outcome":message.tool_outcome,"tool_success":message.tool_success,"steering":message.steering})
+    json!({"coordination":message.coordination,"role":message.role,"content":message.content,"parts":message.parts,"tool_output":message.tool_output,"created_at":message.created_at,"operator_name":message.operator_name,"tool_calls":message.tool_calls,"tool_call_id":message.tool_call_id,"tool_outcome":message.tool_outcome,"tool_success":message.tool_success,"steering":message.steering})
 }
 fn bounded(message: &Message, index: usize) -> Result<Value> {
     let mut value = full(message);
@@ -24,7 +24,7 @@ fn bounded(message: &Message, index: usize) -> Result<Value> {
     }
     let (content, truncated) = text_prefix(&message.content, 4096);
     Ok(
-        json!({"role":message.role,"content":content,"created_at":message.created_at,"operator_name":message.operator_name,"content_truncated":truncated,"content_bytes":message.content.len(),"tool_calls":[],"tool_calls_omitted":!message.tool_calls.is_empty(),"tool_call_id":message.tool_call_id,"steering":message.steering,"tool_outcome":message.tool_outcome,"tool_success":message.tool_success,"message_index":index,"projection_truncated":true,"complete_message":"message_chunk"}),
+        json!({"coordination":message.coordination,"role":message.role,"content":content,"created_at":message.created_at,"operator_name":message.operator_name,"content_truncated":truncated,"content_bytes":message.content.len(),"tool_calls":[],"tool_calls_omitted":!message.tool_calls.is_empty(),"tool_call_id":message.tool_call_id,"steering":message.steering,"tool_outcome":message.tool_outcome,"tool_success":message.tool_success,"message_index":index,"projection_truncated":true,"complete_message":"message_chunk"}),
     )
 }
 pub(super) fn page(messages: &[Message], offset: usize, limit: usize) -> Result<Vec<Value>> {

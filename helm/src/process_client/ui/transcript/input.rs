@@ -122,6 +122,19 @@ impl App {
                         state.last_click = None;
                         return false;
                     };
+                    if let super::Key::Sender(index) = key {
+                        let source = state
+                            .messages
+                            .iter()
+                            .chain(view.snapshot.iter().flat_map(|s| &s.messages))
+                            .find(|m| m.message_index == index)
+                            .and_then(|m| m.coordination.clone());
+                        drop(state);
+                        if let Some(source) = source {
+                            self.open_coordination(source);
+                        }
+                        return true;
+                    }
                     state.click(key, mouse.column, mouse.row, std::time::Instant::now());
                 }
                 MouseEventKind::ScrollUp => {
