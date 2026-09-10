@@ -96,6 +96,16 @@ excluded from recovery without decoding obsolete launch settings. Unfinished
 records retain full validation and exact pending command identities. Plain chat
 also waits for a first nonempty message; EOF and `/quit` before that create no voyage.
 
+Helm omits positively observed legacy creation-only suspended voyages from normal
+navigation: revision zero, no messages, runs, turns, decisions, cleanup or resources,
+and no custom name. Missing/failed observations are not evidence of emptiness;
+archives, local text/images, pending commands and the currently selected voyage stay
+accessible. This does not delete runtime identity or receipt records. Untitled entries
+whose observation is pending or failed say “Loading voyage” or “Unavailable voyage”
+rather than implying that a conversation was saved. New ordinary chat still creates
+no voyage until the first nonempty send; explicit creation APIs retain their durable
+identity semantics.
+
 In a draft, `/model NAME`, `/access read-only|approval|unrestricted`, and
 `/workspace /absolute/path` edit local launch settings; `/discard` discards a draft
 only before first send. Remote drafts use executing-host configuration and an explicitly selected
