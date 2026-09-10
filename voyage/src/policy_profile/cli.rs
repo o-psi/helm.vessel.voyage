@@ -179,9 +179,7 @@ pub fn explicit(config: &Config, assignments: &[String], access: bool) -> Result
             .then_some(base.unattended),
         read_roots: keys.contains(&"allow_read").then_some(base.read_roots),
         write_roots: keys.contains(&"allow_write").then_some(base.write_roots),
-        deny_commands: keys
-            .contains(&"deny_commands")
-            .then_some(base.deny_commands),
+        legacy_deny_commands: None,
         inherit_env: keys.contains(&"inherit_env").then_some(base.inherit_env),
         github_enabled: keys
             .contains(&"github_enabled")

@@ -356,7 +356,7 @@ mod policy_tests {
     use super::super::{Decision, Policy};
     use crate::{Config, config::AccessMode};
     #[test]
-    fn denial_and_approval_matrix() {
+    fn retired_command_denials_do_not_override_access_modes() {
         let root = tempfile::tempdir().unwrap();
         for access in [
             AccessMode::Unrestricted,
@@ -365,11 +365,15 @@ mod policy_tests {
         ] {
             let config = Config {
                 access: Some(access),
-                deny_commands: vec!["printf".into()],
+                legacy_deny_commands: vec!["printf".into()],
                 ..Default::default()
             };
             let policy = Policy::new(&config, root.path().to_path_buf()).unwrap();
             for source in [
+                "shutdown",
+                "reboot",
+                "mkfs",
+                "printf shutdown",
                 "printf denied",
                 "/usr/bin/printf denied",
                 "p\"rint\"f denied",
@@ -378,11 +382,16 @@ mod policy_tests {
                 "cat <<'EOF'\ndata\nEOF\nprintf denied",
                 "sh -c 'printf denied'",
                 "echo $(printf denied)",
-                "env $program",
             ] {
                 assert!(
-                    matches!(policy.command(source), Decision::Deny(_)),
-                    "{source:?}"
+                    match access {
+                        AccessMode::Unrestricted =>
+                            matches!(policy.command(source), Decision::Allow),
+                        AccessMode::Approval =>
+                            !matches!(policy.command(source), Decision::Deny(_)),
+                        AccessMode::ReadOnly => matches!(policy.command(source), Decision::Deny(_)),
+                    },
+                    "{access:?} {source:?}"
                 );
             }
             assert_eq!(

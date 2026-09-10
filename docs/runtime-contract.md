@@ -287,7 +287,8 @@ substitutions in unquoted bodies and commands after the heredoc are inspected.
 Sequential heredoc commands, escaped delimiters and tab-stripping heredocs are
 supported. Multiple heredoc redirects queued on one command are currently refused
 by the grammar rather than partially analyzed.
-Literal command and argument basenames retain command-denial checks. Literal
+Command-name deny-listing has been removed: neither executable names nor inert
+arguments are blocked by a name list. Literal
 nested shell `-c` scripts are inspected; dynamic executable names, dynamic command
 forwarding, `eval`/`source`, shell script/stdin entry points and unsupported expansion
 forms are refused with specific guidance. A valid shell script may therefore still
@@ -296,12 +297,36 @@ never reinterpret a refusal as authorization to run the same effect another way.
 
 Only confidently read-only single commands avoid prompts in approval mode.
 Compound scripts, heredocs, redirects and substitutions require approval there.
-Unrestricted mode skips ordinary prompts, not syntax checks, command denials,
+Unrestricted mode skips ordinary prompts, not syntax checks,
 roots or administrator ceilings. Application policy cannot interpret arbitrary
 Python/program semantics and is not an OS sandbox. The POSIX analyzer does not
 authorize Windows `cmd.exe` PTY commands; that path explicitly refuses until a
 separate dialect-aware implementation is verified. Linux evidence does not
 establish native Windows/macOS behavior.
+
+### Retired command-name deny lists
+
+Command-name deny-list enforcement is removed from shell/PTY policy, internal Git
+worktree helpers, clipboard helpers, administrator-ceiling intersection and child
+or participant delegation. There is no default list and no `deny_commands` CLI,
+UI or effective-policy setting. Read-only mode, approval mode, syntax inspection,
+workspace authority, environment filtering, resource limits and cleanup remain.
+This does not introduce Pi's entire execution model or disable every other guardrail.
+
+Old `deny_commands` values in saved configuration are inert. Historical profile,
+defaults and participant documents retain the serialized field for canonical-byte
+checks, hashes and exact command/assignment identity; it is compatibility metadata,
+not an execution restriction. New compatible documents carry empty lists and new
+assignments send an empty list. Do not strip or rewrite the field in old journals.
+Other unknown fields remain rejected in strict policy documents.
+
+Existing named-profile/default references and confirmed transitions can become
+stale when their effective policy or builtin snapshot changes. Reinspect/reselect
+and explicitly reconfirm those settings using the supported policy controls;
+old confirmation hashes are not silently accepted. Historical journals are not
+rewritten and uncertain operations are not replayed. Older running voyages and
+remote runtimes retain their old behavior until they run an updated executable;
+an empty delegated list cannot disable an older host's own command policy.
 
 ### Action schemas
 

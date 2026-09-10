@@ -175,7 +175,6 @@ pub(super) fn render(section: &str, envelope: &Value) -> String {
             for (key, title) in [
                 ("read_roots", "Readable folders"),
                 ("write_roots", "Writable folders"),
-                ("deny_commands", "Blocked commands"),
             ] {
                 if let Some(items) = rules[key].as_array()
                     && !items.is_empty()

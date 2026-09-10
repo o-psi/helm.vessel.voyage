@@ -138,7 +138,10 @@ pub struct Config {
     pub workspace: Option<PathBuf>,
     pub allow_read: Vec<PathBuf>,
     pub allow_write: Vec<PathBuf>,
-    pub deny_commands: Vec<String>,
+    /// Retired command deny-list. Retained only for saved-document compatibility; never enforced.
+    #[doc(hidden)]
+    #[serde(default, rename = "deny_commands")]
+    pub legacy_deny_commands: Vec<String>,
     pub env: BTreeMap<String, String>,
     pub inherit_env: Vec<String>,
     pub redact_values: Vec<String>,
@@ -346,11 +349,6 @@ pub const CONFIG_OVERRIDE_SPECS: &[ConfigOverrideSpec] = &[
         kind: ConfigValueKind::PathList,
     },
     ConfigOverrideSpec {
-        key: "deny_commands",
-        description: "Blocked command names",
-        kind: ConfigValueKind::StringList,
-    },
-    ConfigOverrideSpec {
         key: "env",
         description: "Tool environment map",
         kind: ConfigValueKind::StringMap,
@@ -449,7 +447,7 @@ impl Default for Config {
             workspace: None,
             allow_read: Vec::new(),
             allow_write: Vec::new(),
-            deny_commands: vec!["shutdown".into(), "reboot".into(), "mkfs".into()],
+            legacy_deny_commands: Vec::new(),
             env: BTreeMap::new(),
             inherit_env: vec!["PATH".into(), "LANG".into(), "LC_ALL".into(), "TERM".into()],
             redact_values: Vec::new(),
@@ -489,7 +487,17 @@ impl Config {
         }
         // Redact structurally before serialization so escaping, short values,
         // and empty bindings cannot evade the diagnostic boundary.
-        toml::to_string_pretty(&displayed)
+        let mut document = toml::Value::try_from(&displayed)?;
+        if let Some(table) = document.as_table_mut() {
+            table.remove("deny_commands");
+            if let Some(explicit) = table
+                .get_mut("policy_explicit")
+                .and_then(toml::Value::as_table_mut)
+            {
+                explicit.remove("deny_commands");
+            }
+        }
+        toml::to_string_pretty(&document)
             .map_err(|_| anyhow::anyhow!("could not serialize concealed configuration"))
     }
 

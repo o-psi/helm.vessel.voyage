@@ -18,7 +18,6 @@ pub(crate) fn limit(config: &mut Config, registration: &ProcessRegistration) -> 
     ceiling.access = Some(mode);
     ceiling.allow_read.clear();
     ceiling.allow_write.clear();
-    ceiling.deny_commands.extend(policy.deny_commands.clone());
     ceiling
         .inherit_env
         .retain(|name| policy.inherit_env.contains(name));

@@ -9,7 +9,7 @@ records delivery evidence and its limits.
 
 Native action schemas reject irrelevant per-action keys before execution. Shell
 policy uses bounded syntax-aware inspection, including literal heredoc handling,
-without bypassing roots, command denials or approvals. New persisted tool outcomes
+without bypassing roots or approvals. New persisted tool outcomes
 distinguish command exit, policy refusal, execution error and incomplete output;
 Helm displays these distinctions with legacy-history fallbacks. Bounded Vessel
 inspection preserves coordination/cleanup observations or explicitly withholds a
@@ -588,7 +588,7 @@ shows metadata and verifies downloaded bytes. See [MCP tools and artifacts](conf
 for concurrency, schema limits, supported content and transfer limitations.
 
 The live registry supplies tools and runtime instructions. Local roots, command
-denials, approvals, cancellation, administrator ceilings and resource limits apply
+access-mode restrictions, approvals, cancellation, administrator ceilings and resource limits apply
 to root and subordinate work. Application policy alone is not an OS sandbox.
 Optional `[sandbox].mode = "required"` adds Linux x86_64 bubblewrap isolation for
 Voyage subprocesses; default off mode retains application policy alone. Required

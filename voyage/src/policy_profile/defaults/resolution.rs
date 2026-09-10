@@ -72,7 +72,7 @@ fn rules(effective: &EffectivePolicy) -> Rules {
             .iter()
             .map(|p| p.to_string_lossy().into_owned())
             .collect(),
-        deny_commands: r.deny_commands.clone(),
+        legacy_deny_commands: Vec::new(),
         inherit_env: r.inherit_env.clone(),
         github_enabled: r.github_enabled,
     }
@@ -101,7 +101,7 @@ fn effective(
         layer.profile_digest = Some(policy_profile::hash(&(profile, provenance))?);
         layers.push(layer);
     }
-    if *explicit != Overrides::default() {
+    if explicit.has_active_fields() {
         layers.push(Layer::new(LayerKind::Explicit, "cli", explicit.clone())?);
     }
     source.resolve(workspace, base, &layers)

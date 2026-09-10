@@ -274,9 +274,7 @@ async fn main() -> Result<()> {
             write_roots: policy_explicit
                 .write_roots
                 .or_else(|| previous.write_roots.clone()),
-            deny_commands: policy_explicit
-                .deny_commands
-                .or_else(|| previous.deny_commands.clone()),
+            legacy_deny_commands: None,
             inherit_env: policy_explicit
                 .inherit_env
                 .or_else(|| previous.inherit_env.clone()),

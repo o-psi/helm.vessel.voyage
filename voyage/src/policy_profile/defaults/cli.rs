@@ -125,7 +125,6 @@ fn activation_arguments(
         ("unattended", "unattended_approval"),
         ("read_roots", "allow_read"),
         ("write_roots", "allow_write"),
-        ("deny_commands", "deny_commands"),
         ("inherit_env", "inherit_env"),
         ("github_enabled", "github_enabled"),
     ] {

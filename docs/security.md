@@ -78,7 +78,7 @@ the Codex executable. API-key and subscription credentials use distinct configur
 transports; selecting a model transport does not grant tool authority.
 
 The current access modes are read-only, approval and unrestricted. Unrestricted
-removes ordinary approval prompts but retains roots, explicit command denials and
+removes ordinary approval prompts but retains roots and
 special exact-review publication requirements. Unattended work follows the
 configured unattended policy and cannot silently assume interactive approval.
 

@@ -36,9 +36,6 @@ impl Reader {
         self.policy
             .check_current()
             .map_err(|_| anyhow::anyhow!("Clipboard policy unavailable"))?;
-        self.policy
-            .check_command_denials(&[program])
-            .map_err(|_| anyhow::anyhow!("Clipboard command denied"))?;
         ensure!(!self.cancel.is_cancelled(), "Clipboard cancelled");
         ensure!(Instant::now() < self.deadline, "Clipboard timed out");
         let mut command = Command::new(program);
@@ -460,7 +457,7 @@ mod policy_tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
     #[tokio::test]
-    async fn explicit_read_only_input_obeys_hard_command_denial() {
+    async fn explicit_read_only_input_ignores_retired_command_denials() {
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join("clipboard-policy-fixture");
         std::fs::write(&path, "#!/bin/sh\nprintf fixture").unwrap();
@@ -480,7 +477,9 @@ mod policy_tests {
                 .unwrap(),
             b"fixture"
         );
-        config.deny_commands.push("clipboard-policy-fixture".into());
+        config
+            .legacy_deny_commands
+            .push("clipboard-policy-fixture".into());
         let reader = Reader {
             policy: crate::policy::Policy::new(&config, root.path().into()).unwrap(),
             cancel: CancellationToken::new(),
@@ -490,9 +489,8 @@ mod policy_tests {
             reader
                 .run(path.to_str().unwrap(), &[], 10)
                 .await
-                .unwrap_err()
-                .to_string()
-                .contains("denied")
+                .unwrap()
+                .is_some()
         );
     }
     #[tokio::test]

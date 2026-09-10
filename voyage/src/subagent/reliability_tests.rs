@@ -102,7 +102,7 @@ fn discovery_delegation_and_dirty_cleanup() {
 }
 #[cfg(unix)]
 #[test]
-fn symlink_escape_and_command_denial_still_refuse() {
+fn symlink_escape_still_refuses_with_retired_command_denials() {
     let tmp = tempfile::tempdir().unwrap();
     let repo = tmp.path().join("repo");
     let outside = tmp.path().join("outside");
@@ -111,7 +111,7 @@ fn symlink_escape_and_command_denial_still_refuse() {
     std::os::unix::fs::symlink(&outside, repo.join("escape")).unwrap();
     let config = crate::Config {
         access: Some(crate::config::AccessMode::Unrestricted),
-        deny_commands: vec!["git".into()],
+        legacy_deny_commands: vec!["git".into()],
         ..Default::default()
     };
     let policy = crate::policy::Policy::new(&config, repo.clone()).unwrap();
@@ -120,11 +120,7 @@ fn symlink_escape_and_command_denial_still_refuse() {
             .check_delegated_workspace(&repo.join("escape/new"))
             .is_err()
     );
-    assert!(
-        policy
-            .check_command_denials(&["git", "worktree", "add"])
-            .is_err()
-    );
+    assert_eq!(policy.command("git status"), crate::policy::Decision::Allow);
 }
 struct Immediate;
 #[async_trait::async_trait]

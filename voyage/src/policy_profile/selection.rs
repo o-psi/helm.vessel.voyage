@@ -63,7 +63,7 @@ impl SelectionRequest {
             self.directory.canonicalize()?,
         ))?);
         let mut layers = vec![profile];
-        if self.explicit != Overrides::default() {
+        if self.explicit.has_active_fields() {
             layers.push(Layer::new(
                 LayerKind::Explicit,
                 "cli",

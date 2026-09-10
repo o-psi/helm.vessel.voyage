@@ -134,7 +134,7 @@ impl ParticipantTool {
                     .as_str()
                     .ok_or_else(|| anyhow::anyhow!("invalid parent policy"))?
                     .into(),
-                deny_commands: rules.deny_commands.clone(),
+                legacy_deny_commands: Vec::new(),
                 inherit_env: rules.inherit_env.clone(),
                 github_enabled: rules.github_enabled,
                 timeout_secs: context.timeout.as_secs(),

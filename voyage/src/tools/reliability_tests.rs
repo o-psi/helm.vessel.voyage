@@ -309,3 +309,46 @@ async fn secret_shell_reports_only_fixed_status_and_exit() {
             .observation_complete
     );
 }
+
+#[tokio::test]
+async fn retired_denials_allow_harmless_shell_output_and_preserve_access() {
+    let root = tempfile::tempdir().unwrap();
+    let mut ctx = context(root.path());
+    let shell = ManagedShell::new();
+    let mut registry = ToolRegistry::default();
+    registry.register(shell.clone());
+    let mut config = crate::Config {
+        access: Some(AccessMode::Unrestricted),
+        legacy_deny_commands: vec!["printf".into(), "shutdown".into()],
+        ..Default::default()
+    };
+    ctx.policy = Arc::new(Policy::new(&config, root.path().into()).unwrap());
+    // Execute only printf; never execute a shutdown, reboot or filesystem tool.
+    let args = json!({"command": "printf '%s\\n' shutdown"});
+    let report = registry
+        .execute_report_with_workflow_secrets("shell", args.clone(), &ctx, None)
+        .await
+        .unwrap();
+    assert!(!report.output.is_error);
+    assert!(report.output.text_fallback().contains("shutdown"));
+    for access in [AccessMode::ReadOnly, AccessMode::Approval] {
+        config.access = Some(access);
+        ctx.policy = Arc::new(Policy::new(&config, root.path().into()).unwrap());
+        // An unavailable approval interface must not be treated as approval.
+        let refused = registry
+            .execute_report_with_workflow_secrets(
+                "shell",
+                json!({"command":"printf shutdown; printf safe"}),
+                &ctx,
+                None,
+            )
+            .await;
+        assert!(refused.is_err());
+    }
+    assert!(
+        shell
+            .shutdown(Duration::from_secs(3))
+            .await
+            .observation_complete
+    );
+}

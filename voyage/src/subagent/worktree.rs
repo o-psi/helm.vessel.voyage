@@ -165,10 +165,6 @@ impl WorktreeManager {
         if let Some(policy) = &self.policy {
             policy.check_current()?;
             policy.check_delegated_workspace(&path)?;
-            let command = self.create_command(name, start_point)?;
-            let arguments = shell_words::split(&command)?;
-            policy
-                .check_command_denials(&arguments.iter().map(String::as_str).collect::<Vec<_>>())?;
         }
         if let Some(managed) = &self.managed {
             managed.prepare(self)?;
@@ -439,8 +435,6 @@ fn git_command<const N: usize>(
     if let Some(policy) = policy {
         policy.check_current()?;
         policy.resolve_read(cwd)?;
-        let arguments = std::iter::once("git").chain(args).collect::<Vec<_>>();
-        policy.check_command_denials(&arguments)?;
     }
     let mut command = match policy {
         Some(policy) => policy.process_command("git", cwd)?,

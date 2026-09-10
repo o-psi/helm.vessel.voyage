@@ -76,7 +76,10 @@ pub struct ParticipantEndpoint {
 #[serde(deny_unknown_fields)]
 pub struct ParticipantPolicy {
     pub access: String,
-    pub deny_commands: Vec<String>,
+    /// Retired command deny-list. Retained only for saved-document compatibility; never enforced.
+    #[doc(hidden)]
+    #[serde(default, rename = "deny_commands")]
+    pub legacy_deny_commands: Vec<String>,
     pub inherit_env: Vec<String>,
     pub github_enabled: bool,
     pub timeout_secs: u64,

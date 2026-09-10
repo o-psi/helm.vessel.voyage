@@ -224,7 +224,7 @@ fn valid_effective(rules: &super::super::Rules) -> bool {
         .chain(&rules.write_roots)
         .all(|root| valid_path(Path::new(root)))
         && rules
-            .deny_commands
+            .legacy_deny_commands
             .iter()
             .chain(&rules.inherit_env)
             .all(|value| !value.contains('\0'))

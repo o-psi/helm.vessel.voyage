@@ -26,7 +26,6 @@ pub struct Policy {
     workspace: PathBuf,
     readable: Vec<PathBuf>,
     writable: Vec<PathBuf>,
-    deny_commands: Vec<String>,
     mode: AccessMode,
     live_access: Option<std::sync::Arc<LiveAccess>>,
     live_ceiling: bool,
@@ -51,7 +50,6 @@ impl Policy {
             workspace: effective.workspace().path().into(),
             readable: effective.rules().read_roots.clone(),
             writable: effective.rules().write_roots.clone(),
-            deny_commands: effective.rules().deny_commands.clone(),
             mode: effective.rules().access,
             snapshot,
         }
@@ -134,9 +132,6 @@ impl Policy {
         );
         config.sandbox = self.sandbox().settings.clone();
         config.github_enabled &= self.snapshot.effective.rules().github_enabled;
-        config.deny_commands.extend(self.deny_commands.clone());
-        config.deny_commands.sort();
-        config.deny_commands.dedup();
         config
             .inherit_env
             .retain(|name| self.snapshot.effective.rules().inherit_env.contains(name));
@@ -208,32 +203,12 @@ impl Policy {
         Ok(resolved)
     }
 
-    /// Deny-list check for exact argv of internal operations. This does not grant
-    /// access or replace the operation's separate mode/approval checks.
-    pub fn check_command_denials(&self, arguments: &[&str]) -> Result<()> {
-        for argument in arguments {
-            if let Some(name) = Path::new(argument)
-                .file_name()
-                .and_then(|name| name.to_str())
-                && self.deny_commands.iter().any(|denied| denied == name)
-            {
-                bail!("command `{name}` is denied by policy");
-            }
-        }
-        Ok(())
-    }
-
     pub fn command(&self, command: &str) -> Decision {
         let analysis = match shell::analyze(command) {
             Ok(analysis) => analysis,
             Err(reason) => return Decision::Deny(format!("shell policy: {reason}")),
         };
         let parsed = analysis.words;
-        if let Err(error) =
-            self.check_command_denials(&parsed.iter().map(String::as_str).collect::<Vec<_>>())
-        {
-            return Decision::Deny(error.to_string());
-        }
         let risky = !analysis.simple || looks_risky(command, &parsed);
         match (self.access_mode(), risky) {
             (AccessMode::ReadOnly, _) => {

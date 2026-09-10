@@ -246,13 +246,15 @@ project configuration, command arguments or Vessel connection credentials.
 
 `access` accepts `read-only`, `approval` or `unrestricted`. Read-only denies
 mutations even when a write root is listed; approval requires review for actions
-that need it. Unrestricted remains subject to configured roots, denials and other
+that need it. Unrestricted remains subject to configured roots and other
 limits. `unattended_approval = "deny"` refuses approval-required actions when there
 is no interactive approver. `"allow"` is an explicit unattended grant.
 These settings are application policy, not an OS sandbox.
 
 `allow_read` and `allow_write` add existing roots; the active workspace is included
-by the current policy adapter. `deny_commands` names denied command basenames.
+by the current policy adapter. Command-name deny-listing has been removed;
+`deny_commands` is no longer an accepted configuration override or active policy control.
+Legacy saved values are accepted as inert compatibility data and are never enforced.
 Children receive an empty environment populated only from `inherit_env` and `[env]`;
 secret-like inherited names are refused. Keep credentials out of child environment
 values too. `redact_values` supplies additional literal output redactions.
@@ -269,7 +271,7 @@ and resource ledgers stay in session storage; that storage is **not** delegated.
 Workspace-only read/write authority is sufficient for ordinary isolated coding.
 The planned directory must still be covered by **both** parent read and write
 roots, including canonical-path checks and inherited administrator ceilings.
-Read-only mode, command denials and approval requirements still apply. Placement
+Read-only mode and approval requirements still apply. Placement
 is deterministic, not a fallback search after a refusal; no extra roots are granted.
 
 Each scope contains a runtime-owned `.gitignore` excluding its contents from the

@@ -41,7 +41,10 @@ pub struct Rules {
     /// Absolute existing directory or the literal `$workspace`.
     pub read_roots: Vec<String>,
     pub write_roots: Vec<String>,
-    pub deny_commands: Vec<String>,
+    /// Retired command deny-list. Retained only for saved-document compatibility; never enforced.
+    #[doc(hidden)]
+    #[serde(default, rename = "deny_commands")]
+    pub legacy_deny_commands: Vec<String>,
     /// Environment variable names only, never their values.
     pub inherit_env: Vec<String>,
     #[serde(default, skip_serializing_if = "github_disabled")]
@@ -86,7 +89,7 @@ impl Builtin {
                 unattended: UnattendedApprovalMode::Deny,
                 read_roots: vec!["$workspace".into()],
                 write_roots: vec!["$workspace".into()],
-                deny_commands: vec!["shutdown".into(), "reboot".into(), "mkfs".into()],
+                legacy_deny_commands: Vec::new(),
                 inherit_env: vec!["PATH".into(), "LANG".into(), "LC_ALL".into(), "TERM".into()],
                 github_enabled: false,
             },
@@ -119,12 +122,7 @@ fn absolute(path: &Path) -> bool {
 }
 impl Rules {
     fn validate(&self) -> Result<()> {
-        for list in [
-            &self.read_roots,
-            &self.write_roots,
-            &self.deny_commands,
-            &self.inherit_env,
-        ] {
+        for list in [&self.read_roots, &self.write_roots, &self.inherit_env] {
             if list.len() > MAX_ITEMS {
                 return Err(Error::Invalid);
             }
@@ -134,8 +132,7 @@ impl Rules {
                 || s.len() > 4096
                 || s.chars().any(char::is_control)
                 || (s != "$workspace" && !absolute(Path::new(s)))
-        }) || self.deny_commands.iter().any(|s| !label(s))
-            || self.inherit_env.iter().any(|s| !env_name(s))
+        }) || self.inherit_env.iter().any(|s| !env_name(s))
         {
             return Err(Error::Invalid);
         }
@@ -201,10 +198,24 @@ pub struct Overrides {
     pub unattended: Option<UnattendedApprovalMode>,
     pub read_roots: Option<Vec<String>>,
     pub write_roots: Option<Vec<String>>,
-    pub deny_commands: Option<Vec<String>>,
+    /// Retired command deny-list. Retained only for saved-document compatibility; never enforced.
+    #[doc(hidden)]
+    #[serde(default, rename = "deny_commands")]
+    pub legacy_deny_commands: Option<Vec<String>>,
     pub inherit_env: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub github_enabled: Option<bool>,
+}
+impl Overrides {
+    /// Retired saved metadata must not create an active override layer.
+    pub(crate) fn has_active_fields(&self) -> bool {
+        self.access.is_some()
+            || self.unattended.is_some()
+            || self.read_roots.is_some()
+            || self.write_roots.is_some()
+            || self.inherit_env.is_some()
+            || self.github_enabled.is_some()
+    }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -235,7 +246,7 @@ impl Layer {
                 unattended: Some(r.unattended.clone()),
                 read_roots: Some(r.read_roots.clone()),
                 write_roots: Some(r.write_roots.clone()),
-                deny_commands: Some(r.deny_commands.clone()),
+                legacy_deny_commands: None,
                 inherit_env: Some(r.inherit_env.clone()),
                 github_enabled: Some(r.github_enabled),
             },
@@ -272,7 +283,6 @@ impl Layer {
         field!(unattended);
         field!(read_roots);
         field!(write_roots);
-        field!(deny_commands);
         field!(inherit_env);
         field!(github_enabled);
     }
@@ -283,7 +293,6 @@ pub struct EffectiveRules {
     pub unattended: UnattendedApprovalMode,
     pub read_roots: Vec<PathBuf>,
     pub write_roots: Vec<PathBuf>,
-    pub deny_commands: Vec<String>,
     pub inherit_env: Vec<String>,
     #[serde(skip_serializing_if = "github_disabled")]
     pub github_enabled: bool,
@@ -403,7 +412,6 @@ fn prepare_roots(r: &Rules, workspace: &Path, allow_exact_file: bool) -> Result<
         unattended: r.unattended.clone(),
         read_roots: roots(&r.read_roots)?,
         write_roots: roots(&r.write_roots)?,
-        deny_commands: sorted(&r.deny_commands),
         inherit_env: sorted(&r.inherit_env),
         github_enabled: r.github_enabled,
     })
@@ -442,9 +450,6 @@ fn ceiling_rules(r: &mut EffectiveRules, c: &EffectiveRules, workspace: &Path) -
     r.write_roots = intersect(&r.write_roots, &c.write_roots);
     r.inherit_env.retain(|name| c.inherit_env.contains(name));
     r.github_enabled &= c.github_enabled;
-    r.deny_commands.extend(c.deny_commands.clone());
-    r.deny_commands.sort();
-    r.deny_commands.dedup();
     if rank(c.access) < rank(r.access) {
         r.access = c.access
     }
@@ -554,7 +559,7 @@ fn resolve_loaded_inner(
             .as_object()
             .ok_or(Error::Invalid)?
             .iter()
-            .filter(|(_, v)| !v.is_null())
+            .filter(|(k, v)| k.as_str() != "deny_commands" && !v.is_null())
             .map(|(k, _)| k.clone())
             .collect::<BTreeSet<_>>();
         let prepared = if trusted_config && layer.kind == LayerKind::Explicit {
@@ -674,10 +679,6 @@ pub fn transition(previous: &EffectivePolicy, proposed: &EffectivePolicy) -> Res
             && old.unattended == UnattendedApprovalMode::Deny)
         || added_roots(&new.read_roots, &old.read_roots)
         || added_roots(&new.write_roots, &old.write_roots)
-        || old
-            .deny_commands
-            .iter()
-            .any(|x| !new.deny_commands.contains(x))
         || new.inherit_env.iter().any(|x| !old.inherit_env.contains(x))
         || (new.github_enabled && !old.github_enabled);
     let digest = hash(&(
@@ -693,4 +694,58 @@ pub fn transition(previous: &EffectivePolicy, proposed: &EffectivePolicy) -> Res
         requires_confirmation,
         digest,
     })
+}
+
+#[cfg(test)]
+mod retired_denial_tests {
+    use super::*;
+
+    #[test]
+    fn legacy_documents_roundtrip_without_effective_command_restrictions() {
+        let mut profile = Builtin::Autonomous.document();
+        profile.rules.legacy_deny_commands = vec!["shutdown".into(), "printf".into()];
+        let bytes = profile.encode().unwrap();
+        let decoded = ProfileDocument::decode(&bytes).unwrap();
+        assert_eq!(decoded.encode().unwrap(), bytes);
+        let overrides = Overrides {
+            legacy_deny_commands: Some(vec!["git".into()]),
+            ..Default::default()
+        };
+        assert!(!overrides.has_active_fields());
+        let saved = serde_json::to_vec(&overrides).unwrap();
+        let restored: Overrides = serde_json::from_slice(&saved).unwrap();
+        assert_eq!(serde_json::to_vec(&restored).unwrap(), saved);
+        let root = tempfile::tempdir().unwrap();
+        let layer = Layer::new(LayerKind::Explicit, "legacy", restored).unwrap();
+        let effective = resolve_loaded(root.path(), &decoded.rules, &[layer], None).unwrap();
+        assert!(
+            serde_json::to_value(effective.rules())
+                .unwrap()
+                .get("deny_commands")
+                .is_none()
+        );
+        assert_eq!(effective.rules().access, AccessMode::Unrestricted);
+    }
+
+    #[test]
+    fn legacy_config_is_loadable_but_not_an_active_setting() {
+        let mut config: crate::Config = toml::from_str(
+            "deny_commands = [\"shutdown\", \"reboot\", \"mkfs\"]\naccess = \"unrestricted\"\n",
+        )
+        .unwrap();
+        assert_eq!(config.legacy_deny_commands.len(), 3);
+        assert!(config.apply_override("deny_commands", "[]").is_err());
+        assert!(!config.diagnostic_toml().unwrap().contains("deny_commands"));
+        assert!(
+            !crate::config::CONFIG_OVERRIDE_SPECS
+                .iter()
+                .any(|s| s.key == "deny_commands")
+        );
+        let root = tempfile::tempdir().unwrap();
+        let policy = crate::policy::Policy::new(&config, root.path().into()).unwrap();
+        for command in ["shutdown", "reboot", "mkfs", "printf shutdown"] {
+            // Policy-only: never execute the destructive command names.
+            assert_eq!(policy.command(command), crate::policy::Decision::Allow);
+        }
+    }
 }

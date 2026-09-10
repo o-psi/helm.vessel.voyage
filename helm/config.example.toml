@@ -38,7 +38,6 @@ unattended_approval = "deny"
 # Extra roots must already exist. The active workspace is always readable/writable.
 allow_read = []
 allow_write = []
-deny_commands = ["shutdown", "reboot", "mkfs"]
 
 # Child tools start with an empty environment. Only these host variables plus [env]
 # are passed through. Secret-like names are rejected.

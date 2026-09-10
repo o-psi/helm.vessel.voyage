@@ -88,13 +88,13 @@ an image draft. Durable draft/resume recovery retains the actual images.
 
 Linux supports `text/uri-list` and GNOME copied-file lists; pasting a cut-file list
 does not move or delete the original files. Unknown/empty clipboard contents,
-missing helpers, denied commands, invalid data, overflow and timeouts produce a
+missing helpers, unavailable authority, invalid data, overflow and timeouts produce a
 visible error while retaining existing text and images. Install **wl-clipboard**
 for Wayland or **xclip** for X11 when needed.
 
 Acquisition is an explicit local **input** operation and works in read-only mode;
 it does not grant the model permission to run clipboard tools. It rechecks local
-policy and command denials. Required process isolation refuses native helper access
+policy. Required process isolation refuses native helper access
 rather than silently bypassing desktop isolation. Helper environments contain only
 needed connection/platform variables, never provider credentials or loader injection
 variables; stderr is suppressed. Helpers have one shared five-second deadline,
