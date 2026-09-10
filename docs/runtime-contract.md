@@ -389,14 +389,20 @@ Nonblank text limits are **UTF-8 bytes**: query 4,096; task/prompt 65,536; renam
 JSON Schema character limits alone cannot enforce byte limits; runtime validation
 remains authoritative. UUID formats also require runtime parsing.
 
-Oversized inspection retains the registration and coordination snapshot while
-omitting transcript/live-text payloads explicitly. Cleanup fields are not silently
-removed. A revision-bound `history` request retrieves persisted messages; the
-native tool has no paged live-text action. If the remaining identity/state still
-cannot fit, no partial snapshot is returned. Other reads get a valid smaller-page
-hint only when the action supports it. Limited mutation presentation retains a
-receipt-read hint, never a replacement mutation. Full redacted mutation results
-remain in the durable operation journal.
+Inspection returns a compact observed overview with bounded progress text and
+explicit detail-read requests. Large cleanup/resource observations are marked
+omitted rather than presented as empty. `details` pages public snapshot fields;
+revision-bound `history` and `message` expand canonical conversation, while
+`run_output` reads accumulated run text. Full-text reads assemble at most 4 MiB
+before redaction and page the redacted UTF-8 result. Source changes and limits
+are explicit incomplete observations. No state read grants execution authority.
+See [Vessel coordination](vessel-coordination.md) for offsets and continuations.
+
+If even the overview's identity/state cannot fit, no partial overview is returned;
+a one-field detail read is suggested. Detail reads that cannot fit a minimal page
+report that the configured budget must increase. Limited mutation presentation
+retains a receipt-read hint, never a replacement mutation. Full redacted mutation
+results remain in the durable operation journal.
 
 ### Structured outcomes and compatibility
 

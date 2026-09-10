@@ -11,9 +11,13 @@ Native action schemas reject irrelevant per-action keys before execution. Shell
 policy uses bounded syntax-aware inspection, including literal heredoc handling,
 without bypassing roots or approvals. New persisted tool outcomes
 distinguish command exit, policy refusal, execution error and incomplete output;
-Helm displays these distinctions with legacy-history fallbacks. Bounded Vessel
-inspection preserves coordination/cleanup observations or explicitly withholds a
-snapshot that cannot fit. See [tool validation and outcomes](runtime-contract.md#tool-validation-and-outcomes)
+Helm displays these distinctions with legacy-history fallbacks. Vessel inspection
+provides a compact observed overview with progress excerpts and coordination/cleanup
+observations. Explicit detail reads page public snapshot fields;
+full-message and run-output reads expand text within a 4 MiB source bound, preserving
+redaction and exact continuations. An overview that cannot fit is withheld with a
+smaller detail-read request. See [Vessel coordination](vessel-coordination.md) and
+[tool validation and outcomes](runtime-contract.md#tool-validation-and-outcomes)
 for supported syntax, compatibility and platform limits.
 
 Completed tool action rows show the executing Voyage's monotonic invocation duration

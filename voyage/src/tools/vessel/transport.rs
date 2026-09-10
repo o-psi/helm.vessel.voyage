@@ -119,10 +119,29 @@ impl Transport {
             journal: None,
         })
     }
+    pub(super) fn redact_complete(&self, value: Value) -> Value {
+        fn scrub(value: Value, token: &str) -> Value {
+            match value {
+                Value::String(s) => Value::String(s.replace(token, "[REDACTED]")),
+                Value::Array(a) => Value::Array(a.into_iter().map(|v| scrub(v, token)).collect()),
+                Value::Object(o) => {
+                    Value::Object(o.into_iter().map(|(k, v)| (k, scrub(v, token))).collect())
+                }
+                v => v,
+            }
+        }
+        if self.token.is_empty() {
+            value
+        } else {
+            scrub(value, &self.token)
+        }
+    }
     pub(super) fn journal(&mut self, root: PathBuf) {
         self.journal = Some(root);
     }
     pub(super) async fn exchange(&self, command: VesselCommand) -> Result<Value, ToolError> {
+        let text_chunk = matches!(&command, VesselCommand::Voyage(r)
+            if matches!(r.command, VoyageCommand::MessageChunk { .. } | VoyageCommand::RunOutput { .. }));
         let mutation_id = match &command {
             VesselCommand::Start { command_id, .. }
             | VesselCommand::StartConfigured { command_id, .. }
@@ -216,20 +235,12 @@ impl Transport {
                 json!({"status": if reply.outcome_unknown {"outcome_unknown"} else {"refused"}, "code":code, "detail":"Inspect current state/capabilities or query receipt before deciding a new action; never replay uncertain effects"}),
             );
         }
-        fn scrub(value: Value, token: &str) -> Value {
-            match value {
-                Value::String(s) => Value::String(if token.is_empty() {
-                    s
-                } else {
-                    s.replace(token, "[REDACTED]")
-                }),
-                Value::Array(a) => Value::Array(a.into_iter().map(|v| scrub(v, token)).collect()),
-                Value::Object(o) => {
-                    Value::Object(o.into_iter().map(|(k, v)| (k, scrub(v, token))).collect())
-                }
-                v => v,
-            }
+        // These internal chunks are reassembled, decoded and scrubbed in read_text
+        // before any model-facing result. Scrubbing here breaks byte continuations
+        // and cannot catch a credential straddling two chunks.
+        if text_chunk {
+            return Ok(reply.result);
         }
-        Ok(scrub(reply.result, &self.token))
+        Ok(self.redact_complete(reply.result))
     }
 }

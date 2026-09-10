@@ -38,6 +38,9 @@ identity/version and actual route capabilities/rights.
 | `list`, `operations` | None | `offset`, `limit` |
 | `search` | `query` | `offset`, `limit` |
 | `inspect` | `session_id` | — |
+| `details` | `session_id` | `path`, `offset`, `limit`, `expected_revision` |
+| `message` | `session_id`, `index`, `expected_revision` | `offset` |
+| `run_output` | `session_id`, `run_id` | `offset` |
 | `controls` | `session_id`, `section` (`models` or `policy`) | `run_id` |
 | `history` | `session_id` | `offset`, `limit`, `expected_revision` |
 | `follow`, `wait` | `session_id` | `after`, `limit`, `wait_ms` |
@@ -56,15 +59,49 @@ with `session_id` reads the target's server receipt, including stopped archive
 receipts. Stored local uncertainty and a subsequently observed server receipt
 remain distinct observations, not a rewritten history.
 
-Page sizes are 1–128 (default 50). Search is case-insensitive catalogue-metadata
-search, not full-text search across every conversation. History is the public
-revision-bound projection; oversized messages can be marked truncated. Event
-follow/wait uses a durable cursor and a 0–30,000 ms wait (default 0), bounded further
-by the executing tool timeout. Event replay gaps require a fresh inspection.
-Use `snapshot.revision` from `inspect` for mutations, the registration's
-`incarnation` for live-resource operations, and `snapshot.run.run_id` for the run.
-Do not infer these identities from names. Archived catalogue metadata carries the
-revision needed for restore.
+`inspect` returns a compact overview rather than a transcript or provider catalogue.
+It retains registration, revision, run state/failure, cleanup and resource observations,
+plus bounded latest assistant/live text, message timestamps and the latest turn.
+An idle process is not proof of task success; the latest assistant message can belong
+to an earlier turn. If no assistant text is in the recent snapshot window, the
+overview says so and can show explicitly labeled accumulated run text instead.
+Live text is provisional. Large observations are explicitly
+marked `detail_omitted` with an exact `read` request; an omitted blocker is unknown,
+not absent. If the overview cannot fit even with shorter excerpts, the response
+withholds it and offers a one-field detail read. Unavailable snapshots retain
+registration separately from the snapshot error.
+
+Follow the overview's `details`, `history.read`, progress `read` and `events` requests
+when more information is needed. Recent history starts at the last five messages,
+not at the beginning. `details` defaults to the public snapshot's field directory;
+its `path` is a JSON pointer, such as `/cleanup`, `/decisions`, `/run` or `/turns`.
+Objects page fields, arrays page entries, and strings page redacted UTF-8 bytes.
+Large nested values carry their own `read` request. Follow `next_read` exactly.
+Detail continuations include the observed revision; changed revisions return
+`revision_changed` and a fresh inspection request. Revisions do not freeze live
+output, decisions or other transient state: these reads are fresh observations.
+Use `controls` for dedicated model/policy metadata.
+
+Page sizes are 1–128 (default 50), with detail pages automatically reduced to fit
+the tool output budget. Search covers catalogue metadata, not full conversation
+text. `history` pages the public revision-bound projection and links every returned
+message to `message`. That action reads the complete public message as JSON text
+chunks, including fields omitted from the bounded history projection. Concatenate
+`data` before parsing JSON. `run_output` reads the chosen run's accumulated text.
+Their offsets count **redacted UTF-8 bytes**, and their exact `next_read` requests
+preserve the route and message/run identity. Each call reassembles at most 4 MiB of
+source text before redaction, then emits up to 4 KiB of text (less when the output
+budget requires it). Larger records return `source_limit`; a run growing during
+assembly returns `source_changed`. Neither is a complete read. Public snapshot
+fields can already be truncated upstream; use `message`/`run_output` for text
+expansion. These reads do not expose private terminal input or configuration secrets.
+
+Event follow/wait uses a durable observation cursor and a 0–30,000 ms wait
+(default 0), bounded further by the executing tool timeout. Event replay gaps
+require a fresh inspection; an ended wait is not completion. Use `snapshot.revision`
+from `inspect` for mutations, the registration's `incarnation` for live-resource
+operations, and `snapshot.run.run_id` for the run. Do not infer these identities
+from names. Archived catalogue metadata carries the revision needed for restore.
 
 Creation paths must be absolute paths on the target host. `config_path` selects
 an existing owned private launch configuration; omitted configuration uses target
