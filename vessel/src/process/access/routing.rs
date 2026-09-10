@@ -83,6 +83,9 @@ impl Supervisor {
                 let right = super::super::api::required_right(&request.command)
                     .ok_or_else(|| anyhow::anyhow!("operation unavailable to scoped clients"))?;
                 has(right)?;
+                if request.command.requires_browser_history() {
+                    has(ProcessRight::History)?;
+                }
                 if matches!(
                     request.command,
                     VoyageCommand::AssignmentObserve { cancel: true, .. }

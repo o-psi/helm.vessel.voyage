@@ -21,6 +21,7 @@ struct GrantAuthority {
     path: PathBuf,
     binding: GrantBinding,
     session: uuid::Uuid,
+    browser_history: bool,
 }
 impl crate::policy::ExecutionAuthority for GrantAuthority {
     fn check(&self) -> Result<()> {
@@ -28,6 +29,10 @@ impl crate::policy::ExecutionAuthority for GrantAuthority {
         ensure!(
             grant.rights.contains(&ProcessRight::Execute),
             "execution grant withdrawn"
+        );
+        ensure!(
+            !self.browser_history || grant.rights.contains(&ProcessRight::History),
+            "browser disclosure history grant withdrawn"
         );
         Ok(())
     }
@@ -80,6 +85,11 @@ pub(super) fn authorize_parts(
     let right = required_process_right(&request.command)
         .ok_or_else(|| anyhow::anyhow!("operation unavailable to scoped clients"))?;
     ensure!(grant.rights.contains(&right), "session permission denied");
+    let browser_history = request.command.requires_browser_history();
+    ensure!(
+        !browser_history || grant.rights.contains(&ProcessRight::History),
+        "browser disclosure requires history and execution grants"
+    );
     if matches!(
         request.command,
         voyage_protocol::process::RuntimeCommand::Terminal { .. }
@@ -105,6 +115,7 @@ pub(super) fn authorize_parts(
             path,
             binding: binding.clone(),
             session: registration.session_id,
+            browser_history,
         })),
         actor,
         grant: Some(binding.clone()),

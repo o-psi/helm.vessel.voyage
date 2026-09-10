@@ -150,6 +150,9 @@ impl Supervisor {
                 let right = crate::process::api::required_right(&request.command)
                     .ok_or_else(|| anyhow::anyhow!("operation unavailable to workspace clients"))?;
                 has(right)?;
+                if request.command.requires_browser_history() {
+                    has(ProcessRight::History)?;
+                }
                 if matches!(request.command, VoyageCommand::Terminal { .. }) {
                     has(ProcessRight::Execute)?;
                 }

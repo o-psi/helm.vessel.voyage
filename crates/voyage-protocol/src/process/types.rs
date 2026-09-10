@@ -235,6 +235,18 @@ pub enum RuntimeCommand {
 }
 
 impl RuntimeCommand {
+    /// Browser executors can receive private agent arguments as well as effects.
+    /// Execute alone is insufficient; scoped admission also needs History.
+    pub fn requires_browser_history(&self) -> bool {
+        match self {
+            Self::PrepareBrowser | Self::Browser { .. } => true,
+            Self::Resolve {
+                original: Some(original),
+                ..
+            } => original.requires_browser_history(),
+            _ => false,
+        }
+    }
     /// Immutable identity of a journalled mutation, excluding resolution itself.
     pub fn mutation_id(&self) -> Option<Uuid> {
         match self {

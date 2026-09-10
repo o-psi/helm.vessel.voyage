@@ -17,7 +17,12 @@ command connection. This runtime introduces no HTTP browser endpoint or secondar
 agent transport. Socket transport, local executor and companion are separate
 components; their deployment checks are not established by this document.
 
-All browser commands require current Execute authority. The authenticated principal
+All browser commands and PrepareBrowser require current **History + Execute**
+authority for scoped session and workspace connections. Execute-only grants cannot
+install an executor or receive another task's private fill/upload arguments. Vessel
+checks both admission paths; Voyage checks again at runtime admission and rechecks
+both rights before browser dispatch. Local owner authority remains allowed.
+The authenticated principal
 is assigned by Vessel/Voyage authorization, never by browser payloads. Bindings carry
 session, process incarnation, optional run, browser, resource and executor UUIDs,
 controller/capture epochs and lease expiry. An idle offer may have `run_id: null`;
@@ -32,7 +37,7 @@ bindings require an explicit new offer rather than automatic lease resurrection.
 
 After explicit local sharing consent, Helm first sends top-level
 `VoyageCommand::PrepareBrowser` (`{"op":"prepare_browser"}`, no fields). It requires
-Execute authority and follows/resumes the current owner through ordinary lifecycle
+History + Execute authority and follows/resumes the current owner through ordinary lifecycle
 fences, including unresolved-cleanup refusal. It creates no agent, browser effect,
 or sharing authority. The normal `VoyageReply.incarnation` supplies the fresh outer
 and Offer incarnation. `PrepareBrowser` is deliberately not an observation served

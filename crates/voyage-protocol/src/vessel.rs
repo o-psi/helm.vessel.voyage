@@ -307,6 +307,18 @@ pub enum VoyageCommand {
 }
 
 impl VoyageCommand {
+    /// Browser executors can receive private agent arguments as well as effects.
+    /// Execute alone is insufficient; scoped admission also needs History.
+    pub fn requires_browser_history(&self) -> bool {
+        match self {
+            Self::PrepareBrowser | Self::Browser { .. } => true,
+            Self::Resolve {
+                original: Some(original),
+                ..
+            } => original.requires_browser_history(),
+            _ => false,
+        }
+    }
     pub fn requires_incarnation(&self) -> bool {
         matches!(
             self,
