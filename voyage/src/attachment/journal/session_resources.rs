@@ -28,6 +28,17 @@ impl Journal {
     }
 
     pub(crate) fn retained_cleanup(&self, session: Uuid) -> Result<Value> {
+        // Saved observations do not initialize runtime tables. A journal written
+        // before retained recovery existed has no retained obligations; reading
+        // its history must not require an upgrade or launch an execution owner.
+        let exists: bool = self.connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE name='process_retained_cleanup')",
+            [],
+            |r| r.get(0),
+        )?;
+        if !exists {
+            return Ok(json!({"run_ids":[],"resources":[],"disposition":"unresolved_retained"}));
+        }
         let mut query = self.connection.prepare("SELECT run_id FROM process_retained_cleanup WHERE session_id=?1 AND confirmation IS NULL ORDER BY rowid")?;
         let runs = query
             .query_map([session.to_string()], |r| r.get::<_, String>(0))?
