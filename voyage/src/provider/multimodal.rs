@@ -13,11 +13,14 @@ use crate::{
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use futures_util::StreamExt;
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use std::{
     future::Future,
     io::{self, Write},
 };
+use voyage_protocol::content::ImageAttachment;
 use voyage_protocol::content::{ContentLimits, ContentPart, ImageMediaType, validate_content};
+use voyage_protocol::tool_result::{ArtifactReference, ToolContent};
 
 pub(crate) const MAX_IMAGE_BYTES: usize = 2 * 1024 * 1024;
 pub(crate) const MAX_REQUEST_BYTES: usize = 8 * 1024 * 1024;
@@ -32,11 +35,108 @@ fn invalid(message: &'static str) -> ProviderError {
 }
 pub(crate) fn has_images(request: &ModelRequest) -> bool {
     request.messages.iter().any(|m| {
-        !m.image_data.is_empty()
+        tool_images(m)
+            || !m.image_data.is_empty()
             || m.parts
                 .iter()
                 .any(|p| matches!(p, ContentPart::Image { .. }))
     })
+}
+pub(crate) fn tool_images(message: &Message) -> bool {
+    message.tool_output.as_ref().is_some_and(|o| {
+        o.content
+            .iter()
+            .any(|p| matches!(p, ToolContent::Image { .. }))
+    })
+}
+/// Artifact MIME declarations are not proof: verify the hash and real bounded raster.
+pub(crate) fn tool_image(
+    artifact: &ArtifactReference,
+    bytes: &[u8],
+) -> Result<ImageAttachment, ProviderError> {
+    let (media_type, width, height) = crate::images::validate(bytes)
+        .map_err(|_| invalid("tool image is not a supported bounded raster"))?;
+    if media_type_name(media_type) != artifact.mime_type
+        || bytes.len() as u64 != artifact.byte_size
+        || hex::encode(Sha256::digest(bytes)) != artifact.sha256
+    {
+        return Err(invalid("tool image does not match artifact metadata"));
+    }
+    Ok(ImageAttachment {
+        id: artifact.id,
+        sha256: artifact.sha256.clone(),
+        name: artifact.name.clone(),
+        media_type,
+        byte_size: artifact.byte_size,
+        width,
+        height,
+    })
+}
+fn parts(message: &Message) -> Result<std::borrow::Cow<'_, [ContentPart]>, ProviderError> {
+    if !tool_images(message) {
+        return Ok(std::borrow::Cow::Borrowed(&message.parts));
+    }
+    if message.role != Role::Tool
+        || !message.parts.is_empty()
+        || message.tool_call_id.as_ref().is_none_or(|id| id.is_empty())
+        || !message.tool_calls.is_empty()
+        || message.provider_state.is_some()
+    {
+        return Err(invalid(
+            "visual tool output requires original tool-call provenance",
+        ));
+    }
+    let output = message.tool_output.as_ref().unwrap();
+    if output
+        .content
+        .len()
+        .saturating_add(usize::from(output.structured_content.is_some()))
+        > 16
+    {
+        return Err(invalid("visual tool output exceeds sixteen content parts"));
+    }
+    let mut count = 0usize;
+    let mut size = 0u64;
+    for part in &output.content {
+        if let ToolContent::Image { artifact } = part {
+            count += 1;
+            size = size
+                .checked_add(artifact.byte_size)
+                .ok_or_else(|| invalid("tool image size overflow"))?;
+            if count > 4 || size > MAX_IMAGE_BYTES as u64 {
+                return Err(invalid(
+                    "visual tool output exceeds four images or aggregate 2 MiB limit",
+                ));
+            }
+        }
+    }
+    if output.text_fallback() != message.content {
+        return Err(invalid("tool result text integrity failure"));
+    }
+    let mut result = Vec::new();
+    for part in &output.content {
+        result.push(match part {
+            ToolContent::Text { text } => ContentPart::Text { text: text.clone() },
+            ToolContent::Image { artifact } => ContentPart::Image {
+                attachment: tool_image(
+                    artifact,
+                    message
+                        .image_data
+                        .get(&artifact.id)
+                        .ok_or_else(|| invalid("tool image unavailable in authorized session"))?,
+                )?,
+            },
+            other => ContentPart::Text {
+                text: serde_json::to_string(other).map_err(|_| invalid("invalid tool content"))?,
+            },
+        });
+    }
+    if let Some(value) = &output.structured_content {
+        result.push(ContentPart::Text {
+            text: json!({"structuredContent":value}).to_string(),
+        });
+    }
+    Ok(std::borrow::Cow::Owned(result))
 }
 fn builtin_images(provider: &ProviderKind, model: &str) -> bool {
     match provider {
@@ -108,6 +208,7 @@ pub(crate) async fn preflight(
     kind: &ProviderKind,
     request: &ModelRequest,
 ) -> Result<(), ProviderError> {
+    validate_adapter(kind, request)?;
     validate_request(request)?;
     if has_images(request) {
         // Do not let a metadata lookup hold image dispatch indefinitely. Malformed
@@ -126,13 +227,28 @@ pub(crate) async fn preflight(
     }
     Ok(())
 }
+pub(crate) fn validate_adapter(
+    kind: &ProviderKind,
+    request: &ModelRequest,
+) -> Result<(), ProviderError> {
+    // These are local compatibility refusals, not provider diagnostics. Do not
+    // silently demote images to metadata or relabel tool output as authored User input.
+    if request.messages.iter().any(tool_images)
+        && matches!(kind, ProviderKind::OpenaiChat | ProviderKind::ChatGptOauth)
+    {
+        return Err(invalid(
+            "selected adapter does not support visual tool outputs with tool-call provenance; use native Responses or Anthropic",
+        ));
+    }
+    Ok(())
+}
 /// Counts image occurrences across the entire request, including repeated UUIDs.
 pub(crate) fn validate_request(request: &ModelRequest) -> Result<(), ProviderError> {
     let mut total = 0usize;
     let mut images = 0usize;
     for message in &request.messages {
         validate_message(message)?;
-        for part in &message.parts {
+        for part in parts(message)?.iter() {
             if let ContentPart::Image { attachment } = part {
                 images += 1;
                 if images > 4 {
@@ -156,24 +272,26 @@ pub(crate) fn validate_request(request: &ModelRequest) -> Result<(), ProviderErr
     Ok(())
 }
 fn validate_message(message: &Message) -> Result<(), ProviderError> {
-    if message.parts.is_empty() {
+    let parts = parts(message)?;
+    if parts.is_empty() {
         return if message.image_data.is_empty() {
             Ok(())
         } else {
             Err(invalid("unreferenced image data in provider request"))
         };
     }
-    if message.role != Role::User
-        || message.tool_call_id.is_some()
-        || !message.tool_calls.is_empty()
-        || message.provider_state.is_some()
+    if !tool_images(message)
+        && (message.role != Role::User
+            || message.tool_call_id.is_some()
+            || !message.tool_calls.is_empty()
+            || message.provider_state.is_some())
     {
         return Err(invalid(
             "structured content is supported only on ordinary user messages",
         ));
     }
     validate_content(
-        &message.parts,
+        &parts,
         ContentLimits {
             max_parts: 16,
             max_text_bytes: 64 * 1024,
@@ -186,7 +304,7 @@ fn validate_message(message: &Message) -> Result<(), ProviderError> {
         true,
     )
     .map_err(|e| ProviderError::Request(e.to_string()))?;
-    for part in &message.parts {
+    for part in parts.iter() {
         if let ContentPart::Image { attachment } = part {
             let bytes = message
                 .image_data
@@ -198,11 +316,19 @@ fn validate_message(message: &Message) -> Result<(), ProviderError> {
             {
                 return Err(invalid("image data does not match validated metadata"));
             }
+            let (media, width, height) = crate::images::validate(bytes)
+                .map_err(|_| invalid("image data is not a supported bounded raster"))?;
+            if media != attachment.media_type
+                || width != attachment.width
+                || height != attachment.height
+                || hex::encode(Sha256::digest(bytes)) != attachment.sha256
+            {
+                return Err(invalid("image raster or hash does not match metadata"));
+            }
         }
     }
     for id in message.image_data.keys() {
-        if !message
-            .parts
+        if !parts
             .iter()
             .any(|p| matches!(p, ContentPart::Image { attachment } if attachment.id == *id))
         {
@@ -211,7 +337,7 @@ fn validate_message(message: &Message) -> Result<(), ProviderError> {
     }
     Ok(())
 }
-fn media_type(value: ImageMediaType) -> &'static str {
+fn media_type_name(value: ImageMediaType) -> &'static str {
     match value {
         ImageMediaType::Png => "image/png",
         ImageMediaType::Jpeg => "image/jpeg",
@@ -221,11 +347,17 @@ fn media_type(value: ImageMediaType) -> &'static str {
 /// Nonempty parts are canonical: never prepend the legacy content projection.
 pub(crate) fn content(message: &Message, wire: Wire) -> Result<Option<Value>, ProviderError> {
     validate_message(message)?;
-    if message.parts.is_empty() {
+    if tool_images(message) && matches!(wire, Wire::Chat) {
+        return Err(invalid(
+            "OpenAI Chat tool messages do not support images; original tool-call provenance retained",
+        ));
+    }
+    let parts = parts(message)?;
+    if parts.is_empty() {
         return Ok(None);
     }
-    let mut blocks = Vec::with_capacity(message.parts.len());
-    for part in &message.parts {
+    let mut blocks = Vec::with_capacity(parts.len());
+    for part in parts.iter() {
         blocks.push(match part {
             ContentPart::Text { text } => match wire {
                 Wire::Chat | Wire::Anthropic => json!({"type":"text", "text":text}),
@@ -233,7 +365,7 @@ pub(crate) fn content(message: &Message, wire: Wire) -> Result<Option<Value>, Pr
             },
             ContentPart::Image { attachment } => {
                 let bytes = message.image_data.get(&attachment.id).ok_or_else(|| invalid("image data unavailable; attach the image again"))?;
-                let mime = media_type(attachment.media_type);
+                let mime = media_type_name(attachment.media_type);
                 let data = STANDARD.encode(bytes);
                 match wire {
                     Wire::Chat => json!({"type":"image_url", "image_url":{"url":format!("data:{mime};base64,{data}"), "detail":"auto"}}),
@@ -332,22 +464,30 @@ mod tests {
     use uuid::Uuid;
     use voyage_protocol::content::ImageAttachment;
 
-    fn image_message(size: usize) -> Message {
+    fn image_message(_size: usize) -> Message {
+        image_message_format(image::ImageFormat::Png)
+    }
+    fn image_message_format(format: image::ImageFormat) -> Message {
+        let mut buffer = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::new_rgb8(1, 1)
+            .write_to(&mut buffer, format)
+            .unwrap();
+        let bytes = buffer.into_inner();
+        let (media_type, width, height) = crate::images::validate(&bytes).unwrap();
         let id = Uuid::from_u128(1);
         let mut message = Message::new(Role::User, "legacy projection");
         message.parts = vec![ContentPart::Image {
             attachment: ImageAttachment {
                 id,
-                sha256: "0".repeat(64),
-                name: "fixture.png".into(),
-                media_type: ImageMediaType::Png,
-                byte_size: size as u64,
-                width: 1,
-                height: 1,
+                sha256: hex::encode(Sha256::digest(&bytes)),
+                name: "fixture".into(),
+                media_type,
+                byte_size: bytes.len() as u64,
+                width,
+                height,
             },
         }];
-        // Encoder fixture, not an image-decoder fixture.
-        message.image_data.insert(id, vec![0; size]);
+        message.image_data.insert(id, bytes);
         message
     }
     fn request(messages: Vec<Message>) -> ModelRequest {
@@ -373,12 +513,14 @@ mod tests {
         m.parts.push(ContentPart::Text {
             text: "after".into(),
         });
+        let data = STANDARD.encode(m.image_data.values().next().unwrap());
+        let url = format!("data:image/png;base64,{data}");
         let chat = content(&m, Wire::Chat).unwrap().unwrap();
         assert_eq!(
             chat,
             json!([
                 {"type":"text","text":"before"},
-                {"type":"image_url","image_url":{"url":"data:image/png;base64,AAAA","detail":"auto"}},
+                {"type":"image_url","image_url":{"url":url,"detail":"auto"}},
                 {"type":"text","text":"after"}
             ])
         );
@@ -387,7 +529,7 @@ mod tests {
             responses,
             json!([
                 {"type":"input_text","text":"before"},
-                {"type":"input_image","image_url":"data:image/png;base64,AAAA","detail":"auto"},
+                {"type":"input_image","image_url":url,"detail":"auto"},
                 {"type":"input_text","text":"after"}
             ])
         );
@@ -396,7 +538,7 @@ mod tests {
             anthropic,
             json!([
                 {"type":"text","text":"before"},
-                {"type":"image","source":{"type":"base64","media_type":"image/png","data":"AAAA"}},
+                {"type":"image","source":{"type":"base64","media_type":"image/png","data":data}},
                 {"type":"text","text":"after"}
             ])
         );
@@ -408,7 +550,11 @@ mod tests {
             (ImageMediaType::Jpeg, "image/jpeg"),
             (ImageMediaType::WebP, "image/webp"),
         ] {
-            let mut m = image_message(3);
+            let mut m = image_message_format(match kind {
+                ImageMediaType::Png => image::ImageFormat::Png,
+                ImageMediaType::Jpeg => image::ImageFormat::Jpeg,
+                ImageMediaType::WebP => image::ImageFormat::WebP,
+            });
             m.content.clear();
             let ContentPart::Image { attachment } = &mut m.parts[0] else {
                 unreachable!()
@@ -440,7 +586,7 @@ mod tests {
     fn full_history_aggregate_counts_repeated_images() {
         let m = image_message(MAX_IMAGE_BYTES);
         assert!(validate_request(&request(vec![m.clone()])).is_ok());
-        assert!(validate_request(&request(vec![m.clone(), m])).is_err());
+        assert!(validate_request(&request(vec![m; 5])).is_err());
     }
     #[test]
     fn rejects_missing_mismatched_unreferenced_and_nonuser_images() {
@@ -458,6 +604,71 @@ mod tests {
             m.role = role;
             assert!(content(&m, Wire::Responses).is_err());
         }
+    }
+    #[test]
+    fn visual_tool_blocks_keep_order_and_refuse_chat() {
+        let image = image_message(3);
+        let ContentPart::Image { attachment } = &image.parts[0] else {
+            unreachable!()
+        };
+        let mut m = Message::tool("call-original", "");
+        m.image_data = image.image_data.clone();
+        let output = voyage_protocol::tool_result::ToolOutput {
+            content: vec![
+                ToolContent::Text {
+                    text: "before".into(),
+                },
+                ToolContent::Image {
+                    artifact: ArtifactReference {
+                        id: attachment.id,
+                        sha256: attachment.sha256.clone(),
+                        name: attachment.name.clone(),
+                        mime_type: "image/png".into(),
+                        byte_size: attachment.byte_size,
+                    },
+                },
+                ToolContent::Text {
+                    text: "after".into(),
+                },
+            ],
+            ..Default::default()
+        };
+        m.content = output.text_fallback();
+        m.tool_output = Some(Box::new(output));
+        assert!(has_images(&request(vec![m.clone()])));
+        assert!(validate_request(&request(vec![m.clone()])).is_ok());
+        for wire in [Wire::Responses, Wire::Anthropic] {
+            let blocks = content(&m, wire).unwrap().unwrap();
+            assert_eq!(blocks[0]["text"], "before");
+            assert_eq!(blocks[2]["text"], "after");
+            assert_eq!(blocks.as_array().unwrap().len(), 3);
+        }
+        assert!(content(&m, Wire::Chat).is_err());
+        assert!(validate_adapter(&ProviderKind::ChatGptOauth, &request(vec![m.clone()])).is_err());
+        assert!(validate_adapter(&ProviderKind::OpenaiChat, &request(vec![m.clone()])).is_err());
+        let mut assistant = Message::new(Role::Assistant, "");
+        assistant.tool_calls.push(crate::model::ToolCall {
+            id: "call-original".into(),
+            name: "screenshot".into(),
+            arguments: json!({}),
+        });
+        let body = super::super::openai_responses::request_body(
+            request(vec![assistant, m.clone()]),
+            false,
+        )
+        .unwrap();
+        assert_eq!(body["input"][1]["type"], "function_call_output");
+        assert_eq!(body["input"][1]["call_id"], "call-original");
+        assert_eq!(body["input"][1]["output"][1]["type"], "input_image");
+        assert!(
+            super::super::openai_responses::request_body(request(vec![m.clone()]), false).is_err()
+        );
+        let canonical = serde_json::to_string(&m).unwrap();
+        assert!(!canonical.contains("base64"));
+        assert_eq!(m.role, Role::Tool);
+        assert_eq!(m.tool_call_id.as_deref(), Some("call-original"));
+        m.image_data.values_mut().next().unwrap()[0] ^= 1;
+        assert!(content(&m, Wire::Responses).is_err());
     }
     #[test]
     fn encoded_limit_counts_whole_body_and_escaping() {

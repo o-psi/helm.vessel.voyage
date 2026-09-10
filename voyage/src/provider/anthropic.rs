@@ -424,7 +424,17 @@ fn map_transport(error: reqwest::Error) -> ProviderError {
 
 fn encode_messages(messages: &[Message]) -> Result<Vec<Value>, ProviderError> {
     let mut result = Vec::new();
+    let mut calls = std::collections::HashSet::new();
     for message in messages {
+        if message.role == Role::Assistant {
+            calls.extend(message.tool_calls.iter().map(|call| call.id.clone()));
+        }
+        if message.role == Role::Tool {
+            let matched = message.tool_call_id.as_ref().is_some_and(|id| calls.remove(id));
+            if super::multimodal::tool_images(message) && !matched {
+                return Err(ProviderError::Request("visual tool result has no matching original tool use".into()));
+            }
+        }
         let structured = super::multimodal::content(message, super::multimodal::Wire::Anthropic)?;
         match message.role {
             Role::User => result.push(json!({"role":"user", "content": structured.unwrap_or_else(|| json!(message.content))})),
@@ -434,7 +444,7 @@ fn encode_messages(messages: &[Message]) -> Result<Vec<Value>, ProviderError> {
                 blocks.extend(message.tool_calls.iter().map(|c| json!({"type":"tool_use", "id":c.id, "name":c.name, "input":c.arguments})));
                 result.push(json!({"role":"assistant", "content":blocks}));
             }
-            Role::Tool => result.push(json!({"role":"user", "content":[{"type":"tool_result", "tool_use_id":message.tool_call_id, "content":message.content}]})),
+            Role::Tool => result.push(json!({"role":"user", "content":[{"type":"tool_result", "tool_use_id":message.tool_call_id, "content":structured.unwrap_or_else(|| json!(message.content)), "is_error":message.tool_output.as_ref().map_or(message.tool_success == Some(false), |o| o.is_error)}]})),
             Role::System => {}
         }
     }
@@ -510,5 +520,61 @@ fn validate_stop_reason(reason: Option<&str>) -> Result<(), ProviderError> {
         _ => Err(ProviderError::InvalidResponse(
             "missing or unsupported Anthropic stop reason".into(),
         )),
+    }
+}
+
+#[cfg(test)]
+mod visual_tool_checks {
+    use super::*;
+    #[test]
+    fn native_tool_result_contains_image_and_original_tool_use() {
+        use sha2::{Digest, Sha256};
+        use voyage_protocol::tool_result::{ArtifactReference, ToolContent, ToolOutput};
+        let mut bytes = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::new_rgb8(1, 1)
+            .write_to(&mut bytes, image::ImageFormat::Png)
+            .unwrap();
+        let bytes = bytes.into_inner();
+        let id = uuid::Uuid::new_v4();
+        let output = ToolOutput {
+            content: vec![
+                ToolContent::Text {
+                    text: "before".into(),
+                },
+                ToolContent::Image {
+                    artifact: ArtifactReference {
+                        id,
+                        sha256: hex::encode(Sha256::digest(&bytes)),
+                        name: "shot.png".into(),
+                        mime_type: "image/png".into(),
+                        byte_size: bytes.len() as u64,
+                    },
+                },
+                ToolContent::Text {
+                    text: "after".into(),
+                },
+            ],
+            is_error: true,
+            structured_content: None,
+        };
+        let mut tool = Message::tool("use-original", output.text_fallback());
+        tool.tool_output = Some(Box::new(output));
+        tool.image_data.insert(id, bytes);
+        let mut assistant = Message::new(Role::Assistant, "");
+        assistant.tool_calls.push(ToolCall {
+            id: "use-original".into(),
+            name: "screenshot".into(),
+            arguments: json!({}),
+        });
+        let wire = encode_messages(&[assistant, tool.clone()]).unwrap();
+        let result = &wire[1]["content"][0];
+        assert_eq!(result["type"], "tool_result");
+        assert_eq!(result["tool_use_id"], "use-original");
+        assert_eq!(result["is_error"], true);
+        assert_eq!(result["content"][0]["text"], "before");
+        assert_eq!(result["content"][1]["type"], "image");
+        assert_eq!(result["content"][2]["text"], "after");
+        assert_eq!(tool.role, Role::Tool);
+        assert!(encode_messages(&[tool]).is_err());
     }
 }
