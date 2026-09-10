@@ -31,6 +31,35 @@ pub struct Settings {
     /// RLIMIT_NPROC counts every process of the real UID, including outside Helm.
     pub uid_processes: u64,
     pub temporary_bytes: u64,
+    // Decode-only compatibility for saved configurations predating bridge removal.
+    // Discard values: they must not grant authority, affect equality, or be
+    // serialized into new configurations. Other unknown fields remain errors.
+    #[doc(hidden)]
+    #[serde(
+        rename = "bridge_read",
+        deserialize_with = "discard_retired_setting",
+        skip_serializing
+    )]
+    pub legacy_bridge_read: (),
+    #[doc(hidden)]
+    #[serde(
+        rename = "bridge_inherit_env",
+        deserialize_with = "discard_retired_setting",
+        skip_serializing
+    )]
+    pub legacy_bridge_inherit_env: (),
+    #[doc(hidden)]
+    #[serde(
+        rename = "bridge_network",
+        deserialize_with = "discard_retired_setting",
+        skip_serializing
+    )]
+    pub legacy_bridge_network: (),
+}
+fn discard_retired_setting<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<(), D::Error> {
+    serde::de::IgnoredAny::deserialize(deserializer).map(|_| ())
 }
 impl Default for Settings {
     fn default() -> Self {
@@ -43,6 +72,9 @@ impl Default for Settings {
             open_files: 1024,
             uid_processes: 4096,
             temporary_bytes: 256 * 1024 * 1024,
+            legacy_bridge_read: (),
+            legacy_bridge_inherit_env: (),
+            legacy_bridge_network: (),
         }
     }
 }

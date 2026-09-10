@@ -101,6 +101,15 @@ Esc/Ctrl+C during preparation cancels it and waits for subprocess cleanup.
 inside your already-running TUI. Existing independent voyages retain their running
 processes and do not automatically move to the new runtime binary.
 
+Saved configurations from before removal of the external Codex bridge may contain
+`sandbox.bridge_read`, `sandbox.bridge_inherit_env` and `sandbox.bridge_network`.
+The current configuration reader accepts and discards these retired fields; they
+grant no access and are omitted when configuration is serialized again. Other
+unknown sandbox fields remain errors. Releases that removed the fields without
+this compatibility handling can read conversation history but fail suspended
+state inspection and reattachment. Upgrade the runtime rather than editing saved
+journals or clearing cleanup evidence; the bridge itself remains unsupported.
+
 Rollback selects the recorded previous verified release. It switches binaries and
 the managed supervisor unit; it does not reverse session data or configuration
 changes. Older executables must still support that data and live process protocol.
