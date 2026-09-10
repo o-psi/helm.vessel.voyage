@@ -19,6 +19,7 @@ are not presented as usable commands.
 | [Images and screenshots](multimodal-implementation.md) | Attaching images, private storage, provider support and limits |
 | [Composer previews](ui-previews.md) | Opt-in inline thumbnails, terminal fallbacks and decoding bounds |
 | [UI components](ui-components.md) | Semantic styles, scoped forms, Unicode editing and library decisions |
+| [Helm UI framework](helm-ui-framework.md) | Deep architecture audit and Helm-specific replacement design; not implemented |
 | [Process access](process-access.md) | Scoped grants, participant execution, signed owner transfer and recovery |
 | [Security](security.md) | Authority, credentials, disclosure, terminal safety and first-release audit |
 | [Development](development.md) | Source layout, build commands and contribution workflow |
