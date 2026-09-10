@@ -117,6 +117,30 @@ cargo test -p voyage --locked --lib provider::failure_tests
 These focused checks do not restore the removed general test suite. No live success
 is implied by the offline failure regression.
 
+## Everyday workflow checks
+
+These focused offline Linux checks exercise normal product behavior using real
+Vessel-supervised voyages and scripted loopback providers:
+
+| Workflow | What is checked |
+| --- | --- |
+| [Stop and continue](test-stop-continue.md) | Cancel inference, observe cleanup, then complete a new message with retained history. |
+| [Two voyages](test-two-voyages.md) | Overlapping real file writes, two running owners, and separately retained conversations. |
+| [Disconnect and reconnect](test-client-reconnect.md) | Real Helm detaches without cancelling work, then reconnects and continues the conversation. |
+| [Run a command](test-command-workflow.md) | A native shell command transforms data; actual output, exit status, and saved reply agree. |
+
+```sh
+cargo build -p helm -p vessel -p voyage --locked -j 8
+python3 voyage/tests/stop_continue.py --bin-dir target/debug
+python3 voyage/tests/two_voyages.py --bin-dir target/debug
+python3 voyage/tests/client_reconnect.py --bin-dir target/debug
+python3 voyage/tests/command_workflow.py --bin-dir target/debug
+```
+
+Use Python without `-O`. Each guide describes bounded execution, private local
+evidence, cleanup and limits. These process checks are separate from the workspace
+Rust coverage percentage; they do not certify live models or the full-screen TUI.
+
 ## Delivery recovery checks
 
 ```sh
