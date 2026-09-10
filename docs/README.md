@@ -17,6 +17,7 @@ are not presented as usable commands.
 | [Connection verification](vessel-connections-verification.md) | Observed Linux UI, protocol, recovery, transport and deployment checks |
 | [Vessel coordination](vessel-coordination.md) | Native model inspection, steering, independent voyage creation and follow-up |
 | [Local shared browser](local-browser.md) | Local companion, full-duplex routing, privacy, file disclosure and recovery |
+| [Browser verification](local-browser-verification.md) | Actual synthetic TUI/runtime/browser journeys and remaining qualification limits |
 | [Visual tool results](visual-tool-results.md) | Provider image encodings, tool provenance and bounded artifact projection |
 | [Duplex transport](duplex-transport.md) | One authenticated socket for Helm commands, events and local capabilities |
 | [Images and screenshots](multimodal-implementation.md) | Attaching images, private storage, provider support and limits |

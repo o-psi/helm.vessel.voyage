@@ -45,6 +45,11 @@ pub(super) fn cleanup(root: &Path) -> Result<()> {
 }
 /// Explicit reconciliation only. Sends cleanup proof; never repeats an action or invents success.
 pub(crate) async fn reconcile(client: Client, session: Uuid, incarnation: Uuid) -> Result<String> {
+    // Wake/follow the current owner explicitly, while every inner effect binding
+    // remains the original one retained locally. Preparation never attests cleanup.
+    let (_, incarnation) = client
+        .voyage_observed(session, incarnation, VoyageCommand::PrepareBrowser)
+        .await?;
     let mut count = 0usize;
     for root in resources()? {
         let directory = Directory::open_existing(&root)?;

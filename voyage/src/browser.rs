@@ -198,10 +198,8 @@ impl BrowserBroker {
         if expired || cancelled {
             let mut d = inner.durable.clone();
             fence(&mut d);
-            if expired {
-                if let Some(o) = &mut d.offer {
-                    o.control = BrowserControl::Disconnected;
-                }
+            if expired && let Some(o) = &mut d.offer {
+                o.control = BrowserControl::Disconnected;
             }
             self.commit(inner, d)?;
         }

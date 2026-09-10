@@ -107,7 +107,9 @@ paths are never interpreted as local filesystem paths.
 Downloads remain untrusted in private local staging. Saving locally and disclosing
 to Voyage are separate choices. No download is automatically opened or executed,
 and a remote result is an immutable session artifact rather than a caller-chosen
-filesystem write. File/raster transfers are limited to 2 MiB each. Large transfers
+filesystem write. File/raster transfers are limited to 2 MiB each. The executing Voyage's configured
+`max_output_bytes` (including encoded result overhead) and artifact-store budgets
+can impose a lower limit; sharing cannot override them. Large transfers
 fail explicitly rather than silently truncate. Staging is removed on clean close;
 profiles and minimal dispatch receipts are retained.
 
@@ -138,7 +140,7 @@ leave an **unknown effect**. A website does not participate in Helm's receipt
 transaction: exactly-once purchases/submissions cannot be promised.
 
 Close the browser, then use `/browser reconcile` for evidence from this local
-installation. It can report that no local dispatch occurred or that the owned
+installation, or `helm connect --access-file /absolute/private/connection.json browser SESSION_UUID --reconcile`. It can report that no local dispatch occurred or that the owned
 adapter/browser positively closed. This resolves resource cleanup, **not whether
 a website transaction succeeded**. Records without positive evidence remain
 unresolved. An orphan profile lock is not silently removed; an unavailable Voyage

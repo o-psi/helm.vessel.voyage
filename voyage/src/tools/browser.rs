@@ -284,11 +284,11 @@ impl Tool for BrowserTool {
                 let metadata = json!({"request_id":id,"state":receipt.state,"page_id":result.page_id,"observation_id":result.observation_id,"text":result.text});
                 if let Some(file) = result.file {
                     let value = json!({"content":[{"type":"text","text":serde_json::to_string(&metadata).map_err(failed)?},{"type":"resource","resource":{"uri":format!("browser-download:{id}/{}",file.name),"mimeType":file.mime_type,"blob":file.data_base64}}],"isError":false});
-                    return super::output::ingest(value, context);
+                    return ingest_browser(value, context);
                 }
                 if let Some(image) = result.image {
                     let value = json!({"content":[{"type":"text","text":serde_json::to_string(&metadata).map_err(failed)?},{"type":"image","mimeType":image.mime_type,"data":image.data_base64}],"isError":false});
-                    return super::output::ingest(value, context);
+                    return ingest_browser(value, context);
                 }
                 return Ok(ToolOutput::text(
                     serde_json::to_string(&metadata).map_err(failed)?,
@@ -313,4 +313,12 @@ fn terminal_output(receipt: &BrowserReceipt) -> Result<ToolOutput, ToolError> {
     let mut output = ToolOutput::text(serde_json::to_string(&value).map_err(failed)?);
     output.is_error = true;
     Ok(output)
+}
+
+fn ingest_browser(value: Value, context: &ToolContext) -> Result<ToolOutput, ToolError> {
+    super::output::ingest(value,context).map_err(|error|match error {
+        ToolError::Failed(message) if message=="MCP result exceeds configured max_output_bytes" =>
+            ToolError::Failed("browser evidence exceeds the executing Voyage's max_output_bytes budget; adjust authorized output limits or use smaller evidence".into()),
+        other=>other,
+    })
 }

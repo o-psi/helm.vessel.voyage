@@ -265,9 +265,10 @@ async function drain() {
   const job=S.queue.shift();if(!job)return;
   S.active=job;
   let result,error;
+  let operationStarted=false,operationSettled=false;
   let deadline;
   const expired=new Promise((_,reject)=> {deadline=setTimeout(()=>{fence();void context?.close().catch(()=>{});reject(new Refusal('action_deadline_unknown'));},limits.action_timeout_ms+limits.prompt_timeout_ms+2000);});
-  try { if(job.cancelled)refuse('cancelled_before_dispatch');authority(job.epoch);result=await Promise.race([execute(job),expired]);authority(job.epoch);if(job.cancelled)refuse('authority_fenced'); }
+  try { if(job.cancelled)refuse('cancelled_before_dispatch');authority(job.epoch);operationStarted=true;const execution=execute(job).then(value=>{operationSettled=true;return value;},error=>{operationSettled=true;throw error;});result=await Promise.race([execution,expired]);authority(job.epoch);if(job.cancelled)refuse('authority_fenced'); }
   catch(e) {error=safeError(e);}
   finally{clearTimeout(deadline);}
   const rec=S.receipts.get(job.id);
@@ -276,7 +277,9 @@ async function drain() {
   try { await durable(rec); } catch { rec.state='unknown';rec.code='receipt_persistence_failed';fence();error={code:'receipt_persistence_failed',message:'Outcome unknown'}; }
   // No DOM, screenshot, dialog or private input survives an authority transition.
   if(job.epoch!==S.epoch || job.cancelled) { result=undefined;error={code:rec.state==='cancelled_before_dispatch'?'cancelled_before_dispatch':'unknown',message:'Authority changed; content withheld'}; }
-  job.resolve({id:job.id,ok:true,result:wireResult(job,rec,result,error)});
+  // A Promise.race timeout is NOT observed command cleanup. This private wrapper
+  // flag proves only local command settlement, never success of website effects.
+  job.resolve({id:job.id,ok:true,result:wireResult(job,rec,result,error),cleanup_observed:!operationStarted||operationSettled});
   S.active=null;void drain();
 }
 async function action(req) {

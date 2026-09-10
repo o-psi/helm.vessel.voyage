@@ -406,3 +406,23 @@ and bounded history pages still provide `message_chunk` for complete messages.
 `helm connect artifact SESSION ARTIFACT PATH` verifies a full download and creates
 a new local file. See [MCP tools and artifacts](configuration.md#mcp-tools-and-artifacts)
 for ownership, retention, validation and platform limits.
+
+## Shared local browser
+
+The [local browser companion](local-browser.md) is an explicit Helm-side capability
+on the same full-duplex connection. `prepare_browser` follows/resumes an existing
+owner without constructing an agent or granting browser access. `browser` operations
+carry the original resource/executor/run/controller/capture identity. Effect requests
+and result receipts are distinct from ordinary user-turn receipts; use the browser
+receipt/reconciliation path, never retry a click because `/receipt` lacks it.
+
+Scoped browser operations require **History and Execute** at both Vessel and Voyage;
+notification subscriptions additionally require Observe. These remote rights do not
+grant local consent, local files or browser capture. Helm and its adapter enforce
+those independently. Browser notifications contain only durable invalidation metadata;
+authorized pending reads and replies carry content on the same socket.
+
+Old effect bindings are retained for receipt/cleanup under the currently authenticated
+outer owner incarnation. Positive cleanup evidence does not turn an uncertain website
+effect into success. Fresh binding or socket identity never replays old effects.
+See [browser verification](local-browser-verification.md) for actual Linux evidence.

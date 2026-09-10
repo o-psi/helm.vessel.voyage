@@ -162,6 +162,7 @@ pub(super) async fn run(
                             }
                             Ok(value) if value["event"] == "approval" => {
                                 if value["pending"] == true { status.send_modify(|s| s.summary="Browser action awaits local confirmation in the companion".into()); }
+                                else if current_control==BrowserControl::Shared {status.send_modify(|s|s.summary="Browser operation is completing; local permissions remain enforced".into());}
                             }
                             Ok(_) => (),
                             Err(_) => anyhow::bail!("Browser control observation lost; sharing fenced"),
@@ -201,6 +202,7 @@ pub(super) async fn run(
                         }
                         if action.as_ref().is_some_and(|job|job.is_finished()) {
                             action.take().unwrap().await.context("Browser dispatch task failed")??;
+                            if current_control==BrowserControl::Shared {status.send_modify(|s|s.summary="Agent sharing enabled. Browser results remain in the Voyage conversation".into());}
                             pending_needed=true;
                         }
                         if pending.as_ref().is_some_and(|job|job.is_finished()) {
@@ -429,7 +431,7 @@ async fn dispatch(
             }
         }
     };
-    let locally_returned = matches!(&local, Some(Ok(_)));
+    let locally_quiescent = matches!(&local,Some(Ok(value)) if value["cleanup_observed"]==true);
     let mut result = BrowserResult {
         request_id: request.request_id,
         action_sha256: request.action_sha256.clone(),
@@ -471,7 +473,8 @@ async fn dispatch(
         result.observation_id = None;
         result.text = "Browser sharing interrupted; observations withheld".into();
     }
-    let unknown_but_quiescent = locally_returned && result.state == BrowserRequestState::Unresolved;
+    let unknown_but_quiescent =
+        locally_quiescent && result.state == BrowserRequestState::Unresolved;
     // Never resend uncertain results automatically. Runtime keeps the original action obligation.
     exchange(
         &client,

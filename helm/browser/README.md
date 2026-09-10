@@ -100,6 +100,12 @@ text plus explicit fresh element refs (`element`/`ref`). References expire after
 Element identity and its descriptive signature are checked again before effects.
 There is no remote JavaScript, CDP, browser launch flag, shell, or local path action.
 
+The private action reply wrapper includes `cleanup_observed` only when the actual
+local command future settled (or never started). A deadline winning a race does
+not set it. Parent reconciliation must not infer quiescence from `ok:true`, a
+returned `unresolved` result, cancellation request or helper process exit. This
+flag does not assert that a website transaction succeeded or was undone.
+
 `BrowserResult` is `{request_id,action_sha256,state,text,page_id,observation_id,image,file}`;
 nullable fields are explicit. States are `completed`, `refused`, `cancelled`, or
 `unresolved`. `image` is `{mime_type:"image/jpeg",data_base64}` and `file` is
