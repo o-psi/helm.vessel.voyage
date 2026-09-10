@@ -100,7 +100,8 @@ pub struct Session {
 /// Automatic-title lifecycle is independent of compacted conversation history.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TitleState {
-    pub completed_runs: u64,
+    #[serde(default)]
+    pub requested_by: Option<Uuid>,
     pub automatic: bool,
     /// Last generated name also detects direct caller edits of the public name field.
     pub generated: String,
@@ -213,7 +214,7 @@ impl Session {
             run_summaries: Vec::new(),
             name: Some(generated_name(id)),
             title_state: Some(TitleState {
-                completed_runs: 0,
+                requested_by: None,
                 automatic: true,
                 generated: generated_name(id),
                 usage: Usage::default(),
@@ -251,7 +252,7 @@ impl Session {
         let fallback = generated_name(self.id);
         let name = self.display_name();
         self.title_state.get_or_insert_with(|| TitleState {
-            completed_runs: 0,
+            requested_by: None,
             automatic: name == fallback,
             generated: fallback,
             usage: Usage::default(),
@@ -263,29 +264,19 @@ impl Session {
         self.name = Some(name);
     }
 
-    pub fn title_due_after_turn(&self) -> bool {
-        let (automatic, count, generated) = self.title_state.as_ref().map_or_else(
-            || (true, 0, generated_name(self.id)),
-            |state| {
-                (
-                    state.automatic,
-                    state.completed_runs,
-                    state.generated.clone(),
-                )
-            },
-        );
-        automatic
-            && self.display_name() == generated
-            && count.checked_add(1).is_some_and(is_title_checkpoint)
+    pub fn automatic_title_enabled(&self) -> bool {
+        self.title_state.as_ref().map_or_else(
+            || self.display_name() == generated_name(self.id),
+            |state| state.automatic && self.display_name() == state.generated,
+        )
     }
 
-    /// Called once after a successful top-level run, never for tool/model iterations.
-    pub fn record_completed_turn(&mut self) {
-        let state = self.title_state_mut();
-        state.completed_runs = state.completed_runs.saturating_add(1);
+    /// Called in the input admission transaction, never for model/tool iterations.
+    pub fn request_title(&mut self, input_id: Uuid) {
+        self.title_state_mut().requested_by = Some(input_id);
     }
 
-    pub fn apply_generated_title(&mut self, result: crate::titles::TitleResult) {
+    pub fn apply_generated_title(&mut self, input_id: Uuid, result: crate::titles::TitleResult) {
         // Auxiliary usage remains separate from conversation usage so it cannot
         // overflow or distort the main run's accounting.
         let name = self.display_name();
@@ -307,6 +298,7 @@ impl Session {
             _ => tracing::warn!("title usage accounting overflowed"),
         }
         if state.automatic
+            && state.requested_by == Some(input_id)
             && state.generated == name
             && let Some(title) = result.title
         {
@@ -325,7 +317,7 @@ impl Session {
                 .is_some_and(|state| state.generated == self.display_name());
         let fallback = generated_name(self.id);
         let state = self.title_state_mut();
-        state.completed_runs = 0;
+        state.requested_by = None;
         if automatic {
             state.generated = fallback.clone();
             self.name = Some(fallback);
@@ -890,18 +882,6 @@ fn read_session(path: &Path) -> Result<Session> {
     }
     Ok(session)
 }
-fn is_title_checkpoint(count: u64) -> bool {
-    let (mut previous, mut current) = (0_u64, 1_u64);
-    while current < count {
-        let Some(next) = previous.checked_add(current) else {
-            return false;
-        };
-        previous = current;
-        current = next;
-    }
-    count != 0 && current == count
-}
-
 fn generated_name(id: Uuid) -> String {
     format!("session-{}", &id.simple().to_string()[..8])
 }

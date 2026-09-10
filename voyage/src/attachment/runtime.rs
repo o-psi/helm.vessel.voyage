@@ -22,6 +22,7 @@ use std::{
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 mod steering;
+mod titles;
 pub use steering::{ManagedSteeringHandle, SteeringAuthorization};
 
 /// Trusted runtime time source; never supplied by a remote command or provider.
@@ -56,6 +57,7 @@ struct TurnToken {
     execution_authority: Option<Arc<dyn crate::policy::ExecutionAuthority>>,
     steering_authority: OnceLock<(Arc<dyn SteeringAuthorization>, Arc<dyn RuntimeClock>)>,
     poisoned: AtomicBool,
+    title_input: tokio::sync::Notify,
 }
 impl TurnToken {
     fn new(run_id: Uuid) -> Self {
@@ -64,6 +66,7 @@ impl TurnToken {
             execution_authority: None,
             steering_authority: OnceLock::new(),
             poisoned: AtomicBool::new(false),
+            title_input: tokio::sync::Notify::new(),
         }
     }
 }
@@ -372,7 +375,6 @@ impl RunOwner {
         state: RunState,
         reason: Option<&'static str>,
         classification: Option<StopReason>,
-        title: Option<crate::titles::TitleResult>,
         cancel: CancellationToken,
     ) -> Result<RunRecord, CheckpointError> {
         let shared = self.store.clone();
@@ -400,16 +402,7 @@ impl RunOwner {
                         run_id,
                         ..
                     } = &mut *store;
-                    journal.finish_classified_with_title(
-                        guard,
-                        *run_id,
-                        state,
-                        reason,
-                        None,
-                        classification,
-                        true,
-                        title.as_ref(),
-                    )
+                    journal.finish_classified(guard, *run_id, state, reason, None, classification)
                 })();
                 match attempt {
                     Ok(record) => return Ok(record),
@@ -591,17 +584,21 @@ impl RunOwner {
                 {
                     return Err(CheckpointError.into());
                 }
-                agent
-                    .run_checkpointed_scoped_with_workflow_secrets(
-                        history,
-                        accepted,
-                        cancel.clone(),
-                        input,
-                        self,
-                        self.model.clone(),
-                        scope,
-                        workflow_bindings,
-                    )
+                self.checkpoint()
+                    .with_title_updates(agent, cancel.clone(), async {
+                        agent
+                            .run_checkpointed_scoped_with_workflow_secrets(
+                                history,
+                                accepted,
+                                cancel.clone(),
+                                input,
+                                self,
+                                self.model.clone(),
+                                scope,
+                                workflow_bindings,
+                            )
+                            .await
+                    })
                     .await
             }
             .await
@@ -641,26 +638,8 @@ impl RunOwner {
             .ok()
             .map(|outcome| outcome.stop_reason.clone());
         before_finish()?;
-        // Use the durable canonical transcript, including the accepted answer
-        // and current run attribution. Never hold the journal lock over I/O.
-        // This bounded, best-effort request is outside terminal-commit retries.
-        let title = if state == RunState::Completed && !cancel.is_cancelled() {
-            match self
-                .storage(|store| Ok(store.journal.load_session(store.session_id)?.session))
-                .await
-            {
-                Ok(session) if session.title_due_after_turn() => {
-                    agent
-                        .generate_title_for_session(&session, cancel.clone())
-                        .await
-                }
-                _ => None,
-            }
-        } else {
-            None
-        };
         let durable = self
-            .persist_terminal(state, reason, classification, title, cancel)
+            .persist_terminal(state, reason, classification, cancel)
             .await?;
         if durable.state == RunState::Cancelled {
             Err(AgentError::Cancelled)

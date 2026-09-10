@@ -112,6 +112,9 @@ impl ManagedSteeringHandle {
                     }
                 }
             }
+            if !outcome.duplicate {
+                checkpoint.token.title_input.notify_one();
+            }
             Ok(outcome)
         })
         .await?

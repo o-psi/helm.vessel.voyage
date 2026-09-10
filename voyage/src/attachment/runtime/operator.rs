@@ -17,8 +17,13 @@ impl RunOwner {
             self.start_operator_scope(agent).await?;
             reason = "Operator tool failed.";
             let session_id = self.record().await?.session_id;
-            let text = agent
-                .operator_tool(session_id, self.run_id, cancel.clone(), name, arguments)
+            let text = self
+                .checkpoint()
+                .with_title_updates(
+                    agent,
+                    cancel.clone(),
+                    agent.operator_tool(session_id, self.run_id, cancel.clone(), name, arguments),
+                )
                 .await?;
             reason = "Operator action failed during finalization.";
             anyhow::ensure!(!cancel.is_cancelled(), "operator action cancelled");

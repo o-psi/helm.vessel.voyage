@@ -38,6 +38,7 @@ pub use catalogue::{
     CancelRequestOutcome, LocalCancelRequest, RunSummary, SessionPage, SessionSummary,
 };
 mod steering;
+mod titles;
 pub use steering::{
     MAX_PENDING_STEERING, MAX_STEERING_PER_RUN, SteeringActor, SteeringAdmission, SteeringOutcome,
     SteeringRecord, SteeringRejection,
@@ -680,6 +681,7 @@ impl Journal {
         message.operator_name = request.operator_name.clone();
         message.parts = request.parts.clone();
         current.session.messages.push(message);
+        current.session.request_title(request.command_id);
         let run = RunRecord {
             id: Uuid::new_v4(),
             command_id: request.command_id,
@@ -1055,32 +1057,6 @@ impl Journal {
         final_text: Option<&str>,
         classification: Option<&crate::agent::StopReason>,
     ) -> Result<RunRecord> {
-        self.finish_classified_with_title(
-            guard,
-            run_id,
-            state,
-            reason,
-            final_text,
-            classification,
-            false,
-            None,
-        )
-    }
-
-    /// Title lifecycle and terminal status share one transaction. Only ordinary
-    /// agent turns opt in; explicit operator actions and recovery do not count.
-    #[allow(clippy::too_many_arguments)]
-    pub(super) fn finish_classified_with_title(
-        &mut self,
-        guard: &ExecutionGuard,
-        run_id: Uuid,
-        state: RunState,
-        reason: Option<&str>,
-        final_text: Option<&str>,
-        classification: Option<&crate::agent::StopReason>,
-        count_turn: bool,
-        title: Option<&crate::titles::TitleResult>,
-    ) -> Result<RunRecord> {
         ensure!(
             !matches!(state, RunState::Accepted | RunState::Running),
             "finish requires terminal state"
@@ -1209,14 +1185,6 @@ impl Journal {
                     .checked_add(1)
                     .context("revision overflow")?,
             )?;
-        }
-        if count_turn && state == RunState::Completed {
-            // Re-read state inside the transaction: a manual rename during the
-            // utility request must win. Rollback also rolls back the turn count.
-            if let Some(title) = title {
-                current.session.apply_generated_title(title.clone());
-            }
-            current.session.record_completed_turn();
         }
         update_session(&tx, &current)?;
         run.state = state.clone();

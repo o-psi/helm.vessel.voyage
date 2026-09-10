@@ -1,12 +1,12 @@
 {
   "schema_version": 1,
-  "measured_at_utc": "2026-09-10T22:43:20.208665+00:00",
+  "measured_at_utc": "2026-09-10T23:00:40.631049+00:00",
   "source": {
-    "base_commit": "793ad21eedb4dd63e654f408620a1ce544f3996b",
+    "base_commit": "02bddf3cf76e82f290b38579f492543c2e30ebbd",
     "dirty": true,
-    "fingerprint_sha256": "612d5d7a21582e682cd2cfa8b313e86ab0771a00ed0e38e29b7387661d7b0556",
-    "fingerprint_method": "SHA-256 of compact sorted JSON mapping workspace .rs files, member Cargo.toml files, root Cargo.toml, Cargo.lock and member tests/*.py files to SHA-256 content hashes",
-    "note": "Working-tree measurement includes unrelated concurrent work; not coverage of clean base or publication commit. Complete source map unchanged during build, process tests and Rust measurement. Python sources fingerprinted but not included in Rust coverage."
+    "fingerprint_sha256": "4289088037e58165cd6c5f35e5fb8fab125326e192d908a542b975115f09f7dd",
+    "fingerprint_method": "SHA-256 of compact sorted JSON (with trailing newline) mapping workspace .rs files, member Cargo.toml files, root Cargo.toml, Cargo.lock and member tests/*.py files to SHA-256 content hashes",
+    "note": "Working-tree measurement includes unrelated concurrent provider/account work and staged Helm work. Not coverage of a clean base or publication commit. Source map unchanged throughout measurement; Python sources fingerprinted but not included in Rust coverage."
   },
   "platform": "x86_64-unknown-linux-gnu",
   "tools": {
@@ -14,7 +14,7 @@
     "llvm": "22.1.8",
     "cargo_llvm_cov": "0.9.1"
   },
-  "command": "cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir target/coverage-report/workflows -j 8",
+  "command": "cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir target/coverage-report/title-input -j 8",
   "environment": {
     "CARGO_LLVM_COV_TARGET_DIR": "target",
     "LLVM_COV": "llvm-cov",
@@ -22,26 +22,26 @@
   },
   "scope": "Existing workspace Rust tests, default features",
   "tests": {
-    "passed": 113,
+    "passed": 120,
     "failed": 0,
     "ignored": 1
   },
   "coverage": {
     "lines": {
-      "count": 71267,
-      "covered": 11673,
-      "percent": 16.379249863190537
+      "count": 71405,
+      "covered": 12856,
+      "percent": 18.00434143267278
     },
     "functions": {
-      "count": 7291,
-      "covered": 1157,
-      "percent": 15.86887944040598
+      "count": 7303,
+      "covered": 1295,
+      "percent": 17.732438723812134
     },
     "regions": {
-      "count": 115603,
-      "covered": 18021,
-      "notcovered": 97582,
-      "percent": 15.588695795091825
+      "count": 115882,
+      "covered": 19778,
+      "notcovered": 96104,
+      "percent": 17.06736162648211
     }
   },
   "exclusions": [
@@ -53,11 +53,12 @@
     "Unrelated .voyage-worktrees source paths discovered from cached binaries in shared target; report-only filter, current workspace Rust files retained"
   ],
   "notes": [
-    "Independent measurement: raw profiles cleared first; compiled artifacts and previous reports preserved. HTML and logs in a new workflows subdirectory.",
-    "Workspace Rust tests passed without live-provider execution. Five separately passing offline process workflows (conversation/files, stop/continue, two voyages, real Helm reconnect, native shell command) ran against freshly built binaries and are excluded from these percentages.",
-    "Compared with previous record: lines -0.0463 percentage points, functions -0.0686 percentage points, regions -0.0381 percentage points.",
-    "Coverage measures execution, not correctness. Process evidence is Linux only; reconnect uses real Helm line/one-turn clients, not the full-screen TUI.",
-    "Unfiltered report included 743 files and 141847 lines (8.2293% covered), including an unrelated browser worktree with no execution in this run. Preserved raw report and generated explicit workspace-only report from the same passing measurement; no source/test scope narrowed within the current workspace."
+    "Independent measurement: raw profiles cleared first; compiled artifacts and previous reports preserved. HTML, detailed JSON, logs and source maps retained under ignored target/.",
+    "Seven focused offline title tests passed, including actual run execution with a blocked main provider, queued steering refresh, persistence after reopen, stale and manual-name protection, exact retries, failure and cancellation.",
+    "Compared with previous record: lines +1.6251 percentage points, functions +1.8636 percentage points, regions +1.4787 percentage points.",
+    "Unfiltered report included 745 files and 142083 lines (9.0672% covered), including unrelated worktree sources. Workspace-only report retains 380 current workspace files from the same passing measurement, using the same exclusion as the prior record.",
+    "HTML report emitted an LLVM warning about 15 functions with mismatched data in cached instrumented objects. Summary report generation exited successfully; coverage remains an approximate execution measurement, not correctness proof.",
+    "Linux only. No live-provider, native macOS/Windows or manual TUI validation. Strict voyage Clippy remains blocked by three unrelated existing provider/account warnings."
   ],
-  "report_command": "cargo llvm-cov report --ignore-filename-regex '/\\.voyage-worktrees/' --json --summary-only --output-path target/coverage-report/workflows/workspace-summary.json"
+  "report_command": "cargo llvm-cov report --ignore-filename-regex '/\\.voyage-worktrees/' --json --summary-only --output-path target/coverage-report/title-input/workspace-summary.json"
 }
