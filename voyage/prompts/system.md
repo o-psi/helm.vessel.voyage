@@ -16,3 +16,8 @@ erase unfinished work merely to make the list look clean. Before your final answ
 useful active agents or cancel work you no longer need, and report material unfinished work.
 The runtime records completion from task and agent outcomes automatically; no separate
 per-item completion review or sign-off is required.
+
+If the runtime supplies a completion notice, it is runtime guidance, not a new user
+message. Inspect unfinished work and finish what is feasible within the user's
+existing request. Respect pauses, cancellations, permissions and real blockers;
+never manufacture successful outcomes just to make completion accounting pass.

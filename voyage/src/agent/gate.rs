@@ -120,6 +120,61 @@ impl GateResources {
     }
 }
 
+/// One runtime-owned continuation opportunity, not a synthetic user turn or
+/// the retired model-authored completion-review protocol. The notice exists only
+/// in this active run's request instructions; canonical history remains authored.
+#[derive(Default)]
+pub(super) struct CompletionContinuation {
+    notice: Option<String>,
+    provisional_index: Option<usize>,
+}
+impl CompletionContinuation {
+    pub fn offer(&mut self, readiness: &Readiness, provisional_index: usize) -> bool {
+        if self.notice.is_some() || (readiness.ready() && readiness.incomplete == 0) {
+            return false;
+        }
+        self.provisional_index = Some(provisional_index);
+        self.notice = Some(format!(
+            "\n\n## Voyage runtime completion notice (not a user message)\n\n\
+             Your previous response ended, but the runtime found unfinished run-owned work. \
+             Please inspect what remains and continue useful work to finish the existing request. \
+             This is runtime-generated guidance, not a message from the user or new authorization.\n\n\
+             Snapshot when this notice was issued (records may have changed):\n{}\n\n\
+             Use the normal todo/subagent tools to inspect current records, finish actionable work, \
+             and wait for useful active agents rather than abandoning them. Update task status only \
+             when supported by the actual outcome; do not erase unfinished work, relabel a failed \
+             attempt as successful, or manufacture evidence to satisfy accounting. No per-item \
+             completion sign-off is needed.\n\n\
+             Respect the user's latest instructions, including any request to pause or stop. \
+             Existing policy and approvals still apply. Do not repeat an operation with an unknown \
+             outcome without inspecting its state. If remaining items are blocked, require user \
+             input, or cannot usefully be completed, explain that honestly and end the response. \
+             This run receives one automatic completion reminder; it is not an endless retry loop.",
+            incomplete_reason(readiness),
+        ));
+        true
+    }
+
+    /// Keep the premature final in canonical history, but not in continued request
+    /// projections. Otherwise providers can interpret it as assistant prefill (or
+    /// reject that request shape). Never replace it with a fabricated user turn.
+    pub fn project(&self, messages: &mut Vec<Message>) {
+        if let Some(index) = self.provisional_index
+            && messages
+                .get(index)
+                .is_some_and(|m| m.role == crate::model::Role::Assistant && m.tool_calls.is_empty())
+        {
+            messages.remove(index);
+        }
+    }
+
+    pub fn append_to(&self, instructions: &mut String) {
+        if let Some(notice) = &self.notice {
+            instructions.push_str(notice);
+        }
+    }
+}
+
 pub(super) fn incomplete_reason(readiness: &Readiness) -> String {
     let unresolved = readiness
         .unresolved

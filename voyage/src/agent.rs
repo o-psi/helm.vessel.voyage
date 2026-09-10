@@ -2,6 +2,8 @@ mod retry;
 
 mod tool_replay;
 pub use retry::RetryJitter;
+#[cfg(test)]
+mod completion_tests;
 mod gate;
 
 pub use gate::{CompletionPhase, FinalizationFailure, OwnedShutdown};
@@ -1180,6 +1182,7 @@ impl Agent {
         let mut turn = 0usize;
         let mut sealed = false;
         let mut last_readiness = None;
+        let mut completion_continuation = gate::CompletionContinuation::default();
         let mut partial_output = String::new();
         let result = async {
         if root_gate.is_some() {
@@ -1240,10 +1243,10 @@ impl Agent {
             }
             self.sink.emit(AgentEvent::Thinking { turn }).await;
             let mut messages = history.clone();
-            messages.insert(
-                0,
-                Message::new(crate::model::Role::System, self.effective_system_prompt(workspace.as_deref(), &extension_guidance)),
-            );
+            completion_continuation.project(&mut messages);
+            let mut instructions = self.effective_system_prompt(workspace.as_deref(), &extension_guidance);
+            completion_continuation.append_to(&mut instructions);
+            messages.insert(0, Message::new(crate::model::Role::System, instructions));
             let request = ModelRequest {
                 model: active_model.clone(),
                 messages,
@@ -1328,13 +1331,28 @@ impl Agent {
                         let mut lease = gate::guarded(gate.lease(scope), &cancel).await??;
                         last_readiness = Some(lease.readiness.clone());
                         let clean = lease.readiness.ready() && lease.readiness.incomplete == 0;
+                        if !clean && completion_continuation.offer(&lease.readiness, history.len() - 1) {
+                            // Release the writer lease before inference or tools so the model
+                            // and active descendants can finish the work just observed.
+                            let readiness = lease.readiness.clone();
+                            drop(lease);
+                            tracing::info!(execution_id = %context.execution_id, total = readiness.total,
+                                incomplete = readiness.incomplete, accounted = readiness.accounted,
+                                "runtime completion continuation requested");
+                            self.sink.emit(AgentEvent::CompletionState {
+                                phase: CompletionPhase::Reconciling,
+                                readiness: Some(readiness),
+                                detail: Some("Voyage runtime asked the model to finish remaining work; no user message was added".into()),
+                            }).await;
+                            continue 'execution;
+                        }
                         if !clean {
                             drop(lease);
                             gate::guarded(gate.shutdown_owned(scope), &cancel).await?;
                             lease = gate::guarded(gate.lease(scope), &cancel).await??;
                             last_readiness = Some(lease.readiness.clone());
                         }
-                        // Finalization is local: no extra model pass for bookkeeping.
+                        // After the optional continuation, finalization is local; no model sign-off.
                         // Close steering atomically while record writers are excluded.
                         if let Some(receiver) = &mut input {
                             let pending = receiver.drain_or_close();

@@ -148,10 +148,39 @@ turns. Terminal metadata and canonical history remain durable.
 Register subagents, managed commands, terminals and completion obligations before
 they become independently active. Finishing a model turn is not proof that all
 owned work finished. Completion observes current run-owned outcomes automatically,
-without a second model-authored sign-off or reconciliation turn. Completed records
-count directly; unfinished tasks and unsuccessful agents retain incomplete outcomes,
-and missing records or active agents remain unresolved. Bound owned-agent shutdown
-and recheck under the writer lease before recording the final decision. Preserve
+without a second model-authored sign-off. Completed records count directly;
+unfinished tasks and unsuccessful agents retain incomplete outcomes, and missing
+records or active agents remain unresolved.
+
+If a normally completed model response has no tool calls but owned work remains,
+Voyage offers one automatic continuation opportunity in the same active run before
+sealing the final decision or shutting down useful descendants. Fixed runtime-authored
+system instructions ask the model to inspect bounded unfinished-item IDs and finish
+what remains feasible within the existing user request. This is **not a user message**,
+steering receipt, tool result, or new authorization. Task titles/results are not promoted
+into system instructions. The readiness snapshot is explicitly potentially stale.
+The writer lease is released before inference so tools and children can make progress;
+new user steering is still applied at the normal boundary.
+
+Guidance stays in outgoing system instructions for the continuation's tool cycles,
+not in canonical conversation history. The premature final answer remains in the
+canonical transcript but is omitted from outgoing continuation projections. This
+avoids treating a trailing assistant final as provider prefill without fabricating a
+user turn. Native Responses/ChatGPT use `instructions`, Anthropic uses `system`, and
+Chat Completions uses its leading system message. No provider replay metadata on
+other messages is changed. Local request/encoding checks do not establish live
+acceptance for every compatible endpoint.
+
+A continuation can use ordinary model/tool cycles; it has no separate bookkeeping
+deadline. It receives only one automatic reminder per active run invocation, so a
+second final response with unfinished work ends honestly as Incomplete rather than
+creating an endless prompt loop. This does not reopen terminal runs, retry provider
+failures/truncated responses, resume cancelled execution, bypass context/account
+limits, or create mandatory per-item review work. User requests to stop/pause and
+real blockers remain controlling. No notice survives into a later run.
+
+After the continuation, or immediately for clean work, bound any remaining owned-agent
+shutdown and recheck under the writer lease before recording the final decision. Preserve
 historical decisions and review evidence. Resource cleanup still requires observed
 results; a completed task status does not prove that its processes have stopped.
 

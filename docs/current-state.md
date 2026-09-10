@@ -602,11 +602,18 @@ broaden it. External content remains untrusted.
 At the model's final response, Voyage derives completion automatically from the
 run's recorded task and agent outcomes. Completed items need no separate review,
 fingerprint exchange or disposition call. Unfinished todos and unsuccessful agents
-remain incomplete; missing records and active agents remain unresolved. Remaining
-owned agents receive bounded shutdown and a fresh observation before the final
-decision is saved under the existing writer lock. Resource cleanup still requires
-actual observation before another turn can start. Completion does not ask the model
-for an extra reconciliation turn or impose a bookkeeping deadline.
+remain incomplete; missing records and active agents remain unresolved. When a normal
+model final leaves owned work unfinished, the same active run gets one runtime-generated
+system notice suggesting it finish what remains. It is not attributed to the user or
+stored as a user/history message. Useful children are not shut down before this
+continuation, and the writer lease is released so tools can finish work. The premature
+answer stays in canonical history but is omitted from outgoing continuation projections
+to avoid assistant-prefill semantics. User steering, cancellation and normal inference
+limits still apply. If the model finishes again without resolving the work, the run
+ends Incomplete without another reminder. There is no extra per-item sign-off or
+bookkeeping deadline. Remaining owned agents then receive bounded shutdown and a fresh
+observation before the final decision is saved under the existing writer lock. Resource
+cleanup still requires actual observation before another turn can start.
 
 The standard tool registry no longer advertises the internal `completion` tool.
 Default instructions make todos and delegation discretionary when useful. Existing
