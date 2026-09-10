@@ -109,7 +109,7 @@ picker) and `helm models` uses the owner-local `DiscoverModels` Vessel operation
 Vessel supervises a bounded `voyage discover-models` helper, not a registered
 voyage or agent loop. Private launch configuration travels over authenticated local
 HTTP and framed child stdin; it is not saved as a launch file, session, command
-receipt or conversation. Runtime policy, provider display validation and host quota
+receipt or conversation. Runtime policy, provider display validation and cleanup tracking
 still apply. Discovery is limited to four concurrent children per Vessel, a
 12-second helper deadline, and bounded supervisor termination/exit observation.
 The supervising task retains ownership after a requesting Helm disconnects.
@@ -211,7 +211,7 @@ verified is retained as unresolved history, separately from next-turn admission.
 Linux launches include a separate child-subreaper guardian. After the runtime exits,
 the guardian stops and reaps remaining descendants, including detached sessions,
 and atomically records incarnation-bound evidence. Recovery uses this evidence to
-close local terminal obligations and release that incarnation's host quota charges.
+close local terminal obligations and resolve that incarnation's host cleanup records.
 It appends unknown outcomes for interrupted tool calls, never success or replay.
 A changed Linux boot identity also establishes that the recorded local processes
 are gone. Remote participant obligations remain unresolved until independently
@@ -285,7 +285,7 @@ replayed. Stopping a supervisor leaves independent voyage processes running.
 Vessel has no concurrent voyage-count cap. The legacy `local-serve --capacity`
 option is accepted but ignored; capabilities report `capacity: null`. The 4,096
 registration retention bound, transfer receipt safeguards, connection bounds and
-runtime host resource limits still apply.
+per-voyage resource controls still apply.
 Explicit Linux user-service installation is available. Native macOS/Windows process
 supervision is unsupported. The Linux installer wizard installs versioned releases
 and manages upgrades, rollback and the local user service. Upgrade resolves the
@@ -707,10 +707,11 @@ The subagent writer lease protects that session's persistent agent tree, so dist
 voyages can execute and delegate concurrently in the same workspace. Writers of the
 same session state still coordinate through its completion lock and exclusive owner.
 Sharing a workspace does not isolate file edits; tools retain their existing policy,
-stale-content and Git conflict checks. Host accounting bounds
-executor slots to 64 and PTYs to 256 across voyage processes. Unconfirmed process death
-retains charges. Guardian-backed recovery releases only that incarnation's scoped
-charges after verified cleanup; legacy charges still need reconciliation/attestation. Completion evidence is
+stale-content and Git conflict checks. Host accounting records
+cleanup obligations without an account-wide executor or PTY quota. Unconfirmed process
+death retains evidence without blocking unrelated voyages. Guardian-backed recovery
+resolves only that incarnation's scoped records after verified cleanup; legacy records
+still need reconciliation/attestation. Completion evidence is
 accounting, not proof that a claim is semantically true.
 
 The shared inference database waits up to two seconds for a competing SQLite

@@ -1,12 +1,12 @@
 {
   "schema_version": 1,
-  "measured_at_utc": "2026-09-10T22:17:26.618495+00:00",
+  "measured_at_utc": "2026-09-10T22:21:19.708527+00:00",
   "source": {
-    "base_commit": "5dfff842797d128d2b34eebe4315caa28d723294",
+    "base_commit": "4baccbeca0796140a2f22f5b3be14c42ac414222",
     "dirty": true,
-    "fingerprint_sha256": "40f2ed0b8e44c4d63d2597c65a7194bc9659812a96efe72e50646c4d28e28e56",
-    "fingerprint_method": "SHA-256 of compact sorted JSON mapping workspace .rs files, member Cargo.toml files, root Cargo.toml, Cargo.lock and member tests/*.py files to SHA-256 content hashes",
-    "note": "Working-tree measurement including unrelated uncommitted changes; not coverage of the clean base or publication commit. Full captured source map was unchanged during the run. Python test sources are fingerprinted but not included in Rust coverage."
+    "fingerprint_sha256": "b54e34633b1ac59b27c2398f0248c7b6b7e748fd3502733a47453617642cf3fe",
+    "fingerprint_method": "SHA-256 of compact sorted JSON mapping workspace .rs files, member Cargo.toml files, root Cargo.toml and Cargo.lock to SHA-256 content hashes",
+    "note": "Isolated working-tree measurement of the base commit plus the quota-removal changes. Captured source files were unchanged during the run; not attributed to a clean commit."
   },
   "platform": "x86_64-unknown-linux-gnu",
   "tools": {
@@ -14,9 +14,9 @@
     "llvm": "22.1.8",
     "cargo_llvm_cov": "0.9.1"
   },
-  "command": "cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir target/coverage-report -j 8",
+  "command": "cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir \"$CARGO_LLVM_COV_TARGET_DIR/coverage-report/remove-capacity-isolated\" -j 8",
   "environment": {
-    "CARGO_LLVM_COV_TARGET_DIR": "target",
+    "CARGO_LLVM_COV_TARGET_DIR": "shared checkout target directory",
     "LLVM_COV": "llvm-cov",
     "LLVM_PROFDATA": "llvm-profdata"
   },
@@ -28,20 +28,20 @@
   },
   "coverage": {
     "lines": {
-      "count": 71125,
-      "covered": 11499,
-      "percent": 16.16731107205624
+      "count": 69161,
+      "covered": 11496,
+      "percent": 16.622084700915256
     },
     "functions": {
-      "count": 7281,
+      "count": 7046,
       "covered": 1142,
-      "percent": 15.68465870072792
+      "percent": 16.20777746239001
     },
     "regions": {
-      "count": 115325,
-      "covered": 17695,
-      "notcovered": 97630,
-      "percent": 15.343594190331672
+      "count": 112079,
+      "covered": 17688,
+      "notcovered": 94391,
+      "percent": 15.781725390126608
     }
   },
   "exclusions": [
@@ -52,9 +52,9 @@
     "Branch coverage"
   ],
   "notes": [
-    "Independent measurement: raw profiles cleared first; compiled artifacts retained and prior run log/summary copied under target/coverage-report/happy-path-prior.",
-    "Workspace Rust tests passed without live-provider execution. The separately passing conversation_files.py process check is not included in these percentages.",
-    "Compared with previous record: lines +0.1359 percentage points, functions +0.0876 percentage points, regions +0.1602 percentage points.",
-    "Coverage measures execution, not correctness; no native macOS/Windows or TUI claim."
+    "Independent measurement in an isolated worktree: raw profiles cleared before the run; existing compiled artifacts retained. Tests passed outside the restricted sandbox with no live-provider calls.",
+    "Shared-checkout preliminary verification was superseded by this isolated measurement to exclude concurrent unfinished edits.",
+    "Compared with previous record (percentage points): {\"functions\": 0.5231, \"lines\": 0.4548, \"regions\": 0.4381}. Scope unchanged; source now excludes unrelated uncommitted account and UI work.",
+    "Coverage measures execution, not correctness. No native macOS/Windows or TUI acceptance claim."
   ]
 }

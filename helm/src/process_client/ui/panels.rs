@@ -189,7 +189,7 @@ pub(super) fn render(section: &str, envelope: &Value) -> String {
         }
         "host_resources" => {
             output.push_str(
-                "# Machine capacity\n\nLimits shared by work running on this machine.\n\n",
+                "# Machine cleanup records\n\nCleanup evidence for work running on this machine.\n\n",
             );
             for (key, title) in [
                 ("executors", "Concurrent runs"),
@@ -197,9 +197,14 @@ pub(super) fn render(section: &str, envelope: &Value) -> String {
             ] {
                 if let Some(limit) = value["limits"][key].as_u64() {
                     output.push_str(&format!("{title}: up to {limit}\n\n"));
+                } else if value["limits"][key].is_null() {
+                    output.push_str(&format!("{title}: no account-wide quota\n\n"));
                 }
             }
-            output.push_str("Capacity is released after cleanup is confirmed. These limits do not indicate how much work has completed.\n");
+            if let Some(total) = value["total"].as_u64() {
+                output.push_str(&format!("Unresolved cleanup records: {total}\n\n"));
+            }
+            output.push_str("Cleanup records do not indicate how much work has completed.\n");
         }
         _ => {
             output.push_str(&fields(value));
