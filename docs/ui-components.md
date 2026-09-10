@@ -81,21 +81,36 @@ changes to canonical content. This is not a cross-terminal frame-rate guarantee.
 
 ### Live Working indicator
 
-[#226](https://github.com/o-psi/voyage/issues/226) adds a ten-frame spinner beside
-**Working** in the selected voyage's heading, beneath its title. The word stays
-readable and all frames have equal width. This indicates that the latest observed
-state is running, not token throughput, percent complete, or proof of remote
-liveness between updates. Waiting for input, stopping, completed, failed and
-interrupted states remain static. Disconnection displays Reconnecting; a retained
-running snapshot without a live process displays Status unavailable instead of
-continuing to animate.
+[#226](https://github.com/o-psi/voyage/issues/226) introduced a spinner in the
+selected voyage's heading. [#227](https://github.com/o-psi/voyage/issues/227) adds
+playful labels: **Pondering**, **Noodling**, **Tinkering**, and **Mulling**. Names
+rotate every four seconds, alongside the ten-frame spinner. Names are padded to
+nine columns so neither spinner frames nor name changes shift the terminal
+summary. These are decorative names for the same running state, **not** specific
+execution steps, token throughput, percent complete, or proof of remote liveness
+between updates.
 
-The spinner uses the existing 100 ms redraw and a monotonic display clock—no
+A gentle TachyonFX foreground sweep moves across the letters and back over
+2.4 seconds. It blends the ordinary muted text into cyan without dissolving,
+replacing, moving or hiding any characters. The effect is confined to the exact
+visible word rectangle, excluding the spinner, host prefix, terminal summary,
+and narrow-layout action button. Per-frame geometry is cleared before layout;
+modal overlays suppress the effect. It runs before terminal color adaptation.
+
+Waiting for input, stopping, completed, failed and interrupted states remain
+static. Disconnection displays Reconnecting; a retained running snapshot without
+a live process displays Status unavailable instead of continuing to animate.
+`HELM_MOTION=never` and monochrome render plain **Working**, without rotating
+names, spinner or shimmer.
+
+The indicator uses the existing 100 ms redraw and a monotonic display clock—no
 extra timer, background task, transcript invalidation or faster repaint is needed.
-Frames missed during a stall are skipped. `HELM_MOTION=never` and monochrome
-render plain **Working**. It is a discrete glyph animation, not a TachyonFX color
-shader; TachyonFX continues to own the short navigation accent. Tool-result rows
-and authored text are not animated, and no spinner is stored in history or exports.
+Missed animation cycles are skipped, not queued. One retained effect is sampled
+within a bounded cycle; there are no off-screen buffers. Tool-result rows and
+authored text are not animated, and no decorative label is stored in history or
+exports. Actual terminal color capability affects how smooth the sweep appears.
+
+### Effects dependency
 
 Selected dependency: **tachyonfx 0.25.2**, MIT, published MSRV unspecified;
 default features disabled, only `std` and `std-duration` enabled. No DSL parser,
@@ -179,3 +194,18 @@ source probes, not a restored test suite or full end-to-end/live-provider eviden
 Real-terminal visual acceptance and native-platform certification remain unverified.
 The build used the concurrent working checkout; unrelated changes are not included
 in this delivery.
+
+
+### Playful label and shimmer verification (#227)
+
+Linux locked Helm check/build and targeted formatting/diff checks passed. An
+ad-hoc probe compiled the actual Working source and checked four padded names,
+forty spinner/name combinations, fixed eleven-column width, static opt-out and
+non-working/non-live fallbacks. Buffer checks observed multiple foreground shades
+while symbols, backgrounds, modifiers and every cell outside the word rectangle
+remained unchanged. Full-cycle/stall sampling matched; reduced motion left the
+buffer untouched. Per-frame geometry reset and modal suppression through a
+Ratatui test backend were also observed. This temporary probe is not a restored
+automated suite. No provider usage or native-platform/real-terminal visual
+certification is claimed. Builds used the concurrent checkout; unrelated edits
+remain excluded from this delivery.

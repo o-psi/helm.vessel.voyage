@@ -53,6 +53,7 @@ impl Navigation {
             && !app.inference_picker_open()
             && app.workspace_picker.is_none()
             && app.vessels.as_ref().is_none_or(|v| !v.borrow().is_open());
+        app.working.draw(frame, visible);
         let area = if visible {
             app.sidebar
                 .hits

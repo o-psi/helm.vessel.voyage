@@ -130,6 +130,7 @@ fn sidebar_state(view: &super::state::View) -> (&'static str, Style, bool) {
 }
 
 pub fn draw(frame: &mut Frame<'_>, app: &App) {
+    app.working.begin_frame();
     app.vessel_sidebar_button.set(Rect::default());
     draw_inner(frame, app);
     app.draw_vessel_control(frame);
@@ -257,6 +258,11 @@ fn draw_inner(frame: &mut Frame<'_>, app: &App) {
     } else {
         Line::styled(title, Style::default().add_modifier(Modifier::BOLD))
     };
+    let status_prefix = if reviewing || rows[0].width < 70 {
+        format!("{host} · ")
+    } else {
+        String::new()
+    };
     let detail = view.map_or_else(
         || "Ctrl+N  Start a voyage".into(),
         |v| {
@@ -287,6 +293,21 @@ fn draw_inner(frame: &mut Frame<'_>, app: &App) {
         ),
         rows[0],
     );
+    // Bound the shimmer to the visible name, after its two-column spinner.
+    let prefix_width =
+        unicode_width::UnicodeWidthStr::width(status_prefix.as_str()).min(u16::MAX as usize) as u16;
+    let word_x = rows[0].x.saturating_add(prefix_width).saturating_add(2);
+    let right = rows[0].right().saturating_sub(
+        if columns[0].width == 0 && !sidebar_open && view.is_some() {
+            9
+        } else {
+            0
+        },
+    );
+    if rows[0].height >= 2 && word_x < right {
+        app.working
+            .record(Rect::new(word_x, rows[0].y + 1, (right - word_x).min(9), 1));
+    }
     if columns[0].width == 0 && !sidebar_open && view.is_some() {
         app.draw_action_trigger(
             frame,
