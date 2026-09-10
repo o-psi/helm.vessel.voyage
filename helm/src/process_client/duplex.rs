@@ -105,7 +105,7 @@ struct Handle {
 }
 enum Outbound {
     Command {
-        request: VesselRequest,
+        request: Box<VesselRequest>,
         reply: oneshot::Sender<Result<VesselResponse>>,
     },
     Subscribe {
@@ -295,10 +295,10 @@ impl Slot {
         handle
             .sender
             .try_send(Outbound::Command {
-                request: VesselRequest {
+                request: Box::new(VesselRequest {
                     protocol: VESSEL_API_VERSION,
                     command,
-                },
+                }),
                 reply: tx,
             })
             .map_err(|_| {
@@ -500,6 +500,9 @@ async fn run(
       }
       Ok(())
     }.await;
+    // Publish a retired handle before exposing the loss to watch consumers.
+    // Otherwise an immediate reconnect can enqueue on the still-draining actor.
+    stop.cancel();
     state.send_modify(|state| {
         if state.socket_id == Some(socket_id) {
             state.socket_id = None;

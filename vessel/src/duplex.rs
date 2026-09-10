@@ -28,9 +28,18 @@ pub trait Backend: Send + Sync + 'static {
 const IO_TIMEOUT: Duration = Duration::from_secs(3);
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(25);
 const MAX_CORRELATIONS: usize = 65536;
+// Cross-connection limits prevent each authenticated socket multiplying the
+// maximum frame size by its own independent command and publication budget.
+static COMMANDS: Semaphore = Semaphore::const_new(64);
+static OBSERVATIONS: Semaphore = Semaphore::const_new(64);
+fn output_budget() -> &'static Arc<Semaphore> {
+    static BUDGET: OnceLock<Arc<Semaphore>> = OnceLock::new();
+    BUDGET.get_or_init(|| Arc::new(Semaphore::new(64 * 1024 * 1024)))
+}
 struct Outgoing {
-    frame: ServerFrame,
+    text: String,
     session: Option<Uuid>,
+    _bytes: OwnedSemaphorePermit,
 }
 struct Reverse {
     request: ReverseRequest,
@@ -98,10 +107,34 @@ async fn authorized(backend: &Arc<dyn Backend>, session: Option<Uuid>) -> bool {
         .unwrap_or(false)
 }
 async fn enqueue(tx: &mpsc::Sender<Outgoing>, frame: ServerFrame, session: Option<Uuid>) -> bool {
-    tokio::time::timeout(IO_TIMEOUT, tx.send(Outgoing { frame, session }))
-        .await
-        .is_ok_and(|v| v.is_ok())
+    let Ok(text) = serde_json::to_string(&frame) else {
+        return false;
+    };
+    if text.len() > MAX_FRAME_BYTES {
+        return false;
+    }
+    let Ok(Ok(bytes)) = tokio::time::timeout(
+        IO_TIMEOUT,
+        output_budget()
+            .clone()
+            .acquire_many_owned(text.len() as u32),
+    )
+    .await
+    else {
+        return false;
+    };
+    tokio::time::timeout(
+        IO_TIMEOUT,
+        tx.send(Outgoing {
+            text,
+            session,
+            _bytes: bytes,
+        }),
+    )
+    .await
+    .is_ok_and(|v| v.is_ok())
 }
+
 fn unknown() -> VesselResponse {
     VesselResponse {
         protocol: VESSEL_API_VERSION,
@@ -132,6 +165,7 @@ pub async fn serve(
     let _registration = Registration(socket_id, backend.clone());
     backend.connected(connection);
     let (tx, mut rx) = mpsc::channel::<Outgoing>(MAX_IN_FLIGHT);
+    let (event_tx, mut event_rx) = mpsc::channel::<Outgoing>(MAX_IN_FLIGHT);
     let (mut sink, mut source) = socket.split();
     let (control_tx, mut control_rx) = mpsc::channel::<Message>(4);
     let (closed_tx, mut closed_rx) = watch::channel(false);
@@ -139,14 +173,19 @@ pub async fn serve(
     let writer_backend = backend.clone();
     let writer = tokio::spawn(async move {
         loop {
-            let message = tokio::select! {
-                Some(message) = control_rx.recv() => message,
+            // Control/replies do not queue behind an event flood. Keep the byte
+            // charge until the write completes, not merely until dequeue.
+            let (message, _charge) = tokio::select! {
+                biased;
+                Some(message) = control_rx.recv() => (message, None),
                 out = rx.recv() => {
                     let Some(out) = out else { break; };
                     if !authorized(&writer_backend, out.session).await { break; }
-                    let Ok(text) = serde_json::to_string(&out.frame) else { break; };
-                    if text.len() > MAX_FRAME_BYTES { break; }
-                    Message::Text(text.into())
+                    (Message::Text(out.text.into()), Some(out._bytes))
+                }
+                Some(out) = event_rx.recv() => {
+                    if !authorized(&writer_backend, out.session).await { break; }
+                    (Message::Text(out.text.into()), Some(out._bytes))
                 }
             };
             if !tokio::time::timeout(IO_TIMEOUT, sink.send(message))
@@ -181,6 +220,7 @@ pub async fn serve(
         Uuid,
         (tokio::time::Instant, oneshot::Sender<Option<ReverseReply>>),
     > = HashMap::new();
+    let mut expired_reverse: HashMap<Uuid, tokio::time::Instant> = HashMap::new();
     let mut heartbeat = tokio::time::interval(Duration::from_secs(HEARTBEAT_SECONDS));
     heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     // Protocol ping/pong is handled by axum/tungstenite; application liveness is
@@ -192,7 +232,13 @@ pub async fn serve(
             _ = heartbeat.tick() => {
                 if last_incoming.elapsed() > Duration::from_secs(DEADLINE_SECONDS) || !authorized(&backend, None).await { break; }
                 if control_tx.try_send(Message::Ping(Vec::new().into())).is_err() { break; }
-                pending_reverse.retain(|_, (at, _)| at.elapsed() < Duration::from_secs(DEADLINE_SECONDS));
+                let now = tokio::time::Instant::now();
+                expired_reverse.retain(|_, at| at.elapsed() < Duration::from_secs(DEADLINE_SECONDS * 2));
+                pending_reverse.retain(|id, (at, _)| {
+                    let keep = at.elapsed() < Duration::from_secs(DEADLINE_SECONDS);
+                    if !keep { expired_reverse.insert(*id, now); }
+                    keep
+                });
             }
             Some(_) = observations.join_next(), if !observations.is_empty() => {}
             Some(reverse) = reverse_rx.recv() => {
@@ -217,13 +263,14 @@ pub async fn serve(
                     ClientFrame::Command { request_id, request } => {
                         if request_id.is_nil() || request.protocol != VESSEL_API_VERSION || seen.len() >= MAX_CORRELATIONS || !seen.insert(request_id) { break; }
                         let Ok(command_permit) = commands.clone().try_acquire_owned() else { break; };
+                        let Ok(global_permit) = COMMANDS.try_acquire() else { break; };
                         let backend = backend.clone(); let tx = tx.clone(); let lifetime = permit.clone(); let failure = failure.clone();
                         // Dropping a JoinHandle detaches it. It is deliberately NOT
                         // owned by the abort-on-disconnect observation JoinSet.
                         tokio::spawn(async move {
-                            let (_command_permit, _lifetime) = (command_permit, lifetime);
+                            let (_command_permit, _global_permit, _lifetime) = (command_permit, global_permit, lifetime);
                             if !authorized(&backend, None).await { let _ = failure.send(true); return; }
-                            let response = tokio::time::timeout(COMMAND_TIMEOUT, backend.command(request)).await.unwrap_or_else(|_| unknown());
+                            let response = tokio::time::timeout(COMMAND_TIMEOUT, backend.command(*request)).await.unwrap_or_else(|_| unknown());
                             if !enqueue(&tx, ServerFrame::Reply { request_id, response }, None).await { let _ = failure.send(true); }
                         });
                     }
@@ -236,7 +283,7 @@ pub async fn serve(
                         if !enqueue(&tx, ServerFrame::Subscribed { request_id }, None).await { break; }
                         let mut handles = Vec::new();
                         for subscription in request.subscriptions {
-                            handles.push(observations.spawn(observe(backend.clone(), tx.clone(), request_id, subscription, failure.clone())));
+                            handles.push(observations.spawn(observe(backend.clone(), event_tx.clone(), request_id, subscription, failure.clone())));
                         }
                         subscriptions.insert(request_id, handles);
                     }
@@ -245,7 +292,10 @@ pub async fn serve(
                         for handle in handles { handle.abort(); }
                     }
                     ClientFrame::ReverseReply { request_id, reply } => {
-                        let Some((_, result)) = pending_reverse.remove(&request_id) else { break; };
+                        let Some((_, result)) = pending_reverse.remove(&request_id) else {
+                            if expired_reverse.remove(&request_id).is_some() { continue; }
+                            break;
+                        };
                         let _ = result.send(Some(reply));
                     }
                 }
@@ -269,6 +319,9 @@ async fn observe(
             let _ = failure.send(true);
             return;
         }
+        let Ok(observation_permit) = OBSERVATIONS.acquire().await else {
+            return;
+        };
         let response = tokio::time::timeout(
             IO_TIMEOUT,
             backend.command(VesselRequest {
@@ -286,6 +339,7 @@ async fn observe(
         )
         .await
         .unwrap_or_else(|_| unknown());
+        drop(observation_permit);
         let mut event = VesselEvent {
             protocol: VESSEL_API_VERSION,
             session_id: subscription.session_id,

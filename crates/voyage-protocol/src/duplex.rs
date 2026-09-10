@@ -17,7 +17,7 @@ pub const DEADLINE_SECONDS: u64 = 15;
 pub enum ClientFrame {
     Command {
         request_id: Uuid,
-        request: VesselRequest,
+        request: Box<VesselRequest>,
     },
     Subscribe {
         request_id: Uuid,

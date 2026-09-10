@@ -27,7 +27,12 @@ connections as well as stopping authorized publication and dispatch. Bytes alrea
 delivered and effects already dispatched cannot be recalled.
 
 Frames are limited to 4 MiB. In-flight requests, subscriptions and outgoing queues
-are bounded. Heartbeat and write/response deadlines terminate stalled connections;
+are bounded: 32 command slots per socket, 64 executing commands and 64 concurrent
+observation reads across sockets in each server process, and a 64 MiB serialized
+outgoing-byte budget. Control/reply queues have priority over event queues. Each
+socket admits up to 256 session subscriptions and retains at most 65,536 correlation
+IDs; reaching a limit fails closed rather than evicting identities and accepting a
+repeated request. Reconnect uses a fresh socket without resending earlier commands. Heartbeat and write/response deadlines terminate stalled connections;
 a slow event consumer cannot grow an unbounded queue. Control replies and event
 observations are independently scheduled. Metadata invalidations retain their
 durable cursor. Event gaps and owner incarnation changes require canonical snapshot
@@ -70,6 +75,7 @@ No transport frame logging is introduced.
 
 ## Deployment and verification boundary
 
+Socket connections use direct TCP/TLS, not HTTP forward-proxy environment variables.
 A TLS reverse proxy must permit WebSocket upgrade and preserve Authorization,
 `x-voyage-grant`, `x-voyage-vessel` and subprotocol headers. Disable caching and
 buffering of the upgraded stream. Configure idle timeouts above the heartbeat
@@ -81,3 +87,6 @@ and the remaining [deployment security gates](security.md#first-release-audit-20
 Offline loopback evidence is not deployed WSS/proxy evidence, a paid-provider result,
 or native macOS/Windows verification. Issue #235 tracks this transport; #234 owns
 the browser integration and #198 retains public deployment security gates.
+
+See [focused Linux verification](duplex-verification.md) for observed checks and
+remaining integration/deployment boundaries.
