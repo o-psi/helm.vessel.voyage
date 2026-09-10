@@ -35,7 +35,7 @@ fn state<'a>(view: &super::state::View, working: &'a super::effects::Working) ->
         return "Conversation restored · cleanup pending";
     }
     let status = if view.process.state == voyage_protocol::process::ProcessState::Unavailable {
-        if view.error.is_some() {
+        if view.error.is_some() || view.connection_unavailable {
             "Recovery needed"
         } else {
             "Recovering"
@@ -64,7 +64,12 @@ fn state<'a>(view: &super::state::View, working: &'a super::effects::Working) ->
 }
 
 /// Label, style and compactness share one precedence order.
-fn sidebar_state(view: &super::state::View) -> (&'static str, Style, bool) {
+// Compact entries combine state and title, then reserve a second row for a divider.
+fn sidebar_state(
+    view: &super::state::View,
+    now: chrono::DateTime<chrono::Utc>,
+    retention_secs: u64,
+) -> (&'static str, Style, bool) {
     use voyage_protocol::process::ProcessState;
     let attention = crate::theme::Role::AwaitingInput.style();
     let running = crate::theme::Role::Running.style();
@@ -81,10 +86,13 @@ fn sidebar_state(view: &super::state::View) -> (&'static str, Style, bool) {
     if view.archived() || view.process.state == ProcessState::CleanupUnconfirmed {
         return ("Needs attention · cleanup", attention, false);
     }
-    if view.process.state == ProcessState::Unavailable {
+    if matches!(
+        view.process.state,
+        ProcessState::Unavailable | ProcessState::Stopped | ProcessState::Relinquished
+    ) {
         return ("Status unavailable", attention, false);
     }
-    if view.error.is_some() {
+    if view.error.is_some() || view.connection_unavailable {
         return (
             if view.connection_unavailable {
                 "Disconnected"
@@ -105,8 +113,8 @@ fn sidebar_state(view: &super::state::View) -> (&'static str, Style, bool) {
         {
             return ("Needs attention · cleanup", attention, false);
         }
-        if view.sidebar_suspended() {
-            return ("Suspended", crate::theme::Role::Muted.style(), true);
+        if view.sidebar_settled(now, retention_secs) {
+            return ("Settled", crate::theme::Role::Muted.style(), true);
         }
         if let Some(run) = &snapshot.run {
             match run.state.as_str() {
@@ -121,8 +129,8 @@ fn sidebar_state(view: &super::state::View) -> (&'static str, Style, bool) {
         }
     }
     match view.process.state {
-        ProcessState::Suspended if view.sidebar_suspended() => {
-            ("Suspended", crate::theme::Role::Muted.style(), true)
+        ProcessState::Suspended if view.snapshot.as_ref().is_some_and(|s| s.run.is_none()) => {
+            ("Finished", crate::theme::Role::Completed.style(), false)
         }
         ProcessState::Suspended => ("Status unavailable", attention, false),
         ProcessState::Starting => ("Running · starting", running, false),
@@ -336,14 +344,6 @@ fn draw_inner(frame: &mut Frame<'_>, app: &App) {
         super::terminals::draw(frame, app, rows[1]);
     } else {
         conversation(frame, app, rows[1]);
-        if !panel_open
-            && !reviewing
-            && !actions_open
-            && !app.inference_picker_open()
-            && let Some(view) = view
-        {
-            view.mark_completion_viewed();
-        }
     }
     if !reviewing {
         app.draw_completion(frame, rows[2]);
@@ -502,39 +502,14 @@ fn sidebar(frame: &mut Frame<'_>, app: &App, area: Rect) {
         .iter()
         .map(|target| {
             let view = &app.views[target];
-            let (label, style, compact) = sidebar_state(view);
+            let (label, style, compact) =
+                sidebar_state(view, app.presentation_now, app.settle_after_secs);
             // Compact entries reserve their second row for the same divider.
             let mut lines = if compact {
-                vec![Line::from(format!(
-                    "{}{} · {}",
-                    label,
-                    if view.completion_unread()
-                        || (view.unread
-                            && view.terminal_completion().is_none()
-                            && !view.sidebar_suspended())
-                    {
-                        " · Unread"
-                    } else {
-                        ""
-                    },
-                    safe(&view.title()),
-                ))]
+                vec![Line::from(format!("{label} · {}", safe(&view.title())))]
             } else {
                 vec![
-                    Line::from(format!(
-                        "{}{} · {}",
-                        label,
-                        if view.completion_unread()
-                            || (view.unread
-                                && view.terminal_completion().is_none()
-                                && !view.sidebar_suspended())
-                        {
-                            " · Unread"
-                        } else {
-                            ""
-                        },
-                        app.route_label(target.route),
-                    )),
+                    Line::from(format!("{label} · {}", app.route_label(target.route))),
                     Line::from(safe(&view.title())),
                 ]
             };
@@ -572,7 +547,14 @@ fn sidebar(frame: &mut Frame<'_>, app: &App, area: Rect) {
                 area,
                 app.hover_style(area, false)
                     .remove_modifier(Modifier::UNDERLINED)
-                    .patch(sidebar_state(&app.views[target]).1),
+                    .patch(
+                        sidebar_state(
+                            &app.views[target],
+                            app.presentation_now,
+                            app.settle_after_secs,
+                        )
+                        .1,
+                    ),
             );
         }
         frame.render_widget(

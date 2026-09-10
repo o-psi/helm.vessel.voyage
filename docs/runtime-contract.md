@@ -91,7 +91,7 @@ The voyage authorizes each response against current policy. A stale response,
 response to another voyage or second response cannot authorize an effect.
 
 Background voyages expose pending decisions without redirecting the current input
-target. Switching views preserves drafts and unread state. Notifications carry
+target. Switching views preserves drafts and result-retention timers. Notifications carry
 minimal metadata and require fresh authorization when opened. When no eligible
 interface is available, the runtime follows bounded pending/refusal behavior under
 local policy; it never waits forever or treats silence as approval.

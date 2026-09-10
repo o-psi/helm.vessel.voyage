@@ -25,7 +25,7 @@ const ITEMS: [(&str, &str, &str); 7] = [
         "workflows",
     ),
     ("Models", "Available and selected models", "models"),
-    ("This machine", "Available capacity", "host_resources"),
+    ("This machine", "Cleanup records", "host_resources"),
 ];
 
 impl App {

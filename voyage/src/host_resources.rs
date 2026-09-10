@@ -1,5 +1,6 @@
 //! Account-wide reservations shared by every independent runtime on this host.
-//! Dropping a reservation never establishes cleanup; unresolved rows retain quota.
+//! Dropping a reservation never establishes cleanup; unresolved rows retain evidence.
+//! This ledger does not impose account-wide execution or terminal quotas.
 use anyhow::{Result, ensure};
 use rusqlite::{Connection, TransactionBehavior, params};
 use serde_json::{Value, json};
@@ -18,7 +19,7 @@ pub(crate) fn set_process_scope(session: Uuid, incarnation: Uuid) -> Result<()> 
 }
 
 /// Only the fenced recovery caller with guardian cleanup evidence may release
-/// these charges. Missing legacy scope rows remain charged.
+/// these obligations. Missing legacy scope rows remain unresolved.
 pub(crate) fn recover_process_scope(session: Uuid, incarnation: Uuid) -> Result<()> {
     let (mut connection, path) = database()?;
     let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -46,22 +47,9 @@ pub(crate) fn recover_process_scope(session: Uuid, incarnation: Uuid) -> Result<
     Ok(())
 }
 
-#[derive(Debug, thiserror::Error)]
-#[error(
-    "host {kind} quota exhausted ({used} charged, {requested} requested, limit {maximum}); unconfirmed cleanup reservations remain charged"
-)]
-struct QuotaExhausted {
-    kind: String,
-    used: i64,
-    requested: usize,
-    maximum: usize,
-}
-
 /// Authored labels only: storage diagnostics can contain private host paths.
 pub(crate) fn startup_failure(error: &anyhow::Error) -> &'static str {
-    if error.downcast_ref::<QuotaExhausted>().is_some() {
-        "Host execution capacity exhausted. Wait for active voyages to finish or reconcile stopped owners' cleanup reservations."
-    } else if error
+    if error
         .downcast_ref::<rusqlite::Error>()
         .is_some_and(|error| {
             matches!(
@@ -72,7 +60,7 @@ pub(crate) fn startup_failure(error: &anyhow::Error) -> &'static str {
     {
         "Host resource accounting is busy. Retry this turn."
     } else {
-        "Host execution capacity could not be reserved. Check host resource accounting on the executing machine."
+        "Host resource cleanup tracking could not be initialized. Check host resource accounting on the executing machine."
     }
 }
 
@@ -86,7 +74,9 @@ fn database() -> Result<(Connection, PathBuf)> {
         cfg!(target_os = "linux"),
         "shared host resource accounting requires Linux private storage"
     );
-    let parent = crate::config::default_data_dir();
+    database_at(crate::config::default_data_dir())
+}
+fn database_at(parent: PathBuf) -> Result<(Connection, PathBuf)> {
     std::fs::create_dir_all(&parent)?;
     let directory = crate::attachment::journal::prepare_directory(parent.join("host-resources"))?;
     let path = directory.join("reservations.sqlite3");
@@ -123,39 +113,27 @@ fn database() -> Result<(Connection, PathBuf)> {
 }
 impl Reservation {
     pub fn acquire(kind: &str, owner: Uuid, units: usize) -> Result<Self> {
-        let maximum = match kind {
-            "executors" => 64,
-            "terminals" => 256,
-            _ => anyhow::bail!("unknown host resource kind"),
-        };
+        Self::acquire_in(database()?, kind, owner, units)
+    }
+    fn acquire_in(
+        (mut connection, path): (Connection, PathBuf),
+        kind: &str,
+        owner: Uuid,
+        units: usize,
+    ) -> Result<Self> {
         ensure!(
-            units > 0 && units <= maximum,
-            "host resource request exceeds its limit"
+            matches!(kind, "executors" | "terminals"),
+            "unknown host resource kind"
         );
-        let (mut connection, path) = database()?;
+        let units = i64::try_from(units)?;
+        ensure!(units > 0, "host resource request must be positive");
         let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let used: i64 = tx.query_row(
-            "SELECT coalesce(sum(units),0) FROM reservations WHERE kind=?1 AND observed=0",
-            [kind],
-            |row| row.get(0),
-        )?;
-        if used + units as i64 > maximum as i64 {
-            return Err(QuotaExhausted {
-                kind: kind.to_owned(),
-                used,
-                requested: units,
-                maximum,
-            }
-            .into());
-        }
-        let count: i64 = tx.query_row("SELECT count(*) FROM reservations", [], |row| row.get(0))?;
-        ensure!(count < 100000, "host resource evidence capacity reached");
         let id = Uuid::new_v4();
         let lease = lease(&path, id)?;
         lease.try_lock()?;
         tx.execute(
             "INSERT INTO reservations(id,kind,owner,units) VALUES(?1,?2,?3,?4)",
-            params![id.to_string(), kind, owner.to_string(), units as i64],
+            params![id.to_string(), kind, owner.to_string(), units],
         )?;
         if let Some((session, incarnation)) = PROCESS_SCOPE.get() {
             tx.execute(
@@ -239,7 +217,7 @@ pub fn attest(id: Uuid, reason: &str) -> Result<Value> {
     )?;
     tx.commit()?;
     Ok(
-        json!({"reservation_id":id,"cleanup":"operator_attested_not_observed","quota_released":true}),
+        json!({"reservation_id":id,"cleanup":"operator_attested_not_observed","quota_released":false}),
     )
 }
 pub fn inspect() -> Result<Value> {
@@ -254,6 +232,46 @@ pub fn inspect() -> Result<Value> {
         |row| row.get(0),
     )?;
     Ok(
-        json!({"scope":"executing_os_account_on_this_host","database":path,"limits":{"executors":64,"terminals":256},"reservations":rows,"total":total,"truncated":total>256,"release":"observed_cleanup_only"}),
+        json!({"scope":"executing_os_account_on_this_host","database":path,"limits":{"executors":null,"terminals":null},"reservations":rows,"total":total,"truncated":total>256,"release":"observed_cleanup_only"}),
     )
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unresolved_and_historical_evidence_does_not_limit_admission() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let open = || database_at(directory.path().to_path_buf());
+        let (connection, _) = open()?;
+        // A full legacy ledger must not become another execution quota.
+        connection.execute_batch(
+            "WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<100000)
+             INSERT INTO reservations SELECT 'historical-'||x,'executors','old-owner',1,1 FROM n;",
+        )?;
+        let first = Reservation::acquire_in(open()?, "executors", Uuid::new_v4(), 64)?;
+        let first_id = first.id.to_string();
+        drop(first); // Unobserved cleanup stays unresolved, but does not block others.
+        let executor = Reservation::acquire_in(open()?, "executors", Uuid::new_v4(), 65)?;
+        let terminal = Reservation::acquire_in(open()?, "terminals", Uuid::new_v4(), 257)?;
+        let another = Reservation::acquire_in(open()?, "executors", Uuid::new_v4(), 1)?;
+        let (_, path) = open()?;
+        assert!(lease(&path, executor.id)?.try_lock().is_err());
+        assert!(lease(&path, terminal.id)?.try_lock().is_err());
+        assert!(lease(&path, another.id)?.try_lock().is_err());
+        let observed: i64 = connection.query_row(
+            "SELECT observed FROM reservations WHERE id=?1",
+            [first_id],
+            |row| row.get(0),
+        )?;
+        assert_eq!(observed, 0);
+        let unresolved: i64 = connection.query_row(
+            "SELECT count(*) FROM reservations WHERE observed=0",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(unresolved, 4);
+        Ok(())
+    }
 }

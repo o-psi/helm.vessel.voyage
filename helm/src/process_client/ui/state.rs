@@ -219,11 +219,7 @@ pub struct View {
     pub terminals: super::terminals::Browser,
     pub scroll: u16,
     pub transcript: std::cell::RefCell<super::transcript::State>,
-    pub unread: bool,
-    /// Helm-local acknowledgement, bound to a run rather than process incarnation.
-    pub acknowledged_completion: Option<Uuid>,
-    /// Set only when the result conversation is actually rendered this visit.
-    pub viewed_completion: std::cell::Cell<Option<Uuid>>,
+    pub settlement: Option<super::notifications::Settlement>,
     pub observed: Option<Instant>,
     pub error: Option<String>,
     /// A route-level transport failure, distinct from a conversation read failure.
@@ -258,9 +254,7 @@ impl View {
             terminals: Default::default(),
             scroll: 0,
             transcript: Default::default(),
-            unread: false,
-            acknowledged_completion: None,
-            viewed_completion: Default::default(),
+            settlement: None,
             observed: None,
             error: None,
             connection_unavailable: false,
@@ -347,7 +341,7 @@ impl super::App {
                 .as_ref()
                 .and_then(|snapshot| snapshot.last_message_at.or(snapshot.created_at));
             (
-                self.views[target].sidebar_suspended(),
+                self.views[target].sidebar_settled(self.presentation_now, self.settle_after_secs),
                 std::cmp::Reverse(activity),
                 *target,
             )

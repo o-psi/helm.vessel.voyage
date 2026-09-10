@@ -17,8 +17,8 @@ struct Draft {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     markers: Option<Vec<crate::composer::ImageMarker>>,
     pending: Option<Pending>,
-    #[serde(default)]
-    acknowledged_completion: Option<uuid::Uuid>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    settlement: Option<super::notifications::Settlement>,
 }
 
 fn path(client: &Client, view: &View) -> Result<PathBuf> {
@@ -130,7 +130,7 @@ pub fn load(client: &Client, view: &mut View) -> Result<()> {
     view.images = draft.images;
     view.draft = super::attachments::restore_draft(draft.text, draft.markers, &view.images)?;
     view.pending = draft.pending;
-    view.acknowledged_completion = draft.acknowledged_completion;
+    view.settlement = draft.settlement;
     Ok(())
 }
 
@@ -141,7 +141,7 @@ pub fn save(client: &Client, view: &View) -> Result<()> {
         images: view.images.clone(),
         markers: (!view.images.is_empty()).then(|| view.draft.markers.clone()),
         pending: view.pending.clone(),
-        acknowledged_completion: view.acknowledged_completion,
+        settlement: view.settlement.clone(),
     };
     let bytes = serde_json::to_vec(&draft)?;
     ensure!(
@@ -197,6 +197,9 @@ mod attachment_tests {
         let draft: Draft = serde_json::from_str(old).unwrap();
         assert!(draft.images.is_empty());
         assert_eq!(draft.text, " keep\n");
-        assert_eq!(serde_json::to_string(&draft).unwrap(), old);
+        assert_eq!(
+            serde_json::to_string(&draft).unwrap(),
+            r#"{"text":" keep\n","pending":null}"#
+        );
     }
 }

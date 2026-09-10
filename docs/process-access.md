@@ -113,9 +113,9 @@ Vessel runs `voyage discover-models` with bounded framed stdin/stdout and concea
 stderr. The child revalidates launch configuration and runtime policy, fetches only
 model metadata, and validates/normalizes it for display. It never constructs an
 agent, session journal or registration. Configuration and result limits are 1 MiB,
-with four concurrent discovery slots, host executor quota and bounded deadlines.
-The supervisor-owned task observes child exit before releasing its host quota,
-including when the requesting Helm disconnects. Unknown cleanup retains its charge;
+with four concurrent discovery slots, host cleanup tracking and bounded deadlines.
+The supervisor-owned task observes child exit before resolving its host cleanup record,
+including when the requesting Helm disconnects. Unknown cleanup retains its evidence;
 request cancellation is not an assertion of cleanup. Provider credentials and
 configuration remain on the local executing machine and are not written into
 command receipts or conversation history.

@@ -61,7 +61,7 @@ const COMMANDS: &[(&str, &str, &str)] = &[
     ("todos", "Show tasks", ""),
     ("subagents", "Show delegated work", ""),
     ("workflows", "Show saved workflows", ""),
-    ("host_resources", "Show machine capacity", ""),
+    ("host_resources", "Show machine cleanup records", ""),
     (
         "browser",
         "Share a local browser",

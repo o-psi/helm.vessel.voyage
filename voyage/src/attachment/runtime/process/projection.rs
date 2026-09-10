@@ -65,6 +65,7 @@ pub(super) fn failure_summary(reason: Option<&str>) -> Option<&str> {
         Some(
             reason @
             ("Host execution capacity exhausted. Wait for active voyages to finish or reconcile stopped owners' cleanup reservations."
+            | "Host resource cleanup tracking could not be initialized. Check host resource accounting on the executing machine."
             | "Host resource accounting is busy. Retry this turn."
             | "Host execution capacity could not be reserved. Check host resource accounting on the executing machine."
             | "Runtime startup failed during runtime policy."

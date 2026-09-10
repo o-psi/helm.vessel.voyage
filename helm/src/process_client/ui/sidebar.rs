@@ -112,7 +112,6 @@ impl App {
         self.sidebar.focus = Focus::Voyages;
         self.interactions.borrow_mut().focused = false;
         if let Some(view) = self.views.get_mut(&target) {
-            view.unread = false;
             view.terminals.clear_displayed();
         }
     }

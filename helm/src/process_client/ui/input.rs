@@ -131,7 +131,6 @@ impl App {
                     self.selected = Some(keys[next]);
                     self.sidebar.focus = sidebar::Focus::Voyages;
                     let view = self.views.get_mut(&keys[next]).expect("known view");
-                    view.unread = false;
                     view.terminals.clear_displayed();
                 }
                 return Ok(());

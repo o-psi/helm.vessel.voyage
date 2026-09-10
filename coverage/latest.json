@@ -1,16 +1,16 @@
 {
   "schema_version": 1,
-  "measured_at_utc": "2026-09-10T22:17:26.618495+00:00",
+  "measured_at_utc": "2026-09-10T22:27:31.298535+00:00",
   "source": {
-    "base_commit": "5dfff842797d128d2b34eebe4315caa28d723294",
+    "base_commit": "ccfcb035aca92534be1d44a694bc5515e726d0a2",
     "dirty": true,
-    "fingerprint_sha256": "40f2ed0b8e44c4d63d2597c65a7194bc9659812a96efe72e50646c4d28e28e56",
-    "fingerprint_method": "SHA-256 of compact sorted JSON mapping workspace .rs files, member Cargo.toml files, root Cargo.toml, Cargo.lock and member tests/*.py files to SHA-256 content hashes",
-    "note": "Working-tree measurement including unrelated uncommitted changes; not coverage of the clean base or publication commit. Full captured source map was unchanged during the run. Python test sources are fingerprinted but not included in Rust coverage."
+    "fingerprint_sha256": "36d1b7f5eb8488ae3349ccea2dc521c4125beb80f402dee1c2591de8d6e347cc",
+    "fingerprint_method": "SHA-256 of compact sorted JSON mapping workspace .rs files, member Cargo.toml files, root Cargo.toml and Cargo.lock to SHA-256 content hashes",
+    "note": "Working-tree measurement includes unrelated concurrent work; not coverage of the clean base or publication commit. Source fingerprint unchanged during measurement."
   },
   "platform": "x86_64-unknown-linux-gnu",
   "tools": {
-    "rustc": "1.98.1 (48a229cea 2026-09-01)",
+    "rustc": "1.98.1",
     "llvm": "22.1.8",
     "cargo_llvm_cov": "0.9.1"
   },
@@ -22,26 +22,26 @@
   },
   "scope": "Existing workspace Rust tests, default features",
   "tests": {
-    "passed": 108,
+    "passed": 113,
     "failed": 0,
     "ignored": 1
   },
   "coverage": {
     "lines": {
-      "count": 71125,
-      "covered": 11499,
-      "percent": 16.16731107205624
+      "count": 71267,
+      "covered": 11706,
+      "percent": 16.425554604515412
     },
     "functions": {
-      "count": 7281,
-      "covered": 1142,
-      "percent": 15.68465870072792
+      "count": 7291,
+      "covered": 1162,
+      "percent": 15.937457138938418
     },
     "regions": {
-      "count": 115325,
-      "covered": 17695,
-      "notcovered": 97630,
-      "percent": 15.343594190331672
+      "count": 115603,
+      "covered": 18065,
+      "notcovered": 97538,
+      "percent": 15.626757091078952
     }
   },
   "exclusions": [
@@ -52,9 +52,11 @@
     "Branch coverage"
   ],
   "notes": [
-    "Independent measurement: raw profiles cleared first; compiled artifacts retained and prior run log/summary copied under target/coverage-report/happy-path-prior.",
-    "Workspace Rust tests passed without live-provider execution. The separately passing conversation_files.py process check is not included in these percentages.",
-    "Compared with previous record: lines +0.1359 percentage points, functions +0.0876 percentage points, regions +0.1602 percentage points.",
-    "Coverage measures execution, not correctness; no native macOS/Windows or TUI claim."
+    "Raw profiles cleared first; previous report and compiled artifacts retained.",
+    "Focused settlement regressions cover deadlines, outcomes, restart fallback, new runs, idle and attention/unavailable states, and configuration validation.",
+    "Compared with previous record: lines -0.1965 percentage points, functions -0.2703 percentage points, regions -0.1550 percentage points.",
+    "The prior measurement used an isolated tree excluding unfinished account/UI changes; this dirty-tree measurement includes that concurrent source. Total lines rose by 2,106 and covered lines by 210, producing the small percentage drop without narrowing workspace test scope.",
+    "Separate offline Linux PTY verification passed retention across navigation, timed Settled presentation, no Unread labels, restart retention, no executor wake on observation, and invalid configuration before terminal setup; one synthetic loopback provider request. This is outside the Rust coverage percentage.",
+    "Coverage measures execution, not correctness; no native macOS/Windows or live-provider claim."
   ]
 }
