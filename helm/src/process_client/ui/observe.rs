@@ -11,6 +11,7 @@ use tokio::sync::{Semaphore, mpsc};
 use voyage_protocol::vessel::{ProcessInfo, VesselCommand, VesselEventSubscription, VoyageCommand};
 
 pub enum Update {
+    Browser { target: Target, result: Result<String, String> },
     Coordination {
         origin: Target,
         request: uuid::Uuid,

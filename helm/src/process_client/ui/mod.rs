@@ -1,5 +1,6 @@
 //! Multiplexed presentation; dropping this interface only drops observations.
 mod actions;
+mod browser;
 mod archive;
 mod attachments;
 mod completion;
@@ -50,6 +51,9 @@ use std::{
 use tokio::sync::mpsc;
 
 pub(super) struct App {
+    browsers: BTreeMap<Target, crate::process_client::browser::Handle>,
+    browser_opened: std::collections::BTreeSet<Target>,
+    browser_retired: Vec<tokio::task::JoinHandle<()>>,
     working: effects::Working,
     coordination_request: Option<uuid::Uuid>,
     previews: previews::State,
@@ -167,6 +171,9 @@ pub async fn run_with_notice(
     let selected =
         session.and_then(|session| clients.first_route().map(|route| Target { route, session }));
     let mut app = App {
+        browsers: BTreeMap::new(),
+        browser_opened: Default::default(),
+        browser_retired: Vec::new(),
         working,
         previews,
         vessels: manager.ok().map(std::cell::RefCell::new),
@@ -227,6 +234,7 @@ pub async fn run_with_notice(
     let mut repaint = tokio::time::interval(Duration::from_millis(100));
     let result = async {
         while !app.quit {
+            app.poll_browsers();
             app.poll_clipboard();
             app.poll_previews()?;
             app.sync_completion();
@@ -267,6 +275,7 @@ pub async fn run_with_notice(
         for (target, view) in &app.views { drafts::save(&app.clients[target.route], view)?; }
         Ok(())
     }.await;
+    let browser_cleanup = app.finish_browsers().await;
     let clipboard_cleanup = app.finish_clipboard().await;
     let preview_cleanup = app.previews.finish();
     for (_, job) in std::mem::take(&mut app.observers) {
@@ -286,7 +295,7 @@ pub async fn run_with_notice(
     for job in app.retired_observers {
         let _ = job.await;
     }
-    result.and(clipboard_cleanup).and(preview_cleanup)
+    result.and(browser_cleanup).and(clipboard_cleanup).and(preview_cleanup)
 }
 
 impl App {

@@ -32,3 +32,6 @@ mod admin;
 pub mod export;
 
 mod artifacts;
+
+/// Explicit human-authorized local browser resources, never an agent runtime.
+pub mod browser;

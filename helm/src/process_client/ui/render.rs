@@ -378,8 +378,8 @@ fn footer(app: &App, width: u16, reviewing: bool, overlay: bool, status: &str) -
     };
     let mut line = Line::styled(hint.to_owned(), muted());
     for shortcuts in [
-        "F1 Help · F3 Console · F5 Archives · F9 Actions · Ctrl+C Leave",
-        "F1 Help · F3 Console · F9 Actions",
+        "F1 Help · F3 Console · F6 Browser · F9 Actions · Ctrl+C Leave",
+        "F1 Help · F6 Browser · F9 Actions",
         "F1 Help",
     ] {
         let shortcuts = if reviewing { "Ctrl+C Leave" } else { shortcuts };

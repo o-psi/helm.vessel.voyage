@@ -103,6 +103,10 @@ impl App {
                 }
                 return Ok(());
             }
+            if key.code == KeyCode::F(6) {
+                let target=self.selected.context("Select an existing voyage before opening Browser")?;
+                return self.browser_command(target,"/browser");
+            }
             if key.code == KeyCode::F(5) {
                 self.show_archives(!self.archives);
                 return Ok(());

@@ -75,7 +75,7 @@ impl Routes {
         self.unavailable.remove(&route);
     }
     pub fn deactivate(&mut self, id: Uuid) {
-        self.active.remove(&id);
+        if let Some(route)=self.active.remove(&id) { self.clients[&route].disconnect(); }
     }
     pub fn len(&self) -> usize {
         self.active.len()
@@ -103,6 +103,7 @@ impl App {
         }
     }
     pub(super) fn disconnect_connection(&mut self, id: Uuid) {
+        self.stop_browser_route(id);
         if let Some(route) = self.clients.routes().find(|route| route.id == id) {
             self.vessel_state(route, super::vessels::ConnectionState::Offline);
         }

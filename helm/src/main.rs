@@ -22,6 +22,9 @@ mod managed;
 #[tokio::main]
 async fn main() -> Result<()> {
     let mut cli = Cli::parse();
+    if let Some(Command::Browser(args)) = &cli.command {
+        return helm::process_client::browser::run_cli(args).await;
+    }
     if matches!(&cli.command, Some(Command::Connect(_))) {
         let creating = matches!(&cli.command, Some(Command::Connect(args))
             if args.command.as_ref().is_some_and(helm::process_client::cli::ConnectedCommand::uses_host_workspace));
@@ -310,6 +313,7 @@ async fn main() -> Result<()> {
         resume: None,
         plain: false,
     }) {
+        Command::Browser(_) => unreachable!("browser setup handled before provider configuration"),
         Command::Connect(_) => {
             unreachable!("connected client handled before execution configuration")
         }
