@@ -28,7 +28,7 @@ impl Supervisor {
                 "scope": "workspaces", "grant_revision": grant.revision,
                 "rights": grant.rights, "expires_at_ms": grant.expires_at_ms,
                 "workspaces": grant.workspaces,
-                "features": ["workspace_pairing", "sse_events", "scoped_catalogue", "voyage_operations", "grant_revocation","start_resolution"]
+                "features": ["workspace_pairing", "sse_events","duplex_socket", "scoped_catalogue", "voyage_operations", "grant_revocation","start_resolution"]
             })),
             VesselCommand::Catalogue => {
                 has(ProcessRight::Catalogue)?;

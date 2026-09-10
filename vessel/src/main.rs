@@ -253,6 +253,13 @@ async fn main() -> Result<()> {
                     process_http::boundary,
                 )),
         )
+        .route(
+            voyage_protocol::duplex::SOCKET_PATH,
+            get(process_http::socket).layer(middleware::from_fn_with_state(
+                state.clone(),
+                process_http::boundary,
+            )),
+        )
         .route("/health", get(health))
         .route("/ready", get(readiness))
         .route("/metrics", get(metrics))

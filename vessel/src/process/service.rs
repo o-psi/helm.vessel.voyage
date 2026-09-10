@@ -38,6 +38,7 @@ struct HttpState {
     token_hash: [u8; 32],
     capacity: Arc<Semaphore>,
     event_capacity: Arc<Semaphore>,
+    socket_capacity: Arc<Semaphore>,
 }
 
 pub async fn serve(directory: PathBuf, binary: PathBuf) -> Result<()> {
@@ -87,8 +88,13 @@ pub async fn serve(directory: PathBuf, binary: PathBuf) -> Result<()> {
         token_hash: Sha256::digest(token.as_bytes()).into(),
         capacity: Arc::new(Semaphore::new(64)),
         event_capacity: Arc::new(Semaphore::new(16)),
+        socket_capacity: Arc::new(Semaphore::new(64)),
     };
     let app = Router::new()
+        .route(
+            voyage_protocol::duplex::SOCKET_PATH,
+            axum::routing::get(local_socket),
+        )
         .route(voyage_protocol::vessel::COMMAND_PATH, post(local_command))
         .route(voyage_protocol::vessel::EVENTS_PATH, post(local_events))
         .layer(axum::extract::DefaultBodyLimit::max(MAX_VESSEL_BODY))
@@ -107,6 +113,60 @@ pub async fn serve(directory: PathBuf, binary: PathBuf) -> Result<()> {
         std::fs::File::open(&directory)?.sync_all()?;
     }
     Ok(())
+}
+
+/// Local account authority is authenticated by local_boundary before upgrade.
+struct LocalSocketBackend {
+    supervisor: Arc<Supervisor>,
+    token_hash: [u8; 32],
+    vessel_id: Uuid,
+}
+impl crate::duplex::Backend for LocalSocketBackend {
+    fn command(&self, request: VesselRequest) -> crate::duplex::BackendFuture<VesselResponse> {
+        let supervisor = self.supervisor.clone();
+        Box::pin(async move { super::api::response(supervisor.handle(request.command).await) })
+    }
+    fn authorize(&self, _session: Option<Uuid>) -> crate::duplex::BackendFuture<bool> {
+        let directory = self.supervisor.directory.clone();
+        let expected = self.token_hash;
+        let vessel_id = self.vessel_id;
+        Box::pin(async move {
+            if !super::identity::public(&directory)
+                .is_ok_and(|identity| identity.vessel_id == vessel_id)
+            {
+                return false;
+            }
+            registry::load_local_access(&directory).is_ok_and(|access| {
+                let actual: [u8; 32] = Sha256::digest(access.token.as_bytes()).into();
+                bool::from(actual.ct_eq(&expected))
+            })
+        })
+    }
+}
+async fn local_socket(
+    State(state): State<HttpState>,
+    headers: axum::http::HeaderMap,
+    upgrade: axum::extract::ws::WebSocketUpgrade,
+) -> Response {
+    if !crate::duplex::supports(&headers) {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+    let Ok(permit) = state.socket_capacity.clone().try_acquire_owned() else {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    };
+    let Ok(identity) = super::identity::public(&state.supervisor.directory) else {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    };
+    let backend = Arc::new(LocalSocketBackend {
+        supervisor: state.supervisor,
+        token_hash: state.token_hash,
+        vessel_id: identity.vessel_id,
+    });
+    upgrade
+        .protocols([voyage_protocol::duplex::SUBPROTOCOL])
+        .max_message_size(voyage_protocol::duplex::MAX_FRAME_BYTES)
+        .max_frame_size(voyage_protocol::duplex::MAX_FRAME_BYTES)
+        .on_upgrade(move |socket| crate::duplex::serve(socket, backend, identity.vessel_id, permit))
 }
 
 async fn local_events(
@@ -344,7 +404,7 @@ impl Supervisor {
             }
             command @ VesselCommand::ManagedImport { .. } => self.initialize_managed(command).await,
             VesselCommand::Capabilities => Ok(
-                json!({"protocol":VESSEL_API_VERSION,"version":env!("CARGO_PKG_VERSION"),"vessel_id":super::identity::public(&self.directory)?.vessel_id,"platform":std::env::consts::OS,"features":["sessionless_models","catalogue","start","start_configured","start_resolution","inspect","voyage_operations","stop","restart","explicit_recovery","durable_receipts","history_paging","events","sse_events","decisions","lifecycle","branch","ordinary_import","managed_import","scoped_grants","revocation","participant_bindings","participant_assignments","signed_owner_transfer"],"max_frame_bytes":MAX_VESSEL_BODY,"capacity":null,"max_connections":64}),
+                json!({"protocol":VESSEL_API_VERSION,"version":env!("CARGO_PKG_VERSION"),"vessel_id":super::identity::public(&self.directory)?.vessel_id,"platform":std::env::consts::OS,"features":["sessionless_models","catalogue","start","start_configured","start_resolution","inspect","voyage_operations","stop","restart","explicit_recovery","durable_receipts","history_paging","events","sse_events","duplex_socket","decisions","lifecycle","branch","ordinary_import","managed_import","scoped_grants","revocation","participant_bindings","participant_assignments","signed_owner_transfer"],"max_frame_bytes":MAX_VESSEL_BODY,"capacity":null,"max_connections":64}),
             ),
             VesselCommand::Catalogue => {
                 let registrations: Vec<_> = self

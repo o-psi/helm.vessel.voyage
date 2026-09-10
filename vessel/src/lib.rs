@@ -3,3 +3,5 @@ pub mod origin;
 
 #[cfg(target_os = "linux")]
 pub mod process;
+
+pub mod duplex;

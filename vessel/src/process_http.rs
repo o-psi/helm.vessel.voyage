@@ -305,3 +305,152 @@ pub(super) async fn pair(
         };
     Json(response).into_response()
 }
+
+/// The public socket uses the same scoped command adapter as HTTP. The initial
+/// capability document freezes the accepted identity, principal, rights, scope
+/// and revision; any change closes the connection rather than broadening it.
+#[derive(Clone)]
+struct SocketBackend {
+    directory: std::path::PathBuf,
+    expected_vessel_id: Uuid,
+    grant_id: Uuid,
+    token: String,
+    authority: serde_json::Value,
+}
+impl SocketBackend {
+    async fn exchange(&self, command: VesselCommand) -> VesselResponse {
+        vessel::process::exchange(
+            &self.directory,
+            &VesselRequest {
+                protocol: VESSEL_API_VERSION,
+                command: VesselCommand::Granted {
+                    expected_vessel_id: Some(self.expected_vessel_id),
+                    grant_id: self.grant_id,
+                    token: self.token.clone(),
+                    command: Box::new(command),
+                },
+            },
+        )
+        .await
+        .unwrap_or_else(|_| VesselResponse {
+            protocol: VESSEL_API_VERSION,
+            result: serde_json::Value::Null,
+            error: Some("Vessel routing unavailable; command outcome unknown".into()),
+            outcome_unknown: true,
+        })
+    }
+}
+impl vessel::duplex::Backend for SocketBackend {
+    fn command(&self, request: VesselRequest) -> vessel::duplex::BackendFuture<VesselResponse> {
+        let backend = self.clone();
+        Box::pin(async move { backend.exchange(request.command).await })
+    }
+    fn authorize(&self, session: Option<Uuid>) -> vessel::duplex::BackendFuture<bool> {
+        let backend = self.clone();
+        Box::pin(async move {
+            let current = backend.exchange(VesselCommand::Capabilities).await;
+            if current.error.is_some()
+                || current.outcome_unknown
+                || current.result != backend.authority
+            {
+                return false;
+            }
+            if let Some(session_id) = session {
+                let scope = backend
+                    .exchange(VesselCommand::Inspect { session_id })
+                    .await;
+                if scope.error.is_some() || scope.outcome_unknown {
+                    return false;
+                }
+            }
+            true
+        })
+    }
+}
+
+pub(super) async fn socket(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    upgrade: axum::extract::ws::WebSocketUpgrade,
+) -> Response {
+    use vessel::duplex::Backend;
+    static SOCKET_CAPACITY: std::sync::OnceLock<std::sync::Arc<tokio::sync::Semaphore>> =
+        std::sync::OnceLock::new();
+    let Some(directory) = state.process_directory else {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    };
+    if !vessel::duplex::supports(&headers)
+        || headers.get_all("authorization").iter().count() != 1
+        || headers.get_all("x-voyage-grant").iter().count() != 1
+    {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+    // A duplex connection always pins its destination, including session grants.
+    let expected_vessel_id = match expected_vessel(&headers) {
+        Ok(Some(id)) => id,
+        _ => return StatusCode::BAD_REQUEST.into_response(),
+    };
+    let Some(token) = headers
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .filter(|v| v.len() == 64 && v.bytes().all(|b| b.is_ascii_hexdigit()))
+    else {
+        return StatusCode::UNAUTHORIZED.into_response();
+    };
+    let Some(grant_id) = headers
+        .get("x-voyage-grant")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| Uuid::parse_str(v).ok())
+        .filter(|v| !v.is_nil())
+    else {
+        return StatusCode::UNAUTHORIZED.into_response();
+    };
+    let Ok(permit) = SOCKET_CAPACITY
+        .get_or_init(|| std::sync::Arc::new(tokio::sync::Semaphore::new(64)))
+        .clone()
+        .try_acquire_owned()
+    else {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    };
+    let mut backend = SocketBackend {
+        directory,
+        expected_vessel_id,
+        grant_id,
+        token: token.into(),
+        authority: serde_json::Value::Null,
+    };
+    let initial = match tokio::time::timeout(
+        std::time::Duration::from_secs(3),
+        backend.exchange(VesselCommand::Capabilities),
+    )
+    .await
+    {
+        Ok(response) if response.error.is_none() && !response.outcome_unknown => response,
+        _ => return StatusCode::UNAUTHORIZED.into_response(),
+    };
+    if initial
+        .result
+        .get("vessel_id")
+        .and_then(serde_json::Value::as_str)
+        .and_then(|id| Uuid::parse_str(id).ok())
+        != Some(expected_vessel_id)
+    {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    backend.authority = initial.result;
+    if !tokio::time::timeout(std::time::Duration::from_secs(3), backend.authorize(None))
+        .await
+        .unwrap_or(false)
+    {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    let backend = std::sync::Arc::new(backend);
+    upgrade
+        .protocols([voyage_protocol::duplex::SUBPROTOCOL])
+        .max_message_size(voyage_protocol::duplex::MAX_FRAME_BYTES)
+        .max_frame_size(voyage_protocol::duplex::MAX_FRAME_BYTES)
+        .on_upgrade(move |socket| {
+            vessel::duplex::serve(socket, backend, expected_vessel_id, permit)
+        })
+}
