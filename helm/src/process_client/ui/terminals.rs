@@ -142,7 +142,7 @@ impl Browser {
 impl App {
     pub(super) fn request_terminal(&mut self, target: Target, terminal_id: Uuid) -> Result<()> {
         anyhow::ensure!(
-            self.clients.current(target.route),
+            self.clients.available(target.route),
             "Vessel disconnected; terminal input is not buffered or replayed"
         );
         let view = &self.views[&target];

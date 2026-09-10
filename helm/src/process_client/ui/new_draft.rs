@@ -336,7 +336,7 @@ impl App {
         anyhow::ensure!(draft.composer.text.len() <= 65536, "draft limit is 64 KiB");
         super::attachments::validate_set(&draft.saved.images)?;
         anyhow::ensure!(
-            self.clients.current(draft.route),
+            self.clients.available(draft.route),
             "This draft belongs to an inactive connection. Reconnect its original Vessel access to recover; no command was redirected"
         );
         let client = self.clients[draft.route].clone();

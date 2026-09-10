@@ -6,7 +6,7 @@ use voyage_protocol::vessel::VoyageCommand;
 impl App {
     pub(super) fn inspect_control(&mut self, target: Target, section: &str) -> Result<()> {
         ensure!(
-            self.clients.current(target.route),
+            self.clients.available(target.route),
             "Vessel disconnected; reconnect to inspect live controls"
         );
         let view = &self.views[&target];

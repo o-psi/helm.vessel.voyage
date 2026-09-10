@@ -18,13 +18,38 @@ The panel provides:
 - **Add HTTPS + pairing** for an owner-approved workspace connection.
 - **Import existing access file** for an existing credential, including restricted
   conversation sharing.
-- Connect/Retry, Disconnect, friendly-name changes and automatic reconnect.
+- Connect/Retry, Disconnect, friendly-name changes and automatic connection at startup.
 - Renew/Replace access, Forget, and recovery of retained connection records.
 - New conversation on the selected Vessel and filters for the conversation list.
 
 Saved connections are loaded by normal interactive Helm startup. Remote discovery
 runs in the background; an unavailable remote does not prevent local work. Explicit
 CLI subcommands remain single-target and do not implicitly fan out to saved Vessels.
+
+### Unavailable Vessels
+
+A failed catalogue check (including its three-second observation timeout) marks
+that Vessel **Unavailable** and pauses its observer and background receipt/history
+checks. Helm does not repeatedly poll it or put transport diagnostics in the shared
+footer. Other Vessels and local draft editing remain usable. An unavailable Vessel
+is not evidence that its voyages stopped, finished, or completed cleanup.
+
+Open the centered **Vessels** modal with **Ctrl+G**, select the connection with
+Up/Down, and press **c** (Connect / Retry). Retry checks connectivity and resumes
+observation on success; it never resends a turn or terminal input. **u** retries all
+unavailable active routes, including launch-only `--access-file` routes that are not
+saved address-book entries. Cached history,
+unsent drafts, and exact pending command identities remain retained. New sends and
+remote changes are refused while the Vessel is known unavailable. Requests already
+in flight retain their own outcome handling; losing observation does not cancel them.
+
+**d** disconnects observation explicitly. Saved remote connections also offer alias,
+connect-at-startup, renewal/replacement, and forget/restore controls. The startup
+preference does not enable repeated retries after a failed connection check.
+Access expiry, revocation, identity changes, and unsupported versions keep their
+separate labels in the modal; an offline check does not erase credentials or bypass
+review. A local startup failure keeps ordinary interactive chat open with its draft;
+plain/scripted operations still return the connection failure.
 
 The executing Vessel is shown beside the conversation/draft. New remote
 conversations use a workspace selected from that Vessel's approved list. A local

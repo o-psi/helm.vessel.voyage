@@ -489,6 +489,10 @@ impl App {
     }
 
     pub(super) fn send_image_turn(&mut self, target: Target) -> Result<()> {
+        ensure!(
+            self.clients.available(target.route),
+            "Vessel unavailable · Ctrl+G to manage / retry; draft retained"
+        );
         self.ensure_paste_finished(Destination::Live(target))?;
         self.ensure_paste_editable(Destination::Live(target))?;
         let view = self.views.get_mut(&target).context("Voyage unavailable")?;

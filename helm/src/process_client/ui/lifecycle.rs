@@ -15,7 +15,7 @@ impl App {
         preserve_draft: bool,
     ) -> Result<()> {
         ensure!(
-            self.clients.current(target.route),
+            self.clients.available(target.route),
             "Vessel disconnected; reconnect before changing remote work"
         );
         let view = self

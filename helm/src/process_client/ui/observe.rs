@@ -71,6 +71,10 @@ pub enum Update {
         incarnation: uuid::Uuid,
         result: Box<Result<Snapshot, String>>,
     },
+    RouteUnavailable {
+        route: Route,
+        error: String,
+    },
     RouteError {
         route: Route,
         error: String,
@@ -96,11 +100,16 @@ pub fn spawn(
         let mut cursors = HashMap::<(uuid::Uuid, uuid::Uuid), u64>::new();
         let mut stream_round = 0usize;
         loop {
-            let streaming = client.supports_events().await;
-            let result = client
-                .request(VesselCommand::Catalogue)
-                .await
-                .and_then(|value| Ok(serde_json::from_value::<Vec<ProcessInfo>>(value)?));
+            // A read-only probe has a short UI budget; its timeout says nothing
+            // about runtime liveness or the outcome of any in-flight command.
+            let result = tokio::time::timeout(
+                Duration::from_secs(3),
+                client.request(VesselCommand::Catalogue),
+            )
+            .await
+            .map_err(|_| anyhow::anyhow!("Vessel connection check timed out"))
+            .and_then(|result| result)
+            .and_then(|value| Ok(serde_json::from_value::<Vec<ProcessInfo>>(value)?));
             match result {
                 Ok(processes) => {
                     cursors.retain(|(id, incarnation), _| {
@@ -118,6 +127,7 @@ pub fn spawn(
                     {
                         break;
                     }
+                    let streaming = client.supports_events().await;
                     let processes = processes
                         .into_iter()
                         .filter(|process| process.archive.is_none() && process.deletion.is_none())
@@ -259,17 +269,15 @@ pub fn spawn(
                     cursors.clear();
                 }
                 Err(error) => {
-                    if sender
-                        .send(Update::RouteError {
+                    let _ = sender
+                        .send(Update::RouteUnavailable {
                             route,
                             error: error.to_string(),
                         })
-                        .await
-                        .is_err()
-                    {
-                        break;
-                    }
-                    tokio::time::sleep(Duration::from_millis(750)).await;
+                        .await;
+                    // The connection manager owns explicit retry. Do not flood
+                    // an offline host, erase cached views, or replay commands.
+                    break;
                 }
             }
         }

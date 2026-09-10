@@ -66,9 +66,20 @@ impl App {
     fn vessel_actions(&mut self, actions: Vec<Action>) {
         for action in actions {
             match action {
+                Action::RetryUnavailable => {
+                    let clients = self
+                        .clients
+                        .routes()
+                        .filter(|route| !self.clients.available(*route))
+                        .map(|route| self.clients[route].clone())
+                        .collect::<Vec<_>>();
+                    for client in clients {
+                        self.retry_client(client);
+                    }
+                }
                 Action::ConnectLocal => {
                     if let Some(client) = self.clients.local_client() {
-                        self.activate_client(client);
+                        self.retry_client(client);
                     } else {
                         self.status = "This launch has no local route. Start ordinary Helm to include this computer.".into();
                     }
@@ -81,7 +92,7 @@ impl App {
                 Action::Activate(connection) => {
                     if let Some(manager) = &self.vessels {
                         let client = connection.client(manager.borrow().registry());
-                        self.activate_client(client);
+                        self.retry_client(client);
                     }
                 }
                 Action::Disconnect(id) | Action::Forget(id) => self.disconnect_connection(id),

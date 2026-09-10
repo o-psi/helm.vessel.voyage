@@ -62,6 +62,16 @@ impl Manager {
         ];
         match &self.panel.page {
             Page::List => {
+                rows.push(Row::plain(
+                    "Unavailable Vessels are not polled. Select one and press c to retry.",
+                ));
+                rows.push(Row::plain(
+                    "Drafts and pending commands are retained; remote runtime state is unknown.",
+                ));
+                rows.push(Row::button(
+                    "[u Retry unavailable Vessels (including launch-only routes)]",
+                    Button::RetryUnavailable,
+                ));
                 rows.push(Row::button("[a Add HTTPS + pairing]", Button::Add));
                 rows.push(Row::button("[w New on selected Vessel]", Button::New));
                 rows.push(Row::button(
@@ -105,7 +115,7 @@ impl Manager {
                     });
                     rows.push(Row::button(
                         format!(
-                            "  {} · {} · reconnect {}",
+                            "  {} · {} · connect at startup {}",
                             text(&c.endpoint),
                             scope(&c.scope),
                             if c.autoconnect { "on" } else { "off" }
@@ -144,7 +154,7 @@ impl Manager {
                         ("[c / Enter Connect / Retry]", Button::Connect),
                         ("[d Disconnect observation only]", Button::Disconnect),
                         ("[r Rename friendly alias]", Button::Rename),
-                        ("[t Toggle automatic reconnect]", Button::Auto),
+                        ("[t Toggle connect at startup]", Button::Auto),
                         ("[n Renew / Replace access]", Button::Replace),
                         ("[f Forget locally]", Button::Forget),
                     ] {

@@ -14,6 +14,10 @@ impl App {
         decision_id: Uuid,
         response: serde_json::Value,
     ) -> Result<()> {
+        ensure!(
+            self.clients.available(target.route),
+            "Vessel unavailable · Ctrl+G to manage / retry; no response sent"
+        );
         let view = self
             .views
             .get_mut(&target)

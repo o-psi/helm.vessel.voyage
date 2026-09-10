@@ -203,11 +203,18 @@ pub async fn chat(
 ) -> Result<()> {
     if reference.is_none() {
         config.workspace = Some(config.resolve_workspace(workspace)?);
-        let client = local::connect(super::cli::default_directory(), true).await?;
+        let directory = super::cli::default_directory();
+        let connected = local::connect(directory.clone(), true).await;
         if plain {
-            return super::plain::chat_new(&client, config).await;
+            return super::plain::chat_new(&connected?, config).await;
         }
-        return super::ui::run_with_config(vec![client], None, Some(config)).await;
+        let (client, notice) = match connected {
+            Ok(client) => (client, None),
+            Err(_) => (Client::local(directory), Some(
+                "Local Vessel unavailable. Drafts remain in Helm; Ctrl+G opens Vessels to manage / retry.".into(),
+            )),
+        };
+        return super::ui::run_with_notice(vec![client], None, Some(config), notice).await;
     }
     let creating = reference.is_none();
     let opened = open(

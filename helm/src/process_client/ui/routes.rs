@@ -1,13 +1,17 @@
 //! Stable activation identities. Historical clients are retained for exact recovery;
 //! disconnected identities are never rebound to a different credential.
 use super::{App, Client, Route, observe};
-use std::{collections::BTreeMap, ops::Index};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    ops::Index,
+};
 use uuid::Uuid;
 
 pub(super) struct Routes {
     clients: BTreeMap<Route, Client>,
     active: BTreeMap<Uuid, Route>,
     order: Vec<Uuid>,
+    unavailable: BTreeSet<Route>,
 }
 impl Routes {
     pub fn new(clients: Vec<Client>) -> Self {
@@ -15,6 +19,7 @@ impl Routes {
             clients: BTreeMap::new(),
             active: BTreeMap::new(),
             order: Vec::new(),
+            unavailable: BTreeSet::new(),
         };
         for client in clients {
             routes.insert(client);
@@ -59,6 +64,15 @@ impl Routes {
     }
     pub fn current(&self, route: Route) -> bool {
         self.active.get(&route.id) == Some(&route)
+    }
+    pub fn available(&self, route: Route) -> bool {
+        self.current(route) && !self.unavailable.contains(&route)
+    }
+    pub fn mark_unavailable(&mut self, route: Route) {
+        self.unavailable.insert(route);
+    }
+    pub fn mark_available(&mut self, route: Route) {
+        self.unavailable.remove(&route);
     }
     pub fn deactivate(&mut self, id: Uuid) {
         self.active.remove(&id);
@@ -121,6 +135,32 @@ impl App {
         self.status =
             "Disconnected observation only. Remote work continues; no input will be replayed."
                 .into();
+    }
+    pub(super) fn retry_client(&mut self, client: Client) {
+        let route = self.clients.routes().find(|route| route.id == client.id());
+        if let Some(route) = route
+            && !self.clients.available(route)
+        {
+            // Keep the activation and in-flight command observations intact.
+            // Retry only the catalogue observer, never a mutation.
+            if self
+                .observers
+                .get(&route.id)
+                .is_some_and(|job| !job.is_finished())
+            {
+                return;
+            }
+            if let Some(job) = self.observers.remove(&route.id) {
+                self.retired_observers.push(job);
+            }
+            self.vessel_state(route, super::vessels::ConnectionState::Connecting);
+            self.observers.insert(
+                route.id,
+                observe::spawn(self.clients[route].clone(), route, self.sender.clone()),
+            );
+            return;
+        }
+        self.activate_client(client);
     }
     pub(super) fn activate_client(&mut self, client: Client) {
         let id = client.id();

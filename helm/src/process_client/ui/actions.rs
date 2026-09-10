@@ -273,6 +273,10 @@ impl App {
                 prompt: draft.clone(),
             }
         };
+        ensure!(
+            self.clients.available(target.route),
+            "Vessel unavailable · Ctrl+G to manage / retry; draft retained"
+        );
         let command = super::attachments::prepare(command, &view.draft, &view.images)?;
         view.pending = Some(Pending {
             command_id,
@@ -304,7 +308,7 @@ impl App {
     }
 
     pub(super) fn dispatch(&mut self, target: Target, command_id: Uuid, command: VoyageCommand) {
-        if !self.clients.current(target.route) {
+        if !self.clients.available(target.route) {
             self.status =
                 "Vessel disconnected. Pending command retained; reconnect to observe its receipt."
                     .into();

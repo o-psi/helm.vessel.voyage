@@ -117,7 +117,7 @@ pub(super) async fn load(
 impl App {
     pub(in crate::process_client::ui) fn refresh_transcript(&mut self) {
         let Some(target) = self.selected else { return };
-        if !self.clients.current(target.route) {
+        if !self.clients.available(target.route) {
             return;
         }
         let Some(view) = self.views.get(&target) else {

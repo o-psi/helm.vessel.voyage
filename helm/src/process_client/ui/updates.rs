@@ -13,6 +13,7 @@ impl App {
             Update::FirstSend { route, .. }
             | Update::Catalogue { route, .. }
             | Update::RouteError { route, .. }
+            | Update::RouteUnavailable { route, .. }
             | Update::Created { route, .. } => Some(*route),
             Update::InferenceModels { route, .. } => *route,
             _ => None,
@@ -176,6 +177,7 @@ impl App {
                 }
             }
             Update::Catalogue { route, processes } => {
+                self.clients.mark_available(route);
                 self.vessel_state(route, vessels::ConnectionState::Connected);
                 for process in processes.into_iter().take(256) {
                     if self.new_drafts.contains_key(&process.session_id) {
@@ -310,8 +312,9 @@ impl App {
                         }
                         view.snapshot = Some(snapshot);
                         view.observed = Some(Instant::now());
-                        view.error = None;
-                        view.connection_unavailable = false;
+                        view.connection_unavailable = !self.clients.available(target.route);
+                        view.error = view.connection_unavailable.then(||
+                            "Vessel unavailable · Ctrl+G to manage / retry. Runtime state is unknown.".into());
                         if recovering_route && self.selected == Some(target) {
                             self.status = "Connected. Voyage state refreshed.".into();
                         }
@@ -321,9 +324,22 @@ impl App {
                 }
                 self.sync_live_inference_picker(target);
             }
+            Update::RouteUnavailable { route, error } => {
+                self.clients.mark_unavailable(route);
+                self.vessel_state(route, vessels::classify_error(&error));
+                // Availability belongs to this Vessel, not the shared footer.
+                // Preserve in-flight receipts and all cached conversation state.
+                for (target, view) in &mut self.views {
+                    if target.route == route {
+                        view.connection_unavailable = true;
+                        view.error = Some("Vessel unavailable · Ctrl+G to manage / retry. Runtime state is unknown.".into());
+                    }
+                }
+            }
             Update::RouteError { route, error } => {
                 self.vessel_state(route, vessels::classify_error(&error));
-                self.status = format!("{} unavailable: {}", self.route_label(route), safe(&error));
+                // Stream failures are provisional; the next catalogue probe
+                // determines Vessel availability without noisy transport diagnostics.
                 for (target, view) in &mut self.views {
                     if target.route == route {
                         view.connection_unavailable = true;

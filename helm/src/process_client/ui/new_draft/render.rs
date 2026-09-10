@@ -19,8 +19,8 @@ impl App {
             Constraint::Length(4),
         ])
         .split(area);
-        let state = if !self.clients.current(draft.route) {
-            "Disconnected · draft and pending delivery retained; reconnect through Vessels"
+        let state = if !self.clients.available(draft.route) {
+            "Vessel unavailable · draft and pending delivery retained; Ctrl+G to manage / retry"
         } else if draft.busy {
             "Starting / checking…"
         } else if draft.saved.attempted {

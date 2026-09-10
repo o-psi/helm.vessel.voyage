@@ -178,7 +178,7 @@ impl App {
         let Some(target) = self.selected else {
             return;
         };
-        if !self.clients.current(target.route) {
+        if !self.clients.available(target.route) {
             return;
         }
         let view = &self.views[&target];

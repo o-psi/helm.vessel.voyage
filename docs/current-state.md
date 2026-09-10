@@ -512,6 +512,15 @@ exact attended publication decisions and canonical session references.
 
 ## Human Vessel connections
 
+Helm treats failed three-second catalogue probes as unavailable Vessels, pauses
+observation and background recovery for those routes, and keeps cached conversations,
+drafts and exact pending identities. It does not infer remote completion or cancel
+in-flight work. Ctrl+G opens the Vessels modal for explicit Connect / Retry; success
+resumes observation without replay. Saved connection autoconnect applies at startup,
+not as an endless offline retry loop. Other routes and draft editing remain usable,
+and ordinary interactive chat stays open if local startup fails. See
+[unavailable Vessels](vessel-connections.md#unavailable-vessels).
+
 Normal interactive Helm startup loads remembered connections without shell flags.
 The visible **Vessels** control, Ctrl+G and `/vessels` open a private connection
 modal for pairing/import, authenticated review, aliases, autoconnect, live

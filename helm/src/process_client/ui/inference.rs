@@ -460,6 +460,13 @@ impl App {
             return;
         };
         if self
+            .new_drafts
+            .get(&id)
+            .is_none_or(|draft| !self.clients.available(draft.route))
+        {
+            return;
+        }
+        if self
             .inference
             .picker
             .as_ref()
@@ -630,6 +637,10 @@ impl App {
                 self.status = "Inference applied to draft · model/account support is validated when sending. Text preserved.".into();
             }
             Destination::Live(target) => {
+                ensure!(
+                    self.clients.available(target.route),
+                    "Vessel unavailable · Ctrl+G to manage / retry; settings retained"
+                );
                 let view = self.views.get_mut(&target).context("voyage unavailable")?;
                 ensure!(
                     view.pending.is_none(),

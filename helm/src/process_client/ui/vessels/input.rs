@@ -118,6 +118,7 @@ impl Manager {
                     KeyCode::Char('a') => Some(Button::Add),
                     KeyCode::Char('i') => Some(Button::Import),
                     KeyCode::Char('c') => Some(Button::Connect),
+                    KeyCode::Char('u') => Some(Button::RetryUnavailable),
                     KeyCode::Char('d') => Some(Button::Disconnect),
                     KeyCode::Char('r') => Some(Button::Rename),
                     KeyCode::Char('n') => Some(Button::Replace),
@@ -193,6 +194,9 @@ impl Manager {
                 } else {
                     Action::Filter(id)
                 }];
+            }
+            Button::RetryUnavailable if matches!(self.panel.page, Page::List) => {
+                return vec![Action::RetryUnavailable];
             }
             Button::Select(i) => self.panel.selected = i,
             Button::Field(_) => {}

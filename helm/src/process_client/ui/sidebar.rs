@@ -186,6 +186,9 @@ impl App {
         if action == Action::Details {
             return None;
         }
+        if !self.clients.available(menu.target.route) {
+            return Some("Vessel unavailable · Ctrl+G to manage / retry");
+        }
         if action == Action::Access && self.clients[menu.target.route].access_file.is_some() {
             return Some("Access changes require executing-account owner authority");
         }

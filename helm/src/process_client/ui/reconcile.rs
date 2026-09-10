@@ -19,7 +19,7 @@ impl App {
         // across both classes prevents unavailable routes starving new voyages.
         let mut ready = Vec::new();
         for (target, view) in &self.views {
-            if !self.clients.current(target.route) {
+            if !self.clients.available(target.route) {
                 continue;
             }
             if self.new_drafts.contains_key(&target.session) {
@@ -38,7 +38,7 @@ impl App {
             }
         }
         for (id, draft) in &self.new_drafts {
-            if self.clients.current(draft.route) && !draft.busy && draft.saved.start.is_some() {
+            if self.clients.available(draft.route) && !draft.busy && draft.saved.start.is_some() {
                 let due = *self.first_send_checks.entry(*id).or_insert(now);
                 if due <= now {
                     ready.push((due, None, *id));

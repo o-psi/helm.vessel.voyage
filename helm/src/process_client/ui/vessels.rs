@@ -21,6 +21,7 @@ use zeroize::Zeroizing;
 pub enum Action {
     Activate(Box<Connection>),
     ConnectLocal,
+    RetryUnavailable,
     DisconnectLocal,
     Disconnect(Uuid),
     Forget(Uuid),
@@ -44,7 +45,7 @@ impl ConnectionState {
         match self {
             Self::Connecting => "Connecting",
             Self::Connected => "Connected",
-            Self::Offline => "Offline",
+            Self::Offline => "Unavailable",
             Self::AccessExpired => "Access expired",
             Self::AccessRevoked => "Access revoked",
             Self::AccessUnavailable => "Access unavailable (expired or revoked)",
@@ -63,6 +64,7 @@ enum Button {
     Add,
     Import,
     Connect,
+    RetryUnavailable,
     Disconnect,
     Rename,
     Replace,
