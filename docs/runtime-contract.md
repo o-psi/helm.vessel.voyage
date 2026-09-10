@@ -74,8 +74,9 @@ establish resource cleanup. Operator attestation must remain distinct from obser
 cleanup and retain its provenance.
 
 Clean suspension has exact-incarnation durable evidence and no runtime endpoint.
-Vessel resumes only that state automatically, with a new incarnation; unavailable
-or explicitly stopped owners still require explicit recovery/restart. A command
+Vessel resumes that state automatically with a new incarnation. An unavailable
+owner can also recover automatically under exclusive fences after verified cleanup;
+an explicitly stopped owner still requires restart. A command
 that was positively refused before dispatch during suspension can cross that
 transition; an uncertain external effect is never automatically retried. Bounded
 one-shot observers read suspended history and receipts under the session fence
@@ -126,8 +127,10 @@ fresh calls. Durable command deduplication is a separate contract: replaying an
 accepted command observes its original run, including after suspension. Neither
 contract provides global exactly-once external effects.
 
-Interrupted calls without durable results block another run until explicit local
-reconciliation. Reconciliation appends unknown failed results and preserves the
+Interrupted calls without durable results block another run until fenced
+reconciliation after cleanup or durable retention of unresolved obligations.
+Automatic recovery records its own provenance,
+distinct from operator-selected reconciliation. Reconciliation appends unknown failed results and preserves the
 original terminal outcome; it never repeats the effects. Its identity checks are
 also response-local, so reuse in a previously completed response cannot prevent
 recovery. Conflicts within the unresolved batch still refuse reconciliation.
@@ -201,10 +204,26 @@ After process failure, recover exclusive ownership before admitting another run.
 Mark abandoned execution interrupted; preserve partial output, unresolved effects
 and pending cleanup. Never replay an uncertain tool effect automatically. A stored
 PID, heartbeat timeout or terminal metadata is insufficient proof that descendants
-are gone. Recovery may require explicit, attributable operator confirmation.
+are gone. Fenced recovery moves unresolved cleanup into durable historical records
+without confirming it, and permits the next explicit turn in the same conversation.
+Original command identities remain terminal; unfinished tools receive unknown
+outcomes and are not replayed. Snapshots expose `retained_cleanup` independently of
+active `pending_cleanup_run` and resources. Later guardian cleanup applies only to
+its own incarnation, never these retained unknown effects. Clear, compact and delete
+remain blocked while they would discard context for retained unknown effects.
+
+On Linux, a separate guardian can supply positive local cleanup evidence after
+the owner exits. It becomes a child subreaper before launch, records boot and
+incarnation identity before effects, signals only kernel-owned children through
+pidfds, and requires the kernel to report no remaining children before recording
+cleanup. It never reads or owns canonical session state. Recovery checks its
+private evidence while holding startup and execution fences; remote assignments
+remain separate obligations. Missing legacy evidence is never fabricated.
+Read-only saved conversation access needs those fences and normal authorization,
+but does not require successful execution recovery or valid execution configuration.
 
 Vessel restart must reconcile runtime registrations against live authenticated
-incarnations. It cannot steal a session fence or clear cleanup blockers. Runtime
+incarnations. It cannot steal a session fence or fabricate cleanup evidence. Runtime
 restart may restore history but must not resume an unknown external effect.
 Credential revocation and authority loss fence new dispatch and initiate the
 specified bounded cleanup; disconnected enforcement remains explicitly unknown.

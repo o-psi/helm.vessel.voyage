@@ -9,7 +9,7 @@ use voyage_protocol::process::ProcessRegistration;
 pub fn launch(binary: &Path, directory: &Path, registration: &ProcessRegistration) -> Result<()> {
     let mut command = Command::new(binary);
     command
-        .arg("serve")
+        .arg("supervise")
         .arg("--directory")
         .arg(directory)
         .arg("--session")

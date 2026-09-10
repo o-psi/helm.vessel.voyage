@@ -364,6 +364,10 @@ fn build(view: &View, state: &State, width: u16) -> Vec<Row> {
             width,
         );
     }
+    if snapshot.recovery_pending || snapshot.recovery_notice.is_some() {
+        note(&mut out, Key::Notice, snapshot.recovery_notice.as_deref().unwrap_or(
+            "Saved conversation restored. Previous program cleanup cannot yet be verified; recovery will check again."), width);
+    }
     if let Some(run) = &snapshot.run
         && (run.state != "completed"
             || snapshot.pending_cleanup_run.is_some()
@@ -374,7 +378,9 @@ fn build(view: &View, state: &State, width: u16) -> Vec<Row> {
         note(
             &mut out,
             key.clone(),
-            if run.state == "completed" {
+            if snapshot.recovery_pending {
+                "Previous run interrupted · saved output"
+            } else if run.state == "completed" {
                 "Finishing response…"
             } else if run.active() && !snapshot.decisions.is_empty() {
                 "Waiting for you"
@@ -430,7 +436,9 @@ fn build(view: &View, state: &State, width: u16) -> Vec<Row> {
                     Some(cleanup) if cleanup.retryable => {
                         "Cleanup needs attention. Send again to retry cleanup; your draft is kept."
                     }
-                    _ => "Cleanup is unconfirmed. Further work is blocked until explicit recovery.",
+                    _ => {
+                        "Previous program cleanup cannot yet be verified. Recovery checks automatically; your draft is kept."
+                    }
                 };
                 note(&mut out, key.clone(), message, width);
                 if let Some(cleanup) = cleanup {

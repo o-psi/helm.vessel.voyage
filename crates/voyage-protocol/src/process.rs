@@ -4,6 +4,23 @@ mod types;
 pub use codec::*;
 pub use types::*;
 
+impl RuntimeCommand {
+    /// Durable reads may use an exclusively fenced helper after an unclean exit.
+    /// This deliberately excludes controls, decisions and mutating resolution.
+    pub fn observes_saved(&self) -> bool {
+        matches!(
+            self,
+            Self::Snapshot
+                | Self::History { .. }
+                | Self::MessageChunk { .. }
+                | Self::RunOutput { .. }
+                | Self::ReadArtifact { .. }
+                | Self::Receipt { .. }
+                | Self::Events { .. }
+        )
+    }
+}
+
 mod lifecycle;
 pub use lifecycle::*;
 

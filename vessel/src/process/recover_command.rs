@@ -16,14 +16,14 @@ pub(super) fn restart_permitted(directory: &Path, registration: &ProcessRegistra
         && marker["restart_permitted"] == true
         && matches!(
             marker["cleanup_disposition"].as_str(),
-            Some("observed" | "operator_attested")
+            Some("observed" | "operator_attested" | "unresolved_retained")
         )
 }
 
 impl Supervisor {
     /// Recover an abandoned owner without supplying operator attestations. This
-    /// can record interrupted work, but cannot clear uncertain cleanup, reconcile
-    /// tools or claim that retained resources stopped.
+    /// retains uncertain cleanup separately from admission and appends unknown
+    /// tool outcomes. It never claims that unobserved resources stopped.
     pub(super) async fn recover_abandoned(
         &self,
         session_id: uuid::Uuid,
@@ -38,13 +38,17 @@ impl Supervisor {
         if restart_permitted(&directory, &registration) {
             return Ok(());
         }
-        ensure!(
-            registration.state != ProcessState::CleanupUnconfirmed,
-            "automatic recovery stopped because cleanup or retained resources need explicit operator confirmation"
-        );
+        // One stable recovery request per incarnation. Re-observation can consume
+        // later guardian evidence without growing the durable command catalogue.
+        use sha2::{Digest, Sha256};
+        let digest = Sha256::digest(format!(
+            "voyage-automatic-recovery-v1:{session_id}:{incarnation}"
+        ));
+        let mut bytes = [0u8; 16];
+        bytes.copy_from_slice(&digest[..16]);
         let marker = self
             .recover(VesselCommand::Recover {
-                command_id: uuid::Uuid::new_v4(),
+                command_id: uuid::Uuid::from_bytes(bytes),
                 session_id,
                 incarnation,
                 acknowledge_cleanup: None,
@@ -57,8 +61,7 @@ impl Supervisor {
             return Ok(());
         }
 
-        // A polling Helm must not create unbounded duplicate recovery records.
-        // Explicit recovery remains available with exact attestation identities.
+        // Keep uncertainty visible, but never disable later automatic observation.
         let mut registrations = self.registrations.lock().await;
         let current = registrations
             .get_mut(&session_id)
@@ -70,7 +73,7 @@ impl Supervisor {
         current.state = ProcessState::CleanupUnconfirmed;
         registry::save(&directory, current)?;
         anyhow::bail!(
-            "automatic recovery stopped because cleanup or retained resources need explicit operator confirmation"
+            "Saved conversation is available. Previous program cleanup cannot yet be verified; automatic recovery will check again. Older voyages may lack the process evidence needed for automatic cleanup."
         )
     }
 

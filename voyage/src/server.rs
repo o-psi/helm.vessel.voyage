@@ -19,6 +19,7 @@ pub mod controls;
 mod decisions;
 mod dispatch;
 mod github;
+pub mod guardian;
 mod images;
 pub mod models;
 mod observations;
@@ -178,6 +179,7 @@ pub async fn serve(args: ServeArgs) -> Result<()> {
         }
         drop(journal);
         let owner = suspended::open_owner(journal_dir, args.session).await?;
+        crate::host_resources::set_process_scope(args.session, args.incarnation)?;
         drop(startup);
         // A new lifetime must establish its own shutdown evidence, even when an
         // operator explicitly starts the same incarnation outside the supervisor.
