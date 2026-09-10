@@ -128,7 +128,8 @@ accepted command observes its original run, including after suspension. Neither
 contract provides global exactly-once external effects.
 
 Interrupted calls without durable results block another run until fenced
-reconciliation after cleanup. Automatic recovery records its own provenance,
+reconciliation after cleanup or durable retention of unresolved obligations.
+Automatic recovery records its own provenance,
 distinct from operator-selected reconciliation. Reconciliation appends unknown failed results and preserves the
 original terminal outcome; it never repeats the effects. Its identity checks are
 also response-local, so reuse in a previously completed response cannot prevent
@@ -203,7 +204,13 @@ After process failure, recover exclusive ownership before admitting another run.
 Mark abandoned execution interrupted; preserve partial output, unresolved effects
 and pending cleanup. Never replay an uncertain tool effect automatically. A stored
 PID, heartbeat timeout or terminal metadata is insufficient proof that descendants
-are gone. Recovery may require explicit, attributable operator confirmation.
+are gone. Fenced recovery moves unresolved cleanup into durable historical records
+without confirming it, and permits the next explicit turn in the same conversation.
+Original command identities remain terminal; unfinished tools receive unknown
+outcomes and are not replayed. Snapshots expose `retained_cleanup` independently of
+active `pending_cleanup_run` and resources. Later guardian cleanup applies only to
+its own incarnation, never these retained unknown effects. Clear, compact and delete
+remain blocked while they would discard context for retained unknown effects.
 
 On Linux, a separate guardian can supply positive local cleanup evidence after
 the owner exits. It becomes a child subreaper before launch, records boot and
@@ -216,7 +223,7 @@ Read-only saved conversation access needs those fences and normal authorization,
 but does not require successful execution recovery or valid execution configuration.
 
 Vessel restart must reconcile runtime registrations against live authenticated
-incarnations. It cannot steal a session fence or clear cleanup blockers. Runtime
+incarnations. It cannot steal a session fence or fabricate cleanup evidence. Runtime
 restart may restore history but must not resume an unknown external effect.
 Credential revocation and authority loss fence new dispatch and initiate the
 specified bounded cleanup; disconnected enforcement remains explicitly unknown.

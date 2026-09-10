@@ -16,14 +16,14 @@ pub(super) fn restart_permitted(directory: &Path, registration: &ProcessRegistra
         && marker["restart_permitted"] == true
         && matches!(
             marker["cleanup_disposition"].as_str(),
-            Some("observed" | "operator_attested")
+            Some("observed" | "operator_attested" | "unresolved_retained")
         )
 }
 
 impl Supervisor {
     /// Recover an abandoned owner without supplying operator attestations. This
-    /// can record interrupted work, but cannot clear uncertain cleanup, reconcile
-    /// tools or claim that retained resources stopped.
+    /// retains uncertain cleanup separately from admission and appends unknown
+    /// tool outcomes. It never claims that unobserved resources stopped.
     pub(super) async fn recover_abandoned(
         &self,
         session_id: uuid::Uuid,

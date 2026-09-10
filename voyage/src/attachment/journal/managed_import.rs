@@ -150,6 +150,10 @@ impl Journal {
                 // These runtime tables are absent from older journals; when present
                 // preserve only rows attributed to the selected canonical session.
                 for (table, filter) in [
+                    (
+                        "process_retained_cleanup",
+                        "session_id IN (SELECT id FROM sessions)",
+                    ),
                     ("process_decisions", "run_id IN (SELECT id FROM runs)"),
                     ("process_assignments", "run_id IN (SELECT id FROM runs)"),
                     (

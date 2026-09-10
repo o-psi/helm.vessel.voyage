@@ -100,7 +100,11 @@ mod linux {
                                 || (saved["restart_permitted"] == true
                                     && matches!(
                                         saved["cleanup_disposition"].as_str(),
-                                        Some("observed" | "operator_attested")
+                                        Some(
+                                            "observed"
+                                                | "operator_attested"
+                                                | "unresolved_retained"
+                                        )
                                     )))
                     })
             });

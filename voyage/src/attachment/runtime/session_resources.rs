@@ -14,6 +14,19 @@ impl ManagedSessionOwner {
         .await?
     }
 
+    pub(crate) async fn retain_interrupted_cleanup(&self) -> anyhow::Result<()> {
+        let shared = self.store.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut store = shared
+                .lock()
+                .map_err(|_| anyhow::anyhow!("owner poisoned"))?;
+            anyhow::ensure!(store.turn.upgrade().is_none(), "managed turn still owned");
+            let Store { journal, guard, .. } = &mut *store;
+            journal.retain_interrupted_cleanup(guard)
+        })
+        .await?
+    }
+
     pub(crate) async fn recover_tool_outcomes(&self) -> anyhow::Result<()> {
         let shared = self.store.clone();
         tokio::task::spawn_blocking(move || {

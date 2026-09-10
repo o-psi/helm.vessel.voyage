@@ -198,21 +198,23 @@ Existing empty or unavailable voyages are not removed by draft handling.
 When a runtime disappears without clean suspension evidence, an ordinary history
 or turn request asks Vessel to run the existing exclusively fenced recovery with
 no operator attestations. Recovery records interrupted work without replaying it,
-then respawns the same session in a fresh voyage process when cleanup is verified.
+then respawns the same session in a fresh voyage process. Cleanup that cannot be
+verified is retained as unresolved history, separately from next-turn admission.
 Linux launches include a separate child-subreaper guardian. After the runtime exits,
 the guardian stops and reaps remaining descendants, including detached sessions,
 and atomically records incarnation-bound evidence. Recovery uses this evidence to
 close local terminal obligations and release that incarnation's host quota charges.
 It appends unknown outcomes for interrupted tool calls, never success or replay.
 A changed Linux boot identity also establishes that the recorded local processes
-are gone. Remote participant cleanup remains independently enforced.
+are gone. Remote participant obligations remain unresolved until independently
+observed; they are never replayed as part of continuation.
 
 Recovery uses one stable automatic command identity per incarnation and checks
 again when later requests arrive; cleanup uncertainty no longer disables retries.
 Authorized saved snapshots, history, output and receipts remain readable through
 an exclusively fenced helper even when cleanup cannot be verified. Invalid saved
 execution settings withhold optional model/access metadata, rather than the history.
-Helm labels this restored conversation with pending cleanup and preserves drafts.
+Helm shows a nonblocking notice when previous effects remain unknown and preserves drafts.
 Vessel retains the last bounded canonical voyage name as
 catalogue metadata, so Helm can identify saved conversations while recovery runs.
 
@@ -237,8 +239,9 @@ This repairs cleanup after interruption; cancellation monitoring still stops a r
 when its five-second observation budget fails. It does not make every computer
 suspend transparent. Older owners have no guardian evidence; their history remains
 readable, but unresolved cleanup cannot be retrospectively declared observed.
-Guardian death on the same boot, failed process observation, inaccessible storage,
-ambiguous tool history and pending remote assignments can still prevent continuation.
+Missing process evidence and pending remote cleanup no longer permanently block new
+turns. Inaccessible storage, a live owner fence, invalid execution configuration or
+ambiguous tool history can still prevent continuation.
 Guardian cleanup is bounded to ten seconds and does not establish rollback or the
 completion of external effects. Linux evidence does not establish native behavior
 on macOS or Windows. The guardian does not own a session journal or run an agent loop.
@@ -430,10 +433,12 @@ Abandoned legacy work has an explicit voyage maintenance recovery path. Import
 publication failures retain provenance and never fall back to a writable old copy.
 
 Agent-construction failures retain resource observers and attempt bounded cleanup.
-Only positively observed cleanup releases run admission and host executor charges.
+While the owner remains live, only positively observed cleanup releases run
+admission and host executor charges.
 Snapshots and Helm show an authored startup-stage summary and distinguish a
 retryable failed run from unconfirmed cleanup; underlying diagnostics are excluded.
-Older stranded runs without guardian evidence still require verified cleanup.
+After owner death, older stranded runs retain unknown cleanup separately and can
+accept new turns automatically without a cleanup attestation.
 
 Archiving an idle voyage preserves its conversation and causes its runtime to
 shut down under the admission lock. Only positively observed cleanup releases

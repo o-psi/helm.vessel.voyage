@@ -200,11 +200,17 @@ impl Journal {
             latest == request.run_id.to_string(),
             "reconciliation requires the latest run"
         );
-        let confirmation: Option<String> = tx.query_row("SELECT confirmation FROM local_cleanup_obligations WHERE run_id=?1 AND session_id=?2 AND installation_id=?3 AND principal_id=?4", params![request.run_id.to_string(),request.session_id.to_string(),run.machine_id.to_string(),run.principal_id.to_string()], |r| r.get(0))?;
+        let confirmation: Option<String> = tx.query_row("SELECT confirmation FROM local_cleanup_obligations WHERE run_id=?1 AND session_id=?2 AND installation_id=?3 AND principal_id=?4", params![request.run_id.to_string(),request.session_id.to_string(),run.machine_id.to_string(),run.principal_id.to_string()], |r| r.get(0)).optional()?.flatten();
+        let retained: bool = if automatic {
+            tx.query_row("SELECT EXISTS(SELECT 1 FROM process_retained_cleanup WHERE run_id=?1 AND session_id=?2 AND installation_id=?3 AND principal_id=?4 AND confirmation IS NULL)", params![request.run_id.to_string(),request.session_id.to_string(),run.machine_id.to_string(),run.principal_id.to_string()], |r| r.get(0))?
+        } else {
+            false
+        };
         ensure!(
-            confirmation
-                .as_deref()
-                .is_some_and(|value| matches!(value, "observed" | "operator_attested")),
+            retained
+                || confirmation
+                    .as_deref()
+                    .is_some_and(|value| matches!(value, "observed" | "operator_attested")),
             "reconciliation requires completed cleanup"
         );
         ensure!(

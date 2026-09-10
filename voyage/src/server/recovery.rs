@@ -99,18 +99,12 @@ pub async fn recover(args: RecoverArgs) -> Result<serde_json::Value> {
         };
         owner.reconcile_local_tools(request).await?;
     }
-    let snapshot = owner.process_snapshot().await?;
-    let resources = owner.session_resources().await?;
-    if !snapshot["pending_cleanup_run"].is_null()
-        || !resources.as_array().is_some_and(Vec::is_empty)
-    {
-        let pending = serde_json::json!({"session_id":args.session,"incarnation":args.incarnation,"command_id":args.command_id,"request":request,"restart_permitted":false,"pending_cleanup_run":snapshot["pending_cleanup_run"],"session_resources":resources,"revision":snapshot["revision"]});
-        persist(&marker, &pending)?;
-        return Ok(pending);
-    }
+    // Missing evidence belongs to the interrupted run, not to every future run.
+    // Retain it atomically without turning uncertainty into cleanup confirmation.
+    owner.retain_interrupted_cleanup().await?;
     owner.recover_tool_outcomes().await?;
     let snapshot = owner.process_snapshot().await?;
-    let result = serde_json::json!({"session_id":args.session,"incarnation":args.incarnation,"command_id":args.command_id,"request":request,"cleanup_disposition":if owner.has_cleanup_attestation().await?{"operator_attested"}else{"observed"},"restart_permitted":true,"revision":snapshot["revision"]});
+    let result = serde_json::json!({"session_id":args.session,"incarnation":args.incarnation,"command_id":args.command_id,"request":request,"cleanup_disposition":if snapshot["retained_cleanup"]["run_ids"].as_array().is_some_and(|v| !v.is_empty()) || snapshot["retained_cleanup"]["resources"].as_array().is_some_and(|v| !v.is_empty()) {"unresolved_retained"} else if owner.has_cleanup_attestation().await?{"operator_attested"}else{"observed"},"restart_permitted":true,"revision":snapshot["revision"]});
     persist(&marker, &result)?;
     persist(&directory.join("recovered.json"), &result)?;
     // The OS fence excludes a live owner; stale endpoints are now safe to remove.

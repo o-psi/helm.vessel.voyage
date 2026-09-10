@@ -289,6 +289,16 @@ fn cleanup_confirmation(
         "SELECT session_id,installation_id,principal_id,confirmation FROM local_cleanup_obligations WHERE run_id=?1", [run_id.to_string()],
         |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
     ).optional()?;
+    let retained_exists: bool = db.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE name='process_retained_cleanup')",
+        [],
+        |r| r.get(0),
+    )?;
+    let row = if row.is_none() && retained_exists {
+        db.query_row("SELECT session_id,installation_id,principal_id,confirmation FROM process_retained_cleanup WHERE run_id=?1", [run_id.to_string()], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).optional()?
+    } else {
+        row
+    };
     row.map(|(session, installation, principal, confirmation)| {
         ensure!(
             session == target.session_id.to_string()
@@ -427,6 +437,14 @@ impl Journal {
             return Ok(());
         }
         tx.execute("UPDATE local_cleanup_obligations SET confirmation=?1 WHERE run_id=?2 AND confirmation IS NULL", params![expected, run_id.to_string()])?;
+        let retained_exists: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE name='process_retained_cleanup')",
+            [],
+            |r| r.get(0),
+        )?;
+        if retained_exists {
+            tx.execute("UPDATE process_retained_cleanup SET confirmation=?1 WHERE run_id=?2 AND confirmation IS NULL", params![expected,run_id.to_string()])?;
+        }
         commit(tx, &self.commit_fence)?;
         Ok(())
     }

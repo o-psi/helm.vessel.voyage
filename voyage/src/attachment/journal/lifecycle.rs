@@ -133,6 +133,25 @@ impl Journal {
             !active && catalogue::pending_cleanup(&tx, guard.session_id)?.is_none(),
             "lifecycle change requires idle voyage and observed cleanup"
         );
+        if matches!(
+            command,
+            RuntimeCommand::Clear { .. }
+                | RuntimeCommand::Compact { .. }
+                | RuntimeCommand::Delete { .. }
+        ) {
+            let retained: bool = tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE name='process_retained_cleanup')",
+                [],
+                |r| r.get(0),
+            )?;
+            if retained {
+                let unknown: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM process_retained_cleanup WHERE session_id=?1 AND confirmation IS NULL) OR EXISTS(SELECT 1 FROM process_session_resources WHERE session_id=?1 AND state='retained_unknown')", [guard.session_id.to_string()], |r| r.get(0))?;
+                ensure!(
+                    !unknown,
+                    "retained unknown effects require preserving conversation history"
+                );
+            }
+        }
         let transferred: bool = tx.query_row(
             "SELECT transfer_id IS NOT NULL FROM process_lifecycle WHERE session_id=?1",
             [guard.session_id.to_string()],

@@ -364,7 +364,7 @@ fn build(view: &View, state: &State, width: u16) -> Vec<Row> {
             width,
         );
     }
-    if snapshot.recovery_pending {
+    if snapshot.recovery_pending || snapshot.recovery_notice.is_some() {
         note(&mut out, Key::Notice, snapshot.recovery_notice.as_deref().unwrap_or(
             "Saved conversation restored. Previous program cleanup cannot yet be verified; recovery will check again."), width);
     }
