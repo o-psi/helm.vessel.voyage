@@ -3,7 +3,9 @@
 mod history;
 mod inspection;
 mod journal;
+mod json_stream;
 mod output;
+mod pagination;
 use output::output;
 #[cfg(test)]
 mod tests;
@@ -79,10 +81,15 @@ pub struct VesselContext {
 pub struct VesselTool {
     settings: VesselSettings,
     context: Option<VesselContext>,
+    pages: std::sync::Arc<pagination::Pages>,
 }
 impl VesselTool {
     pub fn new(settings: VesselSettings, context: Option<VesselContext>) -> Self {
-        Self { settings, context }
+        Self {
+            settings,
+            context,
+            pages: Default::default(),
+        }
     }
     fn local(&self) -> Result<&Path, ToolError> {
         self.context
@@ -157,12 +164,14 @@ enum Action {
         expected_revision: u64,
         #[serde(default)]
         offset: usize,
+        cursor: Option<Uuid>,
     },
     RunOutput {
         session_id: Uuid,
         run_id: Uuid,
         #[serde(default)]
         offset: usize,
+        cursor: Option<Uuid>,
     },
     HistorySearch {
         session_id: Uuid,
@@ -282,6 +291,7 @@ fn input_schema() -> Value {
             "command_id":{"type":"string","format":"uuid"},
             "incarnation":{"type":"string","format":"uuid"},
             "run_id":{"type":["string","null"],"format":"uuid"},
+            "cursor":{"type":["string","null"],"format":"uuid"},
             "expected_revision":{"type":["integer","null"],"minimum":0,"maximum":u64::MAX},
             "offset":{"type":"integer","minimum":0,"maximum":usize::MAX},
             "after":{"type":"integer","minimum":0,"maximum":u64::MAX},
@@ -311,9 +321,13 @@ fn input_schema() -> Value {
             (
                 "message",
                 &["session_id", "index", "expected_revision"],
-                &["offset"],
+                &["offset", "cursor"],
             ),
-            ("run_output", &["session_id", "run_id"], &["offset"]),
+            (
+                "run_output",
+                &["session_id", "run_id"],
+                &["offset", "cursor"],
+            ),
             (
                 "history_search",
                 &["session_id", "pattern"],
@@ -404,7 +418,7 @@ impl Tool for VesselTool {
             output_schema: None,
             annotations: None,
             name: "vessel".into(),
-            description: "Coordinate any voyage authorized by configured Vessel routes, not just related voyages. Public HTTP only; no credentials, terminal access, approval responses, shell, or provider configuration exposed. Ordinary tool policy approvals still apply. routes identifies the owning voyage and configured target aliases. inspect returns a compact observed overview and exact drill-down requests. details pages public snapshot fields using returned JSON pointers; message reads a complete public message as JSON text chunks; run_output reads run text chunks. Follow next_read exactly; offsets for message/run_output count redacted UTF-8 bytes. These detail reads are bounded to 4 MiB source records; snapshots may have upstream omissions; list/search page catalogue metadata (search is not full-text history). history automatically fits canonical conversation pages to the output budget. history_search searches redacted message content with regex and optional role, returning matching-message pages and explicit unsearched entries; follow next_read even on empty match pages until has_more is false. Patterns use Rust regex with inline flags, no look-around/backreferences. It does not search attachment bytes or structured tool-call arguments. follow/wait read bounded events after a cursor; a timeout is not completion. Mutations require a stable caller-generated command_id; reuse it only for the identical request. Durable intents precede effects; unknown outcomes are never replayed. operations pages durable local intent IDs; receipt with session_id queries the server; without it reads the local journal. Create starts a session then submits required initial task; its start command ID is session_id. Use a fresh session ID. Target defaults to local; remote grants enforce their actual rights. No implicit startup, recovery, deletion, or authority broadening.".into(),
+            description: "Coordinate any voyage authorized by configured Vessel routes, not just related voyages. Public HTTP only; no credentials, terminal access, approval responses, shell, or provider configuration exposed. Ordinary tool policy approvals still apply. routes identifies the owning voyage and configured target aliases. inspect returns a compact observed overview and exact drill-down requests. details pages public snapshot fields using returned JSON pointers; message reads a complete public message as JSON text chunks; run_output reads run text chunks. Follow next_read exactly; offsets for message/run_output count redacted UTF-8 bytes. Start these reads at offset zero; continuations require the returned private cursor (16 cached pages, 15 minute lifetime). total_bytes is unknown until the end. These reads stream bounded chunks without a source-size cap; history_search still has a 4 MiB per-message source cap; snapshots may have upstream omissions; list/search page catalogue metadata (search is not full-text history). history automatically fits canonical conversation pages to the output budget. history_search searches redacted message content with regex and optional role, returning matching-message pages and explicit unsearched entries; follow next_read even on empty match pages until has_more is false. Patterns use Rust regex with inline flags, no look-around/backreferences. It does not search attachment bytes or structured tool-call arguments. follow/wait read bounded events after a cursor; a timeout is not completion. Mutations require a stable caller-generated command_id; reuse it only for the identical request. Durable intents precede effects; unknown outcomes are never replayed. operations pages durable local intent IDs; receipt with session_id queries the server; without it reads the local journal. Create starts a session then submits required initial task; its start command ID is session_id. Use a fresh session ID. Target defaults to local; remote grants enforce their actual rights. No implicit startup, recovery, deletion, or authority broadening.".into(),
             input_schema: input_schema(),
         }
     }
@@ -544,6 +558,15 @@ impl Tool for VesselTool {
             return output(result, context, &request);
         }
         let mut transport = transport::Transport::open(local, access)?;
+        if matches!(action, Action::Message { .. } | Action::RunOutput { .. }) {
+            let timeout = context.timeout.min(Duration::from_secs(35));
+            return tokio::select! {
+                _ = context.cancellation.cancelled() => Err(ToolError::Cancelled),
+                result = tokio::time::timeout(timeout, self.pages.read(&transport, context, &request)) =>
+                    result.unwrap_or(Err(ToolError::Timeout(timeout))),
+            };
+        }
+
         // Validate delegation before persisting intent or starting a process.
         if let Action::Create {
             workspace,
@@ -798,24 +821,9 @@ async fn perform(
             }
             Ok(json!({"registration":registration,"snapshot":snapshot}))
         }
-        Action::Message {
-            session_id,
-            index,
-            expected_revision,
-            ..
-        } => {
-            inspection::read_text(
-                t,
-                session_id,
-                Some((index, expected_revision)),
-                None,
-                context,
-            )
-            .await
+        Action::Message { .. } | Action::RunOutput { .. } => {
+            Err(failed("paged read requires continuation dispatcher"))
         }
-        Action::RunOutput {
-            session_id, run_id, ..
-        } => inspection::read_text(t, session_id, None, Some(run_id), context).await,
         Action::HistorySearch {
             session_id,
             pattern,

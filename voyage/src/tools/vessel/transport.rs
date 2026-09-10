@@ -119,6 +119,13 @@ impl Transport {
             journal: None,
         })
     }
+    pub(super) fn page_redactor(&self, base: &crate::tools::Redactor) -> crate::tools::Redactor {
+        base.with_additional([self.token.clone()])
+    }
+    pub(super) fn page_identity(&self) -> Vec<u8> {
+        serde_json::to_vec(&(self.endpoint.as_str(), self.grant, &self.token))
+            .expect("route identity")
+    }
     pub(super) fn redact_complete(&self, value: Value) -> Value {
         fn scrub(value: Value, token: &str) -> Value {
             match value {

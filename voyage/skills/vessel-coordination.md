@@ -30,8 +30,13 @@ public snapshot fields and pages nested objects, arrays and text via returned JS
 pointers; omitted fields and cleanup are unknown, not clear. Use `message` to expand
 a canonical message beyond the history projection, and `run_output` to read run
 text. Follow `next_read` exactly: full-text offsets count redacted UTF-8 bytes;
-message chunks concatenate into public message JSON. Each full-text read is limited
-to a 4 MiB source record. `source_limit`, `source_changed`, revision changes and
+message chunks concatenate into public message JSON. Start at offset zero and
+preserve the returned cursor on every continuation. Cursors are private, limited to
+16 saved pages and expire after 15 minutes or process exit; follow a restart request
+if unavailable. Empty text with a continuation still requires another read. The
+redacted total byte count is unknown until the end. Run reads pin the first observed
+prefix; later appends require a new read. Regex search retains its 4 MiB per-message
+expansion cap. `source_limit`, `source_changed`, cursor expiry, revision changes and
 unavailable state are incomplete observations, not task outcomes. Refresh inspection
 on a changed revision. Detail pages are fresh observations; a stable conversation
 revision does not freeze live activity. The latest assistant message may be from

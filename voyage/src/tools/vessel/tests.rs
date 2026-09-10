@@ -6,7 +6,7 @@ fn all_action_branches_match_serde_without_dispatch() {
     let schema = input_schema();
     let compiled = CompiledSchema::compile(&schema).unwrap();
     let uuid = json!("00112233-4455-4677-8899-aabbccddeeff");
-    let samples = json!({"target":"local","session_id":uuid,"command_id":uuid,"incarnation":uuid,"run_id":uuid,
+    let samples = json!({"cursor":uuid,"target":"local","session_id":uuid,"command_id":uuid,"incarnation":uuid,"run_id":uuid,
         "pattern":"error","role":"assistant","path":"","index":0,"expected_revision":1,"offset":0,"after":0,"limit":1,"wait_ms":0,"section":"models","query":"query","workspace":"/workspace","config_path":"/config","task":"task","prompt":"prompt","name":"name"});
     for branch in schema["oneOf"].as_array().unwrap() {
         let action = branch["properties"]["action"]["const"].clone();

@@ -1,12 +1,12 @@
 {
   "schema_version": 1,
-  "measured_at_utc": "2026-09-10T21:59:32.863565+00:00",
+  "measured_at_utc": "2026-09-10T22:13:07.405634+00:00",
   "source": {
-    "base_commit": "7075e1b811af16e215d8634386b7a88b34833f34",
+    "base_commit": "d1bc562f1d094be71c24b4093c750c1fe3fe7d17",
     "dirty": true,
-    "fingerprint_sha256": "cf973e7dde452c0f4682714a1ab4c0870cd83a4262ed55f81b2ce163c680d1f9",
+    "fingerprint_sha256": "477704f5f6ec08f8c4e37e464a2dbc5c8281f82ee942739bfdfb5f808e325943",
     "fingerprint_method": "SHA-256 of compact sorted JSON mapping workspace .rs files, member Cargo.toml files, root Cargo.toml and Cargo.lock to SHA-256 content hashes",
-    "note": "Historical working-tree measurement including uncommitted changes; not coverage of the base commit or the commit publishing this record. Captured source files were unchanged during the run."
+    "note": "Working-tree measurement including unrelated uncommitted changes; not coverage of the clean base or publication commit. Captured source files were unchanged during the run."
   },
   "platform": "x86_64-unknown-linux-gnu",
   "tools": {
@@ -14,7 +14,7 @@
     "llvm": "22.1.8",
     "cargo_llvm_cov": "0.9.1"
   },
-  "command": "cargo llvm-cov --workspace --locked --no-clean --ignore-run-fail --html --output-dir target/coverage-report -j 8",
+  "command": "cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir target/coverage-report -j 8",
   "environment": {
     "CARGO_LLVM_COV_TARGET_DIR": "target",
     "LLVM_COV": "llvm-cov",
@@ -22,26 +22,26 @@
   },
   "scope": "Existing workspace Rust tests, default features",
   "tests": {
-    "passed": 104,
+    "passed": 107,
     "failed": 0,
     "ignored": 1
   },
   "coverage": {
     "lines": {
-      "count": 70428,
-      "covered": 11080,
-      "percent": 15.732379167376612
+      "count": 71098,
+      "covered": 11398,
+      "percent": 16.0313932881375
     },
     "functions": {
-      "count": 7228,
-      "covered": 1113,
-      "percent": 15.398450470392916
+      "count": 7277,
+      "covered": 1135,
+      "percent": 15.59708671155696
     },
     "regions": {
-      "count": 114189,
-      "covered": 16973,
-      "notcovered": 97216,
-      "percent": 14.86395362075156
+      "count": 115244,
+      "covered": 17498,
+      "notcovered": 97746,
+      "percent": 15.183436881746555
     }
   },
   "exclusions": [
@@ -52,8 +52,9 @@
     "Branch coverage"
   ],
   "notes": [
-    "Initial restricted-sandbox attempt stopped after 3 system-policy failures in Helm; retry outside sandbox passed all 104 tests.",
-    "Raw profiles include the initial attempt and successful retry against unchanged source; subsequent independent measurements must clear raw profiles.",
-    "First baseline; no previous tracked measurement for comparison."
+    "Independent measurement: raw profiles cleared first; existing compiled artifacts and prior report preserved.",
+    "Workspace tests passed without live-provider execution. Separate temporary paging/HTTP and local read-only probes passed before measurement and are not part of coverage.",
+    "Compared with previous record: lines +0.2990 percentage points, functions +0.1986 percentage points, regions +0.3195 percentage points.",
+    "Coverage measures execution, not correctness; no native macOS/Windows claim."
   ]
 }

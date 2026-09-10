@@ -66,12 +66,21 @@ pub(super) fn output(
         if value["status"] == "outcome_unknown" {
             report.outcome.execution = ExecutionOutcome::Unknown;
         }
-        if value["status"] == "source_limit" {
+        if matches!(
+            value["status"].as_str(),
+            Some("source_limit" | "output_limit")
+        ) {
             report.outcome.incomplete = Some(IncompleteReason::OutputLimit);
         } else if matches!(
             value["status"].as_str(),
             Some(
-                "source_changed" | "snapshot_unavailable" | "revision_changed" | "path_unavailable"
+                "cursor_expired"
+                    | "cursor_mismatch"
+                    | "cursor_required"
+                    | "source_changed"
+                    | "snapshot_unavailable"
+                    | "revision_changed"
+                    | "path_unavailable"
             )
         ) {
             report.outcome.incomplete = Some(IncompleteReason::Withheld);

@@ -393,9 +393,10 @@ Inspection returns a compact observed overview with bounded progress text and
 explicit detail-read requests. Large cleanup/resource observations are marked
 omitted rather than presented as empty. `details` pages public snapshot fields;
 revision-bound `history` and `message` expand canonical conversation, while
-`run_output` reads accumulated run text. Full-text reads assemble at most 4 MiB
-before redaction and page the redacted UTF-8 result. Source changes and limits
-are explicit incomplete observations. History and regex-search pages preserve message indices and exact continuations
+`run_output` reads accumulated run text. Message/run reads incrementally decode and redact bounded chunks using private,
+expiring cursors; continuations recheck authority and message revision. Run reads
+pin the initially observed prefix. Source changes and missing cursors are explicit
+incomplete observations. Regex expansion retains its 4 MiB per-message cap. History and regex-search pages preserve message indices and exact continuations
 when reduced to fit. Regex matches redacted content; a truncated projection is
 expanded before evaluation or explicitly reported unsearched. A zero-match page
 with more records or any unsearched gaps is not a complete negative search.
