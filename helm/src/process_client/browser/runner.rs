@@ -7,9 +7,14 @@ use std::{sync::Arc, time::Duration};
 use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
-use voyage_protocol::{browser::*, vessel::{VesselCommand, VoyageCommand}};
+use voyage_protocol::{
+    browser::*,
+    vessel::{VesselCommand, VoyageCommand},
+};
 
-fn now() -> u64 { chrono::Utc::now().timestamp_millis().max(0) as u64 }
+fn now() -> u64 {
+    chrono::Utc::now().timestamp_millis().max(0) as u64
+}
 fn control(value: &Value) -> BrowserControl {
     match value["mode"].as_str() {
         Some("agent") if value["shared"] == true => BrowserControl::Shared,
@@ -17,20 +22,56 @@ fn control(value: &Value) -> BrowserControl {
         _ => BrowserControl::Private,
     }
 }
-async fn exchange(client: &Client, binding: &BrowserBinding, operation: BrowserOperation) -> Result<BrowserReply> {
-    serde_json::from_value(client.voyage(binding.session_id, binding.incarnation,
-        VoyageCommand::Browser { operation }).await?).context("Invalid browser broker reply")
+async fn exchange(
+    client: &Client,
+    binding: &BrowserBinding,
+    operation: BrowserOperation,
+) -> Result<BrowserReply> {
+    serde_json::from_value(
+        client
+            .voyage(
+                binding.session_id,
+                binding.incarnation,
+                VoyageCommand::Browser { operation },
+            )
+            .await?,
+    )
+    .context("Invalid browser broker reply")
 }
-async fn set_control(client: &Client, binding: &BrowserBinding, value: BrowserControl) -> Result<()> {
-    exchange(client, binding, BrowserOperation::Control { command_id:Uuid::new_v4(), binding:binding.clone(), control:value }).await?;
+async fn set_control(
+    client: &Client,
+    binding: &BrowserBinding,
+    value: BrowserControl,
+) -> Result<()> {
+    exchange(
+        client,
+        binding,
+        BrowserOperation::Control {
+            command_id: Uuid::new_v4(),
+            binding: binding.clone(),
+            control: value,
+        },
+    )
+    .await?;
     Ok(())
 }
 
-pub(super) async fn run(client: Client, session: Uuid, incarnation: Uuid, label: String,
-    mut commands: mpsc::Receiver<Control>, stop: CancellationToken, status: &watch::Sender<Status>) -> Result<()> {
+pub(super) async fn run(
+    client: Client,
+    session: Uuid,
+    incarnation: Uuid,
+    label: String,
+    mut commands: mpsc::Receiver<Control>,
+    stop: CancellationToken,
+    status: &watch::Sender<Status>,
+) -> Result<()> {
     let assets = assets::distribution()?;
     if !assets::installed(&assets) {
-        status.send_modify(|s| s.summary="Browser adapter not installed. Run `helm browser setup`, then reopen Browser".into());
+        status.send_modify(|s| {
+            s.summary =
+                "Browser adapter not installed. Run `helm browser setup`, then reopen Browser"
+                    .into()
+        });
         anyhow::bail!("Browser adapter not installed");
     }
     let executable = assets::executable()?;
@@ -38,15 +79,25 @@ pub(super) async fn run(client: Client, session: Uuid, incarnation: Uuid, label:
     client.request(VesselCommand::Capabilities).await?;
     let mut connection = client.connection_state();
     let initial_socket = *connection.borrow();
-    ensure!(initial_socket.socket_id.is_some(), "Browser sharing requires the authenticated full-duplex Vessel connection");
+    ensure!(
+        initial_socket.socket_id.is_some(),
+        "Browser sharing requires the authenticated full-duplex Vessel connection"
+    );
     let root = assets::root()?.join(format!("session-{}", Uuid::new_v4()));
     let private = crate::attachment::local_actor::storage::Directory::open(&root)?;
     let _ownership = private.lock()?;
     let helper = Helper::start(&assets.join("helper.mjs")).await?;
     let mut notices = helper.events();
     let mut binding = BrowserBinding {
-        session_id:session, incarnation, run_id:None, browser_id:Uuid::new_v4(), resource_id:Uuid::new_v4(),
-        executor_id:Uuid::new_v4(), controller_epoch:1, capture_epoch:1, expires_at_ms:now()+30_000,
+        session_id: session,
+        incarnation,
+        run_id: None,
+        browser_id: Uuid::new_v4(),
+        resource_id: Uuid::new_v4(),
+        executor_id: Uuid::new_v4(),
+        controller_epoch: 1,
+        capture_epoch: 1,
+        expires_at_ms: now() + 30_000,
     };
     let result = async {
         let init = helper.call(json!({"op":"init","session_dir":root,"executable_path":executable,
@@ -128,7 +179,8 @@ pub(super) async fn run(client: Client, session: Uuid, incarnation: Uuid, label:
                         if pending.as_ref().is_some_and(|job|job.is_finished()) {
                             let reply=pending.take().unwrap().await.context("Browser pending observation task failed")??;
                             if let BrowserReply::Pending { requests }=reply {
-                                if let Some(request)=requests.into_iter().next() {
+                                if let Some(request)=requests.into_iter().next().filter(|r|current_control==BrowserControl::Shared
+                                    && r.binding.controller_epoch==binding.controller_epoch && r.binding.capture_epoch==binding.capture_epoch) {
                                     ensure!(action.is_none(), "Browser action arbitration conflict");
                                     let (c,h,s)=(client.clone(),helper.clone(),action_stop.clone());
                                     let expected=binding.clone();
@@ -167,75 +219,178 @@ pub(super) async fn run(client: Client, session: Uuid, incarnation: Uuid, label:
         }
         outcome.and(local_fence.map(|_|()))
     }.await;
-    let cleaned=helper.shutdown().await;
+    let cleaned = helper.shutdown().await;
     private.verify()?;
-    if cleaned.is_ok() { journal::cleanup(&root)?; }
+    if cleaned.is_ok() {
+        journal::cleanup(&root)?;
+    }
     // Profile and minimal receipts are retained for explicit local recovery, never silently deleted.
     result.and(cleaned)
 }
 
-async fn update_control(client:&Client, _helper:&Arc<Helper>, value:&Value, binding:&mut BrowserBinding,
-    offered:&mut bool,current:&mut BrowserControl,status:&watch::Sender<Status>) -> Result<()> {
-    let epoch=value["epoch"].as_u64().context("Browser control epoch unavailable")?;
-    let capture=value["capture_epoch"].as_u64().unwrap_or(epoch);
-    ensure!(epoch>=binding.controller_epoch && capture>=binding.capture_epoch,"Browser control epoch regressed");
-    let next=control(value);
-    let changed=epoch!=binding.controller_epoch || capture!=binding.capture_epoch || next!=*current;
-    binding.controller_epoch=epoch;binding.capture_epoch=capture;binding.expires_at_ms=now()+10_000;
-    if !*offered && next==BrowserControl::Shared {
-        exchange(client,binding,BrowserOperation::Offer {command_id:Uuid::new_v4(),binding:binding.clone()}).await?;
-        *offered=true;
-    } else if *offered && changed { set_control(client,binding,next).await?; }
-    *current=next;
-    if changed { status.send_modify(|s| s.summary=match next {
+async fn update_control(
+    client: &Client,
+    _helper: &Arc<Helper>,
+    value: &Value,
+    binding: &mut BrowserBinding,
+    offered: &mut bool,
+    current: &mut BrowserControl,
+    status: &watch::Sender<Status>,
+) -> Result<()> {
+    let epoch = value["epoch"]
+        .as_u64()
+        .context("Browser control epoch unavailable")?;
+    let capture = value["capture_epoch"].as_u64().unwrap_or(epoch);
+    ensure!(
+        epoch >= binding.controller_epoch && capture >= binding.capture_epoch,
+        "Browser control epoch regressed"
+    );
+    let next = control(value);
+    let changed =
+        epoch != binding.controller_epoch || capture != binding.capture_epoch || next != *current;
+    binding.controller_epoch = epoch;
+    binding.capture_epoch = capture;
+    binding.expires_at_ms = now() + 10_000;
+    if !*offered && next == BrowserControl::Shared {
+        exchange(
+            client,
+            binding,
+            BrowserOperation::Offer {
+                command_id: Uuid::new_v4(),
+                binding: binding.clone(),
+            },
+        )
+        .await?;
+        *offered = true;
+    } else if *offered && changed {
+        set_control(client, binding, next).await?;
+    }
+    *current = next;
+    if changed {
+        status.send_modify(|s| s.summary=match next {
         BrowserControl::Shared=>"Agent sharing enabled for this voyage. Take over or enter Private in the local companion",
         BrowserControl::Human=>"Human control. New agent actions and observations are fenced",
         _=>"Private interaction. Agent observation and capture are suspended",
-    }.into()); }
+    }.into());
+    }
     Ok(())
 }
 
-async fn dispatch(client:Client,helper:Arc<Helper>,expected:BrowserBinding,request:BrowserRequest,stop:CancellationToken,root:std::path::PathBuf) -> Result<()> {
-    let b=&request.binding;
-    ensure!(b.session_id==expected.session_id && b.incarnation==expected.incarnation && b.browser_id==expected.browser_id
-        && b.resource_id==expected.resource_id && b.executor_id==expected.executor_id && b.run_id.is_some()
-        && b.controller_epoch==expected.controller_epoch && b.capture_epoch==expected.capture_epoch && request.expires_at_ms>now(),
-        "Stale or mismatched browser request");
-    let mut evidence=journal::Dispatch {binding:b.clone(),request_id:request.request_id,action_sha256:request.action_sha256.clone(),local_dispatch_possible:false};
-    journal::record(&root,&evidence)?;
-    let claim=exchange(&client,b,BrowserOperation::Claim {command_id:Uuid::new_v4(),binding:b.clone(),request_id:request.request_id,action_sha256:request.action_sha256.clone()}).await;
-    let claimed=matches!(claim,Ok(BrowserReply::Receipt {receipt}) if receipt.state==BrowserRequestState::Dispatched);
+async fn dispatch(
+    client: Client,
+    helper: Arc<Helper>,
+    expected: BrowserBinding,
+    request: BrowserRequest,
+    stop: CancellationToken,
+    root: std::path::PathBuf,
+) -> Result<()> {
+    let b = &request.binding;
+    ensure!(
+        b.session_id == expected.session_id
+            && b.incarnation == expected.incarnation
+            && b.browser_id == expected.browser_id
+            && b.resource_id == expected.resource_id
+            && b.executor_id == expected.executor_id
+            && b.run_id.is_some()
+            && b.controller_epoch == expected.controller_epoch
+            && b.capture_epoch == expected.capture_epoch
+            && request.expires_at_ms > now(),
+        "Stale or mismatched browser request"
+    );
+    let mut evidence = journal::Dispatch {
+        binding: b.clone(),
+        request_id: request.request_id,
+        action_sha256: request.action_sha256.clone(),
+        local_dispatch_possible: false,
+    };
+    journal::record(&root, &evidence)?;
+    let claim = exchange(
+        &client,
+        b,
+        BrowserOperation::Claim {
+            command_id: Uuid::new_v4(),
+            binding: b.clone(),
+            request_id: request.request_id,
+            action_sha256: request.action_sha256.clone(),
+        },
+    )
+    .await;
+    let claimed = matches!(claim,Ok(BrowserReply::Receipt {receipt}) if receipt.state==BrowserRequestState::Dispatched);
     if !claimed {
         // No local dispatch occurred. Receipt recovery, not a replacement Claim or action.
-        let _=exchange(&client,b,BrowserOperation::Cleanup {command_id:Uuid::new_v4(),binding:b.clone(),request_id:request.request_id,observed:true}).await;
-        anyhow::bail!("Browser dispatch admission unknown or refused; local action was not sent");
+        let _ = exchange(
+            &client,
+            b,
+            BrowserOperation::Cleanup {
+                command_id: Uuid::new_v4(),
+                binding: b.clone(),
+                request_id: request.request_id,
+                observed: true,
+            },
+        )
+        .await;
+        // Takeover/cancellation may legitimately refuse a pending claim. The socket watcher
+        // separately fences connection loss; do not close a healthy human-controlled browser.
+        return Ok(());
     }
-    evidence.local_dispatch_possible=true;
-    journal::record(&root,&evidence)?;
-    let operation=json!({"op":"action","epoch":b.controller_epoch,"capture_epoch":b.capture_epoch,
+    evidence.local_dispatch_possible = true;
+    journal::record(&root, &evidence)?;
+    let operation = json!({"op":"action","epoch":b.controller_epoch,"capture_epoch":b.capture_epoch,
         "binding":b,"expires_at_ms":request.expires_at_ms,"action_sha256":request.action_sha256,"action":request.action});
-    let local=tokio::select! {
+    let local = tokio::select! {
         biased;
         _=stop.cancelled()=>None,
         value=helper.call_exact(operation,request.request_id.to_string(),Duration::from_secs(65))=>Some(value),
     };
-    let mut result=BrowserResult {request_id:request.request_id,action_sha256:request.action_sha256.clone(),state:BrowserRequestState::Unresolved,
-        text:"Browser action outcome unknown; do not replay".into(),page_id:None,observation_id:None,image:None,file:None};
-    if let Some(Ok(envelope))=local {
-        if envelope["ok"]==true {
-            if let Ok(value)=serde_json::from_value::<BrowserResult>(envelope["result"].clone()) {
-                ensure!(value.request_id==request.request_id && value.action_sha256==request.action_sha256,"Browser result identity mismatch");
-                result=value;
+    let mut result = BrowserResult {
+        request_id: request.request_id,
+        action_sha256: request.action_sha256.clone(),
+        state: BrowserRequestState::Unresolved,
+        text: "Browser action outcome unknown; do not replay".into(),
+        page_id: None,
+        observation_id: None,
+        image: None,
+        file: None,
+    };
+    if let Some(Ok(envelope)) = local {
+        if envelope["ok"] == true {
+            if let Ok(value) = serde_json::from_value::<BrowserResult>(envelope["result"].clone()) {
+                ensure!(
+                    value.request_id == request.request_id
+                        && value.action_sha256 == request.action_sha256,
+                    "Browser result identity mismatch"
+                );
+                result = value;
             }
-        } else if matches!(envelope["error"]["code"].as_str(),Some("authority_fenced"|"cancelled_before_dispatch"|"local_confirmation_denied"|"local_controller_required")) {
-            result.state=BrowserRequestState::Refused;
-            result.text="Local browser authority or confirmation refused the action".into();
+        } else {
+            // Adapter action errors before queue admission are explicit refusals. Once admitted,
+            // its drain path returns a typed result (including unresolved effects), not ok:false.
+            result.state = BrowserRequestState::Refused;
+            result.text = "Local browser refused the action before dispatch; review companion sharing and permissions".into();
         }
     } else {
-        let _=helper.call(json!({"op":"cancel","request_id":request.request_id}),Duration::from_secs(2)).await;
+        let _ = helper
+            .call(
+                json!({"op":"cancel","request_id":request.request_id}),
+                Duration::from_secs(2),
+            )
+            .await;
     }
-    if stop.is_cancelled() { result.image=None;result.file=None;result.text="Browser sharing interrupted; observations withheld".into(); }
+    if stop.is_cancelled() {
+        result.image = None;
+        result.file = None;
+        result.text = "Browser sharing interrupted; observations withheld".into();
+    }
     // Never resend uncertain results automatically. Runtime keeps the original action obligation.
-    exchange(&client,b,BrowserOperation::Result {command_id:Uuid::new_v4(),binding:b.clone(),result}).await?;
+    exchange(
+        &client,
+        b,
+        BrowserOperation::Result {
+            command_id: Uuid::new_v4(),
+            binding: b.clone(),
+            result,
+        },
+    )
+    .await?;
     Ok(())
 }

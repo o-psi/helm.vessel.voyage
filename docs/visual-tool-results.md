@@ -13,11 +13,13 @@ Tool images (including MCP and shared-browser artifacts) remain canonical
   as required by Anthropic's tool protocol; the canonical role is still Tool.
 - OpenAI Chat: explicitly refuses visual tool outputs. Its tool-message content
   schema permits text, not image blocks. Ordinary User image inputs are unchanged.
-- ChatGPT OAuth: explicitly refuses visual tool outputs. Its private Codex backend
-  has not been verified for this Responses extension; public Responses schema
-  evidence alone does not establish private-backend support.
+- Native ChatGPT OAuth: uses the same Responses function-output encoding. The
+  official OpenAI client protocol defines image-bearing `FunctionCallOutputBody`
+  content arrays explicitly (source below). This is native wire compatibility,
+  not an external Codex bridge or another agent loop. Live account/model acceptance
+  remains unverified; normal model image capability checks still apply.
 
-Both supported adapters refuse visual output whose original call is absent. They
+Supported adapters refuse visual output whose original call is absent. They
 never downgrade it to metadata or relabel an orphan as User image input. Other
 non-image tool content retains its deterministic text representation in the
 ordered block list. Structured content follows the ordered content blocks.
@@ -54,6 +56,8 @@ Official generated SDK schemas read on 2026-09-10 (no paid provider requests):
 - [OpenAI image input block](https://github.com/openai/openai-python/blob/603b81f9e228d95032059169cb3a0e7dc12ba93f/src/openai/types/responses/response_input_image_content_param.py)
 - [OpenAI Chat tool message](https://github.com/openai/openai-python/blob/603b81f9e228d95032059169cb3a0e7dc12ba93f/src/openai/types/chat/chat_completion_tool_message_param.py)
 - [Anthropic tool result](https://github.com/anthropics/anthropic-sdk-python/blob/eb21a4352015686c30f5759e8c2f02d70f5371e2/src/anthropic/types/tool_result_block_param.py)
+
+- [Official OpenAI client function-output body and image schema](https://github.com/openai/codex/blob/8e2afc09126c0cea4c282725fe68af43adad73d7/codex-rs/protocol/src/models.rs)
 
 These establish documented request shapes, not observed cloud acceptance or image
 reasoning quality. Scoped synthetic checks are supplied for encoding, provenance, refusal,

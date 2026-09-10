@@ -75,7 +75,9 @@ impl Routes {
         self.unavailable.remove(&route);
     }
     pub fn deactivate(&mut self, id: Uuid) {
-        if let Some(route)=self.active.remove(&id) { self.clients[&route].disconnect(); }
+        if let Some(route) = self.active.remove(&id) {
+            self.clients[&route].disconnect();
+        }
     }
     pub fn len(&self) -> usize {
         self.active.len()

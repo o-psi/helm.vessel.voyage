@@ -1,8 +1,8 @@
 //! Multiplexed presentation; dropping this interface only drops observations.
 mod actions;
-mod browser;
 mod archive;
 mod attachments;
+mod browser;
 mod completion;
 mod controls;
 mod explore;
@@ -295,7 +295,10 @@ pub async fn run_with_notice(
     for job in app.retired_observers {
         let _ = job.await;
     }
-    result.and(browser_cleanup).and(clipboard_cleanup).and(preview_cleanup)
+    result
+        .and(browser_cleanup)
+        .and(clipboard_cleanup)
+        .and(preview_cleanup)
 }
 
 impl App {

@@ -233,11 +233,9 @@ pub(crate) fn validate_adapter(
 ) -> Result<(), ProviderError> {
     // These are local compatibility refusals, not provider diagnostics. Do not
     // silently demote images to metadata or relabel tool output as authored User input.
-    if request.messages.iter().any(tool_images)
-        && matches!(kind, ProviderKind::OpenaiChat | ProviderKind::ChatGptOauth)
-    {
+    if request.messages.iter().any(tool_images) && matches!(kind, ProviderKind::OpenaiChat) {
         return Err(invalid(
-            "selected adapter does not support visual tool outputs with tool-call provenance; use native Responses or Anthropic",
+            "selected adapter does not support visual tool outputs with tool-call provenance; use native Responses, ChatGPT OAuth or Anthropic",
         ));
     }
     Ok(())
@@ -644,7 +642,7 @@ mod tests {
             assert_eq!(blocks.as_array().unwrap().len(), 3);
         }
         assert!(content(&m, Wire::Chat).is_err());
-        assert!(validate_adapter(&ProviderKind::ChatGptOauth, &request(vec![m.clone()])).is_err());
+        assert!(validate_adapter(&ProviderKind::ChatGptOauth, &request(vec![m.clone()])).is_ok());
         assert!(validate_adapter(&ProviderKind::OpenaiChat, &request(vec![m.clone()])).is_err());
         let mut assistant = Message::new(Role::Assistant, "");
         assistant.tool_calls.push(crate::model::ToolCall {

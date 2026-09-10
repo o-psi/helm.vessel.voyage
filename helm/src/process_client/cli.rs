@@ -25,6 +25,8 @@ pub struct ConnectArgs {
 
 #[derive(Subcommand)]
 pub enum ConnectedCommand {
+    /// Open a locally controlled browser companion for this voyage; sharing requires local consent.
+    Browser { session: Uuid },
     /// Download a tool artifact from its owning voyage to a new local file.
     Artifact {
         session: Uuid,
@@ -196,6 +198,9 @@ pub async fn run(args: ConnectArgs) -> Result<()> {
             "CLI operations require a single selected Vessel"
         );
         match command {
+            ConnectedCommand::Browser { session } => {
+                return super::browser::run_connected(clients[0].clone(), session).await;
+            }
             ConnectedCommand::Terminal {
                 session,
                 run,
