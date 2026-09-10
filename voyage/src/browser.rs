@@ -58,6 +58,14 @@ struct Inner {
     run: Option<LiveRun>,
     guards: BTreeMap<Uuid, ToolContext>,
 }
+
+/// Only SQLite's explicit non-admission contention is retryable. Never retry I/O,
+/// identity, schema or uncertain external/browser effects.
+pub(crate) fn storage_busy(error: &anyhow::Error) -> bool {
+    matches!(error.downcast_ref::<rusqlite::Error>(),Some(rusqlite::Error::SqliteFailure(code,_))
+        if matches!(code.code,rusqlite::ErrorCode::DatabaseBusy|rusqlite::ErrorCode::DatabaseLocked))
+}
+
 pub struct BrowserBroker {
     directory: PathBuf,
     session: Uuid,
@@ -789,7 +797,12 @@ impl BrowserBroker {
             },
         })
     }
-    pub(crate) fn enqueue(&self, action: BrowserAction, context: &ToolContext) -> Result<Uuid> {
+    pub(crate) fn enqueue(
+        &self,
+        action: BrowserAction,
+        context: &ToolContext,
+        id: Uuid,
+    ) -> Result<Uuid> {
         let mut inner = self
             .inner
             .lock()
@@ -823,11 +836,6 @@ impl BrowserBroker {
         );
         let mut binding = o.binding.clone();
         binding.run_id = Some(run.id);
-        let id = context
-            .tool_call_id
-            .as_ref()
-            .and_then(|id| Uuid::parse_str(id).ok())
-            .unwrap_or_else(Uuid::new_v4);
         ensure!(
             !inner.durable.entries.contains_key(&id)
                 && !inner.durable.retired_entries.contains_key(&id),
@@ -846,9 +854,9 @@ impl BrowserBroker {
             binding,
             action,
             action_sha256: hash.clone(),
-            expires_at_ms: now()
-                .saturating_add(context.timeout.as_millis().min(60_000) as u64)
-                .min(o.binding.expires_at_ms),
+            // Request deadline is independent of the renewable executor lease.
+            // Claim and local dispatch still check the CURRENT lease and epochs.
+            expires_at_ms: now().saturating_add(context.timeout.as_millis().min(60_000) as u64),
         };
         let mut d = inner.durable.clone();
         d.entries.insert(
@@ -893,12 +901,10 @@ impl BrowserBroker {
             e.result = None;
         }
         let reply = (e.receipt.clone(), e.result.take());
-        if !matches!(
+        let terminal = !matches!(
             reply.0.state,
             BrowserRequestState::Pending | BrowserRequestState::Dispatched
-        ) {
-            inner.guards.remove(&id);
-        }
+        );
         if cancel
             || reply.1.is_some()
             || !matches!(
@@ -907,6 +913,11 @@ impl BrowserBroker {
             )
         {
             self.commit(&mut inner, d)?;
+        }
+        // Keep the waiter guard until its checkpoint is durable. A busy database must
+        // not let a concurrent lease/control commit retire a still-waiting tool.
+        if terminal {
+            inner.guards.remove(&id);
         }
         Ok(reply)
     }

@@ -7,8 +7,12 @@ the existing binaries are in [configuration](configuration.md) and
 
 ## Target authority boundary
 
-Helm presents actions and decisions; it does not execute tools or supply execution
-authority. Vessel authenticates clients and supervises voyage processes within
+Helm presents actions and decisions and does not supply remote execution authority.
+Explicit local browser sharing adds a separate, narrow local execution boundary:
+Helm enforces browser consent, origin/file scope, capture and controller fencing;
+Voyage independently admits the browser tool. Neither remote unrestricted access
+nor a Vessel connection authorizes local sharing. See [local browser](local-browser.md).
+Vessel authenticates clients and supervises voyage processes within
 locally configured limits. Each voyage process enforces the applicable local
 policy before providers, tools, subprocesses, subagents and disclosure boundaries.
 A supervisor's routing decision is not a substitute for runtime admission.

@@ -24,7 +24,9 @@ executors. Human Vessel connections, scoped process grants and participant bindi
 remain distinct authority surfaces. Outbound worker mode is retired; do not reintroduce it.
 Describe current behavior using [docs/current-state.md](docs/current-state.md)
 and code; label target capabilities explicitly. Do not inject planned capabilities
-into current runtime instructions. Browser console work remains deferred.
+into current runtime instructions. Explicit shared local browser execution is opt-in through the same full-duplex
+Helm–Vessel socket. Keep its local consent/capture boundary separate from Voyage
+policy; do not introduce a separately networked browser bridge or general Helm executor.
 
 ## Delivery
 

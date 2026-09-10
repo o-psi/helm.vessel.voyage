@@ -2,6 +2,7 @@
 use super::{Control, Status, assets, helper::Helper, journal};
 use crate::process_client::transport::Client;
 use anyhow::{Context, Result, ensure};
+use futures_util::StreamExt;
 use serde_json::{Value, json};
 use std::{sync::Arc, time::Duration};
 use tokio::sync::{mpsc, watch};
@@ -86,6 +87,7 @@ pub(super) async fn run(
     let root = assets::root()?.join(format!("session-{}", Uuid::new_v4()));
     let private = crate::attachment::local_actor::storage::Directory::open(&root)?;
     let _ownership = private.lock()?;
+    status.send_modify(|s|s.summary="Starting local Chromium: requires Node 24+, installed executable and a working Chromium sandbox".into());
     let helper = Helper::start(&assets.join("helper.mjs")).await?;
     let mut notices = helper.events();
     let mut binding = BrowserBinding {
@@ -102,7 +104,7 @@ pub(super) async fn run(
     let result = async {
         let init = helper.call(json!({"op":"init","session_dir":root,"executable_path":executable,
             "browser_id":binding.browser_id,"resource_id":binding.resource_id,"executor_id":binding.executor_id,
-            "label":label,"binding":binding,"heartbeat_ms":5000}), Duration::from_secs(30)).await?;
+            "label":label,"heartbeat_ms":5000}), Duration::from_secs(30)).await?;
         let companion = super::launcher(&root, init["companion_url"].as_str().context("Companion address unavailable")?)?;
         // Helper may mint its own live browser identity. It becomes fixed before the first offer.
         binding.browser_id = serde_json::from_value(init["browser_id"].clone())?;
@@ -136,6 +138,9 @@ pub(super) async fn run(
         let mut action: Option<tokio::task::JoinHandle<Result<()>>> = None;
         let action_stop = CancellationToken::new();
         let mut pending: Option<tokio::task::JoinHandle<Result<BrowserReply>>> = None;
+        let work_ready=Arc::new(tokio::sync::Notify::new());
+        let mut pending_needed=true;
+        let mut event_worker:Option<tokio::task::JoinHandle<Result<()>>>=None;
         let stopped = helper.stopped();
         let outcome: Result<()> = async {
             loop {
@@ -146,11 +151,13 @@ pub(super) async fn run(
                         ensure!(changed.is_ok() && *connection.borrow() == initial_socket,
                             "Vessel socket changed or disconnected; local sharing requires explicit restart");
                     }
+                    _ = work_ready.notified() => {pending_needed=true;},
                     _ = stopped.cancelled() => anyhow::bail!("Local browser process stopped; effects may be unknown"),
                     event = notices.recv() => {
                         match event {
                             Ok(value) if value["event"] == "control" => {
-                                update_control(&client,&helper,&value,&mut binding,&mut offered,&mut current_control,status).await?;
+                                update_control(&client,&helper,&value,&mut binding,&mut offered,&mut current_control,status,&root,initial_socket).await?;
+                                pending_needed=true;
                                 last_renewal=tokio::time::Instant::now();
                             }
                             Ok(value) if value["event"] == "approval" => {
@@ -169,27 +176,47 @@ pub(super) async fn run(
                                 set_control(&client,&binding,current_control).await?;
                                 last_renewal=tokio::time::Instant::now();
                             }
-                            let local=helper.call(json!({"op":"heartbeat","binding":binding}),Duration::from_secs(2)).await?;
-                            update_control(&client,&helper,&local,&mut binding,&mut offered,&mut current_control,status).await?;
+                            let heartbeat=if offered {json!({"op":"heartbeat","binding":binding})} else {json!({"op":"heartbeat"})};
+                            let local=helper.call(heartbeat,Duration::from_secs(2)).await?;
+                            update_control(&client,&helper,&local,&mut binding,&mut offered,&mut current_control,status,&root,initial_socket).await?;
                             last_heartbeat=tokio::time::Instant::now();
+                        }
+                        if offered && event_worker.is_none() {
+                            let c=client.clone();let b=binding.clone();let notify=work_ready.clone();
+                            event_worker=Some(tokio::spawn(async move {
+                                let mut events=c.events(vec![voyage_protocol::vessel::VesselEventSubscription {session_id:b.session_id,incarnation:b.incarnation,after:0}]).await?;
+                                // Initial recovery closes the race between Offer and subscription.
+                                notify.notify_one();
+                                while let Some(event)=events.next().await {
+                                    let event=event?;
+                                    ensure!(event.error.is_none() && event.session_id==b.session_id && event.incarnation==b.incarnation,"Browser notification owner/authority changed");
+                                    if event.result["replay_gap"]==true || event.result["events"].as_array().is_some_and(|a|a.iter().any(|e|e["kind"]=="browser")) {notify.notify_one();}
+                                }
+                                anyhow::bail!("Browser event subscription ended; sharing fenced")
+                            }));
+                        }
+                        if event_worker.as_ref().is_some_and(|job|job.is_finished()) {
+                            event_worker.take().unwrap().await.context("Browser notification task failed")??;
+                            anyhow::bail!("Browser notification worker stopped");
                         }
                         if action.as_ref().is_some_and(|job|job.is_finished()) {
                             action.take().unwrap().await.context("Browser dispatch task failed")??;
+                            pending_needed=true;
                         }
                         if pending.as_ref().is_some_and(|job|job.is_finished()) {
                             let reply=pending.take().unwrap().await.context("Browser pending observation task failed")??;
-                            if let BrowserReply::Pending { requests }=reply {
-                                if let Some(request)=requests.into_iter().next().filter(|r|current_control==BrowserControl::Shared
+                            if let BrowserReply::Pending { requests }=reply
+                                && let Some(request)=requests.into_iter().next().filter(|r|current_control==BrowserControl::Shared
                                     && r.binding.controller_epoch==binding.controller_epoch && r.binding.capture_epoch==binding.capture_epoch) {
                                     ensure!(action.is_none(), "Browser action arbitration conflict");
                                     let (c,h,s)=(client.clone(),helper.clone(),action_stop.clone());
                                     let expected=binding.clone();
                                     let evidence_root=root.clone();
-                                    action=Some(tokio::spawn(async move { dispatch(c,h,expected,request,s,evidence_root).await }));
-                                }
+                                    action=Some(tokio::spawn(async move { dispatch(c,h,expected,request,s,evidence_root,initial_socket).await }));
                             }
                         }
-                        if offered && current_control==BrowserControl::Shared && action.is_none() && pending.is_none() {
+                        if offered && current_control==BrowserControl::Shared && action.is_none() && pending.is_none() && pending_needed {
+                            pending_needed=false;
                             let c=client.clone();let b=binding.clone();
                             pending=Some(tokio::spawn(async move { exchange(&c,&b,BrowserOperation::Pending {binding:b.clone(),limit:1}).await }));
                         }
@@ -208,11 +235,11 @@ pub(super) async fn run(
             binding.capture_epoch=value["capture_epoch"].as_u64().unwrap_or(binding.controller_epoch);
         }
         if let Some(job)=pending { job.abort(); let _=job.await; }
-        if let Some(mut job)=action {
-            if tokio::time::timeout(Duration::from_secs(5), &mut job).await.is_err() {
-                job.abort();let _=job.await;
-                // Remote dispatched receipt remains unresolved; dropping this future is not cleanup proof.
-            }
+        if let Some(job)=event_worker {job.abort();let _=job.await;}
+        if let Some(mut job)=action
+            && tokio::time::timeout(Duration::from_secs(5), &mut job).await.is_err() {
+            job.abort();let _=job.await;
+            // Remote dispatched receipt remains unresolved; dropping this future is not cleanup proof.
         }
         if offered {
             let _=tokio::time::timeout(Duration::from_secs(3),set_control(&client,&binding,BrowserControl::Disconnected)).await;
@@ -228,14 +255,17 @@ pub(super) async fn run(
     result.and(cleaned)
 }
 
+#[allow(clippy::too_many_arguments)] // Each independent authority/observation fence is explicit.
 async fn update_control(
     client: &Client,
-    _helper: &Arc<Helper>,
+    helper: &Arc<Helper>,
     value: &Value,
     binding: &mut BrowserBinding,
     offered: &mut bool,
     current: &mut BrowserControl,
     status: &watch::Sender<Status>,
+    root: &std::path::Path,
+    socket: crate::process_client::duplex::ConnectionState,
 ) -> Result<()> {
     let epoch = value["epoch"]
         .as_u64()
@@ -252,6 +282,30 @@ async fn update_control(
     binding.capture_epoch = capture;
     binding.expires_at_ms = now() + 10_000;
     if !*offered && next == BrowserControl::Shared {
+        let (_, incarnation) = client
+            .voyage_observed(
+                binding.session_id,
+                binding.incarnation,
+                VoyageCommand::PrepareBrowser,
+            )
+            .await?;
+        ensure!(
+            *client.connection_state().borrow() == socket,
+            "Vessel connection changed while preparing browser sharing"
+        );
+        binding.incarnation = incarnation;
+        journal::offer(root, client, binding)?;
+        let local = helper
+            .call(
+                json!({"op":"heartbeat","binding":binding}),
+                Duration::from_secs(2),
+            )
+            .await?;
+        ensure!(
+            control(&local) == BrowserControl::Shared
+                && local["epoch"].as_u64() == Some(binding.controller_epoch),
+            "Local sharing changed before offer"
+        );
         exchange(
             client,
             binding,
@@ -270,7 +324,12 @@ async fn update_control(
         status.send_modify(|s| s.summary=match next {
         BrowserControl::Shared=>"Agent sharing enabled for this voyage. Take over or enter Private in the local companion",
         BrowserControl::Human=>"Human control. New agent actions and observations are fenced",
-        _=>"Private interaction. Agent observation and capture are suspended",
+        _=>match value["fence_reason"].as_str() {
+            Some("remote_cancellation")=>"Private: remote action cancellation fenced input and capture",
+            Some("connection_liveness_expired"|"binding_expired")=>"Private: browser connection or lease liveness expired",
+            Some("controller_disconnected")=>"Private: local companion controller disconnected",
+            _=>"Private interaction. Agent observation and capture are suspended",
+        },
     }.into());
     }
     Ok(())
@@ -283,7 +342,13 @@ async fn dispatch(
     request: BrowserRequest,
     stop: CancellationToken,
     root: std::path::PathBuf,
+    socket: crate::process_client::duplex::ConnectionState,
 ) -> Result<()> {
+    let mut connection = client.connection_state();
+    ensure!(
+        *connection.borrow() == socket,
+        "Browser socket changed before claim"
+    );
     let b = &request.binding;
     ensure!(
         b.session_id == expected.session_id
@@ -316,7 +381,7 @@ async fn dispatch(
     )
     .await;
     let claimed = matches!(claim,Ok(BrowserReply::Receipt {receipt}) if receipt.state==BrowserRequestState::Dispatched);
-    if !claimed {
+    if !claimed || *connection.borrow() != socket || stop.is_cancelled() {
         // No local dispatch occurred. Receipt recovery, not a replacement Claim or action.
         let _ = exchange(
             &client,
@@ -337,11 +402,34 @@ async fn dispatch(
     journal::record(&root, &evidence)?;
     let operation = json!({"op":"action","epoch":b.controller_epoch,"capture_epoch":b.capture_epoch,
         "binding":b,"expires_at_ms":request.expires_at_ms,"action_sha256":request.action_sha256,"action":request.action});
-    let local = tokio::select! {
-        biased;
-        _=stop.cancelled()=>None,
-        value=helper.call_exact(operation,request.request_id.to_string(),Duration::from_secs(65))=>Some(value),
+    let call = helper.call_exact(
+        operation,
+        request.request_id.to_string(),
+        Duration::from_secs(65),
+    );
+    tokio::pin!(call);
+    let mut receipt_tick = tokio::time::interval(Duration::from_secs(1));
+    let mut cancellation_sent = false;
+    let local = loop {
+        tokio::select! {
+            biased;
+            _=stop.cancelled()=>break None,
+            _=connection.changed()=>break None,
+            value=&mut call=>break Some(value),
+            _=receipt_tick.tick(),if !cancellation_sent=> {
+                // Follow the exact in-flight receipt to propagate remote cancellation/access
+                // invalidation. This read shares the same socket and never dispatches work.
+                let receipt=exchange(&client,b,BrowserOperation::Receipt {binding:b.clone(),request_id:request.request_id}).await;
+                let receipt_state=match &receipt {Ok(BrowserReply::Receipt{receipt})=>format!("{:?}",receipt.state),Ok(_)=>"invalid_reply".into(),Err(_)=>"unavailable".into()};
+                if !matches!(receipt,Ok(BrowserReply::Receipt{receipt}) if receipt.state==BrowserRequestState::Dispatched) {
+                    crate::attachment::local_actor::storage::Directory::open_existing(&root)?.publish(&format!("cancel-{}.json",request.request_id),&serde_json::to_vec(&json!({"request_id":request.request_id,"reason":receipt_state}))?)?;
+                    let _=helper.call(json!({"op":"cancel","request_id":request.request_id}),Duration::from_secs(2)).await;
+                    cancellation_sent=true;
+                }
+            }
+        }
     };
+    let locally_returned = matches!(&local, Some(Ok(_)));
     let mut result = BrowserResult {
         request_id: request.request_id,
         action_sha256: request.action_sha256.clone(),
@@ -379,8 +467,11 @@ async fn dispatch(
     if stop.is_cancelled() {
         result.image = None;
         result.file = None;
+        result.page_id = None;
+        result.observation_id = None;
         result.text = "Browser sharing interrupted; observations withheld".into();
     }
+    let unknown_but_quiescent = locally_returned && result.state == BrowserRequestState::Unresolved;
     // Never resend uncertain results automatically. Runtime keeps the original action obligation.
     exchange(
         &client,
@@ -392,5 +483,18 @@ async fn dispatch(
         },
     )
     .await?;
+    if unknown_but_quiescent {
+        exchange(
+            &client,
+            b,
+            BrowserOperation::Cleanup {
+                command_id: Uuid::new_v4(),
+                binding: b.clone(),
+                request_id: request.request_id,
+                observed: true,
+            },
+        )
+        .await?;
+    }
     Ok(())
 }

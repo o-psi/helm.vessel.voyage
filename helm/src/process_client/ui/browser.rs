@@ -37,8 +37,11 @@ impl App {
                     );
                     self.browsers.insert(target, handle);
                     self.browser_opened.remove(&target);
-                } else if let Some(path) = self.browsers[&target].state.borrow().launcher.clone() {
-                    self.open_browser_launcher(path);
+                } else {
+                    let path = self.browsers[&target].state.borrow().launcher.clone();
+                    if let Some(path) = path {
+                        self.open_browser_launcher(path);
+                    }
                 }
                 self.show_browser_panel(target);
             }
@@ -69,7 +72,9 @@ impl App {
                 let sender = self.sender.clone();
                 self.browser_retired.push(tokio::spawn(async move {
                     let result=crate::process_client::browser::reconcile(client,target.session,incarnation).await.map_err(|_|"Browser reconciliation refused or unavailable. Original evidence retained; no effects replayed".into());
+                    let completion=result.clone().map(|_|());
                     let _=sender.send(Update::Browser {target,result}).await;
+                    completion
                 }));
                 self.status =
                     "Reconciling observed local cleanup only; uncertain effects are not repeated"
@@ -83,7 +88,9 @@ impl App {
                     self.browser_retired.push(tokio::spawn(async move {
                         let result=handle.finish().await.map(|_|"Local browser closed; Voyage continues independently".to_owned())
                             .map_err(|_|"Local browser cleanup or action outcome remains unresolved; retained receipts were not erased".to_owned());
+                        let completion=result.clone().map(|_|());
                         let _=sender.send(Update::Browser {target,result}).await;
+                        completion
                     }));
                 }
                 self.status = "Closing this local browser. No Voyage cancellation was sent".into();
@@ -97,7 +104,10 @@ impl App {
     fn open_browser_launcher(&mut self, path: std::path::PathBuf) {
         // Only a private file path appears in the opener's arguments, never the fragment credential.
         self.browser_retired.push(tokio::spawn(async move {
+            // Opening the ordinary human browser is optional; the private launcher
+            // remains available in the panel when the desktop opener is unavailable.
             let _ = crate::process_client::browser::open_launcher(path).await;
+            Ok(())
         }));
     }
     pub(super) fn show_browser_panel(&mut self, target: Target) {
@@ -175,7 +185,7 @@ impl App {
             failed |= handle.finish().await.is_err();
         }
         for job in self.browser_retired.drain(..) {
-            failed |= job.await.is_err();
+            failed |= !matches!(job.await, Ok(Ok(())));
         }
         ensure!(
             !failed,

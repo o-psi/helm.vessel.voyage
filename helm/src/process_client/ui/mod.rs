@@ -53,7 +53,7 @@ use tokio::sync::mpsc;
 pub(super) struct App {
     browsers: BTreeMap<Target, crate::process_client::browser::Handle>,
     browser_opened: std::collections::BTreeSet<Target>,
-    browser_retired: Vec<tokio::task::JoinHandle<()>>,
+    browser_retired: Vec<tokio::task::JoinHandle<std::result::Result<(), String>>>,
     working: effects::Working,
     coordination_request: Option<uuid::Uuid>,
     previews: previews::State,

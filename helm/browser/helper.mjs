@@ -20,9 +20,10 @@ let limits = {max_tabs:8, max_receipts:10000, max_transfer_bytes:2*1024*1024, ac
   prompt_timeout_ms:30000, heartbeat_ms:5000, width:1280,height:720, max_profile_bytes:256*1024*1024};
 const safeError = e => ({code:e instanceof Refusal ? e.code : 'operation_failed',message:e instanceof Refusal ? e.code : 'Local browser operation failed; details withheld'});
 function status() { return {browser_id:S.browser_id,epoch:S.epoch,capture_epoch:S.epoch,mode:S.mode,shared:S.shared,ready:S.ready,
-  pending:S.queue.length+(S.active?1:0),connected:Date.now()-S.heartbeat < limits.heartbeat_ms}; }
+  pending:S.queue.length+(S.active?1:0),fence_reason:S.fenceReason||'not_shared',connected:Date.now()-S.heartbeat < limits.heartbeat_ms}; }
 function releaseInput(){const pending=[];for(const p of S.pages.values()){for(const key of p.helmKeys||[])pending.push(p.keyboard.up(key));for(const button of p.helmButtons||[])pending.push(p.mouse.up({button}));p.helmKeys=new Set();p.helmButtons=new Set();}if(pending.length){const reset=Promise.all([S.inputReset||Promise.resolve(),...pending]);S.inputReset=reset;reset.then(()=>{if(S.inputReset===reset)S.inputReset=null;},()=>{S.shared=false;if(S.inputReset===reset)S.inputReset=null;});}return S.inputReset;}
-function fence(mode='private') {
+function fence(mode='private',reason='local_control') {
+  S.fenceReason=reason;
   releaseInput();
   for(const v of S.refs.values())v.handle.dispose().catch(()=>{});
   S.boundRun=null;S.chooser=null;for(const u of S.uploads.values())u.shared=false;for(const d of S.downloads.values())d.disclose=false;S.epoch++; S.mode=mode; S.shared=false; S.refs.clear(); S.observations.clear();
@@ -110,7 +111,7 @@ async function init(req) {
   for(const p of context.pages())await registerPage(p);
   if(!S.pages.size)await context.newPage();
   await startCompanion(); S.ready=true; S.heartbeat=Date.now();
-  watchdog=setInterval(()=> { if(S.shared && (Date.now()-S.heartbeat>=limits.heartbeat_ms || (S.binding && Date.now()>=S.binding.expires_at_ms)))fence(); if(S.controller&&Date.now()-S.controller.seen>5000){S.controller=null;fence();} },250); watchdog.unref();
+  watchdog=setInterval(()=> { if(S.shared && Date.now()-S.heartbeat>=limits.heartbeat_ms)fence('private','connection_liveness_expired'); else if(S.shared&&S.binding&&Date.now()>=S.binding.expires_at_ms)fence('private','binding_expired'); if(S.controller&&Date.now()-S.controller.seen>5000){S.controller=null;fence('private','controller_disconnected');} },250); watchdog.unref();
   diskWatch=setInterval(()=>{if(!diskChecking){diskChecking=true;void checkDisk().catch(()=>{fence();void context?.close().catch(()=>{});}).finally(()=>diskChecking=false);}},1000);diskWatch.unref();
   return {...status(),companion_url:`${companionOrigin}/#${launchSecret}`,limits};
 }
@@ -286,7 +287,7 @@ async function action(req) {
   if(req.capture_epoch!==S.epoch)refuse('capture_fenced');
   if(S.binding&&!req.binding)refuse('binding_required');
   if(req.binding)validateBinding(req.binding);
-  if(req.binding && (!S.binding || !sameBinding(req.binding,S.binding) || req.binding.controller_epoch!==S.epoch || req.binding.capture_epoch!==S.epoch || req.binding.expires_at_ms<=Date.now()))refuse('binding_fenced');
+  if(req.binding && (!S.binding || !sameBinding(req.binding,S.binding) || req.binding.controller_epoch!==S.epoch || req.binding.capture_epoch!==S.epoch))refuse('binding_fenced');
   if(req.binding){if(!req.binding.run_id)refuse('run_required');if(S.boundRun&&S.boundRun!==req.binding.run_id){fence();refuse('run_changed');}S.boundRun=req.binding.run_id;}
   if(typeof req.action_sha256!=='string'||! /^[a-f0-9]{64}$/.test(req.action_sha256))refuse('invalid_action_digest');
   normalizeAction(req.action);
@@ -343,7 +344,7 @@ async function request(req) {
   if(req.op==='receipt'){return {receipt:S.receipts.get(req.request_id)||null};}
   if(req.op==='cancel'){
     const job=[S.active,...S.queue].find(j=>j?.id===req.request_id);
-    if(job){job.cancelled=true;if(job===S.active)fence();}
+    if(job){job.cancelled=true;if(job===S.active)fence('private','remote_cancellation');}
     return {receipt:S.receipts.get(req.request_id)||null,cancellation_requested:!!job};
   }
   refuse('unsupported_operation');

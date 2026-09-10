@@ -4,7 +4,7 @@ Scope: #235, isolated `feature/browser-duplex-transport`, based on `69343e1`,
 including `628d0ba`, `e945e05`, `34ca74c`, `324834d` and the subsequent socket
 lifecycle/resource-bound fixes. These are targeted Linux observations, not a
 restored general test suite or a deployed-browser acceptance claim. Browser #234
-is integrated and verified by its owning voyage; #198 retains deployment gates.
+integration and verification belong to its owning voyage; #198 retains deployment gates.
 
 ## Build and source checks
 

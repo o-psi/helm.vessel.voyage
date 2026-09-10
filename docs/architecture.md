@@ -8,8 +8,11 @@ for supported paths, verification and deployment limits.
 
 **Helm is the TUI.** It owns presentation, per-voyage drafts, navigation and client
 connections. Helm connects to Vessels, whether local or remote. It does not own an
-agent loop, execute tools, acknowledge canonical checkpoints or directly supervise
-voyage processes.
+agent loop, acknowledge canonical checkpoints or directly supervise voyage processes.
+Its explicitly shared local browser is a narrow execution exception: Helm owns a
+local browser adapter and independently enforces local consent while the Voyage
+owns tool admission, task execution and canonical results. This does not expose a
+general tool executor in Helm. See [local browser](local-browser.md).
 
 **Vessel is the supervisor and access service.** It authenticates clients,
 discovers and starts voyage processes, exposes their authorized state, routes

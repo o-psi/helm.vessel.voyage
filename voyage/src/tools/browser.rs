@@ -5,10 +5,23 @@ use serde_json::{Value, json};
 use std::sync::Arc;
 use voyage_protocol::{browser::*, tool_result::ToolOutput};
 pub struct BrowserTool(pub Arc<crate::browser::BrowserBroker>);
-fn failed(_: impl std::fmt::Display) -> ToolError {
-    ToolError::Failed(
-        "browser operation refused or unavailable; inspect local sharing/receipt state".into(),
-    )
+fn failed(error: impl std::fmt::Display) -> ToolError {
+    // Authored classifications only; raw storage/browser diagnostics may contain private data.
+    let detail = error.to_string();
+    let code = if detail.contains("browser request missing") {
+        "browser receipt is no longer live"
+    } else if detail.contains("locked") || detail.contains("busy") {
+        "browser checkpoint storage is busy"
+    } else if detail.contains("stale browser page") {
+        "browser observation is stale; inspect again"
+    } else if detail.contains("authority") {
+        "browser execution authority changed"
+    } else if detail.contains("guard") {
+        "browser checkpoint owner fence changed"
+    } else {
+        "browser operation refused or unavailable; inspect local sharing/receipt state"
+    };
+    ToolError::Failed(code.into())
 }
 fn schema() -> Value {
     let uuid = json!({"type":"string","format":"uuid"});
@@ -233,14 +246,37 @@ impl Tool for BrowserTool {
                 *data_base64 = base64::engine::general_purpose::STANDARD.encode(bytes);
             }
         }
-        let id = self.0.enqueue(action, context).map_err(failed)?;
+        let id = context
+            .tool_call_id
+            .as_ref()
+            .and_then(|id| uuid::Uuid::parse_str(id).ok())
+            .unwrap_or_else(uuid::Uuid::new_v4);
+        let mut storage_attempts = 0;
+        loop {
+            match self.0.enqueue(action.clone(), context, id) {
+                Ok(_) => break,
+                Err(error) if crate::browser::storage_busy(&error) && storage_attempts < 50 => {
+                    storage_attempts += 1;
+                    tokio::select! {_=context.cancellation.cancelled()=>return Err(ToolError::Cancelled),_=tokio::time::sleep(std::time::Duration::from_millis(20))=>{}}
+                }
+                Err(error) => return Err(failed(error)),
+            }
+        }
         let deadline =
             tokio::time::Instant::now() + context.timeout.min(std::time::Duration::from_secs(60));
         loop {
             let cancelled = context.cancellation.is_cancelled()
                 || tokio::time::Instant::now() >= deadline
                 || context.policy.check_execution_authority().is_err();
-            let (receipt, result) = self.0.poll(id, cancelled).map_err(failed)?;
+            let (receipt, result) = match self.0.poll(id, cancelled) {
+                Ok(value) => value,
+                Err(error) if crate::browser::storage_busy(&error) && storage_attempts < 50 => {
+                    storage_attempts += 1;
+                    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                    continue;
+                }
+                Err(error) => return Err(failed(error)),
+            };
             if let Some(result) = result {
                 if result.state != BrowserRequestState::Completed {
                     return terminal_output(&receipt);

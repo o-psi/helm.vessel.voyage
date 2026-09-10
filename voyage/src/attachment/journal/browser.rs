@@ -22,6 +22,7 @@ impl Journal {
         );
         let value: serde_json::Value = serde_json::from_str(state)?;
         self.connection.execute_batch("CREATE TABLE IF NOT EXISTS browser_state(session_id TEXT PRIMARY KEY, state TEXT NOT NULL); CREATE TABLE IF NOT EXISTS process_session_resources(id TEXT PRIMARY KEY,session_id TEXT NOT NULL,run_id TEXT NOT NULL,kind TEXT NOT NULL,state TEXT NOT NULL)")?;
+        let has_observations:bool=self.connection.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='process_observations')",[],|r|r.get(0))?;
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -29,6 +30,21 @@ impl Journal {
             .as_object()
             .context("browser entries missing")?
         {
+            // Durable metadata-only reverse notification. Public observers see no action,
+            // URL, DOM, image or file bytes; only the bound executor can fetch pending work.
+            if has_observations && entry["receipt"]["state"] == "pending" {
+                let json_path = format!("$.entries.\"{id}\".receipt.state");
+                let prior: Option<Option<String>> = tx
+                    .query_row(
+                        "SELECT json_extract(state,?2) FROM browser_state WHERE session_id=?1",
+                        params![session.to_string(), json_path],
+                        |r| r.get(0),
+                    )
+                    .optional()?;
+                if prior.flatten().as_deref() != Some("pending") {
+                    tx.execute("INSERT INTO process_observations(session_id,kind,revision,run_id,entity_id) SELECT id,'browser',revision,?2,?3 FROM sessions WHERE id=?1",params![session.to_string(),entry["request"]["binding"]["run_id"].as_str(),id])?;
+                }
+            }
             let pending = entry["receipt"]["cleanup_pending"] == true;
             let run = entry["request"]["binding"]["run_id"]
                 .as_str()

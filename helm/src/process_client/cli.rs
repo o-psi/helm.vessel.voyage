@@ -199,7 +199,7 @@ pub async fn run(args: ConnectArgs) -> Result<()> {
         );
         match command {
             ConnectedCommand::Browser { session } => {
-                return super::browser::run_connected(clients[0].clone(), session).await;
+                super::browser::run_connected(clients[0].clone(), session).await
             }
             ConnectedCommand::Terminal {
                 session,

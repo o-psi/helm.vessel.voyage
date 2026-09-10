@@ -5,6 +5,23 @@ native-platform validation. Focused regression and explicitly enabled live check
 are described in [quality](quality.md). The [implementation ledger](implementation.md)
 records delivery evidence and its limits.
 
+## Shared local browser
+
+Helm's F6 and `/browser` open a dedicated local Chromium companion. Browser actions
+and results use the same authenticated full-duplex Helm–Vessel socket as ordinary
+commands; the helper has private local stdio only. Human/agent control shares one
+browser context, with local origin grants, per-effect confirmation, private capture
+suspension and explicit return-to-agent epochs. Remote policy remains independent.
+A socket identity/loss change fences sharing, not the remote Voyage. Typed visual
+tool results retain their original call provenance through authorized artifacts.
+
+This is Linux-qualified source functionality, not certification of arbitrary
+websites, a production TLS proxy or native macOS/Windows behavior. Setup is an
+explicit `helm browser setup` operation; no browser or model credentials are
+installed automatically. See [local browser](local-browser.md),
+[runtime browser binding](shared-local-browser-runtime.md) and
+[visual tool results](visual-tool-results.md) for exact scope and limits.
+
 ## Tool reliability
 
 Native action schemas reject irrelevant per-action keys before execution. Shell
@@ -740,8 +757,10 @@ Outbound worker mode and its enrollment relay are retired. There is no compatibi
 API or automatic conversion of worker installations. Retired worker registrations,
 bound journals and enrollment-bearing session grants are rejected; their private
 data is not deleted. Remote human Helm
-connections and participant execution use the scoped Vessel gateway. The browser
-execution console remains deferred.
+connections and participant execution use the scoped Vessel gateway. Shared local browser execution is explicitly opt-in through Helm's existing
+full-duplex socket; it does not restore the retired worker relay. See
+[local browser](local-browser.md) for setup, companion privacy, permissions,
+provider limitations and recovery.
 
 Declarative extensions, repository onboarding, configuration drafts and local
 credential enrollment retain their explicit operator workflows. See
