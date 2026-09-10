@@ -435,8 +435,12 @@ Enter using the inventory's exact owning run and observed incarnation. Ctrl+]
 returns from private input to the saved conversation draft. Stale inventories
 cannot attach. F1 opens a scrollable guide; operator panels and command receipts
 render readable metadata. Chat shows compact public tool targets and outcomes directly for up to three
-consecutive calls. Longer sequences use independently clickable accordions, with
-Ctrl+T controlling all groups; raw result payloads remain excluded. Turn separators
+consecutive calls. Longer sequences keep the newest three calls visible and group
+only the older calls into independently clickable accordions. Group counts and
+outcomes describe those older calls; expanding shows them in their original order
+without duplicating the newest three. Ctrl+T controls all groups; individual saved
+call details still expand by double-click, and raw result payloads remain excluded
+from compact summaries. Turn separators
 show elapsed time when the runtime recorded start and finish timestamps. Authored JSON is preserved,
 and operator summarization requires explicit message metadata. Runtime projections
 include message times, bounded turn outcomes and a reconciled live suffix, so

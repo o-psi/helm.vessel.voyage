@@ -223,12 +223,15 @@ pub(super) fn flush(
             (*call, result, active)
         })
         .collect();
-    let failures = entries
+    // The accordion owns only the older prefix; the newest calls stay visible.
+    let older_count = entries.len().saturating_sub(3);
+    let older = &entries[..older_count];
+    let failures = older
         .iter()
         .filter(|(c, r, _)| r.is_some_and(|r| failed(c, r)))
         .count();
-    let finished = entries.iter().filter(|(_, r, _)| r.is_some()).count();
-    let accordion = entries.len() > 3;
+    let finished = older.iter().filter(|(_, r, _)| r.is_some()).count();
+    let accordion = older_count > 0;
     let expanded = state.expanded.get(&id).copied().unwrap_or(state.details);
     if accordion {
         // Keep the gap outside the clickable accordion heading.
@@ -236,7 +239,7 @@ pub(super) fn flush(
         let outcome = if failures > 0 {
             {
                 let mut categories = std::collections::BTreeMap::<&str, usize>::new();
-                for (call, result, _) in &entries {
+                for (call, result, _) in older {
                     if let Some(result) = result
                         && failed(call, result)
                     {
@@ -266,119 +269,118 @@ pub(super) fn flush(
             output,
             Key::ActivityHeader(id),
             format!(
-                "{} {} actions · {finished}/{} finished{outcome} · Click / Ctrl+T",
+                "{} {} older actions · {finished}/{} finished{outcome} · Click / Ctrl+T",
                 if expanded { "▼" } else { "▶" },
-                entries.len(),
-                entries.len()
+                older_count,
+                older_count
             ),
             width,
         );
     }
-    if !accordion || expanded {
-        for (call, result, active) in entries {
-            let status = match result {
-                Some(r) if r.tool_outcome.as_ref().is_some_and(|o| !o.success()) => {
-                    r.tool_outcome.as_ref().unwrap().label()
+    let hidden = if expanded { 0 } else { older_count };
+    for (call, result, active) in entries.into_iter().skip(hidden) {
+        let status = match result {
+            Some(r) if r.tool_outcome.as_ref().is_some_and(|o| !o.success()) => {
+                r.tool_outcome.as_ref().unwrap().label()
+            }
+            Some(r) if vessel_outcome(call, r).is_some() => vessel_outcome(call, r).unwrap(),
+            Some(r) if failed(call, r) => "Failed",
+            Some(r) if r.tool_success == Some(true) => "Done",
+            Some(_) => "Received",
+            None if active => "Working",
+            None => "Unconfirmed",
+        };
+        let outcome = if let Some(outcome) = result.and_then(|r| r.tool_outcome.as_ref()) {
+            let exit = match outcome.command {
+                Some(voyage_protocol::tool_result::CommandOutcome::Exited { code })
+                    if code != 0 =>
+                {
+                    format!(" (exit {code})")
                 }
-                Some(r) if vessel_outcome(call, r).is_some() => vessel_outcome(call, r).unwrap(),
-                Some(r) if failed(call, r) => "Failed",
-                Some(r) if r.tool_success == Some(true) => "Done",
-                Some(_) => "Received",
-                None if active => "Working",
-                None => "Unconfirmed",
+                _ => String::new(),
             };
-            let outcome = if let Some(outcome) = result.and_then(|r| r.tool_outcome.as_ref()) {
-                let exit = match outcome.command {
-                    Some(voyage_protocol::tool_result::CommandOutcome::Exited { code })
-                        if code != 0 =>
-                    {
-                        format!(" (exit {code})")
-                    }
-                    _ => String::new(),
-                };
+            format!(
+                "{exit}{}",
+                if outcome.incomplete.is_some() && outcome.label() != "Output incomplete" {
+                    " · output incomplete"
+                } else {
+                    ""
+                }
+            )
+        } else if call.name == "shell" {
+            result
+                .and_then(|r| r.content.lines().next())
+                .and_then(|l| l.strip_prefix("exit: "))
+                .filter(|c| *c != "0" && c.parse::<i32>().is_ok())
+                .map(|c| format!(" (exit {c})"))
+                .unwrap_or_default()
+        } else {
+            String::new()
+        };
+        let style = match status {
+            "Failed" | "Execution error" | "Command failed" | "Command signalled" => {
+                crate::theme::Role::Failed.style()
+            }
+            "Working" => crate::theme::Role::Running.style(),
+            "Done" => crate::theme::Role::Completed.style(),
+            _ => crate::theme::Role::Muted.style(),
+        };
+        let key = Key::Tool(call.id.clone());
+        let expanded = state.tool_expanded.contains(&call.id);
+        let detail = details(call, result);
+        let count = detail.lines().count();
+        let partial = result.is_some_and(|r| r.projection_truncated);
+        let text = Text::from(Line::from(vec![
+            Span::styled(format!("{status}{outcome} · "), style),
+            Span::raw(compact(
+                &description(call),
+                usize::from(width).saturating_mul(2).saturating_sub(24),
+            )),
+            Span::styled(
                 format!(
-                    "{exit}{}",
-                    if outcome.incomplete.is_some() && outcome.label() != "Output incomplete" {
-                        " · output incomplete"
-                    } else {
-                        ""
-                    }
-                )
-            } else if call.name == "shell" {
-                result
-                    .and_then(|r| r.content.lines().next())
-                    .and_then(|l| l.strip_prefix("exit: "))
-                    .filter(|c| *c != "0" && c.parse::<i32>().is_ok())
-                    .map(|c| format!(" (exit {c})"))
-                    .unwrap_or_default()
-            } else {
-                String::new()
-            };
-            let style = match status {
-                "Failed" | "Execution error" | "Command failed" | "Command signalled" => {
-                    crate::theme::Role::Failed.style()
-                }
-                "Working" => crate::theme::Role::Running.style(),
-                "Done" => crate::theme::Role::Completed.style(),
-                _ => crate::theme::Role::Muted.style(),
-            };
-            let key = Key::Tool(call.id.clone());
-            let expanded = state.tool_expanded.contains(&call.id);
-            let detail = details(call, result);
-            let count = detail.lines().count();
-            let partial = result.is_some_and(|r| r.projection_truncated);
-            let text = Text::from(Line::from(vec![
-                Span::styled(format!("{status}{outcome} · "), style),
-                Span::raw(compact(
-                    &description(call),
-                    usize::from(width).saturating_mul(2).saturating_sub(24),
-                )),
-                Span::styled(
-                    format!(
-                        " · {}{count}{} detail lines · Double-click to {}",
-                        if expanded { "▼ " } else { "▶ " },
-                        if partial { "+" } else { "" },
-                        if expanded { "collapse" } else { "expand" }
-                    ),
-                    crate::theme::Role::Muted.style(),
+                    " · {}{count}{} detail lines · Double-click to {}",
+                    if expanded { "▼ " } else { "▶ " },
+                    if partial { "+" } else { "" },
+                    if expanded { "collapse" } else { "expand" }
                 ),
-            ]));
-            super::layout::entry_gap(output, key.clone());
+                crate::theme::Role::Muted.style(),
+            ),
+        ]));
+        super::layout::entry_gap(output, key.clone());
+        super::layout::rows(
+            output,
+            key.clone(),
+            crate::markdown::wrap_text(text, width.into()),
+        );
+        if expanded {
             super::layout::rows(
                 output,
                 key.clone(),
-                crate::markdown::wrap_text(text, width.into()),
+                crate::markdown::wrap_text(Text::raw(detail), width.into()),
             );
-            if expanded {
-                super::layout::rows(
+        }
+        if let Some(result) = result.and_then(|message| message.tool_output.as_ref()) {
+            for artifact in result.artifacts() {
+                note(
                     output,
                     key.clone(),
-                    crate::markdown::wrap_text(Text::raw(detail), width.into()),
+                    format!(
+                        "  Attachment · {} · {} · {} bytes",
+                        compact(&artifact.name, 80),
+                        compact(&artifact.mime_type, 80),
+                        artifact.byte_size
+                    ),
+                    width,
                 );
-            }
-            if let Some(result) = result.and_then(|message| message.tool_output.as_ref()) {
-                for artifact in result.artifacts() {
-                    note(
-                        output,
-                        key.clone(),
-                        format!(
-                            "  Attachment · {} · {} · {} bytes",
-                            compact(&artifact.name, 80),
-                            compact(&artifact.mime_type, 80),
-                            artifact.byte_size
-                        ),
-                        width,
-                    );
-                    note(
-                        output,
-                        key.clone(),
-                        format!(
-                            "  Artifact {} · save with helm connect artifact",
-                            artifact.id
-                        ),
-                        width,
-                    );
-                }
+                note(
+                    output,
+                    key.clone(),
+                    format!(
+                        "  Artifact {} · save with helm connect artifact",
+                        artifact.id
+                    ),
+                    width,
+                );
             }
         }
     }
@@ -415,6 +417,95 @@ mod reliability_tests {
     use voyage_protocol::tool_result::{
         CommandOutcome, ExecutionOutcome, IncompleteReason, ToolOutcome,
     };
+    #[test]
+    fn collapsed_activity_keeps_newest_three_and_preserves_expansion() {
+        let snapshot: Snapshot = serde_json::from_value(json!({
+            "session_id": uuid::Uuid::new_v4(), "revision": 1,
+            "messages": [], "run": null, "model": "fixture"
+        }))
+        .unwrap();
+        let tools: Vec<_> = (0..7)
+            .map(|i| ToolCall {
+                id: format!("call-{i}"),
+                name: "shell".into(),
+                arguments: json!({"command": format!("command-{i}")}),
+            })
+            .collect();
+        let messages: Vec<_> = tools
+            .iter()
+            .map(|call| Message {
+                role: "tool".into(),
+                tool_call_id: Some(call.id.clone()),
+                content: format!("saved-{}", call.id),
+                tool_success: Some(false),
+                ..Default::default()
+            })
+            .collect();
+        for width in [24, 120] {
+            for count in 0usize..=7 {
+                for (global, override_value, expanded) in [
+                    (false, None, false),
+                    (true, None, true),
+                    (false, Some(true), true),
+                    (true, Some(false), false),
+                ] {
+                    let mut state = State {
+                        details: global,
+                        ..Default::default()
+                    };
+                    if let Some(value) = override_value {
+                        state.expanded.insert(0, value);
+                    }
+                    // Individual detail state must survive moving into/out of the group.
+                    state.tool_expanded.insert("call-0".into());
+                    let mut calls: Vec<_> = tools[..count].iter().enumerate().collect();
+                    let mut rows = vec![];
+                    flush(&mut rows, &mut calls, &messages, &snapshot, &state, width);
+                    assert!(calls.is_empty());
+                    let older = count.saturating_sub(3);
+                    let hidden = if expanded { 0 } else { older };
+                    let mut visible = vec![];
+                    for row in &rows {
+                        if let Key::Tool(id) = &row.key
+                            && visible.last() != Some(id)
+                        {
+                            visible.push(id.clone());
+                        }
+                    }
+                    assert_eq!(
+                        visible,
+                        tools[hidden..count]
+                            .iter()
+                            .map(|c| c.id.clone())
+                            .collect::<Vec<_>>()
+                    );
+                    let header = rows
+                        .iter()
+                        .filter(|r| r.key == Key::ActivityHeader(0))
+                        .map(|r| r.line.to_string())
+                        .collect::<String>();
+                    let compact_header = header.split_whitespace().collect::<String>();
+                    if older == 0 {
+                        assert!(header.is_empty());
+                    } else {
+                        assert!(compact_header.contains(&format!("{older}olderactions")));
+                        assert!(compact_header.contains(&format!("{older}/{older}finished")));
+                        assert!(compact_header.contains(&format!("{older}Failed")));
+                    }
+                    let text = rows
+                        .iter()
+                        .map(|r| r.line.to_string())
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    assert_eq!(text.contains("saved-call-0"), count > 0 && hidden == 0);
+                    assert!(!text.contains("saved-call-1"));
+                    assert!(state.tool_expanded.contains("call-0"));
+                    assert!(rows.iter().all(|r| r.line.width() <= usize::from(width)));
+                }
+            }
+        }
+    }
+
     #[test]
     fn detail_counts_expansion_privacy_and_narrow_wrapping() {
         let snapshot: Snapshot = serde_json::from_value(json!({"session_id":uuid::Uuid::new_v4(),"revision":1,"name":null,"model":"fixture","messages":[],"run":null})).unwrap();
