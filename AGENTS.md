@@ -35,9 +35,10 @@ into current runtime instructions. Browser console work remains deferred.
    documentation. Do not replace required behavior with a prototype or silently
    defer it. Work directly by default. Delegate only when requested or when a
    substantial independent task clearly benefits from parallel work.
-3. Verify the actual change. The automated tests and evaluations have been removed
-   at the user's request; their recreation is separate work. Do not claim regression
-   coverage or create replacements as part of documentation cleanup. Run checks
+3. Verify the actual change. The former broad automated suites were removed;
+   use the existing focused tests without recreating suites as documentation work.
+   For Rust code or test changes, run the coverage workflow below and commit its
+   updated measurement with the delivery. Run checks
    appropriate to the changed surface and scope. Documentation-only edits need
    source, command, path, link, manifest and diff checks. See
    [docs/quality.md](docs/quality.md).
@@ -94,6 +95,53 @@ checkout root against the existing metadata; do not restore deleted scripts impl
 Never reset, clean, force-push, stage unrelated files or overwrite concurrent edits
 implicitly. Keep validation local rather than duplicating it in hosted CI.
 Preserve existing release artifacts and follow [docs/releasing.md](docs/releasing.md).
+
+## Code coverage history
+
+For each delivery changing Rust source, Cargo manifests/lockfile, or tests, run
+workspace Rust test coverage after the final relevant edit. Commit and push
+[coverage/latest.json](coverage/latest.json) with the delivered changes to
+`origin/main`; coverage numbers must not remain only in local output or a chat
+message. Git history is the coverage history (`git log -p -- coverage/latest.json`,
+using the Git wrapper/fallback above in this workspace). Documentation-only changes
+do not require rerunning coverage or refreshing the last measurement.
+
+Install `cargo-llvm-cov` if missing (`cargo install cargo-llvm-cov --locked`).
+With rustup, install `llvm-tools-preview`; with distribution Rust, use matching
+LLVM tools and set `LLVM_COV` and `LLVM_PROFDATA` to their executable paths.
+Run locally from the workspace root, respecting runtime permissions:
+
+```sh
+export CARGO_LLVM_COV_TARGET_DIR="$PWD/target"
+mkdir -p target/coverage-report
+cargo llvm-cov clean --workspace --profraw-only
+cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir target/coverage-report -j 8 > target/coverage-report/run.log 2>&1
+cargo llvm-cov report --json --summary-only --output-path target/coverage-report/summary.json
+```
+
+Check the test command's exit status before proceeding. On test failure, a report
+may still be generated with `cargo llvm-cov report --html --output-dir
+target/coverage-report`; record the failures and do not describe report generation
+as passing tests. Resolve permission failures through the normal approval mechanism,
+never by weakening runtime policy. Clear only raw coverage profiles before an
+independent measurement, preserving compiled artifacts and previous report evidence.
+Coordinate this run with other builds and keep the measured source unchanged.
+
+Update `coverage/latest.json` from `data[0].totals` in the JSON report: preserve
+covered/total counts and percentages for lines, functions and regions. Also record
+the UTC measurement time, measured source commit (or base commit plus an explicit
+dirty-tree marker and source fingerprint), platform, Rust/LLVM/coverage-tool
+versions, exact command, passing/failing/ignored test counts, and exclusions.
+Never attribute dirty-tree coverage to a clean commit. Compare with the prior
+record and explain material drops in the delivery report; do not silently narrow
+the measured scope to raise the percentage.
+
+The default scope is existing workspace Rust tests with default features, excluding
+doctests and ignored tests. Python process checks and manual journeys are separate;
+live-provider tests still require provider/budget approval. Branch coverage is not
+measured by this stable-toolchain command. Coverage measures execution, not correctness.
+Keep HTML, raw profiles, detailed JSON and logs under ignored `target/`; publish
+only the compact summary, without local paths, credentials or test diagnostics.
 
 ## Rust build efficiency
 

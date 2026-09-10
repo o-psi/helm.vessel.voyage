@@ -1,0 +1,59 @@
+{
+  "schema_version": 1,
+  "measured_at_utc": "2026-09-10T21:59:32.863565+00:00",
+  "source": {
+    "base_commit": "7075e1b811af16e215d8634386b7a88b34833f34",
+    "dirty": true,
+    "fingerprint_sha256": "cf973e7dde452c0f4682714a1ab4c0870cd83a4262ed55f81b2ce163c680d1f9",
+    "fingerprint_method": "SHA-256 of compact sorted JSON mapping workspace .rs files, member Cargo.toml files, root Cargo.toml and Cargo.lock to SHA-256 content hashes",
+    "note": "Historical working-tree measurement including uncommitted changes; not coverage of the base commit or the commit publishing this record. Captured source files were unchanged during the run."
+  },
+  "platform": "x86_64-unknown-linux-gnu",
+  "tools": {
+    "rustc": "1.98.1 (48a229cea 2026-09-01)",
+    "llvm": "22.1.8",
+    "cargo_llvm_cov": "0.9.1"
+  },
+  "command": "cargo llvm-cov --workspace --locked --no-clean --ignore-run-fail --html --output-dir target/coverage-report -j 8",
+  "environment": {
+    "CARGO_LLVM_COV_TARGET_DIR": "target",
+    "LLVM_COV": "llvm-cov",
+    "LLVM_PROFDATA": "llvm-profdata"
+  },
+  "scope": "Existing workspace Rust tests, default features",
+  "tests": {
+    "passed": 104,
+    "failed": 0,
+    "ignored": 1
+  },
+  "coverage": {
+    "lines": {
+      "count": 70428,
+      "covered": 11080,
+      "percent": 15.732379167376612
+    },
+    "functions": {
+      "count": 7228,
+      "covered": 1113,
+      "percent": 15.398450470392916
+    },
+    "regions": {
+      "count": 114189,
+      "covered": 16973,
+      "notcovered": 97216,
+      "percent": 14.86395362075156
+    }
+  },
+  "exclusions": [
+    "Ignored live-provider test",
+    "Doctests",
+    "Python process checks",
+    "Manual TUI workflows",
+    "Branch coverage"
+  ],
+  "notes": [
+    "Initial restricted-sandbox attempt stopped after 3 system-policy failures in Helm; retry outside sandbox passed all 104 tests.",
+    "Raw profiles include the initial attempt and successful retry against unchanged source; subsequent independent measurements must clear raw profiles.",
+    "First baseline; no previous tracked measurement for comparison."
+  ]
+}
