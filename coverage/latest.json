@@ -1,0 +1,60 @@
+{
+  "schema_version": 1,
+  "measured_at_utc": "2026-09-10T22:17:26.618495+00:00",
+  "source": {
+    "base_commit": "5dfff842797d128d2b34eebe4315caa28d723294",
+    "dirty": true,
+    "fingerprint_sha256": "40f2ed0b8e44c4d63d2597c65a7194bc9659812a96efe72e50646c4d28e28e56",
+    "fingerprint_method": "SHA-256 of compact sorted JSON mapping workspace .rs files, member Cargo.toml files, root Cargo.toml, Cargo.lock and member tests/*.py files to SHA-256 content hashes",
+    "note": "Working-tree measurement including unrelated uncommitted changes; not coverage of the clean base or publication commit. Full captured source map was unchanged during the run. Python test sources are fingerprinted but not included in Rust coverage."
+  },
+  "platform": "x86_64-unknown-linux-gnu",
+  "tools": {
+    "rustc": "1.98.1 (48a229cea 2026-09-01)",
+    "llvm": "22.1.8",
+    "cargo_llvm_cov": "0.9.1"
+  },
+  "command": "cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir target/coverage-report -j 8",
+  "environment": {
+    "CARGO_LLVM_COV_TARGET_DIR": "target",
+    "LLVM_COV": "llvm-cov",
+    "LLVM_PROFDATA": "llvm-profdata"
+  },
+  "scope": "Existing workspace Rust tests, default features",
+  "tests": {
+    "passed": 108,
+    "failed": 0,
+    "ignored": 1
+  },
+  "coverage": {
+    "lines": {
+      "count": 71125,
+      "covered": 11499,
+      "percent": 16.16731107205624
+    },
+    "functions": {
+      "count": 7281,
+      "covered": 1142,
+      "percent": 15.68465870072792
+    },
+    "regions": {
+      "count": 115325,
+      "covered": 17695,
+      "notcovered": 97630,
+      "percent": 15.343594190331672
+    }
+  },
+  "exclusions": [
+    "Ignored live-provider test",
+    "Doctests",
+    "Python process checks",
+    "Manual TUI workflows",
+    "Branch coverage"
+  ],
+  "notes": [
+    "Independent measurement: raw profiles cleared first; compiled artifacts retained and prior run log/summary copied under target/coverage-report/happy-path-prior.",
+    "Workspace Rust tests passed without live-provider execution. The separately passing conversation_files.py process check is not included in these percentages.",
+    "Compared with previous record: lines +0.1359 percentage points, functions +0.0876 percentage points, regions +0.1602 percentage points.",
+    "Coverage measures execution, not correctness; no native macOS/Windows or TUI claim."
+  ]
+}

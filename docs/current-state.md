@@ -31,8 +31,9 @@ distinguish command exit, policy refusal, execution error and incomplete output;
 Helm displays these distinctions with legacy-history fallbacks. Vessel inspection
 provides a compact observed overview with progress excerpts and coordination/cleanup
 observations. Explicit detail reads page public snapshot fields;
-full-message and run-output reads expand text within a 4 MiB source bound, preserving
-redaction and exact continuations. An overview that cannot fit is withheld with a
+full-message and run-output reads stream bounded chunks with private expiring
+cursors, preserving redaction and exact continuations without a whole-record cap.
+Regex expansion retains a 4 MiB per-message source bound. An overview that cannot fit is withheld with a
 smaller detail-read request. History pages fit the output budget automatically;
 regex conversation search returns bounded matching-message pages with full-message
 and context reads, revision-bound continuations and explicit unsearched gaps.

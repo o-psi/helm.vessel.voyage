@@ -93,10 +93,27 @@ messages are preserved. Every returned message links to `message`. That action r
 chunks, including fields omitted from the bounded history projection. Concatenate
 `data` before parsing JSON. `run_output` reads the chosen run's accumulated text.
 Their offsets count **redacted UTF-8 bytes**, and their exact `next_read` requests
-preserve the route and message/run identity. Each call reassembles at most 4 MiB of
-source text before redaction, then emits up to 4 KiB of text (less when the output
-budget requires it). Larger records return `source_limit`; a run growing during
-assembly returns `source_changed`. Neither is a complete read. Public snapshot
+preserve the route and message/run identity. Start at offset zero; subsequent reads
+require the returned cursor as well as the offset. Cursors hold private incremental
+parser/redaction state in memory: at most 16 saved pages per tool instance, expiring
+after 15 minutes or process exit. Expired or mismatched cursors return an explicit
+restart request. Every continuation rechecks remote authorization and the message
+revision before releasing cached text.
+
+These reads have no whole-record size cap. Each call consumes bounded wire chunks
+and emits up to 4 KiB of redacted text (less when the output budget requires it).
+A call can return empty data with a continuation while processing a long redacted
+region; keep following it. The final redacted `total_bytes` is unknown until parsing
+finishes; `source_total_bytes` identifies the original source byte count. JSON
+string values are decoded, redacted across boundaries and re-encoded; concatenate
+all data before parsing. Object keys and JSON syntax retain their original meaning.
+Configured secrets collectively exceeding 64 KiB are refused.
+
+Run output is the prefix observed at the first read: later appends are excluded,
+and shrinkage returns `source_changed`. This is not a completion observation.
+Message revisions must remain unchanged. Native client assembly is bounded; the
+existing server chunk endpoint can still serialize the complete source record.
+Public snapshot
 fields can already be truncated upstream; use `message`/`run_output` for text
 expansion. These reads do not expose private terminal input or configuration secrets.
 

@@ -75,6 +75,19 @@ automated offline Linux checks, not live-provider or native macOS/Windows eviden
 
 ## Conversation and account-limit checks
 
+The offline [conversation and file-editing check](test-conversation-files.md)
+verifies a normal task through Vessel-supervised voyage processes: read and patch
+a file, save the reply, then continue with retained context and read the edited
+file. It checks actual file contents and successful tool outcomes using a scripted
+loopback provider, without credentials or paid requests.
+
+```sh
+cargo build -p vessel -p voyage --locked -j 8
+python3 voyage/tests/conversation_files.py --bin-dir target/debug
+```
+
+This Linux process check is separate from the workspace Rust coverage percentage.
+
 The explicitly enabled live test uses the executing user's native ChatGPT OAuth
 login and an explicitly selected model. It sends at most three requests without
 tools or automatic retries, requires three completed replies remembering a random
