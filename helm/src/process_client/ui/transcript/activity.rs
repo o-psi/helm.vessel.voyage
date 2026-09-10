@@ -7,6 +7,16 @@ use super::{Key, Message, Row, State, layout::note};
 use crate::process_client::safe;
 use ratatui::text::{Line, Span, Text};
 
+fn duration(ms: u64) -> String {
+    if ms < 1_000 {
+        format!("{ms} ms")
+    } else if ms < 60_000 {
+        format!("{}.{:01} s", ms / 1_000, (ms % 1_000) / 100)
+    } else {
+        format!("{}m {:02}s", ms / 60_000, (ms / 1_000) % 60)
+    }
+}
+
 fn compact(text: &str, limit: usize) -> String {
     let text = safe(text).split_whitespace().collect::<Vec<_>>().join(" ");
     let mut chars = text.chars();
@@ -330,8 +340,15 @@ pub(super) fn flush(
         let detail = details(call, result);
         let count = detail.lines().count();
         let partial = result.is_some_and(|r| r.projection_truncated);
+        let timing = result.map(|r| {
+            r.tool_outcome
+                .as_ref()
+                .and_then(|o| o.elapsed_ms)
+                .map_or_else(|| "timing unavailable".to_owned(), duration)
+        });
+        let timing = timing.map_or_else(String::new, |time| format!(" · {time}"));
         let text = Text::from(Line::from(vec![
-            Span::styled(format!("{status}{outcome} · "), style),
+            Span::styled(format!("{status}{outcome}{timing} · "), style),
             Span::raw(compact(
                 &description(call),
                 usize::from(width).saturating_mul(2).saturating_sub(24),

@@ -1408,6 +1408,7 @@ impl Agent {
                         .unwrap_or_else(|_| serde_json::Value::String("[REDACTED]".into())),
                     })
                     .await;
+                let tool_started = std::time::Instant::now();
                 let result = tokio::select! {
                     biased;
                     _ = cancel.cancelled() => { self.sink.emit(AgentEvent::Cancelled).await; return Err(AgentError::Cancelled); }
@@ -1417,6 +1418,8 @@ impl Agent {
                     Ok(report) => report,
                     Err(error) => crate::tools::ToolReport::error(error),
                 };
+                report.outcome.elapsed_ms =
+                    Some(tool_started.elapsed().as_millis().min(u64::MAX as u128) as u64);
                 report.synchronize();
                 let success = report.outcome.success();
                 tracing::info!(execution_id = %context.execution_id, tool = %call.name,

@@ -16,6 +16,14 @@ inspection preserves coordination/cleanup observations or explicitly withholds a
 snapshot that cannot fit. See [tool validation and outcomes](runtime-contract.md#tool-validation-and-outcomes)
 for supported syntax, compatibility and platform limits.
 
+Completed tool action rows show the executing Voyage's monotonic invocation duration
+(milliseconds, seconds, or minutes), retained in `tool_outcome.elapsed_ms` across
+history reloads and bounded projections. Timing includes policy/approval waits but
+excludes result checkpointing and the lifetime of programs or independent voyages
+started by a call. Returned errors and refusals are timed too. Legacy results show
+“timing unavailable”; interrupted calls without a recorded result have no fabricated
+duration. This is completed-call timing, not a live running stopwatch.
+
 ## Terminal color adaptation
 
 Full-screen Helm and private-terminal chrome use passive terminal color detection

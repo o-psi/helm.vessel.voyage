@@ -94,6 +94,10 @@ impl ToolOutput {
 /// None on an old message means unclassified, not verified success/completeness.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ToolOutcome {
+    /// Monotonic invocation duration, including policy waits, excluding persistence.
+    /// Absent for legacy history and calls without an observed result.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub elapsed_ms: Option<u64>,
     pub execution: ExecutionOutcome,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub command: Option<CommandOutcome>,
