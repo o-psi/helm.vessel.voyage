@@ -81,7 +81,7 @@ enum Command {
         #[arg(long)]
         command_id: Uuid,
     },
-    /// Serve authenticated loopback HTTP/SSE and supervise independent voyage processes.
+    /// Serve authenticated loopback duplex sockets and the compatibility HTTP API.
     LocalServe {
         #[arg(long)]
         directory: PathBuf,

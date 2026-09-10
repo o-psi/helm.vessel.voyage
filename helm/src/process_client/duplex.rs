@@ -63,6 +63,7 @@ impl Drop for ReverseResponder {
 pub(super) struct Slot {
     connection: tokio::sync::Mutex<Option<Handle>>,
     state: watch::Sender<ConnectionState>,
+    observed_vessel: Mutex<Option<Uuid>>,
     reverse: Arc<Mutex<Option<mpsc::Sender<IncomingReverseRequest>>>>,
     stop: CancellationToken,
 }
@@ -89,6 +90,7 @@ pub(super) fn slot(id: Uuid, generation: u64) -> Arc<Slot> {
     let slot = Arc::new(Slot {
         connection: tokio::sync::Mutex::new(None),
         state: watch::channel(ConnectionState::default()).0,
+        observed_vessel: Mutex::new(None),
         reverse: Arc::new(Mutex::new(None)),
         stop: CancellationToken::new(),
     });
@@ -244,6 +246,14 @@ impl Slot {
             !self.stop.is_cancelled(),
             "Vessel connection activation is disconnected"
         );
+        {
+            let mut observed = self.observed_vessel.lock().unwrap();
+            ensure!(
+                observed.is_none_or(|prior| prior == vessel_id),
+                "Vessel identity changed on reconnect"
+            );
+            *observed = Some(vessel_id);
+        }
         let (sender, receiver) = mpsc::channel(MAX_IN_FLIGHT);
         let stop = self.stop.child_token();
         let handle = Handle {

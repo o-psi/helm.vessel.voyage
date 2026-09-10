@@ -312,7 +312,7 @@ pub(super) async fn pair(
 #[derive(Clone)]
 struct SocketBackend {
     directory: std::path::PathBuf,
-    expected_vessel_id: Uuid,
+    expected_vessel_id: Option<Uuid>,
     grant_id: Uuid,
     token: String,
     authority: serde_json::Value,
@@ -324,7 +324,7 @@ impl SocketBackend {
             &VesselRequest {
                 protocol: VESSEL_API_VERSION,
                 command: VesselCommand::Granted {
-                    expected_vessel_id: Some(self.expected_vessel_id),
+                    expected_vessel_id: self.expected_vessel_id,
                     grant_id: self.grant_id,
                     token: self.token.clone(),
                     command: Box::new(command),
@@ -385,9 +385,11 @@ pub(super) async fn socket(
     {
         return StatusCode::BAD_REQUEST.into_response();
     }
-    // A duplex connection always pins its destination, including session grants.
+    // Legacy session credentials predate the identity field. Authenticate them
+    // first, then pin the observed identity for the entire socket. Workspace
+    // credentials still require their persisted pin in the grant gateway.
     let expected_vessel_id = match expected_vessel(&headers) {
-        Ok(Some(id)) => id,
+        Ok(id) => id,
         _ => return StatusCode::BAD_REQUEST.into_response(),
     };
     let Some(token) = headers
@@ -429,15 +431,19 @@ pub(super) async fn socket(
         Ok(response) if response.error.is_none() && !response.outcome_unknown => response,
         _ => return StatusCode::UNAUTHORIZED.into_response(),
     };
-    if initial
+    let Some(vessel_id) = initial
         .result
         .get("vessel_id")
         .and_then(serde_json::Value::as_str)
         .and_then(|id| Uuid::parse_str(id).ok())
-        != Some(expected_vessel_id)
-    {
+        .filter(|id| !id.is_nil())
+    else {
+        return StatusCode::UNAUTHORIZED.into_response();
+    };
+    if expected_vessel_id.is_some_and(|expected| expected != vessel_id) {
         return StatusCode::UNAUTHORIZED.into_response();
     }
+    backend.expected_vessel_id = Some(vessel_id);
     backend.authority = initial.result;
     if !tokio::time::timeout(std::time::Duration::from_secs(3), backend.authorize(None))
         .await
@@ -450,7 +456,5 @@ pub(super) async fn socket(
         .protocols([voyage_protocol::duplex::SUBPROTOCOL])
         .max_message_size(voyage_protocol::duplex::MAX_FRAME_BYTES)
         .max_frame_size(voyage_protocol::duplex::MAX_FRAME_BYTES)
-        .on_upgrade(move |socket| {
-            vessel::duplex::serve(socket, backend, expected_vessel_id, permit)
-        })
+        .on_upgrade(move |socket| vessel::duplex::serve(socket, backend, vessel_id, permit))
 }

@@ -232,7 +232,7 @@ pub async fn serve(
                         let mut sessions = HashSet::new();
                         if request_id.is_nil() || request.protocol != VESSEL_API_VERSION || request.subscriptions.is_empty()
                             || count + request.subscriptions.len() > MAX_SUBSCRIPTIONS || seen.len() >= MAX_CORRELATIONS || !seen.insert(request_id)
-                            || request.subscriptions.iter().any(|s| s.session_id.is_nil() || !sessions.insert(s.session_id)) { break; }
+                            || request.subscriptions.iter().any(|s| s.session_id.is_nil() || s.incarnation.is_nil() || !sessions.insert(s.session_id)) { break; }
                         if !enqueue(&tx, ServerFrame::Subscribed { request_id }, None).await { break; }
                         let mut handles = Vec::new();
                         for subscription in request.subscriptions {
