@@ -24,28 +24,9 @@ pub(super) async fn inspect(
         "models" => {
             let reservation =
                 crate::host_resources::Reservation::acquire("executors", uuid::Uuid::new_v4(), 1)?;
-            let discovery = async {
-                let provider = crate::provider::from_config(resolved.config())?;
-                Ok::<_, anyhow::Error>(
-                    tokio::time::timeout(
-                        std::time::Duration::from_secs(20).min(config.timeout()),
-                        provider.models(),
-                    )
-                    .await??,
-                )
-            }
-            .await;
+            let discovery = crate::server::models::discover(config, &workspace).await;
             reservation.release_observed()?;
-            let mut models = discovery?;
-            if !models.iter().any(|model| model.id == config.model) {
-                models.push(crate::provider::ModelInfo::minimal(config.model.clone()));
-            }
-            let secrets = crate::build::redactor(resolved.config());
-            crate::provider::validate_models_for_display(&models, |value| {
-                secrets.contains_secret(value)
-            })?;
-            crate::provider::normalize_models(&mut models);
-            serde_json::to_value(models)?
+            serde_json::to_value(discovery?)?
         }
         "todos" => serde_json::to_value(
             crate::todo::TodoStore::new(

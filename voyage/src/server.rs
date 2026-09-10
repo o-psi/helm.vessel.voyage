@@ -20,6 +20,7 @@ mod decisions;
 mod dispatch;
 mod github;
 mod images;
+pub mod models;
 mod observations;
 mod submission;
 pub mod suspended;

@@ -13,6 +13,13 @@ pub async fn run(
         .map(|path| path.canonicalize())
         .transpose()
         .context("workflow user directory unavailable")?;
+    ensure!(
+        !prepared
+            .input_monitor
+            .as_ref()
+            .is_some_and(|monitor| monitor.cancellation().is_cancelled()),
+        "workflow input cancelled"
+    );
     let (client, process) = open(&config, Some(workspace), None, model_overridden, true).await?;
     let crate::workflow::Prepared {
         input_monitor,

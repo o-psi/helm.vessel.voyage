@@ -119,6 +119,9 @@ pub async fn run(
     model_overridden: bool,
     configuration_explicit: bool,
 ) -> Result<()> {
+    // Reject unusable input before opening or creating any durable voyage.
+    ensure!(!prompt.trim().is_empty(), "prompt must not be blank");
+    ensure!(prompt.len() <= 65536, "prompt limit is 64 KiB");
     let was_resume = reference.is_some();
     let (client, mut process) = open(
         &config,

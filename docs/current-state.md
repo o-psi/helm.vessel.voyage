@@ -96,15 +96,30 @@ excluded from recovery without decoding obsolete launch settings. Unfinished
 records retain full validation and exact pending command identities. Plain chat
 also waits for a first nonempty message; EOF and `/quit` before that create no voyage.
 
-Helm omits positively observed legacy creation-only suspended voyages from normal
-navigation: revision zero, no messages, runs, turns, decisions, cleanup or resources,
-and no custom name. Missing/failed observations are not evidence of emptiness;
-archives, local text/images, pending commands and the currently selected voyage stay
-accessible. This does not delete runtime identity or receipt records. Untitled entries
-whose observation is pending or failed say “Loading voyage” or “Unavailable voyage”
-rather than implying that a conversation was saved. New ordinary chat still creates
-no voyage until the first nonempty send; explicit creation APIs retain their durable
-identity semantics.
+Model discovery for a local draft (including automatic capability refresh and the
+picker) and `helm models` uses the owner-local `DiscoverModels` Vessel operation.
+Vessel supervises a bounded `voyage discover-models` helper, not a registered
+voyage or agent loop. Private launch configuration travels over authenticated local
+HTTP and framed child stdin; it is not saved as a launch file, session, command
+receipt or conversation. Runtime policy, provider display validation and host quota
+still apply. Discovery is limited to four concurrent children per Vessel, a
+12-second helper deadline, and bounded supervisor termination/exit observation.
+The supervising task retains ownership after a requesting Helm disconnects.
+Success, failure and cancellation therefore need no temporary-voyage deletion.
+Older Vessels without `sessionless_models` return an update-required result; Helm
+never falls back to creating a temporary voyage. Scoped grants cannot submit this
+owner-local configuration operation; existing-session model controls retain their
+own authority checks. Provider credentials stay on the executing host.
+
+An untouched local draft has no saved draft JSON; edited text/images or settings
+are still retained, as are explicit remote workspace choices. Empty, whitespace-only
+and over-limit one-shot prompts are rejected before creating a voyage. Workflow
+input already cancelled before creation is rejected there as well; cancellation
+and admission are checked again during execution handoff. Intentional creation APIs
+and interrupted first sends keep their exact durable identities. Previously saved
+records are not blanket-deleted or hidden merely because their conversation appears
+empty. Untitled entries whose observation is pending or failed say “Loading voyage”
+or “Unavailable voyage”; missing observations never prove emptiness.
 
 In a draft, `/model NAME`, `/access read-only|approval|unrestricted`, and
 `/workspace /absolute/path` edit local launch settings; `/discard` discards a draft

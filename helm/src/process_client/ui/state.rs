@@ -157,9 +157,6 @@ pub struct Snapshot {
     pub history_truncated: bool,
     #[serde(default)]
     pub lifecycle: serde_json::Value,
-    // Missing metadata is unknown, never evidence that an old record is unused.
-    #[serde(default)]
-    pub session_resources: Option<Vec<serde_json::Value>>,
 }
 
 #[derive(Clone, Deserialize, PartialEq)]
@@ -245,33 +242,6 @@ impl View {
                 .as_ref()
                 .is_some_and(|s| s.lifecycle["archived"] == true)
     }
-    /// Hide legacy creation-only records, not merely unnamed conversations.
-    /// Keep the durable owner/receipts intact; this is navigation, not deletion.
-    pub(super) fn unused(&self) -> bool {
-        self.process.state == voyage_protocol::vessel::ProcessState::Suspended
-            && !self.archived()
-            && self.error.is_none()
-            && !self.connection_unavailable
-            && self.pending.is_none()
-            && self.draft.text.is_empty()
-            && self.images.is_empty()
-            && self.snapshot.as_ref().is_some_and(|s| {
-                s.revision == 0
-                    && s.total_messages == 0
-                    && s.messages.is_empty()
-                    && !s.history_truncated
-                    && s.message_offset == 0
-                    && s.last_message_at.is_none()
-                    && s.run.is_none()
-                    && s.turns.is_empty()
-                    && s.pending_cleanup_run.is_none()
-                    && s.cleanup.is_none()
-                    && s.decisions.is_empty()
-                    && s.session_resources.as_ref().is_some_and(Vec::is_empty)
-                    && s.name.as_deref().is_none_or(default_name)
-                    && self.process.name.as_deref().is_none_or(default_name)
-            })
-    }
     pub fn new(process: ProcessInfo) -> Self {
         Self {
             process,
@@ -338,8 +308,6 @@ impl View {
                     "Unavailable voyage"
                 } else if self.snapshot.is_none() {
                     "Loading voyage"
-                } else if self.unused() {
-                    "Empty voyage"
                 } else {
                     "Saved voyage"
                 };
@@ -364,8 +332,6 @@ impl super::App {
             .iter()
             .filter(|(target, view)| {
                 !view.deleted()
-                    // An explicitly open empty voyage stays usable until switched away.
-                    && (self.selected == Some(**target) || !view.unused())
                     && view.archived() == self.archives
                     && self.vessel_filter.is_none_or(|id| target.route.id == id)
             })

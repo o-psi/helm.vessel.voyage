@@ -51,7 +51,7 @@ impl App {
             rows[0],
         );
         let guidance = if self.clients[draft.route].is_local() {
-            "Describe what you want to do.\n\nThis draft is saved on this computer.\n/model · /thinking · /service · /access MODE · /workspace PATH · /help\n\nTab switches drafts and voyages. Ctrl+N opens a blank draft."
+            "Describe what you want to do.\n\nYour edits are saved on this computer.\n/model · /thinking · /service · /access MODE · /workspace PATH · /help\n\nTab switches drafts and voyages. Ctrl+N opens a blank draft."
         } else {
             "Describe what you want the remote host to do.\n\nOnly the draft is saved here. Workspace authority, model settings, policy and provider credentials remain on the executing host.\n/workspace PATH must name an authorized workspace. Ctrl+N opens the workspace picker; Esc cancels without sending."
         };

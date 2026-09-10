@@ -1,5 +1,6 @@
 //! Private local process supervision. No execution library is linked here.
 mod launch;
+mod models;
 mod registry;
 mod routing;
 mod service;

@@ -350,6 +350,12 @@ pub enum TerminalAction {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 pub enum VesselCommand {
+    /// Owner-local, sessionless model metadata. Configuration stays on this host;
+    /// scoped grants cannot use this operation or supply host configuration.
+    DiscoverModels {
+        workspace: PathBuf,
+        configuration: Value,
+    },
     Recover {
         command_id: Uuid,
         session_id: Uuid,

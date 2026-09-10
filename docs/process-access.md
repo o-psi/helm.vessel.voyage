@@ -101,6 +101,25 @@ cleanup is recorded only after it is observed. A revoked client cannot infer tha
 previously transmitted command was refused: retrieve its durable receipt using
 currently authorized access. Reusing an ID with a changed payload is rejected.
 
+## Sessionless local model discovery
+
+The local owner's `discover_models` command carries an absolute `workspace` and a
+private `configuration` launch envelope. It is advertised by `sessionless_models`.
+Helm uses this for local draft model metadata and `helm models`; session/workspace
+grants cannot invoke it or submit that host configuration. Older Vessels must be
+upgraded: Helm does not emulate discovery with Start/Delete.
+
+Vessel runs `voyage discover-models` with bounded framed stdin/stdout and concealed
+stderr. The child revalidates launch configuration and runtime policy, fetches only
+model metadata, and validates/normalizes it for display. It never constructs an
+agent, session journal or registration. Configuration and result limits are 1 MiB,
+with four concurrent discovery slots, host executor quota and bounded deadlines.
+The supervisor-owned task observes child exit before releasing its host quota,
+including when the requesting Helm disconnects. Unknown cleanup retains its charge;
+request cancellation is not an assertion of cleanup. Provider credentials and
+configuration remain on the local executing machine and are not written into
+command receipts or conversation history.
+
 ## Participant setup
 
 A participant receives a bounded subordinate task under a local binding. It runs a

@@ -7,6 +7,9 @@ struct Cli {
 }
 #[derive(Subcommand)]
 enum Command {
+    /// Read a bounded model-discovery request on stdin, without creating a session.
+    DiscoverModels,
+
     /// Run one supervisor-registered session owner.
     Serve(voyage::server::ServeArgs),
     /// Read one suspended-session observation without starting an execution runtime.
@@ -32,6 +35,7 @@ enum Command {
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     match cli.command {
+        Command::DiscoverModels => voyage::server::models::run().await,
         Command::LegacyRecover(args) => {
             println!("{}", voyage::server::legacy_recovery::recover(args).await?);
             Ok(())

@@ -136,8 +136,11 @@ fn read_saved(path: &Path, id: Uuid) -> Result<Option<Saved>> {
 
 pub(super) fn create(saved: Saved, route: Route) -> Result<Draft> {
     let lock = lock(&root()?, saved.id)?.context("draft is open in another Helm")?;
-    // Even an empty workspace choice is a durable Helm draft, not a voyage.
-    save(&saved)?;
+    // An untouched local composer is memory-only. Explicit remote workspace
+    // choices remain recoverable settings; edits/first-send transitions save later.
+    if saved.config.is_none() || !saved.text.is_empty() || !saved.images.is_empty() {
+        save(&saved)?;
+    }
     Ok(Draft {
         saved,
         route,
