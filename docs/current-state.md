@@ -388,6 +388,16 @@ steering and cleanup obligations survive interface disconnect. Exact command
 retries retain their original outcome, including definite rejections. A changed
 principal or payload conflicts. An unknown outcome requires receipt inspection.
 
+Steering accepts an observed session revision at or below the current revision:
+ordinary checkpoints and other steering admissions do not invalidate guidance
+for the exact active run. Future revisions are refused. The observed revision
+remains part of the immutable command payload; exact retries retain their original
+outcome, including older `stale_revision` refusals. Process incarnation, active-run
+identity, current authority, deadlines and queue bounds still apply. This relaxation
+is specific to steering, not configuration or history-sensitive mutations. Existing
+runtime processes must be replaced through normal lifecycle handling before they
+use changed admission behavior; a source update does not hot-patch a running voyage.
+
 Queued steering is checked at the next safe execution boundary. If its deadline
 has passed, Voyage atomically records `not_applied` with reason `expired` and
 continues the run without adding that guidance to canonical or provider history.

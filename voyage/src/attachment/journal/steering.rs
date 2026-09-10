@@ -22,6 +22,8 @@ pub struct SteeringAdmission {
     pub session_id: Uuid,
     pub run_id: Uuid,
     pub actor: SteeringActor,
+    /// Observed session revision, not a compare-and-swap precondition.
+    /// Older observations remain valid for the exact active run; future ones do not.
     pub expected_revision: u64,
     pub expires_at_ms: i64,
     pub text: String,
@@ -267,9 +269,13 @@ impl Journal {
             "steering requires active matching run"
         );
         let current = read_session(&tx, request.session_id)?;
+        // Steering appends guidance to an exact active run, not to a frozen
+        // transcript. Checkpoints and other steering admissions may advance the
+        // observed revision while the sender composes its message. Preserve the
+        // original observation in the immutable request for exact deduplication.
         ensure!(
-            current.revision == request.expected_revision,
-            "stale session revision"
+            request.expected_revision <= current.revision,
+            "steering observation is ahead of current session revision"
         );
         let (total, pending): (i64, i64) = tx.query_row(
             "SELECT count(*),coalesce(sum(status='queued'),0) FROM steering WHERE run_id=?1",
