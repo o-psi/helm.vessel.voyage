@@ -72,8 +72,66 @@ pub(super) fn save(saved: &Saved) -> Result<()> {
     file.as_file().sync_all()?;
     file.persist(root.join(format!("{}.json", saved.id)))?;
     #[cfg(unix)]
-    File::open(root)?.sync_all()?;
+    File::open(&root)?.sync_all()?;
+    // Persist completion before cleanup so interruption cannot expose an unfinished
+    // record after the durable handoff. Keep the lock inode: unlinking it would
+    // let a second Helm acquire a different lock for the same draft.
+    if saved.finished {
+        retire(&root.join(format!("{}.json", saved.id)))?;
+    }
     Ok(())
+}
+
+fn retire(path: &Path) -> Result<()> {
+    std::fs::remove_file(path)?;
+    #[cfg(unix)]
+    File::open(path.parent().context("draft parent")?)?.sync_all()?;
+    Ok(())
+}
+
+/// The terminal flag must be readable independently of evolving launch schemas.
+#[derive(Deserialize)]
+struct Header {
+    id: Uuid,
+    finished: bool,
+}
+
+fn read_saved(path: &Path, id: Uuid) -> Result<Option<Saved>> {
+    let bytes =
+        super::super::drafts::read_private(path, 2 * voyage_protocol::vessel::MAX_VESSEL_BODY)?;
+    let invalid =
+        || anyhow::anyhow!("Invalid saved new-voyage draft {id}; original file preserved");
+    let header: Header = serde_json::from_slice(&bytes).map_err(|_| invalid())?;
+    ensure!(header.id == id && !id.is_nil(), "draft identity mismatch");
+    if header.finished {
+        // Preserve legacy payloads byte-for-byte, but take them out of recovery.
+        // Never overwrite an existing archive with different contents.
+        let archive = path.with_extension("finished");
+        if archive.try_exists()? {
+            let original = super::super::drafts::read_private(
+                &archive,
+                2 * voyage_protocol::vessel::MAX_VESSEL_BODY,
+            )?;
+            ensure!(
+                original == bytes,
+                "Finished draft archive conflict; original preserved"
+            );
+        } else {
+            let mut original =
+                tempfile::NamedTempFile::new_in(path.parent().context("draft parent")?)?;
+            original.write_all(&bytes)?;
+            original.as_file().sync_all()?;
+            original.persist_noclobber(&archive)?;
+            #[cfg(unix)]
+            File::open(path.parent().context("draft parent")?)?.sync_all()?;
+        }
+        retire(path)?;
+        return Ok(None);
+    }
+    let saved: Saved = serde_json::from_slice(&bytes).map_err(|_| invalid())?;
+    saved.validate_identity()?;
+    super::super::attachments::validate_set(&saved.images)?;
+    Ok(Some(saved))
 }
 
 pub(super) fn create(saved: Saved, route: Route) -> Result<Draft> {
@@ -125,19 +183,9 @@ pub(super) fn recover<'a>(
         let Some(lock) = lock(&root, id)? else {
             continue;
         };
-        let bytes = super::super::drafts::read_private(
-            &path,
-            2 * voyage_protocol::vessel::MAX_VESSEL_BODY,
-        )?;
-        let mut saved: Saved = serde_json::from_slice(&bytes).map_err(|_| {
-            anyhow::anyhow!("Invalid saved new-voyage draft; original file preserved")
-        })?;
-        ensure!(saved.id == id, "draft identity mismatch");
-        saved.validate_identity()?;
-        if saved.finished {
+        let Some(mut saved) = read_saved(&path, id)? else {
             continue;
-        }
-        super::super::attachments::validate_set(&saved.images)?;
+        };
         ensure!(
             drafts.len() < 4096,
             "too many local drafts to recover; archive draft files before continuing"
@@ -163,6 +211,10 @@ pub(super) fn recover<'a>(
             let backup = root.join(format!("{id}.legacy"));
             if !backup.try_exists()? {
                 let mut original = tempfile::NamedTempFile::new_in(&root)?;
+                let bytes = super::super::drafts::read_private(
+                    &path,
+                    2 * voyage_protocol::vessel::MAX_VESSEL_BODY,
+                )?;
                 original.write_all(&bytes)?;
                 original.as_file().sync_all()?;
                 original.persist_noclobber(backup)?;
@@ -197,12 +249,5 @@ pub(super) fn reload(id: Uuid) -> Result<Option<Saved>> {
     if !path.try_exists()? {
         return Ok(None);
     }
-    let bytes =
-        super::super::drafts::read_private(&path, 2 * voyage_protocol::vessel::MAX_VESSEL_BODY)?;
-    let saved: Saved = serde_json::from_slice(&bytes)
-        .map_err(|_| anyhow::anyhow!("Invalid saved new-voyage draft; original file preserved"))?;
-    ensure!(saved.id == id, "Saved draft identity mismatch");
-    saved.validate_identity()?;
-    super::super::attachments::validate_set(&saved.images)?;
-    Ok(Some(saved))
+    read_saved(&path, id)
 }

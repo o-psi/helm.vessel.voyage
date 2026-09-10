@@ -81,8 +81,12 @@ a voyage process. Blank Ctrl+N requests reuse the window's blank draft for that
 route/workspace. Drafts appear separately above the voyage list; Tab switches
 out of a draft, and clicking its row returns to it. Nonempty drafts and changed
 settings survive interface exit. Concurrent Helm windows lock individual drafts
-and do not take over each other's first sends. Plain chat also waits for a first
-nonempty message; EOF and `/quit` before that create no voyage.
+and do not take over each other's first sends. Completed or discarded draft JSON
+is removed after completion is durably saved; the lock file remains for concurrent
+window safety. Legacy finished records are preserved as `.finished` files and
+excluded from recovery without decoding obsolete launch settings. Unfinished
+records retain full validation and exact pending command identities. Plain chat
+also waits for a first nonempty message; EOF and `/quit` before that create no voyage.
 
 In a draft, `/model NAME`, `/access read-only|approval|unrestricted`, and
 `/workspace /absolute/path` edit local launch settings; `/discard` discards a draft
