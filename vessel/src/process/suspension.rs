@@ -44,13 +44,26 @@ impl Supervisor {
     ) -> Result<RuntimeResponse> {
         // Live IPC keeps the original token/incarnation. If the owner retires
         // before forwarding, the positively fenced fallback uses current code.
-        routing::forward_authorized(
+        let result = routing::forward_authorized(
             directory,
             &self.current_observer_registration(registration),
-            command,
-            authorization,
+            command.clone(),
+            authorization.clone(),
         )
-        .await
+        .await;
+        if result
+            .as_ref()
+            .is_err_and(|error| error.downcast_ref::<routing::NotConnected>().is_some())
+            && command.observes_saved()
+            && registration.state != ProcessState::Relinquished
+            && (matches!(command, RuntimeCommand::Events { .. })
+                || super::recovery::clean_stop(directory, registration))
+        {
+            return self
+                .observe_current(directory, registration, command, authorization)
+                .await;
+        }
+        result
     }
     pub(super) async fn stop(
         &self,
@@ -261,8 +274,17 @@ impl Supervisor {
                     ),
                     "the addressed runtime is gone; inspect the recovered voyage before acting on live resources"
                 );
-                self.recover_abandoned(session, registration.incarnation)
-                    .await?;
+                if let Err(error) = self
+                    .recover_abandoned(session, registration.incarnation)
+                    .await
+                {
+                    if command.observes_saved() {
+                        return self
+                            .observe_current(&directory, &registration, command, authorization)
+                            .await;
+                    }
+                    return Err(error);
+                }
                 self.restart(Uuid::new_v4(), session, registration.incarnation)
                     .await?;
                 registration = self.registration(session).await?;
@@ -348,8 +370,17 @@ impl Supervisor {
                         ),
                         "the addressed runtime is gone; inspect the recovered voyage before acting on live resources"
                     );
-                    self.recover_abandoned(session, registration.incarnation)
-                        .await?;
+                    if let Err(error) = self
+                        .recover_abandoned(session, registration.incarnation)
+                        .await
+                    {
+                        if command.observes_saved() {
+                            return self
+                                .observe_current(&directory, &registration, command, authorization)
+                                .await;
+                        }
+                        return Err(error);
+                    }
                     self.restart(Uuid::new_v4(), session, registration.incarnation)
                         .await?;
                     registration = self.registration(session).await?;

@@ -7,6 +7,45 @@ use std::path::PathBuf;
 use uuid::Uuid;
 pub mod cli;
 
+static PROCESS_SCOPE: std::sync::OnceLock<(Uuid, Uuid)> = std::sync::OnceLock::new();
+
+pub(crate) fn set_process_scope(session: Uuid, incarnation: Uuid) -> Result<()> {
+    ensure!(
+        PROCESS_SCOPE.set((session, incarnation)).is_ok(),
+        "process resource scope already set"
+    );
+    Ok(())
+}
+
+/// Only the fenced recovery caller with guardian cleanup evidence may release
+/// these charges. Missing legacy scope rows remain charged.
+pub(crate) fn recover_process_scope(session: Uuid, incarnation: Uuid) -> Result<()> {
+    let (mut connection, path) = database()?;
+    let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let ids = {
+        let mut query = tx.prepare("SELECT r.id FROM reservations r JOIN reservation_scopes s ON r.id=s.id WHERE s.session=?1 AND s.incarnation=?2 AND r.observed=0")?;
+        query
+            .query_map(
+                params![session.to_string(), incarnation.to_string()],
+                |row| row.get::<_, String>(0),
+            )?
+            .collect::<rusqlite::Result<Vec<_>>>()?
+    };
+    let mut leases = Vec::new();
+    for id in ids {
+        let lock = lease(&path, id.parse()?)?;
+        lock.try_lock()
+            .map_err(|_| anyhow::anyhow!("resource still owned during recovery"))?;
+        leases.push(lock);
+        tx.execute(
+            "UPDATE reservations SET observed=1 WHERE id=?1 AND observed=0",
+            [id],
+        )?;
+    }
+    tx.commit()?;
+    Ok(())
+}
+
 #[derive(Debug, thiserror::Error)]
 #[error(
     "host {kind} quota exhausted ({used} charged, {requested} requested, limit {maximum}); unconfirmed cleanup reservations remain charged"
@@ -79,6 +118,7 @@ fn database() -> Result<(Connection, PathBuf)> {
     let connection = Connection::open(&path)?;
     connection.busy_timeout(std::time::Duration::from_secs(2))?;
     connection.execute_batch("PRAGMA synchronous=FULL; CREATE TABLE IF NOT EXISTS reservations(id TEXT PRIMARY KEY,kind TEXT NOT NULL,owner TEXT NOT NULL,units INTEGER NOT NULL,observed INTEGER NOT NULL DEFAULT 0);")?;
+    connection.execute_batch("CREATE TABLE IF NOT EXISTS reservation_scopes(id TEXT PRIMARY KEY,session TEXT NOT NULL,incarnation TEXT NOT NULL);")?;
     Ok((connection, path))
 }
 impl Reservation {
@@ -117,6 +157,12 @@ impl Reservation {
             "INSERT INTO reservations(id,kind,owner,units) VALUES(?1,?2,?3,?4)",
             params![id.to_string(), kind, owner.to_string(), units as i64],
         )?;
+        if let Some((session, incarnation)) = PROCESS_SCOPE.get() {
+            tx.execute(
+                "INSERT INTO reservation_scopes VALUES(?1,?2,?3)",
+                params![id.to_string(), session.to_string(), incarnation.to_string()],
+            )?;
+        }
         tx.commit()?;
         Ok(Self {
             id,

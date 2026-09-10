@@ -31,6 +31,13 @@ pub async fn recover(args: RecoverArgs) -> Result<serde_json::Value> {
     );
     let startup = crate::attachment::journal::open_private_file(&directory.join("startup.lock"))?;
     startup.try_lock().context("runtime startup owned")?;
+    let registration = super::transport::registration(&directory)?;
+    ensure!(
+        registration.session_id == args.session
+            && registration.incarnation == args.incarnation
+            && registration.state != voyage_protocol::process::ProcessState::Relinquished,
+        "recovery identity changed or ownership relinquished"
+    );
     let owner = ManagedSessionOwner::open(directory.join("journal"), args.session).await?;
     owner.initialize_process_commands().await?;
     owner.initialize_session_resources().await?;
@@ -46,6 +53,11 @@ pub async fn recover(args: RecoverArgs) -> Result<serde_json::Value> {
                 "recovery command payload conflict"
             );
             if saved["restart_permitted"] == true {
+                ensure!(
+                    saved["session_id"] == args.session.to_string()
+                        && saved["incarnation"] == args.incarnation.to_string(),
+                    "recovery receipt identity mismatch"
+                );
                 persist(&directory.join("recovered.json"), &saved)?;
                 match std::fs::remove_file(directory.join("runtime.sock")) {
                     Ok(()) => {}
@@ -64,6 +76,10 @@ pub async fn recover(args: RecoverArgs) -> Result<serde_json::Value> {
         )?;
     }
     owner.recover_interrupted().await?;
+    if super::guardian::observed(&directory, &registration)? {
+        crate::host_resources::recover_process_scope(args.session, args.incarnation)?;
+        owner.recover_process_cleanup().await?;
+    }
     let actor = LocalActorStore::open(&directory.join("identity"))?.identity()?;
     if let Some(run) = args.acknowledge_cleanup {
         owner.attest_local_cleanup(run, actor).await?;
@@ -92,6 +108,8 @@ pub async fn recover(args: RecoverArgs) -> Result<serde_json::Value> {
         persist(&marker, &pending)?;
         return Ok(pending);
     }
+    owner.recover_tool_outcomes().await?;
+    let snapshot = owner.process_snapshot().await?;
     let result = serde_json::json!({"session_id":args.session,"incarnation":args.incarnation,"command_id":args.command_id,"request":request,"cleanup_disposition":if owner.has_cleanup_attestation().await?{"operator_attested"}else{"observed"},"restart_permitted":true,"revision":snapshot["revision"]});
     persist(&marker, &result)?;
     persist(&directory.join("recovered.json"), &result)?;
@@ -105,7 +123,7 @@ pub async fn recover(args: RecoverArgs) -> Result<serde_json::Value> {
     Ok(result)
 }
 
-fn persist(path: &std::path::Path, value: &serde_json::Value) -> Result<()> {
+pub(super) fn persist(path: &std::path::Path, value: &serde_json::Value) -> Result<()> {
     use std::io::Write;
     let parent = path.parent().context("recovery receipt parent missing")?;
     let mut candidate = tempfile::NamedTempFile::new_in(parent)?;

@@ -247,7 +247,7 @@ impl App {
             let run = snapshot
                 .run
                 .as_ref()
-                .filter(|run| run.active())
+                .filter(|run| run.active() && !snapshot.recovery_pending)
                 .context("no observed active run to cancel")?;
             VoyageCommand::Cancel {
                 command_id,
@@ -257,7 +257,11 @@ impl App {
             }
         } else if command_text.starts_with('/') {
             anyhow::bail!("unknown command; /help lists connected controls");
-        } else if let Some(run) = snapshot.run.as_ref().filter(|run| run.active()) {
+        } else if let Some(run) = snapshot
+            .run
+            .as_ref()
+            .filter(|run| run.active() && !snapshot.recovery_pending)
+        {
             VoyageCommand::Steer {
                 coordination: None,
                 command_id,

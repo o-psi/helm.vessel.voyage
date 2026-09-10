@@ -1,6 +1,31 @@
 use super::*;
 use serde_json::Value;
 impl ManagedSessionOwner {
+    pub(crate) async fn recover_process_cleanup(&self) -> anyhow::Result<()> {
+        let shared = self.store.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut store = shared
+                .lock()
+                .map_err(|_| anyhow::anyhow!("owner poisoned"))?;
+            anyhow::ensure!(store.turn.upgrade().is_none(), "managed turn still owned");
+            let Store { journal, guard, .. } = &mut *store;
+            journal.recover_process_cleanup(guard)
+        })
+        .await?
+    }
+
+    pub(crate) async fn recover_tool_outcomes(&self) -> anyhow::Result<()> {
+        let shared = self.store.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut store = shared
+                .lock()
+                .map_err(|_| anyhow::anyhow!("owner poisoned"))?;
+            anyhow::ensure!(store.turn.upgrade().is_none(), "managed turn still owned");
+            let Store { journal, guard, .. } = &mut *store;
+            journal.recover_tool_outcomes(guard)
+        })
+        .await?
+    }
     pub(crate) async fn initialize_session_resources(&self) -> anyhow::Result<()> {
         let shared = self.store.clone();
         tokio::task::spawn_blocking(move || {

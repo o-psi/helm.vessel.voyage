@@ -60,6 +60,7 @@ async fn observe(directory: &std::path::Path, request: &RuntimeRequest) -> Resul
             &directory,
             &registration,
             !matches!(request.command, RuntimeCommand::Resolve { .. }),
+            request.command.observes_saved(),
         )
     };
     check_retirement()?;
@@ -155,7 +156,17 @@ fn check_retired(
     directory: &std::path::Path,
     registration: &ProcessRegistration,
     require_suspension: bool,
+    saved_read: bool,
 ) -> Result<()> {
+    if saved_read {
+        // Authentication plus the startup and execution locks still apply. A
+        // stale socket or missing cleanup evidence cannot hide durable history.
+        ensure!(
+            registration.state != voyage_protocol::process::ProcessState::Relinquished,
+            "source ownership has been relinquished"
+        );
+        return Ok(());
+    }
     ensure!(
         require_suspension
             || registration.state != voyage_protocol::process::ProcessState::Relinquished,
@@ -197,19 +208,37 @@ async fn inspect(
                 "relinquish","stop"],"decisions":"bounded_120_seconds"})),
         RuntimeCommand::Snapshot => {
             let mut snapshot = owner.process_snapshot().await?;
-            let mut config = config(owner, registration, directory).await?;
-            let saved = owner.snapshot().await?.session;
-            config.model = saved.pending_model.unwrap_or(saved.model);
-            snapshot["inference"] = super::configuration::inference_snapshot(&config);
+            if let Ok(mut config) = config(owner, registration, directory).await {
+                let saved = owner.snapshot().await?.session;
+                config.model = saved.pending_model.unwrap_or(saved.model);
+                snapshot["inference"] = super::configuration::inference_snapshot(&config);
+                snapshot["access"] =
+                    crate::runtime_policy::RuntimePolicy::resolve(&config, &registration.workspace)
+                        .ok()
+                        .and_then(|p| serde_json::to_value(p.policy().access_mode()).ok())
+                        .unwrap_or(Value::Null);
+            } else {
+                snapshot["inference"] = Value::Null;
+                snapshot["access"] = Value::Null;
+            }
             snapshot["inference_next_turn"] = json!(false);
             snapshot["inference_current"] = Value::Null;
-            snapshot["access"] =
-                crate::runtime_policy::RuntimePolicy::resolve(&config, &registration.workspace)
-                    .ok()
-                    .and_then(|p| serde_json::to_value(p.policy().access_mode()).ok())
-                    .unwrap_or(Value::Null);
-            snapshot["decisions"] = owner.decisions(registration.incarnation).await?;
-            snapshot["suspended"] = json!(true);
+            let suspended = check_retired(directory, registration, true, false).is_ok();
+            let retired = check_retired(directory, registration, false, false).is_ok();
+            snapshot["decisions"] = json!([]);
+            snapshot["suspended"] = json!(suspended);
+            snapshot["recovery_pending"] = json!(!retired);
+            if !retired {
+                snapshot["observation"] = json!("saved");
+                snapshot["recovery_notice"] = json!(if directory
+                    .join(format!("guardian-{}.json", registration.incarnation))
+                    .exists()
+                {
+                    "Saved conversation restored. Recovery is checking previous programs; commands with unknown outcomes will not be repeated."
+                } else {
+                    "Saved conversation restored. This older run did not retain enough process information to verify cleanup automatically. Its unfinished commands have not been repeated."
+                });
+            }
             Ok(snapshot)
         }
         RuntimeCommand::History {

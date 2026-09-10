@@ -28,6 +28,8 @@ pub struct LocalReconcileOutcome {
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Receipt {
+    #[serde(default)]
+    automatic: bool,
     request: LocalReconcileRequest,
     revision: u64,
     tool_call_ids: Vec<String>,
@@ -99,6 +101,26 @@ fn unresolved(messages: &[Message]) -> Result<Vec<String>> {
 }
 
 impl Journal {
+    /// Runtime-authored unknown outcomes, never a human cleanup attestation.
+    pub(crate) fn recover_tool_outcomes(&mut self, guard: &ExecutionGuard) -> Result<()> {
+        self.check_guard(guard, guard.session_id)?;
+        let saved = self.load_session(guard.session_id)?;
+        if !super::has_pending_tools(&saved.session.messages) {
+            return Ok(());
+        }
+        let run = self
+            .process_latest_run(guard.session_id)?
+            .context("missing interrupted run")?;
+        let request = LocalReconcileRequest {
+            session_id: guard.session_id,
+            run_id: run.id,
+            installation_id: run.machine_id,
+            principal_id: run.principal_id,
+            expected_revision: saved.revision,
+        };
+        self.reconcile_tools(guard, &request, true)?;
+        Ok(())
+    }
     /// Explicit operator-selected recovery. Requires the exact local actor, guarded
     /// terminal latest run, resolved cleanup, and original expected revision. New
     /// error results report unknown effects, never success/rollback or replay.
@@ -107,6 +129,15 @@ impl Journal {
         &mut self,
         guard: &ExecutionGuard,
         request: &LocalReconcileRequest,
+    ) -> Result<LocalReconcileOutcome> {
+        self.reconcile_tools(guard, request, false)
+    }
+
+    fn reconcile_tools(
+        &mut self,
+        guard: &ExecutionGuard,
+        request: &LocalReconcileRequest,
+        automatic: bool,
     ) -> Result<LocalReconcileOutcome> {
         self.check_guard(guard, request.session_id)?;
         ensure!(
@@ -131,7 +162,9 @@ impl Journal {
         if let Some((session_id, record)) = existing {
             let receipt: Receipt = serde_json::from_str(&record)?;
             ensure!(
-                receipt.request == *request && session_id == request.session_id.to_string(),
+                receipt.request == *request
+                    && receipt.automatic == automatic
+                    && session_id == request.session_id.to_string(),
                 "reconciliation identity reused with different request"
             );
             ensure!(
@@ -199,6 +232,7 @@ impl Journal {
             .checked_add(1)
             .context("revision overflow")?;
         let receipt = Receipt {
+            automatic,
             request: request.clone(),
             revision,
             tool_call_ids: ids.clone(),

@@ -2,6 +2,18 @@
 use super::*;
 use serde_json::{Value, json};
 impl Journal {
+    /// The caller holds the owner fence and has verified whole-process-tree
+    /// cleanup. Remote participant obligations remain independently unresolved.
+    pub(crate) fn recover_process_cleanup(&mut self, guard: &ExecutionGuard) -> Result<()> {
+        self.check_guard(guard, guard.session_id)?;
+        self.connection.execute("UPDATE process_session_resources SET state='observed' WHERE session_id=?1 AND kind='root_terminals' AND state='cleanup_unknown'", [guard.session_id.to_string()])?;
+        if let Some(run) = catalogue::pending_cleanup(&self.connection, guard.session_id)? {
+            self.confirm_local_cleanup_observed(guard, run)?;
+            // The confirmation method retains local observation when a remote
+            // assignment remains. Never clear that assignment here.
+        }
+        Ok(())
+    }
     pub(crate) fn initialize_session_resources(&mut self, guard: &ExecutionGuard) -> Result<()> {
         self.check_guard(guard, guard.session_id)?;
         self.connection.execute_batch("CREATE TABLE IF NOT EXISTS process_session_resources(id TEXT PRIMARY KEY,session_id TEXT NOT NULL,run_id TEXT NOT NULL,kind TEXT NOT NULL,state TEXT NOT NULL)")?;

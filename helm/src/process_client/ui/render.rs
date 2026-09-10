@@ -27,6 +27,13 @@ fn state<'a>(view: &super::state::View, working: &'a super::effects::Working) ->
     if view.connection_unavailable {
         return "Reconnecting";
     }
+    if view
+        .snapshot
+        .as_ref()
+        .is_some_and(|snapshot| snapshot.recovery_pending)
+    {
+        return "Conversation restored · cleanup pending";
+    }
     let status = if view.process.state == voyage_protocol::process::ProcessState::Unavailable {
         if view.error.is_some() {
             "Recovery needed"
@@ -63,6 +70,13 @@ fn sidebar_state(view: &super::state::View) -> (&'static str, Style, bool) {
     let running = crate::theme::Role::Running.style();
     if view.process.archive.is_some() {
         return ("Archived", crate::theme::Role::Muted.style(), false);
+    }
+    if view
+        .snapshot
+        .as_ref()
+        .is_some_and(|snapshot| snapshot.recovery_pending)
+    {
+        return ("Cleanup pending", attention, false);
     }
     if view.archived() || view.process.state == ProcessState::CleanupUnconfirmed {
         return ("Needs attention · cleanup", attention, false);

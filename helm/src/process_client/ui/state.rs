@@ -122,6 +122,10 @@ pub struct Cleanup {
 #[derive(Clone, Deserialize, PartialEq)]
 pub struct Snapshot {
     #[serde(default)]
+    pub recovery_pending: bool,
+    #[serde(default)]
+    pub recovery_notice: Option<String>,
+    #[serde(default)]
     pub total_messages: usize,
     #[serde(default)]
     pub message_offset: usize,
