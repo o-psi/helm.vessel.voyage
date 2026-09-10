@@ -275,7 +275,8 @@ multiple credentials or `--include-local` with a CLI subcommand.
 Legacy session grants remain restricted to one voyage. New workspace pairing
 grants permit creating additional voyages only in owner-approved workspaces and
 only with the `create` right; neither kind grants account-owner administration.
-HTTPS routes receive streamed SSE invalidations. Disconnecting does not cancel
+HTTPS origins upgrade to WSS: ordinary commands, replies and invalidations share
+one [authenticated duplex socket](duplex-transport.md), with no silent HTTP fallback. Disconnecting does not cancel
 accepted work and reconnecting does not replay commands. Saved interactive
 connections do not change the target of an explicit CLI subcommand.
 

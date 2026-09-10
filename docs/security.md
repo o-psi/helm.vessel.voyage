@@ -56,11 +56,12 @@ claim retention guarantees for backups or external copies that are not enforced.
 The Linux process route authenticates a private per-service bearer token and accepts
 it only on a literal-loopback HTTP listener. The discovery record must remain an
 owned private regular file under the owned private Vessel directory. Browser Origin
-requests, redirects and non-loopback endpoints are rejected. SSE subscriptions are
+requests, redirects and non-loopback endpoints are rejected. Helm upgrades this
+listener to an authenticated [duplex socket](duplex-transport.md). Subscriptions are
 bounded and carry only durable invalidations; canonical history requires its
 separate right. Vessel forwards with a session/incarnation-bound runtime secret and
-does not keep the canonical transcript. Remote Helm connections use scoped HTTPS
-grants; there is no SSH account-authority transport.
+does not keep the canonical transcript. Remote Helm connections upgrade HTTPS
+origins to WSS using scoped grants; there is no SSH account-authority transport.
 
 Pending runtime decisions have exact targeting, durable receipts, single-response
 semantics and bounded expiry. Local policy remains the execution ceiling. Scoped process grants bind principal, workspace, session, rights, revision and

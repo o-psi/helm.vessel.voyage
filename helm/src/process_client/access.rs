@@ -4,8 +4,8 @@ use serde::{Deserialize, Serialize};
 use std::{path::Path, time::Duration};
 use uuid::Uuid;
 use voyage_protocol::vessel::{
-    AccessCredential, MAX_VESSEL_BODY, VESSEL_API_VERSION, VesselCommand, VesselEvent,
-    VesselEventRequest, VesselRequest, VesselResponse,
+    AccessCredential, MAX_VESSEL_BODY, VESSEL_API_VERSION, VesselCommand, VesselRequest,
+    VesselResponse,
 };
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -61,7 +61,7 @@ impl Credential {
             Self::Session(c) => c.grant_id,
         }
     }
-    fn token(&self) -> &str {
+    pub(super) fn token(&self) -> &str {
         match self {
             Self::Workspace(c) => &c.token,
             Self::Session(c) => &c.token,
@@ -276,30 +276,28 @@ pub(super) async fn exchange_credential(
     )
     .await
 }
-pub(super) async fn events_credential(
-    credential: &Credential,
-    pin: Option<Uuid>,
-    request: VesselEventRequest,
-) -> Result<futures_util::stream::BoxStream<'static, Result<VesselEvent>>> {
-    let request = credential
-        .authorize(
-            http(credential.endpoint(), true)?
-                .post(endpoint(
-                    credential.endpoint(),
-                    voyage_protocol::vessel::EVENTS_PATH,
-                )?)
-                .header(reqwest::header::ACCEPT, "text/event-stream"),
-            pin,
-        )?
-        .json(&request)
-        .send();
-    let response = tokio::time::timeout(Duration::from_secs(15), request)
-        .await
-        .map_err(|_| ConnectionFailure::Offline)?
-        .map_err(|_| ConnectionFailure::Offline)?;
-    if !response.status().is_success() {
-        envelope(response).await?;
-        anyhow::bail!("Vessel event stream refused");
+/// Interpret public socket replies without exposing submitted secrets in errors.
+pub(super) fn public_response(reply: VesselResponse, local: bool) -> Result<serde_json::Value> {
+    ensure!(
+        reply.protocol == VESSEL_API_VERSION,
+        "unsupported Vessel response protocol"
+    );
+    ensure!(
+        !reply.outcome_unknown,
+        "Vessel command outcome unknown; retain original command identity"
+    );
+    if let Some(error) = reply.error {
+        if let Some(reason) = classified(&error) {
+            return Err(
+                anyhow::Error::new(reason).context(super::transport::Refusal(reason.to_string()))
+            );
+        }
+        let message = if local {
+            format!("Vessel refused: {}", super::safe(&error))
+        } else {
+            "Vessel refused the request".into()
+        };
+        return Err(super::transport::Refusal(message).into());
     }
-    Ok(super::sse::decode(response))
+    Ok(reply.result)
 }

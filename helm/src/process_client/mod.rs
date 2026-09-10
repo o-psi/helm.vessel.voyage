@@ -2,7 +2,7 @@
 pub mod cli;
 pub mod connections;
 pub mod local;
-mod sse;
+pub mod duplex;
 pub mod transport;
 mod ui;
 

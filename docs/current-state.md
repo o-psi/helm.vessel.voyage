@@ -238,11 +238,13 @@ creation use executing-host configuration. Closing Helm detaches; it does not ca
 Linux local discovery starts an absent supervisor from companion binaries. The
 supervisor binds an ephemeral literal-loopback HTTP endpoint and atomically publishes
 its bearer credential in the owned private Vessel directory. Helm validates that
-directory, credential file and endpoint before every request. Commands use bounded
-POST requests. The connected TUI and plain/run followers receive durable
-invalidations over authenticated SSE and fetch canonical snapshots/output only when
-notified; stream reconnect uses the last snapshot cursor and never resubmits work.
-Remote routes use HTTPS and private credentials. Legacy sharing grants remain
+directory, credential file and endpoint before opening one authenticated duplex
+socket per connection activation. Commands, correlated replies, durable invalidations
+and the typed browser notification extension share that socket. The connected TUI
+and plain/run followers fetch canonical snapshots/output when notified; reconnect
+uses the last snapshot cursor and never resubmits work. Remote HTTPS origins upgrade
+to WSS with private credentials; local connections use protected loopback WS.
+There is no silent HTTP/SSE fallback. See [duplex transport](duplex-transport.md). Legacy sharing grants remain
 bound to one session, principal, workspace, rights, revision and expiry. Explicit
 owner-approved pairing grants permit catalogue access and creation across selected
 canonical workspaces, with separate rights and runtime-checked revocation/expiry.
@@ -437,15 +439,16 @@ continuation, unsent drafts and private terminal input are excluded.
 
 ## Interfaces and controls
 
-Helm uses the independently versioned public Vessel API at `/v1/vessel/command`
-and `/v1/vessel/events`. Its explicit session operations are distinct from private
+Helm uses the independently versioned public Vessel API over `/v1/vessel/socket`.
+The explicit HTTP `/v1/vessel/command` and SSE `/v1/vessel/events` API remain for
+compatibility and non-Helm callers. Its explicit session operations are distinct from private
 runtime commands. Vessel selects owners under lifecycle arbitration, translates
 requests and normalizes responses; live-resource actions retain exact incarnation
-fences. Public SSE follows session owners and reports observed incarnation changes.
+fences. Public events follow session owners and report observed incarnation changes.
 The private runtime IPC remains protocol v1. See [process access](process-access.md#wire-and-retained-state)
 for wire examples and the coordinated Helm/Vessel gateway upgrade requirement.
 
-The connected TUI combines local HTTP and scoped HTTPS routes. It retains separate
+The connected TUI combines local WS and scoped WSS routes. It retains separate
 drafts, prompt navigation, scroll, pending command identities and observation
 cursors per voyage. Switching views does not redirect in-flight actions. Background
 voyages show unread state and pending decisions; slow remote observation runs

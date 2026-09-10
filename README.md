@@ -30,8 +30,9 @@ The [architecture](docs/architecture.md) defines these boundaries.
 
 This is a first-release development project. Ordinary Helm chat and run commands,
 managed sessions and connected clients reach independent `voyage` processes through
-Vessel. Local HTTP and scoped HTTPS routes share the same owner protocol and stream
-durable invalidations to Helm with SSE. Session lifecycle, durable decisions,
+Vessel. Local WS and scoped WSS routes share one authenticated full-duplex socket per
+active Helm connection for commands, replies and durable invalidations. See the
+[duplex transport](docs/duplex-transport.md). Session lifecycle, durable decisions,
 private terminal attachment, participant execution
 and positively fenced owner moves are implemented. See the
 [current-state guide](docs/current-state.md) for supported paths and validation limits.
