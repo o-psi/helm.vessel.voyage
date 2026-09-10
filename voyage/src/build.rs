@@ -131,6 +131,12 @@ pub async fn build_authorized_agent_bundle(
             &context.policy,
         )
         .await?;
+        if let Some(browser) = &config.browser {
+            managed_resources.register_browser(browser.clone())?;
+            if browser.available() {
+                tools.register_arc(Arc::new(crate::tools::BrowserTool(browser.clone())))?;
+            }
+        }
         if let Some(tool) = extra_tool {
             tools.register_arc(tool)?;
         }

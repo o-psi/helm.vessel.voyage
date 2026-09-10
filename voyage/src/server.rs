@@ -50,6 +50,7 @@ struct ActiveRun {
     steering: Option<ManagedSteeringHandle>,
 }
 struct State {
+    browser: Arc<crate::browser::BrowserBroker>,
     directory: PathBuf,
     workflows: workflows::Workflows,
     controls: Arc<controls::LiveControls>,
@@ -221,7 +222,14 @@ pub async fn serve(args: ServeArgs) -> Result<()> {
                 .access_mode(),
         )));
         crate::build::set_resource_root(directory.join("resources"))?;
+        let browser = crate::browser::BrowserBroker::open(
+            directory.join("journal"),
+            registration.session_id,
+            registration.incarnation,
+        )?;
+        config.browser = Some(browser.clone());
         let state = Arc::new(State {
+            browser,
             directory: directory.clone(),
             workflows: workflows::Workflows::default(),
             controls: Arc::new(controls::LiveControls::default()),

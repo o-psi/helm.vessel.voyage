@@ -33,6 +33,7 @@ const SCHEMA_VERSION: i64 = 11;
 mod reconciliation;
 pub use reconciliation::{LocalReconcileOutcome, LocalReconcileRequest};
 const STEERING_SCHEMA_VERSION: i64 = 4;
+pub(crate) mod browser;
 mod catalogue;
 pub use catalogue::{
     CancelRequestOutcome, LocalCancelRequest, RunSummary, SessionPage, SessionSummary,

@@ -70,6 +70,9 @@ impl ProviderKind {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
+    /// Explicit process-local sharing; configuration files cannot enable it.
+    #[serde(skip)]
+    pub browser: Option<std::sync::Arc<crate::browser::BrowserBroker>>,
     /// Native Vessel coordination routes; credential contents never enter model context.
     pub vessel: crate::tools::VesselSettings,
     /// Authenticated process identity, populated by the supervisor bootstrap only.
@@ -415,6 +418,7 @@ impl Default for Config {
         Self {
             vessel: Default::default(),
             vessel_context: None,
+            browser: None,
             sandbox: Default::default(),
             participants: Vec::new(),
             chat_preferences: None,
@@ -645,6 +649,7 @@ impl Config {
         // Serialization deliberately drops launch authority; in-process edits must
         // retain it so the next rebuild checks the same profile and transition.
         updated.vessel_context = self.vessel_context.clone();
+        updated.browser = self.browser.clone();
         updated.live_access = self.live_access.clone();
         updated.artifact_scope = self.artifact_scope.clone();
         updated.chat_preferences = self.chat_preferences.clone();

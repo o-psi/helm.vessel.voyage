@@ -102,6 +102,9 @@ pub struct VoyageReply {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 pub enum VoyageCommand {
+    Browser {
+        operation: crate::browser::BrowserOperation,
+    },
     Clear {
         command_id: Uuid,
         expected_revision: u64,
@@ -304,7 +307,8 @@ impl VoyageCommand {
     pub fn requires_incarnation(&self) -> bool {
         matches!(
             self,
-            Self::ExecuteTool { .. }
+            Self::Browser { .. }
+                | Self::ExecuteTool { .. }
                 | Self::Terminal { .. }
                 | Self::Cancel { .. }
                 | Self::Steer { .. }
@@ -313,6 +317,7 @@ impl VoyageCommand {
     }
     pub fn mutation_id(&self) -> Option<Uuid> {
         match self {
+            Self::Browser { operation } => operation.mutation_id(),
             Self::Clear { command_id, .. }
             | Self::Compact { command_id, .. }
             | Self::OperatorTool { command_id, .. }

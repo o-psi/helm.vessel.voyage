@@ -13,6 +13,10 @@ pub(super) async fn suspend(state: &Arc<State>) -> Result<()> {
         !state.workflows.pending().await,
         "private turn preparation remains pending"
     );
+    ensure!(
+        !state.browser.blocks_suspension()?,
+        "local browser lease or cleanup remains active"
+    );
     let snapshot = state.owner.process_snapshot().await?;
     ensure!(
         snapshot["pending_cleanup_run"].is_null(),

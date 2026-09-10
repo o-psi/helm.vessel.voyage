@@ -29,3 +29,6 @@ pub mod tool_result;
 
 /// Voyage-to-voyage presentation provenance.
 pub mod coordination;
+
+/// Explicitly shared, locally executed browser contracts.
+pub mod browser;

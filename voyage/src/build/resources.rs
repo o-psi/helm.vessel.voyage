@@ -4,6 +4,7 @@ pub struct ManagedResourceState {
     closed: bool,
     pub terminals: Vec<crate::tools::ProcessTool>,
     pub shells: Vec<crate::tools::ManagedShell>,
+    pub browser: Option<Arc<crate::browser::BrowserBroker>>,
     pub mcp: Vec<Arc<crate::tools::mcp::McpServer>>,
 }
 pub struct ManagedResources(std::sync::Mutex<ManagedResourceState>, bool);
@@ -18,6 +19,15 @@ impl ManagedResources {
             std::sync::Mutex::new(ManagedResourceState::default()),
             cfg!(target_os = "linux"),
         )
+    }
+    pub fn register_browser(&self, browser: Arc<crate::browser::BrowserBroker>) -> Result<()> {
+        let mut state = self
+            .0
+            .lock()
+            .map_err(|_| anyhow::anyhow!("managed resources poisoned"))?;
+        anyhow::ensure!(!state.closed, "resource admission closed");
+        state.browser = Some(browser);
+        Ok(())
     }
     pub fn register(&self, tools: &mut ToolRegistry) -> Result<()> {
         let mut state = self
@@ -89,7 +99,13 @@ impl ManagedResources {
             let mcp =
                 futures_util::future::join_all(retained.mcp.iter().map(|item| item.shutdown()))
                     .await;
-            terminals.iter().all(|item| item.observation_complete)
+            let browser = retained
+                .browser
+                .as_ref()
+                .map(|b| b.finish_run().unwrap_or(false))
+                .unwrap_or(true);
+            browser
+                && terminals.iter().all(|item| item.observation_complete)
                 && shells.iter().all(|item| item.observation_complete)
                 && mcp.iter().all(Result::is_ok)
                 && (!require_session_observation
@@ -114,6 +130,7 @@ impl ManagedResources {
             terminals: state.terminals.clone(),
             shells: state.shells.clone(),
             mcp: state.mcp.clone(),
+            browser: state.browser.clone(),
         })
     }
 }

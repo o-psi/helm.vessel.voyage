@@ -34,6 +34,23 @@ pub(super) async fn dispatch_admitted(
     };
 
     match command {
+        RuntimeCommand::Browser { operation } => {
+            if let Some(authority) = &authorization.authority {
+                authority.check()?;
+            }
+            let cleanup = matches!(
+                &operation,
+                voyage_protocol::browser::BrowserOperation::Cleanup { observed: true, .. }
+                    | voyage_protocol::browser::BrowserOperation::Result { .. }
+            );
+            let result = state
+                .browser
+                .operate(authorization.actor.principal_id, operation)?;
+            if cleanup {
+                state.cleanup.retry().await;
+            }
+            Ok(serde_json::to_value(result)?)
+        }
         RuntimeCommand::UploadImage {
             upload_id,
             name,
@@ -144,6 +161,7 @@ pub(super) async fn dispatch_admitted(
                 "terminal",
                 "assignment_observe",
                 "relinquish",
+                "browser",
                 "stop",
             ];
             Ok(

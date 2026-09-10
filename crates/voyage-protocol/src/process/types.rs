@@ -11,6 +11,9 @@ pub const MAX_PROCESS_FRAME: usize = 4 * 1024 * 1024;
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 pub enum RuntimeCommand {
+    Browser {
+        operation: crate::browser::BrowserOperation,
+    },
     Clear {
         command_id: Uuid,
         expected_revision: u64,
@@ -232,6 +235,7 @@ impl RuntimeCommand {
     /// Immutable identity of a journalled mutation, excluding resolution itself.
     pub fn mutation_id(&self) -> Option<Uuid> {
         match self {
+            Self::Browser { operation } => operation.mutation_id(),
             Self::Clear { command_id, .. }
             | Self::Compact { command_id, .. }
             | Self::OperatorTool { command_id, .. }

@@ -140,7 +140,9 @@ pub(super) async fn listen(directory: PathBuf, state: Arc<State>) -> Result<()> 
     let retained = state.controls.shutdown_retained(&state.owner).await;
     let snapshot = state.owner.process_snapshot().await?;
     let session_resources = state.owner.session_resources().await?;
-    let observed = run_cleanup
+    let browser_observed = state.browser.finish_run().unwrap_or(false);
+    let observed = browser_observed
+        && run_cleanup
         && retained.is_ok()
         && session_resources.as_array().is_some_and(Vec::is_empty)
         && cleanup.is_ok()
