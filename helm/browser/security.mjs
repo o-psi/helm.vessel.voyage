@@ -22,7 +22,7 @@ export function publicAddress(ip) {
   if (net.isIP(ip) === 6) {
     // Only global unicast; mapped IPv4, local, transition, documentation ranges denied.
     const s = ip.toLowerCase();
-    return /^[23][0-9a-f]{3}:/.test(s) && !s.startsWith('2001:') && !s.startsWith('2002:');
+    return /^[23][0-9a-f]{3}:/.test(s) && !s.startsWith('2001:') && !s.startsWith('2002:') && !s.startsWith('3fff:');
   }
   if (net.isIP(ip) !== 4) return false;
   const [a,b,c] = ip.split('.').map(Number);
@@ -43,6 +43,7 @@ export async function networkProxy(allowed) {
     if (!grant) refuse('origin_not_allowed');
     const u = new URL(raw), host = u.hostname.replace(/^\[|\]$/g, '');
     const addresses = net.isIP(host) ? [{address:host}] : await dns.lookup(host, {all:true});
+    if (allowed.get(o)!==grant) refuse('origin_revoked');
     if (!addresses.length || (!grant.private_network && addresses.some(a => !publicAddress(a.address)))) refuse('private_network_denied');
     return {u, address:addresses[0].address};
   };
@@ -56,6 +57,8 @@ export async function networkProxy(allowed) {
       const upstream = http.request({host:address,port:u.port || 80,method:req.method,path:u.pathname+u.search,headers,timeout:15000}, reply => {
         res.writeHead(reply.statusCode,reply.headers); reply.pipe(res);
       });
+      upstream.on('socket',socket=>{if(!sockets.has(socket)){sockets.add(socket);socket.once('close',()=>sockets.delete(socket));}});
+      res.on('close',()=>upstream.destroy());
       upstream.on('error',() => res.destroy()); upstream.on('timeout',() => upstream.destroy());
       req.on('aborted',() => upstream.destroy()); req.pipe(upstream);
     } catch { res.writeHead(403).end(); }
@@ -71,7 +74,7 @@ export async function networkProxy(allowed) {
       remote.on('error',() => client.destroy()); client.on('error',() => remote.destroy()); client.on('close',() => remote.destroy());
     } catch { client.end('HTTP/1.1 403 Forbidden\r\n\r\n'); }
   });
-  server.on('connection',socket => { sockets.add(socket); socket.on('close',() => sockets.delete(socket)); });
+  server.on('connection',socket => { socket.on('error',()=>socket.destroy());sockets.add(socket); socket.on('close',() => sockets.delete(socket)); });
   server.on('clientError',(_e,s) => s.destroy());
   await new Promise(resolve => server.listen(0,'127.0.0.1',resolve));
   return {server:`http://127.0.0.1:${server.address().port}`,username,password,

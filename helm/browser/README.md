@@ -9,8 +9,8 @@ Do not expose the stdio protocol or loopback companion to a network listener.
 ## Dependencies and setup
 
 Runtime assets: `helper.mjs`, `security.mjs`, `index.html`, `app.js`, `app.css`,
-`package.json`, and `package-lock.json`. `probe.mjs` is a scoped synthetic probe,
-not a runtime asset or a replacement general test suite.
+`package.json`, and `package-lock.json`. `probe.mjs` and `cleanup-probe.mjs` are scoped synthetic probes,
+not runtime assets or a replacement general test suite.
 
 - Node.js **24 or newer** (Linux evidence: Node 26.8.2).
 - `playwright-core` **1.63.0**, pinned in both manifests. The npm registry version
@@ -68,7 +68,20 @@ with `run_id:null`; the first admitted action pins its non-null run. A different
 run fences and requires new local sharing. An owner/incarnation/resource/executor
 change cannot renew old actions. The parent must heartbeat **only while its pinned
 full-duplex connection and grant remain live**, typically every second. The default
-miss threshold is five seconds. EOF and signals fence and clean up, not reconnect.
+miss threshold is five seconds. The manager must consume each `control` event and
+publish the helper's new controller/capture epochs through the existing duplex
+binding handshake before admitting another action. In particular:
+
+1. Initialize with the selected owner binding and `run_id:null` while idle.
+2. Local Share advances the epochs; publish those epochs, then send the first
+   actual action with `run_id:Some(UUID)` (a UUID string in JSON).
+3. Idle `run_id:null` heartbeats do not erase the pinned run. A later non-null run
+   fences; notify the local human, require explicit Share again, and publish the
+   resulting epochs. Do not retry an old effect under a new request identity.
+
+The local companion displays the actual bound session/run IDs alongside the
+manager label. This helper probe establishes the binding semantics, **not** the
+parent's end-to-end duplex publication/reshare handshake. EOF and signals fence and clean up, not reconnect.
 
 `BrowserAction` uses the `action` discriminator:
 
@@ -99,10 +112,11 @@ state and `duplicate_content_withheld`, never redo the effect or replay content.
 
 The companion uses the **same persistent Chromium context** as agent actions.
 Its viewport is a live, transient raster stream with pointer down/up/move, wheel,
-keyboard and text/IME forwarding, not a screenshot-only viewer. Local controls
+keyboard and text/IME forwarding (128 pending input events maximum), not a screenshot-only viewer. Local controls
 include tabs, navigation, takeover, explicit sharing, origin grants, one-effect
 approval prompts, upload picker, downloads, clipboard paste and page dialogs.
-Human input is refused in agent mode. Pending dispatched automation must settle
+Human input is refused in agent mode. Focus preserves viewport coordinates; held
+keys/buttons are released on authority changes and local-window blur. Pending dispatched automation must settle
 before new local input is accepted; takeover immediately fences captures/queues,
 not a claim that an already-dispatched browser/network effect was undone.
 
@@ -113,6 +127,10 @@ mode requires explicit local consent and fresh inspection; old grants/refs do no
 inherit a new epoch. The share dialog warns that the **entire shared browser**,
 including signed-in visible content, can become remote model/history input.
 
+Each local approval shows current/destination origin, bounded untrusted element
+description, non-password fill value, or file name/size/MIME as applicable. These
+are rendered as text, not HTML; page content cannot approve permissions. Approval
+stdout events contain only request identity and pending state, never that content.
 All agent effects require one independently confirmed local prompt, even when
 remote policy already approved them. Prompts expire (default 30 seconds). No
 controller means refusal, not an unattended indefinite approval wait. The local
@@ -134,7 +152,8 @@ resolves DNS, classifies every returned address and connects to that exact IP.
 It does not merely validate DNS and let Chromium resolve the host again. Private,
 loopback, link-local, reserved and conservatively classified IPv6 addresses are
 refused unless the exact origin has a locally reviewed private-network grant.
-Revocation tears down proxy connections. Service workers, WebSockets, QUIC and
+Revocation and permission downgrades tear down proxy connections, including HTTP
+upstream sockets; pending DNS resolution rechecks that the grant still exists. Service workers, WebSockets, QUIC and
 non-proxied WebRTC are disabled. These choices deliberately break sites needing
 those facilities; enabling them without equivalent network enforcement is not a
 supported workaround.
@@ -147,6 +166,15 @@ reuse. A crash lock is **not automatically removed based on PID or age**; an
 operator must first establish the old executor/browser is gone. Retained queued
 receipts become cancelled-before-dispatch and dispatched receipts become unknown;
 neither is replayed. There is no claim that a dead process survived restart.
+
+Cleanup retains one close promise, including rejection: overlapping/repeated
+shutdowns cannot report success while the first close is pending or failed.
+`closed:true` is emitted only after Chromium context close and owned helper
+resources are observed closed, and staging/lock cleanup succeeds. A rejected
+Chromium close leaves staging and `executor.lock` intact and returns
+`cleanup_unresolved`. **Helper process exit alone is not positive browser cleanup
+evidence**, including an exit after EOF/signal or a forced kill; the parent must
+not turn a missing/failed graceful reply into a cleanup attestation.
 
 Receipts are atomically replaced, file/directory fsynced before effects. They
 retain the exact canonical helper-request SHA-256, remote action digest, ID,
@@ -176,10 +204,16 @@ limitation must not be described as sandboxed hard disk enforcement.
 Uploads come from the human picker, or from `upload_prepare` bytes after local
 approval; remote paths are never accepted. Each staged upload additionally needs
 an explicit companion grant for the current sharing epoch and a confirmed upload
-effect. Inspection lists only explicitly granted IDs. Downloads remain private;
+effect. Safe filename and MIME metadata are preserved in the website file payload;
+local filesystem paths are not. Direct local file-chooser uploads consume their
+staging slot after delivery. Taking local control also enables discarding staged
+uploads/downloads, so the bounded pools need not remain full until shutdown. Inspection lists only explicitly granted IDs. Downloads remain private;
 local save and remote disclosure are separate controls. Disclosure requires both
 a local file grant and an action confirmation. Files are never auto-opened or
-executed. Local saves use a browser download dialog and the safe default filename
+executed. The current Voyage broker requires nonempty disclosed file bytes; empty
+downloads can be saved locally but return `empty_download_local_save_only` for
+remote disclosure (rather than sending an invalid broker result). Names are stripped
+of control/path characters and bounded to 128 UTF-8 bytes. Local saves use a browser download dialog and the safe default filename
 `download.bin`; the chosen destination is not revealed to the agent.
 
 ## Actual verification and remaining limitations
@@ -190,15 +224,30 @@ From a configured checkout:
 node --check helper.mjs
 node --check security.mjs
 node --check app.js
+node --check cleanup-probe.mjs
 HELM_BROWSER_PROBE_ROOT=/absolute/private/evidence/root node probe.mjs
+HELM_BROWSER_PROBE_ROOT=/absolute/private/evidence/root node cleanup-probe.mjs
 ```
 
 The scoped probe uses synthetic loopback content and real sandboxed Chromium,
 without Cargo, providers or Vessel. It checks local network permission, HTTP
 security headers and rejections, private refusal, controller exclusion, real
 companion frame rendering/input transport, typed inspection and raster output,
-local deny/allow, durable duplicate/conflict handling, stale references, takeover
-privacy fencing, heartbeat loss and clean shutdown. Its retained profile/receipts
+local deny/allow and prompt expiry, durable duplicate/conflict handling, stale
+references, actual human-picked and remotely staged upload bytes reaching a website,
+local save versus separately approved download disclosure, keyboard input reaching
+the viewed page while absent from private stdout, concurrent screenshot/control
+fencing, takeover after a navigation is durably dispatched, idle/first/later run
+binding and explicit reshare, heartbeat loss without renewal/replay, clean restart
+receipt recovery, refusal of an untouched unexpected executor lock, private file
+modes, and live disk-budget shutdown. Synthetic dispatched/queued receipts are
+explicit fixtures for restart-state checks, not claims of recovered live effects.
+The cleanup probe instruments only a private copy, never production assets: it
+checks overlapping shutdown and a rejected close promise, including failure
+retention after helper exit. Its rejection is synthesized after actually closing
+Chromium, avoiding a deliberately orphaned browser while testing the exact
+failure boundary. Positive fixture quiescence is not a claim that arbitrary
+production close failures are harmless. Its retained profile/receipts
 are private verification evidence, not publishable artifacts.
 
 This is not native macOS/Windows verification, a live website compatibility

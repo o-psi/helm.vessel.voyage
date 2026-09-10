@@ -21,9 +21,11 @@ let limits = {max_tabs:8, max_receipts:10000, max_transfer_bytes:2*1024*1024, ac
 const safeError = e => ({code:e instanceof Refusal ? e.code : 'operation_failed',message:e instanceof Refusal ? e.code : 'Local browser operation failed; details withheld'});
 function status() { return {browser_id:S.browser_id,epoch:S.epoch,capture_epoch:S.epoch,mode:S.mode,shared:S.shared,ready:S.ready,
   pending:S.queue.length+(S.active?1:0),connected:Date.now()-S.heartbeat < limits.heartbeat_ms}; }
+function releaseInput(){const pending=[];for(const p of S.pages.values()){for(const key of p.helmKeys||[])pending.push(p.keyboard.up(key));for(const button of p.helmButtons||[])pending.push(p.mouse.up({button}));p.helmKeys=new Set();p.helmButtons=new Set();}if(pending.length){const reset=Promise.all([S.inputReset||Promise.resolve(),...pending]);S.inputReset=reset;reset.then(()=>{if(S.inputReset===reset)S.inputReset=null;},()=>{S.shared=false;if(S.inputReset===reset)S.inputReset=null;});}return S.inputReset;}
 function fence(mode='private') {
+  releaseInput();
   for(const v of S.refs.values())v.handle.dispose().catch(()=>{});
-  S.boundRun=null;S.epoch++; S.mode=mode; S.shared=false; S.refs.clear(); S.observations.clear();
+  S.boundRun=null;S.chooser=null;for(const u of S.uploads.values())u.shared=false;for(const d of S.downloads.values())d.disclose=false;S.epoch++; S.mode=mode; S.shared=false; S.refs.clear(); S.observations.clear();
   for (const p of S.prompts.values()) p.resolve(false); S.prompts.clear();
   // Pending commands cannot inherit renewed authority. Dispatched effects remain unknown.
   for (const job of S.queue) job.cancelled=true;
@@ -31,7 +33,7 @@ function fence(mode='private') {
   if(S.ready)output({event:"control",...status()});
 }
 function authority(epoch) {
-  if (!S.ready || S.closing || S.mode!=='agent' || !S.shared || epoch!==S.epoch
+  if (!S.ready || S.closing || S.inputReset || S.mode!=='agent' || !S.shared || epoch!==S.epoch
       || Date.now()-S.heartbeat>=limits.heartbeat_ms || (S.binding && Date.now()>=S.binding.expires_at_ms)) refuse('authority_fenced');
 }
 async function durable(receipt) {
@@ -66,6 +68,7 @@ async function init(req) {
   if(typeof req.session_dir!=='string'||!path.isAbsolute(req.session_dir))refuse('invalid_session_directory');
   root=req.session_dir;
   if(req.browser_id) {if(!ID.test(req.browser_id))refuse('invalid_browser_id');S.browser_id=req.browser_id;}
+  if(req.binding)validateBinding(req.binding);
   S.label=typeof req.label==='string'?req.label.slice(0,300):'';S.binding=req.binding||null;
   await fs.mkdir(root,{recursive:true,mode:0o700});
   const st=await fs.lstat(root);
@@ -77,10 +80,11 @@ async function init(req) {
     const stat=await fs.lstat(path.join(root,name));if(!stat.isDirectory()||stat.isSymbolicLink()||(stat.mode&0o077)||(process.getuid&&stat.uid!==process.getuid()))refuse('unsafe_session_directory');
   }
   // Cleanly closed profiles may be reused. A crash lock requires explicit operator recovery.
-  for(const name of await fs.readdir(path.join(root,'receipts'))) {
+  const retained=await fs.readdir(path.join(root,'receipts'));if(retained.length>10000)refuse('receipt_limit');
+  for(const name of retained) {
     if(!/^[A-Za-z0-9_-]{1,128}\.json$/.test(name))continue;
-    const file=path.join(root,'receipts',name),st=await fs.lstat(file);if(!st.isFile()||st.isSymbolicLink()||st.size>4096||(st.mode&0o077))refuse('unsafe_receipt');
-    const r=JSON.parse(await fs.readFile(file,'utf8'));if(!ID.test(r.id)||name!==r.id+'.json')refuse('invalid_receipt');
+    const file=path.join(root,'receipts',name),st=await fs.lstat(file);if(!st.isFile()||st.isSymbolicLink()||st.size>4096||(st.mode&0o077)||(process.getuid&&st.uid!==process.getuid()))refuse('unsafe_receipt');
+    const r=JSON.parse(await fs.readFile(file,'utf8'));if(!ID.test(r.id)||name!==r.id+'.json'||Object.keys(r).some(k=>!['id','digest','action_sha256','state','epoch','created_at','code'].includes(k))||!['digest','action_sha256'].every(k=>typeof r[k]==='string'&&/^[a-f0-9]{64}$/.test(r[k]))||!['queued','dispatched','completed','refused','cancelled_before_dispatch','unknown'].includes(r.state)||!Number.isSafeInteger(r.epoch)||!Number.isSafeInteger(r.created_at)||(r.code!==undefined&&r.code!==null&&!/^[a-z_]{1,80}$/.test(r.code)))refuse('invalid_receipt');
     if(r.state==='dispatched')r.state='unknown';if(r.state==='queued')r.state='cancelled_before_dispatch';await durable(r);
   }
   for(const [key,min,max]of [['max_tabs',1,16],['max_receipts',1,10000],['max_transfer_bytes',1024,2*1024*1024],['action_timeout_ms',1000,30000],['prompt_timeout_ms',1000,60000],['heartbeat_ms',2000,30000],['width',640,1600],['height',480,1000],['max_profile_bytes',32*1024*1024,1024*1024*1024]]) {
@@ -102,7 +106,7 @@ async function init(req) {
   });
   await context.routeWebSocket('**/*',ws=>ws.close());
   context.on('page',p=>registerPage(p).catch(()=>{}));
-  context.on('close',()=> { S.ready=false; fence(); });
+  context.on('close',()=> { fence();S.ready=false;output({event:'control',...status()}); });
   for(const p of context.pages())await registerPage(p);
   if(!S.pages.size)await context.newPage();
   await startCompanion(); S.ready=true; S.heartbeat=Date.now();
@@ -155,7 +159,7 @@ function fresh(a,epoch) {
 }
 async function checkDisk() {
   let total=0,count=0;
-  const walk=async dir=>{for(const item of await fs.readdir(dir,{withFileTypes:true})){if(++count>20000)refuse('profile_entry_limit');const file=path.join(dir,item.name);let st;try{st=await fs.lstat(file);}catch(e){if(e.code==='ENOENT')continue;throw e;}if(st.isSymbolicLink())continue;if(st.isDirectory())await walk(file);else if(st.isFile()){total+=st.size;if(total>limits.max_profile_bytes)refuse('profile_disk_limit');}}};
+  const walk=async dir=>{for(const item of await fs.readdir(dir,{withFileTypes:true}).catch(e=>{if(e.code==='ENOENT')return [];throw e;})){if(++count>20000)refuse('profile_entry_limit');const file=path.join(dir,item.name);let st;try{st=await fs.lstat(file);}catch(e){if(e.code==='ENOENT')continue;throw e;}if(st.isSymbolicLink())continue;if(st.isDirectory())await walk(file);else if(st.isFile()){total+=st.size;if(total>limits.max_profile_bytes)refuse('profile_disk_limit');}}};
   await walk(root);return total;
 }
 async function raster(p) {
@@ -165,6 +169,9 @@ async function raster(p) {
     if(bytes.length>2*1024*1024)refuse('screenshot_limit');
     return {mime_type:'image/jpeg',data_base64:bytes.toString('base64'),width:limits.width,height:limits.height};
   }finally{rasterBusy=false;}
+}
+function validateBinding(b) {
+  if(!b||typeof b!=='object'||!['session_id','incarnation','browser_id','resource_id','executor_id'].every(k=>typeof b[k]==='string'&&ID.test(b[k]))||!(b.run_id===null||(typeof b.run_id==='string'&&ID.test(b.run_id)))||!['controller_epoch','capture_epoch','expires_at_ms'].every(k=>Number.isSafeInteger(b[k])&&b[k]>0)||b.browser_id!==S.browser_id)refuse('invalid_binding');
 }
 function sameBinding(a,b) {
   return ['session_id','incarnation','browser_id','resource_id','executor_id'].every(k=>a[k]===b[k]);
@@ -196,7 +203,7 @@ function normalizeAction(a) {
 function wireResult(job,rec,result,error) {
   const state=rec.state==='completed'?'completed':rec.state==='unknown'||rec.state==='dispatched'?'unresolved':rec.state==='cancelled_before_dispatch'?'cancelled':'refused';
   const image=result?.mime_type==='image/jpeg'?{mime_type:result.mime_type,data_base64:result.data_base64}:null;
-  const file=result?.download_id&&result?.data_base64?{name:'download.bin',mime_type:'application/octet-stream',data_base64:result.data_base64}:null;
+  const file=result?.download_id&&typeof result?.data_base64==='string'?{name:result.name,mime_type:'application/octet-stream',data_base64:result.data_base64}:null;
   const text=error?error.code:image?'Browser screenshot':file?'Locally approved download':JSON.stringify(result??{receipt:rec,content_withheld:true});
   return {request_id:job.id,action_sha256:job.action_sha256,state,text,page_id:result?.page_id||null,observation_id:result?.observation_id||null,image,file};
 }
@@ -214,7 +221,19 @@ async function execute(job) {
   const op=a.type || a.op;
   const reads=['observe','tabs','screenshot'];
   if(!reads.includes(op)) {
-    if(!await confirmation(job,{type:op,page_id:a.page_id || null,url:op==='navigate'?String(a.url).slice(0,2048):undefined,ref:a.ref || null}))refuse('local_confirmation_denied');
+    const ref=S.refs.get(a.ref),signature=ref?JSON.parse(ref.signature):null;
+    const localOrigin=value=>{try{return origin(value).slice(0,2048);}catch{return 'No HTTP(S) origin';}};
+    const currentOrigin=localOrigin(S.pages.get(a.page_id||S.selected)?.url());
+    const file=op==='upload'?S.uploads.get(a.upload_id):op==='download'?S.downloads.get(a.download_id):null;
+    const summary={type:op,page_id:a.page_id||null,current_origin:currentOrigin,
+      destination_origin:['navigate','tab_open'].includes(op)?localOrigin(a.url):op==='upload_stage'?'Private local staging only (not a website upload)':op==='download'?'Remote Voyage/model disclosure':currentOrigin,
+      url:['navigate','tab_open'].includes(op)?String(a.url).slice(0,2048):undefined,
+      element:signature?{tag:signature.tag,type:signature.type,role:signature.role,label:signature.label,href:signature.href?.slice(0,2048)}:null,
+      text:op==='fill'&&typeof a.text==='string'?a.text.slice(0,10000):undefined,
+      filename:op==='upload_stage'?safeName(a.name):file?safeName(file.name):undefined,
+      mime_type:op==='upload_stage'?String(a.mime_type||'application/octet-stream').slice(0,127):file?.mime_type|| (op==='download'?'application/octet-stream':undefined),
+      bytes:op==='upload_stage'&&typeof a.data_base64==='string'?Math.floor(a.data_base64.length*3/4)-(a.data_base64.endsWith('==')?2:a.data_base64.endsWith('=')?1:0):file?.size,ref:a.ref||null};
+    if(!await confirmation(job,summary))refuse('local_confirmation_denied');
     authority(job.epoch);if(job.expires_at_ms&&job.expires_at_ms<=Date.now())refuse('request_expired'); if(job.cancelled)refuse('cancelled_before_dispatch');
   }
   switch(op) {
@@ -225,18 +244,18 @@ async function execute(job) {
       fresh(a,job.epoch);const p=pageFor(a.page_id);
       await dispatch(job,()=>p.goto(u,{waitUntil:'domcontentloaded'})); return observe(p,job.epoch);
     }
-    case 'click': { const h=await reference(a,job.epoch);authority(job.epoch);await dispatch(job,()=>h.click({force:true,timeout:1000})); invalidate(a.page_id);return {effect:'completed',requires_observation:true}; }
+    case 'click': { const h=await reference(a,job.epoch);authority(job.epoch);await dispatch(job,()=>h.click({timeout:1000})); invalidate(a.page_id);return {effect:'completed',requires_observation:true}; }
     case 'fill': { if(typeof a.text!=='string'||a.text.length>10000)refuse('invalid_text');const h=await reference(a,job.epoch);
       if(await h.evaluate(e=>e.type==='password'))refuse('private_input_required');
-      authority(job.epoch);await dispatch(job,()=>h.fill(a.text,{force:true,timeout:1000})); invalidate(a.page_id);return {effect:'completed',requires_observation:true}; }
+      authority(job.epoch);await dispatch(job,()=>h.fill(a.text,{timeout:1000})); invalidate(a.page_id);return {effect:'completed',requires_observation:true}; }
     case 'scroll': { fresh(a,job.epoch);const p=pageFor(a.page_id);const x=Number(a.x||0),y=Number(a.y||0);if(!Number.isFinite(x)||!Number.isFinite(y)||Math.abs(x)>5000||Math.abs(y)>5000)refuse('invalid_scroll');await dispatch(job,()=>p.mouse.wheel(x,y));invalidate(a.page_id);return {effect:'completed',requires_observation:true}; }
     case 'screenshot': {fresh(a,job.epoch);return {...await raster(pageFor(a.page_id)),page_id:a.page_id,observation_id:a.observation_id,epoch:job.epoch};}
     case 'tab_open': {if(S.pages.size>=limits.max_tabs)refuse('tab_limit');if(!S.allowed.has(origin(a.url)))refuse('origin_not_allowed');const p=await dispatch(job,()=>context.newPage());authority(job.epoch);await p.goto(a.url,{waitUntil:'domcontentloaded'});return observe(p,job.epoch); }
     case 'tab_select': fresh(a,job.epoch);pageFor(a.page_id);await dispatch(job,()=>{S.selected=a.page_id;});return observe(pageFor(a.page_id),job.epoch);
     case 'tab_close': fresh(a,job.epoch);await dispatch(job,()=>pageFor(a.page_id).close());return {closed:true};
-    case 'upload': { const h=await reference(a,job.epoch),grant=S.uploads.get(a.upload_id);if(!grant||!grant.shared||grant.epoch!==job.epoch)refuse('upload_not_granted');authority(job.epoch);await dispatch(job,()=>h.setInputFiles(grant.file,{timeout:1000}));S.uploads.delete(a.upload_id);await fs.unlink(grant.file);invalidate(a.page_id);return {effect:'completed',requires_observation:true}; }
-    case 'download': { fresh(a,job.epoch);const d=S.downloads.get(a.download_id);if(!d||!d.disclose||d.epoch!==job.epoch)refuse('download_not_granted');const b=await fs.readFile(d.file);if(b.length>limits.max_transfer_bytes)refuse('transfer_limit');authority(job.epoch);d.disclose=false;return {download_id:a.download_id,mime_type:'application/octet-stream',data_base64:b.toString('base64')}; }
-    case 'upload_stage': { if(typeof a.data_base64!=='string'||a.data_base64.length>limits.max_transfer_bytes*1.4||! /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(a.data_base64))refuse('invalid_blob');const b=Buffer.from(a.data_base64,'base64');if(b.length>limits.max_transfer_bytes)refuse('transfer_limit');return dispatch(job,()=>stageUpload(b,'remote blob',false)); }
+    case 'upload': { const h=await reference(a,job.epoch),grant=S.uploads.get(a.upload_id);if(!grant||!grant.shared||grant.epoch!==job.epoch)refuse('upload_not_granted');const payload={name:grant.name,mimeType:grant.mime_type,buffer:await fs.readFile(grant.file)};authority(job.epoch);await dispatch(job,()=>h.setInputFiles(payload,{timeout:1000}));S.uploads.delete(a.upload_id);await fs.unlink(grant.file);invalidate(a.page_id);return {effect:'completed',requires_observation:true}; }
+    case 'download': { fresh(a,job.epoch);const d=S.downloads.get(a.download_id);if(!d||!d.disclose||d.epoch!==job.epoch)refuse('download_not_granted');const b=await fs.readFile(d.file);if(!b.length)refuse('empty_download_local_save_only');if(b.length>limits.max_transfer_bytes)refuse('transfer_limit');authority(job.epoch);d.disclose=false;return {download_id:a.download_id,name:safeName(d.name),mime_type:'application/octet-stream',data_base64:b.toString('base64')}; }
+    case 'upload_stage': { if(typeof a.data_base64!=='string'||a.data_base64.length>limits.max_transfer_bytes*1.4||! /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(a.data_base64))refuse('invalid_blob');const b=Buffer.from(a.data_base64,'base64');if(b.length>limits.max_transfer_bytes)refuse('transfer_limit');return dispatch(job,()=>stageUpload(b,a.name,false,a.mime_type)); }
     default: refuse('unsupported_action');
   }
 }
@@ -253,7 +272,7 @@ async function drain() {
   const rec=S.receipts.get(job.id);
   rec.state=error?((job.cancelled&&rec.state!=='dispatched')||error.code==='cancelled_before_dispatch'?'cancelled_before_dispatch':rec.state==='dispatched'?'unknown':'refused'):'completed';
   rec.code=error?.code || null;
-  try { await durable(rec); } catch { fence();error={code:'receipt_persistence_failed',message:'Outcome unknown'}; }
+  try { await durable(rec); } catch { rec.state='unknown';rec.code='receipt_persistence_failed';fence();error={code:'receipt_persistence_failed',message:'Outcome unknown'}; }
   // No DOM, screenshot, dialog or private input survives an authority transition.
   if(job.epoch!==S.epoch || job.cancelled) { result=undefined;error={code:rec.state==='cancelled_before_dispatch'?'cancelled_before_dispatch':'unknown',message:'Authority changed; content withheld'}; }
   job.resolve({id:job.id,ok:true,result:wireResult(job,rec,result,error)});
@@ -266,6 +285,7 @@ async function action(req) {
   authority(req.epoch);
   if(req.capture_epoch!==S.epoch)refuse('capture_fenced');
   if(S.binding&&!req.binding)refuse('binding_required');
+  if(req.binding)validateBinding(req.binding);
   if(req.binding && (!S.binding || !sameBinding(req.binding,S.binding) || req.binding.controller_epoch!==S.epoch || req.binding.capture_epoch!==S.epoch || req.binding.expires_at_ms<=Date.now()))refuse('binding_fenced');
   if(req.binding){if(!req.binding.run_id)refuse('run_required');if(S.boundRun&&S.boundRun!==req.binding.run_id){fence();refuse('run_changed');}S.boundRun=req.binding.run_id;}
   if(typeof req.action_sha256!=='string'||! /^[a-f0-9]{64}$/.test(req.action_sha256))refuse('invalid_action_digest');
@@ -276,11 +296,13 @@ async function action(req) {
   S.receipts.set(req.id,rec);await durable(rec);
   return new Promise(resolve=> { S.queue.push({...req,resolve,cancelled:false});void drain(); });
 }
-async function stageUpload(bytes,name,shared) {
+function safeName(name){let result='';for(const c of String(name||'upload.bin').replace(/[\p{Cc}/\\]/gu,'_')){if(Buffer.byteLength(result+c)>128)break;result+=c;}return result||'upload.bin';}
+async function stageUpload(bytes,name,shared,mime='application/octet-stream') {
+  if(typeof mime!=='string'||! /^[a-zA-Z0-9!#$&^_.+-]+\/[a-zA-Z0-9!#$&^_.+-]+$/.test(mime)||mime.length>160)refuse('invalid_mime_type');
   if(S.uploads.size>=8||bytes.length>limits.max_transfer_bytes)refuse('transfer_limit');
   const id=crypto.randomUUID(),file=path.join(root,'uploads',id);
   await fs.writeFile(file,bytes,{mode:0o600,flag:'wx'});
-  S.uploads.set(id,{id,file,name:String(name).slice(0,160),size:bytes.length,shared,epoch:S.epoch});
+  S.uploads.set(id,{id,file,name:safeName(name),mime_type:mime,size:bytes.length,shared,epoch:S.epoch});
   return {upload_id:id,grant_id:id,size:bytes.length};
 }
 async function stageDownload(download) {
@@ -298,21 +320,24 @@ async function stageDownload(download) {
   }catch{S.downloads.delete(id);await download.delete().catch(()=>{});}
   finally{clearInterval(timer);clearTimeout(timeout);}
 }
-async function close() {
-  if(S.closing)return; S.closing=true; fence();clearInterval(watchdog);clearInterval(diskWatch);
-  if(context)await context.close().catch(()=>{});
+let closingPromise;
+function close(){if(!closingPromise)closingPromise=closeOwned();return closingPromise;}
+async function closeOwned() {
+  S.closing=true;if(S.initializing)await S.initializing.catch(()=>{});fence();clearInterval(watchdog);clearInterval(diskWatch);
+  // Failure to observe browser cleanup must retain the exclusive lock for recovery.
+  let browserClosed=true;if(context)try{await context.close();}catch{browserClosed=false;}
   if(proxy)await proxy.close();
   if(server){server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}
   // Never remove profile or receipts. Staged private files are session-owned and removed on clean shutdown.
-  if(root&&lock) { for(const name of ['uploads','downloads'])await fs.rm(path.join(root,name),{recursive:true,force:true});await lock.close();await fs.unlink(path.join(root,'executor.lock')).catch(()=>{}); }
-  S.ready=false;
+  if(root&&lock&&browserClosed) { for(const name of ['uploads','downloads'])await fs.rm(path.join(root,name),{recursive:true,force:true});await lock.close();await fs.unlink(path.join(root,'executor.lock')); }
+  S.ready=false;if(!browserClosed)refuse('cleanup_unresolved');
 }
 async function request(req) {
   if(!req||typeof req.id!=='string'||!ID.test(req.id)||typeof req.op!=='string')refuse('invalid_request');
-  if(req.op==='init')return init(req);
+  if(req.op==='init'){if(S.closing||S.initializing)refuse('already_initialized');S.initializing=init(req);return S.initializing;}
   if(req.op==='shutdown') {await close();return {closed:true};}
   if(!S.ready)refuse('not_initialized');
-  if(req.op==='heartbeat'){if(req.binding){if((S.binding&&!sameBinding(S.binding,req.binding))||(req.binding.run_id&&S.boundRun&&req.binding.run_id!==S.boundRun))fence();S.binding=req.binding;}S.heartbeat=Date.now();return status();}
+  if(req.op==='heartbeat'){if(req.binding){validateBinding(req.binding);if((S.binding&&!sameBinding(S.binding,req.binding))||(req.binding.run_id&&S.boundRun&&req.binding.run_id!==S.boundRun))fence();S.binding=req.binding;}S.heartbeat=Date.now();return status();}
   if(req.op==='status')return status();
   if(req.op==='control'){if(!['private','human'].includes(req.mode))refuse('local_sharing_required');fence(req.mode);return status();}
   if(req.op==='receipt'){return {receipt:S.receipts.get(req.request_id)||null};}
@@ -346,7 +371,7 @@ async function localOperation(c,b) {
     S.controller={client:c,id:b.controller_id,seen:Date.now()};return status();
   }
   controller(c,b);
-  if(b.op==='state')return {...status(),width:limits.width,height:limits.height,label:S.label,selected:S.selected,
+  if(b.op==='state')return {...status(),width:limits.width,height:limits.height,label:S.label,binding:S.binding?{session_id:S.binding.session_id,run_id:S.boundRun||S.binding.run_id,resource_id:S.binding.resource_id,executor_id:S.binding.executor_id}:null,selected:S.selected,
     tabs:await Promise.all([...S.pages].map(async([id,p])=>({id,url:p.url(),title:await p.title().catch(()=> '')}))),
     origins:[...S.allowed].map(([url,v])=>({url,...v})),prompts:[...S.prompts.values()].map(({id,summary})=>({id,summary})),
     uploads:[...S.uploads.values()].map(({id,name,size,shared})=>({id,name,size,shared})),downloads:[...S.downloads.values()].map(({id,name,size,pending,disclose})=>({id,name,size,pending,disclose})),
@@ -355,14 +380,15 @@ async function localOperation(c,b) {
     if(!['agent','human','private'].includes(b.mode))refuse('invalid_mode');
     if(b.mode==='agent'&&S.localBusy)refuse('local_effect_settling');
     fence(b.mode);
-    if(b.mode==='agent'){if(Date.now()-S.heartbeat>=limits.heartbeat_ms||!b.confirm_share) {fence();refuse('sharing_not_confirmed');}S.shared=true;output({event:'control',...status()});}
+    if(b.mode==='agent'){if(S.inputReset)await S.inputReset;if(Date.now()-S.heartbeat>=limits.heartbeat_ms||!b.confirm_share) {fence();refuse('sharing_not_confirmed');}S.shared=true;output({event:'control',...status()});}
     return status();
   }
   if(b.op==='confirm') {const p=S.prompts.get(b.prompt_id);if(!p||p.epoch!==S.epoch)refuse('stale_prompt');p.resolve(b.allow===true);return {};}
   if(b.op==='origin') {
-    human(c,b);const o=origin(b.url);if(b.remove){S.allowed.delete(o);proxy.fence();}else{if(S.allowed.size>=64&&!S.allowed.has(o))refuse('origin_limit');S.allowed.set(o,{private_network:b.private_network===true});}
+    human(c,b);const o=origin(b.url);if(b.remove){S.allowed.delete(o);proxy.fence();}else{if(S.allowed.size>=64&&!S.allowed.has(o))refuse('origin_limit');if(S.allowed.has(o))proxy.fence();S.allowed.set(o,{private_network:b.private_network===true});}
     return {};
   }
+  if(b.op==='discard_upload'||b.op==='discard_download'){human(c,b);const map=b.op==='discard_upload'?S.uploads:S.downloads,item=map.get(b.transfer_id);if(!item||item.pending)refuse('missing_transfer');await fs.unlink(item.file);map.delete(item.id);return {};}
   if(b.op==='share_upload') {const u=S.uploads.get(b.upload_id);if(!u)refuse('missing_upload');u.shared=b.allow===true;u.epoch=S.epoch;return {};}
   if(b.op==='disclose_download') {const d=S.downloads.get(b.download_id);if(!d||d.pending)refuse('missing_download');d.disclose=b.allow===true;d.epoch=S.epoch;return {};}
   human(c,b);
@@ -375,15 +401,16 @@ async function localOperation(c,b) {
     case 'pointer': {
       if(!Number.isFinite(b.x)||!Number.isFinite(b.y)||b.x<0||b.y<0||b.x>limits.width||b.y>limits.height)refuse('invalid_coordinates');
       if(b.kind==='move')await p.mouse.move(b.x,b.y);
-      else if(b.kind==='down'||b.kind==='up'){await p.mouse.move(b.x,b.y);await p.mouse[b.kind]({button:['left','middle','right'][b.button]||'left',clickCount:b.click_count===2?2:1});}
+      else if(b.kind==='down'||b.kind==='up'){await p.mouse.move(b.x,b.y);const button=['left','middle','right'][b.button]||'left';p.helmButtons??=new Set();if(b.kind==='down')p.helmButtons.add(button);else p.helmButtons.delete(button);await p.mouse[b.kind]({button,clickCount:b.click_count===2?2:1});}
       else refuse('invalid_pointer');break;
     }
     case 'wheel':if(!Number.isFinite(b.x)||!Number.isFinite(b.y)||Math.abs(b.x)>5000||Math.abs(b.y)>5000)refuse('invalid_scroll');await p.mouse.wheel(b.x,b.y);break;
-    case 'key':if(typeof b.key!=='string'||b.key.length>40||!['down','up'].includes(b.kind))refuse('invalid_key');await p.keyboard[b.kind](b.key);break;
+    case 'release_input':await releaseInput();break;
+    case 'key':if(typeof b.key!=='string'||b.key.length>40||!['down','up'].includes(b.kind))refuse('invalid_key');p.helmKeys??=new Set();if(b.kind==='down')p.helmKeys.add(b.key);else p.helmKeys.delete(b.key);await p.keyboard[b.kind](b.key);break;
     case 'text':if(typeof b.text!=='string'||b.text.length>10000)refuse('invalid_text');await p.keyboard.insertText(b.text);break;
     case 'clipboard':if(b.allow!==true)refuse('clipboard_permission_required');if(typeof b.text!=='string'||b.text.length>10000)refuse('invalid_text');await p.keyboard.insertText(b.text);break;
-    case 'upload': {if(typeof b.data_base64!=='string'||b.data_base64.length>limits.max_transfer_bytes*1.4)refuse('transfer_limit');const result=await stageUpload(Buffer.from(b.data_base64,'base64'),b.name,false);
-      if(b.chooser_id){const ch=S.chooser;if(!ch||ch.id!==b.chooser_id||ch.epoch!==S.epoch)refuse('stale_chooser');const u=S.uploads.get(result.upload_id);await ch.chooser.setFiles(u.file);S.chooser=null;}return result;}
+    case 'upload': {if(typeof b.data_base64!=='string'||b.data_base64.length>limits.max_transfer_bytes*1.4)refuse('transfer_limit');const result=await stageUpload(Buffer.from(b.data_base64,'base64'),b.name,false,b.mime_type||'application/octet-stream');
+      if(b.chooser_id){const ch=S.chooser;if(!ch||ch.id!==b.chooser_id||ch.epoch!==S.epoch)refuse('stale_chooser');const u=S.uploads.get(result.upload_id);await ch.chooser.setFiles({name:u.name,mimeType:u.mime_type,buffer:await fs.readFile(u.file)});S.chooser=null;S.uploads.delete(u.id);await fs.unlink(u.file);}return result;}
     case 'dialog':if(!S.dialog||S.dialog.id!==b.dialog_id)refuse('stale_dialog');if(b.accept)await S.dialog.dialog.accept(typeof b.text==='string'?b.text.slice(0,4096):'');else await S.dialog.dialog.dismiss();S.dialog=null;break;
     default:refuse('unsupported_local_operation');
   }
@@ -419,7 +446,7 @@ async function startCompanion() {
       const independent=['state','claim','mode','confirm'].includes(b.op);
       if(!independent&&S.localBusy)refuse('local_input_busy');
       if(!independent)S.localBusy=true;
-      try{reply(200,await localOperation(c,b));}finally{if(!independent)S.localBusy=false;}
+      let timer;try{const operation=localOperation(c,b);const deadline=new Promise((_,reject)=>{timer=setTimeout(()=>{if(!independent){fence();void context?.close().catch(()=>{});}reject(new Refusal('local_operation_deadline'));},limits.action_timeout_ms+2000);});reply(200,await Promise.race([operation,deadline]));}finally{clearTimeout(timer);if(!independent)S.localBusy=false;}
     }catch(e){reply(403,{error:safeError(e)});}
   });
   server.requestTimeout=10000;server.headersTimeout=5000;server.maxConnections=16;
