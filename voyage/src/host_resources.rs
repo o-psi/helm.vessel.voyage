@@ -7,6 +7,36 @@ use std::path::PathBuf;
 use uuid::Uuid;
 pub mod cli;
 
+#[derive(Debug, thiserror::Error)]
+#[error(
+    "host {kind} quota exhausted ({used} charged, {requested} requested, limit {maximum}); unconfirmed cleanup reservations remain charged"
+)]
+struct QuotaExhausted {
+    kind: String,
+    used: i64,
+    requested: usize,
+    maximum: usize,
+}
+
+/// Authored labels only: storage diagnostics can contain private host paths.
+pub(crate) fn startup_failure(error: &anyhow::Error) -> &'static str {
+    if error.downcast_ref::<QuotaExhausted>().is_some() {
+        "Host execution capacity exhausted. Wait for active voyages to finish or reconcile stopped owners' cleanup reservations."
+    } else if error
+        .downcast_ref::<rusqlite::Error>()
+        .is_some_and(|error| {
+            matches!(
+                error.sqlite_error_code(),
+                Some(rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked)
+            )
+        })
+    {
+        "Host resource accounting is busy. Retry this turn."
+    } else {
+        "Host execution capacity could not be reserved. Check host resource accounting on the executing machine."
+    }
+}
+
 pub struct Reservation {
     id: Uuid,
     path: PathBuf,
@@ -69,10 +99,15 @@ impl Reservation {
             [kind],
             |row| row.get(0),
         )?;
-        ensure!(
-            used + units as i64 <= maximum as i64,
-            "host {kind} quota exhausted; unconfirmed cleanup reservations remain charged"
-        );
+        if used + units as i64 > maximum as i64 {
+            return Err(QuotaExhausted {
+                kind: kind.to_owned(),
+                used,
+                requested: units,
+                maximum,
+            }
+            .into());
+        }
         let count: i64 = tx.query_row("SELECT count(*) FROM reservations", [], |row| row.get(0))?;
         ensure!(count < 100000, "host resource evidence capacity reached");
         let id = Uuid::new_v4();

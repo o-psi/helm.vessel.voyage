@@ -381,6 +381,32 @@ helm managed --directory "$STORE" recover SESSION_UUID \
   --reconcile-tools RUN_UUID --expected-revision REVISION
 ```
 
+Host execution capacity is shared across voyages on the executing account. Each
+run reserves one executor plus its configured subagent concurrency, against a
+64-slot host limit. Startup reports capacity exhaustion separately from a busy or
+unavailable accounting database, and the failure belongs to the submitted turn.
+Wait for active work to finish before explicitly submitting another turn.
+
+Stopped owners can retain host quota charges independently of session cleanup.
+Inspect them on the executing machine:
+
+```sh
+voyage host-resources inspect
+```
+
+Match each reservation's owner to the run and independently verify its processes
+and descendants have stopped. Only then release that exact reservation:
+
+```sh
+voyage host-resources attest RESERVATION_UUID --confirm RESERVATION_UUID \
+  --reason "Describe the independently verified cleanup"
+```
+
+This records operator-attested cleanup, refuses a live reservation owner, and
+does not replay the failed turn. A missing owner process alone is insufficient
+evidence that descendants stopped. Do not clear the accounting database or raise
+limits to hide unresolved cleanup.
+
 Reconciliation records unknown/interrupted outcomes without repeating effects or
 inventing success. A `run_unconfirmed` result preserves the actual saved state;
 dropping an execution future does not prove its work stopped. Journal schema is

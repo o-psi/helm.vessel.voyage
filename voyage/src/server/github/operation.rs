@@ -10,8 +10,9 @@ pub(super) async fn run(
     let id = run.record().await?.id;
     let reservation = match crate::host_resources::Reservation::acquire("executors", id, 1) {
         Ok(reservation) => reservation,
-        Err(_) => {
-            run.fail_before_execution().await?;
+        Err(error) => {
+            run.fail_before_execution_reason(crate::host_resources::startup_failure(&error))
+                .await?;
             run.confirm_local_cleanup_observed().await?;
             return Ok(());
         }

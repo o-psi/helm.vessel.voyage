@@ -680,7 +680,6 @@ impl Journal {
         message.operator_name = request.operator_name.clone();
         message.parts = request.parts.clone();
         current.session.messages.push(message);
-        update_session(&tx, &current)?;
         let run = RunRecord {
             id: Uuid::new_v4(),
             command_id: request.command_id,
@@ -693,6 +692,9 @@ impl Journal {
             usage: Usage::default(),
             final_checkpointed: false,
         };
+        // Admission owns the user turn even when construction fails before dispatch.
+        current.session.begin_run_summary(run.id);
+        update_session(&tx, &current)?;
         tx.execute(
             "INSERT INTO runs VALUES(?1,?2,?3,1)",
             params![
@@ -954,7 +956,10 @@ impl Journal {
             !current.session.completion_runs.contains(&reference),
             "scope already registered"
         );
-        current.session.begin_run_summary(reference.run_id);
+        // Older admitted journals may predate summaries at admission.
+        if current.session.run_summaries.last().map(|s| s.run_id) != Some(reference.run_id) {
+            current.session.begin_run_summary(reference.run_id);
+        }
         current.session.completion_runs.push(reference);
         update_session(&tx, &current)?;
         commit(tx, &self.commit_fence)?;
@@ -1160,6 +1165,10 @@ impl Journal {
             for terminal in &mut current.session.terminals {
                 terminal.state = crate::terminal::TerminalState::Disconnected;
             }
+        }
+        // Never finalize a preceding turn when an older admission has no summary.
+        if current.session.run_summaries.last().map(|s| s.run_id) != Some(run_id) {
+            current.session.begin_run_summary(run_id);
         }
         if let Some(classification) = classification {
             ensure!(

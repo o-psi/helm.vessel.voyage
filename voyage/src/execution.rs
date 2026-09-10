@@ -116,8 +116,10 @@ pub async fn execute_admitted_with_controls(
         config.subagent_max_concurrency.saturating_add(1),
     ) {
         Ok(reservation) => reservation,
-        Err(_) => {
-            let actual = run.fail_before_execution().await?;
+        Err(error) => {
+            let actual = run
+                .fail_before_execution_reason(crate::host_resources::startup_failure(&error))
+                .await?;
             run.confirm_local_cleanup_observed().await?;
             return Ok(ManagedExecution {
                 actual,

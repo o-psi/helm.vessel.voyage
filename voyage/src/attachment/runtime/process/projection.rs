@@ -63,7 +63,11 @@ pub(super) fn recent(messages: &[Message]) -> Result<(Vec<Value>, usize)> {
 pub(super) fn failure_summary(reason: Option<&str>) -> Option<&str> {
     match reason {
         Some(
-            reason @ ("Runtime startup failed during runtime policy."
+            reason @
+            ("Host execution capacity exhausted. Wait for active voyages to finish or reconcile stopped owners' cleanup reservations."
+            | "Host resource accounting is busy. Retry this turn."
+            | "Host execution capacity could not be reserved. Check host resource accounting on the executing machine."
+            | "Runtime startup failed during runtime policy."
             | "Runtime startup failed during inference accounting."
             | "Runtime startup failed during subagent initialization."
             | "Runtime startup failed during tool initialization."
