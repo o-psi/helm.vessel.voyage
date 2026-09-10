@@ -17,14 +17,17 @@ fn accent() -> Style {
 fn inset(area: Rect, horizontal: u16, vertical: u16) -> Rect {
     area.inner(ratatui::layout::Margin::new(horizontal, vertical))
 }
-fn state(view: &super::state::View) -> &'static str {
+fn state(view: &super::state::View, working: &super::effects::Working) -> &'static str {
     if view.process.archive.is_some() {
         return "Archived · stopped";
     }
     if view.archived() {
         return "Archiving · cleanup pending";
     }
-    if view.process.state == voyage_protocol::process::ProcessState::Unavailable {
+    if view.connection_unavailable {
+        return "Reconnecting";
+    }
+    let status = if view.process.state == voyage_protocol::process::ProcessState::Unavailable {
         if view.error.is_some() {
             "Recovery needed"
         } else {
@@ -46,7 +49,11 @@ fn state(view: &super::state::View) -> &'static str {
         view.snapshot
             .as_ref()
             .map_or("Ready", presentation::voyage_state)
-    }
+    };
+    working.label(
+        status,
+        view.process.state == voyage_protocol::process::ProcessState::Live,
+    )
 }
 
 /// Label, style and compactness share one precedence order.
@@ -254,7 +261,7 @@ fn draw_inner(frame: &mut Frame<'_>, app: &App) {
         || "Ctrl+N  Start a voyage".into(),
         |v| {
             if reviewing || rows[0].width < 60 {
-                return format!("{host} · {}", state(v));
+                return format!("{host} · {}", state(v, &app.working));
             }
             format!(
                 "{}{}   {}",
@@ -263,7 +270,7 @@ fn draw_inner(frame: &mut Frame<'_>, app: &App) {
                 } else {
                     String::new()
                 },
-                state(v),
+                state(v, &app.working),
                 if v.archived() {
                     "History preserved".into()
                 } else {

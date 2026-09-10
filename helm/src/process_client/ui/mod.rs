@@ -50,6 +50,7 @@ use std::{
 use tokio::sync::mpsc;
 
 pub(super) struct App {
+    working: effects::Working,
     coordination_request: Option<uuid::Uuid>,
     previews: previews::State,
     vessels: Option<std::cell::RefCell<vessels::Manager>>,
@@ -165,6 +166,7 @@ pub async fn run_with_notice(
     let selected =
         session.and_then(|session| clients.first_route().map(|route| Target { route, session }));
     let mut app = App {
+        working: effects.working_indicator(),
         previews,
         vessels: manager.ok().map(std::cell::RefCell::new),
         vessel_button: Default::default(),

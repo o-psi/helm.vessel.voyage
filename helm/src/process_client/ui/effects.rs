@@ -1,8 +1,10 @@
-//! One short, color-only navigation accent. Never touches conversation content.
+//! Presentation-only motion. Never touches conversation content.
+mod working;
 use super::{App, state::Target};
 use ratatui::{Frame, layout::Rect, style::Color};
 use std::time::{Duration, Instant};
 use tachyonfx::{Effect, Interpolation, fx};
+pub(super) use working::Working;
 
 pub(super) struct Navigation {
     enabled: bool,
@@ -27,6 +29,10 @@ impl Navigation {
             effect: None,
             last_frame: Instant::now(),
         })
+    }
+
+    pub(super) fn working_indicator(&self) -> Working {
+        Working::new(self.enabled)
     }
 
     pub(super) fn repaint_after(&self) -> Duration {

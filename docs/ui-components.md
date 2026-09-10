@@ -79,6 +79,24 @@ to 100 ms. Elapsed wall time advances the effect, so stalls do not stretch it.
 Effects run before terminal color adaptation, without off-screen buffers or
 changes to canonical content. This is not a cross-terminal frame-rate guarantee.
 
+### Live Working indicator
+
+[#226](https://github.com/o-psi/voyage/issues/226) adds a ten-frame spinner beside
+**Working** in the selected voyage's heading, beneath its title. The word stays
+readable and all frames have equal width. This indicates that the latest observed
+state is running, not token throughput, percent complete, or proof of remote
+liveness between updates. Waiting for input, stopping, completed, failed and
+interrupted states remain static. Disconnection displays Reconnecting; a retained
+running snapshot without a live process displays Status unavailable instead of
+continuing to animate.
+
+The spinner uses the existing 100 ms redraw and a monotonic display clock—no
+extra timer, background task, transcript invalidation or faster repaint is needed.
+Frames missed during a stall are skipped. `HELM_MOTION=never` and monochrome
+render plain **Working**. It is a discrete glyph animation, not a TachyonFX color
+shader; TachyonFX continues to own the short navigation accent. Tool-result rows
+and authored text are not animated, and no spinner is stored in history or exports.
+
 Selected dependency: **tachyonfx 0.25.2**, MIT, published MSRV unspecified;
 default features disabled, only `std` and `std-duration` enabled. No DSL parser,
 web-time or sendable effects. It shares Ratatui core 0.1.2 with Helm, adding no
@@ -147,3 +165,17 @@ These are bounded implementation checks, not a recreated regression suite,
 interactive visual acceptance, an MSRV run, or native macOS/Windows/multiplexer
 certification. Builds included unrelated concurrent checkout edits; only the
 effects implementation and its dependency/documentation changes are delivered here.
+
+### Working indicator verification (#226)
+
+Linux locked Helm check/build and targeted formatting/diff checks passed. An
+ad-hoc probe compiled the actual `effects/working.rs` source and observed ten
+distinct nine-column frames, static opt-out, non-live suppression, unchanged
+non-working labels, cycle wrap and skipping after a simulated stall. A second
+probe extracted the actual header-state function with minimal input fixtures and
+checked running, disconnection, stopped/unavailable processes, pending decisions,
+waiting/stopping/terminal run states and archival precedence. These are bounded
+source probes, not a restored test suite or full end-to-end/live-provider evidence.
+Real-terminal visual acceptance and native-platform certification remain unverified.
+The build used the concurrent working checkout; unrelated changes are not included
+in this delivery.
