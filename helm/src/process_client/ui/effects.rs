@@ -31,7 +31,7 @@ impl Navigation {
         })
     }
 
-    pub(super) fn working_indicator(&self) -> Working {
+    pub(super) fn working_indicator(&self) -> anyhow::Result<Working> {
         Working::new(self.enabled)
     }
 

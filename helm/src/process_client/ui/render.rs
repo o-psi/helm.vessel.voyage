@@ -17,7 +17,7 @@ fn accent() -> Style {
 fn inset(area: Rect, horizontal: u16, vertical: u16) -> Rect {
     area.inner(ratatui::layout::Margin::new(horizontal, vertical))
 }
-fn state(view: &super::state::View, working: &super::effects::Working) -> &'static str {
+fn state<'a>(view: &super::state::View, working: &'a super::effects::Working) -> &'a str {
     if view.process.archive.is_some() {
         return "Archived · stopped";
     }
@@ -305,8 +305,12 @@ fn draw_inner(frame: &mut Frame<'_>, app: &App) {
         },
     );
     if rows[0].height >= 2 && word_x < right {
-        app.working
-            .record(Rect::new(word_x, rows[0].y + 1, (right - word_x).min(9), 1));
+        app.working.record(Rect::new(
+            word_x,
+            rows[0].y + 1,
+            (right - word_x).min(app.working.width()),
+            1,
+        ));
     }
     if columns[0].width == 0 && !sidebar_open && view.is_some() {
         app.draw_action_trigger(

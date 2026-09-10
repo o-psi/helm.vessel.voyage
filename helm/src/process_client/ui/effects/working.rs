@@ -1,4 +1,6 @@
 //! Decorative running-state names, never execution milestones or transcript text.
+mod labels;
+use labels::Labels;
 use ratatui::{Frame, layout::Rect, style::Color};
 use std::{
     cell::{Cell, RefCell},
@@ -8,6 +10,7 @@ use tachyonfx::{Effect, Interpolation, fx, pattern::SweepPattern};
 
 pub(crate) struct Working {
     enabled: bool,
+    labels: Labels,
     epoch: Instant,
     animated: Cell<bool>,
     area: Cell<Option<Rect>>,
@@ -15,8 +18,9 @@ pub(crate) struct Working {
 }
 
 impl Working {
-    pub(crate) fn new(enabled: bool) -> Self {
-        Self {
+    pub(crate) fn new(enabled: bool) -> anyhow::Result<Self> {
+        Ok(Self {
+            labels: Labels::from_env()?,
             enabled,
             epoch: Instant::now(),
             animated: Cell::new(false),
@@ -25,7 +29,11 @@ impl Working {
                 fx::fade_to_fg(Color::Cyan, (1200, Interpolation::Linear))
                     .with_pattern(SweepPattern::left_to_right(4)),
             ),
-        }
+        })
+    }
+
+    pub(crate) fn width(&self) -> u16 {
+        self.labels.width
     }
 
     pub(crate) fn begin_frame(&self) {
@@ -33,13 +41,13 @@ impl Working {
         self.area.set(None);
     }
 
-    pub(crate) fn label(&self, status: &'static str, live: bool) -> &'static str {
+    pub(crate) fn label(&self, status: &'static str, live: bool) -> &str {
         self.animated
             .set(self.enabled && live && status == "Working");
         self.at(status, live, self.epoch.elapsed())
     }
 
-    fn at(&self, status: &'static str, live: bool, elapsed: Duration) -> &'static str {
+    fn at(&self, status: &'static str, live: bool, elapsed: Duration) -> &str {
         if status != "Working" {
             return status;
         }
@@ -49,31 +57,9 @@ impl Working {
         if !self.enabled {
             return status;
         }
-        // Padded to nine columns; changing names cannot shift the terminal summary.
-        macro_rules! frames {
-            ($word:literal) => {
-                [
-                    concat!("⠋ ", $word),
-                    concat!("⠙ ", $word),
-                    concat!("⠹ ", $word),
-                    concat!("⠸ ", $word),
-                    concat!("⠼ ", $word),
-                    concat!("⠴ ", $word),
-                    concat!("⠦ ", $word),
-                    concat!("⠧ ", $word),
-                    concat!("⠇ ", $word),
-                    concat!("⠏ ", $word),
-                ]
-            };
-        }
-        const NAMES: [[&str; 10]; 4] = [
-            frames!("Pondering"),
-            frames!("Noodling "),
-            frames!("Tinkering"),
-            frames!("Mulling  "),
-        ];
         let ms = elapsed.as_millis();
-        NAMES[((ms / 4000) % 4) as usize][((ms / 100) % 10) as usize]
+        &self.labels.frames[((ms / 4000) % self.labels.frames.len() as u128) as usize]
+            [((ms / 100) % 10) as usize]
     }
 
     // The renderer supplies only the word's visible cells, excluding the spinner,

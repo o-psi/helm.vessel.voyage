@@ -83,9 +83,11 @@ changes to canonical content. This is not a cross-terminal frame-rate guarantee.
 
 [#226](https://github.com/o-psi/voyage/issues/226) introduced a spinner in the
 selected voyage's heading. [#227](https://github.com/o-psi/voyage/issues/227) adds
-playful labels: **Pondering**, **Noodling**, **Tinkering**, and **Mulling**. Names
-rotate every four seconds, alongside the ten-frame spinner. Names are padded to
-nine columns so neither spinner frames nor name changes shift the terminal
+playful labels. [#229](https://github.com/o-psi/voyage/issues/229) moves the names
+to JSON and expands the bundled set to 24, including **Pondering**, **Noodling**,
+**Percolating**, **Woolgathering**, and **Wiggling gears**. Names rotate in file
+order every four seconds alongside the ten-frame spinner. Names are padded to
+the longest label’s display width, so neither frames nor names shift the terminal
 summary. These are decorative names for the same running state, **not** specific
 execution steps, token throughput, percent complete, or proof of remote liveness
 between updates.
@@ -109,6 +111,45 @@ Missed animation cycles are skipped, not queued. One retained effect is sampled
 within a bounded cycle; there are no off-screen buffers. Tool-result rows and
 authored text are not animated, and no decorative label is stored in history or
 exports. Actual terminal color capability affects how smooth the sweep appears.
+
+### Custom working statuses (JSON)
+
+Defaults live in [`helm/assets/working-statuses.json`](../helm/assets/working-statuses.json),
+a JSON array with one string per entry. They are embedded in the binary, so an
+installed Helm does not depend on a source-tree asset path. Editing bundled
+source data takes a rebuild; a **runtime override requires no rebuild**:
+
+```json
+[
+  "Pondering",
+  "Noodling",
+  "Wibbling",
+  "Brewing ideas"
+]
+```
+
+Save that as `working-statuses.json`, then launch:
+
+```sh
+HELM_WORKING_STATUSES="$PWD/working-statuses.json" helm connect --no-start
+```
+
+The explicit file replaces the defaults; there is no merge or automatic config
+file discovery. Relative paths resolve from Helm’s launch directory. Helm reads
+it once before terminal setup; restart Helm to pick up edits. There are no reads
+on the animation path. Spinner frames and padding are precomputed, and shimmer
+width follows the longest configured name (clipped on narrow screens).
+
+Limits: a regular UTF-8 JSON file at most **64 KiB**, containing **1–128 strings**.
+Each label must be trimmed, nonblank, **1–32 display columns**, and at most
+**128 UTF-8 bytes**. Control characters, line/paragraph separators and bidi
+controls are rejected, not interpreted as terminal commands. Multiword labels
+and ordinary Unicode are supported. JSON comments, objects and non-string
+entries are not accepted. Missing, malformed or invalid explicit files fail with
+an error before entering the alternate screen—even in reduced-motion mode—rather
+than silently ignoring the override. Unix FIFO paths are rejected without waiting.
+All entries are decorative running-state names; they do not replace actual
+waiting, failure or completion statuses.
 
 ### Effects dependency
 
@@ -209,3 +250,21 @@ Ratatui test backend were also observed. This temporary probe is not a restored
 automated suite. No provider usage or native-platform/real-terminal visual
 certification is claimed. Builds used the concurrent checkout; unrelated edits
 remain excluded from this delivery.
+
+
+### JSON status verification (#229)
+
+Linux `cargo check -p helm --locked` and `cargo build -p helm --locked` passed.
+Ad-hoc actual-source probes checked the 24 defaults and 240 equal-width frames,
+Unicode padding, dynamic shimmer bounds, motion/state fallbacks, and rejection of
+empty/wrong-type/whitespace/control/bidi/invalid-UTF-8/oversize/over-count/over-width
+input. The 128-label boundary was accepted. A runtime override replaced defaults
+without recompilation; edits did not change an existing instance, and a new
+instance observed them. Offline isolated PTY checks accepted a custom Unicode
+file and restored the terminal on Ctrl+C; empty, missing, oversized and FIFO
+files failed before terminal setup. No Vessel or provider was started.
+
+Targeted formatting, diff, JSON asset and local documentation link checks passed.
+These bounded probes are not a recreated suite, live-run visual acceptance, or
+native macOS/Windows/terminal-font certification. Builds used the concurrent
+checkout; unrelated work is excluded from this delivery.

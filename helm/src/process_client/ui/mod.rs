@@ -131,6 +131,7 @@ pub async fn run_with_notice(
     );
     let mut styles = crate::theme::TerminalStyles::from_env()?;
     let mut effects = effects::Navigation::from_env(styles.allows_color_images())?;
+    let working = effects.working_indicator()?;
     let previews =
         previews::State::new(styles.allows_color_images(), styles.allows_native_images())?;
     terminal::enable_raw_mode()?;
@@ -166,7 +167,7 @@ pub async fn run_with_notice(
     let selected =
         session.and_then(|session| clients.first_route().map(|route| Target { route, session }));
     let mut app = App {
-        working: effects.working_indicator(),
+        working,
         previews,
         vessels: manager.ok().map(std::cell::RefCell::new),
         vessel_button: Default::default(),
