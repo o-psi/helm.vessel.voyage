@@ -324,39 +324,35 @@ and private-terminal handoff also end a drag. Mouse reporting requires a support
 terminal.
 
 Sidebar voyages show explicit state labels and colours: running is dark blue,
-idle/finished is green, needs attention is orange, and failed is red. A terminal
-result (including failure or cancellation) remains expanded as a notification even
-when Vessel has already suspended the process. Opening its conversation clears
-the result's Unread marker but does not compact or reorder it. Only after that
-conversation has been displayed and you navigate away does Helm acknowledge the
-result and move the clean suspended voyage below active and unreviewed voyages.
-Recency ordering is retained within each group; mouse and keyboard use that same
-order. A result that arrives while you are viewing the conversation can be
-acknowledged when you leave. Help, action menus, panels, requests and private
-terminals do not count as viewing a result.
+idle/finished is green, needs attention is orange, and failed is red. Terminal
+results retain their status for five minutes by default, then become **Settled**.
+Set `HELM_SETTLE_AFTER_SECS` to a nonnegative integer number of seconds before
+starting Helm to change this period; `0` settles immediately. Invalid values fail
+before terminal setup. This is a Helm presentation setting, loaded at startup.
 
-Acknowledged suspended voyages are grey and use two terminal rows (combined
-state/title and a divider). Unreviewed results and other entries use three (state,
-title, divider), including cancelled results awaiting review. Muted horizontal
-rules separate every pair of entries. Long titles are clipped to one row.
-Selection uses bold text and a subtle background without an arrow or replacing
-the state colour. Compact entries omit the route label; Actions → Details retains
-the Vessel identity.
+Settled voyages are grey and use two terminal rows (combined state/title and a
+divider). They sort below active and recent results, retaining recency within each
+group. Other entries use three rows (state, title, divider). Mouse and keyboard
+use the same order. Muted rules separate entries; titles stay on one clipped row.
+Selection uses bold text and a subtle background without replacing state colour.
+Compact entries omit the route label; Actions → Details retains Vessel identity.
 
-Acknowledgement is saved with Helm's local view/draft state by run UUID, survives
-Helm restart and does not mutate runtime history or keep a voyage process alive.
-A new run creates a new notification; repeated snapshots, cleanup updates and new
-process incarnations do not re-notify an acknowledged result. Existing views with
-no saved acknowledgement present their latest result for review once. Closing Helm
-without navigating away does not acknowledge the result. A persistence failure is
-reported and can leave it unacknowledged after restart. Separate Helm windows keep
-their own in-memory views; this is not a cross-device notification service.
+There are no voyage Unread markers or review acknowledgements. Viewing, leaving,
+or covering a conversation does not change its timer. The timer uses the matching
+run's canonical completion timestamp; older peers without that timestamp use a
+Helm-local first-observed time saved with the draft by run UUID. Idle voyages use
+their creation time, with the same local fallback. Restarting Helm, polling,
+renaming, and process incarnation changes do not reset a saved timer. A new run
+gets a new timer. Existing acknowledgement fields are ignored when loading older
+drafts. Failed timing persistence is reported and may reset the fallback after a
+restart. Separate Helm installations can have different fallback times for older
+peers; canonical timestamps use the executing host's clock.
 
-Input and unresolved cleanup after a run stops take attention precedence and
-prevent compaction; cleanup obligations during active work do not change Running
-to attention. Disconnected or unavailable owners are explicitly labelled rather
-than inferred to be finished or suspended. Terminal outcomes remain in the
-conversation even after the sidebar moves the voyage into the suspended group.
+Settled describes presentation independently of whether the executor is live or
+suspended. Settling does not suspend a process or change canonical history.
+Active work, pending delivery, decisions and unresolved cleanup prevent settling.
+Disconnected, unavailable and stopped owners retain their explicit status rather
+than being inferred settled. Full terminal outcomes remain in the conversation.
 Each sidebar voyage has a clickable **⋮** Actions button. Mouse hover highlights
 voyage rows, their separate Actions buttons, enabled action-menu entries and
 access-mode choices with a contrasting background, without changing keyboard
@@ -487,7 +483,7 @@ for wire examples and the coordinated Helm/Vessel gateway upgrade requirement.
 The connected TUI combines local HTTP and scoped HTTPS routes. It retains separate
 drafts, prompt navigation, scroll, pending command identities and observation
 cursors per voyage. Switching views does not redirect in-flight actions. Background
-voyages show unread state and pending decisions; slow remote observation runs
+voyages show retained result status and pending decisions; slow remote observation runs
 outside the input/render loop. Plain chat, one-shot streaming and JSON managed
 output observe the same owner. Reconnect never resubmits a turn or terminal input.
 

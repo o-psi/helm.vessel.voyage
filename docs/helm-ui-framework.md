@@ -60,7 +60,7 @@ sidebar, transcript, paste and lifecycle mutate that same object.
 
 `process_client/ui/state.rs:205–225` similarly combines remote observations,
 composer/images/history, pending commands, overview and terminal browser state,
-transcript projection, unread status and render caches in `View`.
+transcript projection, result-retention timing and render caches in `View`.
 
 **Consequence:** file boundaries do not enforce responsibility boundaries. A
 feature change can require knowledge of unrelated overlays, persistence and
@@ -97,11 +97,9 @@ flattening the different first-send and existing-voyage delivery policies.
 
 `process_client/ui/render.rs:135–154` resets several hit collections and invokes
 `sync_interactions()` while rendering through `&App`. `sidebar/menu.rs:118–142`
-consumes follow-selection state and writes scroll position. Notification state
-uses `Cell` to record which run was actually displayed
-(`notifications.rs:36–47`) and persists acknowledgement after departure
-(`notifications.rs:51–73`). These behaviors matter; removing them without a
-replacement would lose focus/notification semantics.
+consumes follow-selection state and writes scroll position. These behaviors
+matter; removing them without a replacement would lose focus semantics. Result
+retention now uses timestamps rather than rendered/visited acknowledgement.
 
 **Consequence:** event behavior depends on what happened to render, with mutable
 state hidden behind shared references. Render-local mutation itself is not a bug;
@@ -110,9 +108,9 @@ and application transitions.
 
 **Replacement:** explicit prepare/layout, paint and successful-presentation
 phases. Paint may update isolated render caches and construct hit maps, but cannot
-send requests, save drafts, alter focus or acknowledge a result. A successfully
-presented frame returns non-sensitive facts such as the exact displayed run;
-the reducer applies the existing acknowledgement-on-departure policy.
+send requests, save drafts or alter focus. A successfully presented frame can
+return non-sensitive presentation facts; result settling remains time-based and
+independent of frame exposure.
 
 ### 4. Async task ownership is inconsistent
 
@@ -262,13 +260,9 @@ Paths beginning `ui/` below mean `helm/src/process_client/ui/`.
   an enlargement notice (`ui/render.rs:159–166`), but normal Enter/new-draft Enter
   handlers can still dispatch when no other scope consumes the event. Preserve
   text but disable hidden consequential actions in an explicit undersized scope.
-- **Covered results can count as viewed.** The underlying conversation marks
-  completion viewed before workspace/Vessels overlays paint above it
-  (`ui/render.rs:135–144,328–337`). The workspace picker clears the whole supplied
-  frame (`ui/new_draft/workspaces.rs:221–235`). Departure can persist the local
-  acknowledgement (`ui/notifications.rs:54–70`). Final exposure, not underlying
-  painting, must determine presentation facts. This is a local unread marker, not
-  a canonical runtime checkpoint.
+- **Result review tracking was removed.** Time-based settlement now replaces
+  rendered/visited acknowledgement. Overlay exposure and navigation no longer
+  affect voyage result retention; this remains presentation-only state.
 
 ### Medium priority: scopes need explicit retirement and navigation
 
@@ -370,7 +364,7 @@ helm/src/ui/
   layout/         regions, clipping, frame hit map, focus and pointer capture
   components/     narrow shared forms/buttons/pickers/panel chrome
   features/
-    voyages/      sidebar, filtering, selection, unread presentation
+    voyages/      sidebar, filtering, selection, result presentation
     conversation/ transcript and per-voyage presentation
     compose/      editor, images, paste and preview presentation
     drafts/       new-voyage setup and first-send workflow
@@ -483,7 +477,7 @@ instead of silently redirecting input to another voyage.
 | First send | Durable start and submit identities; explicit phases for owner-created/turn-not-attempted, refused and uncertain; no replay of creation, submission or uploads |
 | Existing compose/steer | Exact target/run; retain pending envelope separately from next editable text; images freeze appropriately; rejection preserves input |
 | Navigate/reconnect | New/live/archive views, source draft retention on branch, immutable connection identity, stale generation rejection; disconnect is not cancellation |
-| Transcript | Canonical text and tool outcomes, partial/live reconciliation, full-message/earlier-history loading, anchor-preserving resize/search/expansion, rendered-result acknowledgement |
+| Transcript | Canonical text and tool outcomes, partial/live reconciliation, full-message/earlier-history loading, anchor-preserving resize/search/expansion, time-based result retention |
 | Decisions/access | Background target binding, expiry/incarnation/revision checks, pending disablement, separate choice/confirmation, question skip and approval deny/back semantics |
 | Lifecycle/overviews/export | Rename, branch, cancel, compact/clear, archive/restore/delete; exact destructive confirmation, cleanup distinctions, stale overview replies and owned export publication |
 | Inference/accounts | Model/thinking/service/access controls and slash parity, next-turn versus admitted settings, catalog context/generation; reconcile #213 account/device scopes at the actual cutover baseline |

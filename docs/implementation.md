@@ -207,7 +207,7 @@ capacity, and Vessel shutdown/restart under active work. Relevant work: #18 and 
 Replace in-process agent ownership with Vessel clients. Connect to the local
 Vessel automatically for normal local use, without remote enrollment. Combine
 permitted local and remote catalogues in one voyage list, with origin, runtime
-state, connection freshness, unread activity and pending decisions.
+state, connection freshness, retained results and pending decisions.
 
 Maintain separate drafts, scroll positions, event cursors and modal state per
 voyage. Switching a view cannot cancel work or redirect a pending action. Route

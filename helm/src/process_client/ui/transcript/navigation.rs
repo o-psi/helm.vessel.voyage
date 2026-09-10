@@ -261,7 +261,6 @@ impl App {
         view.panel = None;
         view.terminals.open = false;
         view.terminals.clear_displayed();
-        view.unread = false;
         self.selected = Some(target);
         self.vessel_filter = None;
         self.archives = false;

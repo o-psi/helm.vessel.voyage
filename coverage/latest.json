@@ -1,47 +1,47 @@
 {
   "schema_version": 1,
-  "measured_at_utc": "2026-09-10T22:21:19.708527+00:00",
+  "measured_at_utc": "2026-09-10T22:27:31.298535+00:00",
   "source": {
-    "base_commit": "4baccbeca0796140a2f22f5b3be14c42ac414222",
+    "base_commit": "ccfcb035aca92534be1d44a694bc5515e726d0a2",
     "dirty": true,
-    "fingerprint_sha256": "b54e34633b1ac59b27c2398f0248c7b6b7e748fd3502733a47453617642cf3fe",
+    "fingerprint_sha256": "36d1b7f5eb8488ae3349ccea2dc521c4125beb80f402dee1c2591de8d6e347cc",
     "fingerprint_method": "SHA-256 of compact sorted JSON mapping workspace .rs files, member Cargo.toml files, root Cargo.toml and Cargo.lock to SHA-256 content hashes",
-    "note": "Isolated working-tree measurement of the base commit plus the quota-removal changes. Captured source files were unchanged during the run; not attributed to a clean commit."
+    "note": "Working-tree measurement includes unrelated concurrent work; not coverage of the clean base or publication commit. Source fingerprint unchanged during measurement."
   },
   "platform": "x86_64-unknown-linux-gnu",
   "tools": {
-    "rustc": "1.98.1 (48a229cea 2026-09-01)",
+    "rustc": "1.98.1",
     "llvm": "22.1.8",
     "cargo_llvm_cov": "0.9.1"
   },
-  "command": "cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir \"$CARGO_LLVM_COV_TARGET_DIR/coverage-report/remove-capacity-isolated\" -j 8",
+  "command": "cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir target/coverage-report -j 8",
   "environment": {
-    "CARGO_LLVM_COV_TARGET_DIR": "shared checkout target directory",
+    "CARGO_LLVM_COV_TARGET_DIR": "target",
     "LLVM_COV": "llvm-cov",
     "LLVM_PROFDATA": "llvm-profdata"
   },
   "scope": "Existing workspace Rust tests, default features",
   "tests": {
-    "passed": 108,
+    "passed": 113,
     "failed": 0,
     "ignored": 1
   },
   "coverage": {
     "lines": {
-      "count": 69161,
-      "covered": 11496,
-      "percent": 16.622084700915256
+      "count": 71267,
+      "covered": 11706,
+      "percent": 16.425554604515412
     },
     "functions": {
-      "count": 7046,
-      "covered": 1142,
-      "percent": 16.20777746239001
+      "count": 7291,
+      "covered": 1162,
+      "percent": 15.937457138938418
     },
     "regions": {
-      "count": 112079,
-      "covered": 17688,
-      "notcovered": 94391,
-      "percent": 15.781725390126608
+      "count": 115603,
+      "covered": 18065,
+      "notcovered": 97538,
+      "percent": 15.626757091078952
     }
   },
   "exclusions": [
@@ -52,9 +52,11 @@
     "Branch coverage"
   ],
   "notes": [
-    "Independent measurement in an isolated worktree: raw profiles cleared before the run; existing compiled artifacts retained. Tests passed outside the restricted sandbox with no live-provider calls.",
-    "Shared-checkout preliminary verification was superseded by this isolated measurement to exclude concurrent unfinished edits.",
-    "Compared with previous record (percentage points): {\"functions\": 0.5231, \"lines\": 0.4548, \"regions\": 0.4381}. Scope unchanged; source now excludes unrelated uncommitted account and UI work.",
-    "Coverage measures execution, not correctness. No native macOS/Windows or TUI acceptance claim."
+    "Raw profiles cleared first; previous report and compiled artifacts retained.",
+    "Focused settlement regressions cover deadlines, outcomes, restart fallback, new runs, idle and attention/unavailable states, and configuration validation.",
+    "Compared with previous record: lines -0.1965 percentage points, functions -0.2703 percentage points, regions -0.1550 percentage points.",
+    "The prior measurement used an isolated tree excluding unfinished account/UI changes; this dirty-tree measurement includes that concurrent source. Total lines rose by 2,106 and covered lines by 210, producing the small percentage drop without narrowing workspace test scope.",
+    "Separate offline Linux PTY verification passed retention across navigation, timed Settled presentation, no Unread labels, restart retention, no executor wake on observation, and invalid configuration before terminal setup; one synthetic loopback provider request. This is outside the Rust coverage percentage.",
+    "Coverage measures execution, not correctness; no native macOS/Windows or live-provider claim."
   ]
 }

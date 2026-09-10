@@ -5,6 +5,26 @@ executing host. Helm submits configuration references through Vessel; remote rou
 never copy provider credentials. See [Architecture](architecture.md) and
 [Operations](operations.md).
 
+## Helm status retention
+
+Voyage results retain their status for five minutes before appearing as **Settled**
+in the sidebar. Configure this presentation delay when starting Helm:
+
+```sh
+HELM_SETTLE_AFTER_SECS=600 helm
+```
+
+The value is a nonnegative integer number of seconds (`300` by default; `0` for
+immediate settling). Helm reads it once at startup and rejects malformed or
+out-of-range values before entering terminal mode. Set it in Helm's environment
+for a persistent preference; it is not a voyage runtime TOML setting.
+
+The delay starts at the saved run completion time, independently of reading or
+navigating away from the conversation and independently of process suspension.
+Older peers without completion times use a saved local observation time. Pending
+input, delivery, cleanup, active work and unavailable connections do not settle.
+See [current behavior](current-state.md) for ordering and restart details.
+
 ## Runtime configuration
 
 By default a launched owner uses that host's `helm/config.toml`. Explicit

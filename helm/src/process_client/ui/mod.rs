@@ -51,6 +51,8 @@ use tokio::sync::mpsc;
 
 pub(super) struct App {
     working: effects::Working,
+    settle_after_secs: u64,
+    presentation_now: chrono::DateTime<chrono::Utc>,
     coordination_request: Option<uuid::Uuid>,
     previews: previews::State,
     vessels: Option<std::cell::RefCell<vessels::Manager>>,
@@ -129,6 +131,7 @@ pub async fn run_with_notice(
         io::stdin().is_terminal() && io::stdout().is_terminal(),
         "connected TUI needs a terminal; use connect list/new/inspect/submit for plain operation"
     );
+    let settle_after_secs = notifications::retention_from_env()?;
     let mut styles = crate::theme::TerminalStyles::from_env()?;
     let mut effects = effects::Navigation::from_env(styles.allows_color_images())?;
     let working = effects.working_indicator()?;
@@ -168,6 +171,8 @@ pub async fn run_with_notice(
         session.and_then(|session| clients.first_route().map(|route| Target { route, session }));
     let mut app = App {
         working,
+        settle_after_secs,
+        presentation_now: chrono::Utc::now(),
         previews,
         vessels: manager.ok().map(std::cell::RefCell::new),
         vessel_button: Default::default(),
@@ -233,6 +238,7 @@ pub async fn run_with_notice(
             app.refresh_transcript();
             tokio::select! {
                 _ = repaint.tick() => {
+                    app.presentation_now = chrono::Utc::now();
                     app.reconcile_pending();
                     terminal.draw(|frame| {
                         render::draw(frame, &app);
@@ -248,7 +254,6 @@ pub async fn run_with_notice(
                 },
                 update = receiver.recv() => if let Some(update) = update { app.update(update); },
             }
-            app.acknowledge_departed_completions();
             if let Some((target,incarnation,run,terminal_id))=app.terminal_request.take() {
                 app.previews.clear()?;
                 app.sidebar.pointer = None;

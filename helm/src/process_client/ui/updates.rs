@@ -281,11 +281,6 @@ impl App {
                         {
                             return;
                         }
-                        let changed = view
-                            .snapshot
-                            .as_ref()
-                            .is_none_or(|old| old.revision != snapshot.revision);
-                        view.unread |= changed && self.selected != Some(target);
                         if view.snapshot.as_ref() != Some(&snapshot) {
                             view.rendered.take();
                         }
@@ -319,6 +314,11 @@ impl App {
                             transcript.dirty = true;
                         }
                         view.snapshot = Some(snapshot);
+                        if view.observe_settlement(chrono::Utc::now())
+                            && let Err(error) = drafts::save(&self.clients[target.route], view)
+                        {
+                            self.status = format!("Saving voyage status timing failed: {error}");
+                        }
                         view.observed = Some(Instant::now());
                         view.connection_unavailable = !self.clients.available(target.route);
                         view.error = view.connection_unavailable.then(||
