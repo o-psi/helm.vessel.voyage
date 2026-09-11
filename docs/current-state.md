@@ -661,7 +661,10 @@ unconfirmed disposal/restoration stops that interface rather than exposing
 incomplete private input to the composer. A dedicated `helm connect terminal` command provides plain-user
 access; historical inline plain-chat terminal commands are not wired. See the
 [private terminal contract](private-terminal.md) for exact bounds, supported keys,
-rendering decisions and Linux/native evidence limits.
+rendering decisions and Linux/native evidence limits. The 64 KiB paste limit
+applies after event decoding; Crossterm's unterminated-paste parser buffer remains
+an explicitly tracked pre-decode bound gap, so total outer-input memory is not
+claimed bounded.
 
 Tools, policy, todos, subagents, terminals, workflows and model metadata have runtime
 controls. Operator tool calls use the real authorized registry and admitted run
