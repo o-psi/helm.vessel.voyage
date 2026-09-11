@@ -5,7 +5,7 @@ mod shutdown;
 use super::{Tool, ToolContext, ToolError};
 use crate::terminal::{
     InteractiveTerminals, TerminalCell, TerminalColor, TerminalError, TerminalEvent, TerminalId,
-    TerminalSnapshot, TerminalState as UiState, TerminalSummary,
+    TerminalModes, TerminalSnapshot, TerminalState as UiState, TerminalSummary,
 };
 use crate::{model::ToolDefinition, policy::Decision};
 use async_trait::async_trait;
@@ -93,6 +93,7 @@ struct Capture {
     base: usize,
     dropped: u64,
     parser: vt100::Parser,
+    revision: u64,
 }
 impl Capture {
     fn new(rows: u16, cols: u16) -> Self {
@@ -102,6 +103,7 @@ impl Capture {
             base: 0,
             dropped: 0,
             parser: vt100::Parser::new(rows, cols, 0),
+            revision: 0,
         }
     }
     fn make_private(&mut self, cursor: usize) {
@@ -115,7 +117,13 @@ impl Capture {
             self.bytes.clear();
         }
     }
+    fn resize(&mut self, rows: u16, columns: u16) {
+        self.parser.set_size(rows, columns);
+        self.revision = self.revision.saturating_add(1);
+    }
     fn capture_output(&mut self, bytes: &[u8], max_unread_bytes: usize) {
+        self.parser.process(bytes);
+        self.revision = self.revision.saturating_add(1);
         if let Some(privacy) = &mut self.privacy {
             privacy.suppressed_output_bytes = privacy
                 .suppressed_output_bytes
@@ -201,7 +209,7 @@ impl Tool for ProcessTool {
             "command":{"type":"string"},"id":{"type":["string","null"],"format":"uuid"},
             "name":{"type":["string","null"]},"current_name":{"type":["string","null"]},
             "cwd":{"type":["string","null"]},"env":{"type":"object","additionalProperties":{"type":"string"}},
-            "data":{"type":"string"},"rows":{"type":"integer","minimum":1,"maximum":65535},"cols":{"type":"integer","minimum":1,"maximum":65535}
+            "data":{"type":"string"},"rows":{"type":"integer","minimum":1,"maximum":120},"cols":{"type":"integer","minimum":1,"maximum":240}
         }), &[], &[
             ("start", &["command"], &["name","cwd","env","rows","cols"]),
             ("read", &[], &["id","name"]), ("write", &["data"], &["id","name"]),
@@ -418,6 +426,7 @@ impl ProcessTool {
                 )));
             }
         }
+        check_size(rows, cols)?;
         let pair = native_pty_system()
             .openpty(PtySize {
                 rows,
@@ -503,7 +512,7 @@ impl ProcessTool {
                         Err(_) => break,
                         Ok(n) => {
                             let mut capture = sink.lock().expect("PTY buffer poisoned");
-                            capture.parser.process(&buffer[..n]);
+                            capture.capture_output(&buffer[..n], max_unread_bytes);
                             let cursor_report = buffer[..n]
                                 .windows(4)
                                 .any(|window| window == b"\x1b[6n")
@@ -511,7 +520,6 @@ impl ProcessTool {
                                     let (row, column) = capture.parser.screen().cursor_position();
                                     format!("\x1b[{};{}R", row + 1, column + 1)
                                 });
-                            capture.capture_output(&buffer[..n], max_unread_bytes);
                             if !reader_pending.swap(true, Ordering::AcqRel) {
                                 let _ = events.send(TerminalEvent::Changed(TerminalId(id)));
                             }
@@ -571,25 +579,33 @@ impl ProcessTool {
             .map(|process| process.writer.clone())
             .ok_or_else(|| ToolError::Failed(format!("unknown process {id}")))
     }
-    fn human_input(&self, id: TerminalId) -> Result<input::Input, TerminalError> {
-        let map = self
-            .processes
-            .lock()
-            .map_err(|_| TerminalError::Failed("terminal manager unavailable".into()))?;
-        let process = map.get(&id.0).ok_or(TerminalError::NotFound(id))?;
-        let mut capture = process
-            .output
-            .lock()
-            .map_err(|_| TerminalError::Failed("terminal capture unavailable".into()))?;
-        process.writer.make_private();
-        let newly_private = capture.privacy.is_none();
-        capture.make_private(process.cursor);
-        if newly_private && !process.notification_pending.swap(true, Ordering::AcqRel) {
-            let _ = self.events.send(TerminalEvent::Changed(id));
-        }
-        Ok(process.writer.clone())
+    async fn human_input(&self, id: TerminalId) -> Result<input::Input, TerminalError> {
+        let writer = {
+            let map = self
+                .processes
+                .lock()
+                .map_err(|_| TerminalError::Failed("terminal manager unavailable".into()))?;
+            let process = map.get(&id.0).ok_or(TerminalError::NotFound(id))?;
+            let mut capture = process
+                .output
+                .lock()
+                .map_err(|_| TerminalError::Failed("terminal capture unavailable".into()))?;
+            let newly_private = capture.privacy.is_none();
+            // Suppress capture before waiting: unconfirmed attach must not leak output.
+            capture.make_private(process.cursor);
+            if newly_private && !process.notification_pending.swap(true, Ordering::AcqRel) {
+                let _ = self.events.send(TerminalEvent::Changed(id));
+            }
+            process.writer.clone()
+        };
+        writer
+            .make_private()
+            .await
+            .map_err(|error| TerminalError::Failed(error.to_string()))?;
+        Ok(writer)
     }
     fn resize(&self, id: Uuid, rows: u16, cols: u16) -> Result<String, ToolError> {
+        check_size(rows, cols)?;
         let mut map = self.processes.lock().map_err(failed)?;
         let p = map
             .get_mut(&id)
@@ -602,7 +618,11 @@ impl ProcessTool {
                 pixel_height: 0,
             })
             .map_err(failed)?;
-        p.output.lock().map_err(failed)?.parser.set_size(rows, cols);
+        let mut capture = p.output.lock().map_err(failed)?;
+        capture.resize(rows, cols);
+        if !p.notification_pending.swap(true, Ordering::AcqRel) {
+            let _ = self.events.send(TerminalEvent::Changed(TerminalId(id)));
+        }
         p.rows = rows;
         p.cols = cols;
         Ok(format!("resized to {cols}x{rows}"))
@@ -688,7 +708,7 @@ impl InteractiveTerminals for ProcessTool {
         })
     }
     async fn attach(&self, id: TerminalId) -> Result<TerminalSnapshot, TerminalError> {
-        self.human_input(id)?;
+        self.human_input(id).await?;
         self.snapshot(id).await
     }
     async fn snapshot(&self, id: TerminalId) -> Result<TerminalSnapshot, TerminalError> {
@@ -708,38 +728,19 @@ impl InteractiveTerminals for ProcessTool {
             .map_err(|e| TerminalError::Failed(e.to_string()))?;
         p.notification_pending.store(false, Ordering::Release);
         let screen = capture.parser.screen();
-        let cells = (0..p.rows)
-            .map(|row| {
-                (0..p.cols)
-                    .map(|col| {
-                        screen
-                            .cell(row, col)
-                            .map_or_else(TerminalCell::default, |cell| TerminalCell {
-                                text: if cell.is_wide_continuation() {
-                                    String::new()
-                                } else {
-                                    let text = cell.contents();
-                                    if text.is_empty() { " ".into() } else { text }
-                                },
-                                foreground: color(cell.fgcolor()),
-                                background: color(cell.bgcolor()),
-                                bold: cell.bold(),
-                                dim: false,
-                                italic: cell.italic(),
-                                underlined: cell.underline(),
-                                reversed: cell.inverse(),
-                            })
-                    })
-                    .collect()
-            })
-            .collect();
+        let cells = screen_cells(screen);
         Ok(TerminalSnapshot {
             id,
             title: p.name.clone().unwrap_or_else(|| p.command.clone()),
             state,
-            revision: (capture.base + capture.bytes.len()) as u64,
+            revision: capture.revision,
             cells,
-            cursor: Some({
+            modes: TerminalModes {
+                app_cursor: screen.application_cursor(),
+                app_keypad: screen.application_keypad(),
+                bracketed_paste: screen.bracketed_paste(),
+            },
+            cursor: (!screen.hide_cursor()).then(|| {
                 let (row, column) = screen.cursor_position();
                 (column, row)
             }),
@@ -753,7 +754,7 @@ impl InteractiveTerminals for ProcessTool {
                 "terminal manager is shutting down".into(),
             ));
         }
-        let writer = self.human_input(id)?;
+        let writer = self.human_input(id).await?;
         writer
             .write(bytes)
             .await
@@ -768,6 +769,64 @@ impl InteractiveTerminals for ProcessTool {
     fn subscribe(&self) -> broadcast::Receiver<TerminalEvent> {
         self.events.subscribe()
     }
+}
+fn screen_cells(screen: &vt100::Screen) -> Vec<Vec<TerminalCell>> {
+    let (rows, columns) = screen.size();
+    (0..rows)
+        .map(|row| {
+            (0..columns)
+                .map(|col| {
+                    screen
+                        .cell(row, col)
+                        .map_or_else(TerminalCell::default, |cell| TerminalCell {
+                            text: if cell.is_wide_continuation() {
+                                String::new()
+                            } else {
+                                let text = cell.contents();
+                                safe_cell_text(&text)
+                            },
+                            width: if cell.is_wide_continuation() {
+                                0
+                            } else if cell.is_wide() {
+                                2
+                            } else {
+                                1
+                            },
+                            foreground: color(cell.fgcolor()),
+                            background: color(cell.bgcolor()),
+                            bold: cell.bold(),
+                            dim: false,
+                            italic: cell.italic(),
+                            underlined: cell.underline(),
+                            reversed: cell.inverse(),
+                        })
+                })
+                .collect()
+        })
+        .collect()
+}
+fn check_size(rows: u16, columns: u16) -> Result<(), ToolError> {
+    use voyage_protocol::terminal::{MAX_COLUMNS, MAX_ROWS};
+    if !(1..=MAX_COLUMNS).contains(&columns) || !(1..=MAX_ROWS).contains(&rows) {
+        return Err(ToolError::InvalidArguments(
+            "terminal size must be 1..240 columns by 1..120 rows".into(),
+        ));
+    }
+    Ok(())
+}
+fn safe_cell_text(text: &str) -> String {
+    use voyage_protocol::terminal::{MAX_CELL_BYTES, safe_cell_char};
+    let mut safe = String::new();
+    for ch in text.chars().filter(|ch| safe_cell_char(*ch)) {
+        if safe.len() + ch.len_utf8() > MAX_CELL_BYTES {
+            break;
+        }
+        safe.push(ch);
+    }
+    if safe.is_empty() {
+        safe.push(' ');
+    }
+    safe
 }
 fn terminal_error(error: ToolError) -> TerminalError {
     TerminalError::Failed(error.to_string())
@@ -865,5 +924,175 @@ mod schema_tests {
         ] {
             assert!(compiled.validate(&value).is_err());
         }
+    }
+}
+
+#[cfg(test)]
+mod screen_tests {
+    use super::*;
+    #[test]
+    fn emulated_screen_preserves_styles_wide_cells_combining_modes_and_cursor() {
+        let mut capture = Capture::new(3, 12);
+        capture.capture_output(
+            "\x1b[1;3;4;7;38;5;123;48;2;1;2;3m界e\u{301}\x1b[?1h\x1b=\x1b[?2004h\x1b[?25l"
+                .as_bytes(),
+            1024,
+        );
+        let screen = capture.parser.screen();
+        let cells = screen_cells(screen);
+        assert_eq!(cells[0][0].text, "界");
+        assert_eq!(cells[0][0].width, 2);
+        assert_eq!(cells[0][1].text, "");
+        assert_eq!(cells[0][1].width, 0);
+        assert_eq!(cells[0][2].text, "e\u{301}");
+        assert_eq!(cells[0][0].foreground, TerminalColor::Indexed(123));
+        assert_eq!(cells[0][0].background, TerminalColor::Rgb(1, 2, 3));
+        assert!(
+            cells[0][0].bold
+                && cells[0][0].italic
+                && cells[0][0].underlined
+                && cells[0][0].reversed
+        );
+        assert!(screen.hide_cursor());
+        let modes = TerminalModes {
+            app_cursor: screen.application_cursor(),
+            app_keypad: screen.application_keypad(),
+            bracketed_paste: screen.bracketed_paste(),
+        };
+        assert!(modes.app_cursor && modes.app_keypad && modes.bracketed_paste);
+        crate::terminal::TerminalScreen {
+            version: 1,
+            columns: 12,
+            height: 3,
+            cells,
+            modes,
+        }
+        .validate()
+        .unwrap();
+        capture.capture_output(b"\x1b[?1049hALT\x1b[?1049l\x1b[?25h", 1024);
+        assert!(!capture.parser.screen().hide_cursor());
+        assert_eq!(screen_cells(capture.parser.screen())[0][0].text, "界");
+    }
+    #[test]
+    fn private_output_and_resize_advance_screen_revision_without_model_capture() {
+        let mut capture = Capture::new(2, 4);
+        capture.capture_output(b"old", 1024);
+        let revision = capture.revision;
+        capture.make_private(0);
+        capture.capture_output(b"secret", 1024);
+        assert!(capture.revision > revision);
+        let revision = capture.revision;
+        capture.resize(3, 5);
+        assert!(capture.revision > revision);
+        assert_eq!(capture.parser.screen().size(), (3, 5));
+        assert!(capture.bytes.is_empty());
+        let (read, _) = unread_chunk(&capture, 0, 1024);
+        assert!(!read.contains("secret"));
+        assert_eq!(capture.privacy.as_ref().unwrap().suppressed_output_bytes, 6);
+    }
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn native_echo_and_repeat_stay_out_of_private_model_capture() {
+        use std::{io::Read, time::Duration};
+        let pair = native_pty_system()
+            .openpty(PtySize {
+                rows: 8,
+                cols: 80,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .unwrap();
+        input::make_nonblocking(&*pair.master).unwrap();
+        let mut command = CommandBuilder::new("/bin/sh");
+        command.arg("-c");
+        command.arg(
+            "stty echo; printf 'ready\\n'; IFS= read -r secret; printf 'repeat:%s\\n' \"$secret\"",
+        );
+        struct ChildGuard(Box<dyn Child + Send + Sync>);
+        impl Drop for ChildGuard {
+            fn drop(&mut self) {
+                let _ = self.0.kill();
+                let _ = self.0.wait();
+            }
+        }
+        let _child = ChildGuard(pair.slave.spawn_command(command).unwrap());
+        let mut reader = pair.master.try_clone_reader().unwrap();
+        let stop = Arc::new(AtomicBool::new(false));
+        let done = Arc::new(AtomicBool::new(false));
+        let writer = input::Input::start(
+            pair.master.take_writer().unwrap(),
+            stop.clone(),
+            done.clone(),
+        )
+        .unwrap();
+        struct Stop(Arc<AtomicBool>);
+        impl Drop for Stop {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::Release);
+            }
+        }
+        let stopper = Stop(stop);
+        let mut capture = Capture::new(8, 80);
+        async fn receive(reader: &mut dyn Read, capture: &mut Capture, marker: &str) {
+            tokio::time::timeout(Duration::from_secs(3), async {
+                let mut bytes = [0; 1024];
+                while !capture.parser.screen().contents().contains(marker) {
+                    match reader.read(&mut bytes) {
+                        Ok(n) if n > 0 => capture.capture_output(&bytes[..n], 4096),
+                        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => (),
+                        result => panic!("native PTY ended before marker: {result:?}"),
+                    }
+                    tokio::time::sleep(Duration::from_millis(5)).await;
+                }
+            })
+            .await
+            .unwrap();
+        }
+        receive(&mut *reader, &mut capture, "ready").await;
+        capture.make_private(0);
+        writer.make_private().await.unwrap();
+        writer
+            .write(b"synthetic-private-value\n".to_vec())
+            .await
+            .unwrap();
+        receive(&mut *reader, &mut capture, "repeat:synthetic-private-value").await;
+        assert!(
+            capture
+                .parser
+                .screen()
+                .contents()
+                .matches("synthetic-private-value")
+                .count()
+                >= 2
+        );
+        assert!(capture.bytes.is_empty());
+        assert!(
+            !unread_chunk(&capture, 0, 4096)
+                .0
+                .contains("synthetic-private-value")
+        );
+        assert_eq!(
+            writer.write_model(b"blocked".to_vec()).await,
+            Err(input::InputError::Private)
+        );
+        drop(stopper);
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while !done.load(Ordering::Acquire) {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .unwrap();
+    }
+    #[test]
+    fn bounds_and_cell_sanitization_are_utf8_safe() {
+        assert!(check_size(120, 240).is_ok());
+        for (rows, cols) in [(0, 80), (24, 0), (121, 80), (24, 241)] {
+            assert!(check_size(rows, cols).is_err());
+        }
+        let text = safe_cell_text(&format!("\x1b\u{202e}{}", "界".repeat(30)));
+        assert_eq!(text.len(), 63);
+        assert!(text.chars().all(voyage_protocol::terminal::safe_cell_char));
+        assert_eq!(safe_cell_text("\u{2066}"), " ");
     }
 }

@@ -1,12 +1,12 @@
 {
   "schema_version": 1,
-  "measured_at_utc": "2026-09-11T17:12:09.665144+00:00",
+  "measured_at_utc": "2026-09-11T17:42:20.221084+00:00",
   "source": {
-    "base_commit": "e1f2f6f0358d5bb624ed0d5a78f3c2d4f7d68e53",
+    "base_commit": "7fd619f5a4f563c3432baec9652ec3ab06ba1221",
     "dirty": false,
-    "fingerprint_sha256": "c1a84e4387d4ce9da9635c8266e831c7773746aa45e216b132cf3a2157d52b66",
+    "fingerprint_sha256": "ec2954c33c97edc4d620f9ad0ebcc3e494e755a52a5d6af05bc2209397a2e568",
     "fingerprint_method": "SHA-256 of compact sorted JSON mapping all tracked regular-file contents and symlink target text to SHA-256 hashes",
-    "note": "Clean isolated issue #14 source after merging published accounts, ordering and decision fixes. All tracked bytes remained unchanged through workspace tests and current-artifact export; subsequent measurement publication does not change measured Rust source."
+    "note": "Clean isolated issue #32 source after merging published main/#14/account/approval changes. All tracked bytes stayed unchanged through tests and current-artifact export. Later summary/documentation publication does not change measured Rust/test source."
   },
   "platform": "x86_64-unknown-linux-gnu",
   "tools": {
@@ -14,7 +14,7 @@
     "llvm": "22.1.8",
     "cargo_llvm_cov": "0.9.1"
   },
-  "command": "cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir \"$CARGO_LLVM_COV_TARGET_DIR/coverage-report/issue14-final/default-report\" -j 8",
+  "command": "cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir \"$CARGO_LLVM_COV_TARGET_DIR/coverage-report/issue32-final/default-report\" -j 8",
   "environment": {
     "CARGO_LLVM_COV_TARGET_DIR": "existing shared workspace target",
     "LLVM_COV": "llvm-cov",
@@ -22,33 +22,33 @@
   },
   "scope": "All existing workspace Rust tests and current workspace executable artifacts, default features",
   "tests": {
-    "passed": 212,
+    "passed": 227,
     "failed": 0,
     "ignored": 1
   },
   "coverage": {
     "lines": {
-      "count": 80421,
-      "covered": 20204,
-      "percent": 25.1227913107273
+      "count": 81610,
+      "covered": 21323,
+      "percent": 26.127925499326064
     },
     "functions": {
-      "count": 8017,
-      "covered": 1972,
-      "percent": 24.59772982412374
+      "count": 8121,
+      "covered": 2074,
+      "percent": 25.53872675778845
     },
     "regions": {
-      "count": 130512,
-      "covered": 31353,
-      "notcovered": 99159,
-      "percent": 24.023078337624128
+      "count": 132329,
+      "covered": 33094,
+      "notcovered": 99235,
+      "percent": 25.008879383959677
     }
   },
   "report_selection": {
     "method": "Complete current Cargo compiler-artifact executable set from instrumented cargo test --workspace --locked --no-run --message-format=json; LLVM export/show retains tool-default exclusions plus distribution Rust standard-library debug paths",
     "workspace_executables": 11,
     "executed_test_binaries": 10,
-    "logical_source_files": 402,
+    "logical_source_files": 406,
     "byte_identical_reused_source_files": 0,
     "duplicate_logical_source_paths": 0,
     "mismatched_functions": 0
@@ -62,13 +62,13 @@
     "Tool-default dependency/test-source exclusions and distribution Rust standard-library debug paths"
   ],
   "notes": [
-    "Workspace Rust tests passed: 212 passed, 0 failed, 1 ignored. The focused Helm UI subset and 11 real PTY assertion groups are separate evidence in docs/ux-readiness.md.",
-    "Raw profiles were cleared before this independent measurement, preserving compiled artifacts and prior report evidence. All 11 current workspace executables and the final profdata are retained with hashes locally.",
-    "The default shared-target report mixed historical objects and is not used for these totals. Complete current Cargo artifact selection retained every executed test binary and current non-test executable. See #251.",
-    "The first current-artifact export included one distribution Rust standard-library source outside the workspace; that raw report is preserved. Its toolchain-library path is excluded consistently with the existing standard-library exclusion. No current workspace source was hidden; every final filename belongs to the measured worktree with no duplicate logical source or mismatched functions.",
-    "Workspace entrypoint timestamps were refreshed before measurement to avoid stale cross-worktree artifacts, without changing tracked bytes or deleting caches.",
-    "Strict Clippy remains failing on inherited account/provider/transcript warnings; warning-mode analysis completed. Neither formatting nor coverage implies that strict lint gate passed.",
-    "Compared with prior committed record: lines +2.3444 percentage points, functions +2.2080 percentage points, regions +2.3391 percentage points.",
-    "Coverage measures execution, not correctness. No live-provider, deployed public TLS, native macOS/Windows, or whole-product certification is implied."
+    "Workspace Rust tests passed: 227 passed, 0 failed, 1 ignored. Linux PTY/process checks are separately reported in docs/private-terminal.md.",
+    "Raw profiles were cleared before independent measurement; compiled artifacts and prior report evidence were preserved. All 11 current workspace executables and measured profdata were copied with hashes under ignored target evidence.",
+    "The default shared-target report included stale objects and missing historical source paths; it is preserved but not used for published totals. Exact current Cargo artifact selection retained every executed test binary and the current non-test voyage executable. See #251.",
+    "Tool-default exclusions plus the existing distribution Rust standard-library debug-path exclusion were retained. Every final source file belongs to the measured worktree; no duplicate logical paths, byte-reused foreign paths or mismatched functions were found.",
+    "Workspace entrypoint timestamps were refreshed before measurement to prevent stale cross-worktree artifacts, without changing tracked bytes or deleting caches.",
+    "Strict Clippy still fails on inherited account/provider/UI warnings; warning-mode analysis completed with no new terminal diagnostics. Neither formatting nor coverage is a strict-lint pass.",
+    "Compared with prior record: lines +1.0051 percentage points, functions +0.9410 percentage points, regions +0.9858 percentage points.",
+    "Coverage measures execution, not correctness. No live-provider, native macOS/Windows or deployed TLS/multiplexer certification is implied."
   ]
 }

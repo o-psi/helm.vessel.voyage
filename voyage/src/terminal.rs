@@ -42,6 +42,7 @@ pub struct TerminalSnapshot {
     pub revision: u64,
     pub cells: Vec<Vec<TerminalCell>>,
     pub cursor: Option<(u16, u16)>,
+    pub modes: TerminalModes,
     /// Total transcript bytes evicted from the bounded agent-read buffer.
     pub dropped_unread_bytes: u64,
     /// Human-only capture state; never serialize screen contents into model records.
@@ -55,25 +56,7 @@ pub struct TerminalPrivacy {
     pub suppressed_output_bytes: u64,
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct TerminalCell {
-    pub text: String,
-    pub foreground: TerminalColor,
-    pub background: TerminalColor,
-    pub bold: bool,
-    pub dim: bool,
-    pub italic: bool,
-    pub underlined: bool,
-    pub reversed: bool,
-}
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum TerminalColor {
-    #[default]
-    Default,
-    Indexed(u8),
-    Rgb(u8, u8, u8),
-}
+pub use voyage_protocol::terminal::{TerminalCell, TerminalColor, TerminalModes, TerminalScreen};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum TerminalEvent {

@@ -36,5 +36,7 @@ pub mod coordination;
 pub mod browser;
 pub mod duplex;
 
+/// Human-only emulated terminal frames.
+pub mod terminal;
 #[cfg(test)]
 mod workflow_preview_tests;
