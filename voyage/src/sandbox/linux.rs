@@ -106,7 +106,7 @@ pub(super) fn roots(read: &[PathBuf], write: &[PathBuf]) -> Result<Vec<Root>, Er
     Ok(roots)
 }
 #[allow(deprecated)] // Deny historical syscall numbers as well as current interfaces.
-fn filter(network: Network) -> Vec<libc::sock_filter> {
+fn filter(network: Network, extension: bool) -> Vec<libc::sock_filter> {
     let mut p = vec![];
     let mut stmt = |code, k| {
         p.push(libc::sock_filter {
@@ -201,6 +201,24 @@ fn filter(network: Network) -> Vec<libc::sock_filter> {
             jf: 0,
             k: 0x50000 | libc::EPERM as u32,
         });
+    }
+    // Executable SDK children must remain in their owned session. Namespace
+    // teardown is additional containment, not a replacement for observation.
+    if extension {
+        for nr in [libc::SYS_setsid, libc::SYS_setpgid] {
+            p.push(libc::sock_filter {
+                code: 0x15,
+                jt: 0,
+                jf: 1,
+                k: nr as u32,
+            });
+            p.push(libc::sock_filter {
+                code: 0x06,
+                jt: 0,
+                jf: 0,
+                k: 0x50000 | libc::EPERM as u32,
+            });
+        }
     }
     // clone3 opaque argument block: ENOSYS lets libc fall back to inspectable clone.
     p.push(libc::sock_filter {
@@ -317,11 +335,55 @@ fn filter(network: Network) -> Vec<libc::sock_filter> {
     });
     p
 }
+pub(super) fn seal_extension(bytes: &[u8]) -> Result<ExtensionImage, Error> {
+    // Seals prevent changes through retained aliases after digest inspection.
+    let fd = unsafe {
+        libc::memfd_create(
+            c"voyage-extension".as_ptr(),
+            libc::MFD_CLOEXEC | libc::MFD_ALLOW_SEALING,
+        )
+    };
+    if fd < 0 {
+        return Err(Error::Setup);
+    }
+    let mut file = unsafe { File::from_raw_fd(fd) };
+    file.write_all(bytes)
+        .and_then(|_| file.rewind())
+        .map_err(|_| Error::Setup)?;
+    let seals = libc::F_SEAL_SEAL | libc::F_SEAL_SHRINK | libc::F_SEAL_GROW | libc::F_SEAL_WRITE;
+    if unsafe { libc::fchmod(fd, 0o500) } < 0
+        || unsafe { libc::fcntl(fd, libc::F_ADD_SEALS, seals) } < 0
+        || unsafe { libc::fcntl(fd, libc::F_GET_SEALS) } & seals != seals
+    {
+        return Err(Error::Setup);
+    }
+    Ok(ExtensionImage {
+        file: std::sync::Arc::new(file),
+    })
+}
+pub(super) fn apply_extension(
+    sandbox: &Sandbox,
+    payload: &mut Command,
+    image: &ExtensionImage,
+) -> Result<(), Error> {
+    let mut narrowed = sandbox.clone();
+    narrowed.settings.network = Network::Denied;
+    apply_profile(&narrowed, payload, Path::new("/tmp"), true, Some(image))
+}
 pub(super) fn apply(
     sandbox: &Sandbox,
     payload: &mut Command,
     cwd: &Path,
     read_only: bool,
+) -> Result<(), Error> {
+    apply_profile(sandbox, payload, cwd, read_only, None)
+}
+fn apply_profile(
+    sandbox: &Sandbox,
+    payload: &mut Command,
+    cwd: &Path,
+    read_only: bool,
+    extension: Option<&ExtensionImage>,
 ) -> Result<(), Error> {
     let mut cmd = Command::new("/usr/bin/bwrap");
     cmd.args([
@@ -338,72 +400,91 @@ pub(super) fn apply(
         cmd.arg("--unshare-net");
     }
     let mut files = vec![];
-    // Fixed system runtime, never the operator's home, host root or /etc tree.
-    for path in [
-        "/usr/bin",
-        "/usr/sbin",
-        "/usr/lib",
-        "/usr/lib64",
-        "/usr/share/terminfo",
-        "/usr/share/zoneinfo",
-        "/bin",
-        "/sbin",
-        "/lib",
-        "/lib64",
-    ] {
-        let path = Path::new(path);
-        if !path.exists() {
-            continue;
-        }
-        if let Ok(target) = std::fs::read_link(path) {
-            cmd.arg("--symlink").arg(target).arg(path);
-        } else {
-            let file = pin(path)?;
-            cmd.arg("--ro-bind-fd")
-                .arg(file.as_raw_fd().to_string())
-                .arg(path);
-            files.push(file);
+    let mut image_fd = None;
+    if extension.is_none() {
+        // Fixed system runtime, never the operator's home, host root or /etc tree.
+        for path in [
+            "/usr/bin",
+            "/usr/sbin",
+            "/usr/lib",
+            "/usr/lib64",
+            "/usr/share/terminfo",
+            "/usr/share/zoneinfo",
+            "/bin",
+            "/sbin",
+            "/lib",
+            "/lib64",
+        ] {
+            let path = Path::new(path);
+            if !path.exists() {
+                continue;
+            }
+            if let Ok(target) = std::fs::read_link(path) {
+                cmd.arg("--symlink").arg(target).arg(path);
+            } else {
+                let file = pin(path)?;
+                cmd.arg("--ro-bind-fd")
+                    .arg(file.as_raw_fd().to_string())
+                    .arg(path);
+                files.push(file);
+            }
         }
     }
     cmd.args([
         "--proc", "/proc", "--dev", "/dev", "--dir", "/run", "--dir", "/etc",
     ]);
-    for path in [
-        "/etc/ld.so.cache",
-        "/etc/resolv.conf",
-        "/etc/hosts",
-        "/etc/nsswitch.conf",
-        "/etc/ssl/certs",
-    ] {
-        let path = Path::new(path);
-        if path.exists() {
-            let resolved = path.canonicalize().map_err(|_| Error::Setup)?;
-            let file = pin(&resolved)?;
-            cmd.arg("--ro-bind-fd")
-                .arg(file.as_raw_fd().to_string())
-                .arg(path);
-            files.push(file);
+    if extension.is_none() {
+        for path in [
+            "/etc/ld.so.cache",
+            "/etc/resolv.conf",
+            "/etc/hosts",
+            "/etc/nsswitch.conf",
+            "/etc/ssl/certs",
+        ] {
+            let path = Path::new(path);
+            if path.exists() {
+                let resolved = path.canonicalize().map_err(|_| Error::Setup)?;
+                let file = pin(&resolved)?;
+                cmd.arg("--ro-bind-fd")
+                    .arg(file.as_raw_fd().to_string())
+                    .arg(path);
+                files.push(file);
+            }
         }
     }
     cmd.arg("--size")
         .arg(sandbox.settings.temporary_bytes.to_string())
         .args(["--tmpfs", "/tmp"]);
-    for root in sandbox.roots.iter() {
-        let file = root.file.try_clone().map_err(|_| Error::Setup)?;
-        cmd.arg(if root.writable && !read_only {
-            "--bind-fd"
-        } else {
-            "--ro-bind-fd"
-        })
-        .arg(file.as_raw_fd().to_string())
-        .arg(&root.path);
+    if extension.is_none() {
+        for root in sandbox.roots.iter() {
+            let file = root.file.try_clone().map_err(|_| Error::Setup)?;
+            cmd.arg(if root.writable && !read_only {
+                "--bind-fd"
+            } else {
+                "--ro-bind-fd"
+            })
+            .arg(file.as_raw_fd().to_string())
+            .arg(&root.path);
+            files.push(file);
+        }
+    } else if let Some(image) = extension {
+        let file = image.file.try_clone().map_err(|_| Error::Setup)?;
+        let seals =
+            libc::F_SEAL_SEAL | libc::F_SEAL_SHRINK | libc::F_SEAL_GROW | libc::F_SEAL_WRITE;
+        if unsafe { libc::fcntl(file.as_raw_fd(), libc::F_GET_SEALS) } & seals != seals {
+            return Err(Error::Setup);
+        }
+        image_fd = Some(file.as_raw_fd());
+        cmd.args(["--perms", "0500", "--ro-bind-data"])
+            .arg(file.as_raw_fd().to_string())
+            .arg("/extension");
         files.push(file);
     }
     // Only explicit write mounts and sized /tmp may accept ordinary files.
     // Root and /dev tmpfs must not provide an unbounded temporary-storage bypass.
     cmd.args(["--remount-ro", "/", "--remount-ro", "/dev"]);
     let mut seccomp = tempfile::tempfile().map_err(|_| Error::Setup)?;
-    for instruction in filter(sandbox.settings.network) {
+    for instruction in filter(sandbox.settings.network, extension.is_some()) {
         seccomp
             .write_all(&instruction.code.to_ne_bytes())
             .and_then(|_| seccomp.write_all(&[instruction.jt, instruction.jf]))
@@ -465,6 +546,11 @@ pub(super) fn apply(
         payload.pre_exec(move || {
             // A Command may be spawned repeatedly; bwrap consumes these offsets.
             for fd in [seccomp_fd, argument_file_fd] {
+                if libc::lseek(fd, 0, libc::SEEK_SET) < 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+            }
+            if let Some(fd) = image_fd {
                 if libc::lseek(fd, 0, libc::SEEK_SET) < 0 {
                     return Err(std::io::Error::last_os_error());
                 }

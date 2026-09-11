@@ -5,6 +5,7 @@ pub mod chat_preferences;
 pub mod completion;
 pub mod config;
 pub mod context;
+pub(crate) mod extension_sdk;
 pub mod extensions;
 pub mod file_publication;
 pub mod github;

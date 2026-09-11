@@ -1,7 +1,9 @@
-//! Declarative packages never register tools or execute installation code.
+//! Versioned packages. Installation never runs code; format 1 remains declarative.
 mod catalog;
 pub mod cli;
+pub(crate) mod executable;
 mod index;
+pub(crate) mod runtime;
 mod store;
 
 use anyhow::{Result, ensure};
@@ -42,6 +44,65 @@ pub struct Archive {
     pub manifest: Manifest,
     #[serde(deserialize_with = "unique_map")]
     pub files: BTreeMap<String, String>,
+}
+#[derive(Clone, Debug)]
+pub(crate) enum Package {
+    Declarative(Archive),
+    Executable(executable::Archive),
+}
+#[derive(Clone, Debug, Serialize)]
+#[serde(untagged)]
+pub enum PackageManifest {
+    Declarative(Manifest),
+    Executable(executable::Manifest),
+}
+impl Package {
+    pub(crate) fn parse(bytes: &[u8]) -> Result<Self> {
+        ensure!(
+            bytes.len() <= executable::MAX_ARCHIVE,
+            "package exceeds archive limit"
+        );
+        #[derive(Deserialize)]
+        struct Header {
+            manifest: Format,
+        }
+        #[derive(Deserialize)]
+        struct Format {
+            format: u32,
+        }
+        let header: Header = serde_json::from_slice(bytes)
+            .map_err(|_| anyhow::anyhow!("invalid package format header"))?;
+        // Parse original bytes, not a Value round-trip which could erase duplicate keys.
+        match header.manifest.format {
+            1 => Ok(Self::Declarative(Archive::parse(bytes)?)),
+            2 => Ok(Self::Executable(executable::Archive::parse(bytes)?)),
+            _ => anyhow::bail!("unsupported package format"),
+        }
+    }
+    pub(crate) fn id(&self) -> &str {
+        match self {
+            Self::Declarative(a) => &a.manifest.id,
+            Self::Executable(a) => &a.manifest.id,
+        }
+    }
+    pub(crate) fn manifest(&self) -> PackageManifest {
+        match self {
+            Self::Declarative(a) => PackageManifest::Declarative(a.manifest.clone()),
+            Self::Executable(a) => PackageManifest::Executable(a.manifest.clone()),
+        }
+    }
+}
+fn version(value: &str) -> Result<()> {
+    let parts: Vec<_> = value.split('.').collect();
+    ensure!(
+        parts.len() == 3
+            && parts.iter().all(|p| !p.is_empty()
+                && p.len() <= 6
+                && p.bytes().all(|b| b.is_ascii_digit())
+                && (*p == "0" || !p.starts_with('0'))),
+        "version must be numeric major.minor.patch"
+    );
+    Ok(())
 }
 pub fn digest(bytes: &[u8]) -> String {
     hex::encode(Sha256::digest(bytes))
@@ -111,15 +172,7 @@ impl Archive {
             m.format == 1 && identifier(&m.id),
             "unsupported package format or identity"
         );
-        let parts: Vec<_> = m.version.split('.').collect();
-        ensure!(
-            parts.len() == 3
-                && parts.iter().all(|p| !p.is_empty()
-                    && p.len() <= 6
-                    && p.bytes().all(|b| b.is_ascii_digit())
-                    && (*p == "0" || !p.starts_with('0'))),
-            "version must be numeric major.minor.patch"
-        );
+        version(&m.version)?;
         let line = env!("CARGO_PKG_VERSION").rsplit_once('.').unwrap().0;
         ensure!(
             m.helm == line,
@@ -206,3 +259,6 @@ fn unique_map<'de, D: serde::Deserializer<'de>>(
     }
     deserializer.deserialize_map(Visitor)
 }
+
+#[cfg(test)]
+mod package_tests;

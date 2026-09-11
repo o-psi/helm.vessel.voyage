@@ -5,7 +5,8 @@ mod definitions;
 mod transport;
 mod wire;
 
-pub(crate) use definitions::{Definition, Definitions, Kind, validate_definitions};
-pub(crate) use transport::{Cleanup, Completion, Host, Identity, Invocation, InvocationHandle,
-    Executor, LaunchAdapter, Launched, Lease, MAX_READ};
-pub(crate) use wire::{MAX_FRAME, parse_json};
+pub(crate) use definitions::{Definitions, Kind, validate_definitions};
+pub(crate) use transport::{
+    Cleanup, Executor, Host, Identity, Invocation, LaunchAdapter, Launched, Lease, MAX_READ,
+};
+pub(crate) use wire::deserialize_json;

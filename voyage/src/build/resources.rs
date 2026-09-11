@@ -6,6 +6,7 @@ pub struct ManagedResourceState {
     pub shells: Vec<crate::tools::ManagedShell>,
     pub browser: Option<Arc<crate::browser::BrowserBroker>>,
     pub mcp: Vec<Arc<crate::tools::mcp::McpServer>>,
+    pub(crate) extensions: Vec<Arc<crate::extensions::runtime::Manager>>,
 }
 pub struct ManagedResources(std::sync::Mutex<ManagedResourceState>, bool);
 impl Default for ManagedResources {
@@ -19,6 +20,18 @@ impl ManagedResources {
             std::sync::Mutex::new(ManagedResourceState::default()),
             cfg!(target_os = "linux"),
         )
+    }
+    pub(crate) fn own_extensions(
+        &self,
+        manager: Arc<crate::extensions::runtime::Manager>,
+    ) -> Result<()> {
+        let mut state = self
+            .0
+            .lock()
+            .map_err(|_| anyhow::anyhow!("managed resources poisoned"))?;
+        anyhow::ensure!(!state.closed, "managed resource admission closed");
+        state.extensions.push(manager);
+        Ok(())
     }
     pub fn register_browser(&self, browser: Arc<crate::browser::BrowserBroker>) -> Result<()> {
         let mut state = self
@@ -45,6 +58,15 @@ impl ManagedResources {
         for server in tools.mcp_servers() {
             if !state.mcp.iter().any(|other| Arc::ptr_eq(other, &server)) {
                 state.mcp.push(server);
+            }
+        }
+        if let Some(manager) = tools.extensions() {
+            if !state
+                .extensions
+                .iter()
+                .any(|other| Arc::ptr_eq(other, &manager))
+            {
+                state.extensions.push(manager);
             }
         }
         if let Some(terminals) = tools.terminals() {
@@ -99,6 +121,10 @@ impl ManagedResources {
             let mcp =
                 futures_util::future::join_all(retained.mcp.iter().map(|item| item.shutdown()))
                     .await;
+            let extensions = futures_util::future::join_all(
+                retained.extensions.iter().map(|manager| manager.shutdown()),
+            )
+            .await;
             let browser = retained
                 .browser
                 .as_ref()
@@ -108,6 +134,7 @@ impl ManagedResources {
                 && terminals.iter().all(|item| item.observation_complete)
                 && shells.iter().all(|item| item.observation_complete)
                 && mcp.iter().all(Result::is_ok)
+                && extensions.iter().all(Result::is_ok)
                 && (!require_session_observation
                     || retained.mcp.iter().all(|server| server.observed()))
         })
@@ -131,6 +158,7 @@ impl ManagedResources {
             shells: state.shells.clone(),
             mcp: state.mcp.clone(),
             browser: state.browser.clone(),
+            extensions: state.extensions.clone(),
         })
     }
 }

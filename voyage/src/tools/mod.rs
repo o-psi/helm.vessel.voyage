@@ -8,7 +8,7 @@ pub(crate) mod output;
 pub(crate) mod reliability_tests;
 mod report;
 pub use report::ToolReport;
-mod process;
+pub(crate) mod process;
 mod questions;
 pub(crate) mod schema;
 mod shell;
@@ -403,9 +403,16 @@ pub struct ToolRegistry {
     contracts: BTreeMap<String, ToolContract>,
     terminals: Option<ProcessTool>,
     mcp: Vec<mcp::McpLease>,
+    extensions: Option<Arc<crate::extensions::runtime::Manager>>,
 }
 
 impl ToolRegistry {
+    pub(crate) fn own_extensions(&mut self, manager: Arc<crate::extensions::runtime::Manager>) {
+        self.extensions = Some(manager);
+    }
+    pub(crate) fn extensions(&self) -> Option<Arc<crate::extensions::runtime::Manager>> {
+        self.extensions.clone()
+    }
     pub fn own_mcp(&mut self, server: Arc<mcp::McpServer>) {
         self.mcp.push(mcp::McpLease(server));
     }
@@ -478,6 +485,9 @@ impl ToolRegistry {
             .collect()
     }
     pub fn retain_allowed(&mut self, allowed: &std::collections::BTreeSet<String>) {
+        if let Some(manager) = &self.extensions {
+            manager.restrict_host_read(allowed.contains("read_file"));
+        }
         self.tools.retain(|name, _| allowed.contains(name));
         self.contracts.retain(|name, _| allowed.contains(name));
         if !allowed.contains("process") {

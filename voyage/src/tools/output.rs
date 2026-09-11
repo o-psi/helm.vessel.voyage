@@ -91,7 +91,7 @@ pub(super) fn redact(output: &mut ToolOutput, redactor: &Redactor) -> Result<(),
     *output = serde_json::from_value(value).map_err(|_| refused())?;
     Ok(())
 }
-pub(super) fn ingest(
+pub(crate) fn ingest(
     mut value: Value,
     context: &super::ToolContext,
 ) -> Result<ToolOutput, ToolError> {

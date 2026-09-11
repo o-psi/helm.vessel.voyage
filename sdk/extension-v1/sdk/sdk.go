@@ -17,7 +17,7 @@ import (
     "unicode/utf8"
 )
 
-const MaxFrame = 1024 * 1024
+const MaxFrame = 1024 * 1024 - 1 // One byte reserved for LF.
 var ErrProtocol = errors.New("extension protocol failure")
 var ErrDenied = errors.New("host request denied")
 

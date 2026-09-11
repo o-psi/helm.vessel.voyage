@@ -1,7 +1,7 @@
 # Executable extension SDK, protocol 1
 
 Status: **bounded source implementation for #63/#75, not a verified executable
-release**. The global #213 build pause applies. No compilation, tests, coverage,
+release**. The #63 build slot is still unadmitted after #213's release. No compilation, tests, coverage,
 static linking or supervised isolation journey has been established for these
 files. Parent integration owns package admission, sandbox/resource adapters,
 module and registry wiring, command routing and admitted lifecycle dispatch.
@@ -37,7 +37,7 @@ counts characters; all limits below additionally count **UTF-8 bytes**.
 
 | Bound | Protocol 1 |
 | --- | --- |
-| Frame | 1 MiB excluding LF; bounded before allocation growth |
+| Frame | 1 MiB including LF; bounded before allocation growth |
 | JSON tree | depth 48 (root 0), 4096 value nodes per complete envelope |
 | Each input/output schema | 256 KiB; offline bounded validator |
 | Aggregate definitions | 512 KiB, also subject to JSON tree bound |
@@ -80,7 +80,9 @@ never built-in overrides, slash-string interpolation or shell text. Parent owns
 the final external namespace spelling and routing, not this transport.
 Lifecycle entries do nothing on discovery or executor construction. Parent must
 admit and invoke them at real run boundaries; cancelled/crashed runs do not need
-an effectful finish handler. No ambient hook dispatch is implemented here.
+an effectful finish handler. No ambient hook dispatch is implemented here. The
+current format-2 package integration explicitly refuses nonempty lifecycle arrays
+until that integration exists; it does not silently ignore subscriptions.
 
 ### Invocation and replies
 
@@ -102,8 +104,10 @@ ceilings and redaction. Its result is `host_result {invocation,request,text}` or
 `host_error {invocation,request,code:"denied"}`; errors never include private
 reasons or paths. Reads are neither arbitrary filesystem access nor a permission
 granted by package activation alone. Broker must refuse invalid UTF-8 or offsets
-that split codepoints rather than lossy-decode; choose a valid UTF-8 prefix within
-the bound and never read unbounded data first. There is no write/network/shell/
+that split codepoints rather than lossy-decode; never read unbounded data first. The initial integrated broker accepts only
+offset zero and a complete file fitting the requested bound (at most 64 KiB).
+Nonzero offsets and partial files are refused so multiple range reads cannot
+reassemble redacted secret fragments. There is no write/network/shell/
 secret/PTY capability and no local fallback. Broker approval futures must be
 cancellation-safe. Any bytes from the child while a host read is outstanding
 fail the call: the child waits for that reply, including withholding progress.

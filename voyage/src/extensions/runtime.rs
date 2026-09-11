@@ -1,0 +1,582 @@
+//! Executing-Voyage integration. Registry construction never launches code.
+use super::catalog::{Catalog, ExecutableSnapshot};
+use crate::{
+    extension_sdk as sdk,
+    tools::{Tool, ToolContext, ToolError},
+};
+use anyhow::{Result, ensure};
+use async_trait::async_trait;
+use serde_json::{Value, json};
+use std::{
+    collections::BTreeMap,
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Duration,
+};
+use tokio::time::Instant;
+use uuid::Uuid;
+
+#[derive(Default)]
+pub(crate) struct Manager {
+    state: Mutex<State>,
+    read_allowed: AtomicBool,
+}
+#[derive(Default)]
+struct State {
+    closed: bool,
+    executors: Vec<Arc<sdk::Executor>>,
+    children: Vec<Arc<OwnedChild>>,
+}
+struct OwnedChild {
+    child: tokio::sync::Mutex<tokio::process::Child>,
+    #[cfg(target_os = "linux")]
+    identity: Option<Arc<crate::tools::process::SessionIdentity>>,
+    reservation: crate::host_resources::extensions::ExtensionReservation,
+    observed: AtomicBool,
+    observation: tokio::sync::Mutex<Option<tokio::task::JoinHandle<bool>>>,
+}
+impl OwnedChild {
+    async fn observe(self: &Arc<Self>) -> bool {
+        if self.observed.load(Ordering::Acquire) {
+            return true;
+        }
+        // Retain an in-flight observer through caller cancellation/timeouts. A
+        // retry waits for the same observer rather than spawning duplicate kills.
+        let mut observer = self.observation.lock().await;
+        if observer.is_none() {
+            let owned = self.clone();
+            *observer = Some(tokio::spawn(async move {
+                let mut child = owned.child.lock().await;
+                #[cfg(target_os = "linux")]
+                let empty = if let Some(identity) = owned.identity.clone() {
+                    tokio::task::spawn_blocking(move || {
+                        let deadline = std::time::Instant::now() + Duration::from_secs(4);
+                        while std::time::Instant::now() < deadline {
+                            match identity.kill_and_observe(deadline) {
+                                Ok(true) => return true,
+                                Ok(false) => std::thread::sleep(Duration::from_millis(5)),
+                                Err(_) => return false,
+                            }
+                        }
+                        false
+                    })
+                    .await
+                    .unwrap_or(false)
+                } else {
+                    false
+                };
+                #[cfg(not(target_os = "linux"))]
+                let empty = false;
+                if !empty {
+                    return false;
+                }
+                if !matches!(
+                    tokio::time::timeout(Duration::from_millis(250), child.wait()).await,
+                    Ok(Ok(_))
+                ) {
+                    return false;
+                }
+                if owned.reservation.release_observed().is_err() {
+                    return false;
+                }
+                owned.observed.store(true, Ordering::Release);
+                true
+            }));
+        }
+        let result = observer
+            .as_mut()
+            .expect("owned observer")
+            .await
+            .unwrap_or(false);
+        *observer = None;
+        result
+    }
+}
+struct ChildLease(Arc<OwnedChild>);
+#[async_trait]
+impl sdk::Lease for ChildLease {
+    async fn terminate_and_observe(&mut self) -> sdk::Cleanup {
+        if self.0.observe().await {
+            sdk::Cleanup::Observed
+        } else {
+            sdk::Cleanup::Pending
+        }
+    }
+}
+impl Manager {
+    pub(crate) fn restrict_host_read(&self, allowed: bool) {
+        if !allowed {
+            self.read_allowed.store(false, Ordering::Release);
+        }
+    }
+    pub(crate) async fn shutdown(&self) -> Result<()> {
+        let (executors, children) = {
+            let mut state = self
+                .state
+                .lock()
+                .map_err(|_| anyhow::anyhow!("extension ownership unavailable"))?;
+            state.closed = true;
+            for executor in &state.executors {
+                executor.close();
+            }
+            (state.executors.clone(), state.children.clone())
+        };
+        // Closed manager admission fences even queued SDK tasks before spawn.
+        let (_, result) = tokio::join!(
+            futures_util::future::join_all(executors.iter().map(|executor| executor.shutdown())),
+            futures_util::future::join_all(children.iter().map(|child| child.observe()))
+        );
+        // This concrete adapter performs no detached launch effect: every child
+        // is retained before returning, and refusal before spawn is observed.
+        // Reconcile a prior SDK timeout only after BOTH actual task drain and
+        // positive cleanup of every retained child; not merely a dropped waiter.
+        ensure!(
+            executors.iter().all(|executor| executor.tasks_drained())
+                && result.into_iter().all(|observed| observed),
+            "executable extension cleanup remains pending"
+        );
+        Ok(())
+    }
+    fn add_executor(&self, executor: Arc<sdk::Executor>) -> Result<()> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| anyhow::anyhow!("extension ownership unavailable"))?;
+        ensure!(
+            !state.closed && state.executors.len() < 128,
+            "extension admission closed or full"
+        );
+        state.executors.push(executor);
+        Ok(())
+    }
+}
+struct Adapter {
+    catalog: Arc<Catalog>,
+    snapshot: ExecutableSnapshot,
+    manager: Arc<Manager>,
+    contexts: Arc<Mutex<BTreeMap<Uuid, ToolContext>>>,
+}
+#[async_trait]
+impl sdk::LaunchAdapter for Adapter {
+    async fn launch(&self, identity: &sdk::Identity, deadline: Instant) -> Result<sdk::Launched> {
+        // No await between grant/policy admission, durable reservation and owned
+        // spawn registration: cancellation cannot strand an untracked child.
+        let context = self
+            .contexts
+            .lock()
+            .map_err(|_| anyhow::anyhow!("extension context unavailable"))?
+            .get(&identity.invocation)
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("extension invocation context expired"))?;
+        context.policy.check_execution_authority()?;
+        ensure!(
+            Instant::now() < deadline && !context.cancellation.is_cancelled(),
+            "extension launch cancelled or expired"
+        );
+        let (session, incarnation) = crate::host_resources::process_scope()
+            .ok_or_else(|| anyhow::anyhow!("supervised extension owner unavailable"))?;
+        ensure!(
+            identity.session == session
+                && identity.incarnation == incarnation
+                && identity.run == context.execution_id
+                && identity.package == self.snapshot.archive.manifest.id
+                && identity.digest == self.snapshot.digest,
+            "extension invocation identity mismatch"
+        );
+        let image = crate::sandbox::ExtensionImage::seal(&self.snapshot.archive.executable()?)?;
+        let mut command = std::process::Command::new("/extension");
+        command
+            .env_clear()
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null());
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            // Setsid precedes the SDK filter which prevents later session escape.
+            unsafe {
+                command.pre_exec(|| {
+                    if libc::setsid() < 0 {
+                        Err(std::io::Error::last_os_error())
+                    } else {
+                        Ok(())
+                    }
+                });
+            }
+        }
+        context
+            .policy
+            .sandbox()
+            .apply_extension(&mut command, &image)?;
+        let mut state = self
+            .manager
+            .state
+            .lock()
+            .map_err(|_| anyhow::anyhow!("extension ownership unavailable"))?;
+        state
+            .children
+            .retain(|child| !child.observed.load(Ordering::Acquire));
+        ensure!(
+            !state.closed && state.children.len() < 128,
+            "extension admission closed or full"
+        );
+        let reservation = self.catalog.admit_executable(
+            &self.snapshot,
+            identity.invocation,
+            identity.run,
+            "invoke",
+        )?;
+        if context.policy.check_execution_authority().is_err()
+            || context.cancellation.is_cancelled()
+            || Instant::now() >= deadline
+        {
+            reservation.release_observed()?; // No child has been spawned.
+            anyhow::bail!("extension launch authority changed");
+        }
+        let mut command = tokio::process::Command::from(command);
+        command.kill_on_drop(true);
+        let mut child = match command.spawn() {
+            Ok(child) => child,
+            Err(_) => {
+                reservation.release_observed()?;
+                anyhow::bail!("required executable isolation launch failed");
+            }
+        };
+        #[cfg(target_os = "linux")]
+        let process_identity = child
+            .id()
+            .and_then(|pid| crate::tools::process::SessionIdentity::capture(pid).ok())
+            .map(Arc::new);
+        let reader = child.stdout.take();
+        let writer = child.stdin.take();
+        let owned = Arc::new(OwnedChild {
+            child: tokio::sync::Mutex::new(child),
+            #[cfg(target_os = "linux")]
+            identity: process_identity,
+            reservation,
+            observed: AtomicBool::new(false),
+            observation: tokio::sync::Mutex::new(None),
+        });
+        state.children.push(owned.clone());
+        let reader =
+            reader.ok_or_else(|| anyhow::anyhow!("extension protocol output unavailable"))?;
+        let writer =
+            writer.ok_or_else(|| anyhow::anyhow!("extension protocol input unavailable"))?;
+        Ok(sdk::Launched {
+            reader: Box::new(reader),
+            writer: Box::new(writer),
+            lease: Box::new(ChildLease(owned)),
+        })
+    }
+}
+struct Broker {
+    context: ToolContext,
+    manager: Arc<Manager>,
+    progress: Arc<Mutex<Vec<String>>>,
+}
+#[async_trait]
+impl sdk::Host for Broker {
+    async fn read(
+        &self,
+        identity: &sdk::Identity,
+        path: &str,
+        offset: u64,
+        max_bytes: usize,
+        deadline: Instant,
+    ) -> Result<String> {
+        let context = &self.context;
+        ensure!(
+            self.manager.read_allowed.load(Ordering::Acquire),
+            "extension host read excluded by tool ceiling"
+        );
+        ensure!(
+            identity.run == context.execution_id
+                && max_bytes > 0
+                && max_bytes <= sdk::MAX_READ
+                && path.len() <= 4096
+                && offset == 0,
+            "invalid extension host read"
+        );
+        ensure!(
+            Instant::now() < deadline && !context.cancellation.is_cancelled(),
+            "extension host read expired"
+        );
+        context.policy.check_execution_authority()?;
+        let path = context.policy.resolve_read(std::path::Path::new(path))?;
+        let policy = context.policy.clone();
+        let value = tokio::task::spawn_blocking(move || -> Result<String> {
+            use cap_fs_ext::{DirExt, FollowSymlinks, OpenOptionsFollowExt, OpenOptionsSyncExt};
+            use std::io::{Read, Seek};
+            policy.check_execution_authority()?;
+            // Traverse the exact authorized canonical path descriptor-relatively,
+            // refusing symlink replacement at every component and bounded I/O.
+            let mut dir = cap_std::fs::Dir::open_ambient_dir("/", cap_std::ambient_authority())?;
+            let parent = path
+                .parent()
+                .ok_or_else(|| anyhow::anyhow!("invalid host read path"))?;
+            for part in parent.components() {
+                match part {
+                    std::path::Component::RootDir => {}
+                    std::path::Component::Normal(part) => dir = dir.open_dir_nofollow(part)?,
+                    _ => anyhow::bail!("invalid host read path"),
+                }
+            }
+            let mut options = cap_std::fs::OpenOptions::new();
+            options.read(true).follow(FollowSymlinks::No).nonblock(true);
+            let mut file = dir.open_with(
+                path.file_name()
+                    .ok_or_else(|| anyhow::anyhow!("invalid host read name"))?,
+                &options,
+            )?;
+            ensure!(
+                file.metadata()?.is_file() && file.metadata()?.len() <= sdk::MAX_READ as u64,
+                "host file exceeds bounded read contract"
+            );
+            file.seek(std::io::SeekFrom::Start(offset))?;
+            let mut bytes = Vec::new();
+            file.take(max_bytes as u64 + 1).read_to_end(&mut bytes)?;
+            ensure!(
+                bytes.len() <= max_bytes,
+                "host read exceeds requested bound"
+            );
+            policy.check_execution_authority()?;
+            String::from_utf8(bytes).map_err(|_| anyhow::anyhow!("host file is not UTF-8"))
+        })
+        .await
+        .map_err(|_| anyhow::anyhow!("extension host read interrupted"))??;
+        context.policy.check_execution_authority()?;
+        ensure!(
+            Instant::now() < deadline && !context.cancellation.is_cancelled(),
+            "extension host read expired"
+        );
+        Ok(context.redactor.redact(value))
+    }
+    async fn progress(&self, identity: &sdk::Identity, text: &str) -> Result<()> {
+        ensure!(
+            identity.run == self.context.execution_id && !self.context.cancellation.is_cancelled(),
+            "extension progress expired"
+        );
+        self.context.policy.check_execution_authority()?;
+        let mut progress = self
+            .progress
+            .lock()
+            .map_err(|_| anyhow::anyhow!("extension progress unavailable"))?;
+        ensure!(
+            progress.len() < 256
+                && progress.iter().map(String::len).sum::<usize>() + text.len()
+                    <= self.context.max_output_bytes.min(65536),
+            "extension progress budget exceeded"
+        );
+        // Keep untrusted text private until the complete output passes the
+        // existing split-text confidentiality checks. No subprocess diagnostics.
+        progress.push(
+            text.chars()
+                .filter(|c| !c.is_control() || *c == '\n' || *c == '\t')
+                .collect(),
+        );
+        Ok(())
+    }
+}
+struct ExtensionTool {
+    manager: Arc<Manager>,
+    definition: crate::model::ToolDefinition,
+    remote: String,
+    kind: sdk::Kind,
+    snapshot: ExecutableSnapshot,
+    executor: Arc<sdk::Executor>,
+    contexts: Arc<Mutex<BTreeMap<Uuid, ToolContext>>>,
+}
+struct ContextLease {
+    id: Uuid,
+    contexts: Arc<Mutex<BTreeMap<Uuid, ToolContext>>>,
+}
+impl Drop for ContextLease {
+    fn drop(&mut self) {
+        if let Ok(mut contexts) = self.contexts.lock() {
+            contexts.remove(&self.id);
+        }
+    }
+}
+#[async_trait]
+impl Tool for ExtensionTool {
+    fn definition(&self) -> crate::model::ToolDefinition {
+        self.definition.clone()
+    }
+    async fn execute(&self, arguments: Value, context: &ToolContext) -> Result<String, ToolError> {
+        Ok(self
+            .execute_output(arguments, context)
+            .await?
+            .text_fallback())
+    }
+    async fn execute_output(
+        &self,
+        arguments: Value,
+        context: &ToolContext,
+    ) -> Result<voyage_protocol::tool_result::ToolOutput, ToolError> {
+        fn fail(_: impl std::fmt::Display) -> ToolError {
+            ToolError::Failed("executable extension failed; inspect review and cleanup; do not replay uncertain effects".into())
+        }
+        let deadline = Instant::now() + context.timeout.min(Duration::from_secs(120));
+        if context.policy.access_mode() == crate::config::AccessMode::ReadOnly {
+            return Err(ToolError::Denied(
+                "executable extensions are unavailable in read-only mode".into(),
+            ));
+        }
+        if context.policy.access_mode() == crate::config::AccessMode::Approval {
+            tokio::time::timeout_at(
+                deadline,
+                context.approver.approve(&context.approval(
+                    "extension.invoke",
+                    format!("{} @ {}", self.definition.name, self.snapshot.digest),
+                    "Run this reviewed executable in required isolation".into(),
+                )),
+            )
+            .await
+            .map_err(|_| ToolError::Timeout(context.timeout))?
+            .require_approved()?;
+        }
+        context.policy.check_execution_authority().map_err(fail)?;
+        let (session, incarnation) = crate::host_resources::process_scope()
+            .ok_or_else(|| fail(anyhow::anyhow!("owner unavailable")))?;
+        let invocation = Uuid::new_v4();
+        self.contexts
+            .lock()
+            .map_err(|_| fail(anyhow::anyhow!("context unavailable")))?
+            .insert(invocation, context.clone());
+        let _context = ContextLease {
+            id: invocation,
+            contexts: self.contexts.clone(),
+        };
+        let progress = Arc::new(Mutex::new(Vec::new()));
+        let handle = self
+            .executor
+            .start(
+                sdk::Invocation {
+                    identity: sdk::Identity {
+                        session,
+                        incarnation,
+                        run: context.execution_id,
+                        invocation,
+                        package: self.snapshot.archive.manifest.id.clone(),
+                        digest: self.snapshot.digest.clone(),
+                    },
+                    kind: self.kind,
+                    name: self.remote.clone(),
+                    arguments,
+                    deadline,
+                    cancellation: context.cancellation.clone(),
+                },
+                Arc::new(Broker {
+                    context: context.clone(),
+                    manager: self.manager.clone(),
+                    progress: progress.clone(),
+                }),
+            )
+            .map_err(fail)?;
+        let completion = handle.completion().await;
+        let value = completion.result.map_err(fail)?;
+        if completion.cleanup != sdk::Cleanup::Observed {
+            return Err(fail(anyhow::anyhow!("cleanup pending")));
+        }
+        let mut content = progress
+            .lock()
+            .map_err(|_| fail(anyhow::anyhow!("progress unavailable")))?
+            .iter()
+            .map(|text| json!({"type":"text","text":text}))
+            .collect::<Vec<_>>();
+        content.push(json!({"type":"text","text":serde_json::to_string(&value).map_err(fail)?}));
+        crate::tools::output::ingest(
+            json!({"content":content,"structuredContent":value}),
+            context,
+        )
+    }
+}
+
+pub(crate) fn register(
+    tools: &mut crate::tools::ToolRegistry,
+    manager: Arc<Manager>,
+    policy: &crate::policy::Policy,
+) -> Result<()> {
+    if !policy.sandbox().required() || crate::host_resources::process_scope().is_none() {
+        return Ok(());
+    }
+    manager.read_allowed.store(
+        tools
+            .definitions()
+            .iter()
+            .any(|definition| definition.name == "read_file"),
+        Ordering::Release,
+    );
+    let catalog = Arc::new(Catalog::new(
+        policy.workspace(),
+        &crate::config::default_data_dir(),
+    )?);
+    for snapshot in catalog.executable_snapshots()? {
+        let definitions = sdk::Definitions::parse(
+            &snapshot.archive.manifest.definitions,
+            &snapshot.archive.manifest.capabilities,
+        )?;
+        let contexts = Arc::new(Mutex::new(BTreeMap::new()));
+        let adapter = Arc::new(Adapter {
+            catalog: catalog.clone(),
+            snapshot: snapshot.clone(),
+            manager: manager.clone(),
+            contexts: contexts.clone(),
+        });
+        let executor = sdk::Executor::new(
+            snapshot.archive.manifest.definitions.clone(),
+            snapshot.archive.manifest.capabilities.clone(),
+            adapter,
+        )?;
+        let mut candidates: Vec<Arc<dyn Tool>> = Vec::new();
+        for (kind, definitions) in [
+            (sdk::Kind::Tool, definitions.tools),
+            (sdk::Kind::Command, definitions.commands),
+        ] {
+            for definition in definitions {
+                let prefix = if kind == sdk::Kind::Tool {
+                    "ext"
+                } else {
+                    "extcmd"
+                };
+                let name = format!(
+                    "{prefix}_{}_{}",
+                    snapshot.archive.manifest.id.replace('-', "_"),
+                    definition.name
+                );
+                candidates.push(Arc::new(ExtensionTool {
+                    manager: manager.clone(),
+                    definition: crate::model::ToolDefinition {
+                        name,
+                        description: definition.description,
+                        input_schema: definition.input_schema,
+                        output_schema: Some(definition.output_schema),
+                        annotations: None,
+                    },
+                    remote: definition.name,
+                    kind,
+                    snapshot: snapshot.clone(),
+                    executor: executor.clone(),
+                    contexts: contexts.clone(),
+                }));
+            }
+        }
+        // All definitions must be collision-free before this package contributes
+        // anything. A broken package cannot erase an unrelated registered tool.
+        let existing = tools.definitions();
+        if candidates.iter().any(|candidate| {
+            existing
+                .iter()
+                .any(|definition| definition.name == candidate.definition().name)
+        }) {
+            continue;
+        }
+        manager.add_executor(executor)?;
+        for candidate in candidates {
+            tools.register_arc(candidate)?;
+        }
+    }
+    Ok(())
+}

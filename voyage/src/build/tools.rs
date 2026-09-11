@@ -53,6 +53,16 @@ pub async fn build_tools(
         }
         return Ok(tools);
     }
+    if let Some(resources) = resources {
+        let manager = Arc::new(crate::extensions::runtime::Manager::default());
+        resources.own_extensions(manager.clone())?;
+        tools.own_extensions(manager.clone());
+        if crate::extensions::runtime::register(&mut tools, manager, policy).is_err() {
+            tracing::warn!(
+                "executable package registration unavailable; inspect exact package reviews"
+            );
+        }
+    }
     // Keep transport ownership until assembly succeeds so a later discovery or
     // registration failure can reap every server already started by this build.
     let mut servers = Vec::new();

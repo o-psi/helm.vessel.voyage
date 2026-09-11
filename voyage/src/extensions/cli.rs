@@ -1,5 +1,5 @@
 use super::{
-    Archive,
+    Package,
     catalog::{Catalog, Scope},
     store,
 };
@@ -61,6 +61,22 @@ pub enum ExtensionCommand {
         #[arg(long)]
         expected: String,
     },
+    /// Review exact executable bytes/capabilities; does not start an extension.
+    ReviewExecutable {
+        id: String,
+        #[arg(long)]
+        expected: String,
+        #[arg(long = "capability", required = true)]
+        capabilities: Vec<String>,
+    },
+    /// List executable review bindings separately from declarative grants.
+    ExecutionGrants,
+    /// Revoke an orphaned executable review without claiming active work stopped.
+    RevokeExecution {
+        binding: String,
+        #[arg(long)]
+        expected: String,
+    },
     Disable {
         id: String,
         #[arg(long)]
@@ -76,8 +92,8 @@ fn source(path: &std::path::Path) -> Result<Vec<u8>> {
     if path.is_dir() {
         store::pack(path)
     } else {
-        let bytes = store::local(path)?;
-        Archive::parse(&bytes)?;
+        let bytes = store::local_bounded(path, super::executable::MAX_ARCHIVE)?;
+        Package::parse(&bytes)?;
         Ok(bytes)
     }
 }
@@ -97,8 +113,8 @@ pub async fn run(args: ExtensionArgs, workspace: Option<PathBuf>) -> Result<()> 
         }
         ExtensionCommand::Install { source: path } => {
             let bytes = source(&path)?;
-            let archive = Archive::parse(&bytes)?;
-            catalog.mutate(args.scope, &archive.manifest.id, None, Some(&bytes), None)?;
+            let archive = Package::parse(&bytes)?;
+            catalog.mutate(args.scope, archive.id(), None, Some(&bytes), None)?;
             println!("{}", super::digest(&bytes));
         }
         ExtensionCommand::Update {
@@ -137,6 +153,18 @@ pub async fn run(args: ExtensionArgs, workspace: Option<PathBuf>) -> Result<()> 
         ),
         ExtensionCommand::Enable { id, expected } => {
             catalog.mutate(args.scope, &id, Some(&expected), None, Some(true))?
+        }
+        ExtensionCommand::ReviewExecutable {
+            id,
+            expected,
+            capabilities,
+        } => catalog.review_executable(args.scope, &id, &expected, &capabilities)?,
+        ExtensionCommand::ExecutionGrants => println!(
+            "{}",
+            serde_json::to_string_pretty(&catalog.execution_records()?)?
+        ),
+        ExtensionCommand::RevokeExecution { binding, expected } => {
+            catalog.revoke_execution(&binding, &expected)?
         }
         ExtensionCommand::Disable { id, expected } => {
             catalog.mutate(args.scope, &id, Some(&expected), None, Some(false))?
