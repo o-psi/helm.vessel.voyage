@@ -136,8 +136,6 @@ pub struct Snapshot {
     #[serde(default)]
     pub created_at: Option<chrono::DateTime<chrono::Utc>>,
     #[serde(default)]
-    pub last_message_at: Option<chrono::DateTime<chrono::Utc>>,
-    #[serde(default)]
     pub observation_cursor: Option<u64>,
     pub name: Option<String>,
     pub model: String,
@@ -324,7 +322,7 @@ fn default_name(name: &str) -> bool {
 }
 
 impl super::App {
-    /// One activity order for both presentation and keyboard navigation. Unknown
+    /// One turn-end order for both presentation and keyboard navigation. Unknown
     /// timestamps (older owners or unavailable snapshots) sort last, not as now.
     pub(super) fn ordered_targets(&self) -> Vec<Target> {
         let mut targets: Vec<_> = self
@@ -341,7 +339,7 @@ impl super::App {
             let activity = self.views[target]
                 .snapshot
                 .as_ref()
-                .and_then(|snapshot| snapshot.last_message_at.or(snapshot.created_at));
+                .and_then(Snapshot::last_turn_end);
             (
                 self.views[target].sidebar_settled(self.presentation_now, self.settle_after_secs),
                 std::cmp::Reverse(activity),
@@ -349,5 +347,85 @@ impl super::App {
             )
         });
         targets
+    }
+}
+
+impl Snapshot {
+    /// In-flight messages never move a voyage; all terminal outcomes count.
+    fn last_turn_end(&self) -> Option<chrono::DateTime<chrono::Utc>> {
+        self.turns
+            .iter()
+            .filter_map(|turn| turn.finished_at)
+            .max()
+            .or(self.created_at)
+    }
+}
+
+#[cfg(test)]
+mod ordering_tests {
+    use super::*;
+    use chrono::{DateTime, Utc};
+    use serde_json::json;
+
+    fn time(seconds: i64) -> DateTime<Utc> {
+        DateTime::from_timestamp(seconds, 0).unwrap()
+    }
+
+    fn snapshot(created: Option<i64>, message: i64, turns: &[(&str, Option<i64>)]) -> Snapshot {
+        serde_json::from_value(json!({
+            "session_id": Uuid::nil(), "revision": 1, "model": "fixture",
+            "messages": [], "created_at": created.map(time), "last_message_at": time(message),
+            "turns": turns.iter().map(|(phase, end)| json!({
+                "run_id": Uuid::new_v4(), "phase": phase, "finished_at": end.map(time)
+            })).collect::<Vec<_>>()
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn concurrent_messages_do_not_change_turn_end_recency() {
+        let mut running = snapshot(
+            Some(10),
+            900,
+            &[("completed", Some(100)), ("running", None)],
+        );
+        let finished = snapshot(Some(20), 150, &[("completed", Some(200))]);
+        assert!(finished.last_turn_end() > running.last_turn_end());
+        running.messages.push(Message {
+            created_at: Some(time(1000)),
+            ..Message::default()
+        });
+        assert_eq!(running.last_turn_end(), Some(time(100)));
+        running.turns.last_mut().unwrap().finished_at = Some(time(1100));
+        assert!(running.last_turn_end() > finished.last_turn_end());
+    }
+
+    #[test]
+    fn latest_end_counts_for_every_outcome_not_vector_order() {
+        for phase in ["completed", "failed", "cancelled", "interrupted"] {
+            let value = snapshot(
+                Some(10),
+                900,
+                &[
+                    (phase, Some(200)),
+                    ("completed", Some(100)),
+                    ("running", None),
+                ],
+            );
+            assert_eq!(value.last_turn_end(), Some(time(200)));
+        }
+    }
+
+    #[test]
+    fn missing_turn_ends_use_creation_never_messages_or_observation_time() {
+        assert_eq!(snapshot(Some(10), 900, &[]).last_turn_end(), Some(time(10)));
+        assert_eq!(
+            snapshot(Some(10), 900, &[("running", None)]).last_turn_end(),
+            Some(time(10))
+        );
+        assert_eq!(
+            snapshot(None, 900, &[("completed", None)]).last_turn_end(),
+            None
+        );
     }
 }
