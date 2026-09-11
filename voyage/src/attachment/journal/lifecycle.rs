@@ -185,7 +185,9 @@ impl Journal {
                     (1..=100_000).contains(retain),
                     "retain must be 1..100000 messages"
                 );
-                receipt["removed_messages"] = json!(saved.session.compact(*retain as usize));
+                receipt["compacted_messages"] = json!(saved.session.compact(*retain as usize)?);
+                receipt["canonical_preserved"] = json!(true);
+                receipt["removed_messages"] = json!(0);
             }
             RuntimeCommand::Archive { archived, .. } => {
                 tx.execute(

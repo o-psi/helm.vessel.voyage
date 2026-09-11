@@ -136,10 +136,9 @@ impl Session {
         self.reanchor_run_summaries();
     }
 
-    pub fn compact(&mut self, retain: usize) -> usize {
-        let removed = compact_messages(&mut self.messages, retain);
-        self.reanchor_run_summaries();
-        removed
+    /// Compact only provider working context, preserving canonical text and anchors.
+    pub fn compact(&mut self, retain: usize) -> Result<usize> {
+        self.working_context.compact(&self.messages, retain)
     }
 
     pub(super) fn reanchor_run_summaries(&mut self) {

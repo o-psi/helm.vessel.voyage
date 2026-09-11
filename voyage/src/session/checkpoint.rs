@@ -95,6 +95,32 @@ impl RunCheckpoint for SessionCheckpoint {
         self.run_id
     }
 
+    async fn working_context(&self) -> Result<crate::context::WorkingContext, CheckpointError> {
+        let session = self.session.lock().await;
+        self.validate(&session)?;
+        session
+            .working_context
+            .validate(&session.messages)
+            .map_err(|_| CheckpointError)?;
+        Ok(session.working_context.clone())
+    }
+
+    async fn save_working_context(
+        &self,
+        context: &crate::context::WorkingContext,
+    ) -> Result<(), CheckpointError> {
+        let mut session = self.session.lock().await;
+        self.validate(&session)?;
+        context
+            .validate(&session.messages)
+            .map_err(|_| CheckpointError)?;
+        let mut next = session.clone();
+        next.working_context = context.clone();
+        self.persist(&mut next).await?;
+        *session = next;
+        Ok(())
+    }
+
     async fn canonical(&self, messages: &[Message], usage: &Usage) -> Result<(), CheckpointError> {
         let mut session = self.session.lock().await;
         self.validate(&session)?;
@@ -192,5 +218,73 @@ impl RunCheckpoint for SessionCheckpoint {
         self.persist(&mut next).await?;
         *session = next;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod working_context_tests {
+    use super::*;
+    use crate::model::Role;
+
+    #[tokio::test]
+    async fn working_projection_checkpoint_survives_reload_without_replacing_canonical() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = SessionStore::new(directory.path().join("sessions"));
+        let mut session = Session::new(directory.path().to_path_buf(), "fixture".into());
+        for index in 0..12 {
+            session
+                .messages
+                .push(Message::new(Role::User, format!("question {index}")));
+            session
+                .messages
+                .push(Message::new(Role::Assistant, format!("answer {index}")));
+        }
+        let run_id = Uuid::new_v4();
+        session.begin_run_summary(run_id);
+        store.save(&mut session).await.unwrap();
+        let id = session.id;
+        let canonical = serde_json::to_value(&session.messages).unwrap();
+        let anchors = session.run_summaries[0].message_fingerprints.clone();
+        let start = session.run_summaries[0].message_start;
+        let end = session.run_summaries[0].message_end;
+        let revision = session.revision;
+        let checkpoint = SessionCheckpoint::new(session, Some(store.clone()), run_id);
+        let mut context = checkpoint.working_context().await.unwrap();
+        let source = checkpoint.snapshot_for_finish().await;
+        assert!(context.compact(&source.messages, 4).unwrap() > 0);
+        checkpoint.save_working_context(&context).await.unwrap();
+        let loaded = store.load(id).await.unwrap();
+        assert!(loaded.revision > revision);
+        assert_eq!(serde_json::to_value(&loaded.messages).unwrap(), canonical);
+        assert_eq!(loaded.run_summaries[0].message_fingerprints, anchors);
+        assert_eq!(loaded.run_summaries[0].message_start, start);
+        assert_eq!(loaded.run_summaries[0].message_end, end);
+        assert_eq!(
+            serde_json::to_value(&loaded.working_context).unwrap(),
+            serde_json::to_value(&context).unwrap()
+        );
+        assert!(
+            loaded
+                .working_context
+                .project(&loaded.messages)
+                .unwrap()
+                .len()
+                < loaded.messages.len()
+        );
+    }
+
+    #[tokio::test]
+    async fn wrong_run_cannot_read_or_save_projection() {
+        let mut session = Session::new(".".into(), "fixture".into());
+        session.messages.push(Message::new(Role::User, "hello"));
+        session.begin_run_summary(Uuid::new_v4());
+        let checkpoint = SessionCheckpoint::new(session, None, Uuid::new_v4());
+        assert!(checkpoint.working_context().await.is_err());
+        assert!(
+            checkpoint
+                .save_working_context(&Default::default())
+                .await
+                .is_err()
+        );
     }
 }
