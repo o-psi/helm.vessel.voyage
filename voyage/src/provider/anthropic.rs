@@ -9,7 +9,7 @@ use crate::model::{Message, ModelRequest, ModelResponse, Role, ToolCall, Usage};
 
 pub struct AnthropicProvider {
     pub(super) client: reqwest::Client,
-    api_key: String,
+    api_key: super::api_credential::ApiCredential,
     base_url: String,
     output_capacities: tokio::sync::Mutex<std::collections::BTreeMap<String, u32>>,
 }
@@ -18,7 +18,7 @@ impl AnthropicProvider {
     pub fn new(api_key: String, base_url: Option<String>) -> Self {
         Self {
             client: super::native_http_client(),
-            api_key,
+            api_key: super::api_credential::ApiCredential::Legacy(api_key),
             output_capacities: Default::default(),
             base_url: base_url
                 .unwrap_or_else(|| "https://api.anthropic.com/v1".into())
@@ -26,6 +26,13 @@ impl AnthropicProvider {
                 .into(),
         }
     }
+    pub(super) fn with_account(mut self, binding: Option<&voyage_protocol::accounts::AccountBinding>) -> Self {
+        if let Some(binding) = binding {
+            self.api_key = super::api_credential::ApiCredential::Account(binding.clone());
+        }
+        self
+    }
+
 
     // Anthropic requires max_tokens. Resolve its supported maximum rather than
     // imposing a harness default: https://platform.claude.com/docs/en/api/http/models/retrieve
@@ -45,7 +52,7 @@ impl AnthropicProvider {
             .push(&request.model);
         let response = super::endpoint_http_client(&self.client, &self.base_url)
             .get(url)
-            .header("x-api-key", &self.api_key)
+            .header("x-api-key", self.api_key.resolve()?)
             .header("anthropic-version", "2023-06-01")
             .send()
             .await
@@ -78,10 +85,13 @@ impl Provider for AnthropicProvider {
         let mut after_id: Option<String> = None;
         let mut remaining = super::catalog::MAX_BYTES;
         let mut cursors = std::collections::BTreeSet::new();
+        let mut observed_keys = Vec::new();
         loop {
+            let key = self.api_key.resolve()?;
+            observed_keys.push(key.clone());
             let mut request = super::endpoint_http_client(&self.client, &self.base_url)
                 .get(format!("{}/models", self.base_url))
-                .header("x-api-key", &self.api_key)
+                .header("x-api-key", &key)
                 .header("anthropic-version", "2023-06-01")
                 .query(&[("limit", "1000")]);
             if let Some(cursor) = &after_id {
@@ -108,7 +118,7 @@ impl Provider for AnthropicProvider {
                 model.input_modalities = super::multimodal::discovered_modalities(item)?;
                 model.display_name =
                     super::catalog::optional_text(item, "display_name", id)?.to_owned();
-                super::validate_model(&model, &[&self.api_key])?;
+                super::validate_model(&model, &observed_keys.iter().map(String::as_str).collect::<Vec<_>>())?;
                 models.push(model);
             }
             match value.get("has_more") {
@@ -126,7 +136,7 @@ impl Provider for AnthropicProvider {
                 .ok_or_else(|| {
                     ProviderError::InvalidResponse("model pagination omitted cursor".into())
                 })?;
-            super::catalog::validate_text(cursor, 512, true, &[&self.api_key])?;
+            super::catalog::validate_text(cursor, 512, true, &observed_keys.iter().map(String::as_str).collect::<Vec<_>>())?;
             if !cursors.insert(cursor.to_owned()) || cursors.len() >= super::catalog::MAX_PAGES {
                 return Err(ProviderError::InvalidResponse(
                     "model pagination repeated or exceeded 16 pages".into(),
@@ -134,7 +144,7 @@ impl Provider for AnthropicProvider {
             }
             after_id = Some(cursor.to_owned());
         }
-        super::validate_models(&models, &[&self.api_key])?;
+        super::validate_models(&models, &observed_keys.iter().map(String::as_str).collect::<Vec<_>>())?;
         normalize_models(&mut models);
         Ok(models)
     }
@@ -173,7 +183,7 @@ impl Provider for AnthropicProvider {
                 super::multimodal::check_body(&body)?;
                 let response = super::endpoint_http_client(&self.client, &self.base_url)
                     .post(format!("{}/messages", self.base_url))
-                    .header("x-api-key", &self.api_key)
+                    .header("x-api-key", self.api_key.resolve()?)
                     .header("anthropic-version", "2023-06-01")
                     .json(&body)
                     .send()
@@ -220,7 +230,7 @@ impl Provider for AnthropicProvider {
                 super::multimodal::check_body(&body)?;
                 let response = super::endpoint_http_client(&self.client, &self.base_url)
                     .post(format!("{}/messages", self.base_url))
-                    .header("x-api-key", &self.api_key)
+                    .header("x-api-key", self.api_key.resolve()?)
                     .header("anthropic-version", "2023-06-01")
                     .json(&body)
                     .send()

@@ -13,7 +13,7 @@ impl crate::EventSink for Events {
 }
 pub(super) async fn submit(
     state: &Arc<State>,
-    authorization: super::authorization::Authorization,
+    mut authorization: super::authorization::Authorization,
     command: RuntimeCommand,
 ) -> Result<Value> {
     let coordination = match &command {
@@ -109,6 +109,7 @@ pub(super) async fn submit(
             .system_prompt
             .push_str(bootstrap::WORKSPACE_RECREATED_NOTICE);
     }
+    super::authorization::account_authority(state, &mut authorization, &config)?;
     config.model = saved
         .session
         .pending_model

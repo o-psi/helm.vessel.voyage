@@ -29,7 +29,7 @@ use crate::model::{ModelRequest, ModelResponse};
 const CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
 const REFRESH_SKEW_SECS: u64 = 300;
 
-mod storage;
+pub(crate) mod storage;
 
 #[derive(Clone, Debug)]
 pub struct OAuthEndpoints {
@@ -216,7 +216,7 @@ impl Default for OAuthEndpoints {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct OAuthTokens {
     pub access_token: String,
     pub refresh_token: String,
@@ -234,7 +234,7 @@ pub struct TokenStatus {
     pub refreshable: bool,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct PkceAuthorization {
     pub url: String,
     pub verifier: String,
@@ -242,7 +242,7 @@ pub struct PkceAuthorization {
     pub redirect_uri: String,
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct DeviceAuthorization {
     pub device_auth_id: String,
     pub user_code: String,
@@ -253,6 +253,8 @@ pub struct DeviceAuthorization {
         deserialize_with = "device_poll_interval"
     )]
     pub interval: u64,
+    #[serde(default)]
+    pub expires_in: Option<u64>,
 }
 
 // The native device endpoint encodes interval as a decimal string; retain
@@ -283,6 +285,12 @@ struct DeviceToken {
 #[derive(Clone)]
 pub struct TokenStore {
     path: PathBuf,
+    binding: Option<(
+        crate::accounts::Registry,
+        voyage_protocol::accounts::AccountBinding,
+    )>,
+    legacy_default: bool,
+    initialization_error: bool,
 }
 
 /// Public registry-facing name for the native subscription credential store.
@@ -290,11 +298,35 @@ pub type ChatGptTokenStore = TokenStore;
 
 impl TokenStore {
     pub fn new(path: PathBuf) -> Self {
-        Self { path }
+        let legacy_default = Self::default_path().is_ok_and(|default| path == default);
+        let resolved = if legacy_default {
+            crate::accounts::Registry::legacy_store_binding()
+        } else {
+            Ok(None)
+        };
+        let initialization_error = resolved.is_err();
+        Self {
+            path,
+            binding: resolved.ok().flatten(),
+            legacy_default,
+            initialization_error,
+        }
     }
 
-    // Retain the legacy path so Vessel auth and Voyage execution share existing
-    // credentials without migration or resurrecting logged-out tokens.
+    pub(crate) fn bound(
+        registry: crate::accounts::Registry,
+        binding: voyage_protocol::accounts::AccountBinding,
+    ) -> Self {
+        Self {
+            path: PathBuf::new(),
+            binding: Some((registry, binding)),
+            legacy_default: false,
+            initialization_error: false,
+        }
+    }
+
+    // Retain the legacy filename. After explicit registry migration, new stores
+    // resolve its stable account UUID; reads never initiate migration or resurrect login.
     pub fn default_path() -> Result<PathBuf, ProviderError> {
         dirs::data_local_dir()
             .map(|root| root.join("helm").join("chatgpt-oauth.json"))
@@ -306,15 +338,57 @@ impl TokenStore {
     }
 
     pub async fn load(&self) -> Result<Option<OAuthTokens>, ProviderError> {
-        let Some(bytes) = self.private_bytes().await? else {
-            return Ok(None);
-        };
-        let tokens: Option<OAuthTokens> = serde_json::from_slice(&bytes)
-            .map_err(|_| ProviderError::Authentication("invalid ChatGPT token cache".into()))?;
-        if let Some(tokens) = &tokens {
-            validate_tokens(tokens)?;
+        if self.initialization_error {
+            return Err(private_cache_error());
         }
-        Ok(tokens)
+        // Instances created before migration must stop rather than read the retained old cache.
+        if self.legacy_default
+            && self.binding.is_none()
+            && crate::accounts::Registry::legacy_store_binding()
+                .map_err(account_error)?
+                .is_some()
+        {
+            return Err(ProviderError::Authentication(
+                "legacy credentials migrated; recreate provider with the account binding".into(),
+            ));
+        }
+        // Re-read after bounded waits so independent voyages reuse completed rotation.
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
+        loop {
+            let result = if let Some((registry, binding)) = &self.binding {
+                if self.legacy_default
+                    && registry.legacy_logged_out(binding).map_err(account_error)?
+                {
+                    Ok(None)
+                } else {
+                    registry
+                        .oauth_load(binding)
+                        .map(Some)
+                        .map_err(account_error)
+                }
+            } else {
+                let path = self.path.clone();
+                let bytes = tokio::task::spawn_blocking(move || storage::read_tokens(&path))
+                    .await
+                    .map_err(|_| private_cache_error())?
+                    .map_err(|_| private_cache_error());
+                bytes.and_then(|bytes| match bytes {
+                    None => Ok(None),
+                    Some(bytes) => serde_json::from_slice::<Option<OAuthTokens>>(&bytes)
+                        .map_err(|_| private_cache_error()),
+                })
+            };
+            match result {
+                Ok(tokens) => {
+                    if let Some(t) = &tokens {
+                        validate_tokens(t)?;
+                    }
+                    return Ok(tokens);
+                }
+                Err(error) if tokio::time::Instant::now() >= deadline => return Err(error),
+                Err(_) => tokio::time::sleep(Duration::from_millis(100)).await,
+            }
+        }
     }
 
     async fn private_bytes(&self) -> Result<Option<Vec<u8>>, ProviderError> {
@@ -335,6 +409,34 @@ impl TokenStore {
 
     pub async fn save(&self, tokens: &OAuthTokens) -> Result<(), ProviderError> {
         validate_tokens(tokens)?;
+        if self.initialization_error {
+            return Err(private_cache_error());
+        }
+        if let Some((registry, binding)) = &self.binding {
+            if self.legacy_default {
+                return registry
+                    .reauthenticate_oauth(
+                        binding.account_id,
+                        binding.identity_generation,
+                        tokens.clone(),
+                        true,
+                    )
+                    .map(|_| ())
+                    .map_err(account_error);
+            }
+            return registry
+                .oauth_save(binding, tokens, None)
+                .map_err(account_error);
+        }
+        if self.legacy_default
+            && crate::accounts::Registry::legacy_store_binding()
+                .map_err(account_error)?
+                .is_some()
+        {
+            return Err(ProviderError::Authentication(
+                "legacy credentials migrated; restart authentication command".into(),
+            ));
+        }
         let bytes = serde_json::to_vec(tokens).map_err(|_| private_cache_error())?;
         if bytes.len() > storage::LIMIT {
             return Err(private_cache_error());
@@ -343,6 +445,24 @@ impl TokenStore {
     }
 
     pub async fn clear(&self) -> Result<(), ProviderError> {
+        if self.initialization_error {
+            return Err(private_cache_error());
+        }
+        if self.legacy_default
+            && self.binding.is_none()
+            && crate::accounts::Registry::legacy_store_binding()
+                .map_err(account_error)?
+                .is_some()
+        {
+            return Err(ProviderError::Authentication(
+                "legacy credentials migrated; restart authentication command".into(),
+            ));
+        }
+        if let Some((registry, binding)) = &self.binding {
+            return registry
+                .logout(binding.account_id, false)
+                .map_err(account_error);
+        }
         self.publish(None).await
     }
 
@@ -369,6 +489,13 @@ impl TokenStore {
                 "Local ChatGPT credentials already exist".into(),
             ));
         }
+        let tokens = Self::read_import_tokens(source).await?;
+        self.save(&tokens).await?;
+        Ok(tokens)
+    }
+
+    /// Private explicit import input. Does not execute Codex or publish credentials.
+    pub async fn read_import_tokens(source: &Path) -> Result<OAuthTokens, ProviderError> {
         let bytes = Self::new(source.to_owned())
             .private_bytes()
             .await?
@@ -401,7 +528,7 @@ impl TokenStore {
             expires_at,
             account_id,
         };
-        self.save(&tokens).await?;
+        validate_tokens(&tokens)?;
         Ok(tokens)
     }
 
@@ -568,6 +695,7 @@ impl ChatGptOAuth {
         super::validate_native_endpoint(&self.endpoints.device_user_code)?;
         let response = super::endpoint_http_client(&self.client, &self.endpoints.device_user_code)
             .post(&self.endpoints.device_user_code)
+            .timeout(Duration::from_secs(30))
             .json(&serde_json::json!({"client_id": CLIENT_ID}))
             .send()
             .await
@@ -579,11 +707,7 @@ impl ChatGptOAuth {
                 response.status()
             )));
         }
-        response.json().await.map_err(|error| {
-            ProviderError::InvalidResponse(format!(
-                "invalid device authorization response: {error}"
-            ))
-        })
+        auth_json(response).await
     }
 
     /// Performs one device-flow poll; callers retry pending responses after `interval`.
@@ -591,22 +715,49 @@ impl ChatGptOAuth {
         &self,
         device: &DeviceAuthorization,
     ) -> Result<OAuthTokens, ProviderError> {
+        let tokens = self.poll_device_unpublished(device).await?;
+        self.replace(tokens.clone()).await?;
+        Ok(tokens)
+    }
+
+    /// Host enrollment uses this seam: publication belongs to its durable transaction.
+    pub async fn poll_device_unpublished(
+        &self,
+        device: &DeviceAuthorization,
+    ) -> Result<OAuthTokens, ProviderError> {
         super::validate_native_endpoint(&self.endpoints.device_token)?;
-        let response = super::endpoint_http_client(&self.client, &self.endpoints.device_token).post(&self.endpoints.device_token).json(&serde_json::json!({"device_auth_id":device.device_auth_id,"user_code":device.user_code})).send().await.map_err(map_request)?;
+        let response = super::endpoint_http_client(&self.client, &self.endpoints.device_token).post(&self.endpoints.device_token).timeout(Duration::from_secs(30)).json(&serde_json::json!({"device_auth_id":device.device_auth_id,"user_code":device.user_code})).send().await.map_err(map_request)?;
         super::reject_redirect(&response)?;
         if !response.status().is_success() {
-            return match response.status().as_u16() {
-                403 | 404 => Err(ProviderError::Unavailable(
+            let status = response.status().as_u16();
+            let body: Value = auth_json(response).await?;
+            let code = body
+                .get("error")
+                .and_then(Value::as_str)
+                .or_else(|| body.pointer("/error/code").and_then(Value::as_str))
+                .or_else(|| body.get("code").and_then(Value::as_str));
+            return match code {
+                Some("authorization_pending") => Err(ProviderError::Unavailable(
                     "device authorization pending".into(),
                 )),
-                status => Err(ProviderError::Authentication(format!(
-                    "device authorization poll failed with HTTP {status}"
-                ))),
+                Some("slow_down") => Err(ProviderError::Unavailable(
+                    "device authorization slow_down".into(),
+                )),
+                Some("access_denied") => Err(ProviderError::Authentication(
+                    "device authorization denied".into(),
+                )),
+                Some("expired_token") => Err(ProviderError::Authentication(
+                    "device authorization expired".into(),
+                )),
+                None if status == 403 || status == 404 => Err(ProviderError::Unavailable(
+                    "device authorization pending".into(),
+                )),
+                _ => Err(ProviderError::Authentication(
+                    "device authorization poll failed".into(),
+                )),
             };
         }
-        let grant: DeviceToken = response.json().await.map_err(|error| {
-            ProviderError::InvalidResponse(format!("invalid device token response: {error}"))
-        })?;
+        let grant: DeviceToken = auth_json(response).await?;
         let tokens = self
             .exchange(&[
                 ("grant_type", "authorization_code"),
@@ -619,7 +770,7 @@ impl ChatGptOAuth {
                 ),
             ])
             .await?;
-        self.replace(tokens.clone()).await?;
+        validate_tokens(&tokens)?;
         Ok(tokens)
     }
 
@@ -631,9 +782,7 @@ impl ChatGptOAuth {
 
     pub async fn status(&self) -> TokenStatus {
         let mut tokens = self.tokens.lock().await;
-        if tokens.is_none() {
-            *tokens = self.store.load().await.ok().flatten();
-        }
+        *tokens = self.store.load().await.ok().flatten();
         TokenStatus {
             authenticated: tokens.is_some(),
             account_id: tokens.as_ref().map(|value| value.account_id.clone()),
@@ -670,15 +819,38 @@ impl ChatGptOAuth {
 
     async fn valid_tokens(&self) -> Result<OAuthTokens, ProviderError> {
         let mut guard = self.tokens.lock().await;
-        if guard.is_none() {
-            *guard = self.store.load().await?;
-        }
+        *guard = self.store.load().await?;
         let current = guard
             .clone()
             .ok_or_else(|| ProviderError::Authentication("ChatGPT login required".into()))?;
         if current.expires_at > now_secs().saturating_add(REFRESH_SKEW_SECS) {
             return Ok(current);
         }
+        let claim = if let Some((registry, binding)) = &self.store.binding {
+            registry
+                .refresh_begin(binding, &current)
+                .map_err(account_error)
+        } else {
+            let path = self.store.path.clone();
+            let expected = current.clone();
+            tokio::task::spawn_blocking(move || storage::begin_refresh(&path, &expected))
+                .await
+                .map_err(|_| private_cache_error())?
+                .map_err(|_| private_cache_error())
+        };
+        let fence = match claim {
+            Ok(fence) => fence,
+            Err(error) => {
+                // Another process may have rotated since our read. Never replay its effect.
+                if let Some(latest) = self.store.load().await? {
+                    if latest.expires_at > now_secs().saturating_add(REFRESH_SKEW_SECS) {
+                        *guard = Some(latest.clone());
+                        return Ok(latest);
+                    }
+                }
+                return Err(error);
+            }
+        };
         let mut refreshed = self
             .exchange(&[
                 ("grant_type", "refresh_token"),
@@ -687,9 +859,24 @@ impl ChatGptOAuth {
             ])
             .await?;
         if refreshed.refresh_token.is_empty() {
-            refreshed.refresh_token = current.refresh_token;
+            refreshed.refresh_token = current.refresh_token.clone();
         }
-        self.store.save(&refreshed).await?;
+        validate_tokens(&refreshed)?;
+        if let Some((registry, binding)) = &self.store.binding {
+            registry
+                .oauth_save(binding, &refreshed, Some(fence))
+                .map_err(account_error)?;
+        } else {
+            let path = self.store.path.clone();
+            let previous = current.clone();
+            let next = refreshed.clone();
+            tokio::task::spawn_blocking(move || {
+                storage::commit_refresh(&path, &previous, &next, fence)
+            })
+            .await
+            .map_err(|_| private_cache_error())?
+            .map_err(|_| private_cache_error())?;
+        }
         *guard = Some(refreshed.clone());
         Ok(refreshed)
     }
@@ -704,10 +891,15 @@ impl ChatGptOAuth {
         super::validate_native_endpoint(&self.endpoints.token)?;
         let response = super::endpoint_http_client(&self.client, &self.endpoints.token)
             .post(&self.endpoints.token)
+            .timeout(Duration::from_secs(30))
             .form(form)
             .send()
             .await
-            .map_err(|error| ProviderError::Request(error.to_string()))?;
+            .map_err(|_| {
+                ProviderError::Request(
+                    "OAuth exchange transport failed; outcome may be uncertain".into(),
+                )
+            })?;
         super::reject_redirect(&response)?;
         if !response.status().is_success() {
             return Err(ProviderError::Authentication(format!(
@@ -715,9 +907,7 @@ impl ChatGptOAuth {
                 response.status()
             )));
         }
-        let raw: TokenResponse = response.json().await.map_err(|error| {
-            ProviderError::InvalidResponse(format!("invalid OAuth response: {error}"))
-        })?;
+        let raw: TokenResponse = auth_json(response).await?;
         let account_id = raw
             .account_id
             .or_else(|| raw.id_token.as_deref().and_then(account_id_from_jwt))
@@ -763,11 +953,18 @@ fn map_request(error: reqwest::Error) -> ProviderError {
     }
 }
 
-fn validate_tokens(value: &OAuthTokens) -> Result<(), ProviderError> {
+pub(crate) fn validate_tokens(value: &OAuthTokens) -> Result<(), ProviderError> {
     if value.access_token.is_empty()
         || value.refresh_token.is_empty()
         || value.account_id.is_empty()
         || value.expires_at == 0
+        || value.access_token.len() > 16_384
+        || value.refresh_token.len() > 16_384
+        || value.account_id.len() > 512
+        || value.id_token.as_ref().is_some_and(|v| v.len() > 16_384)
+        || value.access_token.chars().any(char::is_control)
+        || value.refresh_token.chars().any(char::is_control)
+        || value.account_id.chars().any(char::is_control)
     {
         return Err(ProviderError::Authentication(
             "ChatGPT token set is incomplete".into(),
@@ -929,4 +1126,31 @@ fn filter_response_tier(response: &mut ModelResponse, tokens: &OAuthTokens) {
     }) {
         response.service_tier = None;
     }
+}
+
+fn account_error(_: anyhow::Error) -> ProviderError {
+    ProviderError::Authentication(
+        "account revoked, changed, busy or uncertain; inspect host account status".into(),
+    )
+}
+
+async fn auth_json<T: serde::de::DeserializeOwned>(
+    mut response: reqwest::Response,
+) -> Result<T, ProviderError> {
+    let read = async {
+        let mut bytes = Vec::new();
+        while let Some(chunk) = response.chunk().await.map_err(|_| private_cache_error())? {
+            if bytes.len().saturating_add(chunk.len()) > storage::LIMIT {
+                return Err(ProviderError::InvalidResponse(
+                    "OAuth response exceeds bound".into(),
+                ));
+            }
+            bytes.extend_from_slice(&chunk);
+        }
+        serde_json::from_slice(&bytes)
+            .map_err(|_| ProviderError::InvalidResponse("invalid OAuth response".into()))
+    };
+    tokio::time::timeout(Duration::from_secs(30), read)
+        .await
+        .map_err(|_| ProviderError::Timeout("OAuth response timed out".into()))?
 }

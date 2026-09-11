@@ -1,6 +1,7 @@
 pub(crate) mod multimodal;
 pub use multimodal::validate_image_capability;
 mod anthropic;
+mod api_credential;
 mod catalog;
 mod inference;
 pub use catalog::{validate_model, validate_models, validate_models_for_display};
@@ -10,7 +11,7 @@ pub use inference::{
     resolve_inference, resolve_inference_values, validate_inference_settings,
     validate_inference_settings_with_model,
 };
-mod chatgpt_oauth;
+pub(crate) mod chatgpt_oauth;
 pub(crate) mod discovery;
 mod openai;
 mod openai_responses;
@@ -284,6 +285,21 @@ pub trait Provider: Send + Sync {
 }
 
 pub fn from_config(config: &Config) -> Result<Box<dyn Provider>, ProviderError> {
+    config
+        .validate_account()
+        .map_err(|e| ProviderError::Authentication(e.to_string()))?;
+    if config.account.is_some() {
+        return Ok(Box::new(BoundProvider {
+            config: config.clone(),
+        }));
+    }
+    native_from_config(config)
+}
+
+fn native_from_config(config: &Config) -> Result<Box<dyn Provider>, ProviderError> {
+    config
+        .validate_account()
+        .map_err(|e| ProviderError::Authentication(e.to_string()))?;
     validate_config_endpoints(config)?;
     validate_inference_settings(config)
         .map_err(|error| ProviderError::Request(error.to_string()))?;
@@ -293,7 +309,7 @@ pub fn from_config(config: &Config) -> Result<Box<dyn Provider>, ProviderError> 
                 .api_key()
                 .map_err(|e| ProviderError::Authentication(e.to_string()))?,
             config.base_url.clone(),
-        ))),
+        ).with_account(config.account.as_ref()))),
         ProviderKind::OpenaiChat => Ok(Box::new(
             OpenAiProvider::new(
                 config
@@ -301,9 +317,16 @@ pub fn from_config(config: &Config) -> Result<Box<dyn Provider>, ProviderError> 
                     .map_err(|e| ProviderError::Authentication(e.to_string()))?,
                 config.base_url.clone(),
             )
+            .with_account(config.account.as_ref())
             .with_max_tokens_parameter(config.chat_use_max_tokens),
         )),
         ProviderKind::ChatGptOauth => {
+            if let Some(binding) = &config.account {
+                return crate::accounts::Registry::default_host()
+                    .and_then(|registry| registry.oauth_provider(binding))
+                    .map(|provider| Box::new(provider) as Box<dyn Provider>)
+                    .map_err(|e| ProviderError::Authentication(e.to_string()));
+            }
             let store = ChatGptTokenStore::new(ChatGptTokenStore::default_path()?);
             let mut endpoints = OAuthEndpoints::default();
             if let Some(base) = config.chatgpt_base_url.as_deref() {
@@ -318,7 +341,7 @@ pub fn from_config(config: &Config) -> Result<Box<dyn Provider>, ProviderError> 
                 .api_key()
                 .map_err(|e| ProviderError::Authentication(e.to_string()))?,
             config.base_url.clone(),
-        ))),
+        ).with_account(config.account.as_ref()))),
     }
 }
 
@@ -491,4 +514,22 @@ pub(crate) fn reported_service_tier(value: Option<&serde_json::Value>) -> Option
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-'))
     .then(|| text.to_owned())
+}
+
+/// Own the admitted configuration, not a credential snapshot. Every request and
+/// retry constructs a native adapter with the current same-identity credential.
+struct BoundProvider {
+    config: Config,
+}
+#[async_trait]
+impl Provider for BoundProvider {
+    async fn models(&self) -> Result<Vec<ModelInfo>, ProviderError> {
+        native_from_config(&self.config)?.models().await
+    }
+    async fn complete(&self, request: ModelRequest) -> Result<ModelResponse, ProviderError> {
+        native_from_config(&self.config)?.complete(request).await
+    }
+    async fn stream(&self, request: ModelRequest) -> Result<ProviderStream, ProviderError> {
+        native_from_config(&self.config)?.stream(request).await
+    }
 }

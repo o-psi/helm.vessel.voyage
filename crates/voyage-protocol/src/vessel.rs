@@ -266,6 +266,15 @@ pub enum VoyageCommand {
         reasoning_effort: Option<String>,
         service_tier: Option<String>,
     },
+    SetAccountInference {
+        command_id: Uuid,
+        expected_revision: u64,
+        expires_at_ms: u64,
+        model: String,
+        reasoning_effort: Option<String>,
+        service_tier: Option<String>,
+        account: crate::accounts::AccountBinding,
+    },
     SetModel {
         command_id: Uuid,
         expected_revision: u64,
@@ -328,7 +337,7 @@ impl VoyageCommand {
             | Self::Steer { command_id, .. }
             | Self::Rename { command_id, .. }
             | Self::SetModel { command_id, .. }
-            | Self::SetInference { command_id, .. }
+            | Self::SetInference { command_id, .. } | Self::SetAccountInference { command_id, .. }
             | Self::Archive { command_id, .. }
             | Self::Delete { command_id, .. }
             | Self::Respond { command_id, .. } => Some(*command_id),
@@ -433,6 +442,10 @@ pub enum VesselCommand {
         session_id: Uuid,
         workspace: PathBuf,
         rights: Vec<ProcessRight>,
+        #[serde(default)]
+        accounts: Vec<Uuid>,
+        #[serde(default)]
+        enrollment_connections: Vec<Uuid>,
         expires_at_ms: u64,
         endpoint: String,
     },
@@ -450,6 +463,27 @@ pub enum VesselCommand {
     },
     Capabilities,
     Catalogue,
+    /// Safe host catalogue; scope is checked before reading account metadata.
+    Accounts { workspace: PathBuf, transport: Option<crate::accounts::Transport> },
+    AccountDefaults { workspace: PathBuf },
+    AccountModels { workspace: PathBuf, account: crate::accounts::AccountBinding },
+    StartAccount {
+        command_id: Uuid, session_id: Uuid, workspace: PathBuf,
+        account: crate::accounts::AccountBinding, model: String,
+        reasoning_effort: Option<String>, service_tier: Option<String>,
+    },
+    ResolveStartAccount {
+        command_id: Uuid, session_id: Uuid, workspace: PathBuf,
+        account: crate::accounts::AccountBinding, model: String,
+        reasoning_effort: Option<String>, service_tier: Option<String>,
+    },
+    EnrollAccount {
+        command_id: Uuid, enrollment_id: Uuid, workspace: PathBuf,
+        connection_id: Uuid, alias: String, label: String,
+    },
+    CancelAccountEnrollment { command_id: Uuid, enrollment_id: Uuid, workspace: PathBuf },
+    /// Human-only private read. MUST NOT be journaled, exposed to tools, SSE or history.
+    PrivateAccountEnrollment { enrollment_id: Uuid, workspace: PathBuf },
     Start {
         command_id: Uuid,
         session_id: Uuid,

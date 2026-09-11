@@ -93,6 +93,12 @@ impl Journal {
             expires_at_ms,
             ..
         }
+        | RuntimeCommand::SetAccountInference {
+            command_id,
+            expected_revision,
+            expires_at_ms,
+            ..
+        }
         | RuntimeCommand::SetAccess {
             command_id,
             expected_revision,
@@ -133,7 +139,10 @@ impl Journal {
             |r| r.get(0),
         )?;
         let access_only = matches!(&command, RuntimeCommand::SetAccess { .. });
-        let inference_only = matches!(&command, RuntimeCommand::SetInference { .. });
+        let inference_only = matches!(
+            &command,
+            RuntimeCommand::SetInference { .. } | RuntimeCommand::SetAccountInference { .. }
+        );
         ensure!(
             ((access_only || inference_only) && active > 0)
                 || (active == 0

@@ -50,8 +50,9 @@ impl Supervisor {
                 self.observe_assignment(&grant, assignment_id, true).await
             }
             VesselCommand::Capabilities => Ok(
-                json!({"protocol":VESSEL_API_VERSION,"version":env!("CARGO_PKG_VERSION"),"vessel_id":crate::process::identity::public(&self.directory)?.vessel_id,"principal_id":grant.principal_id,"scope":"session","session_id":grant.session_id,"grant_revision":grant.revision,"rights":grant.rights,"expires_at_ms":grant.expires_at_ms,"features":["scoped_catalogue","voyage_operations","sse_events","grant_revocation","start_resolution"]}),
+                json!({"protocol":VESSEL_API_VERSION,"version":env!("CARGO_PKG_VERSION"),"vessel_id":crate::process::identity::public(&self.directory)?.vessel_id,"principal_id":grant.principal_id,"scope":"session","session_id":grant.session_id,"grant_revision":grant.revision,"rights":grant.rights,"expires_at_ms":grant.expires_at_ms,"features":["scoped_catalogue","voyage_operations","sse_events","grant_revocation","start_resolution","provider_accounts","account_start","private_account_enrollment"]}),
             ),
+            command @ (VesselCommand::Accounts { .. } | VesselCommand::AccountDefaults { .. } | VesselCommand::AccountModels { .. } | VesselCommand::StartAccount { .. } | VesselCommand::ResolveStartAccount { .. } | VesselCommand::EnrollAccount { .. } | VesselCommand::CancelAccountEnrollment { .. } | VesselCommand::PrivateAccountEnrollment { .. }) => self.host_accounts(command, crate::process::accounts::Scope::Session(grant.clone())).await,
             VesselCommand::Catalogue => {
                 has(ProcessRight::Observe)?;
                 match self.registration(grant.session_id).await {

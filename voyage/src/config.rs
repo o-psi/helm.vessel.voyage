@@ -99,6 +99,8 @@ pub struct Config {
     /// Explicit GitHub capability; the named credential never enters child environment.
     pub github_enabled: bool,
     pub provider: ProviderKind,
+    /// Frozen executing-host identity; absent preserves legacy credential behavior.
+    pub account: Option<voyage_protocol::accounts::AccountBinding>,
     pub model: String,
     pub api_key_env: String,
     /// Explicit opt-out only for a configured native compatible endpoint.
@@ -420,6 +422,7 @@ impl Default for Config {
             chat_preferences: None,
             github_enabled: false,
             provider: ProviderKind::OpenaiResponses,
+            account: None,
             model: "gpt-5".into(),
             api_key_env: "OPENAI_API_KEY".into(),
             api_key_required: true,
@@ -521,7 +524,66 @@ impl Config {
         Ok(config)
     }
 
+    /// Apply an explicit, exact host selection. Never refresh a saved generation.
+    pub fn select_account(
+        &mut self,
+        binding: voyage_protocol::accounts::AccountBinding,
+    ) -> Result<()> {
+        use voyage_protocol::accounts::Transport;
+        let registry = crate::accounts::Registry::default_host()?;
+        registry.validate_binding(&binding)?;
+        let connection = registry.connection(binding.connection_id)?;
+        self.provider = match binding.transport {
+            Transport::OpenaiResponses => ProviderKind::OpenaiResponses,
+            Transport::OpenaiChat => ProviderKind::OpenaiChat,
+            Transport::ChatgptOauth => ProviderKind::ChatGptOauth,
+            Transport::Anthropic => ProviderKind::Anthropic,
+        };
+        if self.provider == ProviderKind::ChatGptOauth {
+            self.chatgpt_base_url = Some(connection.endpoint);
+        } else {
+            self.base_url = Some(connection.endpoint);
+        }
+        self.account = Some(binding);
+        self.validate_account()
+    }
+    pub fn validate_account(&self) -> Result<()> {
+        if let Some(binding) = &self.account {
+            use voyage_protocol::accounts::Transport;
+            let transport = match self.provider {
+                ProviderKind::OpenaiResponses => Transport::OpenaiResponses,
+                ProviderKind::OpenaiChat => Transport::OpenaiChat,
+                ProviderKind::ChatGptOauth => Transport::ChatgptOauth,
+                ProviderKind::Anthropic => Transport::Anthropic,
+            };
+            anyhow::ensure!(binding.transport == transport, "account transport mismatch");
+            let registry = crate::accounts::Registry::default_host()?;
+            registry.validate_binding(binding)?;
+            let connection = registry.connection(binding.connection_id)?;
+            let endpoint = match self.provider {
+                ProviderKind::ChatGptOauth => self
+                    .chatgpt_base_url
+                    .as_deref()
+                    .unwrap_or("https://chatgpt.com/backend-api/codex"),
+                ProviderKind::Anthropic => self
+                    .base_url
+                    .as_deref()
+                    .unwrap_or("https://api.anthropic.com/v1"),
+                _ => self
+                    .base_url
+                    .as_deref()
+                    .unwrap_or("https://api.openai.com/v1"),
+            };
+            anyhow::ensure!(endpoint == connection.endpoint, "account endpoint mismatch");
+        }
+        Ok(())
+    }
+
     pub fn api_key(&self) -> Result<String> {
+        if let Some(binding) = &self.account {
+            self.validate_account()?;
+            return crate::accounts::Registry::default_host()?.resolve_api_key(binding);
+        }
         if !self.api_key_required {
             self.validate()?;
             return Ok(String::new());

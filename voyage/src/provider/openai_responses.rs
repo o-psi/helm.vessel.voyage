@@ -13,7 +13,7 @@ use crate::model::{Message, ModelRequest, ModelResponse, Role, ToolCall, Usage};
 /// Chat Completions adapter because the wire formats and streaming events differ.
 pub struct OpenAiResponsesProvider {
     client: reqwest::Client,
-    api_key: String,
+    api_key: super::api_credential::ApiCredential,
     base_url: String,
 }
 
@@ -21,19 +21,26 @@ impl OpenAiResponsesProvider {
     pub fn new(api_key: String, base_url: Option<String>) -> Self {
         Self {
             client: super::native_http_client(),
-            api_key,
+            api_key: super::api_credential::ApiCredential::Legacy(api_key),
             base_url: base_url
                 .unwrap_or_else(|| "https://api.openai.com/v1".into())
                 .trim_end_matches('/')
                 .into(),
         }
     }
+    pub(super) fn with_account(mut self, binding: Option<&voyage_protocol::accounts::AccountBinding>) -> Self {
+        if let Some(binding) = binding {
+            self.api_key = super::api_credential::ApiCredential::Account(binding.clone());
+        }
+        self
+    }
+
 }
 
 #[async_trait]
 impl Provider for OpenAiResponsesProvider {
     async fn models(&self) -> Result<Vec<ModelInfo>, ProviderError> {
-        super::discovery::models(&self.client, &self.base_url, &self.api_key)
+        super::discovery::models(&self.client, &self.base_url, &self.api_key.resolve()?)
             .await?
             .ok_or_else(|| {
                 ProviderError::InvalidResponse(
@@ -55,7 +62,7 @@ impl Provider for OpenAiResponsesProvider {
             super::multimodal::guard(images, async {
                 let response = super::endpoint_http_client(&self.client, &self.base_url)
                     .post(format!("{}/responses", self.base_url))
-                    .apply_key(&self.api_key)
+                    .apply_key(&self.api_key.resolve()?)
                     .json(&request_body(request, false)?)
                     .send()
                     .await
@@ -79,7 +86,7 @@ impl Provider for OpenAiResponsesProvider {
             super::multimodal::guard(images, async {
                 let response = super::endpoint_http_client(&self.client, &self.base_url)
                     .post(format!("{}/responses", self.base_url))
-                    .apply_key(&self.api_key)
+                    .apply_key(&self.api_key.resolve()?)
                     .json(&request_body(request, true)?)
                     .send()
                     .await

@@ -28,8 +28,9 @@ impl Supervisor {
                 "scope": "workspaces", "grant_revision": grant.revision,
                 "rights": grant.rights, "expires_at_ms": grant.expires_at_ms,
                 "workspaces": grant.workspaces,
-                "features": ["workspace_pairing", "sse_events", "scoped_catalogue", "voyage_operations", "grant_revocation","start_resolution"]
+                "features": ["workspace_pairing", "sse_events", "scoped_catalogue", "voyage_operations", "grant_revocation","start_resolution","provider_accounts","account_start","private_account_enrollment"]
             })),
+            command @ (VesselCommand::Accounts { .. } | VesselCommand::AccountDefaults { .. } | VesselCommand::AccountModels { .. } | VesselCommand::StartAccount { .. } | VesselCommand::ResolveStartAccount { .. } | VesselCommand::EnrollAccount { .. } | VesselCommand::CancelAccountEnrollment { .. } | VesselCommand::PrivateAccountEnrollment { .. }) => self.host_accounts(command, crate::process::accounts::Scope::Connection(grant.clone())).await,
             VesselCommand::Catalogue => {
                 has(ProcessRight::Catalogue)?;
                 let registrations: Vec<_> = self
@@ -226,7 +227,7 @@ impl Supervisor {
         Ok(())
     }
 
-    fn connection_session(
+    pub(crate) fn connection_session(
         &self,
         grant: &ConnectionGrant,
         session_id: Uuid,
@@ -264,6 +265,8 @@ impl Supervisor {
                     && !previous.revoked
                     && previous.expires_at_ms == grant.expires_at_ms
                     && previous.rights == rights
+                    && previous.accounts == grant.accounts
+                    && previous.enrollment_connections == grant.enrollment_connections
                     && previous.parent_grant.is_none()
                     && previous.participant_binding.is_none()
                     && previous
@@ -291,6 +294,8 @@ impl Supervisor {
                     workspace: workspace.to_owned(),
                     revision: grant.revision,
                     rights,
+                    accounts: grant.accounts.clone(),
+                    enrollment_connections: grant.enrollment_connections.clone(),
                     expires_at_ms: grant.expires_at_ms,
                     revoked: false,
                     token_hash: String::new(),

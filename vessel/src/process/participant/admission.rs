@@ -129,6 +129,8 @@ impl Supervisor {
                 workspace: binding.workspace.clone(),
                 revision: 1,
                 rights: grant.rights.clone(),
+                accounts: grant.accounts.clone(),
+                enrollment_connections: grant.enrollment_connections.clone(),
                 expires_at_ms: grant.expires_at_ms.min(binding.expires_at_ms),
                 revoked: false,
                 token_hash: store::hash(&format!(
@@ -187,6 +189,8 @@ impl Supervisor {
                 workspace: binding.workspace.clone(),
                 revision: 1,
                 rights: grant.rights.clone(),
+                accounts: grant.accounts.clone(),
+                enrollment_connections: grant.enrollment_connections.clone(),
                 expires_at_ms: grant.expires_at_ms.min(binding.expires_at_ms),
                 revoked: false,
                 token_hash: store::hash(&Uuid::new_v4().to_string()),
