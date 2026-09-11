@@ -156,6 +156,44 @@ impl BoundEnvironment {
     }
 }
 
+/// Resolve name-only preview selection without reading or retaining private values.
+/// Required secrets are implicit; optional names must be unique declared optional
+/// secrets. The returned set is also the response parity contract for clients.
+pub(crate) fn preview_names(
+    document: &Document,
+    optional_secret_names: &[String],
+) -> Result<BTreeSet<String>> {
+    ensure!(
+        optional_secret_names.len() <= super::MAX_PARAMETERS,
+        "too many optional workflow secret names"
+    );
+    validate_names(document)?;
+    let mut names: BTreeSet<String> = document
+        .parameters
+        .iter()
+        .filter(|(_, parameter)| parameter.secret && parameter.required)
+        .map(|(name, _)| name.clone())
+        .collect();
+    for name in optional_secret_names {
+        ensure!(
+            super::identifier(name),
+            "invalid optional workflow secret name"
+        );
+        ensure!(
+            document
+                .parameters
+                .get(name)
+                .is_some_and(|parameter| parameter.secret && !parameter.required),
+            "optional workflow secret name must refer to a declared optional secret"
+        );
+        ensure!(
+            names.insert(name.clone()),
+            "duplicate optional workflow secret name"
+        );
+    }
+    Ok(names)
+}
+
 pub fn render_public(
     document: &Document,
     supplied: &[(String, String)],

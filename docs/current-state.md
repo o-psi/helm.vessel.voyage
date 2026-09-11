@@ -618,7 +618,17 @@ controls. Operator tool calls use the real authorized registry and admitted run
 resources, including approval and completion accounting, without inventing a model
 request. Saved workflows retain digest-bound trust and typed public inputs; secret
 shell bindings travel through an expiring private input channel and are excluded
-from durable command/history payloads. GitHub operator commands run in voyage with
+from durable command/history payloads. `WorkflowPreview` accepts an optional
+`optional_secret_names` array of declared optional secret names (not values), at
+most 32 unique names of 1–64 ASCII identifier bytes. Omission or an empty array
+retains required-only preview behavior; required names are always included
+implicitly and must not be repeated in the optional selection. Unknown names,
+public parameters and malformed or duplicate names are refused. Preview responses
+include sorted `secret_names` for the complete rendered reference set. Clients
+selecting optional secrets must require exact name-set parity before submission:
+an older Vessel/runtime rejects the new request field, and a missing or mismatched
+response set is not permission to execute a different prompt. Private submission
+and its mutation identity are unchanged. GitHub operator commands run in voyage with
 exact attended publication decisions and canonical session references.
 
 ## Human Vessel connections

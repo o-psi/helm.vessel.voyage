@@ -78,6 +78,11 @@ pub enum RuntimeCommand {
         user_directory: Option<PathBuf>,
         inputs: Vec<(String, String)>,
         trust_digest: Option<String>,
+        /// Optional declared secret names to render as references, never values.
+        /// Required secret names are always included. None preserves legacy preview.
+        /// Clients selecting optional names must check response `secret_names` parity.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        optional_secret_names: Option<Vec<String>>,
     },
     WorkflowSubmit {
         command_id: Uuid,

@@ -109,6 +109,7 @@ pub(super) async fn dispatch_admitted(
             user_directory,
             inputs,
             trust_digest,
+            optional_secret_names,
         } => {
             ensure!(
                 authorization.grant.is_none() || user_directory.is_none(),
@@ -121,6 +122,7 @@ pub(super) async fn dispatch_admitted(
                 user_directory.as_deref(),
                 &inputs,
                 trust_digest.as_deref(),
+                optional_secret_names.as_deref(),
             )
         }
         RuntimeCommand::WorkflowSubmit { .. } => {
