@@ -680,3 +680,28 @@ workflows. Run it only against the exact verified companion binaries. See
 must be recorded with the delivered source; source/test drafting alone is not
 verification. No live-provider entitlement, semantic-quality certification or
 native macOS/Windows behavior is implied.
+
+#### Recorded Linux verification
+
+Issue #64 measured clean source `9edcc03b8a1d2176513840e1d064bf3c12670482`,
+with the published #10 and #63 changes integrated. A later Android-only merge
+preserves unrelated work and changes no measured Cargo workspace source or tests.
+
+- **280 workspace Rust tests passed, 0 failed, 1 ignored** under LLVM coverage.
+- **21 native process combinations passed**: Chat, Responses and Anthropic each
+  exercised actual rejection with a smaller request and restart persistence,
+  256 KiB automatic preparation, irreducible input, manual preservation with
+  exact deduplication/restart and legacy refusal, cancellation, partial-stream
+  refusal, and a 12-effect active turn without repeated effects.
+- Development builds and workspace formatting passed. The complete current
+  report retained all **11 executables and 418 source files**, with no duplicate
+  logical source or mismatched functions. Line coverage is **30.1737%**; the
+  committed [compact measurement](../coverage/latest.json) records exact counts.
+- Strict Clippy is **not passing** because inherited account/provider/UI warnings
+  remain. Compaction's introduced nested-if warning was fixed; warning-mode
+  analysis completed. Earlier interrupted compilations have no test outcome.
+  Failed fixture API-route and cancellation-identity checks were corrected; their
+  logs remain retained, and timeouts were not increased.
+
+These are synthetic local Linux workflows, not paid-provider semantic acceptance
+or native macOS/Windows certification. No human testing gate was used.
