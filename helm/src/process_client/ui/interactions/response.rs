@@ -54,6 +54,7 @@ impl App {
             response,
         };
         view.pending = Some(Pending {
+            account_host: None,
             command_id,
             original: Some(Box::new(command.clone())),
             receipt_only: false,

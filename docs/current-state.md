@@ -189,6 +189,15 @@ Confirmed changes survive runtime suspension and supervisor restart. Helm retain
 pending commands and reconciles their original identities after reconnect without
 replaying uncertain commands. Stale or unsupported changes preserve prior values.
 
+Named provider connections/accounts keep credentials on the execution host. Helm's
+Account control stages an atomic account/model/override choice independently of the
+active run; private device sign-in exposes only temporary verification material to
+its human view. Resume and branches retain trusted account identity. API credentials
+are entered in an execution-host private terminal or bound to an explicit environment
+name. Account-use and enrollment grants are distinct and default-denied. See
+[named provider accounts](provider-accounts.md) for lifecycle, migration, uncertainty,
+and evidence limits; no automatic quota rotation or credential forwarding is provided.
+
 OpenAI Responses, Chat Completions and ChatGPT OAuth adapters encode explicit
 reasoning-effort and service-tier fields. Native ChatGPT catalog discovery retains
 advertised reasoning and service choices and their optional defaults. A shared
@@ -364,7 +373,10 @@ starting Helm to change this period; `0` settles immediately. Invalid values fai
 before terminal setup. This is a Helm presentation setting, loaded at startup.
 
 Settled voyages are grey. They sort below active and recent results, retaining
-recency within each group. Every entry uses two terminal rows (title and divider),
+newest turn-end order within each group (including failed, cancelled and interrupted
+turns). Voyages with no recorded turn end use creation time; unknown timestamps
+sort last, with stable identity ties. In-flight messages do not change recency.
+Every entry uses two terminal rows (title and divider),
 with mouse and keyboard using the same order. Muted rules separate entries; titles
 stay on one clipped row. Selection uses bold/reverse styling. A muted trailing
 Vessel label appears only when the list spans multiple Vessels; Actions → Details

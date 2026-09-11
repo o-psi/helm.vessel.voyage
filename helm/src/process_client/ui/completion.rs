@@ -12,6 +12,11 @@ use voyage_protocol::vessel::VoyageCommand;
 
 const COMMANDS: &[(&str, &str, &str)] = &[
     ("help", "Show help", ""),
+    (
+        "account",
+        "Choose next-run account / private sign-in",
+        "Optional safe label search",
+    ),
     ("vessels", "Manage connected Vessels", ""),
     (
         "new",

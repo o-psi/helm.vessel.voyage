@@ -17,6 +17,8 @@ impl Supervisor {
             session_id,
             workspace,
             rights,
+            accounts,
+            enrollment_connections,
             expires_at_ms,
             endpoint,
         } = &command
@@ -59,7 +61,7 @@ impl Supervisor {
                 && !rights
                     .iter()
                     .any(|right| matches!(right, ProcessRight::Catalogue | ProcessRight::Create))
-                && rights.len() <= 8
+                && rights.len() <= 16
                 && rights
                     .iter()
                     .enumerate()
@@ -92,6 +94,8 @@ impl Supervisor {
             workspace,
             revision: 1,
             rights: rights.clone(),
+            accounts: accounts.clone(),
+            enrollment_connections: enrollment_connections.clone(),
             expires_at_ms: *expires_at_ms,
             revoked: false,
             token_hash: store::hash(&credential.token),

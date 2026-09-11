@@ -251,12 +251,15 @@ so existing logins remain usable without copying or re-importing credentials.
 Run `vessel auth` on the execution host as the account running Voyage; it is a
 local command and does not authenticate a remote Vessel from Helm. For a headless
 host, use `vessel auth login --device`. Provider credentials are separate from
-Vessel connection and scoped session credentials. Helm only exposes read-only local
-credential diagnostics; Voyage loads and refreshes tokens on the executing host.
+Vessel connection and scoped session credentials. Helm also provides named-account
+selection and a private device sign-in view; Voyage loads and refreshes provider tokens
+on the executing host. See [named provider accounts](provider-accounts.md).
 `helm auth` is no longer supported; update scripts to call `vessel auth`.
-Status reports cached credentials, not a live provider validation. Logout removes
-the cache but does not revoke tokens already cached by running Voyages; stop those
-processes when changing accounts or logging out.
+Status reports cached credentials, not a live provider validation. Logout writes a
+durable local tombstone; subsequent requests and refresh commits refuse stale
+credentials. It cannot recall already-dispatched requests or revoke upstream tokens.
+Named profiles use stable bindings; explicit replacement invalidates old bindings
+rather than silently switching active voyages.
 
 Subscription transport uses an internal
 product endpoint and remains experimental. Never copy tokens into sessions,

@@ -10,7 +10,7 @@ use crate::model::{Message, ModelRequest, ModelResponse, Role, ToolCall, Usage};
 
 pub struct OpenAiProvider {
     client: reqwest::Client,
-    api_key: String,
+    api_key: super::api_credential::ApiCredential,
     base_url: String,
     use_max_tokens: bool,
 }
@@ -19,7 +19,7 @@ impl OpenAiProvider {
     pub fn new(api_key: String, base_url: Option<String>) -> Self {
         Self {
             client: super::native_http_client(),
-            api_key,
+            api_key: super::api_credential::ApiCredential::Legacy(api_key),
             use_max_tokens: false,
             base_url: base_url
                 .unwrap_or_else(|| "https://api.openai.com/v1".into())
@@ -27,6 +27,21 @@ impl OpenAiProvider {
                 .into(),
         }
     }
+    pub(super) fn with_account(
+        mut self,
+        config: &crate::Config,
+        redactor: Option<std::sync::Arc<crate::tools::Redactor>>,
+    ) -> Self {
+        if let Some(binding) = &config.account {
+            self.api_key = super::api_credential::ApiCredential::Account {
+                binding: binding.clone(),
+                authority: config.provider_authority.clone(),
+                redactor,
+            };
+        }
+        self
+    }
+
     pub fn with_max_tokens_parameter(mut self, enabled: bool) -> Self {
         self.use_max_tokens = enabled;
         self
@@ -50,7 +65,7 @@ impl OpenAiProvider {
 #[async_trait]
 impl Provider for OpenAiProvider {
     async fn models(&self) -> Result<Vec<ModelInfo>, ProviderError> {
-        super::discovery::models(&self.client, &self.base_url, &self.api_key)
+        super::discovery::models(&self.client, &self.base_url, &self.api_key.resolve()?)
             .await?
             .ok_or_else(|| {
                 ProviderError::InvalidResponse(
@@ -69,7 +84,7 @@ impl Provider for OpenAiProvider {
 
                 let response = super::endpoint_http_client(&self.client, &self.base_url)
                     .post(format!("{}/chat/completions", self.base_url))
-                    .apply_key(&self.api_key)
+                    .apply_key(&self.api_key.resolve()?)
                     .json(&body)
                     .send()
                     .await
@@ -90,7 +105,7 @@ impl Provider for OpenAiProvider {
             super::multimodal::guard(images, async {
                 let response = super::endpoint_http_client(&self.client, &self.base_url)
                     .post(format!("{}/chat/completions", self.base_url))
-                    .apply_key(&self.api_key)
+                    .apply_key(&self.api_key.resolve()?)
                     .json(&self.body(request, true)?)
                     .send()
                     .await

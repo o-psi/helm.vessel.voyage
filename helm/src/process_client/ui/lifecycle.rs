@@ -36,6 +36,7 @@ impl App {
         let branch_id = Uuid::new_v4();
         let expires_at_ms = super::super::frontend::deadline()?;
         view.pending = Some(Pending {
+            account_host: None,
             command_id,
             incarnation,
             original: None,

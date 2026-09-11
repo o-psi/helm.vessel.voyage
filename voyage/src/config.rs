@@ -82,6 +82,9 @@ pub struct Config {
     /// Process-local access updates; never persisted or delegated as authority.
     #[serde(skip)]
     pub live_access: Option<std::sync::Arc<crate::policy::LiveAccess>>,
+    /// Admitted run's current grant check, never restored from serialized settings.
+    #[serde(skip)]
+    pub provider_authority: Option<std::sync::Arc<dyn crate::policy::ExecutionAuthority>>,
     /// Runtime-owned artifact storage; never accepted from configuration.
     #[serde(skip)]
     pub artifact_scope: Option<crate::artifacts::Scope>,
@@ -102,6 +105,8 @@ pub struct Config {
     /// Explicit GitHub capability; the named credential never enters child environment.
     pub github_enabled: bool,
     pub provider: ProviderKind,
+    /// Frozen executing-host identity; absent preserves legacy credential behavior.
+    pub account: Option<voyage_protocol::accounts::AccountBinding>,
     pub model: String,
     pub api_key_env: String,
     /// Explicit opt-out only for a configured native compatible endpoint.
@@ -424,6 +429,7 @@ impl Default for Config {
             chat_preferences: None,
             github_enabled: false,
             provider: ProviderKind::OpenaiResponses,
+            account: None,
             model: "gpt-5".into(),
             api_key_env: "OPENAI_API_KEY".into(),
             api_key_required: true,
@@ -456,6 +462,7 @@ impl Default for Config {
             inherit_env: vec!["PATH".into(), "LANG".into(), "LC_ALL".into(), "TERM".into()],
             redact_values: Vec::new(),
             live_access: None,
+            provider_authority: None,
             artifact_scope: None,
             policy_profile: None,
             policy_defaults: None,
@@ -525,7 +532,107 @@ impl Config {
         Ok(config)
     }
 
+    /// Apply an explicit, exact host selection. Never refresh a saved generation.
+    /// Executing-host migration only. Never call this on a remote Helm draft.
+    /// Existing OAuth caches require the explicit old-writers-stopped CLI boundary;
+    /// once migrated their original identity is retained, including tombstones.
+    pub fn materialize_legacy_account(&mut self) -> Result<()> {
+        if self.account.is_some() {
+            return Ok(());
+        }
+        use voyage_protocol::accounts::Transport;
+        let binding = match self.provider {
+            ProviderKind::ChatGptOauth => Some(crate::accounts::Registry::legacy_store_binding()?
+                .map(|(_, binding)| binding)
+                .ok_or_else(|| anyhow::anyhow!("Select a named ChatGPT account, or explicitly migrate the retained legacy login after stopping old credential writers: vessel auth accounts migrate-legacy --old-writers-stopped"))?),
+            _ if !self.api_key_required => None,
+            _ => {
+                let (transport, endpoint) = match self.provider {
+                    ProviderKind::OpenaiResponses => {
+                        (Transport::OpenaiResponses, "https://api.openai.com/v1")
+                    }
+                    ProviderKind::OpenaiChat => {
+                        (Transport::OpenaiChat, "https://api.openai.com/v1")
+                    }
+                    ProviderKind::Anthropic => {
+                        (Transport::Anthropic, "https://api.anthropic.com/v1")
+                    }
+                    ProviderKind::ChatGptOauth => unreachable!(),
+                };
+                Some(
+                    crate::accounts::Registry::default_host()?.migrate_legacy_api(
+                        self.base_url.clone().unwrap_or_else(|| endpoint.into()),
+                        transport,
+                        self.api_key_env.clone(),
+                    )?,
+                )
+            }
+        };
+        self.account = binding;
+        Ok(())
+    }
+
+    pub fn select_account(
+        &mut self,
+        binding: voyage_protocol::accounts::AccountBinding,
+    ) -> Result<()> {
+        use voyage_protocol::accounts::Transport;
+        let registry = crate::accounts::Registry::default_host()?;
+        registry.validate_binding(&binding)?;
+        let connection = registry.connection(binding.connection_id)?;
+        self.provider = match binding.transport {
+            Transport::OpenaiResponses => ProviderKind::OpenaiResponses,
+            Transport::OpenaiChat => ProviderKind::OpenaiChat,
+            Transport::ChatgptOauth => ProviderKind::ChatGptOauth,
+            Transport::Anthropic => ProviderKind::Anthropic,
+        };
+        if self.provider == ProviderKind::ChatGptOauth {
+            self.chatgpt_base_url = Some(connection.endpoint);
+        } else {
+            self.base_url = Some(connection.endpoint);
+        }
+        self.account = Some(binding);
+        // Explicit named authentication is not an anonymous compatible endpoint.
+        self.api_key_required = true;
+        self.validate_account()
+    }
+    pub fn validate_account(&self) -> Result<()> {
+        if let Some(binding) = &self.account {
+            use voyage_protocol::accounts::Transport;
+            let transport = match self.provider {
+                ProviderKind::OpenaiResponses => Transport::OpenaiResponses,
+                ProviderKind::OpenaiChat => Transport::OpenaiChat,
+                ProviderKind::ChatGptOauth => Transport::ChatgptOauth,
+                ProviderKind::Anthropic => Transport::Anthropic,
+            };
+            anyhow::ensure!(binding.transport == transport, "account transport mismatch");
+            let registry = crate::accounts::Registry::default_host()?;
+            registry.validate_binding(binding)?;
+            let connection = registry.connection(binding.connection_id)?;
+            let endpoint = match self.provider {
+                ProviderKind::ChatGptOauth => self
+                    .chatgpt_base_url
+                    .as_deref()
+                    .unwrap_or("https://chatgpt.com/backend-api/codex"),
+                ProviderKind::Anthropic => self
+                    .base_url
+                    .as_deref()
+                    .unwrap_or("https://api.anthropic.com/v1"),
+                _ => self
+                    .base_url
+                    .as_deref()
+                    .unwrap_or("https://api.openai.com/v1"),
+            };
+            anyhow::ensure!(endpoint == connection.endpoint, "account endpoint mismatch");
+        }
+        Ok(())
+    }
+
     pub fn api_key(&self) -> Result<String> {
+        if let Some(binding) = &self.account {
+            self.validate_account()?;
+            return crate::accounts::Registry::default_host()?.resolve_api_key(binding);
+        }
         if !self.api_key_required {
             self.validate()?;
             return Ok(String::new());
@@ -652,6 +759,7 @@ impl Config {
         updated.vessel_context = self.vessel_context.clone();
         updated.browser = self.browser.clone();
         updated.live_access = self.live_access.clone();
+        updated.provider_authority = self.provider_authority.clone();
         updated.artifact_scope = self.artifact_scope.clone();
         updated.chat_preferences = self.chat_preferences.clone();
         updated.policy_profile = self.policy_profile.clone();
