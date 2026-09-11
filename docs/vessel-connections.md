@@ -408,8 +408,34 @@ Final-source review merged published main `bfcb2bf` (including #14) and also fou
 an unsafe-destination edge: a dangling pairing-state symlink could be mistaken for
 absent state, and atomic access-file replacement could otherwise repair an unsafe
 destination. The candidate now rejects both, with focused preservation assertions.
-Those final review changes require the separately admitted final-source coverage
-and process-fixture run; the earlier `d2b873e` passes are not attributed to them.
+Those changes were verified on exact source
+`71bc7d2b40b99de356f4b9c98930670e309c1ed5` by job
+`70c704f4-78bb-4bfa-922f-0985794af2de`: the separate plain build and four fixture
+groups passed, followed by **218 passed / 0 failed / 1 ignored** workspace Rust
+tests under coverage. All 11 current executable objects and 404 source files were
+retained, with zero duplicate logical paths or mismatched functions. Measured
+coverage was **26.5268% lines, 25.5687% functions and 25.4582% regions**; source
+and plain binary hashes were unchanged. Independent OS checks observed empty
+descendant state, absent job cgroup, exited observer and no leftover key-test
+directories. Two nonfatal coverage CLI warnings (renamed `export-prefix` and the
+`--profraw-only`/`--workspace` combination) are retained in the measurement notes;
+the initially empty coverage target and current-object exports were verified.
+These results belong to `71bc7d2`, not later main changes.
+
+The retained issue scope is now implemented and has Linux regression evidence:
+
+| Requirement | Implementation and supporting evidence |
+| --- | --- |
+| Meaningful at-rest contract | Protected assets, independent external key custody, unattended refusal, backups, unlock/key loss and attacker exclusions are specified above; no colocated persistent key or implicit filesystem-only waiver. |
+| Protection and failure recovery | AES-GCM envelopes, mandatory key for new managed secret writes, explicit exact-identity migration, bounded/private atomic I/O; Rust and process checks cover wrong/missing/unsafe keys, corrupt data, publication interruption/retry and unsafe destination preservation. |
+| Current-grant lifecycle accountability | Typed local-owner intent/observation journal, full authority comparison, exact retry markers, bounded fixed-horizon reads and explicit legacy/retention gaps; tests cover restart, concurrent pairing, pruning, changed cursors and secret-free output. |
+
+External deployment prerequisites and the explicitly excluded authority surfaces
+are not new implementation deferrals: this feature does not promise key escrow,
+provider-store encryption, production secret-manager setup, forensic erasure,
+public TLS certification or non-Linux support. Repository integration and its
+latest-source verification are separate delivery steps; a historical measurement
+must never be relabelled as coverage of a later merged tree.
 
 Human connections do not automatically populate `[vessel.remotes]` or grant a
 model coordination authority. That configuration belongs to the executing host
