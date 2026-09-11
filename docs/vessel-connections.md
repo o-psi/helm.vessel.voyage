@@ -331,7 +331,7 @@ replays a voyage command or recreates a grant known to have been published and t
 removed. Full authority fields are checked before accepting a retained publication.
 
 Events expose only typed lifecycle kind, sequence, observation time, relevant UUIDs,
-revision/expiry, workspace UUIDs and enumerated rights. They exclude tokens/verifiers,
+revision/expiry, workspace/account/enrollment-connection UUIDs and enumerated rights. They exclude tokens/verifiers,
 codes, endpoints, paths/names, conversation/provider data, raw errors and free text.
 An invitation event does not prove delivery of its private output file. A principal
 UUID is public metadata, not an authenticated person's identity. Expiry is enforced

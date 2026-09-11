@@ -88,6 +88,8 @@ fn encrypted_pairing_lifecycle() {
                 provider_ready: None,
             }],
             vec![ProcessRight::Observe],
+            Vec::new(),
+            Vec::new(),
             600,
         )
         .unwrap()

@@ -18,6 +18,8 @@ pub(super) struct Event {
     pub expires_at_ms: Option<u64>,
     pub workspace_ids: Vec<Uuid>,
     pub rights: Vec<ProcessRight>,
+    pub account_ids: Vec<Uuid>,
+    pub enrollment_connection_ids: Vec<Uuid>,
 }
 #[derive(Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -68,7 +70,9 @@ impl Journal {
                 event.sequence == self.first_sequence + i as u64
                     && event.vessel_id == self.vessel_id
                     && event.workspace_ids.len() <= 32
-                    && event.rights.len() <= 10,
+                    && event.rights.len() <= 16
+                    && event.account_ids.len() <= 64
+                    && event.enrollment_connection_ids.len() <= 32,
                 "connection audit sequence or metadata gap"
             );
         }
@@ -113,6 +117,10 @@ pub(super) fn event(
             .map(|g| g.workspaces.iter().map(|w| w.id).collect())
             .unwrap_or_default(),
         rights: grant.map(|g| g.rights.clone()).unwrap_or_default(),
+        account_ids: grant.map(|g| g.accounts.clone()).unwrap_or_default(),
+        enrollment_connection_ids: grant
+            .map(|g| g.enrollment_connections.clone())
+            .unwrap_or_default(),
     }
 }
 #[derive(Serialize, Deserialize)]
@@ -210,6 +218,47 @@ pub(super) fn page(journal: Option<&Journal>, limit: usize, cursor: Option<&str>
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn current_account_scope_is_retained_without_secrets() {
+        let vessel = Uuid::new_v4();
+        let grant = ConnectionGrant {
+            schema_version: 1,
+            grant_id: Uuid::new_v4(),
+            principal_id: Uuid::new_v4(),
+            vessel_id: vessel,
+            revision: 1,
+            rights: serde_json::from_str(r#"["catalogue","account_use","account_enroll","create","observe","history","execute","steer","decide","cancel","lifecycle","terminal"]"#).unwrap(),
+            accounts: vec![Uuid::new_v4()],
+            enrollment_connections: vec![Uuid::new_v4()],
+            expires_at_ms: 1,
+            revoked: false,
+            token_hash: "synthetic-verifier-must-not-appear".into(),
+            workspaces: vec![],
+        };
+        let mut journal = Journal::new(vessel, false);
+        journal
+            .append(event(
+                Kind::GrantPublicationObserved,
+                1,
+                vessel,
+                Some(Uuid::new_v4()),
+                None,
+                Some(&grant),
+            ))
+            .unwrap();
+        let output = page(Some(&journal), 1, None).unwrap();
+        assert_eq!(output["events"][0]["account_ids"], json!(grant.accounts));
+        assert_eq!(
+            output["events"][0]["enrollment_connection_ids"],
+            json!(grant.enrollment_connections)
+        );
+        assert_eq!(output["events"][0]["rights"].as_array().unwrap().len(), 12);
+        assert!(
+            !serde_json::to_string(&output)
+                .unwrap()
+                .contains(&grant.token_hash)
+        );
+    }
     #[test]
     fn fixed_horizon_retention_and_restart() {
         let vessel = Uuid::new_v4();

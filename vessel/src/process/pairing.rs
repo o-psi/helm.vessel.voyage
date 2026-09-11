@@ -475,6 +475,10 @@ pub fn invite(
                 .all(|(i, r)| !rights[..i].contains(r)),
         "invalid rights"
     );
+    ensure!(
+        accounts.len() <= 64 && enrollment_connections.len() <= 32,
+        "account scope exceeds executing-host account capacity"
+    );
     let endpoint = crate::origin::validate_origin(endpoint, true)
         .map_err(|_| anyhow::anyhow!("endpoint requires HTTPS or literal loopback"))?;
     // Retain redemption material until grant expiry; never evict live retry evidence.
@@ -510,6 +514,8 @@ pub fn invite(
     event.expires_at_ms = Some(invitation.expires_at_ms);
     event.workspace_ids = workspaces.iter().map(|w| w.id).collect();
     event.rights = rights.clone();
+    event.account_ids = accounts.clone();
+    event.enrollment_connection_ids = enrollment_connections.clone();
     append(&mut state, event)?;
     state.invitations.push(Pending {
         invitation_id: invitation.invitation_id,
