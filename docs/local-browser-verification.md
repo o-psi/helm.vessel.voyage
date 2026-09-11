@@ -144,3 +144,23 @@ reports and compiled caches were preserved. [#251](https://github.com/o-psi/voya
 tracks making this shared-target selection routine in the general coverage workflow.
 The prior coverage record used a dirty tree containing unrelated work; differences
 are recorded, not advertised as a controlled coverage improvement.
+
+### Publication measurement
+
+After integrating main through the sidebar and Fibonacci-title correction, clean
+source `39d071601e4b8f0085070fe65ba40a00bb13728b` passed **134 tests, 0 failed,
+1 ignored**. All source bytes stayed unchanged. The final current-artifact export
+contains 389 unique source files, no stale source paths or mismatched functions:
+lines **14,003 / 73,237 (19.12%)**, functions **1,382 / 7,412 (18.65%)**, and regions
+**21,852 / 119,221 (18.33%)**. The previous measurements above remain historical
+evidence, not the publication totals. Full reports, inventories, source map and
+preserved instrumented executables are in `target/coverage-report/browser-delivery-final`.
+Only workspace entrypoint mtimes were refreshed to prevent cross-worktree cache
+reuse; no source bytes or compiled caches were removed.
+
+The publication binaries also passed the full actual F6 TUI/browser/socket journey
+with the latest sidebar and title scheduling code. Evidence:
+`.local/browser-integration-31wpuv1a`. The mock provider handled independent title
+requests separately; browser effect requests were not repeated. Account partial work
+was moved to its own isolated continuation, and the original 67 staged UI comment
+lines were restored without changing executable code or restoring deleted scripts.
