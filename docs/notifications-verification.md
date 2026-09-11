@@ -97,6 +97,14 @@ capacity behavior, UTC quiet hours, rollback fencing and unsafe private-file ref
 
 ## Preserved failed attempts
 
+The first full workspace coverage run failed the existing canonical-journal legacy
+fixture: it changed a freshly initialized schema-12 database's version to 10 while
+retaining the new notification tables. The runtime correctly rejected duplicate
+future-layout tables. The fixture now removes those two tables when constructing
+synthetic v10 storage; the runtime's migration refusal was not weakened. That
+failed run and profiles are retained separately from the subsequent measurement.
+
+
 The first native attempt opened F2 before catalogue arrival and sent the inbox
 command into an empty picker. Two following selector attempts expected a generated
 `session-*` name instead of Helm's first-message display title. Those fixture
