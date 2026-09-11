@@ -1,12 +1,12 @@
 {
   "schema_version": 1,
-  "measured_at_utc": "2026-09-11T15:19:35.013218+00:00",
+  "measured_at_utc": "2026-09-11T16:08:38.909070+00:00",
   "source": {
-    "base_commit": "39d071601e4b8f0085070fe65ba40a00bb13728b",
+    "base_commit": "8c3a46dd37a40cd09c6fb8d54514179a9bce42af",
     "dirty": false,
-    "fingerprint_sha256": "db14ae9df68915b2f6311172c80733756bae06d4dfa463e82188ea92a2174058",
+    "fingerprint_sha256": "634d68a9f33e68d856d257bc25e8b2f458b65eb8ecebc76fe1631141898d837d",
     "fingerprint_method": "SHA-256 of compact sorted JSON mapping all tracked regular-file contents and symlink target text to SHA-256 hashes",
-    "note": "Clean isolated integration worktree; all tracked input bytes remained unchanged through tests and current-artifact export. Later summary/documentation publication does not change measured Rust source."
+    "note": "Clean isolated account integration worktree, including published browser/main changes. All tracked bytes stayed unchanged through workspace tests and current-artifact export. Summary publication does not change measured Rust source."
   },
   "platform": "x86_64-unknown-linux-gnu",
   "tools": {
@@ -14,7 +14,7 @@
     "llvm": "22.1.8",
     "cargo_llvm_cov": "0.9.1"
   },
-  "command": "cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir \"$CARGO_LLVM_COV_TARGET_DIR/coverage-report/browser-delivery-final/default-report\" -j 8",
+  "command": "cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir \"$CARGO_LLVM_COV_TARGET_DIR/coverage-report/provider-accounts-final/default-report\" -j 8",
   "environment": {
     "CARGO_LLVM_COV_TARGET_DIR": "existing shared workspace target",
     "LLVM_COV": "llvm-cov",
@@ -22,33 +22,33 @@
   },
   "scope": "All existing workspace Rust tests and current workspace executable artifacts, default features",
   "tests": {
-    "passed": 134,
+    "passed": 171,
     "failed": 0,
     "ignored": 1
   },
   "coverage": {
     "lines": {
-      "count": 73237,
-      "covered": 14003,
-      "percent": 19.12011688081161
+      "count": 77374,
+      "covered": 17183,
+      "percent": 22.207718355002974
     },
     "functions": {
-      "count": 7412,
-      "covered": 1382,
-      "percent": 18.64543982730707
+      "count": 7811,
+      "covered": 1715,
+      "percent": 21.95621559339393
     },
     "regions": {
-      "count": 119221,
-      "covered": 21852,
-      "notcovered": 97369,
-      "percent": 18.328985665277088
+      "count": 125540,
+      "covered": 26441,
+      "notcovered": 99099,
+      "percent": 21.061812967978334
     }
   },
   "report_selection": {
-    "method": "Complete current Cargo compiler-artifact executable set from cargo test --workspace --locked --no-run --message-format=json under cargo llvm-cov show-env instrumentation; LLVM export/show retains tool-default filename exclusions",
+    "method": "Complete current Cargo compiler-artifact executable set from cargo test --workspace --locked --no-run --message-format=json under cargo llvm-cov show-env instrumentation; LLVM export/show retains tool-default filename exclusions; exclude distribution Rust standard-library expansion paths outside the workspace",
     "workspace_executables": 11,
     "executed_test_binaries": 10,
-    "logical_source_files": 389,
+    "logical_source_files": 398,
     "byte_identical_reused_source_files": 0,
     "duplicate_logical_source_paths": 0,
     "mismatched_functions": 0
@@ -60,14 +60,16 @@
     "JavaScript browser/cleanup probes",
     "Manual TUI workflows",
     "Branch coverage",
-    "Historical shared-target executables not in the complete current Cargo artifact set"
+    "Historical shared-target executables not in the complete current Cargo artifact set",
+    "Distribution Rust standard-library macro expansion paths under /usr/src/debug/rust/ (not workspace source)"
   ],
   "notes": [
-    "Raw profiles were cleared before this independent measurement; compiled artifacts and prior reports were preserved.",
-    "The default shared-target report mixed stale main/worktree binaries and was not used for the published totals. Exact current-artifact selection corrected this; all current workspace members/targets and executed test binaries were retained. See issue #251.",
-    "Out-of-process shared-browser, privacy, cleanup and duplex journeys passed separately and are not included in these Rust percentages.",
-    "Coverage measures execution, not correctness. No paid-provider, native macOS/Windows or production TLS deployment certification is implied.",
-    "Every reported source file belongs to the measured worktree; workspace entrypoint mtimes were refreshed before measurement to avoid stale cross-worktree Cargo artifacts, without changing contents or deleting compiled caches.",
-    "Compared with prior record: lines -0.2540 percentage points, functions -0.3419 percentage points, regions -0.3528 percentage points. Earlier shared-target reporting may use different artifact provenance; the complete current artifact set is retained here."
+    "Raw profiles were cleared before this independent measurement; compiled artifacts, previous profiles/profdata and previous reports were preserved.",
+    "The default shared-target report included historical binaries and was not used for published totals. All current Cargo workspace executable artifacts and all executed test binaries were retained for corrected export; see #251.",
+    "The first current-artifact export exposed a distribution Rust std thread-local macro source path outside the workspace. The final report excludes that external toolchain path explicitly; no workspace member, target or source was dropped.",
+    "Four separate synthetic process journeys passed: concurrent named-account switching and resume/branch; active same-identity rotation with split-stream secret redaction; explicit scoped use/enrollment permissions; rotation/logout refusal without fallback. They are not included in Rust percentages.",
+    "Coverage measures execution, not correctness. No paid-provider, real device authorization, native macOS/Windows, or production TLS deployment claim is implied.",
+    "All reported source paths belong to the measured worktree. Workspace entrypoint mtimes were refreshed to avoid stale cross-worktree Cargo artifacts without changing source bytes or deleting caches.",
+    "Compared with previous published record: lines +3.0876 percentage points, functions +3.3108 percentage points, regions +2.7328 percentage points. Current-artifact selection and workspace scope are retained."
   ]
 }
