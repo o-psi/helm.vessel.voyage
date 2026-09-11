@@ -51,7 +51,7 @@ Every row needs a supported-scope decision and concrete verification; human revi
 | --- | --- | --- | --- |
 | J01 | Start Helm and understand background work | `helm`, `helm chat`, `helm connect` | Review: first launch, missing Vessel, launch failure, empty catalogue and independent runtime lifetime. |
 | J02 | Connect to the intended machine | Vessels panel, Ctrl+G and `/vessels`; remembered local WS/remote WSS connections | Implemented #194; failed probes pause the route and explicit Connect / Retry resumes observations without replay. Credential protection/audit remains #10; broader disclosure #79. [Connection evidence](vessel-connections-verification.md) predates the current duplex transport. |
-| J03 | Configure a provider and sign in | `vessel auth`, `helm config`, `helm doctor`, `local-provider`, startup flags | Gap: CLI onboarding; credential expiry, billing distinctions, wrong host and retry need an integrated journey. |
+| J03 | Configure a provider and sign in | Composer Account / `/account`, private native device sign-in, executing-host `vessel auth accounts` for API enrollment | Named executing-host accounts and guarded local/remote selection delivered in #213; API keys remain in the executing-host private CLI, never ordinary chat. Private account controls require 44×22; smaller layouts explain resizing and permit Escape. [Account guide](provider-accounts.md). Credential protection/audit remains #10/#200. |
 | J04 | Create a voyage in a workspace | Ctrl+N, `/new`, approved-workspace picker and local draft | First send creates an independent owner; plain startup and draft editing do not. Exact pending creation/turn identities are retained and resolved without replay. Review actual failure and duplicate-send cases. |
 | J05 | Find, resume and switch voyages | F2 searchable named voyage/draft picker at all supported widths; Tab/Shift+Tab; sidebar | Picker captures identities, searches names/hosts/status/workspaces, preserves composers and permits navigation away from pending decisions without answering them. No UUID entry required. F5 selects archives; F2 then searches that inventory. |
 | J06 | Understand host, model, run and observation state | Header, voyage list, snapshot errors | Review: stale/offline versus idle, stopped versus completed, duplicate routes, long names and many voyages. |
@@ -252,8 +252,8 @@ whole-product certification.
 - **#14:** general operator UX, unsupported structured tool forms and large-inventory
   paging; objective end-to-end journey evidence.
 - **#10 / #200:** connection and provider credential protection/recovery and native
-  storage. Provider/sign-in onboarding must remain on the executing host; a local
-  Helm form cannot silently configure or retain remote provider credentials.
+  storage. Named account/device-sign-in UI is delivered in #213. Credentials remain on
+  the executing host; Helm does not become a remote provider credential store.
 - **#70 / #71:** broader policy editing and resource/usage/budget contracts. A
   configuration path or cleanup count is not a complete editor/dashboard.
 - **#32:** private-terminal structured cells, child-mode input, restoration and

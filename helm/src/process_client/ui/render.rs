@@ -151,6 +151,11 @@ pub fn draw(frame: &mut Frame<'_>, app: &App) {
         }
         super::workflows::draw(frame, app);
     }
+    // A late account observation must never leave private input focused behind
+    // an opaque operator/navigation screen.
+    if app.voyage_picker.is_some() || app.operator.is_some() || app.workflows_open() {
+        app.draw_accounts(frame);
+    }
     app.draw_vessel_control(frame);
     app.draw_workspace_picker(frame, frame.area());
     if let Some(manager) = &app.vessels {

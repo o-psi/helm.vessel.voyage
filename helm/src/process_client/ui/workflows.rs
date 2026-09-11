@@ -163,6 +163,7 @@ impl Panel {
     fn pending(&self, expires_at_ms: u64, private_inputs_id: Option<Uuid>) -> Pending {
         let command_id = Uuid::new_v4();
         Pending {
+            account_host: None,
             command_id,
             incarnation: self.incarnation,
             draft: String::new(),

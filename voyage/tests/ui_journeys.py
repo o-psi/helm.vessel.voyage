@@ -204,7 +204,7 @@ def main():
         'fixture_sha256': hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
         'platform': sys.platform, 'python': sys.version, 'argv': sys.argv,
     }, indent=2))
-    env = {'PATH': '/usr/bin:/bin', 'LANG': 'C.UTF-8', 'TERM': 'xterm-256color'}
+    env = {'PATH': '/usr/bin:/bin', 'LANG': 'C.UTF-8', 'TERM': 'xterm-256color', 'UI_FIXTURE_KEY': 'synthetic-ui-fixture-key-not-a-real-credential'}
     for key in ('HOME', 'XDG_DATA_HOME', 'XDG_STATE_HOME', 'XDG_CONFIG_HOME', 'XDG_CACHE_HOME'):
         path = root / key.lower()
         path.mkdir(mode=0o700)
@@ -274,8 +274,21 @@ def main():
                      root / f'helm-{len(ptys)}-{columns}x{rows}.pty', columns, rows)
         ptys.append(pty)
         wait_for(lambda: any(label in screen(pty) for label in
-                            ('First message', 'Permission needed', 'F2 Voyages')), timeout=15)
+                            ('First message', 'Permission needed', 'F2 Voyages', 'private human view')), timeout=15)
+        ready_draft(pty)
         return pty
+
+    def ready_draft(pty):
+        # #213 resolves explicitly configured named accounts on the executing host.
+        # At 40x18 account editing is deliberately disabled with a resize hint;
+        # closing review retains that configured binding and returns to the draft.
+        time.sleep(.5)
+        if 'private human view' in screen(pty):
+            wait_for(lambda: any((d.get('account_settings') or {}).get('account') for d in drafts()), timeout=15)
+            if pty['columns'] == 40:
+                assert 'Enlarge to at least' in screen(pty)
+            send(pty, ESC)
+            expect(pty, 'First message')
 
     def stop(pty):
         pty_helpers.stop_pty(pty, wait_for)
@@ -334,6 +347,10 @@ def main():
                 pass
 
     try:
+        connection = json.loads(subprocess.check_output([str(binary / 'vessel'), 'auth', 'accounts', 'connect', '--label', 'UI fixture', '--endpoint', f'http://127.0.0.1:{server.server_port}/v1', '--transports', 'openai-chat'], env=env, cwd=workspace, timeout=15))
+        account = json.loads(subprocess.check_output([str(binary / 'vessel'), 'auth', 'accounts', 'add', '--connection', connection['id'], '--account', 'ui-fixture', '--env', 'UI_FIXTURE_KEY'], env=env, cwd=workspace, timeout=15))
+        with config.open('a') as cfg:
+            cfg.write(f'\n[account]\naccount_id = "{account["id"]}"\nconnection_id = "{connection["id"]}"\nidentity_generation = {account["identity_generation"]}\nconnection_revision = {connection["revision"]}\ntransport = "openai_chat"\n')
         supervisor = subprocess.Popen([str(binary / 'vessel'), 'local-serve', '--directory', str(directory),
             '--voyage-binary', str(binary / 'voyage')], env=env, cwd=workspace,
             stdin=subprocess.DEVNULL, stdout=log, stderr=log)
@@ -347,6 +364,7 @@ def main():
             text = f'size-{columns}-unique 界 e\u0301'
             if columns != 40:
                 send(pty, '\x0e')
+                ready_draft(pty)
                 expect(pty, 'First message')
             paste(pty, text)
             wait_for(lambda: saved(text))
@@ -368,10 +386,12 @@ def main():
         pick(pty, 'size-40-unique')
         expect(pty, 'First message')
         send(pty, '\x0e')
+        ready_draft(pty)
         expect(pty, 'First message')
         paste(pty, alpha)
         wait_for(lambda: saved(alpha))
         send(pty, '\x0e')
+        ready_draft(pty)
         paste(pty, beta)
         wait_for(lambda: saved(beta))
         pick(pty, 'orchard-unique')
