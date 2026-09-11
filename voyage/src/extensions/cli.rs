@@ -71,6 +71,10 @@ pub enum ExtensionCommand {
     },
     /// List executable review bindings separately from declarative grants.
     ExecutionGrants,
+    /// Inspect bounded recent invocation outcomes, independently of cleanup.
+    ExecutionStatus {
+        binding: String,
+    },
     /// Revoke an orphaned executable review without claiming active work stopped.
     RevokeExecution {
         binding: String,
@@ -159,6 +163,10 @@ pub async fn run(args: ExtensionArgs, workspace: Option<PathBuf>) -> Result<()> 
             expected,
             capabilities,
         } => catalog.review_executable(args.scope, &id, &expected, &capabilities)?,
+        ExtensionCommand::ExecutionStatus { binding } => println!(
+            "{}",
+            serde_json::to_string_pretty(&catalog.execution_status(&binding)?)?
+        ),
         ExtensionCommand::ExecutionGrants => println!(
             "{}",
             serde_json::to_string_pretty(&catalog.execution_records()?)?

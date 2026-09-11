@@ -95,7 +95,8 @@ The broker exposes only a separately requested UTF-8 file read. It rechecks curr
 execution authority and authorized canonical roots, opens every component without
 following a replaced symlink, requires a bounded regular file, and checks authority
 again before returning data. A delegated registry excluding `read_file` also
-excludes the broker capability. No private ToolContext, provider credential,
+excludes the broker capability. Private account/session/configuration stores are
+refused even beneath a broadly allowed host root. No private ToolContext, provider credential,
 workflow environment, human terminal input, shell, write or network capability is
 sent to the extension. The initial broker requires offset zero and the complete
 file to fit the requested bound, at most 64 KiB, then redacts the complete value.
@@ -140,13 +141,34 @@ succeeded or an external disclosure was rolled back. Unknown effects are never
 replayed automatically. Corrupt review/ledger records are preserved and fail
 closed rather than authorizing a replacement.
 
+## Admitted lifecycle events
+
+The source integration dispatches optional `run_start` and `run_finish` handlers
+at actual Agent run boundaries, including operator runs. Start occurs after input
+checkpointing; finish occurs before successful acceptance, with steering closed.
+Cancellation, failed main work and crashes do not require an effectful finish
+handler. Metadata is only `{run,event}`, not conversation/provider state. These
+handlers are separate from advertised model tools and cannot be invoked by a
+fabricated tool name. Registry filtering also filters delegated handlers.
+
+The entire set at either boundary is bounded by the current command timeout and
+120 seconds, including approvals. Every handler uses current execution authority,
+exact package review, isolated spawn and the same retained cleanup manager. A
+failed handler quarantines its package instance, not unrelated packages or the
+main voyage. Fixed response outcomes and unknown interrupted outcomes are retained
+in the package ledger separately from cleanup. `helm extension execution-status
+BINDING` reads the latest 32 records without child diagnostics or private paths.
+Repeated admission of the same package/digest/run/lifecycle event is refused;
+restart never replays a previously admitted handler. No model-authored messages
+are fabricated to represent runtime lifecycle effects.
+
 ## Explicit remaining scope
 
-- Nonempty lifecycle definitions are currently **refused at package validation**.
-  The protocol recognizes run-start/run-finish, but real admitted run-boundary
-  integration remains unfinished. No ignored subscriptions or ambient hooks.
-- Live progress presentation, complete package-specific diagnostics and the full
-  supervised adverse-state journey remain unfinished.
+- Live progress presentation and the complete package-specific diagnostic surface
+  remain unfinished. Progress is currently retained in the checked final result.
+- The focused `voyage/tests/executable_packages.py` journey and standalone static
+  conformance source are written but unexecuted. They require a scheduled slot,
+  built companion programs/examples and actual required-isolation support.
 - Rust/Go compilation and tests, sealed-byte/isolation/no-effects evidence,
   held-pipe/descendant/crash/cancellation races, interrupted publication, and the
   joined real package workflow have not run. Focused Rust test source is not a pass.

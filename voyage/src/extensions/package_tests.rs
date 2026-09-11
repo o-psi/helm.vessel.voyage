@@ -3,7 +3,7 @@ use super::*;
 use base64::Engine;
 use serde_json::json;
 
-fn package() -> executable::Archive {
+pub(super) fn package() -> executable::Archive {
     let bytes = executable::tests::elf();
     executable::Archive {
         manifest: executable::Manifest {

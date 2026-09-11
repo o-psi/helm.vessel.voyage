@@ -30,14 +30,26 @@ struct State {
     children: Vec<Arc<OwnedChild>>,
 }
 struct OwnedChild {
-    child: tokio::sync::Mutex<tokio::process::Child>,
+    child: tokio::sync::Mutex<Option<tokio::process::Child>>,
     #[cfg(target_os = "linux")]
     identity: Option<Arc<crate::tools::process::SessionIdentity>>,
     reservation: crate::host_resources::extensions::ExtensionReservation,
     observed: AtomicBool,
+    process_observed: AtomicBool,
     observation: tokio::sync::Mutex<Option<tokio::task::JoinHandle<bool>>>,
 }
 impl OwnedChild {
+    fn no_child(reservation: crate::host_resources::extensions::ExtensionReservation) -> Arc<Self> {
+        Arc::new(Self {
+            child: tokio::sync::Mutex::new(None),
+            #[cfg(target_os = "linux")]
+            identity: None,
+            reservation,
+            observed: AtomicBool::new(false),
+            process_observed: AtomicBool::new(true),
+            observation: tokio::sync::Mutex::new(None),
+        })
+    }
     async fn observe(self: &Arc<Self>) -> bool {
         if self.observed.load(Ordering::Acquire) {
             return true;
@@ -49,34 +61,50 @@ impl OwnedChild {
             let owned = self.clone();
             *observer = Some(tokio::spawn(async move {
                 let mut child = owned.child.lock().await;
-                #[cfg(target_os = "linux")]
-                let empty = if let Some(identity) = owned.identity.clone() {
-                    tokio::task::spawn_blocking(move || {
-                        let deadline = std::time::Instant::now() + Duration::from_secs(4);
-                        while std::time::Instant::now() < deadline {
-                            match identity.kill_and_observe(deadline) {
-                                Ok(true) => return true,
-                                Ok(false) => std::thread::sleep(Duration::from_millis(5)),
-                                Err(_) => return false,
+                if !owned.process_observed.load(Ordering::Acquire) {
+                    let Some(child) = child.as_mut() else {
+                        return false;
+                    };
+                    #[cfg(target_os = "linux")]
+                    let identity = owned.identity.clone().or_else(|| {
+                        child
+                            .id()
+                            .and_then(|pid| {
+                                crate::tools::process::SessionIdentity::capture(pid).ok()
+                            })
+                            .map(Arc::new)
+                    });
+                    #[cfg(target_os = "linux")]
+                    let empty = if let Some(identity) = identity {
+                        tokio::task::spawn_blocking(move || {
+                            let deadline = std::time::Instant::now() + Duration::from_secs(4);
+                            while std::time::Instant::now() < deadline {
+                                match identity.kill_and_observe(deadline) {
+                                    Ok(true) => return true,
+                                    Ok(false) => std::thread::sleep(Duration::from_millis(5)),
+                                    Err(_) => return false,
+                                }
                             }
-                        }
+                            false
+                        })
+                        .await
+                        .unwrap_or(false)
+                    } else {
                         false
-                    })
-                    .await
-                    .unwrap_or(false)
-                } else {
-                    false
-                };
-                #[cfg(not(target_os = "linux"))]
-                let empty = false;
-                if !empty {
-                    return false;
-                }
-                if !matches!(
-                    tokio::time::timeout(Duration::from_millis(250), child.wait()).await,
-                    Ok(Ok(_))
-                ) {
-                    return false;
+                    };
+                    #[cfg(not(target_os = "linux"))]
+                    let empty = false;
+                    if !empty
+                        || !matches!(
+                            tokio::time::timeout(Duration::from_millis(250), child.wait()).await,
+                            Ok(Ok(_))
+                        )
+                    {
+                        return false;
+                    }
+                    // Retain positive observation across a later ledger-write
+                    // failure; never try to recapture a PID we already reaped.
+                    owned.process_observed.store(true, Ordering::Release);
                 }
                 if owned.reservation.release_observed().is_err() {
                     return false;
@@ -154,16 +182,16 @@ impl Manager {
 }
 struct Adapter {
     catalog: Arc<Catalog>,
-    snapshot: ExecutableSnapshot,
-    manager: Arc<Manager>,
-    contexts: Arc<Mutex<BTreeMap<Uuid, ToolContext>>>,
+    snapshot: Arc<ExecutableSnapshot>,
+    manager: std::sync::Weak<Manager>,
+    contexts: Arc<Mutex<BTreeMap<Uuid, (ToolContext, String)>>>,
 }
 #[async_trait]
 impl sdk::LaunchAdapter for Adapter {
     async fn launch(&self, identity: &sdk::Identity, deadline: Instant) -> Result<sdk::Launched> {
         // No await between grant/policy admission, durable reservation and owned
         // spawn registration: cancellation cannot strand an untracked child.
-        let context = self
+        let (context, action) = self
             .contexts
             .lock()
             .map_err(|_| anyhow::anyhow!("extension context unavailable"))?
@@ -210,8 +238,11 @@ impl sdk::LaunchAdapter for Adapter {
             .policy
             .sandbox()
             .apply_extension(&mut command, &image)?;
-        let mut state = self
+        let manager = self
             .manager
+            .upgrade()
+            .ok_or_else(|| anyhow::anyhow!("extension resource owner retired"))?;
+        let mut state = manager
             .state
             .lock()
             .map_err(|_| anyhow::anyhow!("extension ownership unavailable"))?;
@@ -226,13 +257,13 @@ impl sdk::LaunchAdapter for Adapter {
             &self.snapshot,
             identity.invocation,
             identity.run,
-            "invoke",
+            &action,
         )?;
         if context.policy.check_execution_authority().is_err()
             || context.cancellation.is_cancelled()
             || Instant::now() >= deadline
         {
-            reservation.release_observed()?; // No child has been spawned.
+            state.children.push(OwnedChild::no_child(reservation)); // Retry durable release through owned cleanup.
             anyhow::bail!("extension launch authority changed");
         }
         let mut command = tokio::process::Command::from(command);
@@ -240,7 +271,7 @@ impl sdk::LaunchAdapter for Adapter {
         let mut child = match command.spawn() {
             Ok(child) => child,
             Err(_) => {
-                reservation.release_observed()?;
+                state.children.push(OwnedChild::no_child(reservation));
                 anyhow::bail!("required executable isolation launch failed");
             }
         };
@@ -252,11 +283,12 @@ impl sdk::LaunchAdapter for Adapter {
         let reader = child.stdout.take();
         let writer = child.stdin.take();
         let owned = Arc::new(OwnedChild {
-            child: tokio::sync::Mutex::new(child),
+            child: tokio::sync::Mutex::new(Some(child)),
             #[cfg(target_os = "linux")]
             identity: process_identity,
             reservation,
             observed: AtomicBool::new(false),
+            process_observed: AtomicBool::new(false),
             observation: tokio::sync::Mutex::new(None),
         });
         state.children.push(owned.clone());
@@ -305,6 +337,25 @@ impl sdk::Host for Broker {
         );
         context.policy.check_execution_authority()?;
         let path = context.policy.resolve_read(std::path::Path::new(path))?;
+        // A broad user root is not consent to disclose Voyage account/session
+        // stores to an extension. These private interfaces are never brokered.
+        let mut private_roots = vec![
+            crate::config::default_data_dir(),
+            crate::build::resource_root(),
+        ];
+        if let Some(config) = crate::config::default_config_path() {
+            if let Some(parent) = config.parent() {
+                private_roots.push(parent.to_path_buf());
+            }
+        }
+        for private in private_roots {
+            if private.try_exists()? {
+                ensure!(
+                    !path.starts_with(private.canonicalize()?),
+                    "extension host read targets private runtime storage"
+                );
+            }
+        }
         let policy = context.policy.clone();
         let value = tokio::task::spawn_blocking(move || -> Result<String> {
             use cap_fs_ext::{DirExt, FollowSymlinks, OpenOptionsFollowExt, OpenOptionsSyncExt};
@@ -384,13 +435,13 @@ struct ExtensionTool {
     definition: crate::model::ToolDefinition,
     remote: String,
     kind: sdk::Kind,
-    snapshot: ExecutableSnapshot,
+    snapshot: Arc<ExecutableSnapshot>,
     executor: Arc<sdk::Executor>,
-    contexts: Arc<Mutex<BTreeMap<Uuid, ToolContext>>>,
+    contexts: Arc<Mutex<BTreeMap<Uuid, (ToolContext, String)>>>,
 }
 struct ContextLease {
     id: Uuid,
-    contexts: Arc<Mutex<BTreeMap<Uuid, ToolContext>>>,
+    contexts: Arc<Mutex<BTreeMap<Uuid, (ToolContext, String)>>>,
 }
 impl Drop for ContextLease {
     fn drop(&mut self) {
@@ -444,7 +495,23 @@ impl Tool for ExtensionTool {
         self.contexts
             .lock()
             .map_err(|_| fail(anyhow::anyhow!("context unavailable")))?
-            .insert(invocation, context.clone());
+            .insert(
+                invocation,
+                (
+                    context.clone(),
+                    format!(
+                        "{}.{}",
+                        if self.kind == sdk::Kind::Lifecycle {
+                            "lifecycle"
+                        } else if self.kind == sdk::Kind::Command {
+                            "command"
+                        } else {
+                            "tool"
+                        },
+                        self.remote
+                    ),
+                ),
+            );
         let _context = ContextLease {
             id: invocation,
             contexts: self.contexts.clone(),
@@ -476,6 +543,9 @@ impl Tool for ExtensionTool {
             )
             .map_err(fail)?;
         let completion = handle.completion().await;
+        // Persist fixed effect outcome independently of positive process cleanup.
+        crate::host_resources::extensions::outcome(invocation, completion.result.is_ok())
+            .map_err(fail)?;
         let value = completion.result.map_err(fail)?;
         if completion.cleanup != sdk::Cleanup::Observed {
             return Err(fail(anyhow::anyhow!("cleanup pending")));
@@ -514,6 +584,7 @@ pub(crate) fn register(
         &crate::config::default_data_dir(),
     )?);
     for snapshot in catalog.executable_snapshots()? {
+        let snapshot = Arc::new(snapshot);
         let definitions = sdk::Definitions::parse(
             &snapshot.archive.manifest.definitions,
             &snapshot.archive.manifest.capabilities,
@@ -522,7 +593,7 @@ pub(crate) fn register(
         let adapter = Arc::new(Adapter {
             catalog: catalog.clone(),
             snapshot: snapshot.clone(),
-            manager: manager.clone(),
+            manager: Arc::downgrade(&manager),
             contexts: contexts.clone(),
         });
         let executor = sdk::Executor::new(
@@ -534,12 +605,13 @@ pub(crate) fn register(
         for (kind, definitions) in [
             (sdk::Kind::Tool, definitions.tools),
             (sdk::Kind::Command, definitions.commands),
+            (sdk::Kind::Lifecycle, definitions.lifecycle),
         ] {
             for definition in definitions {
-                let prefix = if kind == sdk::Kind::Tool {
-                    "ext"
-                } else {
-                    "extcmd"
+                let prefix = match kind {
+                    sdk::Kind::Tool => "ext",
+                    sdk::Kind::Command => "extcmd",
+                    sdk::Kind::Lifecycle => "extlife",
                 };
                 let name = format!(
                     "{prefix}_{}_{}",
@@ -575,7 +647,17 @@ pub(crate) fn register(
         }
         manager.add_executor(executor)?;
         for candidate in candidates {
-            tools.register_arc(candidate)?;
+            let name = candidate.definition().name;
+            if name.starts_with("extlife_") {
+                let event = if name.ends_with("_run_start") {
+                    "run_start"
+                } else {
+                    "run_finish"
+                };
+                tools.register_extension_lifecycle(event, candidate)?;
+            } else {
+                tools.register_arc(candidate)?;
+            }
         }
     }
     Ok(())

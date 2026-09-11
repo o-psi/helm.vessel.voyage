@@ -81,8 +81,8 @@ the final external namespace spelling and routing, not this transport.
 Lifecycle entries do nothing on discovery or executor construction. Parent must
 admit and invoke them at real run boundaries; cancelled/crashed runs do not need
 an effectful finish handler. No ambient hook dispatch is implemented here. The
-current format-2 package integration explicitly refuses nonempty lifecycle arrays
-until that integration exists; it does not silently ignore subscriptions.
+parent integration dispatches these at admitted Agent/operator run boundaries,
+separately from model tools; see [package lifecycle](executable-packages.md#admitted-lifecycle-events).
 
 ### Invocation and replies
 

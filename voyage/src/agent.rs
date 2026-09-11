@@ -1215,6 +1215,9 @@ impl Agent {
             }
             result = tokio::task::spawn_blocking(move || crate::extensions::guidance(extension_policy.workspace())) => result.unwrap_or_default(),
         };
+        // Initial input is canonical before admitting optional package hooks.
+        gate::guarded(self.checkpoint(checkpoint, &mut history, &usage), &cancel).await??;
+        self.tools.run_extension_lifecycle("run_start", &context).await;
         'execution: loop {
             // Diagnostic accounting only; progress never imposes an execution cutoff.
             turn = turn.saturating_add(1);
@@ -1374,6 +1377,8 @@ impl Agent {
                                 continue;
                             }
                         }
+                        self.tools.run_extension_lifecycle("run_finish", &context).await;
+                        if cancel.is_cancelled() { return Err(AgentError::Cancelled); }
                         gate::guarded(self.checkpoint(checkpoint, &mut history, &usage), &cancel).await??;
                         let readiness = lease.readiness.clone();
                         let clean = readiness.ready() && readiness.incomplete == 0;
@@ -1392,6 +1397,8 @@ impl Agent {
                         return Ok(AgentOutcome { messages: history.clone(), answer, usage: usage.clone(), turns: turn, stop_reason });
                     }
                 }
+                self.tools.run_extension_lifecycle("run_finish", &context).await;
+                if cancel.is_cancelled() { return Err(AgentError::Cancelled); }
                 if let Some(checkpoint) = checkpoint {
                     tokio::time::timeout(context.timeout, checkpoint.accepted(&history, &usage, &StopReason::Completed)).await.map_err(|_| CheckpointError)??;
                 }

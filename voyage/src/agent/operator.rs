@@ -58,9 +58,15 @@ impl Agent {
             );
         }
         self.tools
-            .execute(name, arguments, &context)
-            .await
-            .map_err(Into::into)
+            .run_extension_lifecycle("run_start", &context)
+            .await;
+        let result = self.tools.execute(name, arguments, &context).await;
+        if result.is_ok() && !context.cancellation.is_cancelled() {
+            self.tools
+                .run_extension_lifecycle("run_finish", &context)
+                .await;
+        }
+        result.map_err(Into::into)
     }
     pub(crate) fn operator_arguments(&self, value: &serde_json::Value) -> anyhow::Result<()> {
         anyhow::ensure!(

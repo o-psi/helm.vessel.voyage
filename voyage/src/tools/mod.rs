@@ -444,6 +444,12 @@ impl ToolContract {
     }
 }
 
+struct LifecycleTool {
+    event: &'static str,
+    tool: Arc<dyn Tool>,
+    contract: ToolContract,
+}
+
 #[derive(Default)]
 pub struct ToolRegistry {
     tools: BTreeMap<String, Arc<dyn Tool>>,
@@ -451,6 +457,7 @@ pub struct ToolRegistry {
     terminals: Option<ProcessTool>,
     mcp: Vec<mcp::McpLease>,
     extensions: Option<Arc<crate::extensions::runtime::Manager>>,
+    extension_lifecycle: Vec<LifecycleTool>,
 }
 
 impl ToolRegistry {
@@ -459,6 +466,68 @@ impl ToolRegistry {
     }
     pub(crate) fn extensions(&self) -> Option<Arc<crate::extensions::runtime::Manager>> {
         self.extensions.clone()
+    }
+    pub(crate) fn register_extension_lifecycle(
+        &mut self,
+        event: &'static str,
+        tool: Arc<dyn Tool>,
+    ) -> Result<(), ToolError> {
+        let contract = ToolContract::compile(tool.definition())?;
+        if !matches!(event, "run_start" | "run_finish")
+            || self.extension_lifecycle.len() >= 256
+            || self.tools.contains_key(&contract.definition.name)
+            || self
+                .extension_lifecycle
+                .iter()
+                .any(|entry| entry.contract.definition.name == contract.definition.name)
+        {
+            return Err(ToolError::Failed(
+                "invalid or duplicate executable lifecycle definition".into(),
+            ));
+        }
+        self.extension_lifecycle.push(LifecycleTool {
+            event,
+            tool,
+            contract,
+        });
+        Ok(())
+    }
+    /// Internal admitted run events are not model-authored tool calls or tools
+    /// silently omitted from the advertised registry. Only this path dispatches
+    /// them, under the same current authority/approval generation as tools.
+    pub(crate) async fn run_extension_lifecycle(&self, event: &str, context: &ToolContext) {
+        let deadline = tokio::time::Instant::now() + context.timeout.min(Duration::from_secs(120));
+        for entry in self
+            .extension_lifecycle
+            .iter()
+            .filter(|entry| entry.event == event)
+        {
+            if context.cancellation.is_cancelled() || tokio::time::Instant::now() >= deadline {
+                break;
+            }
+            let mut dispatch = context.clone();
+            dispatch.timeout = deadline.saturating_duration_since(tokio::time::Instant::now());
+            dispatch.tool_call_id = None;
+            dispatch.policy = Arc::new(context.policy.for_dispatch());
+            dispatch.approver = Arc::new(DispatchApprover {
+                inner: context.approver.clone(),
+                policy: dispatch.policy.clone(),
+            });
+            let arguments = serde_json::json!({"run":context.execution_id,"event":event});
+            if entry.contract.input.validate(&arguments).is_err() {
+                tracing::warn!("executable lifecycle schema refused actual run metadata");
+                continue;
+            }
+            if !matches!(
+                tokio::time::timeout_at(deadline, entry.tool.execute_output(arguments, &dispatch))
+                    .await,
+                Ok(Ok(_))
+            ) {
+                tracing::warn!(
+                    "executable lifecycle handler failed or refused; inspect package execution status"
+                );
+            }
+        }
     }
     pub fn own_mcp(&mut self, server: Arc<mcp::McpServer>) {
         self.mcp.push(mcp::McpLease(server));
@@ -535,6 +604,8 @@ impl ToolRegistry {
         if let Some(manager) = &self.extensions {
             manager.restrict_host_read(allowed.contains("read_file"));
         }
+        self.extension_lifecycle
+            .retain(|entry| allowed.contains(&entry.contract.definition.name));
         self.tools.retain(|name, _| allowed.contains(name));
         self.contracts.retain(|name, _| allowed.contains(name));
         if !allowed.contains("process") {
@@ -542,6 +613,7 @@ impl ToolRegistry {
         }
     }
     pub fn retain_read_only(&mut self) {
+        self.extension_lifecycle.clear();
         self.tools.retain(|name, _| {
             matches!(
                 name.as_str(),

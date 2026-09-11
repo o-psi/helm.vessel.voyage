@@ -74,15 +74,12 @@ impl Manifest {
         let definitions =
             crate::extension_sdk::Definitions::parse(&self.definitions, &self.capabilities)?;
         ensure!(
-            definitions.lifecycle.is_empty(),
-            "automatic executable lifecycle handlers are not integrated; package activation refused"
-        );
-        ensure!(
             definitions
                 .tools
                 .iter()
                 .chain(&definitions.commands)
-                .all(|definition| self.id.len() + definition.name.len() + 8 <= 64),
+                .chain(&definitions.lifecycle)
+                .all(|definition| self.id.len() + definition.name.len() + 9 <= 64),
             "namespaced executable definition exceeds 64 bytes"
         );
         Ok(())
