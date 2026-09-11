@@ -17,7 +17,33 @@ The implementation is based on published main `b990ecd` (#64/#10 and Android
 changes), merged into `26e0e00`, plus the notification changes. Exact final measured
 source, tool versions, fingerprint and workspace coverage are recorded separately
 in [coverage/latest.json](../coverage/latest.json) when measurement completes.
-Native Python/PTTY checks are not part of Rust coverage percentages.
+Native Python/PTY checks are not part of Rust coverage percentages.
+
+## Final workspace coverage
+
+Measured clean source `a6b1d3e2e1be4fdad9c62b61774a60ee823d18a8` on Linux with
+Rust 1.98.1, LLVM 22.1.8 and cargo-llvm-cov 0.9.1: **315 passed, 0 failed, 1 ignored**.
+All 11 current workspace executables (10 executed test binaries) were retained;
+424 current logical source files, no reused foreign source paths or mismatched
+functions. Source fingerprint remained unchanged throughout measurement.
+
+- Lines: **28,055 / 88,456 (31.72%)**
+- Functions: **2,658 / 8,707 (30.53%)**
+- Regions: **44,347 / 144,370 (30.72%)**
+
+Compared with the prior record, coverage increased by 1.5426 / 1.1631 / 1.6258
+percentage points respectively, with the same default workspace scope/exclusions.
+The default mixed shared-target report was retained but not used for published
+numbers; it referenced historical binaries and deleted old worktree paths. The
+published export uses the complete current Cargo artifact set, not a handpicked
+package subset. Branch coverage is not measured. Coverage is execution evidence,
+not security or correctness certification.
+
+The initial standalone lease terminal later became unregistered before its expected
+expiry; the discontinuity was reported and no uninterrupted lock ownership is
+claimed. Final workspace measurements and artifact exports ran under a directly
+attached `flock`, with observed ownership. No other worker was admitted to this
+local slot before its explicit coordinator release.
 
 ## Actual commands and outcomes
 
