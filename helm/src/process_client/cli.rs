@@ -209,11 +209,12 @@ pub async fn run(args: ConnectArgs) -> Result<()> {
         );
         match command {
             ConnectedCommand::Inbox {
-                command: super::inbox::InboxCommand::Watch {
-                    destination,
-                    after,
-                    seconds,
-                },
+                command:
+                    super::inbox::InboxCommand::Watch {
+                        destination,
+                        after,
+                        seconds,
+                    },
             } => super::inbox::watch(&clients[0], destination, after, seconds).await,
             ConnectedCommand::Browser { session, reconcile } => {
                 if reconcile {

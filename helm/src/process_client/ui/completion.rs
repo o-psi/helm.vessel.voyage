@@ -12,7 +12,11 @@ use voyage_protocol::vessel::VoyageCommand;
 
 const COMMANDS: &[(&str, &str, &str)] = &[
     ("help", "Show help", ""),
-    ("inbox", "Read notification metadata (never responds)", "destinations | list DESTINATION [AFTER] | open/seen/dismiss DESTINATION EVENT"),
+    (
+        "inbox",
+        "Read notification metadata (never responds)",
+        "destinations | list DESTINATION [AFTER] | open/seen/dismiss DESTINATION EVENT",
+    ),
     (
         "account",
         "Choose next-run account / private sign-in",
