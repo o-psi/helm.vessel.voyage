@@ -231,7 +231,7 @@ def scoped_resolution(fixture):
         return fixture.request({"op": "grant", "command_id": str(uuid.uuid4()),
             "grant_id": str(uuid.uuid4()), "principal_id": str(uuid.uuid4()),
             "session_id": session, "workspace": str(fixture.workspace), "rights": rights,
-            "expires_at_ms": int(time.time() * 1000) + 60_000, "enrollment": None,
+            "expires_at_ms": int(time.time() * 1000) + 60_000,
             "endpoint": "http://127.0.0.1"})
 
     def scoped(credential, command):
