@@ -156,5 +156,6 @@ mod tests {
         }))
         .unwrap();
         assert!(legacy.requested_by.is_none());
+        assert_eq!(legacy.user_messages, 0);
     }
 }

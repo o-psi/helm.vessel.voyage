@@ -1,12 +1,12 @@
 {
   "schema_version": 1,
-  "measured_at_utc": "2026-09-11T15:05:06.384141+00:00",
+  "measured_at_utc": "2026-09-11T15:11:18.396600+00:00",
   "source": {
-    "commit": "a273a94ab144b8873e29037a1f93a1d262a66e26",
-    "dirty": false,
-    "fingerprint_sha256": "c7be25a0579c52ba238f6c3a1bea5e82088278070fafb1215a0cab54953dec56",
+    "base_commit": "a16041feea5a11ee8202c5c941e24e2bcb83fc17",
+    "dirty": true,
+    "fingerprint_sha256": "201895dcb38cdc1e9bde4f4ed69b4d55ced540836b6b8e7a90750c08a1e62b5c",
     "fingerprint_method": "SHA-256 of compact sorted JSON (with trailing newline) mapping workspace .rs files, member Cargo.toml files, root Cargo.toml, Cargo.lock and member tests/*.py files to SHA-256 content hashes",
-    "note": "Clean detached checkout; source fingerprint unchanged throughout final measurement. Python tests fingerprinted but not measured."
+    "note": "Dirty-tree measurement of Fibonacci title correction against recorded base, not coverage of a clean commit. Complete source map unchanged throughout measurement. Python tests fingerprinted but excluded from Rust coverage."
   },
   "platform": "x86_64-unknown-linux-gnu",
   "tools": {
@@ -14,34 +14,34 @@
     "llvm": "22.1.8",
     "cargo_llvm_cov": "0.9.1"
   },
-  "command": "cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir \"$CARGO_LLVM_COV_TARGET_DIR/coverage-report/sidebar-253\" -j 8",
+  "command": "cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir target/coverage-report/fibonacci-titles -j 8",
   "environment": {
-    "CARGO_LLVM_COV_TARGET_DIR": "shared existing target directory",
+    "CARGO_LLVM_COV_TARGET_DIR": "target",
     "LLVM_COV": "llvm-cov",
     "LLVM_PROFDATA": "llvm-profdata"
   },
   "scope": "Existing workspace Rust tests, default features",
   "tests": {
-    "passed": 127,
+    "passed": 131,
     "failed": 0,
     "ignored": 1
   },
   "coverage": {
     "lines": {
-      "count": 69773,
-      "covered": 13283,
-      "percent": 19.037450016482023
+      "count": 67869,
+      "covered": 13149,
+      "percent": 19.374088317199313
     },
     "functions": {
-      "count": 7093,
-      "covered": 1324,
-      "percent": 18.666290709149862
+      "count": 6952,
+      "covered": 1320,
+      "percent": 18.9873417721519
     },
     "regions": {
-      "count": 113353,
-      "covered": 20594,
-      "notcovered": 92759,
-      "percent": 18.16802378410805
+      "count": 109936,
+      "covered": 20538,
+      "notcovered": 89398,
+      "percent": 18.681778489302868
     }
   },
   "exclusions": [
@@ -53,11 +53,12 @@
     "Unrelated shared-local-browser worktree paths discovered from cached binaries in shared target; report-only filter, all measured checkout Rust files retained"
   ],
   "notes": [
-    "Independent final measurement after the last Rust edit: raw profiles cleared first; compiled artifacts and previous reports preserved. HTML, detailed JSON and logs retained under target/coverage-report/sidebar-253.",
-    "Workspace Rust tests passed, including three compact-sidebar regression tests. No live-provider execution or manual full-screen TUI verification.",
-    "Compared with prior record: lines +0.2657 percentage points, functions +0.2304 percentage points, regions +0.2956 percentage points.",
-    "Unfiltered report included 749 files and 142338 lines. The report-only exclusion removed 372 cached browser-worktree files outside the measured checkout; all 377 reported files remaining belong to the clean measured checkout. No current workspace source or tests excluded to raise coverage.",
-    "Coverage measures execution, not correctness. No native macOS/Windows or live-provider certification is implied."
+    "Independent measurement: raw profiles cleared first; compiled artifacts and previous reports preserved. HTML, detailed JSON, logs and source maps retained under ignored target/coverage-report/fibonacci-titles.",
+    "Eleven focused title tests passed. New regressions check Fibonacci user-message checkpoints, suppression at non-checkpoints, mixed submission/steering and exact retries, failed-run independence, stale-result suppression, counter persistence through history replacement/reload and explicit reset.",
+    "Compared with previous record: lines +0.3366 percentage points, functions +0.3211 percentage points, regions +0.5138 percentage points.",
+    "Unfiltered report included 750 files and 140827 lines. Same worktree-path exclusion as prior record removes cached foreign checkout sources; all 356 current workspace files remain.",
+    "HTML generation warned about 12 functions with mismatched cached instrumented data and uncovered cached worktree files. Warnings are not test failures; coverage is approximate execution evidence, not correctness proof.",
+    "Linux only; no live-provider, native macOS/Windows or manual TUI checks. Strict voyage Clippy remains blocked by the existing provider/mod.rs large_enum_variant warning."
   ],
-  "report_command": "cargo llvm-cov report --ignore-filename-regex '/\\.voyage-worktrees/shared-local-browser/' --json --summary-only --output-path \"$CARGO_LLVM_COV_TARGET_DIR/coverage-report/sidebar-253/workspace-summary.json\""
+  "report_command": "cargo llvm-cov report --ignore-filename-regex '/\\.voyage-worktrees/' --json --summary-only --output-path target/coverage-report/fibonacci-titles/workspace-summary.json"
 }
