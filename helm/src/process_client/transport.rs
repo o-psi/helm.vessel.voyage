@@ -14,6 +14,7 @@ pub struct Client {
     id: super::connections::ConnectionId,
     generation: u64,
     managed: Option<super::connections::Connection>,
+    socket: std::sync::Arc<super::duplex::Slot>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -30,6 +31,7 @@ impl Client {
             directory,
             access_file: None,
             id: route.id(),
+            socket: super::duplex::slot(route.id(), 0),
             generation: 0,
             managed: None,
         }
@@ -43,6 +45,7 @@ impl Client {
             directory: route.directory.clone(),
             access_file: Some(path),
             id: route.id(),
+            socket: super::duplex::slot(route.id(), 0),
             generation: 0,
             managed: None,
         }
@@ -57,6 +60,7 @@ impl Client {
             directory,
             access_file: Some(path),
             id: route.id(),
+            socket: super::duplex::slot(route.id(), 0),
             generation: 0,
             managed: None,
         }
@@ -69,6 +73,7 @@ impl Client {
             directory: PathBuf::new(),
             access_file: Some(path),
             id: connection.id,
+            socket: super::duplex::slot(connection.id, 0),
             generation: 0,
             managed: Some(connection),
         }
@@ -80,6 +85,9 @@ impl Client {
         self.generation
     }
     pub fn with_generation(mut self, generation: u64) -> Self {
+        if self.generation != generation {
+            self.socket = super::duplex::slot(self.id, generation);
+        }
         self.generation = generation;
         self
     }
@@ -141,11 +149,7 @@ impl Client {
             protocol: VESSEL_API_VERSION,
             subscriptions,
         };
-        if let Some(path) = &self.access_file {
-            let credential = self.read_access(path)?;
-            return super::access::events_credential(&credential, self.pin(), request).await;
-        }
-        super::local::events(&self.directory, request).await
+        self.socket.events(self, request).await
     }
 
     pub async fn supports_events(&self) -> bool {
@@ -153,21 +157,56 @@ impl Client {
             .await
             .ok()
             .and_then(|value| value.get("features").and_then(Value::as_array).cloned())
-            .is_some_and(|features| features.iter().any(|feature| feature == "sse_events"))
+            .is_some_and(|features| features.iter().any(|feature| feature == "duplex_socket"))
     }
 
-    #[cfg(unix)]
     async fn exchange(&self, command: VesselCommand) -> Result<Value> {
+        self.socket.exchange(self, command).await
+    }
+
+    pub fn connection_state(&self) -> tokio::sync::watch::Receiver<super::duplex::ConnectionState> {
+        self.socket.state()
+    }
+    pub async fn reverse_requests(
+        &self,
+    ) -> Result<tokio::sync::mpsc::Receiver<super::duplex::IncomingReverseRequest>> {
+        self.socket.reverse_requests()
+    }
+    /// Permanently retire this activation. Pending deliveries stay uncertain;
+    /// explicit reconnection must use a fresh activation generation.
+    pub fn disconnect(&self) {
+        self.socket.disconnect();
+    }
+
+    pub(super) fn socket_request(
+        &self,
+    ) -> Result<(
+        tokio_tungstenite::tungstenite::http::Request<()>,
+        Option<uuid::Uuid>,
+    )> {
         if let Some(path) = &self.access_file {
             let credential = self.read_access(path)?;
-            return super::access::exchange_credential(&credential, self.pin(), command).await;
+            let pin = self.pin().or(credential.vessel_id());
+            let request = super::duplex::request(
+                super::access::endpoint(
+                    credential.endpoint(),
+                    voyage_protocol::duplex::SOCKET_PATH,
+                )?,
+                credential.token(),
+                Some(credential.grant_id()),
+                pin,
+            )?;
+            Ok((request, pin))
+        } else {
+            let credential = super::local::credential(&self.directory)?;
+            let request = super::duplex::request(
+                super::local::endpoint(&credential, voyage_protocol::duplex::SOCKET_PATH)?,
+                &credential.token,
+                None,
+                None,
+            )?;
+            Ok((request, None))
         }
-        super::local::exchange(&self.directory, command).await
-    }
-
-    #[cfg(not(unix))]
-    async fn exchange(&self, _command: VesselCommand) -> Result<Value> {
-        anyhow::bail!("private Vessel client transport is not implemented on this platform")
     }
 
     pub async fn voyage(

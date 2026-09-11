@@ -24,7 +24,9 @@ executors. Human Vessel connections, scoped process grants and participant bindi
 remain distinct authority surfaces. Outbound worker mode is retired; do not reintroduce it.
 Describe current behavior using [docs/current-state.md](docs/current-state.md)
 and code; label target capabilities explicitly. Do not inject planned capabilities
-into current runtime instructions. Browser console work remains deferred.
+into current runtime instructions. Explicit shared local browser execution is opt-in through the same full-duplex
+Helm–Vessel socket. Keep its local consent/capture boundary separate from Voyage
+policy; do not introduce a separately networked browser bridge or general Helm executor.
 
 ## Delivery
 
@@ -135,6 +137,13 @@ versions, exact command, passing/failing/ignored test counts, and exclusions.
 Never attribute dirty-tree coverage to a clean commit. Compare with the prior
 record and explain material drops in the delivery report; do not silently narrow
 the measured scope to raise the percentage.
+
+When sharing a target directory across worktrees, verify that report objects belong
+to the current Cargo workspace artifact set. Historical instrumented binaries can
+duplicate source totals or report mismatched functions despite passing tests. Preserve
+the raw report; do not publish those mixed totals or hide current source to improve
+them. Keep every current workspace target/test binary, validate reused source identity,
+and document any corrected artifact selection (tracked in #251).
 
 The default scope is existing workspace Rust tests with default features, excluding
 doctests and ignored tests. Python process checks and manual journeys are separate;

@@ -216,8 +216,10 @@ bypasses are not supported. Literal-loopback HTTP remains a development exceptio
 not a LAN transport. With Cloudflare Tunnel, TLS can terminate at Cloudflare and
 forward to the Vessel gateway's private loopback HTTP listener. An interactive
 Cloudflare Access login page is not a supported Helm authentication method; the
-Vessel credential authenticates API access. Preserve POST command traffic and
-unbuffered SSE at `/v1/vessel/command` and `/v1/vessel/events`; pairing also needs
+Vessel credential authenticates API access. Preserve authenticated WebSocket upgrade
+at `/v1/vessel/socket` with the `voyage.vessel.v1` subprotocol; commands and events
+share this socket. Helm does not fall back to HTTP/SSE if upgrade fails. See
+[duplex transport](duplex-transport.md). HTTP pairing also needs
 `/v1/vessel/pair` and `/v1/vessel/pair/capabilities`.
 
 Vessel and native private-storage support remain Linux-focused. A build or local

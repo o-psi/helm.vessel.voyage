@@ -2,7 +2,7 @@
 pub mod cli;
 pub mod connections;
 pub mod local;
-mod sse;
+pub mod duplex;
 pub mod transport;
 mod ui;
 
@@ -32,3 +32,6 @@ mod admin;
 pub mod export;
 
 mod artifacts;
+
+/// Explicit human-authorized local browser resources, never an agent runtime.
+pub mod browser;

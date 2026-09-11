@@ -1,7 +1,9 @@
+mod browser;
+pub use browser::BrowserTool;
 pub(crate) mod action_schema;
 mod filesystem;
 pub mod mcp;
-mod output;
+pub(crate) mod output;
 #[cfg(test)]
 pub(crate) mod reliability_tests;
 mod report;
@@ -722,6 +724,10 @@ impl ToolRegistry {
 fn allowed_in_read_only(name: &str, arguments: &Value) -> bool {
     let action = arguments.get("action").and_then(Value::as_str);
     match name {
+        "browser" => {
+            serde_json::from_value::<voyage_protocol::browser::BrowserAction>(arguments.clone())
+                .is_ok_and(|a| a.observation_only())
+        }
         "questions" | "read_file" | "list_directory" | "search_files" => true,
         "process" => matches!(action, Some("read" | "list")),
         "todo" => action == Some("list"),

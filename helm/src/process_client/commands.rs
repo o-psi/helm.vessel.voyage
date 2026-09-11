@@ -19,7 +19,8 @@ pub(super) async fn execute(
             return super::export::markdown(client, session, &path).await;
         }
         ConnectedCommand::Admin { command } => return super::admin::execute(client, command).await,
-        ConnectedCommand::Run { .. }
+        ConnectedCommand::Browser { .. }
+        | ConnectedCommand::Run { .. }
         | ConnectedCommand::Chat { .. }
         | ConnectedCommand::Terminal { .. } => {
             unreachable!("streaming frontend handled separately")

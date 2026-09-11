@@ -67,6 +67,11 @@ const COMMANDS: &[(&str, &str, &str)] = &[
     ("subagents", "Show delegated work", ""),
     ("workflows", "Show saved workflows", ""),
     ("host_resources", "Show machine cleanup records", ""),
+    (
+        "browser",
+        "Share a local browser",
+        "open | status | takeover | private | close | reconcile",
+    ),
     ("terminals", "Browse program terminals", ""),
     (
         "terminal",

@@ -142,4 +142,15 @@ fn image_cost(message: &crate::model::Message) -> usize {
             _ => None,
         })
         .fold(0usize, usize::saturating_add)
+        .saturating_add(
+            message
+                .tool_output
+                .iter()
+                .flat_map(|o| &o.content)
+                .filter(|p| matches!(p, voyage_protocol::tool_result::ToolContent::Image { .. }))
+                // Tool references carry no dimensions. Use the maximum accepted raster
+                // cost rather than excluding image tokens from operator context bounds.
+                .count()
+                .saturating_mul(16 * 1024 * 1024 / 256 + 4096),
+        )
 }

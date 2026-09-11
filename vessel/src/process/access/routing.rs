@@ -66,7 +66,7 @@ impl Supervisor {
                 self.observe_assignment(&grant, assignment_id, true).await
             }
             VesselCommand::Capabilities => Ok(
-                json!({"protocol":VESSEL_API_VERSION,"version":env!("CARGO_PKG_VERSION"),"vessel_id":crate::process::identity::public(&self.directory)?.vessel_id,"principal_id":grant.principal_id,"scope":"session","session_id":grant.session_id,"grant_revision":grant.revision,"rights":grant.rights,"expires_at_ms":grant.expires_at_ms,"features":["scoped_catalogue","voyage_operations","sse_events","grant_revocation","start_resolution","provider_accounts","account_start","private_account_enrollment"]}),
+                json!({"protocol":VESSEL_API_VERSION,"version":env!("CARGO_PKG_VERSION"),"vessel_id":crate::process::identity::public(&self.directory)?.vessel_id,"principal_id":grant.principal_id,"scope":"session","session_id":grant.session_id,"grant_revision":grant.revision,"rights":grant.rights,"expires_at_ms":grant.expires_at_ms,"features":["scoped_catalogue","voyage_operations","sse_events","duplex_socket","grant_revocation","start_resolution","provider_accounts","account_start","private_account_enrollment"]}),
             ),
             command @ (VesselCommand::Accounts { .. }
             | VesselCommand::AccountDefaults { .. }
@@ -113,6 +113,9 @@ impl Supervisor {
                 let right = super::super::api::required_right(&request.command)
                     .ok_or_else(|| anyhow::anyhow!("operation unavailable to scoped clients"))?;
                 has(right)?;
+                if request.command.requires_browser_history() {
+                    has(ProcessRight::History)?;
+                }
                 if matches!(
                     request.command,
                     VoyageCommand::AssignmentObserve { cancel: true, .. }

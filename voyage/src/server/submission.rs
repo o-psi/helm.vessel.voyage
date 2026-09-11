@@ -250,6 +250,10 @@ pub(super) async fn submit(
     ))?;
     let accepts_steering = operator.is_none();
     let cancel = CancellationToken::new();
+    if let Err(error) = state.browser.begin_run(run_id, cancel.clone()) {
+        run.fail_before_execution().await?;
+        return Err(error);
+    }
     *state.active.lock().await = Some(ActiveRun {
         id: run_id,
         inference: super::configuration::inference_snapshot_with_model(

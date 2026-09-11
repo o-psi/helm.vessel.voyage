@@ -32,3 +32,6 @@ pub mod accounts;
 
 /// Voyage-to-voyage presentation provenance.
 pub mod coordination;
+
+pub mod browser;
+pub mod duplex;

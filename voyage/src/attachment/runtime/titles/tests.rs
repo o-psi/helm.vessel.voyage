@@ -302,3 +302,101 @@ async fn real_run_refreshes_from_steering_while_main_provider_is_blocked() {
         "Shorten user intent names"
     );
 }
+
+#[tokio::test]
+async fn fibonacci_counts_all_accepted_messages_not_completed_runs_or_retries() {
+    let (_root, owner, mut run, agent, mut requests) = fixture().await;
+    let handle = run.enable_steering(Arc::new(|_, _, _| Ok(()))).unwrap();
+    let inputs: Vec<_> = (2..=13)
+        .map(|n| steering(&owner, &run, &format!("User update {n}")))
+        .collect();
+    let checkpoint = run.checkpoint();
+    tokio::time::timeout(
+        Duration::from_secs(5),
+        checkpoint.with_title_updates(&agent, CancellationToken::new(), async {
+            let (_, reply) = requests.recv().await.unwrap();
+            reply.send(Ok("Initial user intent")).unwrap();
+            name_is(&owner, "Initial user intent").await;
+            for (number, request) in (2..=13).zip(inputs) {
+                assert!(!handle.submit(request.clone()).await.unwrap().duplicate);
+                assert!(handle.submit(request).await.unwrap().duplicate);
+                let session = owner.snapshot().await.unwrap().session;
+                assert_eq!(session.title_state.unwrap().user_messages, number);
+                if [2, 3, 5, 8, 13].contains(&number) {
+                    let (request, reply) = requests.recv().await.unwrap();
+                    assert!(
+                        request.messages[1]
+                            .content
+                            .contains(&format!("User update {number}"))
+                    );
+                    // A failed title at message 3 must not move the checkpoint to 4.
+                    if number == 3 {
+                        reply
+                            .send(Err(ProviderError::Request("offline failure".into())))
+                            .unwrap();
+                    } else {
+                        reply.send(Ok("Updated user intent")).unwrap();
+                    }
+                } else {
+                    assert!(
+                        tokio::time::timeout(Duration::from_millis(40), requests.recv())
+                            .await
+                            .is_err(),
+                        "unexpected title inference at user message {number}"
+                    );
+                }
+            }
+            assert_eq!(run.record().await.unwrap().state, RunState::Accepted);
+            assert_eq!(owner.snapshot().await.unwrap().session.messages.len(), 1);
+        }),
+    )
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn failed_runs_and_submission_retries_do_not_shift_user_message_checkpoints() {
+    let (_root, owner, mut run, _agent, _requests) = fixture().await;
+    run.fail_before_execution().await.unwrap();
+    drop(run);
+    for count in 2..=5 {
+        let snapshot = owner.snapshot().await.unwrap();
+        let request = TurnAdmission {
+            coordination: None,
+            operator_name: None,
+            command_id: Uuid::new_v4(),
+            machine_id: Uuid::new_v4(),
+            principal_id: Uuid::new_v4(),
+            session_id: owner.session_id(),
+            expected_revision: snapshot.revision,
+            expires_at_ms: chrono::Utc::now().timestamp_millis() + 60000,
+            prompt: format!("Follow-up {count}"),
+            parts: vec![],
+        };
+        let Admission::New(mut run) = owner.admit(request.clone()).await.unwrap() else {
+            panic!("expected new submission");
+        };
+        assert!(matches!(
+            owner.admit(request.clone()).await.unwrap(),
+            Admission::Existing(_)
+        ));
+        let state = owner.snapshot().await.unwrap().session.title_state.unwrap();
+        assert_eq!(state.user_messages, count);
+        assert_eq!(
+            state.requested_by,
+            (count != 4).then_some(request.command_id)
+        );
+        run.fail_before_execution().await.unwrap();
+        assert_eq!(
+            owner
+                .snapshot()
+                .await
+                .unwrap()
+                .session
+                .title_state
+                .unwrap()
+                .user_messages,
+            count
+        );
+    }
+}

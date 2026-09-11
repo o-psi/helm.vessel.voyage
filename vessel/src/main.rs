@@ -81,7 +81,7 @@ enum Command {
         #[arg(long)]
         command_id: Uuid,
     },
-    /// Serve authenticated loopback HTTP/SSE and supervise independent voyage processes.
+    /// Serve authenticated loopback duplex sockets and the compatibility HTTP API.
     LocalServe {
         #[arg(long)]
         directory: PathBuf,
@@ -252,6 +252,13 @@ async fn main() -> Result<()> {
                     state.clone(),
                     process_http::boundary,
                 )),
+        )
+        .route(
+            voyage_protocol::duplex::SOCKET_PATH,
+            get(process_http::socket).layer(middleware::from_fn_with_state(
+                state.clone(),
+                process_http::boundary,
+            )),
         )
         .route("/health", get(health))
         .route("/ready", get(readiness))

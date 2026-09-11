@@ -16,17 +16,16 @@ Redemption over `/v1/vessel/pair` produces a distinct versioned workspace creden
 it does not reinterpret or broaden the session grants below. Workspace grants are
 checked at gateway dispatch and by each running voyage's authority watcher.
 `vessel revoke-connection` is the local owner's revision-bound revocation operation.
-The gateway admits at most 32 distinct SSE subscriptions per request; Helm rotates
-bounded subscription groups. Provider credentials remain on the executing host.
+Helm uses bounded subscription groups on its authenticated duplex socket. Provider credentials remain on the executing host.
 
 ## Scoped remote access
 
 A local account uses a private bearer credential to its Vessel's literal-loopback
 HTTP endpoint. The credential is published as `process-http.json` in the owned 0700
 Vessel directory, is never placed in command arguments, and changes on service
-start. Commands use bounded POST requests. Helm opens an authenticated SSE response
-for durable invalidations, then retrieves canonical snapshots and output through
-ordinary commands. A grant credential for remote HTTPS access instead binds one
+start. Helm upgrades to a [single authenticated duplex socket](duplex-transport.md)
+for ordinary commands, correlated replies and durable invalidations; canonical
+snapshots and output are retrieved through ordinary commands on that socket. A grant credential for remote HTTPS access instead binds one
 principal, session UUID, canonical workspace, explicit rights and expiration.
 
 Run the private loopback HTTP service before enabling the scoped HTTPS gateway. The
@@ -45,16 +44,17 @@ vessel --bind 127.0.0.1:8080 \
 Only literal loopback development origins can use HTTP, with
 `--allow-insecure-loopback`. The listener still binds a literal loopback address.
 The gateway validates an optional browser Origin against the configured origin,
-limits frames, SSE subscriptions and concurrent requests, and returns
+limits frames, subscriptions and concurrent requests, and returns
 `Cache-Control: no-store`. Gateway request-body collection has a ten-second total
 deadline before dispatch; this deadline does not cancel admitted commands or SSE
 streams. Public deployment also needs the proxy controls and remaining release
-gates in the [first-release audit](security.md#first-release-audit-2026-09-08). SSE carries bounded metadata-only invalidations and
-keepalives. A slow or disconnected Helm cannot block canonical writes; it reconnects
+gates in the [first-release audit](security.md#first-release-audit-2026-09-08). The duplex socket carries bounded metadata-only invalidations and
+heartbeats. A slow or disconnected Helm cannot block canonical writes; it reconnects
 from a durable cursor and uses a snapshot after a retained-event gap. Stream loss
-does not imply cancellation and never causes command replay. WebSockets are not used
-for control or observation; private bidirectional PTY attachment remains a separate
-transport concern.
+does not imply cancellation and never causes command replay. Commands, events and
+typed browser notifications share this socket. Private human PTY data never enters
+conversation history. HTTP/SSE remains an explicit compatibility API, not a silent
+Helm fallback.
 
 Issue a credential on the executing host. Replace all example UUIDs with the actual
 session and independently selected principal identities. The credential output must
@@ -287,8 +287,10 @@ command ID when retrying an uncertain response.
 
 ## Wire and retained state
 
-The public Vessel service API uses JSON over HTTP(S), bounded to 4 MiB. Commands
-use `POST /v1/vessel/command`; durable invalidations use an SSE response from
+The public Vessel service API uses JSON bounded to 4 MiB. Active Helm connections
+use `GET /v1/vessel/socket` with WebSocket subprotocol `voyage.vessel.v1`; public
+command/response envelopes below are carried in correlated duplex frames. Explicit
+HTTP compatibility uses `POST /v1/vessel/command` and SSE from
 `POST /v1/vessel/events`. Both use `protocol: 1`, defined by `VESSEL_API_VERSION`
 independently of the private runtime's `PROCESS_PROTOCOL`. The public definitions
 are in `crates/voyage-protocol/src/vessel.rs`; private execution messages remain in
@@ -365,7 +367,7 @@ cleanup. Vessel never acknowledges admission before the runtime's durable receip
 Operation-specific result bodies remain JSON projections rather than fully typed
 schemas for every tool/control surface.
 
-SSE requests contain `protocol` and a list of `{session_id, incarnation, after}`
+Event subscription requests contain `protocol` and a list of `{session_id, incarnation, after}`
 subscriptions. The incarnation records the client's last observation; Vessel selects
 the current owner. Updates identify the observed owner. An owner transition sets
 `owner_changed` and requests snapshot recovery; cursors remain session-scoped.
@@ -404,3 +406,23 @@ and bounded history pages still provide `message_chunk` for complete messages.
 `helm connect artifact SESSION ARTIFACT PATH` verifies a full download and creates
 a new local file. See [MCP tools and artifacts](configuration.md#mcp-tools-and-artifacts)
 for ownership, retention, validation and platform limits.
+
+## Shared local browser
+
+The [local browser companion](local-browser.md) is an explicit Helm-side capability
+on the same full-duplex connection. `prepare_browser` follows/resumes an existing
+owner without constructing an agent or granting browser access. `browser` operations
+carry the original resource/executor/run/controller/capture identity. Effect requests
+and result receipts are distinct from ordinary user-turn receipts; use the browser
+receipt/reconciliation path, never retry a click because `/receipt` lacks it.
+
+Scoped browser operations require **History and Execute** at both Vessel and Voyage;
+notification subscriptions additionally require Observe. These remote rights do not
+grant local consent, local files or browser capture. Helm and its adapter enforce
+those independently. Browser notifications contain only durable invalidation metadata;
+authorized pending reads and replies carry content on the same socket.
+
+Old effect bindings are retained for receipt/cleanup under the currently authenticated
+outer owner incarnation. Positive cleanup evidence does not turn an uncertain website
+effect into success. Fresh binding or socket identity never replays old effects.
+See [browser verification](local-browser-verification.md) for actual Linux evidence.

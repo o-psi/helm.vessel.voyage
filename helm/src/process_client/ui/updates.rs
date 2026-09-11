@@ -3,7 +3,8 @@ use super::*;
 impl App {
     pub(super) fn update(&mut self, update: Update) {
         let route = match &update {
-            Update::Live { target, .. }
+            Update::Browser { target, .. }
+            | Update::Live { target, .. }
             | Update::History { target, .. }
             | Update::Completion { target, .. }
             | Update::Terminals { target, .. }
@@ -40,6 +41,9 @@ impl App {
             view.transcript.borrow_mut().dirty = true;
         }
         match update {
+            Update::Browser { target: _, result } => {
+                self.status = result.unwrap_or_else(|e| e);
+            }
             Update::Coordination {
                 origin,
                 request,
@@ -333,6 +337,7 @@ impl App {
                 self.sync_live_inference_picker(target);
             }
             Update::RouteUnavailable { route, error } => {
+                self.stop_browser_route(route.id);
                 self.clients.mark_unavailable(route);
                 self.vessel_state(route, vessels::classify_error(&error));
                 // Availability belongs to this Vessel, not the shared footer.

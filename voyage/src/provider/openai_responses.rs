@@ -114,6 +114,8 @@ pub(crate) fn request_body_for(
     stream: bool,
 ) -> Result<Value, ProviderError> {
     super::inference::validate_request(provider, &request)?;
+    super::multimodal::validate_adapter(provider, &request)?;
+    super::multimodal::validate_request(&request)?;
     let instructions = request
         .messages
         .iter()
@@ -143,6 +145,9 @@ pub(crate) fn request_body_for(
             Some("function_call_output")
                 if !item["call_id"].as_str().is_some_and(|id| calls.remove(id)) =>
             {
+                if item["output"].is_array() {
+                    return Err(ProviderError::Request("visual tool result has no matching original function call; cannot relabel it as User input".into()));
+                }
                 *item = json!({"type":"message","role":"user","content":format!(
                     "[Tool result retained from earlier history; original call unavailable]\n{}",
                     item["output"].as_str().unwrap_or_default()
@@ -212,9 +217,11 @@ fn unique_replay_calls(items: Vec<Value>) -> Result<Vec<Value>, ProviderError> {
 fn encode_message(message: &Message) -> Result<Vec<Value>, ProviderError> {
     if let Some(content) = super::multimodal::content(message, super::multimodal::Wire::Responses)?
     {
-        return Ok(vec![
-            json!({"type":"message", "role":"user", "content":content}),
-        ]);
+        return Ok(vec![if message.role == Role::Tool {
+            json!({"type":"function_call_output", "call_id":message.tool_call_id, "output":content})
+        } else {
+            json!({"type":"message", "role":"user", "content":content})
+        }]);
     }
     if message.role == Role::Tool {
         return Ok(message

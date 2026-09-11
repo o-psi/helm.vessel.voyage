@@ -5,6 +5,23 @@ native-platform validation. Focused regression and explicitly enabled live check
 are described in [quality](quality.md). The [implementation ledger](implementation.md)
 records delivery evidence and its limits.
 
+## Shared local browser
+
+Helm's F6 and `/browser` open a dedicated local Chromium companion. Browser actions
+and results use the same authenticated full-duplex Helm–Vessel socket as ordinary
+commands; the helper has private local stdio only. Human/agent control shares one
+browser context, with local origin grants, per-effect confirmation, private capture
+suspension and explicit return-to-agent epochs. Remote policy remains independent.
+A socket identity/loss change fences sharing, not the remote Voyage. Typed visual
+tool results retain their original call provenance through authorized artifacts.
+
+This is Linux-qualified source functionality, not certification of arbitrary
+websites, a production TLS proxy or native macOS/Windows behavior. Setup is an
+explicit `helm browser setup` operation; no browser or model credentials are
+installed automatically. See [local browser](local-browser.md),
+[runtime browser binding](shared-local-browser-runtime.md) and
+[visual tool results](visual-tool-results.md) for exact scope and limits.
+
 On Linux, an existing voyage can recreate its deleted working directory on the
 next message while retaining conversation history and access settings. Recovery
 creates an empty private directory at the same path, blocks accidental parent Git
@@ -54,6 +71,13 @@ The private Vessel panel uses scoped focus for form fields, reconnect toggles,
 submission and confirmation controls. Tab/Shift+Tab traverse that scope; ordinary
 composer completion and voyage switching retain their own routing. See
 [scoped interaction](ui-interaction.md).
+
+The voyage sidebar gives every voyage one title row plus a divider, without
+repeated status prefixes or a separate status/host row. Existing semantic status
+styles remain; when the visible list spans multiple Vessels, a muted Vessel label
+follows the title and may be clipped before it. The selected voyage header retains
+explicit status text, including in no-color mode. Current source does not track
+unread voyages or display an unread badge.
 
 The conversation footer combines send hints and navigation shortcuts on one row,
 shortening shortcuts as space decreases. Routine connection-refresh notices are
@@ -272,11 +296,13 @@ creation use executing-host configuration. Closing Helm detaches; it does not ca
 Linux local discovery starts an absent supervisor from companion binaries. The
 supervisor binds an ephemeral literal-loopback HTTP endpoint and atomically publishes
 its bearer credential in the owned private Vessel directory. Helm validates that
-directory, credential file and endpoint before every request. Commands use bounded
-POST requests. The connected TUI and plain/run followers receive durable
-invalidations over authenticated SSE and fetch canonical snapshots/output only when
-notified; stream reconnect uses the last snapshot cursor and never resubmits work.
-Remote routes use HTTPS and private credentials. Legacy sharing grants remain
+directory, credential file and endpoint before opening one authenticated duplex
+socket per connection activation. Commands, correlated replies, durable invalidations
+and the typed browser notification extension share that socket. The connected TUI
+and plain/run followers fetch canonical snapshots/output when notified; reconnect
+uses the last snapshot cursor and never resubmits work. Remote HTTPS origins upgrade
+to WSS with private credentials; local connections use protected loopback WS.
+There is no silent HTTP/SSE fallback. See [duplex transport](duplex-transport.md). Legacy sharing grants remain
 bound to one session, principal, workspace, rights, revision and expiry. Explicit
 owner-approved pairing grants permit catalogue access and creation across selected
 canonical workspaces, with separate rights and runtime-checked revocation/expiry.
@@ -330,19 +356,20 @@ resizing. Release the mouse to finish; focus loss, terminal resize, keyboard inp
 and private-terminal handoff also end a drag. Mouse reporting requires a supporting
 terminal.
 
-Sidebar voyages show explicit state labels and colours: running is dark blue,
+Sidebar voyage titles retain state colours without repeated labels: running is dark blue,
 idle/finished is green, needs attention is orange, and failed is red. Terminal
 results retain their status for five minutes by default, then become **Settled**.
 Set `HELM_SETTLE_AFTER_SECS` to a nonnegative integer number of seconds before
 starting Helm to change this period; `0` settles immediately. Invalid values fail
 before terminal setup. This is a Helm presentation setting, loaded at startup.
 
-Settled voyages are grey and use two terminal rows (combined state/title and a
-divider). They sort below active and recent results, retaining recency within each
-group. Other entries use three rows (state, title, divider). Mouse and keyboard
-use the same order. Muted rules separate entries; titles stay on one clipped row.
-Selection uses bold text and a subtle background without replacing state colour.
-Compact entries omit the route label; Actions → Details retains Vessel identity.
+Settled voyages are grey. They sort below active and recent results, retaining
+recency within each group. Every entry uses two terminal rows (title and divider),
+with mouse and keyboard using the same order. Muted rules separate entries; titles
+stay on one clipped row. Selection uses bold/reverse styling. A muted trailing
+Vessel label appears only when the list spans multiple Vessels; Actions → Details
+retains Vessel identity even when that label is omitted or clipped. Explicit status
+remains in the selected voyage header, including when colors are disabled.
 
 There are no voyage Unread markers or review acknowledgements. Viewing, leaving,
 or covering a conversation does not change its timer. The timer uses the matching
@@ -404,7 +431,7 @@ with an internal suspended disposition. The next submission automatically starts
 a new incarnation with the same session UUID, saved configuration and canonical
 history, using the current Vessel runtime binary. Conversation summaries label successful completion
 Finished for 24 hours after its durable completion timestamp, then Settled; the sidebar
-uses the state and compact suspension presentation described above. Failed,
+uses the time-based styling and compact title presentation described above. Failed,
 cancelled and cleanup-pending outcomes remain distinct. Bounded one-shot helpers
 serve suspended observations without waking an executor. Supervisor-owned reads
 and scoped stop checks use the currently configured runtime binary, not a retired
@@ -479,15 +506,16 @@ continuation, unsent drafts and private terminal input are excluded.
 
 ## Interfaces and controls
 
-Helm uses the independently versioned public Vessel API at `/v1/vessel/command`
-and `/v1/vessel/events`. Its explicit session operations are distinct from private
+Helm uses the independently versioned public Vessel API over `/v1/vessel/socket`.
+The explicit HTTP `/v1/vessel/command` and SSE `/v1/vessel/events` API remain for
+compatibility and non-Helm callers. Its explicit session operations are distinct from private
 runtime commands. Vessel selects owners under lifecycle arbitration, translates
 requests and normalizes responses; live-resource actions retain exact incarnation
-fences. Public SSE follows session owners and reports observed incarnation changes.
+fences. Public events follow session owners and report observed incarnation changes.
 The private runtime IPC remains protocol v1. See [process access](process-access.md#wire-and-retained-state)
 for wire examples and the coordinated Helm/Vessel gateway upgrade requirement.
 
-The connected TUI combines local HTTP and scoped HTTPS routes. It retains separate
+The connected TUI combines local WS and scoped WSS routes. It retains separate
 drafts, prompt navigation, scroll, pending command identities and observation
 cursors per voyage. Switching views does not redirect in-flight actions. Background
 voyages show retained result status and pending decisions; slow remote observation runs
@@ -749,8 +777,10 @@ Outbound worker mode and its enrollment relay are retired. There is no compatibi
 API or automatic conversion of worker installations. Retired worker registrations,
 bound journals and enrollment-bearing session grants are rejected; their private
 data is not deleted. Remote human Helm
-connections and participant execution use the scoped Vessel gateway. The browser
-execution console remains deferred.
+connections and participant execution use the scoped Vessel gateway. Shared local browser execution is explicitly opt-in through Helm's existing
+full-duplex socket; it does not restore the retired worker relay. See
+[local browser](local-browser.md) for setup, companion privacy, permissions,
+provider limitations and recovery.
 
 Declarative extensions, repository onboarding, configuration drafts and local
 credential enrollment retain their explicit operator workflows. See

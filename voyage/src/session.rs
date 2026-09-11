@@ -100,6 +100,9 @@ pub struct Session {
 /// Automatic-title lifecycle is independent of compacted conversation history.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TitleState {
+    /// Accepted submissions and steering, independent of completion and compaction.
+    #[serde(default)]
+    pub user_messages: u64,
     #[serde(default)]
     pub requested_by: Option<Uuid>,
     pub automatic: bool,
@@ -214,6 +217,7 @@ impl Session {
             run_summaries: Vec::new(),
             name: Some(generated_name(id)),
             title_state: Some(TitleState {
+                user_messages: 0,
                 requested_by: None,
                 automatic: true,
                 generated: generated_name(id),
@@ -252,6 +256,7 @@ impl Session {
         let fallback = generated_name(self.id);
         let name = self.display_name();
         self.title_state.get_or_insert_with(|| TitleState {
+            user_messages: 0,
             requested_by: None,
             automatic: name == fallback,
             generated: fallback,
@@ -273,7 +278,11 @@ impl Session {
 
     /// Called in the input admission transaction, never for model/tool iterations.
     pub fn request_title(&mut self, input_id: Uuid) {
-        self.title_state_mut().requested_by = Some(input_id);
+        let state = self.title_state_mut();
+        state.user_messages = state.user_messages.saturating_add(1);
+        // Non-checkpoints also invalidate stale results and prevent a later run
+        // from retrying a previous checkpoint's utility request.
+        state.requested_by = is_title_checkpoint(state.user_messages).then_some(input_id);
     }
 
     pub fn apply_generated_title(&mut self, input_id: Uuid, result: crate::titles::TitleResult) {
@@ -318,6 +327,7 @@ impl Session {
         let fallback = generated_name(self.id);
         let state = self.title_state_mut();
         state.requested_by = None;
+        state.user_messages = 0;
         if automatic {
             state.generated = fallback.clone();
             self.name = Some(fallback);
@@ -882,6 +892,77 @@ fn read_session(path: &Path) -> Result<Session> {
     }
     Ok(session)
 }
+fn is_title_checkpoint(count: u64) -> bool {
+    let (mut previous, mut current) = (0_u64, 1_u64);
+    while current < count {
+        let Some(next) = previous.checked_add(current) else {
+            return false;
+        };
+        previous = current;
+        current = next;
+    }
+    count != 0 && current == count
+}
+
 fn generated_name(id: Uuid) -> String {
     format!("session-{}", &id.simple().to_string()[..8])
+}
+
+#[cfg(test)]
+mod title_schedule_tests {
+    use super::*;
+
+    #[test]
+    fn fibonacci_user_count_survives_history_replacement_and_reload_but_clear_resets_it() {
+        let mut session = Session::new(PathBuf::from("."), "fixture".into());
+        for count in 1..=34 {
+            let id = Uuid::new_v4();
+            session.request_title(id);
+            let state = session.title_state.as_ref().unwrap();
+            assert_eq!(state.user_messages, count);
+            assert_eq!(
+                state.requested_by,
+                [1, 2, 3, 5, 8, 13, 21, 34].contains(&count).then_some(id)
+            );
+            // History replacement/compaction is not a new input and cannot erase the count.
+            session.replace_messages(Vec::new());
+            session = serde_json::from_slice(&serde_json::to_vec(&session).unwrap()).unwrap();
+            assert_eq!(session.title_state.as_ref().unwrap().user_messages, count);
+        }
+        session.clear_conversation();
+        assert_eq!(session.title_state.as_ref().unwrap().user_messages, 0);
+        let id = Uuid::new_v4();
+        session.request_title(id);
+        assert_eq!(session.title_state.as_ref().unwrap().requested_by, Some(id));
+        assert!(!is_title_checkpoint(0));
+        assert!(!is_title_checkpoint(u64::MAX));
+        session.title_state_mut().user_messages = u64::MAX;
+        session.request_title(Uuid::new_v4());
+        assert_eq!(
+            session.title_state.as_ref().unwrap().user_messages,
+            u64::MAX
+        );
+        assert!(session.title_state.as_ref().unwrap().requested_by.is_none());
+    }
+
+    #[test]
+    fn non_checkpoint_invalidates_previous_inflight_title() {
+        let mut session = Session::new(PathBuf::from("."), "fixture".into());
+        for _ in 0..2 {
+            session.request_title(Uuid::new_v4());
+        }
+        let third = Uuid::new_v4();
+        session.request_title(third);
+        let original = session.display_name();
+        session.request_title(Uuid::new_v4());
+        session.apply_generated_title(
+            third,
+            crate::titles::TitleResult {
+                title: Some("Old user intent".into()),
+                usage: Usage::default(),
+            },
+        );
+        assert_eq!(session.display_name(), original);
+        assert!(session.title_state.as_ref().unwrap().requested_by.is_none());
+    }
 }

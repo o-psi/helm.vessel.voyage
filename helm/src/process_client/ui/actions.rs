@@ -60,6 +60,9 @@ impl App {
         preserve_draft: bool,
     ) -> Result<()> {
         let command_text = draft.trim();
+        if command_text == "/browser" || command_text.starts_with("/browser ") {
+            return self.browser_command(target, command_text);
+        }
         if command_text == "/vessels" {
             self.open_vessels();
             return Ok(());

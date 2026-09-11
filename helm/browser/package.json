@@ -1,0 +1,10 @@
+{
+  "name": "@voyage/helm-local-browser",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Private-stdio local Chromium adapter and loopback interactive companion",
+  "engines": { "node": ">=24" },
+  "dependencies": { "playwright-core": "1.63.0" },
+  "scripts": { "start": "node helper.mjs" }
+}

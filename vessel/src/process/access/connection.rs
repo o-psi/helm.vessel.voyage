@@ -28,7 +28,7 @@ impl Supervisor {
                 "scope": "workspaces", "grant_revision": grant.revision,
                 "rights": grant.rights, "expires_at_ms": grant.expires_at_ms,
                 "workspaces": grant.workspaces,
-                "features": ["workspace_pairing", "sse_events", "scoped_catalogue", "voyage_operations", "grant_revocation","start_resolution","provider_accounts","account_start","private_account_enrollment"]
+                "features": ["workspace_pairing", "sse_events","duplex_socket", "scoped_catalogue", "voyage_operations", "grant_revocation","start_resolution","provider_accounts","account_start","private_account_enrollment"]
             })),
             command @ (VesselCommand::Accounts { .. } | VesselCommand::AccountDefaults { .. } | VesselCommand::AccountModels { .. } | VesselCommand::StartAccount { .. } | VesselCommand::ResolveStartAccount { .. } | VesselCommand::EnrollAccount { .. } | VesselCommand::CancelAccountEnrollment { .. } | VesselCommand::PrivateAccountEnrollment { .. }) => self.host_accounts(command, crate::process::accounts::Scope::Connection(grant.clone())).await,
             VesselCommand::Catalogue => {
@@ -151,6 +151,9 @@ impl Supervisor {
                 let right = crate::process::api::required_right(&request.command)
                     .ok_or_else(|| anyhow::anyhow!("operation unavailable to workspace clients"))?;
                 has(right)?;
+                if request.command.requires_browser_history() {
+                    has(ProcessRight::History)?;
+                }
                 if matches!(request.command, VoyageCommand::Terminal { .. }) {
                     has(ProcessRight::Execute)?;
                 }

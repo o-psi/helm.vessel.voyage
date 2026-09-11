@@ -34,6 +34,46 @@ pub(super) async fn dispatch_admitted(
     };
 
     match command {
+        RuntimeCommand::PrepareBrowser => {
+            if let Some(authority) = &authorization.authority {
+                authority.check()?;
+            }
+            // The supervisor has already followed/resumed the owner under its
+            // existing lifecycle fences. Do not offer, build an agent, or infer
+            // local consent here. The outer reply carries the current incarnation.
+            Ok(json!({"prepared": true}))
+        }
+        RuntimeCommand::Browser { operation } => {
+            if let Some(authority) = &authorization.authority {
+                authority.check()?;
+            }
+            let cleanup = matches!(
+                &operation,
+                voyage_protocol::browser::BrowserOperation::Cleanup { observed: true, .. }
+                    | voyage_protocol::browser::BrowserOperation::Result { .. }
+            );
+            let mut attempts = 0;
+            let result = loop {
+                if let Some(authority) = &authorization.authority {
+                    authority.check()?;
+                }
+                match state
+                    .browser
+                    .operate(authorization.actor.principal_id, operation.clone())
+                {
+                    Ok(value) => break value,
+                    Err(error) if crate::browser::storage_busy(&error) && attempts < 50 => {
+                        attempts += 1;
+                        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                    }
+                    Err(error) => return Err(error),
+                }
+            };
+            if cleanup {
+                state.cleanup.retry().await;
+            }
+            Ok(serde_json::to_value(result)?)
+        }
         RuntimeCommand::UploadImage {
             upload_id,
             name,
@@ -146,6 +186,7 @@ pub(super) async fn dispatch_admitted(
                 "terminal",
                 "assignment_observe",
                 "relinquish",
+                "browser",
                 "stop",
             ];
             Ok(

@@ -7,8 +7,12 @@ the existing binaries are in [configuration](configuration.md) and
 
 ## Target authority boundary
 
-Helm presents actions and decisions; it does not execute tools or supply execution
-authority. Vessel authenticates clients and supervises voyage processes within
+Helm presents actions and decisions and does not supply remote execution authority.
+Explicit local browser sharing adds a separate, narrow local execution boundary:
+Helm enforces browser consent, origin/file scope, capture and controller fencing;
+Voyage independently admits the browser tool. Neither remote unrestricted access
+nor a Vessel connection authorizes local sharing. See [local browser](local-browser.md).
+Vessel authenticates clients and supervises voyage processes within
 locally configured limits. Each voyage process enforces the applicable local
 policy before providers, tools, subprocesses, subagents and disclosure boundaries.
 A supervisor's routing decision is not a substitute for runtime admission.
@@ -56,11 +60,12 @@ claim retention guarantees for backups or external copies that are not enforced.
 The Linux process route authenticates a private per-service bearer token and accepts
 it only on a literal-loopback HTTP listener. The discovery record must remain an
 owned private regular file under the owned private Vessel directory. Browser Origin
-requests, redirects and non-loopback endpoints are rejected. SSE subscriptions are
+requests, redirects and non-loopback endpoints are rejected. Helm upgrades this
+listener to an authenticated [duplex socket](duplex-transport.md). Subscriptions are
 bounded and carry only durable invalidations; canonical history requires its
 separate right. Vessel forwards with a session/incarnation-bound runtime secret and
-does not keep the canonical transcript. Remote Helm connections use scoped HTTPS
-grants; there is no SSH account-authority transport.
+does not keep the canonical transcript. Remote Helm connections upgrade HTTPS
+origins to WSS using scoped grants; there is no SSH account-authority transport.
 
 Pending runtime decisions have exact targeting, durable receipts, single-response
 semantics and bounded expiry. Local policy remains the execution ceiling. Scoped process grants bind principal, workspace, session, rights, revision and

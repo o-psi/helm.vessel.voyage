@@ -102,6 +102,12 @@ pub struct VoyageReply {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 pub enum VoyageCommand {
+    /// Follow/resume the ordinary owner for an explicitly authorized local share.
+    /// No browser effect, sharing authority, or agent turn is created.
+    PrepareBrowser,
+    Browser {
+        operation: crate::browser::BrowserOperation,
+    },
     Clear {
         command_id: Uuid,
         expected_revision: u64,
@@ -310,10 +316,23 @@ pub enum VoyageCommand {
 }
 
 impl VoyageCommand {
+    /// Browser executors can receive private agent arguments as well as effects.
+    /// Execute alone is insufficient; scoped admission also needs History.
+    pub fn requires_browser_history(&self) -> bool {
+        match self {
+            Self::PrepareBrowser | Self::Browser { .. } => true,
+            Self::Resolve {
+                original: Some(original),
+                ..
+            } => original.requires_browser_history(),
+            _ => false,
+        }
+    }
     pub fn requires_incarnation(&self) -> bool {
         matches!(
             self,
-            Self::ExecuteTool { .. }
+            Self::Browser { .. }
+                | Self::ExecuteTool { .. }
                 | Self::Terminal { .. }
                 | Self::Cancel { .. }
                 | Self::Steer { .. }
@@ -322,6 +341,7 @@ impl VoyageCommand {
     }
     pub fn mutation_id(&self) -> Option<Uuid> {
         match self {
+            Self::Browser { operation } => operation.mutation_id(),
             Self::Clear { command_id, .. }
             | Self::Compact { command_id, .. }
             | Self::OperatorTool { command_id, .. }

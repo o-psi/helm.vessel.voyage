@@ -25,6 +25,13 @@ pub struct ConnectArgs {
 
 #[derive(Subcommand)]
 pub enum ConnectedCommand {
+    /// Open a locally controlled browser companion for this voyage; sharing requires local consent.
+    Browser {
+        session: Uuid,
+        /// Submit retained positive local cleanup evidence; never replay a browser effect.
+        #[arg(long)]
+        reconcile: bool,
+    },
     /// Download a tool artifact from its owning voyage to a new local file.
     Artifact {
         session: Uuid,
@@ -196,6 +203,25 @@ pub async fn run(args: ConnectArgs) -> Result<()> {
             "CLI operations require a single selected Vessel"
         );
         match command {
+            ConnectedCommand::Browser { session, reconcile } => {
+                if reconcile {
+                    let info: voyage_protocol::vessel::ProcessInfo = serde_json::from_value(
+                        clients[0]
+                            .request(voyage_protocol::vessel::VesselCommand::Inspect {
+                                session_id: session,
+                            })
+                            .await?,
+                    )?;
+                    println!(
+                        "{}",
+                        super::browser::reconcile(clients[0].clone(), session, info.incarnation)
+                            .await?
+                    );
+                    Ok(())
+                } else {
+                    super::browser::run_connected(clients[0].clone(), session).await
+                }
+            }
             ConnectedCommand::Terminal {
                 session,
                 run,

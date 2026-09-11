@@ -1244,6 +1244,7 @@ impl Agent {
             self.sink.emit(AgentEvent::Thinking { turn }).await;
             let mut messages = history.clone();
             completion_continuation.project(&mut messages);
+            crate::model::visual::project(&mut messages, context.artifact_scope.as_ref())?;
             let mut instructions = self.effective_system_prompt(workspace.as_deref(), &extension_guidance);
             completion_continuation.append_to(&mut instructions);
             messages.insert(0, Message::new(crate::model::Role::System, instructions));

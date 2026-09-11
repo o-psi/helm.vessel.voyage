@@ -97,7 +97,7 @@ Those limits are explicit rather than alternate embedded execution fallbacks.
 | 6. Participants and owner moves | Explicit receiver bindings, bounded disclosed context, distinct subordinate sessions, immutable assignment/result/cleanup obligations, cancellation tombstones and idle reconciliation. Pinned signing identities, destination readiness, permanent source fencing and verified checkpoint courier implement explicit owner movement without timeout takeover. |
 
 The Linux installer now has real review/apply, upgrade and rollback paths; the
-browser execution console remains deferred. Native process-service
+[shared local browser](local-browser.md) uses the existing full-duplex connection; general remote browser consoles remain out of scope. Native process-service
 paths outside Linux fail explicitly. Outbound worker mode and its enrollment relay
 are retired; human remote connections and participant execution use the scoped gateway.
 

@@ -12,7 +12,7 @@ operator interfaces. Paths in backticks require the source checkout.
 | Path | Current responsibility |
 | --- | --- |
 | `helm/src/main.rs`, `helm/src/cli.rs`, `helm/src/diagnostics.rs` | CLI dispatch, grammar and execution-host diagnostics clients |
-| `helm/src/process_client/` | Connected CLI, local HTTP/scoped HTTPS commands and SSE, lifecycle/courier clients and multiplexer |
+| `helm/src/process_client/` | Connected CLI, local WS/scoped WSS commands, replies and events, lifecycle/courier clients and multiplexer |
 | `helm/src/markdown.rs`, `helm/src/onboarding/` | Rendering and repository onboarding |
 | `voyage/src/main.rs`, `voyage/src/server/` | Independent runtime entrypoint, private transport and session command dispatch |
 | `voyage/src/agent.rs`, `voyage/src/agent/`, `voyage/src/context.rs` | Provider-neutral loop, cancellation, context and completion integration |
@@ -26,7 +26,7 @@ operator interfaces. Paths in backticks require the source checkout.
 | `helm/src/managed.rs` | Thin supervised managed client |
 | `vessel/src/process/` | Linux launch, private registry, routing and conservative stop/restart |
 | `vessel/src/main.rs` and HTTP/transport modules | Management, human pairing and scoped process gateway |
-| `crates/voyage-protocol/src/vessel.rs` | Public Vessel operations, service responses and SSE contract |
+| `crates/voyage-protocol/src/vessel.rs` | Public Vessel operations, service responses and event contract |
 | `crates/voyage-protocol/src/process/` | Private runtime IPC and shared identity/authority data |
 | `vessel/src/process/api.rs` | Public-to-private operation adapter and public response normalization |
 | `crates/voyage-storage/src/` | Native private-storage primitives |
