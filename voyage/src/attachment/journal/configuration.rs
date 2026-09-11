@@ -11,7 +11,7 @@ fn ensure_access_revision(
 ) -> Result<()> {
     let current = read_session(connection, session)?.revision;
     let changed: bool = connection.query_row(
-        "SELECT EXISTS(SELECT 1 FROM process_commands WHERE json_extract(request, '$.op') IN ('configure','set_access','set_inference','set_model') AND json_extract(receipt, '$.status')='applied' AND json_extract(receipt, '$.revision') > ?1)",
+        "SELECT EXISTS(SELECT 1 FROM process_commands WHERE json_extract(request, '$.op') IN ('configure','set_access','set_inference','set_account_inference','set_model') AND json_extract(receipt, '$.status')='applied' AND json_extract(receipt, '$.revision') > ?1)",
         [i64::try_from(expected)?], |row| row.get(0),
     )?;
     ensure!(
@@ -71,6 +71,39 @@ impl Journal {
         commit(tx, &self.commit_fence)
     }
 
+    /// Deterministic executing-host legacy migration. This is not a user switch:
+    /// only the previously absent account field may be added, under the owner guard.
+    pub(crate) fn materialize_account_configuration(
+        &mut self,
+        guard: &ExecutionGuard,
+        previous: &str,
+        settings: &str,
+    ) -> Result<()> {
+        self.check_guard(guard, guard.session_id)?;
+        let mut before: Value = serde_json::from_str(previous)?;
+        let after: Value = serde_json::from_str(settings)?;
+        ensure!(
+            before["config"]["account"].is_null() && after["config"]["account"].is_object(),
+            "not legacy account materialization"
+        );
+        before["config"]["account"] = after["config"]["account"].clone();
+        ensure!(
+            before == after && settings.len() <= 1024 * 1024,
+            "legacy account migration changed other settings"
+        );
+        let tx = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        ensure!(
+            tx.execute(
+                "UPDATE process_configuration SET settings=?1 WHERE session_id=?2 AND settings=?3",
+                params![settings, guard.session_id.to_string(), previous]
+            )? == 1,
+            "configuration changed during migration"
+        );
+        commit(tx, &self.commit_fence)
+    }
+
     pub(crate) fn configure(
         &mut self,
         guard: &ExecutionGuard,
@@ -88,6 +121,12 @@ impl Journal {
             ..
         }
         | RuntimeCommand::SetInference {
+            command_id,
+            expected_revision,
+            expires_at_ms,
+            ..
+        }
+        | RuntimeCommand::SetAccountInference {
             command_id,
             expected_revision,
             expires_at_ms,
@@ -133,7 +172,10 @@ impl Journal {
             |r| r.get(0),
         )?;
         let access_only = matches!(&command, RuntimeCommand::SetAccess { .. });
-        let inference_only = matches!(&command, RuntimeCommand::SetInference { .. });
+        let inference_only = matches!(
+            &command,
+            RuntimeCommand::SetInference { .. } | RuntimeCommand::SetAccountInference { .. }
+        );
         ensure!(
             ((access_only || inference_only) && active > 0)
                 || (active == 0

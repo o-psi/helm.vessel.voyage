@@ -1,6 +1,7 @@
 pub(crate) mod multimodal;
 pub use multimodal::validate_image_capability;
 mod anthropic;
+mod api_credential;
 mod catalog;
 mod inference;
 pub use catalog::{validate_model, validate_models, validate_models_for_display};
@@ -10,7 +11,7 @@ pub use inference::{
     resolve_inference, resolve_inference_values, validate_inference_settings,
     validate_inference_settings_with_model,
 };
-mod chatgpt_oauth;
+pub(crate) mod chatgpt_oauth;
 pub(crate) mod discovery;
 mod openai;
 mod openai_responses;
@@ -36,6 +37,8 @@ pub use chatgpt_oauth::{
 pub use openai::OpenAiProvider;
 pub use openai_responses::OpenAiResponsesProvider;
 
+#[cfg(test)]
+mod account_identity_tests;
 #[cfg(test)]
 mod failure_tests;
 
@@ -284,16 +287,45 @@ pub trait Provider: Send + Sync {
 }
 
 pub fn from_config(config: &Config) -> Result<Box<dyn Provider>, ProviderError> {
+    from_config_with_redactor(config, None)
+}
+
+pub(crate) fn from_config_with_redactor(
+    config: &Config,
+    redactor: Option<std::sync::Arc<crate::tools::Redactor>>,
+) -> Result<Box<dyn Provider>, ProviderError> {
+    config
+        .validate_account()
+        .map_err(|e| ProviderError::Authentication(e.to_string()))?;
+    if config.account.is_some() {
+        return Ok(Box::new(BoundProvider {
+            config: config.clone(),
+            redactor,
+        }));
+    }
+    native_from_config(config, redactor)
+}
+
+fn native_from_config(
+    config: &Config,
+    redactor: Option<std::sync::Arc<crate::tools::Redactor>>,
+) -> Result<Box<dyn Provider>, ProviderError> {
+    config
+        .validate_account()
+        .map_err(|e| ProviderError::Authentication(e.to_string()))?;
     validate_config_endpoints(config)?;
     validate_inference_settings(config)
         .map_err(|error| ProviderError::Request(error.to_string()))?;
     match config.provider {
-        ProviderKind::OpenaiResponses => Ok(Box::new(OpenAiResponsesProvider::new(
-            config
-                .api_key()
-                .map_err(|e| ProviderError::Authentication(e.to_string()))?,
-            config.base_url.clone(),
-        ))),
+        ProviderKind::OpenaiResponses => Ok(Box::new(
+            OpenAiResponsesProvider::new(
+                config
+                    .api_key()
+                    .map_err(|e| ProviderError::Authentication(e.to_string()))?,
+                config.base_url.clone(),
+            )
+            .with_account(config, redactor.clone()),
+        )),
         ProviderKind::OpenaiChat => Ok(Box::new(
             OpenAiProvider::new(
                 config
@@ -301,9 +333,22 @@ pub fn from_config(config: &Config) -> Result<Box<dyn Provider>, ProviderError> 
                     .map_err(|e| ProviderError::Authentication(e.to_string()))?,
                 config.base_url.clone(),
             )
+            .with_account(config, redactor.clone())
             .with_max_tokens_parameter(config.chat_use_max_tokens),
         )),
         ProviderKind::ChatGptOauth => {
+            if let Some(binding) = &config.account {
+                return crate::accounts::Registry::default_host()
+                    .and_then(|registry| registry.oauth_provider(binding))
+                    .map(|provider| {
+                        Box::new(
+                            provider
+                                .with_authority(config.provider_authority.clone())
+                                .with_redactor(redactor.clone()),
+                        ) as Box<dyn Provider>
+                    })
+                    .map_err(|e| ProviderError::Authentication(e.to_string()));
+            }
             let store = ChatGptTokenStore::new(ChatGptTokenStore::default_path()?);
             let mut endpoints = OAuthEndpoints::default();
             if let Some(base) = config.chatgpt_base_url.as_deref() {
@@ -311,14 +356,19 @@ pub fn from_config(config: &Config) -> Result<Box<dyn Provider>, ProviderError> 
                 endpoints.responses = format!("{base}/responses");
                 endpoints.models = format!("{base}/models");
             }
-            Ok(Box::new(ChatGptOauthProvider::from_store(store, endpoints)))
+            Ok(Box::new(
+                ChatGptOauthProvider::from_store(store, endpoints).with_redactor(redactor),
+            ))
         }
-        ProviderKind::Anthropic => Ok(Box::new(AnthropicProvider::new(
-            config
-                .api_key()
-                .map_err(|e| ProviderError::Authentication(e.to_string()))?,
-            config.base_url.clone(),
-        ))),
+        ProviderKind::Anthropic => Ok(Box::new(
+            AnthropicProvider::new(
+                config
+                    .api_key()
+                    .map_err(|e| ProviderError::Authentication(e.to_string()))?,
+                config.base_url.clone(),
+            )
+            .with_account(config, redactor.clone()),
+        )),
     }
 }
 
@@ -491,4 +541,40 @@ pub(crate) fn reported_service_tier(value: Option<&serde_json::Value>) -> Option
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-'))
     .then(|| text.to_owned())
+}
+
+/// Own the admitted configuration, not a credential snapshot. Every request and
+/// retry constructs a native adapter with the current same-identity credential.
+struct BoundProvider {
+    config: Config,
+    redactor: Option<std::sync::Arc<crate::tools::Redactor>>,
+}
+#[async_trait]
+impl Provider for BoundProvider {
+    async fn models(&self) -> Result<Vec<ModelInfo>, ProviderError> {
+        native_from_config(&self.config, self.redactor.clone())?
+            .models()
+            .await
+    }
+    async fn complete(&self, request: ModelRequest) -> Result<ModelResponse, ProviderError> {
+        native_from_config(&self.config, self.redactor.clone())?
+            .complete(request)
+            .await
+    }
+    async fn stream(&self, request: ModelRequest) -> Result<ProviderStream, ProviderError> {
+        native_from_config(&self.config, self.redactor.clone())?
+            .stream(request)
+            .await
+    }
+}
+
+fn check_provider_authority(
+    authority: &Option<std::sync::Arc<dyn crate::policy::ExecutionAuthority>>,
+) -> Result<(), ProviderError> {
+    if let Some(authority) = authority {
+        authority.check().map_err(|_| {
+            ProviderError::Authentication("executing-host account authority withdrawn".into())
+        })?;
+    }
+    Ok(())
 }

@@ -213,7 +213,7 @@ async fn inspect(
         RuntimeCommand::Health => Ok(json!({"pid":null,"session_id":registration.session_id,
             "incarnation":registration.incarnation,"suspended":true,
             "capabilities":["snapshot","history","message_chunk","run_output","submit",
-                "receipt","resolve","cancel","steer","rename","set_model","set_inference","set_access","decisions",
+                "receipt","resolve","cancel","steer","rename","set_model","set_inference","set_account_inference","set_access","decisions",
                 "respond","archive","delete","branch","clear","compact","events","controls",
                 "operator_tool","configure","workflow_submit","terminal","assignment_observe",
                 "relinquish","stop"],"decisions":"bounded_120_seconds"})),

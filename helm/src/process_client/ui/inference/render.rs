@@ -24,13 +24,24 @@ impl App {
             return;
         };
         let settings = self.inference_settings(destination).ok();
-        let fields = [Field::Model, Field::Thinking, Field::Service];
-        let columns = Layout::horizontal([Constraint::Percentage(25); 4]).split(area);
-        self.draw_access_control(frame, columns[3], destination);
+        let fields = [
+            Field::Account,
+            Field::Model,
+            Field::Thinking,
+            Field::Service,
+        ];
+        let columns = Layout::horizontal([Constraint::Percentage(20); 5]).split(area);
+        self.draw_access_control(frame, columns[4], destination);
         for (field, area) in fields.into_iter().zip(columns.iter().copied()) {
             let value = settings
                 .as_ref()
-                .map(|s| s.label(field))
+                .map(|s| {
+                    if field == Field::Account {
+                        self.account_control_label(destination, s)
+                    } else {
+                        s.label(field)
+                    }
+                })
                 .unwrap_or_else(|| "unavailable".into());
             self.draw_composer_control(
                 frame,
@@ -71,6 +82,7 @@ impl App {
 
     pub(in crate::process_client::ui) fn draw_inference_picker(&self, frame: &mut Frame<'_>) {
         self.draw_draft_access(frame);
+        self.draw_accounts(frame);
         let Some(picker) = &self.inference.picker else {
             return;
         };

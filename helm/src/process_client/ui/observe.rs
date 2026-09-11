@@ -22,13 +22,6 @@ pub enum Update {
         result: Result<Box<super::transcript::navigation::Located>, String>,
     },
     Vessels(super::vessels::Event),
-    DraftInferenceModels {
-        id: uuid::Uuid,
-        provider: String,
-        context: Option<[u8; 32]>,
-        generation: uuid::Uuid,
-        models: Option<Vec<crate::provider::ModelInfo>>,
-    },
     InferenceModels {
         route: Option<Route>,
         id: uuid::Uuid,

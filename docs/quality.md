@@ -238,3 +238,29 @@ and limits. Fixtures use synthetic pixels and local provider responses only;
 no test reads the operator's actual clipboard, captures the desktop, or spends live-provider budget.
 The PTY regression uses private fake clipboard helpers and exercises inline paste,
 editing, cancellation/errors, draft migration and supervised image delivery.
+
+## Named provider accounts
+
+The focused offline account journey uses synthetic API bindings and a loopback
+provider with real independent Vessel-supervised Voyage processes:
+
+```sh
+cargo build -p vessel -p voyage --locked -j 8
+python3 tests/provider_accounts.py --bin-dir target/debug
+```
+
+It covers two concurrent account identities, staged current/next-turn selection,
+exact conflicting/replayed selection envelopes, suspension/resume and branching,
+same-identity API rotation (including split-stream redaction during an active run),
+logout refusal without fallback, and explicit scoped
+account/enrollment metadata access. It uses the current public `/v1/vessel/command`
+contract while preserving the older concurrent fixture unchanged. It does not
+establish native platform, live-provider, or public TLS results.
+
+Rust account tests retain actual loopback device polling/exchange races, identity
+conflicts, private storage failure cases, and independent process refresh fencing.
+Helm account tests cover its private view and durable public selection envelopes.
+These tests are included in workspace coverage; the Python journey is separate.
+When using a shared build target, retain every current Cargo compiler-artifact
+executable in the LLVM report and exclude historical stale binaries, not workspace
+packages. See [#251](https://github.com/o-psi/voyage/issues/251).

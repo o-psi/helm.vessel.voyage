@@ -197,6 +197,15 @@ pub enum RuntimeCommand {
         reasoning_effort: Option<String>,
         service_tier: Option<String>,
     },
+    SetAccountInference {
+        command_id: Uuid,
+        expected_revision: u64,
+        expires_at_ms: u64,
+        model: String,
+        reasoning_effort: Option<String>,
+        service_tier: Option<String>,
+        account: crate::accounts::AccountBinding,
+    },
     SetModel {
         command_id: Uuid,
         expected_revision: u64,
@@ -271,6 +280,7 @@ impl RuntimeCommand {
             | Self::Rename { command_id, .. }
             | Self::SetModel { command_id, .. }
             | Self::SetInference { command_id, .. }
+            | Self::SetAccountInference { command_id, .. }
             | Self::Respond { command_id, .. }
             | Self::Archive { command_id, .. }
             | Self::Delete { command_id, .. }

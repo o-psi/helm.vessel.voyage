@@ -228,6 +228,15 @@ pub async fn inference_context(config: &Config) -> Option<[u8; 32]> {
         ))
         .ok()?,
     );
+    if let Some(binding) = &config.account {
+        config.validate_account().ok()?;
+        let descriptor = crate::accounts::Registry::default_host()
+            .ok()?
+            .validate_binding(binding)
+            .ok()?;
+        hash.update(serde_json::to_vec(&(binding, descriptor.capability_revision)).ok()?);
+        return Some(hash.finalize().into());
+    }
     match config.provider {
         ProviderKind::ChatGptOauth => {
             let path = super::ChatGptTokenStore::default_path().ok()?;

@@ -159,6 +159,7 @@ impl App {
             access: access.into(),
         };
         view.pending = Some(super::super::state::Pending {
+            account_host: None,
             command_id,
             original: Some(Box::new(command.clone())),
             receipt_only: false,

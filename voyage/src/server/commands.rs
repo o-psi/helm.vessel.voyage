@@ -94,7 +94,8 @@ pub(super) async fn dispatch_admitted(
         }
         command @ (RuntimeCommand::Configure { .. }
         | RuntimeCommand::SetAccess { .. }
-        | RuntimeCommand::SetInference { .. }) => {
+        | RuntimeCommand::SetInference { .. }
+        | RuntimeCommand::SetAccountInference { .. }) => {
             super::configuration::configure(state, command, authorization).await
         }
         RuntimeCommand::WorkflowInputs { input_id, values } => {
@@ -170,6 +171,7 @@ pub(super) async fn dispatch_admitted(
                 "rename",
                 "set_model",
                 "set_inference",
+                "set_account_inference",
                 "set_access",
                 "decisions",
                 "respond",

@@ -189,6 +189,15 @@ Confirmed changes survive runtime suspension and supervisor restart. Helm retain
 pending commands and reconciles their original identities after reconnect without
 replaying uncertain commands. Stale or unsupported changes preserve prior values.
 
+Named provider connections/accounts keep credentials on the execution host. Helm's
+Account control stages an atomic account/model/override choice independently of the
+active run; private device sign-in exposes only temporary verification material to
+its human view. Resume and branches retain trusted account identity. API credentials
+are entered in an execution-host private terminal or bound to an explicit environment
+name. Account-use and enrollment grants are distinct and default-denied. See
+[named provider accounts](provider-accounts.md) for lifecycle, migration, uncertainty,
+and evidence limits; no automatic quota rotation or credential forwarding is provided.
+
 OpenAI Responses, Chat Completions and ChatGPT OAuth adapters encode explicit
 reasoning-effort and service-tier fields. Native ChatGPT catalog discovery retains
 advertised reasoning and service choices and their optional defaults. A shared
