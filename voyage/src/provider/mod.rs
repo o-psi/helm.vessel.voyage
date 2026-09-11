@@ -16,6 +16,7 @@ pub(crate) mod discovery;
 mod openai;
 mod openai_responses;
 mod redaction;
+mod rejection;
 pub(crate) use redaction::definition as redact_tool_definition;
 pub(crate) use redaction::message as redact_message;
 
@@ -44,12 +45,17 @@ mod failure_tests;
 
 pub(crate) const USAGE_LIMIT_MESSAGE: &str = "Provider account usage limit reached. Wait for the account allowance to reset before sending another message.";
 
+pub(crate) const CONTEXT_LENGTH_MESSAGE: &str =
+    "Provider rejected the request because it exceeds the model context length.";
+
 #[derive(Debug, Error)]
 pub enum ProviderError {
     #[error("authentication failed: {0}")]
     Authentication(String),
     #[error("{USAGE_LIMIT_MESSAGE}")]
     UsageLimit,
+    #[error("{CONTEXT_LENGTH_MESSAGE}")]
+    ContextLength,
     #[error("provider rate limit: {message}")]
     RateLimit {
         message: String,
@@ -224,6 +230,7 @@ impl ProviderError {
                 "Provider authentication failed. Check credentials on the executing machine."
             }
             Self::UsageLimit => USAGE_LIMIT_MESSAGE,
+            Self::ContextLength => CONTEXT_LENGTH_MESSAGE,
             Self::RateLimit { .. } => "Provider rate limit prevented completion.",
             Self::Unavailable(_) => "Provider temporarily unavailable.",
             Self::Timeout(_) => "Provider request timed out.",
@@ -468,25 +475,12 @@ pub(crate) async fn checked_json(
             .map_err(|e| ProviderError::InvalidResponse(format!("{e}: {body}")))
     } else if status.as_u16() == 401 || status.as_u16() == 403 {
         Err(ProviderError::Authentication(body))
+    } else if let Some(error) = serde_json::from_str::<serde_json::Value>(&body)
+        .ok()
+        .and_then(|value| rejection::classify(&value, Some(status.as_u16())))
+    {
+        Err(error)
     } else if status.as_u16() == 429 {
-        // Account exhaustion is not transient throttling. Do not retry the same
-        // exhausted allowance, or retain arbitrary provider error text.
-        let exhausted = serde_json::from_str::<serde_json::Value>(&body)
-            .ok()
-            .is_some_and(|value| {
-                [value.pointer("/error/type"), value.pointer("/error/code")]
-                    .into_iter()
-                    .flatten()
-                    .any(|code| {
-                        matches!(
-                            code.as_str(),
-                            Some("usage_limit_reached" | "insufficient_quota")
-                        )
-                    })
-            });
-        if exhausted {
-            return Err(ProviderError::UsageLimit);
-        }
         Err(ProviderError::RateLimit {
             message: body,
             retry_after,

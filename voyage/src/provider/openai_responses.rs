@@ -748,6 +748,13 @@ fn decode_stream_error(value: &Value) -> ProviderError {
         .get("type")
         .and_then(Value::as_str)
         .unwrap_or_default();
+    // Output exhaustion is not a rejected input, even if a contradictory code is present.
+    if kind == "response.incomplete" {
+        return ProviderError::Incomplete;
+    }
+    if let Some(error) = super::rejection::classify(value, None) {
+        return error;
+    }
     let error = value
         .pointer("/response/error")
         .or_else(|| value.get("error"))
@@ -771,7 +778,6 @@ fn decode_stream_error(value: &Value) -> ProviderError {
         })
         .to_owned();
     match code {
-        _ if kind == "response.incomplete" => ProviderError::Incomplete,
         "usage_limit_reached" | "insufficient_quota" => ProviderError::UsageLimit,
         "rate_limit_exceeded" => ProviderError::RateLimit {
             message,
@@ -786,6 +792,9 @@ fn validate_status(value: &Value) -> Result<(), ProviderError> {
     match value.get("status").and_then(Value::as_str) {
         None | Some("completed") => Ok(()),
         Some("incomplete") => Err(ProviderError::Incomplete),
+        Some("failed") => Err(super::rejection::classify(value, None).unwrap_or_else(|| {
+            ProviderError::InvalidResponse("response did not complete".into())
+        })),
         _ => Err(ProviderError::InvalidResponse(
             "response did not complete".into(),
         )),
@@ -798,5 +807,69 @@ fn map_transport(error: reqwest::Error) -> ProviderError {
         ProviderError::Unavailable(error.to_string())
     } else {
         ProviderError::Request(error.to_string())
+    }
+}
+
+#[cfg(test)]
+mod context_rejection_tests {
+    use super::*;
+    use futures_util::StreamExt;
+
+    // ChatGPT OAuth and native Responses both use this stream decoder.
+    #[tokio::test]
+    async fn responses_and_oauth_sse_classify_nested_and_flat_errors() {
+        for event in [
+            json!({"type":"response.failed","response":{"error":{"code":"context_length_exceeded","message":"PRIVATE"}}}),
+            json!({"type":"error","code":"context_length_exceeded","message":"PRIVATE"}),
+            json!({"type":"error","error":{"code":"context_length_exceeded","message":"PRIVATE"}}),
+        ] {
+            let frame = format!("data: {event}\n\n");
+            let source = futures_util::stream::iter(vec![Ok(bytes::Bytes::from(frame))]);
+            let stream = responses_stream(source);
+            futures_util::pin_mut!(stream);
+            let error = stream.next().await.unwrap().unwrap_err();
+            assert!(matches!(error, ProviderError::ContextLength));
+            assert!(!error.is_retryable());
+            assert_eq!(error.to_string(), super::super::CONTEXT_LENGTH_MESSAGE);
+            assert!(stream.next().await.is_none());
+        }
+    }
+
+    #[test]
+    fn failed_response_classification_preserves_output_and_account_limits() {
+        let error = decode_response(json!({"status":"failed","error":{
+            "code":"context_length_exceeded","message":"PRIVATE"
+        }}))
+        .unwrap_err();
+        assert!(matches!(error, ProviderError::ContextLength));
+        for reason in ["max_output_tokens", "content_filter"] {
+            let event = json!({"type":"response.incomplete","response":{
+                "status":"incomplete","incomplete_details":{"reason":reason},
+                "error":{"code":"context_length_exceeded"}
+            }});
+            assert!(matches!(
+                decode_stream_error(&event),
+                ProviderError::Incomplete
+            ));
+            assert!(matches!(
+                decode_response(event["response"].clone()),
+                Err(ProviderError::Incomplete)
+            ));
+        }
+        for code in ["usage_limit_reached", "insufficient_quota"] {
+            let event = json!({"type":"response.failed","response":{"error":{
+                "code":code,"message":"PRIVATE"
+            }}});
+            assert!(matches!(
+                decode_stream_error(&event),
+                ProviderError::UsageLimit
+            ));
+        }
+        let unknown = json!({"type":"error","code":"rate_limit_exceeded"});
+        assert!(matches!(
+            decode_stream_error(&unknown),
+            ProviderError::RateLimit { .. }
+        ));
+        assert!(decode_stream_error(&unknown).is_retryable());
     }
 }

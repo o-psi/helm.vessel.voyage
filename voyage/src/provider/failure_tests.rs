@@ -107,3 +107,77 @@ async fn transient_or_unknown_throttling_keeps_bounded_retry_after() {
         assert_eq!(error.retry_after(), Some(std::time::Duration::from_secs(1)));
     }
 }
+
+#[tokio::test]
+async fn context_rejections_are_content_free_and_never_transient() {
+    for (status, body) in [
+        (
+            400,
+            r#"{"error":{"code":"context_length_exceeded","message":"PRIVATE"}}"#,
+        ),
+        (
+            400,
+            r#"{"error":{"type":"invalid_request_error","message":"prompt is too long: 210000 tokens > 200000 maximum PRIVATE"}}"#,
+        ),
+        (
+            400,
+            r#"{"error":{"type":"invalid_request_error","message":"This model's maximum context length is 8192 tokens. PRIVATE"}}"#,
+        ),
+        // Explicit context codes override transient HTTP status and Retry-After.
+        (
+            429,
+            r#"{"error":{"code":"context_length_exceeded","message":"PRIVATE"}}"#,
+        ),
+        (
+            503,
+            r#"{"error":{"code":"context_length_exceeded","message":"PRIVATE"}}"#,
+        ),
+    ] {
+        let error = reject_with(status, "12", body).await;
+        assert!(matches!(error, ProviderError::ContextLength));
+        assert!(!error.is_retryable());
+        assert_eq!(error.retry_after(), None);
+        assert_eq!(error.to_string(), CONTEXT_LENGTH_MESSAGE);
+        assert_eq!(error.public_failure_reason(), CONTEXT_LENGTH_MESSAGE);
+        assert!(!format!("{error:?}").contains("PRIVATE"));
+        assert!(matches!(
+            multimodal::redact(error),
+            ProviderError::ContextLength
+        ));
+    }
+}
+
+#[tokio::test]
+async fn generic_size_errors_and_authentication_are_not_context_rejections() {
+    for (status, body) in [
+        (
+            413,
+            r#"{"error":{"type":"request_too_large","message":"request too large"}}"#,
+        ),
+        (
+            400,
+            r#"{"error":{"type":"invalid_request_error","message":"max_tokens is too large"}}"#,
+        ),
+        (400, r#"{"error":{"message":"context length exceeded"}}"#),
+        (400, "context_length_exceeded"),
+        (401, r#"{"error":{"code":"context_length_exceeded"}}"#),
+        (403, r#"{"error":{"code":"context_length_exceeded"}}"#),
+        (
+            429,
+            r#"{"error":{"type":"invalid_request_error","message":"prompt is too long: 210000 tokens > 200000 maximum"}}"#,
+        ),
+        (
+            500,
+            r#"{"error":{"type":"invalid_request_error","message":"This model's maximum context length is 8192 tokens."}}"#,
+        ),
+    ] {
+        assert!(!matches!(
+            reject_with(status, "12", body).await,
+            ProviderError::ContextLength
+        ));
+    }
+    let error =
+        reject(r#"{"error":{"type":"usage_limit_reached","code":"context_length_exceeded"}}"#)
+            .await;
+    assert!(matches!(error, ProviderError::UsageLimit));
+}
