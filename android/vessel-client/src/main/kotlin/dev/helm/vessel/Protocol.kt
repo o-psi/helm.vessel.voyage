@@ -42,7 +42,7 @@ object Requests {
         return session("history", sessionId, "offset" to offset.json(), "limit" to limit.json(), "expected_revision" to (expectedRevision?.json() ?: JsonNull))
     }
     fun events(sessionId: String, incarnation: String, after: Long, limit: Int = 64, waitMs: Int = 0): JsonObject {
-        require(after >= 0 && limit in 1..128 && waitMs in 0..30000)
+        require(after >= 0 && limit in 1..128 && waitMs in 0..10000)
         return session("events", sessionId, "incarnation" to uuid(incarnation).json(), "after" to after.json(), "limit" to limit.json(), "wait_ms" to waitMs.json())
     }
     fun messageChunk(sessionId: String, index: Long, offset: Long, expectedRevision: Long, limit: Int = 65536): JsonObject {

@@ -113,7 +113,7 @@ class OkHttpVesselTransport internal constructor(
         override fun onMessage(webSocket: WebSocket, text: String) {
             try {
                 if (text.toByteArray(Charsets.UTF_8).size > MAX_FRAME_BYTES) throw VesselFailure("Frame limit")
-                val frame = wireJson.parseToJsonElement(text).jsonObject
+                val frame = boundedFrame(text)
                 synchronized(monitor) {
                     if (socket.failed || active !== socket) return
                     val type = frame.string("type")
@@ -235,4 +235,23 @@ class OkHttpVesselTransport internal constructor(
         // Only this client's socket is closed. Never submit a remote cancel/stop.
         Unit
     }
+}
+
+/** Limit JSON nesting before recursive tree decoding; strings may contain arbitrary brackets. */
+internal fun boundedFrame(text: String): JsonObject {
+    var depth = 0
+    var quoted = false
+    var escaped = false
+    for (char in text) {
+        if (quoted) {
+            if (escaped) escaped = false
+            else if (char == '\\') escaped = true
+            else if (char == '"') quoted = false
+        } else when (char) {
+            '"' -> quoted = true
+            '{', '[' -> { depth++; require(depth <= 64) { "Frame nesting limit" } }
+            '}', ']' -> depth--
+        }
+    }
+    return wireJson.parseToJsonElement(text).jsonObject
 }

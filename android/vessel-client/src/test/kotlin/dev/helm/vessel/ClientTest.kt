@@ -144,4 +144,19 @@ class ClientTest {
         transport.answer = { val response = prior(it); transport.state.value = ConnectionState(null, 1); response }
         assertFailsWith<IllegalArgumentException> { client.reconcile(SESSION) }
     }
+    @Test fun mismatchedReceiptCannotResolveAnotherCommand() = runBlocking {
+        val journal = Journal(); val transport = FakeTransport(); val client = VesselClient(endpoint(), journal, transport)
+        journal.insert(JournalEntry(VESSEL, SESSION, COMMAND, fixture("submit")))
+        transport.answer = { VesselResponse(obj("session_id" to SESSION.json(), "incarnation" to INCARNATION.json(), "result" to obj("command_id" to GRANT.json(), "status" to "accepted".json())), null, false) }
+        client.recoverPending()
+        assertEquals(JournalState.UNCERTAIN, journal.entries.getValue(COMMAND).state)
+        assertEquals("receipt", transport.requests.single()["command"]!!.jsonObject.string("op"))
+    }
+
+    @Test fun jsonNestingBoundIgnoresEscapedStringBrackets() {
+        assertFailsWith<IllegalArgumentException> { boundedFrame("[".repeat(65) + "0" + "]".repeat(65)) }
+        val text = obj("text" to ("[".repeat(80) + "\\\"").json()).toString()
+        assertEquals(wireJson.parseToJsonElement(text), boundedFrame(text))
+    }
+
 }

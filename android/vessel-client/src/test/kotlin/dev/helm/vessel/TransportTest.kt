@@ -133,4 +133,39 @@ class TransportTest {
             } finally { transport.close() }
         }
     }
+    @Test fun untrustedTlsCertificateIsNotAcceptedByProductionClient() = runBlocking {
+        Peer().use { peer ->
+            val url = peer.server.url(SOCKET_PATH).toString().replaceFirst("https://", "wss://")
+            val transport = OkHttpVesselTransport(VesselEndpoint(url, VESSEL, GRANT, TOKEN))
+            try {
+                assertFailsWith<VesselFailure> { transport.connect() }
+                assertNull(transport.state.value.socketId)
+                assertTrue(peer.frames.isEmpty())
+            } finally { transport.close() }
+        }
+    }
+    @Test fun oversizedInboundClosesSocketAtApplicationBoundary() = runBlocking {
+        Peer().use { peer ->
+            val transport = peer.transport()
+            try {
+                transport.connect()
+                peer.socket.send("x".repeat(MAX_FRAME_BYTES + 1))
+                withTimeout(5000) { transport.state.first { it.socketId == null } }
+                assertTrue(transport.state.value.lossGeneration > 0)
+                assertTrue(peer.frames.isEmpty())
+            } finally { transport.close() }
+        }
+    }
+    @Test fun unexpectedCorrelationFencesSocket() = runBlocking {
+        Peer().use { peer ->
+            val transport = peer.transport()
+            try {
+                transport.connect()
+                peer.socket.send(obj("type" to "reply".json(), "request_id" to COMMAND.json(), "response" to wireJson.parseToJsonElement(fixture("accepted"))).toString())
+                withTimeout(3000) { transport.state.first { it.socketId == null } }
+                assertTrue(transport.state.value.lossGeneration > 0)
+            } finally { transport.close() }
+        }
+    }
+
 }
