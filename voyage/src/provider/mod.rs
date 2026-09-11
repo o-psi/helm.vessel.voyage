@@ -70,6 +70,15 @@ pub enum ProviderError {
     },
     #[error("provider request timed out: {0}")]
     Timeout(String),
+    /// A transport failure does not establish whether the remote effect occurred.
+    #[error("provider transport failed: {0}")]
+    Transport(String),
+    /// Observed HTTP metadata; classification and retry policy belong to the source.
+    #[error("{source}")]
+    HttpStatus {
+        source: Box<ProviderError>,
+        status: u16,
+    },
     #[error("provider request failed: {0}")]
     Request(String),
     #[error("invalid provider response: {0}")]
@@ -206,8 +215,60 @@ pub fn normalize_models(models: &mut Vec<ModelInfo>) {
 }
 
 impl ProviderError {
+    /// Stable, content-free classification suitable for public failure metadata.
+    pub fn category(&self) -> &'static str {
+        match self {
+            Self::HttpStatus { source, .. } | Self::RetryAfter { source, .. } => source.category(),
+            Self::Authentication(_) => "authentication",
+            Self::UsageLimit => "usage_limit",
+            Self::ContextLength => "context_length",
+            Self::RateLimit { .. } => "rate_limit",
+            Self::Unavailable(_) => "unavailable",
+            Self::Timeout(_) => "timeout",
+            Self::Transport(_) => "transport",
+            Self::Request(_) => "request",
+            Self::InvalidResponse(_) => "invalid_response",
+            Self::Incomplete => "incomplete",
+        }
+    }
+
+    pub fn is_context_length(&self) -> bool {
+        match self {
+            Self::HttpStatus { source, .. } | Self::RetryAfter { source, .. } => {
+                source.is_context_length()
+            }
+            Self::ContextLength => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_incomplete(&self) -> bool {
+        match self {
+            Self::HttpStatus { source, .. } | Self::RetryAfter { source, .. } => {
+                source.is_incomplete()
+            }
+            Self::Incomplete => true,
+            _ => false,
+        }
+    }
+
+    pub fn http_status(&self) -> Option<u16> {
+        match self {
+            Self::HttpStatus { status, .. } => Some(*status),
+            Self::RetryAfter { source, .. } => source.http_status(),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn with_http_status(self, status: u16) -> Self {
+        Self::HttpStatus {
+            source: Box::new(self),
+            status,
+        }
+    }
+
     pub fn is_retryable(&self) -> bool {
-        if let Self::RetryAfter { source, .. } = self {
+        if let Self::RetryAfter { source, .. } | Self::HttpStatus { source, .. } = self {
             return source.is_retryable();
         }
         matches!(
@@ -217,6 +278,7 @@ impl ProviderError {
     }
     pub fn retry_after(&self) -> Option<std::time::Duration> {
         match self {
+            Self::HttpStatus { source, .. } => source.retry_after(),
             Self::RateLimit { retry_after, .. } => *retry_after,
             Self::RetryAfter { delay, .. } => Some(*delay),
             _ => None,
@@ -225,7 +287,9 @@ impl ProviderError {
 
     pub(crate) fn public_failure_reason(&self) -> &'static str {
         match self {
-            Self::RetryAfter { source, .. } => source.public_failure_reason(),
+            Self::RetryAfter { source, .. } | Self::HttpStatus { source, .. } => {
+                source.public_failure_reason()
+            }
             Self::Authentication(_) => {
                 "Provider authentication failed. Check credentials on the executing machine."
             }
@@ -234,7 +298,8 @@ impl ProviderError {
             Self::RateLimit { .. } => "Provider rate limit prevented completion.",
             Self::Unavailable(_) => "Provider temporarily unavailable.",
             Self::Timeout(_) => "Provider request timed out.",
-            Self::Request(_) => "Provider rejected the request.",
+            Self::Transport(_) => "Provider connection failed; request outcome may be uncertain.",
+            Self::Request(_) => "Provider request failed.",
             Self::InvalidResponse(_) => "Provider returned an invalid or incomplete response.",
             Self::Incomplete => "Provider stopped before completing its response.",
         }
@@ -455,9 +520,22 @@ pub(crate) fn reject_redirect(response: &reqwest::Response) -> Result<(), Provid
         return Err(ProviderError::Request(format!(
             "HTTP {} redirect refused; configure the provider's final endpoint explicitly",
             response.status().as_u16()
-        )));
+        ))
+        .with_http_status(response.status().as_u16()));
     }
     Ok(())
+}
+
+/// Never retain reqwest diagnostics (which can contain URLs or credentials).
+/// Builder errors are local; other non-timeout transport outcomes are uncertain.
+pub(crate) fn map_transport(error: reqwest::Error) -> ProviderError {
+    if error.is_timeout() {
+        ProviderError::Timeout("request deadline elapsed".into())
+    } else if error.is_builder() {
+        ProviderError::Request("invalid local HTTP request".into())
+    } else {
+        ProviderError::Transport("connection failed; outcome may be uncertain".into())
+    }
 }
 
 pub(crate) async fn checked_json(
@@ -469,8 +547,8 @@ pub(crate) async fn checked_json(
     let body = response
         .text()
         .await
-        .map_err(|e| ProviderError::Request(e.to_string()))?;
-    if status.is_success() {
+        .map_err(|e| map_transport(e).with_http_status(status.as_u16()))?;
+    let result = if status.is_success() {
         serde_json::from_str(&body)
             .map_err(|e| ProviderError::InvalidResponse(format!("{e}: {body}")))
     } else if status.as_u16() == 401 || status.as_u16() == 403 {
@@ -496,7 +574,8 @@ pub(crate) async fn checked_json(
         })
     } else {
         Err(ProviderError::Request(format!("HTTP {status}: {body}")))
-    }
+    };
+    result.map_err(|error| error.with_http_status(status.as_u16()))
 }
 
 pub(crate) async fn checked_stream_response(

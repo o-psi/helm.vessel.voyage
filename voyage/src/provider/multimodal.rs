@@ -217,7 +217,9 @@ pub(crate) async fn preflight(
             match tokio::time::timeout(std::time::Duration::from_secs(10), provider.models()).await
             {
                 Ok(Ok(models)) => Some(models),
-                Ok(Err(error @ ProviderError::InvalidResponse(_))) => return Err(redact(error)),
+                Ok(Err(error)) if error.category() == "invalid_response" => {
+                    return Err(redact(error));
+                }
                 _ => None,
             };
         let known = models
@@ -399,6 +401,11 @@ pub(crate) fn check_body(body: &Value) -> Result<(), ProviderError> {
 pub(crate) fn redact(error: ProviderError) -> ProviderError {
     const MESSAGE: &str = "image-bearing provider request failed; provider diagnostic omitted";
     match error {
+        ProviderError::HttpStatus { source, status } => ProviderError::HttpStatus {
+            source: Box::new(redact(*source)),
+            status,
+        },
+        ProviderError::Transport(_) => ProviderError::Transport(MESSAGE.into()),
         ProviderError::Authentication(_) => ProviderError::Authentication(MESSAGE.into()),
         ProviderError::UsageLimit => ProviderError::UsageLimit,
         ProviderError::ContextLength => ProviderError::ContextLength,

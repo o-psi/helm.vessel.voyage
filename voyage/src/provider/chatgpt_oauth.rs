@@ -747,7 +747,8 @@ impl ChatGptOAuth {
             return Err(ProviderError::Authentication(format!(
                 "device authorization failed with HTTP {}",
                 response.status()
-            )));
+            ))
+            .with_http_status(response.status().as_u16()));
         }
         auth_json(response).await
     }
@@ -807,7 +808,8 @@ impl ChatGptOAuth {
                 _ => Err(ProviderError::Authentication(
                     "device authorization poll failed".into(),
                 )),
-            };
+            }
+            .map_err(|error| error.with_http_status(status));
         }
         auth_json(response).await
     }
@@ -965,17 +967,23 @@ impl ChatGptOAuth {
             .form(form)
             .send()
             .await
-            .map_err(|_| {
-                ProviderError::Request(
-                    "OAuth exchange transport failed; outcome may be uncertain".into(),
-                )
+            .map_err(|error| {
+                // Token rotation may already have happened, including on timeout.
+                if error.is_builder() {
+                    super::map_transport(error)
+                } else {
+                    ProviderError::Transport(
+                        "OAuth exchange failed; outcome may be uncertain".into(),
+                    )
+                }
             })?;
         super::reject_redirect(&response)?;
         if !response.status().is_success() {
             return Err(ProviderError::Authentication(format!(
                 "ChatGPT OAuth exchange failed with HTTP {}",
                 response.status()
-            )));
+            ))
+            .with_http_status(response.status().as_u16()));
         }
         let raw: TokenResponse = auth_json(response).await?;
         let account_id = raw
@@ -1016,11 +1024,7 @@ fn device_verification_uri() -> String {
     "https://auth.openai.com/codex/device".into()
 }
 fn map_request(error: reqwest::Error) -> ProviderError {
-    if error.is_timeout() {
-        ProviderError::Timeout("OAuth request deadline elapsed".into())
-    } else {
-        ProviderError::Request("OAuth connection failed; outcome may be uncertain".into())
-    }
+    super::map_transport(error)
 }
 
 pub(crate) fn validate_tokens(value: &OAuthTokens) -> Result<(), ProviderError> {
@@ -1261,9 +1265,10 @@ fn account_error(error: anyhow::Error) -> ProviderError {
 async fn auth_json<T: serde::de::DeserializeOwned>(
     mut response: reqwest::Response,
 ) -> Result<T, ProviderError> {
+    let status = response.status().as_u16();
     let read = async {
         let mut bytes = Vec::new();
-        while let Some(chunk) = response.chunk().await.map_err(|_| private_cache_error())? {
+        while let Some(chunk) = response.chunk().await.map_err(map_request)? {
             if bytes.len().saturating_add(chunk.len()) > storage::LIMIT {
                 return Err(ProviderError::InvalidResponse(
                     "OAuth response exceeds bound".into(),
@@ -1276,5 +1281,25 @@ async fn auth_json<T: serde::de::DeserializeOwned>(
     };
     tokio::time::timeout(Duration::from_secs(30), read)
         .await
-        .map_err(|_| ProviderError::Timeout("OAuth response timed out".into()))?
+        .map_err(|_| ProviderError::Timeout("OAuth response timed out".into()))
+        .and_then(|result| result)
+        .map_err(|error| error.with_http_status(status))
+}
+
+#[cfg(test)]
+mod failure_classification_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn oauth_body_transport_is_not_authentication_failure() {
+        let response = super::super::failure_tests::http_response(200, "0", "{", 100).await;
+        let error = auth_json::<Value>(response).await.unwrap_err();
+        assert_eq!(error.category(), "transport");
+        assert_eq!(error.http_status(), Some(200));
+        assert!(!error.is_retryable());
+        let response = super::super::failure_tests::http_response(200, "0", "{", 1).await;
+        let error = auth_json::<Value>(response).await.unwrap_err();
+        assert_eq!(error.category(), "invalid_response");
+        assert_eq!(error.http_status(), Some(200));
+    }
 }

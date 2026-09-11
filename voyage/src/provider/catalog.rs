@@ -168,13 +168,7 @@ pub(crate) fn strings(
 }
 
 pub(crate) fn transport(error: reqwest::Error) -> ProviderError {
-    if error.is_timeout() {
-        ProviderError::Timeout("model discovery timed out".into())
-    } else if error.is_connect() {
-        ProviderError::Unavailable("model discovery connection failed".into())
-    } else {
-        ProviderError::Request("model discovery connection failed".into())
-    }
+    super::map_transport(error)
 }
 
 /// Budget counts all downloaded pages, including unrecognized JSON fields.
@@ -182,40 +176,39 @@ pub(crate) async fn json(
     mut response: reqwest::Response,
     remaining: &mut usize,
 ) -> Result<Value, ProviderError> {
-    super::reject_redirect(&response).map_err(|error| match error {
-        ProviderError::Request(message) => {
-            ProviderError::Request(format!("protocol failure: {message}"))
-        }
-        other => other,
-    })?;
+    super::reject_redirect(&response)?;
     let code = response.status().as_u16();
     match code {
         200..=299 => {}
         401 | 403 => {
             return Err(ProviderError::Authentication(
                 "authentication failure: endpoint rejected credentials".into(),
-            ));
+            )
+            .with_http_status(code));
         }
         429 => {
             return Err(ProviderError::RateLimit {
                 message: "model endpoint rate limited".into(),
                 retry_after: super::response_retry_after(&response),
-            });
+            }
+            .with_http_status(code));
         }
         408 | 409 | 500..=599 => {
             let error = ProviderError::Unavailable(format!("model endpoint HTTP {code}"));
-            return Err(match super::response_retry_after(&response) {
+            return Err((match super::response_retry_after(&response) {
                 Some(delay) => ProviderError::RetryAfter {
                     source: Box::new(error),
                     delay,
                 },
                 None => error,
-            });
+            })
+            .with_http_status(code));
         }
         _ => {
-            return Err(ProviderError::Request(format!(
-                "model endpoint HTTP {code}"
-            )));
+            return Err(
+                ProviderError::Request(format!("model endpoint HTTP {code}"))
+                    .with_http_status(code),
+            );
         }
     }
     if response
@@ -224,20 +217,27 @@ pub(crate) async fn json(
     {
         return Err(ProviderError::InvalidResponse(
             "protocol failure: model list exceeds 1 MiB".into(),
-        ));
+        )
+        .with_http_status(code));
     }
     let mut bytes = Vec::new();
-    while let Some(chunk) = response.chunk().await.map_err(transport)? {
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|error| transport(error).with_http_status(code))?
+    {
         if chunk.len() > *remaining {
             return Err(ProviderError::InvalidResponse(
                 "protocol failure: model list exceeds 1 MiB".into(),
-            ));
+            )
+            .with_http_status(code));
         }
         *remaining -= chunk.len();
         bytes.extend_from_slice(&chunk);
     }
     serde_json::from_slice(&bytes).map_err(|_| {
         ProviderError::InvalidResponse("protocol failure: invalid model-list JSON".into())
+            .with_http_status(code)
     })
 }
 

@@ -13,13 +13,7 @@ pub(crate) async fn models(
         .apply_key(key)
         .send()
         .await
-        .map_err(|error| {
-            if error.is_timeout() {
-                ProviderError::Timeout("model discovery deadline elapsed".into())
-            } else {
-                ProviderError::Request("connection failure: model endpoint unavailable".into())
-            }
-        })?;
+        .map_err(super::map_transport)?;
     if matches!(response.status().as_u16(), 404 | 405 | 501) {
         return Ok(None);
     }

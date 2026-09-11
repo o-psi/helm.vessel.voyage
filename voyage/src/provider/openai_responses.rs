@@ -800,13 +800,7 @@ fn validate_status(value: &Value) -> Result<(), ProviderError> {
     }
 }
 fn map_transport(error: reqwest::Error) -> ProviderError {
-    if error.is_timeout() {
-        ProviderError::Timeout(error.to_string())
-    } else if error.is_connect() {
-        ProviderError::Unavailable(error.to_string())
-    } else {
-        ProviderError::Request(error.to_string())
-    }
+    super::map_transport(error)
 }
 
 #[cfg(test)]
@@ -815,6 +809,31 @@ mod context_rejection_tests {
     use futures_util::StreamExt;
 
     // ChatGPT OAuth and native Responses both use this stream decoder.
+    #[tokio::test]
+    async fn sse_body_transport_failure_is_distinct_from_clean_eof() {
+        let response = super::super::failure_tests::http_response(200, "0", "data: {", 100).await;
+        let stream = responses_stream(response.bytes_stream());
+        futures_util::pin_mut!(stream);
+        let error = stream.next().await.unwrap().unwrap_err();
+        assert_eq!(error.category(), "transport");
+        assert_eq!(error.http_status(), None);
+        assert!(!error.is_retryable());
+        assert!(stream.next().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn truncated_sse_is_not_context_rejection_or_retryable() {
+        let source = futures_util::stream::iter(vec![Ok(bytes::Bytes::from_static(b"data: {"))]);
+        let stream = responses_stream(source);
+        futures_util::pin_mut!(stream);
+        let error = stream.next().await.unwrap().unwrap_err();
+        assert_eq!(error.category(), "invalid_response");
+        assert_eq!(error.http_status(), None);
+        assert!(!error.is_context_length());
+        assert!(!error.is_retryable());
+        assert!(stream.next().await.is_none());
+    }
+
     #[tokio::test]
     async fn responses_and_oauth_sse_classify_nested_and_flat_errors() {
         for event in [
