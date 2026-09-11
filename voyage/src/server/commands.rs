@@ -34,6 +34,9 @@ pub(super) async fn dispatch_admitted(
     };
 
     match command {
+        RuntimeCommand::NotificationEvents { after, limit } => {
+            state.owner.notification_events(after, limit).await
+        }
         RuntimeCommand::PrepareBrowser => {
             if let Some(authority) = &authorization.authority {
                 authority.check()?;
@@ -156,6 +159,7 @@ pub(super) async fn dispatch_admitted(
         } => super::observations::observe(state, after, limit, wait_ms).await,
         RuntimeCommand::Health => {
             let capabilities = vec![
+                "notification_events",
                 "snapshot",
                 "read_artifact",
                 "history",

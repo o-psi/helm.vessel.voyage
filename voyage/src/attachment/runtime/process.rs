@@ -5,6 +5,38 @@ use serde_json::{Value, json};
 use voyage_protocol::process::RuntimeCommand;
 mod projection;
 impl ManagedSessionOwner {
+    /// Only server startup supplies the authenticated registration generation.
+    pub(crate) async fn bind_notification_incarnation(
+        &self,
+        incarnation: Uuid,
+    ) -> anyhow::Result<()> {
+        let shared = self.store.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut store = shared
+                .lock()
+                .map_err(|_| anyhow::anyhow!("owner poisoned"))?;
+            let Store { journal, guard, .. } = &mut *store;
+            journal.bind_notification_incarnation(guard, incarnation)
+        })
+        .await?
+    }
+
+    pub(crate) async fn notification_events(
+        &self,
+        after: u64,
+        limit: u32,
+    ) -> anyhow::Result<Value> {
+        let shared = self.store.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut store = shared
+                .lock()
+                .map_err(|_| anyhow::anyhow!("owner poisoned"))?;
+            let session = store.session_id;
+            store.journal.notification_events(session, after, limit)
+        })
+        .await?
+    }
+
     pub(crate) async fn initialize_process_commands(&self) -> anyhow::Result<()> {
         let shared = self.store.clone();
         tokio::task::spawn_blocking(move || {

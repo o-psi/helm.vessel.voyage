@@ -11,6 +11,12 @@ pub const MAX_PROCESS_FRAME: usize = 4 * 1024 * 1024;
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 pub enum RuntimeCommand {
+    /// Metadata-only outbox read by the authenticated local supervisor. No recipient
+    /// or payload is accepted; this is deliberately not a public VoyageCommand.
+    NotificationEvents {
+        after: u64,
+        limit: u32,
+    },
     /// Follow/resume the ordinary owner for an explicitly authorized local share.
     /// No browser effect, sharing authority, or agent turn is created.
     PrepareBrowser,
@@ -305,6 +311,7 @@ impl RuntimeCommand {
                 | Self::Receipt { .. }
                 | Self::Resolve { .. }
                 | Self::Events { .. }
+                | Self::NotificationEvents { .. }
                 | Self::Decisions
                 | Self::Controls { .. }
                 | Self::WorkflowPreview { .. }
