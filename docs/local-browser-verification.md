@@ -14,7 +14,9 @@ browser profile, clipboard, provider account or paid request was used.
 The standalone browser frontend passed the complete journey in
 `.local/browser-integration-18a_67ms`. The actual TUI passed it in
 `.local/browser-integration-42nijvr4`, and the final expanded journey passed in
-`.local/browser-integration-4qndcpk8`:
+`.local/browser-integration-4qndcpk8`. After integrating the latest capacity and
+Settled-status changes, the same full journey passed again in
+`.local/browser-integration-cw3kyqwf`:
 
 - Start with an already **suspended** voyage; F6 opens a dedicated private local
   Chromium companion. Explicit local sharing prepares the current owner without
@@ -117,3 +119,28 @@ not imply access to personal profiles or arbitrary desktop applications.
 Publication and preservation of concurrent main edits are tracked in #234/#235.
 A tested feature worktree alone is not a delivered main revision. Unknown resources
 from an earlier interrupted operator run are not attested clean by a fresh fixture.
+
+## Final workspace coverage
+
+The clean integrated source `b19f0a93aa3f13272e505645c0dccf446c3428c5`
+completed workspace Rust coverage with **116 passed, 0 failed, 1 ignored**.
+All tracked input bytes were unchanged during measurement. Published counts are in
+[coverage/latest.json](../coverage/latest.json): lines **12,319 / 72,710 (16.94%)**,
+functions **1,207 / 7,372 (16.37%)**, regions **19,127 / 118,103 (16.20%)**.
+These exclude the separately passing Python/JavaScript/TUI journeys.
+
+The default `--no-clean` report scanned historical binaries from other checkouts in
+the shared target, doubled source totals and reported mismatches. That report is
+retained but **not** the published measurement. The corrected export uses all
+11 current workspace executable artifacts identified by Cargo, including all 10
+executed test binaries, with the tool's default filename exclusions. It reports
+386 unique logical source files and no mismatched functions. Twenty-one reused
+installer source paths were verified byte-identical to the measured checkout; they
+were retained rather than excluded. No current package/target was omitted.
+
+Raw/default and corrected reports, current-artifact inventory, source fingerprint,
+logs and HTML remain under `target/coverage-report/browser-final-current`. Prior
+reports and compiled caches were preserved. [#251](https://github.com/o-psi/voyage/issues/251)
+tracks making this shared-target selection routine in the general coverage workflow.
+The prior coverage record used a dirty tree containing unrelated work; differences
+are recorded, not advertised as a controlled coverage improvement.

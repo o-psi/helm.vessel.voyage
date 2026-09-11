@@ -138,6 +138,13 @@ Never attribute dirty-tree coverage to a clean commit. Compare with the prior
 record and explain material drops in the delivery report; do not silently narrow
 the measured scope to raise the percentage.
 
+When sharing a target directory across worktrees, verify that report objects belong
+to the current Cargo workspace artifact set. Historical instrumented binaries can
+duplicate source totals or report mismatched functions despite passing tests. Preserve
+the raw report; do not publish those mixed totals or hide current source to improve
+them. Keep every current workspace target/test binary, validate reused source identity,
+and document any corrected artifact selection (tracked in #251).
+
 The default scope is existing workspace Rust tests with default features, excluding
 doctests and ignored tests. Python process checks and manual journeys are separate;
 live-provider tests still require provider/budget approval. Branch coverage is not

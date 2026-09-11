@@ -1,63 +1,73 @@
 {
   "schema_version": 1,
-  "measured_at_utc": "2026-09-10T22:43:20.208665+00:00",
+  "measured_at_utc": "2026-09-10T22:54:14.396821+00:00",
   "source": {
-    "base_commit": "793ad21eedb4dd63e654f408620a1ce544f3996b",
-    "dirty": true,
-    "fingerprint_sha256": "612d5d7a21582e682cd2cfa8b313e86ab0771a00ed0e38e29b7387661d7b0556",
-    "fingerprint_method": "SHA-256 of compact sorted JSON mapping workspace .rs files, member Cargo.toml files, root Cargo.toml, Cargo.lock and member tests/*.py files to SHA-256 content hashes",
-    "note": "Working-tree measurement includes unrelated concurrent work; not coverage of clean base or publication commit. Complete source map unchanged during build, process tests and Rust measurement. Python sources fingerprinted but not included in Rust coverage."
+    "base_commit": "b19f0a93aa3f13272e505645c0dccf446c3428c5",
+    "dirty": false,
+    "fingerprint_sha256": "48e283c6439c59a07bdf21c4e15f86dc04149e5a7bb5f2271c0fbd75335b653d",
+    "fingerprint_method": "SHA-256 of compact sorted JSON mapping all tracked regular-file contents and symlink target text to SHA-256 hashes",
+    "note": "Clean isolated integration worktree; all tracked input bytes remained unchanged through tests and current-artifact export. Later summary/documentation publication does not change measured Rust source."
   },
   "platform": "x86_64-unknown-linux-gnu",
   "tools": {
-    "rustc": "1.98.1",
+    "rustc": "1.98.1 (48a229cea 2026-09-01)",
     "llvm": "22.1.8",
     "cargo_llvm_cov": "0.9.1"
   },
-  "command": "cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir target/coverage-report/workflows -j 8",
+  "command": "cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir \"$CARGO_LLVM_COV_TARGET_DIR/coverage-report/browser-final-current/default-report\" -j 8",
   "environment": {
-    "CARGO_LLVM_COV_TARGET_DIR": "target",
+    "CARGO_LLVM_COV_TARGET_DIR": "existing shared workspace target",
     "LLVM_COV": "llvm-cov",
     "LLVM_PROFDATA": "llvm-profdata"
   },
-  "scope": "Existing workspace Rust tests, default features",
+  "scope": "All existing workspace Rust tests and current workspace executable artifacts, default features",
   "tests": {
-    "passed": 113,
+    "passed": 116,
     "failed": 0,
     "ignored": 1
   },
   "coverage": {
     "lines": {
-      "count": 71267,
-      "covered": 11673,
-      "percent": 16.379249863190537
+      "count": 72710,
+      "covered": 12319,
+      "percent": 16.942648879108788
     },
     "functions": {
-      "count": 7291,
-      "covered": 1157,
-      "percent": 15.86887944040598
+      "count": 7372,
+      "covered": 1207,
+      "percent": 16.372761801410743
     },
     "regions": {
-      "count": 115603,
-      "covered": 18021,
-      "notcovered": 97582,
-      "percent": 15.588695795091825
+      "count": 118103,
+      "covered": 19127,
+      "notcovered": 98976,
+      "percent": 16.195185558368543
     }
+  },
+  "report_selection": {
+    "method": "Complete current Cargo compiler-artifact executable set from cargo test --workspace --locked --no-run --message-format=json under cargo llvm-cov show-env instrumentation; LLVM export/show retains tool-default filename exclusions",
+    "workspace_executables": 11,
+    "executed_test_binaries": 10,
+    "logical_source_files": 386,
+    "byte_identical_reused_source_files": 21,
+    "duplicate_logical_source_paths": 0,
+    "mismatched_functions": 0
   },
   "exclusions": [
     "Ignored live-provider test",
     "Doctests",
     "Python process checks",
+    "JavaScript browser/cleanup probes",
     "Manual TUI workflows",
     "Branch coverage",
-    "Unrelated .voyage-worktrees source paths discovered from cached binaries in shared target; report-only filter, current workspace Rust files retained"
+    "Historical shared-target executables not in the complete current Cargo artifact set"
   ],
   "notes": [
-    "Independent measurement: raw profiles cleared first; compiled artifacts and previous reports preserved. HTML and logs in a new workflows subdirectory.",
-    "Workspace Rust tests passed without live-provider execution. Five separately passing offline process workflows (conversation/files, stop/continue, two voyages, real Helm reconnect, native shell command) ran against freshly built binaries and are excluded from these percentages.",
-    "Compared with previous record: lines -0.0463 percentage points, functions -0.0686 percentage points, regions -0.0381 percentage points.",
-    "Coverage measures execution, not correctness. Process evidence is Linux only; reconnect uses real Helm line/one-turn clients, not the full-screen TUI.",
-    "Unfiltered report included 743 files and 141847 lines (8.2293% covered), including an unrelated browser worktree with no execution in this run. Preserved raw report and generated explicit workspace-only report from the same passing measurement; no source/test scope narrowed within the current workspace."
-  ],
-  "report_command": "cargo llvm-cov report --ignore-filename-regex '/\\.voyage-worktrees/' --json --summary-only --output-path target/coverage-report/workflows/workspace-summary.json"
+    "Raw profiles were cleared before this independent measurement; compiled artifacts and prior reports were preserved.",
+    "The default shared-target report mixed stale main/worktree binaries and was not used for the published totals. Exact current-artifact selection corrected this; all current workspace members/targets and executed test binaries were retained. See issue #251.",
+    "Unchanged installer artifacts retained primary-checkout debug paths; their source bytes matched the measured tree and every logical source path was unique. No production source was removed to raise coverage.",
+    "Compared with prior record: lines +0.5634 percentage points, functions +0.5039 percentage points, regions +0.6065 percentage points. The prior record measured a dirty tree with unrelated account/UI work; this record measures the clean integrated browser/duplex tree, so this is not a controlled like-for-like improvement claim.",
+    "Out-of-process shared-browser, privacy, cleanup and duplex journeys passed separately and are not included in these Rust percentages.",
+    "Coverage measures execution, not correctness. No paid-provider, native macOS/Windows or production TLS deployment certification is implied."
+  ]
 }
