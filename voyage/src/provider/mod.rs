@@ -287,18 +287,29 @@ pub trait Provider: Send + Sync {
 }
 
 pub fn from_config(config: &Config) -> Result<Box<dyn Provider>, ProviderError> {
+    from_config_with_redactor(config, None)
+}
+
+pub(crate) fn from_config_with_redactor(
+    config: &Config,
+    redactor: Option<std::sync::Arc<crate::tools::Redactor>>,
+) -> Result<Box<dyn Provider>, ProviderError> {
     config
         .validate_account()
         .map_err(|e| ProviderError::Authentication(e.to_string()))?;
     if config.account.is_some() {
         return Ok(Box::new(BoundProvider {
             config: config.clone(),
+            redactor,
         }));
     }
-    native_from_config(config)
+    native_from_config(config, redactor)
 }
 
-fn native_from_config(config: &Config) -> Result<Box<dyn Provider>, ProviderError> {
+fn native_from_config(
+    config: &Config,
+    redactor: Option<std::sync::Arc<crate::tools::Redactor>>,
+) -> Result<Box<dyn Provider>, ProviderError> {
     config
         .validate_account()
         .map_err(|e| ProviderError::Authentication(e.to_string()))?;
@@ -313,7 +324,7 @@ fn native_from_config(config: &Config) -> Result<Box<dyn Provider>, ProviderErro
                     .map_err(|e| ProviderError::Authentication(e.to_string()))?,
                 config.base_url.clone(),
             )
-            .with_account(config),
+            .with_account(config, redactor.clone()),
         )),
         ProviderKind::OpenaiChat => Ok(Box::new(
             OpenAiProvider::new(
@@ -322,7 +333,7 @@ fn native_from_config(config: &Config) -> Result<Box<dyn Provider>, ProviderErro
                     .map_err(|e| ProviderError::Authentication(e.to_string()))?,
                 config.base_url.clone(),
             )
-            .with_account(config)
+            .with_account(config, redactor.clone())
             .with_max_tokens_parameter(config.chat_use_max_tokens),
         )),
         ProviderKind::ChatGptOauth => {
@@ -330,8 +341,11 @@ fn native_from_config(config: &Config) -> Result<Box<dyn Provider>, ProviderErro
                 return crate::accounts::Registry::default_host()
                     .and_then(|registry| registry.oauth_provider(binding))
                     .map(|provider| {
-                        Box::new(provider.with_authority(config.provider_authority.clone()))
-                            as Box<dyn Provider>
+                        Box::new(
+                            provider
+                                .with_authority(config.provider_authority.clone())
+                                .with_redactor(redactor.clone()),
+                        ) as Box<dyn Provider>
                     })
                     .map_err(|e| ProviderError::Authentication(e.to_string()));
             }
@@ -342,7 +356,9 @@ fn native_from_config(config: &Config) -> Result<Box<dyn Provider>, ProviderErro
                 endpoints.responses = format!("{base}/responses");
                 endpoints.models = format!("{base}/models");
             }
-            Ok(Box::new(ChatGptOauthProvider::from_store(store, endpoints)))
+            Ok(Box::new(
+                ChatGptOauthProvider::from_store(store, endpoints).with_redactor(redactor),
+            ))
         }
         ProviderKind::Anthropic => Ok(Box::new(
             AnthropicProvider::new(
@@ -351,7 +367,7 @@ fn native_from_config(config: &Config) -> Result<Box<dyn Provider>, ProviderErro
                     .map_err(|e| ProviderError::Authentication(e.to_string()))?,
                 config.base_url.clone(),
             )
-            .with_account(config),
+            .with_account(config, redactor.clone()),
         )),
     }
 }
@@ -531,17 +547,24 @@ pub(crate) fn reported_service_tier(value: Option<&serde_json::Value>) -> Option
 /// retry constructs a native adapter with the current same-identity credential.
 struct BoundProvider {
     config: Config,
+    redactor: Option<std::sync::Arc<crate::tools::Redactor>>,
 }
 #[async_trait]
 impl Provider for BoundProvider {
     async fn models(&self) -> Result<Vec<ModelInfo>, ProviderError> {
-        native_from_config(&self.config)?.models().await
+        native_from_config(&self.config, self.redactor.clone())?
+            .models()
+            .await
     }
     async fn complete(&self, request: ModelRequest) -> Result<ModelResponse, ProviderError> {
-        native_from_config(&self.config)?.complete(request).await
+        native_from_config(&self.config, self.redactor.clone())?
+            .complete(request)
+            .await
     }
     async fn stream(&self, request: ModelRequest) -> Result<ProviderStream, ProviderError> {
-        native_from_config(&self.config)?.stream(request).await
+        native_from_config(&self.config, self.redactor.clone())?
+            .stream(request)
+            .await
     }
 }
 

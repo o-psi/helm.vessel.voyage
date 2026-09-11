@@ -26,11 +26,16 @@ impl AnthropicProvider {
                 .into(),
         }
     }
-    pub(super) fn with_account(mut self, config: &crate::Config) -> Self {
+    pub(super) fn with_account(
+        mut self,
+        config: &crate::Config,
+        redactor: Option<std::sync::Arc<crate::tools::Redactor>>,
+    ) -> Self {
         if let Some(binding) = &config.account {
             self.api_key = super::api_credential::ApiCredential::Account {
                 binding: binding.clone(),
                 authority: config.provider_authority.clone(),
+                redactor,
             };
         }
         self
@@ -453,9 +458,14 @@ fn encode_messages(messages: &[Message]) -> Result<Vec<Value>, ProviderError> {
             calls.extend(message.tool_calls.iter().map(|call| call.id.clone()));
         }
         if message.role == Role::Tool {
-            let matched = message.tool_call_id.as_ref().is_some_and(|id| calls.remove(id));
+            let matched = message
+                .tool_call_id
+                .as_ref()
+                .is_some_and(|id| calls.remove(id));
             if super::multimodal::tool_images(message) && !matched {
-                return Err(ProviderError::Request("visual tool result has no matching original tool use".into()));
+                return Err(ProviderError::Request(
+                    "visual tool result has no matching original tool use".into(),
+                ));
             }
         }
         let structured = super::multimodal::content(message, super::multimodal::Wire::Anthropic)?;

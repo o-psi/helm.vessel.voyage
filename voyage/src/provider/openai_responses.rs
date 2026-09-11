@@ -28,11 +28,16 @@ impl OpenAiResponsesProvider {
                 .into(),
         }
     }
-    pub(super) fn with_account(mut self, config: &crate::Config) -> Self {
+    pub(super) fn with_account(
+        mut self,
+        config: &crate::Config,
+        redactor: Option<std::sync::Arc<crate::tools::Redactor>>,
+    ) -> Self {
         if let Some(binding) = &config.account {
             self.api_key = super::api_credential::ApiCredential::Account {
                 binding: binding.clone(),
                 authority: config.provider_authority.clone(),
+                redactor,
             };
         }
         self

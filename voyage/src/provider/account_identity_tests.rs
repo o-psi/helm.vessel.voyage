@@ -205,3 +205,17 @@ fn independent_processes_reuse_one_slow_oauth_refresh() {
     assert_eq!(server.join().unwrap(), (1, 2));
     assert!(success, "independent refresh child failed or timed out");
 }
+
+#[test]
+fn refreshed_credentials_share_stream_redaction_without_debug_disclosure() {
+    let redactor = crate::tools::Redactor::new(["synthetic-original".into()]);
+    let child = redactor.with_additional(["child-private".into()]);
+    redactor.remember_credential("synthetic-rotated").unwrap();
+    assert!(child.contains_secret("synthetic-rotated"));
+    assert_eq!(child.redact("synthetic-rotated"), "[REDACTED]");
+    assert_eq!(
+        child.stable_prefix("prefix synthetic-ro", false),
+        "prefix ".len()
+    );
+    assert!(!format!("{redactor:?}").contains("synthetic"));
+}

@@ -458,11 +458,16 @@ impl Supervisor {
         // an applied receipt: the owning Voyage remains the configuration authority.
         // Resolution checks the same envelope but never dispatches it automatically.
         let inference = match &request.command {
-            command @ (VoyageCommand::SetInference { .. } | VoyageCommand::SetAccountInference { .. }) => Some((command.clone(), true)),
+            command @ (VoyageCommand::SetInference { .. }
+            | VoyageCommand::SetAccountInference { .. }) => Some((command.clone(), true)),
             VoyageCommand::Resolve {
                 command_id,
                 original: Some(original),
-            } if matches!(original.as_ref(), VoyageCommand::SetInference { .. } | VoyageCommand::SetAccountInference { .. }) => {
+            } if matches!(
+                original.as_ref(),
+                VoyageCommand::SetInference { .. } | VoyageCommand::SetAccountInference { .. }
+            ) =>
+            {
                 ensure!(
                     original.mutation_id() == Some(*command_id),
                     "resolution identity mismatch"
@@ -473,7 +478,8 @@ impl Supervisor {
         };
         if let Some((command, reserve)) = inference {
             ensure!(
-                authorization.is_none() || matches!(command, VoyageCommand::SetAccountInference { .. }),
+                authorization.is_none()
+                    || matches!(command, VoyageCommand::SetAccountInference { .. }),
                 "inference settings require owner authority"
             );
             self.registration(request.session_id).await?;
@@ -491,10 +497,18 @@ impl Supervisor {
             )?;
         }
         if let Some(binding) = &authorization {
-            let grant: ProcessGrant = super::access::store::load(&super::access::store::grant_path(&self.directory, binding.grant_id))?;
+            let grant: ProcessGrant = super::access::store::load(
+                &super::access::store::grant_path(&self.directory, binding.grant_id),
+            )?;
             let selected = match &request.command {
                 VoyageCommand::SetAccountInference { account, .. } => Some(account),
-                VoyageCommand::Resolve { original: Some(original), .. } => match original.as_ref() { VoyageCommand::SetAccountInference { account, .. } => Some(account), _ => None },
+                VoyageCommand::Resolve {
+                    original: Some(original),
+                    ..
+                } => match original.as_ref() {
+                    VoyageCommand::SetAccountInference { account, .. } => Some(account),
+                    _ => None,
+                },
                 _ => None,
             };
             if let Some(account) = selected {

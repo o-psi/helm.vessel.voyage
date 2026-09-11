@@ -542,9 +542,9 @@ impl Config {
         }
         use voyage_protocol::accounts::Transport;
         let binding = match self.provider {
-            ProviderKind::ChatGptOauth => {
-                crate::accounts::Registry::legacy_store_binding()?.map(|(_, binding)| binding)
-            }
+            ProviderKind::ChatGptOauth => Some(crate::accounts::Registry::legacy_store_binding()?
+                .map(|(_, binding)| binding)
+                .ok_or_else(|| anyhow::anyhow!("Select a named ChatGPT account, or explicitly migrate the retained legacy login after stopping old credential writers: vessel auth accounts migrate-legacy --old-writers-stopped"))?),
             _ if !self.api_key_required => None,
             _ => {
                 let (transport, endpoint) = match self.provider {

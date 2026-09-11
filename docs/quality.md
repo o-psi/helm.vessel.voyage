@@ -234,7 +234,8 @@ python3 tests/provider_accounts.py --bin-dir target/debug
 
 It covers two concurrent account identities, staged current/next-turn selection,
 exact conflicting/replayed selection envelopes, suspension/resume and branching,
-same-identity API rotation, logout refusal without fallback, and explicit scoped
+same-identity API rotation (including split-stream redaction during an active run),
+logout refusal without fallback, and explicit scoped
 account/enrollment metadata access. It uses the current public `/v1/vessel/command`
 contract while preserving the older concurrent fixture unchanged. It does not
 establish native platform, live-provider, or public TLS results.

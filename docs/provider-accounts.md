@@ -24,7 +24,8 @@ not erase history. While a turn is active, its root, children, retries, and prov
 requests retain the admitted account/billing/endpoint identity. The picker stages
 **next turn** independently. Safe same-identity credential refresh is allowed; logout
 or replacement prevents subsequent dispatch rather than moving the turn to another
-account. Requests already sent cannot be recalled.
+account. Native dispatch registers refreshed/rotated credentials with the run's shared
+redactor before any response or diagnostic can be published. Requests already sent cannot be recalled.
 
 Selection is held in trusted execution configuration and survives suspension/resume
 and branch creation. Branches inherit the selected next-turn account and still need
@@ -152,6 +153,11 @@ Legacy OAuth migration is an explicit upgrade boundary:
 # First stop old credential-writing binaries; this flag is an owner assertion.
 vessel auth accounts migrate-legacy --old-writers-stopped
 ```
+
+Before admitting a turn with an old unbound OAuth configuration, select a named
+account or perform this explicit migration. The refusal is intentional: reading a
+mutable legacy cache cannot freeze a run's billing identity, and the runtime cannot
+assert that old credential writers were stopped on the owner's behalf.
 
 The legacy cache is retained as upgrade data. Migration is idempotent, including
 logged-out caches, and never imports it again after logout. The original migration

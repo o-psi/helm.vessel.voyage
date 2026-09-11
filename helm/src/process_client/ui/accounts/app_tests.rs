@@ -407,8 +407,10 @@ async fn expiry_denial_cancel_and_small_layout_clear_or_hide_material() {
     v.user_code = Some(String::new());
     assert!(!active_material(&v));
     let id = app.accounts.picker.as_ref().unwrap().id;
-    app.account_reply(id, Err(anyhow::anyhow!("access denied")))
-        .unwrap();
+    assert!(
+        app.account_reply(id, Err(anyhow::anyhow!("access denied")))
+            .is_err()
+    );
     assert!(app.accounts.picker.as_ref().unwrap().private.is_none());
     material(&mut app);
     key(&mut app, KeyCode::Char('c'));

@@ -8,16 +8,27 @@ pub(super) enum ApiCredential {
     Account {
         binding: AccountBinding,
         authority: Option<std::sync::Arc<dyn crate::policy::ExecutionAuthority>>,
+        redactor: Option<std::sync::Arc<crate::tools::Redactor>>,
     },
 }
 impl ApiCredential {
     pub(super) fn resolve(&self) -> Result<String, ProviderError> {
         match self {
             Self::Legacy(value) => Ok(value.clone()),
-            Self::Account { binding, authority } => {
+            Self::Account {
+                binding,
+                authority,
+                redactor,
+            } => {
                 super::check_provider_authority(authority)?;
                 crate::accounts::Registry::default_host()
                     .and_then(|registry| registry.resolve_api_key(binding))
+                    .and_then(|key| {
+                        if let Some(redactor) = redactor {
+                            redactor.remember_credential(&key)?;
+                        }
+                        Ok(key)
+                    })
                     // Storage errors must not disclose credential or host paths.
                     .map_err(|_| {
                         ProviderError::Authentication(

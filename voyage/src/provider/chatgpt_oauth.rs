@@ -555,6 +555,7 @@ impl TokenStore {
 }
 
 pub struct ChatGptOAuth {
+    redactor: Option<Arc<crate::tools::Redactor>>,
     authority: Option<Arc<dyn crate::policy::ExecutionAuthority>>,
     client: reqwest::Client,
     endpoints: OAuthEndpoints,
@@ -569,11 +570,31 @@ impl ChatGptOAuth {
     pub fn from_store(store: TokenStore, endpoints: OAuthEndpoints) -> Self {
         Self {
             authority: None,
+            redactor: None,
             client: super::native_http_client(),
             endpoints,
             store,
             tokens: Arc::new(Mutex::new(None)),
         }
+    }
+    pub(crate) fn with_redactor(mut self, redactor: Option<Arc<crate::tools::Redactor>>) -> Self {
+        self.redactor = redactor;
+        self
+    }
+    fn remember_tokens(&self, tokens: &OAuthTokens) -> Result<(), ProviderError> {
+        if let Some(redactor) = &self.redactor {
+            for secret in [
+                &tokens.access_token,
+                &tokens.refresh_token,
+                tokens.id_token.as_deref().unwrap_or(""),
+                &tokens.account_id,
+            ] {
+                redactor.remember_credential(secret).map_err(|_| {
+                    ProviderError::Authentication("credential redaction unavailable".into())
+                })?;
+            }
+        }
+        Ok(())
     }
     pub(crate) fn with_authority(
         mut self,
@@ -587,6 +608,7 @@ impl ChatGptOAuth {
         let tokens = store.load().await?;
         Ok(Self {
             authority: None,
+            redactor: None,
             client: super::native_http_client(),
             endpoints,
             store,
@@ -861,6 +883,7 @@ impl ChatGptOAuth {
         let current = guard
             .clone()
             .ok_or_else(|| ProviderError::Authentication("ChatGPT login required".into()))?;
+        self.remember_tokens(&current)?;
         if current.expires_at > now_secs().saturating_add(REFRESH_SKEW_SECS) {
             return Ok(current);
         }
@@ -883,6 +906,7 @@ impl ChatGptOAuth {
                 if let Some(latest) = self.store.load().await? {
                     super::check_provider_authority(&self.authority)?;
                     if latest.expires_at > now_secs().saturating_add(REFRESH_SKEW_SECS) {
+                        self.remember_tokens(&latest)?;
                         *guard = Some(latest.clone());
                         return Ok(latest);
                     }
@@ -902,6 +926,7 @@ impl ChatGptOAuth {
             refreshed.refresh_token = current.refresh_token.clone();
         }
         validate_tokens(&refreshed)?;
+        self.remember_tokens(&refreshed)?;
         let identity = login_identity(&current)?;
         if identity.is_none() || identity != login_identity(&refreshed)? {
             return Err(ProviderError::Authentication("OAuth identity changed or cannot be established; explicit reauthentication required".into()));

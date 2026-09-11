@@ -274,7 +274,8 @@ impl RuntimeCommand {
             | Self::Steer { command_id, .. }
             | Self::Rename { command_id, .. }
             | Self::SetModel { command_id, .. }
-            | Self::SetInference { command_id, .. } | Self::SetAccountInference { command_id, .. }
+            | Self::SetInference { command_id, .. }
+            | Self::SetAccountInference { command_id, .. }
             | Self::Respond { command_id, .. }
             | Self::Archive { command_id, .. }
             | Self::Delete { command_id, .. }

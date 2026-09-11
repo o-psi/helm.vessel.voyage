@@ -1,61 +1,58 @@
-# Helm account UI integration — #213 completion handoff
+# Helm account UI integration (#213)
 
-This delivery owns `helm/` only. It includes parent protocol commit `14e88a0`
-(owner-local optional `config_path` for account creation/resolution, plus an
-enrollment-only connection catalogue) as a prerequisite, not a second protocol
-implementation. The parent owns runtime changes, Cargo builds, tests, workspace
-coverage measurement and final publication. No Cargo command was run in this
-worktree; rustfmt and diff checks are source checks, not passing tests.
+User operations and qualification limits are documented in
+[Named provider accounts](../../../../../docs/provider-accounts.md).
+The public account/enrollment types live in `voyage_protocol::accounts` and
+`voyage_protocol::vessel`. Helm uses the ordinary duplex `Client::request`, not a
+second transport or HTTP/SSE fallback.
 
-## Integrated workflows
+## Identity and persistence
 
-- `/account` and the composer control share the keyboard/mouse account picker.
-  Confirmation stages exact atomic account/model/override commands, keeps current
-  runs unchanged, preserves composer text, and keeps remembered new-voyage choices
-  separate from host defaults. An unavailable remembered identity never falls back.
-- Local configured drafts call the existing frontend `launch::persist` using
-  `Saved::launch_config()`, restoring retained policy override/profile metadata.
-  `StartAccount` persists that exact trusted JSON path before dispatch;
-  `ResolveStartAccount` recovers it unchanged. Remote creation accepts no local
-  configuration path. Neither path resolves credentials on Helm.
-- `Client::connection_state()` supplies a view-owned watch. `loss_generation`
-  invalidates the request/view identity, drops queued one-shots and clears private
-  material even when loss and reconnect coalesce between UI ticks. Rendering also
-  gates on the current counter. Automatic polling pauses after loss. Explicit R
-  privately inspects the original enrollment under current authority; reconnect
-  never replays `EnrollAccount`. Closing drops the private receiver and view.
-- Enrollment-only callers can use the connection catalogue without account labels;
-  missing/denied defaults do not block adding an authorized device account.
-- Device responses remain view-owned (not `Update`, public events, diagnostics,
-  conversation or serialized drafts). Expiry, denial, cancellation, completion,
-  closure and socket loss remove display material. Empty/malformed codes and URLs
-  outside the exact native provider flow are never displayed/opened.
-- O is the sole explicit browser action. It passes only a fixed provider URL to
-  `xdg-open`/`open` with null standard streams. One launcher is allowed at a time;
-  it is polled/reaped and terminated after ten seconds if still pending. This
-  bounds the launcher, not the user's browser navigation. Other platforms show
-  manual-navigation guidance. No real browser/provider is used by test fixtures.
-- Connection selection now supports mouse hits and keyboard scrolling; small
-  layouts consume private input without exposing codes. Ctrl+C/Q still exits.
+`/account` and the composer Account control share the keyboard/mouse picker.
+Confirmation stages an atomic account/model/override envelope and preserves
+composer text and the admitted run's identity. New-voyage preferences are keyed by
+authenticated Vessel/workspace/connection, never alias or route index. An unavailable
+remembered identity cannot silently fall back.
 
-## Focused synthetic App tests for parent execution
+Configured local drafts restore policy metadata using `Saved::launch_config()` and
+the existing frontend launch persistence. `StartAccount` includes an owner-local
+optional trusted JSON path; `ResolveStartAccount` retains that exact path. Scoped
+remote creation accepts no local configuration path. Neither path resolves remote
+provider credentials on Helm.
 
-`accounts/app_tests.rs` exercises actual App input/render/reply/persistence paths:
-keyboard and mouse confirmation, exact pending recovery envelopes, retained current
-run and composer, isolated saved-state scanning for private material, prompt-history
-and conversation exclusion, explicit browser action, empty codes, expiry, denied
-reads, repeated cancel identity, publication winning cancellation, closure, narrow
-layout, coalesced disconnect/reconnect with queued and late stale replies, explicit
-private reopening, enrollment-only connection selection, configured first-send
-policy/path preservation, remembered defaults and unavailable binding refusal.
+## Private enrollment lifecycle
 
-Fixtures use per-thread temporary storage (no HOME/environment mutation) and a
-browser effect substitute. Synthetic clients point to nonexistent local Vessel
-files; there are no provider calls. Existing helper-level tests additionally cover
-legacy settings deserialization, selection availability, aliases and safe intents.
+The view owns its one-shot receiver and temporary response. Neither is an `Update`,
+conversation message, ordinary event, diagnostic, or serializable draft. Durable
+storage contains only the original public enrollment envelope and cancellation ID.
+An enrollment-only caller can inspect its allowed connections without account labels.
 
-The parent must compile/test integrated consumers and publish workspace coverage
-before treating the Rust delivery as verified. Real-provider workflows and native
-macOS/Windows security/launcher behavior are not established by these source checks
-or Linux synthetic tests. GitHub CLI authentication was unavailable here; parent
-must record actual test outcomes and remaining full-issue scope in #213.
+`Client::connection_state()` supplies the view-owned watch. A change in
+`loss_generation` invalidates the request/view ID, drops queued responses, and clears
+codes even if disconnect/reconnect coalesce between ticks. Rendering checks the
+current generation too. Explicit R resolves the original admission and privately
+reads status; it never repeats `EnrollAccount`. Resolving an absent original fences
+it as not admitted so a late start cannot launch provider authorization.
+
+Closure, expiry, denial, cancellation, success, or socket loss clear sensitive
+material. Codes must be nonempty and bounded; the verification URI must exactly
+match the supported native provider flow. O is the sole explicit browser action,
+passes only the fixed URI with null standard streams, and permits one bounded,
+reaped launcher at a time. It bounds the launcher, not the user's browser navigation.
+Unsupported platforms show manual navigation guidance.
+
+## Focused checks
+
+`accounts/app_tests.rs` exercises actual App input, render, reply, and persistence
+paths with synthetic one-shots and watches: keyboard/mouse selection; exact pending
+recovery; current/next-run separation; composer/history preservation; saved-state
+scanning for private material; explicit browser action; expiry/denied reads;
+repeat-cancel identity; publication winning cancellation; closure/narrow layouts;
+coalesced connection loss; configured launches; and remembered/unavailable bindings.
+The fixtures use temporary per-test storage and a browser-effect substitute, not
+operator HOME, real providers, or a real browser. Helper tests cover aliases,
+availability, host/workspace keys and legacy deserialization.
+
+The delivery's recorded Cargo/process results and `coverage/latest.json` are the
+verification evidence. Linux synthetic tests do not certify live-provider login,
+deployed TLS proxies, native macOS/Windows private storage, or platform launchers.

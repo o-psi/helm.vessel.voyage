@@ -29,6 +29,21 @@ class AccountingHandler(ProviderHandler):
         prompt = next(m["content"] for m in reversed(body["messages"]) if m["role"] == "user")
         with self.server.guard:
             self.server.account_requests.append((prompt, self.headers.get("Authorization"), body))
+        if prompt == "rotate-during-run" and self.server.count(prompt) == 1:
+            with self.server.guard:
+                self.server.requests[prompt] += 1
+            # Echo a synthetic rotated secret split across stream frames. The
+            # admitted agent must learn the dispatch credential before publishing.
+            chunks = [{"choices": [{"index": 0, "delta": {"content": part}, "finish_reason": None}]}
+                      for part in ("synthetic-personal-", "rotated")]
+            chunks.append({"choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]})
+            payload = ("".join("data: " + json.dumps(chunk) + "\n\n" for chunk in chunks) + "data: [DONE]\n\n").encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+            return
         # Reuse the existing bounded gate/stream fixture, not another runtime suite.
         self.rfile = io.BytesIO(raw)
         super().do_POST()
@@ -209,6 +224,23 @@ class NamedAccounts(unittest.TestCase):
         denied = scoped(user, {"op": "accounts", "workspace": str(f.workspace), "transport": None}, envelope=True)
         self.assertIsNotNone(denied["error"])
         self.assertEqual(f.provider.account_requests, [])
+
+    def test_active_rotation_redacts_new_credential_before_stream_publication(self):
+        f = self.f
+        session, _ = f.new_account(self.personal)
+        f.provider.file_tasks.add("rotate-during-run")
+        turn = f.submit(session, "rotate-during-run")
+        f.reached_provider(session, "rotate-during-run")
+        f.cli("rotate-api", "--account", self.personal["account_id"], "--generation", "1",
+              "--env", "ACCOUNT_PERSONAL_ROTATED", "--attest-same-identity")
+        turn[0].set()
+        snapshot = f.finished(session)
+        self.assertEqual(f.authorization("rotate-during-run"),
+                         ["Bearer synthetic-personal", "Bearer synthetic-personal-rotated"])
+        public = json.dumps(snapshot)
+        self.assertNotIn("synthetic-personal-rotated", public)
+        self.assertIn("[REDACTED]", public)
+        self.assertEqual(snapshot["inference"]["account"], self.personal)
 
     def test_rotation_preserves_binding_logout_refuses_without_fallback(self):
         f = self.f
