@@ -1277,11 +1277,9 @@ impl Agent {
             }
             self.sink.emit(AgentEvent::Thinking { turn }).await;
             let prepared = working_context.prepare(&history).map_err(|_| CheckpointError)?;
-            if prepared > 0 {
-                if let Some(checkpoint) = checkpoint {
-                    gate::guarded(tokio::time::timeout(context.timeout, checkpoint.save_working_context(&working_context)), &cancel).await?
-                        .map_err(|_| CheckpointError)??;
-                }
+            if prepared > 0 && let Some(checkpoint) = checkpoint {
+                gate::guarded(tokio::time::timeout(context.timeout, checkpoint.save_working_context(&working_context)), &cancel).await?
+                    .map_err(|_| CheckpointError)??;
             }
             let mut recovery_attempt = 0;
             let mut rejected_size = None;
