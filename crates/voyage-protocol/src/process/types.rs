@@ -34,6 +34,9 @@ pub enum RuntimeCommand {
         expected_revision: u64,
         expires_at_ms: u64,
         retain: u32,
+        /// Require non-destructive working-context compaction; old peers must refuse.
+        #[serde(default, skip_serializing_if = "is_false")]
+        preserve_canonical: bool,
     },
     AssignmentObserve {
         run_id: Uuid,
@@ -437,4 +440,9 @@ impl std::fmt::Debug for RuntimeCommand {
             .field("command_id", &self.mutation_id())
             .finish_non_exhaustive()
     }
+}
+
+// Preserve legacy command serialization for exact receipt identity.
+fn is_false(value: &bool) -> bool {
+    !*value
 }

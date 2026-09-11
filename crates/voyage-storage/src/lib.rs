@@ -6,3 +6,5 @@ mod policy;
 mod windows;
 #[cfg(windows)]
 pub use windows::PrivateDirectory;
+
+pub mod credentials;

@@ -391,7 +391,9 @@ already dispatched effects. Linux ceiling enforcement is not claimed for other O
 `command_timeout_secs`, `max_output_bytes`, terminal count/unread limits and
 subagent concurrency bound different resources. `max_tokens = 0` and
 `context_window = 0` add no operator token cap; provider-specific requirements still
-apply. `provider_retry_attempts`, `provider_retry_initial_ms` and
+apply. [Working-context compaction](#working-context-compaction) prepares large results
+and recovers from recognized provider context rejection without enabling a local
+token gate or repeating completed tools. `provider_retry_attempts`, `provider_retry_initial_ms` and
 `provider_retry_max_ms` bound retries before streamed content arrives. Exponential
 waits use half-to-full equal jitter. Explicit `Retry-After` seconds or HTTP dates
 are honored for throttling and transient service errors; a server delay above the
@@ -563,3 +565,143 @@ runtime ownership fence; older runtimes refuse the upgraded journal.
 These storage and process behaviors require actual native verification. Current
 acceptance evidence is Linux with synthetic local peers; it does not establish
 native macOS/Windows private-storage behavior or live-provider results.
+
+## Working-context compaction
+
+Voyage owns two distinct things: the full canonical conversation and the smaller
+working projection used for provider requests. Helm exposes manual preparation
+through Vessel. Neither Helm nor Vessel runs a summarizing agent.
+
+### Automatic preparation and recovery
+
+Before a provider request, Voyage applies saved working-context reductions. At
+192 KiB of serialized projected messages it attempts extractive preparation of
+large assistant text and tool results. This is a preparation threshold, **not a
+token allowance or admission veto**. If preparation cannot shrink anything, the
+initial request still reaches the provider unless an operator explicitly enabled
+a local context limit. The threshold is not a model-capacity claim.
+
+A recognized provider input-context rejection causes the same active run to build
+a smaller request. Native OpenAI Chat/Responses, ChatGPT OAuth Responses and
+Anthropic error paths recognize the explicit `context_length_exceeded` code and
+narrow typed maximum-context/prompt-too-long diagnostics. Unknown errors are not
+silently reclassified. Account exhaustion, authentication failures and output
+truncation are not input-context recovery.
+
+Recovery has four reduction stages: 4096-, 1024- and 256-byte excerpts, then
+complete recorded tool-group extraction. Already stronger reductions are retained;
+empty stages do not dispatch. Every retried request must be materially smaller
+(at least 128 serialized-estimate units) after redaction, tool replay projection
+and any explicitly requested local preflight. This measure is not billing usage
+or an authoritative tokenizer. Recovery never loops on an unchanged request.
+Ordinary transient retries remain separately bounded, and every dispatched
+request passes normal inference admission/accounting.
+
+Only a rejection before any response delta can recover automatically. A rejection
+after text **or tool-call** deltas ends as an incomplete response, including when
+no safe public text was displayed. It does not repeat uncertain provider work.
+Completed tool calls are not executed again: recovery stays at the provider
+boundary after their canonical result checkpoints.
+
+### What survives
+
+- Full canonical text, tool arguments, exact call/result identities, outcome
+  metadata, steering receipts and artifacts remain saved and readable.
+- User task and steering text are never shortened. Current runtime instructions
+  are generated separately and do not become conversation messages.
+- Tool results can become clearly labelled excerpts carrying canonical non-system
+  message ordinals and SHA-256 references. Artifact reference metadata is retained
+  outside the excerpt; binary payloads are not copied into summaries.
+- A complete recorded tool-call/result group can become an assistant-side
+  extractive record. It preserves call IDs/names, argument digests, recorded
+  outcomes and adjacent authored assistant decisions. Tool excerpts remain
+  explicitly labelled untrusted data, not new authority. Incomplete groups are
+  never split or relabelled as completed effects.
+- Provider continuation envelopes are cleared in the **request copy** when a
+  saved projection is active, so they cannot silently reinsert the original large
+  content. Canonical provider state is not rewritten by compaction.
+
+Extractive records are intentionally lossy, not a claim that a language model
+understood every relevant detail. They retain beginnings/endings, explicitly labelled decision/constraint/outcome
+lines and exact references rather than inventing conclusions about omitted content. Oversized protected
+lines are retained in full, even if that makes a request irreducible. Full history
+can be read in Helm or through authorized Vessel history/message operations;
+consult it when omitted details matter. Do not rerun effectful tools merely to
+reconstruct their earlier output. A hash reference is provenance, not proof of
+success or a new artifact-access grant.
+
+Projection ranges are bound to canonical message fingerprints. Invalid or stale
+projections fail closed rather than discarding canonical history. The projection
+is saved before the reduced request is dispatched. Its generation and reason
+(manual, preparation, or provider rejection) survive process suspension, resume
+and restart. Branches copy the projection with canonical history and without
+provider continuation. Clear and deletion clear projection metadata with their
+existing explicit semantics. Compaction cannot restore history destructively
+omitted by older versions.
+
+### Manual Helm operation
+
+Use **Actions → Compact older messages**, type `KEEP N`, or send `/compact N`.
+`N` is 1–100000 and protects the newest N non-system messages from new manual
+reductions; task and steering are protected regardless of age. Existing stronger
+reductions are not undone. The command requires an idle voyage, the reviewed
+history revision and the existing authority/cleanup checks. The unsent draft stays
+intact.
+
+The receipt reports `compacted_messages`, `canonical_preserved: true`, and
+`removed_messages: 0`. Helm displays the actual reduction count or a no-op result.
+The same command identity returns its saved receipt, not another mutation.
+
+The command carries `preserve_canonical: true` on both public and private wire
+contracts. Older strict-decoding Vessels/runtimes reject this field rather than
+performing old destructive compaction. New runtimes refuse fresh legacy compact
+requests lacking that requirement; historical receipts retain their original
+identity. Upgrade the affected peer instead of falling back to truncation.
+
+### Failure and verification boundaries
+
+If task text, instructions, schemas or remaining valid groups cannot be safely
+reduced further, the run stops with an actionable context-exhausted explanation:
+full history is retained; narrow the task or select a larger-context model.
+Failed projection validation/persistence stops dispatch. Cancellation is checked
+at execution, checkpoint and provider boundaries; a saved reduction is not
+permission to continue a cancelled run.
+
+There is no external summarizer, summary credential, or paid fallback. Summary
+construction failures are local failures, not successful semantic summaries.
+Provider limits still apply. Explicit positive `context_window` and `max_tokens`
+retain their opt-in semantics and required transport fields remain unchanged.
+
+Focused source tests cover projection integrity, Unicode boundaries, restart
+serialization, no tool replay, failure preservation and cancellation. The offline
+`voyage/tests/context_compaction.py` fixture targets supervised native HTTP
+workflows. Run it only against the exact verified companion binaries. See
+[quality guidance](quality.md) for coverage and platform boundaries. Test results
+must be recorded with the delivered source; source/test drafting alone is not
+verification. No live-provider entitlement, semantic-quality certification or
+native macOS/Windows behavior is implied.
+
+#### Recorded Linux verification
+
+Issue #64 measured clean source `9edcc03b8a1d2176513840e1d064bf3c12670482`,
+with the published #10 and #63 changes integrated. A later Android-only merge
+preserves unrelated work and changes no measured Cargo workspace source or tests.
+
+- **280 workspace Rust tests passed, 0 failed, 1 ignored** under LLVM coverage.
+- **21 native process combinations passed**: Chat, Responses and Anthropic each
+  exercised actual rejection with a smaller request and restart persistence,
+  256 KiB automatic preparation, irreducible input, manual preservation with
+  exact deduplication/restart and legacy refusal, cancellation, partial-stream
+  refusal, and a 12-effect active turn without repeated effects.
+- Development builds and workspace formatting passed. The complete current
+  report retained all **11 executables and 418 source files**, with no duplicate
+  logical source or mismatched functions. Line coverage is **30.1737%**; the
+  committed [compact measurement](../coverage/latest.json) records exact counts.
+- Strict Clippy is **not passing** because inherited account/provider/UI warnings
+  remain. Compaction's introduced nested-if warning was fixed; warning-mode
+  analysis completed. Earlier interrupted compilations have no test outcome.
+  Failed fixture API-route and cancellation-identity checks were corrected; their
+  logs remain retained, and timeouts were not increased.
+
+These are synthetic local Linux workflows, not paid-provider semantic acceptance
+or native macOS/Windows certification. No human testing gate was used.

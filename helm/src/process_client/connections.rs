@@ -458,3 +458,8 @@ pub(super) fn validate_credential(connection: &Connection, credential: &Credenti
     }
     Ok(())
 }
+
+/// Explicit offline migration of retained connection secrets; never edits identities.
+pub fn protect_credentials(root: &std::path::Path) -> Result<usize> {
+    private::protect(root)
+}

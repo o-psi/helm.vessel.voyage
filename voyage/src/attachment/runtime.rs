@@ -654,6 +654,36 @@ impl RunCheckpoint for ManagedRunCheckpoint {
     fn run_id(&self) -> Uuid {
         self.token.run_id
     }
+    async fn working_context(&self) -> Result<crate::context::WorkingContext, CheckpointError> {
+        let token = self.token.clone();
+        self.storage(move |store| {
+            if let Some(authority) = &token.execution_authority {
+                authority.check()?;
+            }
+            steering::authorize(store, &token)?;
+            store
+                .journal
+                .load_working_context(&store.guard, store.run_id)
+        })
+        .await
+    }
+    async fn save_working_context(
+        &self,
+        context: &crate::context::WorkingContext,
+    ) -> Result<(), CheckpointError> {
+        let context = context.clone();
+        let token = self.token.clone();
+        self.storage(move |store| {
+            if let Some(authority) = &token.execution_authority {
+                authority.check()?;
+            }
+            steering::authorize(store, &token)?;
+            store
+                .journal
+                .save_working_context(&store.guard, store.run_id, &context)
+        })
+        .await
+    }
     async fn canonical(&self, messages: &[Message], usage: &Usage) -> Result<(), CheckpointError> {
         let messages = messages.to_vec();
         let usage = usage.clone();
@@ -767,6 +797,15 @@ impl RunCheckpoint for ManagedRunCheckpoint {
 impl RunCheckpoint for RunOwner {
     fn run_id(&self) -> Uuid {
         self.run_id
+    }
+    async fn working_context(&self) -> Result<crate::context::WorkingContext, CheckpointError> {
+        self.checkpoint().working_context().await
+    }
+    async fn save_working_context(
+        &self,
+        context: &crate::context::WorkingContext,
+    ) -> Result<(), CheckpointError> {
+        self.checkpoint().save_working_context(context).await
     }
     async fn canonical(&self, messages: &[Message], usage: &Usage) -> Result<(), CheckpointError> {
         self.checkpoint().canonical(messages, usage).await

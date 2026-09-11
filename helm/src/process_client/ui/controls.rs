@@ -76,6 +76,7 @@ pub(super) fn mutation(
             expected_revision,
             expires_at_ms,
             retain,
+            preserve_canonical: true,
         })
     } else if let Some(path) = text.strip_prefix("/configure ") {
         let config_path = std::path::PathBuf::from(path);

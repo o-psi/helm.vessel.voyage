@@ -38,6 +38,7 @@ impl std::fmt::Debug for FinalizationFailure {
             AgentError::Finalization(_) => "finalization",
             AgentError::Completion(_) => "completion_store",
             AgentError::Context(_) => "context",
+            AgentError::ContextExhausted(_) => "provider_context_exhausted",
             AgentError::Policy(_) => "policy",
             AgentError::Provider(_) => "provider",
             AgentError::WorkspaceInstructions(_) => "workspace_instructions",

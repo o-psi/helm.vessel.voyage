@@ -180,12 +180,22 @@ impl Journal {
                 saved.session.clear_conversation();
                 receipt["cleared"] = json!(true);
             }
-            RuntimeCommand::Compact { retain, .. } => {
+            RuntimeCommand::Compact {
+                retain,
+                preserve_canonical,
+                ..
+            } => {
+                ensure!(
+                    *preserve_canonical,
+                    "update client: compaction requires preserve_canonical=true"
+                );
                 ensure!(
                     (1..=100_000).contains(retain),
                     "retain must be 1..100000 messages"
                 );
-                receipt["removed_messages"] = json!(saved.session.compact(*retain as usize));
+                receipt["compacted_messages"] = json!(saved.session.compact(*retain as usize)?);
+                receipt["canonical_preserved"] = json!(true);
+                receipt["removed_messages"] = json!(0);
             }
             RuntimeCommand::Archive { archived, .. } => {
                 tx.execute(
@@ -206,6 +216,7 @@ impl Journal {
                     [guard.session_id.to_string()],
                 )?;
                 saved.session.messages.clear();
+                saved.session.working_context = Default::default();
                 saved.session.terminals.clear();
                 saved.session.completion_runs.clear();
                 saved.session.run_summaries.clear();
@@ -257,6 +268,7 @@ impl Journal {
                     branch.set_name(name.clone());
                 }
                 branch.messages = saved.session.messages.clone();
+                branch.working_context = saved.session.working_context.clone();
                 for message in &mut branch.messages {
                     message.provider_state = None;
                 }

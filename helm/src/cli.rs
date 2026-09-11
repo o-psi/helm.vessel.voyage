@@ -84,13 +84,19 @@ pub(crate) enum LogFormat {
 }
 #[derive(Subcommand)]
 pub(crate) enum Command {
+    /// Encrypt retained human connection secrets with an externally provisioned runtime key.
+    ProtectConnections {
+        /// Existing private helm-connections directory; no network or provider access.
+        #[arg(long)]
+        directory: PathBuf,
+    },
     /// Install or inspect the local shared-browser adapter (never shares a browser).
     Browser(helm::process_client::browser::BrowserArgs),
     /// Connect through local HTTP or scoped HTTPS.
     Connect(helm::process_client::cli::ConnectArgs),
     /// Inspect GitHub context and publish only after exact attended review.
     Github(GithubArgs),
-    /// Install, inspect and explicitly enable declarative packages.
+    /// Install, inspect and explicitly review declarative or executable packages.
     Extension(helm::extensions::cli::ExtensionArgs),
     /// Inspect and configure local session/project inference attempt allowances.
     Inference(helm::inference::cli::InferenceArgs),

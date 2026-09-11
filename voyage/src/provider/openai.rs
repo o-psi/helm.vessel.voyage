@@ -206,9 +206,9 @@ fn apply_stream_chunk(
     assembly: &mut StreamAssembly,
 ) -> Result<Vec<ProviderDelta>, ProviderError> {
     if value.get("error").is_some() {
-        return Err(ProviderError::Request(
-            "OpenAI stream reported a provider error".into(),
-        ));
+        return Err(super::rejection::classify(value, None).unwrap_or_else(|| {
+            ProviderError::Request("OpenAI stream reported a provider error".into())
+        }));
     }
     let mut events = Vec::new();
     if let Some(usage) = value.get("usage") {
@@ -489,5 +489,36 @@ fn validate_finish_reason(reason: Option<&str>) -> Result<(), ProviderError> {
         _ => Err(ProviderError::InvalidResponse(
             "missing or unsupported OpenAI finish reason".into(),
         )),
+    }
+}
+
+#[cfg(test)]
+mod context_rejection_tests {
+    use super::*;
+    use futures_util::StreamExt;
+
+    #[tokio::test]
+    async fn chat_sse_classifies_explicit_context_and_account_rejections() {
+        for (code, context) in [
+            ("context_length_exceeded", true),
+            ("insufficient_quota", false),
+        ] {
+            let frame = format!(
+                "data: {}\n\n",
+                json!({"error":{"code":code,"message":"PRIVATE"}})
+            );
+            let source = futures_util::stream::iter(vec![Ok(bytes::Bytes::from(frame))]);
+            let stream = openai_stream(source);
+            futures_util::pin_mut!(stream);
+            let error = stream.next().await.unwrap().unwrap_err();
+            if context {
+                assert!(matches!(error, ProviderError::ContextLength));
+            } else {
+                assert!(matches!(error, ProviderError::UsageLimit));
+            }
+            assert!(!error.is_retryable());
+            assert!(!error.to_string().contains("PRIVATE"));
+            assert!(stream.next().await.is_none());
+        }
     }
 }

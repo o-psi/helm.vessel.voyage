@@ -7,8 +7,13 @@ use serde_json::{Value, json};
 use std::path::PathBuf;
 use uuid::Uuid;
 pub mod cli;
+pub(crate) mod extensions;
 
 static PROCESS_SCOPE: std::sync::OnceLock<(Uuid, Uuid)> = std::sync::OnceLock::new();
+
+pub(crate) fn process_scope() -> Option<(Uuid, Uuid)> {
+    PROCESS_SCOPE.get().copied()
+}
 
 pub(crate) fn set_process_scope(session: Uuid, incarnation: Uuid) -> Result<()> {
     ensure!(
@@ -206,7 +211,7 @@ pub fn attest(id: Uuid, reason: &str) -> Result<Value> {
     )?;
     ensure!(
         tx.execute(
-            "UPDATE reservations SET observed=2 WHERE id=?1 AND observed=0",
+            "UPDATE reservations SET observed=2 WHERE id=?1 AND observed=0 AND kind<>'extensions'",
             [id.to_string()]
         )? == 1,
         "no unresolved reservation for attestation"

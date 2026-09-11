@@ -299,7 +299,8 @@ where
                 if data.is_empty(){continue;}
                 let value:Value=serde_json::from_slice(data).map_err(|e|ProviderError::InvalidResponse(format!("invalid Anthropic stream event: {e}")))?;
                 if value.get("type").and_then(Value::as_str) == Some("error") {
-                    Err(ProviderError::Request("Anthropic stream reported a provider error".into()))?;
+                    Err(super::rejection::classify(&value, None).unwrap_or_else(||
+                        ProviderError::Request("Anthropic stream reported a provider error".into())))?;
                 }
                 if let Some(usage) = value.pointer("/message/usage").or_else(|| value.get("usage")) {
                     if let Some(tier) = super::reported_service_tier(usage.get("service_tier")) { assembly.service_tier = Some(tier); }
@@ -609,5 +610,35 @@ mod visual_tool_checks {
         assert_eq!(result["content"][2]["text"], "after");
         assert_eq!(tool.role, Role::Tool);
         assert!(encode_messages(&[tool]).is_err());
+    }
+}
+
+#[cfg(test)]
+mod context_rejection_tests {
+    use super::*;
+    use futures_util::StreamExt;
+
+    #[tokio::test]
+    async fn anthropic_sse_classifies_only_narrow_prompt_rejection() {
+        for (message, context) in [
+            (
+                "prompt is too long: 210000 tokens > 200000 maximum PRIVATE",
+                true,
+            ),
+            ("max_tokens is too large PRIVATE", false),
+        ] {
+            let frame = format!(
+                "event: error\ndata: {}\n\n",
+                json!({"type":"error","error":{"type":"invalid_request_error","message":message}})
+            );
+            let source = futures_util::stream::iter(vec![Ok(bytes::Bytes::from(frame))]);
+            let stream = anthropic_stream(source);
+            futures_util::pin_mut!(stream);
+            let error = stream.next().await.unwrap().unwrap_err();
+            assert_eq!(matches!(error, ProviderError::ContextLength), context);
+            assert!(!error.is_retryable());
+            assert!(!error.to_string().contains("PRIVATE"));
+            assert!(stream.next().await.is_none());
+        }
     }
 }

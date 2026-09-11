@@ -401,6 +401,7 @@ pub(crate) fn redact(error: ProviderError) -> ProviderError {
     match error {
         ProviderError::Authentication(_) => ProviderError::Authentication(MESSAGE.into()),
         ProviderError::UsageLimit => ProviderError::UsageLimit,
+        ProviderError::ContextLength => ProviderError::ContextLength,
         ProviderError::Incomplete => ProviderError::Incomplete,
         ProviderError::RetryAfter { source, delay } => ProviderError::RetryAfter {
             source: Box::new(redact(*source)),

@@ -7,6 +7,7 @@ description = "Voyage management plane"
 
 [dependencies]
 chrono.workspace = true
+voyage-storage.workspace = true
 voyage-runtime = { package = "voyage", path = "../voyage" }
 log.workspace = true
 anyhow.workspace = true

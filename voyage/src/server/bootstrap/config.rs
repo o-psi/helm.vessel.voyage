@@ -35,10 +35,13 @@ pub(crate) fn load(path: Option<&Path>, workspace: &Path) -> Result<Config> {
         bytes.len() <= 1024 * 1024,
         "configuration grew beyond limit"
     );
-    if bytes.iter().copied().find(|b| !b.is_ascii_whitespace()) == Some(b'{') {
-        serde_json::from_slice::<crate::launch_config::LaunchConfig>(&bytes)?.resolve(workspace)
+    let mut config = if bytes.iter().copied().find(|b| !b.is_ascii_whitespace()) == Some(b'{') {
+        serde_json::from_slice::<crate::launch_config::LaunchConfig>(&bytes)?.resolve(workspace)?
     } else {
         let text = std::str::from_utf8(&bytes)?;
-        Config::parse_loaded(text)
-    }
+        Config::parse_loaded(text)?
+    };
+    config.protect_extension_file(path, &metadata)?;
+    config.extension_private_files_complete = true;
+    Ok(config)
 }

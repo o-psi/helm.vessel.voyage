@@ -41,10 +41,20 @@ impl LiveControls {
                 *confirm_session_id == owner.session_id(),
                 "session confirmation mismatch"
             ),
-            RuntimeCommand::Compact { retain, .. } => ensure!(
-                (1..=100000).contains(retain),
-                "retain must be 1..100000 messages"
-            ),
+            RuntimeCommand::Compact {
+                retain,
+                preserve_canonical,
+                ..
+            } => {
+                ensure!(
+                    *preserve_canonical,
+                    "update client: compaction requires preserve_canonical=true"
+                );
+                ensure!(
+                    (1..=100000).contains(retain),
+                    "retain must be 1..100000 messages"
+                );
+            }
             _ => {}
         }
         let (expected, expiry) = match command {

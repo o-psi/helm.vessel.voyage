@@ -97,6 +97,8 @@ impl Journal {
         portable.name = saved.session.name.clone();
         portable.title_state = saved.session.title_state.clone();
         portable.messages = saved.session.messages.clone();
+        portable.working_context = saved.session.working_context.clone();
+        portable.working_context.validate(&portable.messages)?;
         portable.usage = saved.session.usage.clone();
         for message in &mut portable.messages {
             message.provider_state = None;

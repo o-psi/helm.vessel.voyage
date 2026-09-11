@@ -21,42 +21,6 @@ use tokio::fs;
 
 use uuid::Uuid;
 
-/// Shrink a conversation without breaking tool-call groups. The system message and
-/// most recent messages are retained; removed history is represented by a durable
-/// summary marker so providers are told that context was intentionally compacted.
-pub fn compact_messages(messages: &mut Vec<Message>, retain: usize) -> usize {
-    if messages.len() <= retain.max(2) {
-        return 0;
-    }
-    let system = messages
-        .first()
-        .filter(|message| message.role == crate::model::Role::System)
-        .cloned();
-    let keep = retain.max(2).saturating_sub(usize::from(system.is_some()));
-    let nominal_split = messages.len().saturating_sub(keep);
-    // Never retain a tool result without the user turn which led to its call.
-    let mut split = (nominal_split..messages.len())
-        .find(|index| messages[*index].role == crate::model::Role::User)
-        .unwrap_or(nominal_split);
-    // A long tool loop may have no later user turn. Keep the assistant
-    // call together with all of its results at the fallback boundary.
-    while split > 0 && messages[split].role == crate::model::Role::Tool {
-        split -= 1;
-    }
-    let removed = split.saturating_sub(usize::from(system.is_some()));
-    let mut recent = messages.split_off(split);
-    messages.clear();
-    if let Some(system) = system {
-        messages.push(system);
-    }
-    messages.push(Message::new(
-        crate::model::Role::System,
-        format!("[Earlier conversation compacted: {removed} messages omitted.]"),
-    ));
-    messages.append(&mut recent);
-    removed
-}
-
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Session {
     pub id: Uuid,
@@ -92,6 +56,9 @@ pub struct Session {
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub draft: String,
     pub messages: Vec<Message>,
+    /// Provider working projection; canonical conversation remains complete.
+    #[serde(default)]
+    pub working_context: crate::context::WorkingContext,
     pub usage: Usage,
     #[serde(default)]
     pub terminals: Vec<crate::terminal::TerminalSummary>,
@@ -228,6 +195,7 @@ impl Session {
             github_references: Vec::new(),
             draft: String::new(),
             messages: Vec::new(),
+            working_context: crate::context::WorkingContext::default(),
             usage: Usage::default(),
             terminals: Vec::new(),
         }
@@ -318,6 +286,7 @@ impl Session {
 
     pub fn clear_conversation(&mut self) {
         self.messages.clear();
+        self.working_context = crate::context::WorkingContext::default();
         self.run_summaries.clear();
         let automatic = self.title_state_mut().automatic
             && self
@@ -459,6 +428,7 @@ impl SessionStore {
     /// changed after commit. The bounded synchronous commit has no cancellation points.
     pub async fn save_with_lease(&self, session: &mut Session, lease: &SessionLease) -> Result<()> {
         session.validate_github_references()?;
+        session.working_context.validate(&session.messages)?;
         self.check_lease(session.id, lease)?;
         let destination = lease.directory.join(format!("{}.json", session.id));
         if let Some(source) = &session.loaded_from {
@@ -497,6 +467,7 @@ impl SessionStore {
             .messages
             .retain(|message| message.role != crate::model::Role::System);
         persisted.reanchor_run_summaries();
+        persisted.working_context.validate(&persisted.messages)?;
         let bytes = serde_json::to_vec_pretty(&persisted)?;
         anyhow::ensure!(
             bytes.len() as u64 <= MAX_SESSION_BYTES,
@@ -663,6 +634,10 @@ impl SessionStore {
         branch.updated_at = now;
         branch.parent_id = Some(source.id);
         branch.completion_runs.clear();
+        for message in &mut branch.messages {
+            message.provider_state = None;
+        }
+        branch.working_context.validate(&branch.messages)?;
         branch.title_state = None;
         branch.name = name
             .filter(|name| !name.trim().is_empty())
@@ -886,6 +861,7 @@ fn read_session(path: &Path) -> Result<Session> {
     session
         .messages
         .retain(|message| message.role != crate::model::Role::System);
+    session.working_context.validate(&session.messages)?;
     session.recover_run_summaries();
     for terminal in &mut session.terminals {
         terminal.state = crate::terminal::TerminalState::Disconnected;
@@ -964,5 +940,100 @@ mod title_schedule_tests {
         );
         assert_eq!(session.display_name(), original);
         assert!(session.title_state.as_ref().unwrap().requested_by.is_none());
+    }
+}
+
+#[cfg(test)]
+mod working_context_tests {
+    use super::*;
+    use crate::model::Role;
+
+    fn conversation() -> Session {
+        let mut session = Session::new(".".into(), "fixture".into());
+        for index in 0..12 {
+            session
+                .messages
+                .push(Message::new(Role::User, format!("question {index}")));
+            session.messages.push(Message::new(
+                Role::Assistant,
+                format!("answer {index}: {}", "source details ".repeat(1000)),
+            ));
+        }
+        session.begin_run_summary(Uuid::new_v4());
+        session
+    }
+
+    #[test]
+    fn manual_compaction_preserves_canonical_and_run_anchors_and_clear_resets_projection() {
+        let mut session = conversation();
+        let messages = serde_json::to_value(&session.messages).unwrap();
+        let summaries = serde_json::to_value(&session.run_summaries).unwrap();
+        assert!(session.compact(4).unwrap() > 0);
+        assert_eq!(serde_json::to_value(&session.messages).unwrap(), messages);
+        assert_eq!(
+            serde_json::to_value(&session.run_summaries).unwrap(),
+            summaries
+        );
+        let restored: Session =
+            serde_json::from_value(serde_json::to_value(&session).unwrap()).unwrap();
+        assert_eq!(
+            serde_json::to_value(
+                restored
+                    .working_context
+                    .project(&restored.messages)
+                    .unwrap()
+            )
+            .unwrap(),
+            serde_json::to_value(session.working_context.project(&session.messages).unwrap())
+                .unwrap()
+        );
+        session.replace_messages(session.messages.clone());
+        assert_eq!(
+            serde_json::to_value(&session.working_context).unwrap(),
+            serde_json::to_value(&restored.working_context).unwrap()
+        );
+        session.clear_conversation();
+        assert!(session.messages.is_empty());
+        assert_eq!(
+            serde_json::to_value(&session.working_context).unwrap(),
+            serde_json::to_value(crate::context::WorkingContext::default()).unwrap()
+        );
+    }
+
+    #[test]
+    fn legacy_snapshot_without_working_context_loads_default() {
+        let session = conversation();
+        let mut value = serde_json::to_value(&session).unwrap();
+        value.as_object_mut().unwrap().remove("working_context");
+        let restored: Session = serde_json::from_value(value).unwrap();
+        restored
+            .working_context
+            .validate(&restored.messages)
+            .unwrap();
+        assert_eq!(
+            serde_json::to_value(&restored.working_context).unwrap(),
+            serde_json::to_value(crate::context::WorkingContext::default()).unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn local_branch_retains_projection_and_full_canonical_history() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = SessionStore::new(directory.path().join("sessions"));
+        let mut source = conversation();
+        source.compact(4).unwrap();
+        let branch = store.branch(&source, None).await.unwrap();
+        assert_ne!(branch.id, source.id);
+        assert_eq!(branch.parent_id, Some(source.id));
+        assert_eq!(
+            serde_json::to_value(&branch.messages).unwrap(),
+            serde_json::to_value(&source.messages).unwrap()
+        );
+        assert_eq!(
+            serde_json::to_value(&branch.working_context).unwrap(),
+            serde_json::to_value(&source.working_context).unwrap()
+        );
+        let loaded = store.load(branch.id).await.unwrap();
+        loaded.working_context.validate(&loaded.messages).unwrap();
     }
 }

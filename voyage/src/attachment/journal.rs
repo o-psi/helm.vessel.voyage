@@ -41,6 +41,7 @@ pub use catalogue::{
 };
 mod steering;
 mod titles;
+mod working_context;
 pub use steering::{
     MAX_PENDING_STEERING, MAX_STEERING_PER_RUN, SteeringActor, SteeringAdmission, SteeringOutcome,
     SteeringRecord, SteeringRejection,

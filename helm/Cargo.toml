@@ -10,6 +10,7 @@ name = "helm"
 path = "src/main.rs"
 
 [dependencies]
+voyage-storage.workspace = true
 voyage-runtime = { package = "voyage", path = "../voyage" }
 log.workspace = true
 voyage-protocol.workspace = true
@@ -68,4 +69,3 @@ zeroize = "1.9"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_System_Console", "Win32_System_Threading"] }
-voyage-storage.workspace = true

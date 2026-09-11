@@ -119,6 +119,9 @@ pub enum VoyageCommand {
         expected_revision: u64,
         expires_at_ms: u64,
         retain: u32,
+        /// Require non-destructive working-context compaction; old peers must refuse.
+        #[serde(default, skip_serializing_if = "is_false")]
+        preserve_canonical: bool,
     },
     AssignmentObserve {
         run_id: Uuid,
@@ -665,5 +668,30 @@ impl std::fmt::Debug for VesselResponse {
             .field("has_error", &self.error.is_some())
             .field("outcome_unknown", &self.outcome_unknown)
             .finish_non_exhaustive()
+    }
+}
+
+// Preserve legacy command serialization for exact receipt identity.
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
+#[cfg(test)]
+mod compaction_identity_tests {
+    use super::*;
+    #[test]
+    fn legacy_compact_identity_roundtrips_without_new_false_field() {
+        let value = serde_json::json!({"op":"compact","command_id":Uuid::new_v4(),"expected_revision":7,"expires_at_ms":9000,"retain":10});
+        let command: VoyageCommand = serde_json::from_value(value.clone()).unwrap();
+        assert_eq!(serde_json::to_value(command).unwrap(), value);
+    }
+    #[test]
+    fn canonical_preservation_requirement_is_part_of_exact_payload() {
+        let value = serde_json::json!({"op":"compact","command_id":Uuid::new_v4(),"expected_revision":7,"expires_at_ms":9000,"retain":10,"preserve_canonical":true});
+        let command: VoyageCommand = serde_json::from_value(value.clone()).unwrap();
+        assert_eq!(serde_json::to_value(command).unwrap(), value);
+        let private: crate::process::RuntimeCommand =
+            serde_json::from_value(value.clone()).unwrap();
+        assert_eq!(serde_json::to_value(private).unwrap(), value);
     }
 }
