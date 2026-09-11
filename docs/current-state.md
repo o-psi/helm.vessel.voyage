@@ -5,6 +5,13 @@ native-platform validation. Focused regression and explicitly enabled live check
 are described in [quality](quality.md). The [implementation ledger](implementation.md)
 records delivery evidence and its limits.
 
+On Linux, an existing voyage can recreate its deleted working directory on the
+next message while retaining conversation history and access settings. Recovery
+creates an empty private directory at the same path, blocks accidental parent Git
+discovery, and explains that previous files were not restored. Saved reads and
+delivery resolution do not require directory recreation. See
+[deleted working directories](runtime-contract.md#deleted-working-directories) for bounds and verification.
+
 ## Tool reliability
 
 Native action schemas reject irrelevant per-action keys before execution. Shell

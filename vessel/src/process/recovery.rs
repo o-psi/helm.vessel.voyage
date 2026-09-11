@@ -26,6 +26,11 @@ struct Stopped {
 pub fn clean_stop(directory: &Path, registration: &ProcessRegistration) -> bool {
     stopped(directory, registration).is_ok()
 }
+pub(super) fn startup_failed(directory: &Path, registration: &ProcessRegistration) -> bool {
+    clean_stop(directory, registration)
+        && super::access::store::load::<serde_json::Value>(&directory.join("stopped.json"))
+            .is_ok_and(|value| value["startup_failed"] == true)
+}
 pub(super) fn suspended(directory: &Path, registration: &ProcessRegistration) -> bool {
     matches!(std::fs::symlink_metadata(directory.join("runtime.sock")),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound)

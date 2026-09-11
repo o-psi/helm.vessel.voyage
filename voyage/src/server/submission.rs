@@ -101,6 +101,14 @@ pub(super) async fn submit(
     }
     let saved = state.owner.snapshot().await?;
     let mut config = state.config.read().await.clone();
+    if bootstrap::workspace_recreated(&state.directory, &state.registration) {
+        config
+            .system_prompt
+            .push_str("\n\nRuntime workspace notice: ");
+        config
+            .system_prompt
+            .push_str(bootstrap::WORKSPACE_RECREATED_NOTICE);
+    }
     config.model = saved
         .session
         .pending_model

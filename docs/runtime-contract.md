@@ -444,3 +444,60 @@ See [configuration](configuration.md#execution-policy-and-limits) for policy and
 [Git workflow](local-git.md) for wrapper-free repository access. Focused offline
 checks accompanying these code changes do not recreate the removed broad suites
 or certify live providers or native platforms.
+
+## Deleted working directories
+
+A voyage's conversation lives in its private runtime journal, separately from its
+working directory. Deleting a completed voyage's working directory must not erase
+its history or prevent delivery resolution.
+
+On Linux, the next explicitly submitted message or runtime restart can recreate a missing directory
+at its original path. This applies to an existing voyage with retained host
+configuration and a positively fenced restart. The parent directory must still
+exist at its canonical path and permit creation. Recovery does not recursively
+create missing parents, follow a replacement parent symlink, overwrite an existing
+path, relocate the voyage, or restore deleted files. Ordinary startup then resolves
+the retained configuration against current execution policy. Session identity,
+history, access settings and command deduplication remain in force.
+
+The new directory is private (0700). A `.git` pointer deliberately refers to a
+missing `.voyage-missing-checkout` directory. This makes Git fail instead of
+discovering a repository in a parent directory. To use Git again, explicitly
+restore the original checkout, or remove that placeholder `.git` file and
+initialize the intended repository. Recovery does not guess a branch or commit,
+and it cannot recover deleted uncommitted files. No Git recovery provenance is
+currently retained for automatically reconstructing a removed worktree.
+
+Helm and the executing model receive a notice that the directory was recreated
+without its files. The model notice is runtime context, not a synthetic message
+inserted into saved conversation history. The private recovery record identifies
+the recreated directory's inode and Git placeholder; replacing the directory or explicitly
+removing the placeholder ends the notice.
+
+Saved reads and delivery resolution do not recreate directories or run an agent.
+Resolution uses retained configuration for public-payload validation without
+requiring execution-policy resolution against a live workspace. Existing caller,
+grant, cleanup and execution fences still apply. An unadmitted command ID is closed
+durably; a delayed copy cannot execute. After a failed startup, a new message may
+retry once the filesystem problem is corrected. Uncertain work is never replayed.
+
+Automatic recreation is implemented for Linux. Native macOS and Windows behavior
+is not established. Missing parents, denied filesystem permissions and current
+policy refusals can still require operator action; history and local delivery
+resolution remain independent of directory recreation.
+
+### Deleted-directory verification
+
+```sh
+cargo build -p vessel -p voyage --locked -j 8
+python3 voyage/tests/missing_workspace.py --bin-dir target/debug
+```
+
+The focused offline Linux fixture verifies preserved history, negative delivery
+resolution without directory creation, a subsequent completed turn under the same
+session and access mode, no duplicate inference, a runtime-only model notice,
+blocked parent Git discovery, and continuation after a failed startup with a
+missing parent. It uses synthetic credentials and a local provider, with bounded
+waits and observed cleanup of fixture-owned processes. It does not establish live
+provider or full-screen Helm behavior. Evidence stays under the printed `/tmp/vdr-*`
+directory. This process check is separate from workspace Rust coverage.

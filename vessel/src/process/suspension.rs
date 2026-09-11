@@ -290,7 +290,8 @@ impl Supervisor {
                 registration = self.registration(session).await?;
                 resumed = true;
             }
-            if super::recovery::suspended(&directory, &registration)
+            if (super::recovery::suspended(&directory, &registration)
+                || super::recovery::startup_failed(&directory, &registration))
                 && !command.observes_suspended()
             {
                 ensure!(

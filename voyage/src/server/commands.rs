@@ -154,6 +154,7 @@ pub(super) async fn dispatch_admitted(
             // Serialize with settings publication so revision and values describe one state.
             let _admission = state.admission.lock().await;
             let mut snapshot = state.owner.process_snapshot().await?;
+            bootstrap::annotate_workspace(&mut snapshot, &state.directory, &state.registration);
             let mut inference_config = state.config.read().await.clone();
             let saved = state.owner.snapshot().await?.session;
             inference_config.model = saved.pending_model.unwrap_or(saved.model);
