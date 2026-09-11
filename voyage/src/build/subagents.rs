@@ -232,7 +232,8 @@ impl SubagentExecutor for CliSubagentExecutor {
             .check_execution_authority()
             .map_err(|error| error.to_string())?;
         let agent = Agent::new(
-            provider::from_config(&config).map_err(|e| e.to_string())?,
+            provider::from_config_with_redactor(&config, Some(tool_context.redactor.clone()))
+                .map_err(|e| e.to_string())?,
             tools,
             tool_context,
             context.inference_warning_sink(),

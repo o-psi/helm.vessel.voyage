@@ -33,6 +33,10 @@ pub struct PairInviteArgs {
         default_value = "catalogue,create,observe,history,execute"
     )]
     pub rights: Vec<String>,
+    #[arg(long, value_delimiter = ',')]
+    pub accounts: Vec<Uuid>,
+    #[arg(long, value_delimiter = ',')]
+    pub enrollment_connections: Vec<Uuid>,
     #[arg(long, default_value_t = 600)]
     pub ttl_seconds: u64,
 }
@@ -128,6 +132,8 @@ pub fn invite(args: PairInviteArgs) -> Result<()> {
         args.principal,
         workspaces,
         rights,
+        args.accounts,
+        args.enrollment_connections,
         args.ttl_seconds,
     )?;
     // Publish complete bytes without ever replacing a concurrently created output.

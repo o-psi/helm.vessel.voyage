@@ -2,6 +2,10 @@ use super::*;
 
 impl App {
     pub(super) fn input(&mut self, event: Event) -> Result<()> {
+        // Private enrollment consumes every event before clipboard/composer/history handlers.
+        if self.account_input(&event)? {
+            return Ok(());
+        }
         self.cancel_panel_paste_on_input(&event);
         if matches!(event, Event::Resize(..)) {
             self.resize_previews()?;

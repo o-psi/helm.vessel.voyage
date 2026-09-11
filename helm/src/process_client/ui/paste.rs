@@ -517,6 +517,7 @@ impl App {
             &view.images,
         )?;
         view.pending = Some(state::Pending {
+            account_host: None,
             command_id,
             incarnation: view.process.incarnation,
             draft: view.draft.text.clone(),

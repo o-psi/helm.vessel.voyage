@@ -1,4 +1,5 @@
 use super::*;
+use anyhow::{Context, ensure};
 impl ManagedSessionOwner {
     pub(crate) async fn check_access_revision(&self, expected: u64) -> anyhow::Result<()> {
         let shared = self.store.clone();
@@ -29,6 +30,32 @@ impl ManagedSessionOwner {
                 .map_err(|_| anyhow::anyhow!("owner poisoned"))?;
             let Store { journal, guard, .. } = &mut *store;
             journal.retain_initial_configuration(guard, settings)
+        })
+        .await?
+    }
+
+    pub(crate) async fn materialize_account_configuration(
+        &self,
+        account: &voyage_protocol::accounts::AccountBinding,
+    ) -> anyhow::Result<()> {
+        let previous = self
+            .saved_configuration()
+            .await?
+            .context("initial configuration missing")?;
+        let mut value: serde_json::Value = serde_json::from_str(&previous)?;
+        ensure!(
+            value["config"]["account"].is_null(),
+            "account already selected"
+        );
+        value["config"]["account"] = serde_json::to_value(account)?;
+        let settings = serde_json::to_string(&value)?;
+        let shared = self.store.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut store = shared
+                .lock()
+                .map_err(|_| anyhow::anyhow!("owner poisoned"))?;
+            let Store { journal, guard, .. } = &mut *store;
+            journal.materialize_account_configuration(guard, &previous, &settings)
         })
         .await?
     }

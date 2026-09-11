@@ -79,6 +79,10 @@ struct Pending {
     attempts: u32,
     workspaces: Vec<ApprovedWorkspace>,
     rights: Vec<ProcessRight>,
+    #[serde(default)]
+    accounts: Vec<Uuid>,
+    #[serde(default)]
+    enrollment_connections: Vec<Uuid>,
     redemption: Option<Redemption>,
 }
 #[derive(Serialize, Deserialize)]
@@ -290,7 +294,7 @@ pub fn inventory(root: &Path) -> Result<Value> {
                 && summary.revision > 0
                 && summary.expires_at_ms > 0
                 && !summary.rights.is_empty()
-                && summary.rights.len() <= 10
+                && summary.rights.len() <= 16
                 && summary
                     .rights
                     .iter()
@@ -323,6 +327,8 @@ pub fn invite(
     principal_id: Uuid,
     workspaces: Vec<ApprovedWorkspace>,
     rights: Vec<ProcessRight>,
+    accounts: Vec<Uuid>,
+    enrollment_connections: Vec<Uuid>,
     ttl_seconds: u64,
 ) -> Result<Invitation> {
     let _lock = lock(root)?;
@@ -357,7 +363,7 @@ pub fn invite(
     );
     ensure!(
         !rights.is_empty()
-            && rights.len() <= 10
+            && rights.len() <= 16
             && rights
                 .iter()
                 .enumerate()
@@ -397,6 +403,8 @@ pub fn invite(
         attempts: 0,
         workspaces,
         rights,
+        accounts,
+        enrollment_connections,
         redemption: None,
     });
     save(root, &state)?;
@@ -493,6 +501,8 @@ pub fn redeem(
             vessel_id: p.vessel_id,
             revision: 1,
             rights: p.rights.clone(),
+            accounts: p.accounts.clone(),
+            enrollment_connections: p.enrollment_connections.clone(),
             expires_at_ms: now
                 .checked_add(GRANT_TTL_MS)
                 .ok_or_else(|| anyhow::anyhow!("expiry overflow"))?,

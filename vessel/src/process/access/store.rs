@@ -89,7 +89,7 @@ pub(super) fn authenticate(root: &Path, id: Uuid, token: &str) -> Result<Process
     current(&grant)?;
     Ok(grant)
 }
-pub(super) fn current(grant: &ProcessGrant) -> Result<()> {
+pub(crate) fn current(grant: &ProcessGrant) -> Result<()> {
     ensure!(!grant.revoked, "access revoked");
     ensure!(grant.expires_at_ms > now()?, "access expired");
     Ok(())
@@ -153,6 +153,8 @@ pub(crate) fn current_connection(root: &Path, grant: &ConnectionGrant) -> Result
             && !latest.revoked
             && latest.expires_at_ms == grant.expires_at_ms
             && latest.rights == grant.rights
+            && latest.accounts == grant.accounts
+            && latest.enrollment_connections == grant.enrollment_connections
             && latest.workspaces == grant.workspaces,
         "connection authority changed"
     );

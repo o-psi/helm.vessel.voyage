@@ -12,13 +12,19 @@ pub(super) async fn configure(
 async fn configure_inner(
     state: &Arc<State>,
     command: RuntimeCommand,
-    authorization: super::authorization::Authorization,
+    mut authorization: super::authorization::Authorization,
 ) -> Result<serde_json::Value> {
     ensure!(
-        authorization.grant.is_none(),
+        authorization.grant.is_none()
+            || matches!(command, RuntimeCommand::SetAccountInference { .. }),
         "configuration requires executing-account owner authority"
     );
     let (RuntimeCommand::Configure {
+        command_id,
+        expected_revision,
+        ..
+    }
+    | RuntimeCommand::SetAccountInference {
         command_id,
         expected_revision,
         ..
@@ -37,15 +43,44 @@ async fn configure_inner(
         anyhow::bail!("not configure")
     };
     let access_only = matches!(&command, RuntimeCommand::SetAccess { .. });
-    let inference_only = matches!(&command, RuntimeCommand::SetInference { .. });
+    let inference_only = matches!(
+        &command,
+        RuntimeCommand::SetInference { .. } | RuntimeCommand::SetAccountInference { .. }
+    );
     let _admission = state.admission.lock().await;
     let active = state.active.lock().await.is_some();
     ensure!(
         !state.shutdown.is_cancelled() && (access_only || inference_only || !active),
         "configuration requires idle runtime"
     );
+    state
+        .owner
+        .bind_process_command(
+            *command_id,
+            authorization.actor.principal_id,
+            command.clone(),
+        )
+        .await?;
     if let Some(receipt) = state.owner.process_receipt(*command_id).await? {
         return Ok(receipt);
+    }
+    if let RuntimeCommand::SetAccountInference {
+        expires_at_ms,
+        expected_revision,
+        ..
+    } = &command
+    {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_millis();
+        ensure!(
+            u128::from(*expires_at_ms) > now && u128::from(*expires_at_ms) - now <= 300_000,
+            "invalid account selection deadline"
+        );
+        ensure!(
+            state.owner.snapshot().await?.revision == *expected_revision,
+            "session revision conflict"
+        );
     }
     let mut config = match &command {
         RuntimeCommand::Configure { config_path, .. } => {
@@ -55,13 +90,22 @@ async fn configure_inner(
             );
             bootstrap::load_config(Some(config_path), &state.registration.workspace)?
         }
-        RuntimeCommand::SetInference {
+        RuntimeCommand::SetAccountInference {
+            model,
+            reasoning_effort,
+            service_tier,
+            ..
+        }
+        | RuntimeCommand::SetInference {
             model,
             reasoning_effort,
             service_tier,
             ..
         } => {
             let mut config = state.config.read().await.clone();
+            if let RuntimeCommand::SetAccountInference { account, .. } = &command {
+                config.select_account(account.clone())?;
+            }
             config.model = model.clone();
             config.reasoning_effort = reasoning_effort.clone();
             config.service_tier = service_tier.clone();
@@ -104,6 +148,7 @@ async fn configure_inner(
         }
         _ => unreachable!(),
     };
+    super::authorization::account_authority(state, &mut authorization, &config)?;
     bootstrap::limit_participant(&mut config, &state.registration)?;
     let known = if access_only {
         state.controls.known_model(&config).await
@@ -170,6 +215,9 @@ async fn configure_inner(
             .close_for_command(&state.owner, &command)
             .await?;
     }
+    // Discovery may have awaited the provider; selection still needs current
+    // host grant/account authority at durable publication, not just picker time.
+    super::authorization::account_authority(state, &mut authorization, &config)?;
     let mut current = state.config.write().await;
     let receipt = state
         .owner
@@ -208,6 +256,7 @@ pub(super) fn inference_snapshot_with_model(
     serde_json::json!({
         "resolution": resolution,
         "model": config.model,
+        "account": config.account,
         "reasoning_effort": config.reasoning_effort,
         "service_tier": config.service_tier,
         "provider": config.provider,

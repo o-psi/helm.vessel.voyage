@@ -21,6 +21,7 @@ struct GrantAuthority {
     path: PathBuf,
     binding: GrantBinding,
     session: uuid::Uuid,
+    account: Option<voyage_protocol::accounts::AccountBinding>,
     browser_history: bool,
 }
 impl crate::policy::ExecutionAuthority for GrantAuthority {
@@ -30,6 +31,9 @@ impl crate::policy::ExecutionAuthority for GrantAuthority {
             grant.rights.contains(&ProcessRight::Execute),
             "execution grant withdrawn"
         );
+        if let Some(account) = &self.account {
+            check_account(&grant, account)?;
+        }
         ensure!(
             !self.browser_history || grant.rights.contains(&ProcessRight::History),
             "browser disclosure history grant withdrawn"
@@ -115,6 +119,7 @@ pub(super) fn authorize_parts(
             path,
             binding: binding.clone(),
             session: registration.session_id,
+            account: None,
             browser_history,
         })),
         actor,
@@ -164,6 +169,14 @@ fn read_current(path: &Path, binding: &GrantBinding, session: uuid::Uuid) -> Res
                 && !original.revoked
                 && original.expires_at_ms > now
                 && grant.expires_at_ms <= original.expires_at_ms
+                && grant
+                    .accounts
+                    .iter()
+                    .all(|id| original.accounts.contains(id))
+                && grant
+                    .enrollment_connections
+                    .iter()
+                    .all(|id| original.enrollment_connections.contains(id))
                 && original
                     .workspaces
                     .iter()
@@ -197,6 +210,13 @@ fn read_current(path: &Path, binding: &GrantBinding, session: uuid::Uuid) -> Res
                 .iter()
                 .all(|right| original.rights.contains(right)),
             "participant rights exceed parent grant"
+        );
+        ensure!(
+            grant
+                .accounts
+                .iter()
+                .all(|id| original.accounts.contains(id)),
+            "participant account scope exceeds parent"
         );
         let accepted = grant
             .participant_binding
@@ -242,4 +262,71 @@ fn load_private<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T> {
 #[cfg(not(unix))]
 fn read_current(_: &Path, _: &GrantBinding, _: uuid::Uuid) -> Result<ProcessGrant> {
     anyhow::bail!("scoped runtime authority unsupported on this platform")
+}
+
+fn check_account(
+    grant: &ProcessGrant,
+    account: &voyage_protocol::accounts::AccountBinding,
+) -> Result<()> {
+    let registry = crate::accounts::Registry::default_host()?;
+    registry.validate_binding(account)?;
+    let enrolled = registry
+        .enrollment_actor(account.account_id)?
+        .is_some_and(|actor| {
+            actor.principal
+                == format!(
+                    "grant:{}:{}:{}",
+                    grant
+                        .connection_binding
+                        .as_ref()
+                        .map_or(grant.grant_id, |b| b.grant_id),
+                    grant.principal_id,
+                    grant
+                        .connection_binding
+                        .as_ref()
+                        .map_or(grant.revision, |b| b.revision)
+                )
+                && actor.workspace == grant.workspace.to_string_lossy()
+                && grant.rights.contains(&ProcessRight::AccountEnroll)
+                && grant
+                    .enrollment_connections
+                    .contains(&account.connection_id)
+        });
+    ensure!(
+        grant.rights.contains(&ProcessRight::AccountUse)
+            && (grant.accounts.contains(&account.account_id) || enrolled),
+        "account use denied"
+    );
+    Ok(())
+}
+/// Bind the run authority to the frozen account; dispatch re-reads current grants.
+pub(super) fn account_authority(
+    state: &State,
+    authorization: &mut Authorization,
+    config: &crate::Config,
+) -> Result<()> {
+    config.validate_account()?;
+    let Some(binding) = &authorization.grant else {
+        return Ok(());
+    };
+    let root = state
+        .directory
+        .parent()
+        .and_then(Path::parent)
+        .ok_or_else(|| anyhow::anyhow!("missing grant root"))?;
+    let path = root
+        .join("access/grants")
+        .join(format!("{}.json", binding.grant_id));
+    let grant = read_current(&path, binding, state.registration.session_id)?;
+    if let Some(account) = &config.account {
+        check_account(&grant, account)?;
+    }
+    authorization.authority = Some(Arc::new(GrantAuthority {
+        path,
+        binding: binding.clone(),
+        session: state.registration.session_id,
+        account: config.account.clone(),
+        browser_history: false,
+    }));
+    Ok(())
 }

@@ -1,6 +1,7 @@
 # Native provider accounts
 
-Status: proposed implementation plan; not current functionality.
+Status: design and acceptance matrix. See [current operation](provider-accounts.md)
+and the issue delivery evidence for implemented workflows and verification limits.
 Tracking: [#213](https://github.com/o-psi/voyage/issues/213).
 User requirement: support multiple accounts for one provider; select/configure the
 account in Helm, including device-code sign-in for local and remote execution hosts.
@@ -389,4 +390,4 @@ verification; do not recreate the removed broad test/evaluation suites. Build/ch
 all affected protocol consumers and both binaries at each changed boundary. Actual
 OAuth login/refresh with a provider needs approved accounts and budget. Linux storage
 checks do not establish native macOS/Windows security. Record skipped checks as gaps,
-not passes. Multi-account support is not yet implemented by this planning document.
+not passes. This design document alone is not evidence that an acceptance check passed.
