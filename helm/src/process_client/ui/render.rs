@@ -63,66 +63,57 @@ fn state<'a>(view: &super::state::View, working: &'a super::effects::Working) ->
     )
 }
 
-/// Label, style and compactness share one precedence order.
-// Compact entries combine state and title, then reserve a second row for a divider.
-fn sidebar_state(
+/// Status affects styling, never the space reserved for a voyage title.
+fn sidebar_style(
     view: &super::state::View,
     now: chrono::DateTime<chrono::Utc>,
     retention_secs: u64,
-) -> (&'static str, Style, bool) {
+) -> Style {
     use voyage_protocol::process::ProcessState;
     let attention = crate::theme::Role::AwaitingInput.style();
     let running = crate::theme::Role::Running.style();
     if view.process.archive.is_some() {
-        return ("Archived", crate::theme::Role::Muted.style(), false);
+        return crate::theme::Role::Muted.style();
     }
     if view
         .snapshot
         .as_ref()
         .is_some_and(|snapshot| snapshot.recovery_pending)
     {
-        return ("Cleanup pending", attention, false);
+        return attention;
     }
     if view.archived() || view.process.state == ProcessState::CleanupUnconfirmed {
-        return ("Needs attention · cleanup", attention, false);
+        return attention;
     }
     if matches!(
         view.process.state,
         ProcessState::Unavailable | ProcessState::Stopped | ProcessState::Relinquished
     ) {
-        return ("Status unavailable", attention, false);
+        return attention;
     }
     if view.error.is_some() || view.connection_unavailable {
-        return (
-            if view.connection_unavailable {
-                "Disconnected"
-            } else {
-                "Needs attention"
-            },
-            attention,
-            false,
-        );
+        return attention;
     }
     if let Some(snapshot) = &view.snapshot {
         if !snapshot.decisions.is_empty() {
-            return ("Needs attention · input", attention, false);
+            return attention;
         }
         // Cleanup obligations are recorded before work starts.
         if snapshot.pending_cleanup_run.is_some()
             && snapshot.run.as_ref().is_none_or(|run| !run.active())
         {
-            return ("Needs attention · cleanup", attention, false);
+            return attention;
         }
         if view.sidebar_settled(now, retention_secs) {
-            return ("Settled", crate::theme::Role::Muted.style(), true);
+            return crate::theme::Role::Muted.style();
         }
         if let Some(run) = &snapshot.run {
             match run.state.as_str() {
-                "failed" => return ("Failed", crate::theme::Role::Failed.style(), false),
-                "completed" => return ("Finished", crate::theme::Role::Completed.style(), false),
-                "cancelled" => return ("Cancelled", crate::theme::Role::Muted.style(), false),
+                "failed" => return crate::theme::Role::Failed.style(),
+                "completed" => return crate::theme::Role::Completed.style(),
+                "cancelled" => return crate::theme::Role::Muted.style(),
                 "interrupted" | "awaiting_decision" => {
-                    return ("Needs attention", attention, false);
+                    return attention;
                 }
                 _ => {}
             }
@@ -130,22 +121,18 @@ fn sidebar_state(
     }
     match view.process.state {
         ProcessState::Suspended if view.snapshot.as_ref().is_some_and(|s| s.run.is_none()) => {
-            ("Finished", crate::theme::Role::Completed.style(), false)
+            crate::theme::Role::Completed.style()
         }
-        ProcessState::Suspended => ("Status unavailable", attention, false),
-        ProcessState::Starting => ("Running · starting", running, false),
-        ProcessState::Stopped | ProcessState::Relinquished => {
-            ("Status unavailable", attention, false)
-        }
+        ProcessState::Suspended => attention,
+        ProcessState::Starting => running,
+        ProcessState::Stopped | ProcessState::Relinquished => attention,
         _ => match view.snapshot.as_ref() {
-            None => ("Status unavailable", attention, false),
+            None => attention,
             Some(snapshot) => match snapshot.run.as_ref().map(|run| run.state.as_str()) {
-                Some("accepted" | "running") => ("Running", running, false),
-                Some("cancel_requested") => ("Running · cancelling", running, false),
-                Some("completed") | None => {
-                    ("Finished", crate::theme::Role::Completed.style(), false)
-                }
-                _ => ("Needs attention", attention, false),
+                Some("accepted" | "running") => running,
+                Some("cancel_requested") => running,
+                Some("completed") | None => crate::theme::Role::Completed.style(),
+                _ => attention,
             },
         },
     }
@@ -418,6 +405,16 @@ fn footer(app: &App, width: u16, reviewing: bool, overlay: bool, status: &str) -
     text
 }
 
+/// Trailing host metadata can be clipped, but must never displace the title.
+fn sidebar_text(title: &str, host: Option<&str>) -> Text<'static> {
+    let mut line = Line::raw(safe(title));
+    if let Some(host) = host {
+        line.spans
+            .push(Span::styled(format!(" · {}", safe(host)), muted()));
+    }
+    Text::from(vec![line, Line::default()])
+}
+
 fn sidebar(frame: &mut Frame<'_>, app: &App, area: Rect) {
     let divider_style = if app.sidebar.resize.highlighted(app.sidebar.pointer) {
         accent().add_modifier(Modifier::BOLD)
@@ -493,6 +490,11 @@ fn sidebar(frame: &mut Frame<'_>, app: &App, area: Rect) {
         ),
     );
     let targets = app.ordered_targets();
+    let multiple_vessels = targets.first().is_some_and(|first| {
+        targets
+            .iter()
+            .any(|target| target.route.id != first.route.id)
+    });
     let mut heights = Vec::new();
     let list_area = Rect {
         width: rows[1].width.saturating_sub(3),
@@ -502,20 +504,12 @@ fn sidebar(frame: &mut Frame<'_>, app: &App, area: Rect) {
         .iter()
         .map(|target| {
             let view = &app.views[target];
-            let (label, style, compact) =
-                sidebar_state(view, app.presentation_now, app.settle_after_secs);
-            // Compact entries reserve their second row for the same divider.
-            let mut lines = if compact {
-                vec![Line::from(format!("{label} · {}", safe(&view.title())))]
-            } else {
-                vec![
-                    Line::from(format!("{label} · {}", app.route_label(target.route))),
-                    Line::from(safe(&view.title())),
-                ]
-            };
-            lines.push(Line::default());
-            heights.push(lines.len() as u16);
-            ListItem::new(lines).style(style)
+            let style = sidebar_style(view, app.presentation_now, app.settle_after_secs);
+            let host = multiple_vessels.then(|| app.route_label(target.route));
+            // Every state gets one title row plus the existing divider row.
+            let text = sidebar_text(&view.title(), host.as_deref());
+            heights.push(text.lines.len() as u16);
+            ListItem::new(text).style(style)
         })
         .collect::<Vec<_>>();
     let index = targets.iter().position(|t| Some(*t) == app.selected);
@@ -547,14 +541,11 @@ fn sidebar(frame: &mut Frame<'_>, app: &App, area: Rect) {
                 area,
                 app.hover_style(area, false)
                     .remove_modifier(Modifier::UNDERLINED)
-                    .patch(
-                        sidebar_state(
-                            &app.views[target],
-                            app.presentation_now,
-                            app.settle_after_secs,
-                        )
-                        .1,
-                    ),
+                    .patch(sidebar_style(
+                        &app.views[target],
+                        app.presentation_now,
+                        app.settle_after_secs,
+                    )),
             );
         }
         frame.render_widget(
@@ -667,4 +658,87 @@ fn composer(frame: &mut Frame<'_>, app: &App, area: Rect, preview_rows: u16) {
 }
 fn conversation(frame: &mut Frame<'_>, app: &App, area: Rect) {
     super::transcript::draw(frame, app, area);
+}
+
+#[cfg(test)]
+mod sidebar_tests {
+    use super::*;
+    use crate::process_client::ui::state::View;
+    use crate::theme::Role;
+    use ratatui::{buffer::Buffer, widgets::StatefulWidget};
+    use serde_json::json;
+    use uuid::Uuid;
+
+    fn view(run_state: &str) -> View {
+        let session = Uuid::new_v4();
+        let mut view = View::new(
+            serde_json::from_value(json!({
+                "session_id": session, "incarnation": Uuid::new_v4(),
+                "workspace": "/tmp", "state": "live", "name": "Voyage title"
+            }))
+            .unwrap(),
+        );
+        view.snapshot = Some(
+            serde_json::from_value(json!({
+                "session_id": session, "revision": 1, "model": "fixture", "messages": [],
+                "run": {"run_id": Uuid::new_v4(), "state": run_state}
+            }))
+            .unwrap(),
+        );
+        view
+    }
+
+    #[test]
+    fn titles_use_one_content_row_for_every_status_and_preserve_styles() {
+        let now = chrono::Utc::now();
+        for (status, role) in [
+            ("accepted", Role::Running),
+            ("running", Role::Running),
+            ("cancel_requested", Role::Running),
+            ("completed", Role::Completed),
+            ("failed", Role::Failed),
+            ("cancelled", Role::Muted),
+            ("interrupted", Role::AwaitingInput),
+            ("awaiting_decision", Role::AwaitingInput),
+        ] {
+            let view = view(status);
+            assert_eq!(sidebar_style(&view, now, 300), role.style(), "{status}");
+            let text = sidebar_text(&view.title(), None);
+            assert_eq!(text.lines.len(), 2);
+            assert_eq!(text.lines[0].to_string(), "Voyage title");
+            assert_eq!(text.lines[1].width(), 0);
+        }
+        let mut view = view("completed");
+        view.observe_settlement(now);
+        assert_eq!(sidebar_style(&view, now, 0), Role::Muted.style());
+        view.connection_unavailable = true;
+        assert_eq!(sidebar_style(&view, now, 0), Role::AwaitingInput.style());
+    }
+
+    #[test]
+    fn narrow_list_prioritizes_unicode_titles_and_keeps_selected_entry_visible() {
+        for width in [1, 8, 20, 40] {
+            let area = Rect::new(0, 0, width, 4);
+            let mut buffer = Buffer::empty(area);
+            let items =
+                (0..8).map(|_| ListItem::new(sidebar_text("界界界界 title", Some("Remote"))));
+            let mut state = ListState::default().with_selected(Some(7));
+            StatefulWidget::render(
+                List::new(items).highlight_style(Role::Selection.style()),
+                area,
+                &mut buffer,
+                &mut state,
+            );
+            assert_eq!(state.offset(), 6);
+            if width >= 8 {
+                assert_eq!(buffer[(0, 2)].symbol(), "界");
+                assert!(buffer[(0, 2)].modifier.contains(Modifier::REVERSED));
+                assert_eq!(buffer[(6, 2)].symbol(), "界");
+            }
+        }
+        let text = sidebar_text("Title", Some("Remote"));
+        assert_eq!(text.lines[0].to_string(), "Title · Remote");
+        assert_eq!(text.lines[0].spans[1].style, muted());
+        assert_eq!(sidebar_text("Title", None).lines[0].to_string(), "Title");
+    }
 }

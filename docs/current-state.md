@@ -55,6 +55,13 @@ submission and confirmation controls. Tab/Shift+Tab traverse that scope; ordinar
 composer completion and voyage switching retain their own routing. See
 [scoped interaction](ui-interaction.md).
 
+The voyage sidebar gives every voyage one title row plus a divider, without
+repeated status prefixes or a separate status/host row. Existing semantic status
+styles remain; when the visible list spans multiple Vessels, a muted Vessel label
+follows the title and may be clipped before it. The selected voyage header retains
+explicit status text, including in no-color mode. Current source does not track
+unread voyages or display an unread badge.
+
 The conversation footer combines send hints and navigation shortcuts on one row,
 shortening shortcuts as space decreases. Routine connection-refresh notices are
 hidden. Pending and next-turn hints remain visible; other notices share that row
@@ -330,19 +337,20 @@ resizing. Release the mouse to finish; focus loss, terminal resize, keyboard inp
 and private-terminal handoff also end a drag. Mouse reporting requires a supporting
 terminal.
 
-Sidebar voyages show explicit state labels and colours: running is dark blue,
+Sidebar voyage titles retain state colours without repeated labels: running is dark blue,
 idle/finished is green, needs attention is orange, and failed is red. Terminal
 results retain their status for five minutes by default, then become **Settled**.
 Set `HELM_SETTLE_AFTER_SECS` to a nonnegative integer number of seconds before
 starting Helm to change this period; `0` settles immediately. Invalid values fail
 before terminal setup. This is a Helm presentation setting, loaded at startup.
 
-Settled voyages are grey and use two terminal rows (combined state/title and a
-divider). They sort below active and recent results, retaining recency within each
-group. Other entries use three rows (state, title, divider). Mouse and keyboard
-use the same order. Muted rules separate entries; titles stay on one clipped row.
-Selection uses bold text and a subtle background without replacing state colour.
-Compact entries omit the route label; Actions → Details retains Vessel identity.
+Settled voyages are grey. They sort below active and recent results, retaining
+recency within each group. Every entry uses two terminal rows (title and divider),
+with mouse and keyboard using the same order. Muted rules separate entries; titles
+stay on one clipped row. Selection uses bold/reverse styling. A muted trailing
+Vessel label appears only when the list spans multiple Vessels; Actions → Details
+retains Vessel identity even when that label is omitted or clipped. Explicit status
+remains in the selected voyage header, including when colors are disabled.
 
 There are no voyage Unread markers or review acknowledgements. Viewing, leaving,
 or covering a conversation does not change its timer. The timer uses the matching
@@ -404,7 +412,7 @@ with an internal suspended disposition. The next submission automatically starts
 a new incarnation with the same session UUID, saved configuration and canonical
 history, using the current Vessel runtime binary. Conversation summaries label successful completion
 Finished for 24 hours after its durable completion timestamp, then Settled; the sidebar
-uses the state and compact suspension presentation described above. Failed,
+uses the time-based styling and compact title presentation described above. Failed,
 cancelled and cleanup-pending outcomes remain distinct. Bounded one-shot helpers
 serve suspended observations without waking an executor. Supervisor-owned reads
 and scoped stop checks use the currently configured runtime binary, not a retired
