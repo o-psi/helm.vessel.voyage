@@ -65,5 +65,21 @@ support claims. Record actual runtime/deployment evidence and unresolved limitat
 Do not advertise the target Helm–Vessel–voyage separation, remote multiplexing or
 participant execution until the relevant workflows are implemented and verified.
 
-Signing keys, SBOM publication and service deployment remain explicit delivery work;
-credentials for them must not be placed in repository configuration or archives.
+## Independent release signatures and source inventory
+
+The new `packaging/release_bundle.py` supports explicit-asset bundle preparation,
+OpenSSH detached signatures and verification against independently pinned trust,
+version and target. See the [release bundle guide](https://github.com/o-psi/voyage/blob/main/packaging/README.md).
+It copies only selected assets, records source commit/tree and hashes, and emits
+an SPDX Cargo.lock inventory. It never restores or implicitly depends on deleted
+packaging scripts. Historical packager commands above require those files to be
+present; documentation is not evidence that a dirty checkout can run them.
+
+The inventory is not a resolved binary/build SBOM; it includes optional, development
+and other-platform dependencies and excludes OS/toolchain inputs. Signatures cover
+the manifest and exact inventory/artifact bytes, not proof of their build origin.
+Bootstrap and installer acquisition do not yet enforce these signatures. Consumers
+must explicitly verify before extracting or executing. No production trust key,
+product release, container image, reproducible-build result or native deployment
+is implied. Publication of signed assets/full build SBOMs and service deployment
+remain explicit delivery work; credentials must never enter source or archives.
