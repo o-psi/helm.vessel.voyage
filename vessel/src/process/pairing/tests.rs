@@ -240,5 +240,24 @@ fn encrypted_pairing_lifecycle() {
     std::fs::write(state_path(&root), &corrupt).unwrap();
     assert!(protect_credentials(&root).is_err());
     assert_eq!(std::fs::read(state_path(&root)).unwrap(), corrupt);
-    std::fs::write(state_path(&root), sealed).unwrap();
+    std::fs::write(state_path(&root), &sealed).unwrap();
+    // Final review: dangling state links are unsafe, not a fresh empty journal.
+    let saved_state = directory(&root).join("test-original-state");
+    std::fs::rename(state_path(&root), &saved_state).unwrap();
+    std::os::unix::fs::symlink("test-absent-state", state_path(&root)).unwrap();
+    assert!(load(&root).is_err());
+    assert!(protect_credentials(&root).is_err());
+    assert!(store::save_bytes(&state_path(&root), b"{}", STATE_BYTES).is_err());
+    assert!(
+        std::fs::symlink_metadata(state_path(&root))
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+    std::fs::remove_file(state_path(&root)).unwrap();
+    std::fs::rename(saved_state, state_path(&root)).unwrap();
+    std::fs::set_permissions(state_path(&root), std::fs::Permissions::from_mode(0o644)).unwrap();
+    assert!(store::save_bytes(&state_path(&root), b"{}", STATE_BYTES).is_err());
+    assert_eq!(std::fs::read(state_path(&root)).unwrap(), sealed);
+    std::fs::set_permissions(state_path(&root), std::fs::Permissions::from_mode(0o600)).unwrap();
 }

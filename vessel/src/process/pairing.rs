@@ -150,8 +150,18 @@ fn lock(root: &Path) -> Result<File> {
         .map_err(|_| anyhow::anyhow!("pairing busy; retry the same request"))?;
     Ok(file)
 }
+fn state_present(root: &Path) -> Result<bool> {
+    match std::fs::symlink_metadata(state_path(root)) {
+        Ok(metadata) => {
+            ensure!(metadata.is_file(), "invalid private pairing state file");
+            Ok(true)
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error.into()),
+    }
+}
 fn load(root: &Path) -> Result<State> {
-    if !state_path(root).try_exists()? {
+    if !state_present(root)? {
         return Ok(State::default());
     }
     let bytes = store::read_bounded(
@@ -184,7 +194,7 @@ fn save(root: &Path, state: &State) -> Result<()> {
 fn start_audit(root: &Path, state: &mut State, now: u64) -> Result<()> {
     if state.audit.is_none() {
         let vessel = identity(root)?;
-        let mut journal = audit::Journal::new(vessel, state_path(root).try_exists()?);
+        let mut journal = audit::Journal::new(vessel, state_present(root)?);
         journal.append(audit::event(
             Kind::AuditStarted,
             now,
@@ -837,7 +847,7 @@ pub fn protect_credentials(root: &Path) -> Result<()> {
     );
     voyage_storage::credentials::check_key()?;
     let _lock = lock(root)?;
-    if state_path(root).try_exists()? {
+    if state_present(root)? {
         load(root)?; // Validate without changing the canonical plaintext representation.
         let bytes = store::read_bounded(
             &state_path(root),

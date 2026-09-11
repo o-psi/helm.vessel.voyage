@@ -63,6 +63,20 @@ pub(crate) fn save_bounded<T: Serialize>(path: &Path, value: &T, limit: usize) -
 }
 pub(crate) fn save_bytes(path: &Path, bytes: &[u8], limit: usize) -> Result<()> {
     ensure!(bytes.len() <= limit, "access record too large");
+    // Refuse unsafe destinations rather than letting atomic rename repair them.
+    // In particular, a dangling symlink must not be mistaken for absent state.
+    match std::fs::symlink_metadata(path) {
+        Ok(meta) => ensure!(
+            meta.is_file()
+                && meta.nlink() == 1
+                && meta.uid() == unsafe { libc::geteuid() }
+                && meta.mode() & 0o077 == 0
+                && meta.len() <= limit as u64,
+            "invalid private access destination"
+        ),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => (),
+        Err(error) => return Err(error.into()),
+    }
     let parent = path
         .parent()
         .ok_or_else(|| anyhow::anyhow!("missing access directory"))?;

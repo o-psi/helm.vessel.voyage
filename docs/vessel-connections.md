@@ -376,6 +376,41 @@ it makes no provider requests or native macOS/Windows claim. Its printed private
 evidence directory retains process/CLI results. These commands describe the checks;
 actual run results must accompany the delivered source revision.
 
+#### Recorded #10 verification and remaining limits
+
+The operator-approved isolated Linux worker tested candidate
+`d2b873e1cc066c4eeac672001d2672505114de5f` (Rust 1.98.1, eight compiler jobs,
+14 GiB cap, private umask 077, no real credentials):
+
+- Job `3497c8c2-8ad9-4efd-9f06-6b635e14b57a`: workspace check passed; workspace
+  Rust tests passed **183 / failed 0 / ignored 1** (the live-provider check).
+  The current executable inventory retained 11 workspace artifacts. Source
+  fingerprints were unchanged. This was not a coverage measurement.
+- Job `34a79732-b2f4-4307-a02a-678c4f395a79`: fresh Helm/Vessel/Voyage build and
+  the actual `connection_protection.py` fixture passed using the same job's
+  hash-verified binaries. Its four declared result groups cover mandatory key
+  provisioning and concurrent exact pairing, bounded audit/revocation/restart,
+  explicit migration and unavailable/wrong/unsafe-key refusal, and fixture process
+  exit. The infrastructure separately observed no remaining descendants, absent
+  job cgroup, exited observer and no remaining synthetic tmpfs key directories.
+
+These results do not establish the entire security contract by themselves. The
+Rust cases separately exercise envelope authentication, purpose/key binding,
+publication/finalization failure injection, exact retries after event pruning,
+changed horizons/gaps and storage preservation. They are bounded regression
+checks, not proof against every crash or filesystem failure. No actual hardware
+power loss, hostile owning-account execution, live provider, public TLS deployment,
+native macOS/Windows, required OS isolation or production key-manager integration
+is certified. External provisioning, swap/hibernation policy and independent key
+backup are explicit deployment requirements, not implemented key escrow.
+
+Final-source review merged published main `bfcb2bf` (including #14) and also found
+an unsafe-destination edge: a dangling pairing-state symlink could be mistaken for
+absent state, and atomic access-file replacement could otherwise repair an unsafe
+destination. The candidate now rejects both, with focused preservation assertions.
+Those final review changes require the separately admitted final-source coverage
+and process-fixture run; the earlier `d2b873e` passes are not attributed to them.
+
 Human connections do not automatically populate `[vessel.remotes]` or grant a
 model coordination authority. That configuration belongs to the executing host
 and remains a separate explicit decision.
