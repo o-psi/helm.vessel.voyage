@@ -550,10 +550,10 @@ fn apply_profile(
                     return Err(std::io::Error::last_os_error());
                 }
             }
-            if let Some(fd) = image_fd {
-                if libc::lseek(fd, 0, libc::SEEK_SET) < 0 {
-                    return Err(std::io::Error::last_os_error());
-                }
+            if let Some(fd) = image_fd
+                && libc::lseek(fd, 0, libc::SEEK_SET) < 0
+            {
+                return Err(std::io::Error::last_os_error());
             }
             if libc::syscall(libc::SYS_close_range, 3u32, u32::MAX, 4u32) < 0 {
                 return Err(std::io::Error::last_os_error());

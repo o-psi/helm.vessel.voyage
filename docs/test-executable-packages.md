@@ -1,103 +1,125 @@
-# Executable package verification plan
+# Executable package verification (Linux x86_64)
 
-**Not run.** This is the command/acceptance plan for the source draft under #63,
-not passing evidence. The owner must have an explicit coordinator-admitted build
-slot before executing any command below that builds or runs binaries. Do not queue
-a lock waiter before admission. The shared target and build lock remain in use by
-other issue owners; remote builder capacity is not assumed.
+## Observed results
 
-## Prerequisites and scope
+The local #63 verification used the merged #14/#21/account/#32 source, not the
+initial source-only draft. The final focused fixture passed **18 recorded groups**,
+including positive fixture cleanup, through real Vessel-supervised Voyage owners.
+The endpoint was an isolated scripted local provider; no paid provider, real login,
+production service or host sandbox configuration change was used.
 
-- Linux x86_64 with the repository's required bubblewrap isolation working. Missing
-  isolation is a refusal/failure, not permission to use sandbox-off as a substitute.
-- Existing shared Rust target, companion Helm/Vessel/Voyage binaries built from the
-  same merged source, and approved Go tooling for static external examples.
-- The reference Go formatter was unavailable during source work. Neither Go toolchain
-  availability nor static linking has been established. Do not silently install or
-  use an unadmitted remote builder while another owner holds the slot.
-- Fixtures use isolated HOME/XDG directories, synthetic local credentials and the
-  existing loopback provider fixture. No live provider requests, actual login,
-  production services or host sandbox configuration changes are required.
+- Locked Voyage/Helm check and Helm/Vessel/Voyage development builds passed.
+- **17 focused Rust extension/SDK tests passed** before final workspace coverage.
+  The final whole-workspace measurement and its actual test totals are recorded in
+  [coverage/latest.json](../coverage/latest.json), not inferred from this subset.
+- **3 Go SDK tests passed**, and transformation, read and conformance examples built
+  as static x86_64 Linux ELF executables. Go source formatting passed.
+- Warning-mode Clippy completed across affected packages/all targets without
+  extension diagnostics. Strict Clippy **did not pass**: inherited account/provider
+  and UI warnings remain. New extension style findings were corrected, not silenced.
+- JSON, Python source syntax, documentation paths and diff checks passed.
 
-After admission, hold `/home/psi/voyage/.local/issue-wave-build.lock` throughout
-builds, focused checks and final coverage/report generation, using the existing
-`/home/psi/voyage/target`. Merge current published main before final measurement.
-These paths are coordination details for this checkout, not portable install paths.
+### Native fixture groups
 
-## Focused commands after admission
+1. Real pack/install/inspect, inactive installation, refusal of declarative enable,
+   exact capability review, supervised invocation and actual lifecycle records.
+2. Structured operator commands and required-profile denial of host files, network,
+   session escape and inherited environment; no leaked setup descriptors/system
+   runtime mounts; private temporary storage remains usable.
+3. No executable fallback for sandbox-off or read-only runs.
+4. Concurrent active-run controls do not replay lifecycle handlers. Exact repeated
+   operator-command admission preserves the original run and lifecycle records.
+5. Stale digest refusal, revoke-before-drain update/disable during active work,
+   cancellation, observed cleanup, replacement and noninherited review.
+6–11. Plugin crash, newline-free flood, wrong invocation ID, duplicate terminal
+   response, unauthorized host capability, and a descendant retaining pipes.
+   Each is followed by observed cleanup and a fresh explicit invocation, not replay.
+12. SIGKILL of the exact fixture-owned Voyage process, independent guardian cleanup,
+   fenced recovery and a fresh turn. The old tool invocation remains singular with
+   an **unknown** outcome; recovered cleanup is not fabricated tool success.
+13. Artifact integrity failure and inactive project shadowing without user fallback.
+14. The standalone transformation SDK example returns the actual uppercase result.
+15. The separately authorized host-file example; outside-root, explicit in-workspace
+   private configuration and hard-link reads are refused.
+16. A colliding manifest excludes the whole package before initialization/effects;
+   its unique tool is also unavailable and its invocation ledger stays empty.
+17. Disable and removal.
+18. Positive fixture process and durable cleanup observation.
 
-From the merged checkout root, with the slot's explicit target settings:
+The successful held-child case is intentional: PID-namespace teardown stops the
+child when its parent exits, allowing the valid result to complete cleanly. A
+held pipe is not automatically a failed tool if actual cleanup is observed.
+
+## Tools, acquisition and commands
+
+Observed local tools: Rust **1.98.1**, LLVM **22.1.8**, cargo-llvm-cov **0.9.1**,
+bubblewrap **0.12.0**, and Go **1.27.1**, Linux x86_64. Go was initially absent from
+the command path. Its user-local installation used system-CA-verified HTTPS from
+`https://go.dev/dl/?mode=json` and the official archive:
+
+- `https://go.dev/dl/go1.27.1.linux-amd64.tar.gz`
+- Size: **70,553,950 bytes**
+- SHA-256: `63d339f0da5ab53635a56f2490a7984dfe12dfcff22ad749f63edaf590168445`
+
+The archive size/hash were checked before extraction, and archive paths/types were
+validated. No system-wide upgrade or implicit runtime installation was performed.
+Package activation does not install Go or download runtimes.
+
+Commands, with the existing shared target selected under the coordinator's build
+lease (replace example paths with the actual locally built artifacts):
 
 ```sh
-cargo check -p voyage -p helm --locked
-cargo test -p voyage --locked --lib extensions
-cargo test -p voyage --locked --lib extension_sdk
+cargo check -p voyage -p helm --locked -j 8
+cargo test -p voyage --locked --lib extensions -j 8
+cargo test -p voyage --locked --lib extension_sdk -j 8
 cargo build -p helm -p vessel -p voyage --locked -j 8
+cargo clippy -p voyage -p helm -p vessel --all-targets --locked -j 8
 ```
 
-From `sdk/extension-v1`, after establishing Go tooling in the admitted environment:
+From `sdk/extension-v1`:
 
 ```sh
 gofmt -w sdk/*.go cmd/*/*.go
-go test ./...
-CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -buildmode=exe -trimpath -ldflags='-s -w' -o conformance ./cmd/conformance
-CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -buildmode=exe -trimpath -ldflags='-s -w' -o read-text ./cmd/read
-CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -buildmode=exe -trimpath -ldflags='-s -w' -o transform ./cmd/transform
+GOTOOLCHAIN=local go test ./...
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -buildmode=exe -trimpath -ldflags='-s -w' -o CONFORMANCE ./cmd/conformance
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -buildmode=exe -trimpath -ldflags='-s -w' -o READ_EXAMPLE ./cmd/read
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -buildmode=exe -trimpath -ldflags='-s -w' -o TRANSFORM ./cmd/transform
 ```
-
-Keep generated binaries and raw evidence under ignored local evidence storage;
-the relative Go `-o` names above are illustrative author commands, not permission
-to add binaries to Git. Supply actual output paths for the scheduled measurement.
 
 From the checkout root:
 
 ```sh
-python3 voyage/tests/executable_packages.py \
-  --bin-dir /home/psi/voyage/target/debug \
-  --conformance-bin PATH_TO_STATIC_CONFORMANCE \
-  --read-bin PATH_TO_STATIC_READ_EXAMPLE
+python3 voyage/tests/executable_packages.py --bin-dir TARGET/debug \
+  --conformance-bin CONFORMANCE --read-bin READ_EXAMPLE --transform-bin TRANSFORM
 ```
 
-This fixture reuses `voyage/tests/delivery_recovery.py` for supervised connections,
-private synthetic state and positive cleanup assertions. It does not restore the
-removed broad test suite. Its own source syntax check is not fixture execution.
+The fixture reuses `voyage/tests/delivery_recovery.py` for supervised connections
+and private synthetic state. It does not recreate the removed broad suites.
+The final coverage workflow follows AGENTS.md; Go/Python/native checks are separate
+from workspace Rust percentages. Every current Cargo workspace executable must be
+retained when correcting stale shared-target report selection. Source/object
+validation, detailed reports, profiles and logs stay in ignored target evidence.
 
-## Cases and evidence
+## Retained failures and limits
 
-The source fixture exercises:
+Earlier failures remain retained, not rewritten as passes:
 
-1. Real pack/install/inspect, inactive installation, refusal of format-1 enable,
-   exact capability review and supervised operator invocation.
-2. Structured commands and actual run-start/run-finish handlers, separate durable
-   invocation response and cleanup records, and returned result content.
-3. Required-profile denial of host `/etc/passwd`, networking, session escape and
-   inherited environment, plus bounded private temporary storage availability.
-   These are focused probes, not the whole OS-security matrix.
-4. No executable fallback in sandbox-off or read-only runs.
-5. Stale expected digests, revoke-before-drain update/disable during an active call,
-   cancellation, observed cleanup, replacement and noninherited review.
-6. Crash, newline-free flooding and a descendant retaining pipes; a later explicit
-   invocation is fresh work, never a replay of the failed call.
-7. Artifact-integrity refusal and inactive project shadowing without user fallback.
-8. The separately authorized host-file example, denied outside-root and explicit
-   private-config reads, hard-link refusal, disable and removal.
+- A private-config unit fixture omitted the required local endpoint for no-auth
+  provider configuration; its test configuration was corrected.
+- Rust's internally tagged unit variant accepted extra shutdown-ack fields. The
+  variant was changed to a strict empty struct and the regression then passed.
+- The first native fixture used active `execute_tool` instead of idle
+  `operator_tool`; a later control-receipt assertion looked at the outer admission
+  status rather than the nested outcome. Both schema assumptions were corrected.
+- The initial held-child assertion expected failure despite successful namespace
+  cleanup. The corrected check requires actual child creation and observed cleanup.
+- The runtime-crash fixture initially expected `failed`; the retained journal
+  correctly recorded `interrupted`. The assertion was corrected without increasing
+  the timeout or replaying the interrupted effect.
 
-Rust test source additionally covers strict duplicate JSON, framing/schema bounds,
-queue closure, ELF range/interpreter/permission refusal, declarative separation,
-symlinks, stale reviews, unobserved-vs-attested-vs-observed reservation state and
-publication interruption before and after writing new bytes. Additional source
-regressions cover decoded progress/result secret fragments, private configuration
-provenance across serialization/rename and retained cancelled blocking-read workers.
-
-Retain each actual command, exit status, source identity, platform/tool versions,
-fixture snapshots, failures and cleanup evidence. Never turn a timeout into a pass.
-The final default-feature workspace Rust coverage run follows AGENTS.md exactly;
-commit `coverage/latest.json` with the verified delivery. Validate reused report
-objects belong to the measured workspace and preserve any mixed/raw reports.
-Go/Python/native journeys are separate from the Rust coverage percentage.
-
-Further malformed-response, dropped-caller, current-policy/delegation, private-store,
-secret-fragment and shutdown-race cases must be assessed against actual results;
-this written plan does not establish that they pass. Live progress presentation,
-full platform readiness and paid-provider behavior are separate claims. Neither
-#63 nor #75 closes from a syntax check, protocol schema or unexecuted fixture.
+Raw local evidence is retained under ignored `target/issue-63-evidence` and
+`target/coverage-report/issue63-final`. No private fixture state is published.
+Coverage measures execution, not correctness. This evidence does not establish
+native macOS/Windows behavior, arbitrary filesystem-stall guarantees, aggregate
+resource budgets, every hostile encoding or a full live progress UI. #75 retains
+its broader SDK/UI/support obligations; unsupported capabilities fail closed.

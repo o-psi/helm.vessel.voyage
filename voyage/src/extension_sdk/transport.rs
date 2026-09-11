@@ -322,7 +322,7 @@ impl Executor {
             wire::write(&mut launched.writer, &json!({"type":"shutdown"})).await?;
             let reply: Incoming = decode(wire::read(&mut reader).await?)?;
             ensure!(
-                matches!(reply, Incoming::ShutdownAck),
+                matches!(reply, Incoming::ShutdownAck {}),
                 "unexpected extension shutdown reply"
             );
             // No additional frames, partial frames or late responses may follow.
@@ -518,7 +518,7 @@ enum Incoming {
         offset: u64,
         max_bytes: usize,
     },
-    ShutdownAck,
+    ShutdownAck {},
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "snake_case")]

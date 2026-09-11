@@ -1,9 +1,10 @@
 # Protocol-1 reference SDK (Go, standard library only)
 
-**Source-only, uncompiled and untested while the #63 verification slot is unadmitted.** See the
-[protocol and integration contract](../../docs/extension-sdk.md). No binary is
-checked in; these examples have not yet demonstrated static-ELF admission or
-supervised execution. Neither example imports internal Voyage Rust APIs.
+See the [protocol and integration contract](../../docs/extension-sdk.md) and
+[Linux verification report](../../docs/test-executable-packages.md). Static examples
+have been exercised through real Vessel-supervised Voyage owners with required
+isolation. Neither example imports internal Voyage Rust APIs. No binaries are
+checked in; Go is an authoring dependency, not installed by package activation.
 
 - `cmd/transform`: deterministic uppercase structured input; capability `execute`.
 - `cmd/read`: policy-brokered UTF-8 read of at most 4096 bytes; additionally requires
@@ -15,8 +16,8 @@ supervised execution. Neither example imports internal Voyage Rust APIs.
 - `protocol.schema.json`: language-neutral field schema. State, byte and deadline
   constraints in the contract are normative in addition to schema shape.
 
-After **explicit release and an assigned build slot**, from this directory, a
-machine with approved Go tooling can build static Linux x86_64 examples:
+From this directory, a machine with Go tooling can build static Linux x86_64 examples
+(coordinate the shared build slot when working in this repository):
 
 ```sh
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -buildmode=exe -trimpath -ldflags='-s -w' -o transform ./cmd/transform
@@ -24,8 +25,7 @@ CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -buildmode=exe -trimpath -ldflags
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -buildmode=exe -trimpath -ldflags='-s -w' -o conformance ./cmd/conformance
 ```
 
-These are future author commands, not commands executed by this delivery. Parent
-packaging must inspect/validate the ELF, integrity-pin it into a format-2 archive
+These author commands produce local binaries. Voyage packaging inspects/validates the ELF, integrity-pin it into a format-2 archive
 and copy the corresponding `definitions.json` into the manifest's `definitions`.
 The SDK confirms these exact compiled-in definitions and capabilities. Do not
 launch by mutable external executable path or treat a successful direct run as

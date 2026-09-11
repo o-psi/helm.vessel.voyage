@@ -60,6 +60,16 @@ func main() {
 				return nil, err
 			}
 			return map[string]bool{"child_started": true}, nil
+		case "wrong_id":
+			json.NewEncoder(os.Stdout).Encode(map[string]any{"type": "result", "invocation": "00000000-0000-0000-0000-000000000000", "value": map[string]bool{"wrong": true}})
+			return map[string]bool{"bad": true}, nil
+		case "duplicate":
+			json.NewEncoder(os.Stdout).Encode(map[string]any{"type": "result", "invocation": c.InvocationID(), "value": map[string]bool{"first": true}})
+			return map[string]bool{"duplicate": true}, nil
+		case "host_capability":
+			json.NewEncoder(os.Stdout).Encode(map[string]any{"type": "host.file.read", "invocation": c.InvocationID(), "request": 1, "path": "allowed.txt", "offset": 0, "max_bytes": 4096})
+			<-ctx.Done()
+			return nil, ctx.Err()
 		case "isolation":
 			_, fileErr := os.ReadFile("/etc/passwd")
 			fd, netErr := syscall.Socket(syscall.AF_INET, syscall.SOCK_STREAM, 0)
@@ -68,7 +78,16 @@ func main() {
 			}
 			_, sessionErr := syscall.Setsid()
 			writeErr := os.WriteFile("/tmp/probe", []byte("private"), 0600)
-			return map[string]bool{"host_file_denied": fileErr != nil, "network_denied": netErr != nil,
+			descriptorsClean := true
+			entries, _ := os.ReadDir("/proc/self/fd")
+			for _, entry := range entries {
+				target, err := os.Readlink("/proc/self/fd/" + entry.Name())
+				if err == nil && (strings.Contains(target, "memfd:") || strings.HasPrefix(target, "/home/") || strings.HasPrefix(target, "/tmp/vdr-")) {
+					descriptorsClean = false
+				}
+			}
+			_, runtimeErr := os.Stat("/usr/bin")
+			return map[string]bool{"descriptors_private": descriptorsClean, "system_runtime_absent": runtimeErr != nil, "host_file_denied": fileErr != nil, "network_denied": netErr != nil,
 				"session_escape_denied": sessionErr != nil, "environment_empty": os.Getenv("VOYAGE_EXTENSION_CANARY") == "",
 				"private_tmp_writable": writeErr == nil}, nil
 		}

@@ -60,14 +60,13 @@ impl ManagedResources {
                 state.mcp.push(server);
             }
         }
-        if let Some(manager) = tools.extensions() {
-            if !state
+        if let Some(manager) = tools.extensions()
+            && !state
                 .extensions
                 .iter()
                 .any(|other| Arc::ptr_eq(other, &manager))
-            {
-                state.extensions.push(manager);
-            }
+        {
+            state.extensions.push(manager);
         }
         if let Some(terminals) = tools.terminals() {
             state.terminals.push(terminals);

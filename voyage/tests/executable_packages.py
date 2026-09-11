@@ -10,6 +10,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -46,9 +47,10 @@ class Extensions(Fixture):
         return json.loads(self.cli("execution-status", binding))
 
     def start_tool(self, session, name, arguments):
-        return self.command(session, {"op": "execute_tool", "command_id": str(uuid.uuid4()),
+        self.last_tool_command = {"op": "operator_tool", "command_id": str(uuid.uuid4()),
             "expected_revision": self.command(session, {"op": "snapshot"})["revision"],
-            "expires_at_ms": int(time.time() * 1000) + 60000, "name": name, "arguments": arguments})
+            "expires_at_ms": int(time.time() * 1000) + 60000, "name": name, "arguments": arguments}
+        return self.command(session, self.last_tool_command)
 
     def tool(self, session, name, arguments, success=True):
         admitted = self.start_tool(session, name, arguments)
@@ -83,6 +85,7 @@ def main():
     parser.add_argument("--bin-dir", type=Path, required=True)
     parser.add_argument("--conformance-bin", type=Path, required=True)
     parser.add_argument("--read-bin", type=Path, required=True)
+    parser.add_argument("--transform-bin", type=Path, required=True)
     args = parser.parse_args()
     assert sys.platform == "linux", "native Linux evidence required; no fallback"
     source = Path(__file__).resolve().parents[2]
@@ -102,17 +105,23 @@ def main():
         fixture.tool(session, "ext_conformance_probe", {"mode": "echo", "text": "inactive"}, success=False)
         fixture.cli("review-executable", "conformance", "--expected", sha, "--capability", "execute")
         binding = fixture.inspect_package()["binding"]
-        _, snapshot = fixture.tool(session, "ext_conformance_probe", {"mode": "echo", "text": "structured-output-marker"})
+        first_admission, snapshot = fixture.tool(session, "ext_conformance_probe", {"mode": "echo", "text": "structured-output-marker"})
         assert "structured-output-marker" in last_output(snapshot)
         events = fixture.status(binding)["latest"]
         assert {event["action"] for event in events} >= {"lifecycle.run_start", "tool.probe", "lifecycle.run_finish"}, events
         assert all(event["cleanup"] == "observed" for event in events), events
+        original_ids = {event["invocation"] for event in events}
+        replay = fixture.command(session, fixture.last_tool_command)
+        assert replay["run_id"] == first_admission["run_id"], replay
+        assert {event["invocation"] for event in fixture.status(binding)["latest"]} == original_ids
+        assert len([event for event in events if event["action"] == "lifecycle.run_start"]) == 1
+        assert len([event for event in events if event["action"] == "lifecycle.run_finish"]) == 1
         fixture.record("real-pack-install-review-invoke-lifecycle", {"snapshot": snapshot, "events": events})
         _, snapshot = fixture.tool(session, "extcmd_conformance_echo_command", {"text": "operator-command-output"})
         assert "operator-command-output" in last_output(snapshot)
         _, snapshot = fixture.tool(session, "ext_conformance_probe", {"mode": "isolation"})
         text = last_output(snapshot)
-        for key in ("host_file_denied", "network_denied", "session_escape_denied", "environment_empty", "private_tmp_writable"):
+        for key in ("host_file_denied", "network_denied", "session_escape_denied", "environment_empty", "private_tmp_writable", "descriptors_private", "system_runtime_absent"):
             assert f'"{key}":true' in text.replace(" ", ""), (key, text)
         assert fixture.env["VOYAGE_EXTENSION_CANARY"] not in json.dumps(snapshot)
         fixture.record("required-isolation-and-command", snapshot)
@@ -132,6 +141,19 @@ def main():
         admitted = fixture.start_tool(session, "ext_conformance_probe", {"mode": "block"})
         wait_for(lambda: any(event["action"] == "tool.probe" and event["cleanup"] == "pending"
             for event in fixture.status(binding)["latest"]))
+        control_id = str(uuid.uuid4())
+        control = {"op": "execute_tool", "command_id": control_id,
+            "expected_revision": fixture.command(session, {"op": "snapshot"})["revision"],
+            "expires_at_ms": int(time.time()*1000)+60000, "run_id": admitted["run_id"],
+            "name": "list_directory", "arguments": {"path": "."}}
+        fixture.command(session, control)
+        def control_done():
+            receipt = fixture.command(session, {"op": "receipt", "command_id": control_id})
+            return receipt if receipt.get("outcome", {}).get("status") == "completed" else None
+        concurrent = wait_for(control_done, timeout=5)
+        active_events = [event for event in fixture.status(binding)["latest"] if event["run"] == admitted["run_id"]]
+        assert len([event for event in active_events if event["action"] == "lifecycle.run_start"]) == 1, active_events
+        fixture.record("concurrent-control-no-lifecycle-replay", concurrent)
         fixture.cli("update", "conformance", replacement, "--expected", sha, success=False)
         fixture.cli("disable", "conformance", "--expected", sha, success=False)
         state = fixture.inspect_package()
@@ -151,12 +173,43 @@ def main():
         fixture.cli("review-executable", "conformance", "--expected", next_sha, "--capability", "execute")
         fixture.record("revoke-before-drain-cancel-update-no-inherited-review", {"state": state, "cancelled": cancelled})
 
-        for mode in ("crash", "flood", "held_child"):
-            fixture.tool(session, "ext_conformance_probe", {"mode": mode}, success=False)
+        for mode in ("crash", "flood", "wrong_id", "duplicate", "host_capability", "held_child"):
+            _, adverse = fixture.tool(session, "ext_conformance_probe", {"mode": mode}, success=(mode == "held_child"))
+            if mode == "held_child":
+                assert '"child_started":true' in last_output(adverse).replace(" ", ""), adverse
             wait_for(lambda: fixture.inspect_package()["pending_execution"] == 0)
             # A subsequent explicit turn is new work, not replay of the failed call.
             fixture.tool(session, "ext_conformance_probe", {"mode": "echo", "text": "fresh-after-" + mode})
             fixture.record(mode + "-cleanup-and-fresh-run", fixture.status(binding))
+
+        # Kill only this fixture-owned runtime, not its independent guardian.
+        # Recovery must observe old resources and retain unknown effects, not replay.
+        interrupted = fixture.start_tool(session, "ext_conformance_probe", {"mode": "block"})
+        wait_for(lambda: any(event["run"] == interrupted["run_id"] and event["action"] == "tool.probe"
+            and event["cleanup"] == "pending" for event in fixture.status(binding)["latest"]))
+        matches = [(pid, argv) for pid, argv in fixture.owned_processes().items()
+            if Path(os.fsdecode(argv[3])).name == session]
+        assert len(matches) == 1, matches
+        pid, argv = matches[0]
+        descriptor = os.pidfd_open(pid)
+        try:
+            assert fixture.owned_processes().get(pid) == argv
+            signal.pidfd_send_signal(descriptor, signal.SIGKILL)
+        finally:
+            os.close(descriptor)
+        def recovered():
+            try:
+                snapshot = fixture.command(session, {"op": "snapshot"})
+                return snapshot if snapshot.get("run", {}).get("state") == "interrupted" else None
+            except (OSError, AssertionError):
+                return None
+        recovered_state = wait_for(recovered)
+        wait_for(lambda: fixture.inspect_package()["pending_execution"] == 0)
+        old_events = [event for event in fixture.status(binding)["latest"] if event["run"] == interrupted["run_id"]]
+        assert len([event for event in old_events if event["action"] == "tool.probe"]) == 1, old_events
+        assert next(event for event in old_events if event["action"] == "tool.probe")["outcome"] == "unknown", old_events
+        fixture.tool(session, "ext_conformance_probe", {"mode": "echo", "text": "fresh-after-runtime-crash"})
+        fixture.record("runtime-crash-guardian-recovery-no-replay", {"events": old_events, "snapshot": recovered_state})
 
         # Corrupted bytes/capabilities are rejected during install, not at first effect.
         malformed = json.loads(first.read_text())
@@ -170,6 +223,14 @@ def main():
         fixture.cli("remove", "conformance", "--expected", sha, scope="project")
         fixture.tool(session, "ext_conformance_probe", {"mode": "echo", "text": "user-after-shadow-removal"})
         fixture.record("integrity-and-inactive-project-shadow", fixture.inspect_package())
+
+        transform, transform_sha, _ = archive(fixture, args.transform_bin.resolve(),
+            source / "sdk/extension-v1/cmd/transform/definitions.json", name="transform")
+        fixture.cli("install", transform)
+        fixture.cli("review-executable", "transform", "--expected", transform_sha, "--capability", "execute")
+        _, transformed = fixture.tool(session, "ext_transform_uppercase", {"text": "real standalone transformation"})
+        assert "REAL STANDALONE TRANSFORMATION" in last_output(transformed)
+        fixture.record("standalone-transformation-example", transformed)
 
         reader, reader_sha, _ = archive(fixture, args.read_bin.resolve(),
             source / "sdk/extension-v1/cmd/read/definitions.json", name="reader")
@@ -185,6 +246,22 @@ def main():
         os.link(fixture.workspace / "allowed.txt", fixture.workspace / "hardlink.txt")
         fixture.tool(session, "ext_reader_read_text", {"path": "hardlink.txt"}, success=False)
         fixture.record("separately-authorized-host-read-and-refusal", snapshot)
+        # A colliding manifest is excluded as a whole before initialization.
+        # Its executable need not cooperate for namespace collision refusal.
+        collision_definitions = json.loads((source / "sdk/extension-v1/cmd/read/definitions.json").read_text())
+        collision_definitions["tools"][0]["name"] = "text"
+        unique = dict(collision_definitions["tools"][0]); unique["name"] = "unique"
+        collision_definitions["tools"].append(unique)
+        collision_path = fixture.root / "collision-definitions.json"
+        collision_path.write_text(json.dumps(collision_definitions))
+        collision, collision_sha, _ = archive(fixture, args.read_bin.resolve(), collision_path, name="reader-read")
+        fixture.cli("install", collision)
+        fixture.cli("review-executable", "reader-read", "--expected", collision_sha, "--capability", "execute")
+        collision_binding = fixture.inspect_package("reader-read")["binding"]
+        fixture.tool(session, "ext_reader_read_unique", {"path": "allowed.txt"}, success=False)
+        assert fixture.status(collision_binding)["latest"] == []
+        fixture.record("collision-excludes-whole-package-before-effects", fixture.inspect_package("reader-read"))
+
         fixture.cli("disable", "conformance", "--expected", next_sha)
         fixture.tool(session, "ext_conformance_probe", {"mode": "echo"}, success=False)
         fixture.cli("remove", "conformance", "--expected", next_sha)

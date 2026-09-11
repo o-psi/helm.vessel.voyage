@@ -1,12 +1,11 @@
 # Executable extension SDK, protocol 1
 
-Status: **bounded source implementation for #63/#75, not a verified executable
-release**. The #63 build slot is still unadmitted after #213's release. No compilation, tests, coverage,
-static linking or supervised isolation journey has been established for these
-files. Parent integration owns package admission, sandbox/resource adapters,
-module and registry wiring, command routing and admitted lifecycle dispatch.
-This dependency alone does not resolve either issue. See [architecture](architecture.md)
-and [current state](current-state.md) for the runtime boundary.
+Protocol 1 has an initial Linux x86_64 implementation integrated with
+[executable packages](executable-packages.md). Verified scope and retained failures
+are recorded in the [verification report](test-executable-packages.md). The SDK
+alone grants no execution authority; live progress UI and broader SDK acceptance
+remain tracked in #75. See [architecture](architecture.md) and
+[current state](current-state.md) for runtime boundaries.
 
 ## Distribution and trust
 
@@ -175,16 +174,15 @@ Protocol 1 is the sole initial version. There is no historical SDK compatibility
 claim. Unsupported versions/capabilities fail closed; they must not crash Helm or
 block unrelated packages. An incompatible future wire or capability change needs
 an explicit new protocol and documented migration, not silent reinterpretation.
-No deprecation window is promised for this unpublished, unverified source draft.
+Protocol 1 is the only supported version; an eventual deprecation requires an explicit migration notice, not reinterpretation of existing grants.
 
-## Remaining verification/integration
+## Verification and remaining integration
 
-Module-local focused tests cover strict JSON/framing/definitions and in-memory
-handshake/result/cleanup disposition. They have **not been run** during the pause.
-They are not OS isolation evidence. Parent must wire the module and adapters,
-validate both examples as actual static ELF packages, and verify supervised
-install/review/activate/invoke/cancel/update/disable/remove, stale grants, collision,
-capability refusal, isolation/secret boundaries, crash/descendant cleanup, dropped
-caller, held-pipe/flood/timeout/race cases and resource recovery. Required Rust
-coverage must be measured after final integration under a scheduled released
-build slot. No target artifacts or coverage measurement accompany this source handoff.
+Focused Rust/Go tests and actual static examples run through Vessel-supervised
+Voyage owners; see [the report](test-executable-packages.md) for exact results.
+These checks are not blanket certification of every hostile program or platform.
+The package adapter owns sealed-byte launch, current policy, descendant/read-worker
+observation and guardian recovery. Live progress presentation remains unfinished;
+progress currently reaches the checked final output. Protocol 1 has no invented
+previous-version compatibility claim. Repository SDK source is separate from the
+legacy runtime release archives.

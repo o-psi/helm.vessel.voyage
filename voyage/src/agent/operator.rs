@@ -58,15 +58,20 @@ impl Agent {
             );
         }
         self.tools
-            .run_extension_lifecycle("run_start", &context)
-            .await;
-        let result = self.tools.execute(name, arguments, &context).await;
-        if result.is_ok() && !context.cancellation.is_cancelled() {
-            self.tools
-                .run_extension_lifecycle("run_finish", &context)
-                .await;
-        }
-        result.map_err(Into::into)
+            .execute(name, arguments, &context)
+            .await
+            .map_err(Into::into)
+    }
+    pub(crate) async fn operator_run_lifecycle(
+        &self,
+        run: uuid::Uuid,
+        cancel: CancellationToken,
+        event: &str,
+    ) {
+        let mut context = self.context.clone();
+        context.execution_id = run;
+        context.cancellation = cancel;
+        self.tools.run_extension_lifecycle(event, &context).await;
     }
     pub(crate) fn operator_arguments(&self, value: &serde_json::Value) -> anyhow::Result<()> {
         anyhow::ensure!(

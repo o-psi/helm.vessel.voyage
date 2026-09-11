@@ -56,6 +56,10 @@ type Call struct {
 	canRead       bool
 	closed        bool
 }
+
+// InvocationID is public correlation metadata, never an execution capability.
+func (c *Call) InvocationID() string { return c.identity.Invocation }
+
 type output struct {
 	mu     sync.Mutex
 	writer io.Writer

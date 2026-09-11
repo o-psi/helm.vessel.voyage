@@ -1,11 +1,12 @@
-# Executable packages: source integration for #63 / #75
+# Executable packages (Linux x86_64)
 
-**Status: unverified source draft, not a delivered executable extension release.**
-The #63 owner has not been admitted to a build slot. No compilation, executable
-example, supervised journey, isolation test or coverage measurement is claimed.
-The [SDK contract](extension-sdk.md) separates protocol implementation from the
-required executing-Voyage adapters. See [architecture](architecture.md) for the
-Helm → Vessel → independent Voyage boundary.
+Format-2 packages execute only inside the independent Voyage runtime under the
+required Linux isolation profile. The [SDK contract](extension-sdk.md) separates
+protocol behavior from package authority and resource ownership. See
+[architecture](architecture.md) for Helm → Vessel → Voyage boundaries and the
+[verification report](test-executable-packages.md) for observed checks and limits.
+This is not publisher certification, native macOS/Windows support or production
+readiness for arbitrary extension code.
 
 ## Implemented source path
 
@@ -41,8 +42,7 @@ project candidates. No implicit fallback executes a different package.
 
 ## Review is not live activation
 
-These are **source-defined commands to verify after a scheduled build**, not
-commands run as evidence in this delivery:
+Use these commands on the executing host; inspection and review do not launch code:
 
 ```sh
 helm extension pack ./package ./example.helmpkg
@@ -171,23 +171,17 @@ Repeated admission of the same package/digest/run/lifecycle event is refused;
 restart never replays a previously admitted handler. No model-authored messages
 are fabricated to represent runtime lifecycle effects.
 
-## Explicit remaining scope
+## Limits and remaining SDK scope
 
-See the [scheduled verification plan](test-executable-packages.md) for commands,
-prerequisites and the distinction between written tests and actual evidence.
+See the [verification report](test-executable-packages.md) for actual commands,
+results, retained failures and the distinction between coverage and correctness.
 
-
-- Live progress presentation and the complete package-specific diagnostic surface
-  remain unfinished. Progress is currently retained in the checked final result.
-- The focused `voyage/tests/executable_packages.py` journey and standalone static
-  conformance source are written but unexecuted. They require a scheduled slot,
-  built companion programs/examples and actual required-isolation support.
-- Rust/Go compilation and tests, sealed-byte/isolation/no-effects evidence,
-  held-pipe/descendant/crash/cancellation races, interrupted publication, and the
-  joined real package workflow have not run. Focused Rust test source is not a pass.
-- Merge current main, resolve overlap with other wave owners, then obtain an
-  explicit #63 build slot. Run the required final workspace coverage, retain raw
-  evidence and commit the measured `coverage/latest.json` with the verified
-  implementation. Integration/publication requires the shared integration lock.
-- Neither #63 nor #75 is closed by this draft. Unsupported platforms, live-provider
-  certification and production changes are not implied.
+- Live progress presentation remains unfinished under #75. Bounded progress is
+  currently retained in the checked final result, not streamed into the TUI.
+- Native macOS/Windows, alternate ELF ABIs, dynamic linking, extra package resources,
+  host writes/network/secrets and publisher trust are not supported by this version.
+- The repository contains the standalone SDK and examples; this does not silently
+  add an SDK distribution to the legacy runtime-release archive scripts.
+- SDK-wide authoring/support and the remaining UI/adversarial matrix are tracked
+  separately under #75. No human acceptance/testing gate substitutes for missing
+  evidence. Required isolation unavailable always refuses launch.

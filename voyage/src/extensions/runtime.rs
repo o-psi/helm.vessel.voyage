@@ -407,10 +407,10 @@ impl sdk::Host for Broker {
             crate::config::default_data_dir(),
             crate::build::resource_root(),
         ];
-        if let Some(config) = crate::config::default_config_path() {
-            if let Some(parent) = config.parent() {
-                private_roots.push(parent.to_path_buf());
-            }
+        if let Some(config) = crate::config::default_config_path()
+            && let Some(parent) = config.parent()
+        {
+            private_roots.push(parent.to_path_buf());
         }
         for private in private_roots {
             if private.try_exists()? {
