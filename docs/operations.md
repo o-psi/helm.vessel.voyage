@@ -153,12 +153,15 @@ switches that terminal to private capture; subsequent terminal output and human
 input are excluded from model history. Inspect progress in the private terminal.
 
 Helm observes terminal metadata without attaching or executing a tool. It uses the
-inventory's owning run, including retained terminals after a run completes, and
+inventory's exact owning run while its resources remain live, and
 rejects stale runtime incarnations. Console rows preserve blank cells, wide text
 and combining characters, resize on attachment, and show the program cursor. Helm
 uses standard terminal text and borders rather than requiring an icon font; actual
 font coverage still depends on the user's terminal. Very small windows show a
 resize message rather than permitting an unseen terminal selection.
+
+See [private terminal fidelity](private-terminal.md) for plain-user commands,
+structured screen/input bounds, failure handling and platform limitations.
 
 ### Approvals and questions
 
@@ -331,7 +334,8 @@ Create cannot replace an existing identity. Recover a lost response with list;
 state. Submit prints an admission receipt before output; JSON mode emits bounded
 output, decision and completion records. Decisions can be answered from another
 connected interface. Plain attended submission presents approval/question prompts.
-Persistent root terminals remain owned by the independent voyage between turns.
+Root terminals remain owned by the independent Voyage during their run and close
+before clean suspension; metadata never promises cross-turn or restart survival.
 
 ## Exact retries, cancellation and recovery
 

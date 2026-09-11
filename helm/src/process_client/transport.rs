@@ -209,6 +209,40 @@ impl Client {
         }
     }
 
+    /// Human terminal effects stay on one observed socket for the entire attachment.
+    pub(super) async fn private_terminal(
+        &self,
+        socket_id: uuid::Uuid,
+        session_id: uuid::Uuid,
+        incarnation: uuid::Uuid,
+        run_id: uuid::Uuid,
+        terminal_id: uuid::Uuid,
+        operation: voyage_protocol::vessel::TerminalAction,
+    ) -> Result<Value> {
+        let command = VesselCommand::Voyage(VoyageRequest {
+            session_id,
+            incarnation: Some(incarnation),
+            command: VoyageCommand::Terminal {
+                run_id,
+                terminal_id,
+                operation,
+            },
+        });
+        let value = tokio::time::timeout(
+            Duration::from_secs(15),
+            self.socket.exchange_bound(self, socket_id, command),
+        )
+        .await
+        .context("private terminal deadline elapsed; delivery unknown, never replay")??;
+        let reply: VoyageReply = serde_json::from_value(value)
+            .map_err(|_| anyhow::anyhow!("invalid private terminal response"))?;
+        ensure!(
+            reply.session_id == session_id && reply.incarnation == incarnation,
+            "private terminal response identity mismatch"
+        );
+        Ok(reply.result)
+    }
+
     pub async fn voyage(
         &self,
         session_id: uuid::Uuid,
