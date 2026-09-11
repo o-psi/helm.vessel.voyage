@@ -122,6 +122,7 @@ pub async fn serve(args: ServeArgs) -> Result<()> {
             "runtime registration changed during startup"
         );
         let prepared: Result<_> = async {
+            bootstrap::prepare_workspace(&directory, &registration)?;
             let workspace = args.workspace.canonicalize()?;
             let initial =
                 Journal::open(directory.join("journal"))?.initial_configuration(args.session)?;

@@ -1,73 +1,64 @@
 {
   "schema_version": 1,
-  "measured_at_utc": "2026-09-10T22:54:14.396821+00:00",
+  "measured_at_utc": "2026-09-10T23:00:40.631049+00:00",
   "source": {
-    "base_commit": "b19f0a93aa3f13272e505645c0dccf446c3428c5",
-    "dirty": false,
-    "fingerprint_sha256": "48e283c6439c59a07bdf21c4e15f86dc04149e5a7bb5f2271c0fbd75335b653d",
-    "fingerprint_method": "SHA-256 of compact sorted JSON mapping all tracked regular-file contents and symlink target text to SHA-256 hashes",
-    "note": "Clean isolated integration worktree; all tracked input bytes remained unchanged through tests and current-artifact export. Later summary/documentation publication does not change measured Rust source."
+    "base_commit": "02bddf3cf76e82f290b38579f492543c2e30ebbd",
+    "dirty": true,
+    "fingerprint_sha256": "4289088037e58165cd6c5f35e5fb8fab125326e192d908a542b975115f09f7dd",
+    "fingerprint_method": "SHA-256 of compact sorted JSON (with trailing newline) mapping workspace .rs files, member Cargo.toml files, root Cargo.toml, Cargo.lock and member tests/*.py files to SHA-256 content hashes",
+    "note": "Working-tree measurement includes unrelated concurrent provider/account work and staged Helm work. Not coverage of a clean base or publication commit. Source map unchanged throughout measurement; Python sources fingerprinted but not included in Rust coverage."
   },
   "platform": "x86_64-unknown-linux-gnu",
   "tools": {
-    "rustc": "1.98.1 (48a229cea 2026-09-01)",
+    "rustc": "1.98.1",
     "llvm": "22.1.8",
     "cargo_llvm_cov": "0.9.1"
   },
-  "command": "cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir \"$CARGO_LLVM_COV_TARGET_DIR/coverage-report/browser-final-current/default-report\" -j 8",
+  "command": "cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir target/coverage-report/title-input -j 8",
   "environment": {
-    "CARGO_LLVM_COV_TARGET_DIR": "existing shared workspace target",
+    "CARGO_LLVM_COV_TARGET_DIR": "target",
     "LLVM_COV": "llvm-cov",
     "LLVM_PROFDATA": "llvm-profdata"
   },
-  "scope": "All existing workspace Rust tests and current workspace executable artifacts, default features",
+  "scope": "Existing workspace Rust tests, default features",
   "tests": {
-    "passed": 116,
+    "passed": 120,
     "failed": 0,
     "ignored": 1
   },
   "coverage": {
     "lines": {
-      "count": 72710,
-      "covered": 12319,
-      "percent": 16.942648879108788
+      "count": 71405,
+      "covered": 12856,
+      "percent": 18.00434143267278
     },
     "functions": {
-      "count": 7372,
-      "covered": 1207,
-      "percent": 16.372761801410743
+      "count": 7303,
+      "covered": 1295,
+      "percent": 17.732438723812134
     },
     "regions": {
-      "count": 118103,
-      "covered": 19127,
-      "notcovered": 98976,
-      "percent": 16.195185558368543
+      "count": 115882,
+      "covered": 19778,
+      "notcovered": 96104,
+      "percent": 17.06736162648211
     }
-  },
-  "report_selection": {
-    "method": "Complete current Cargo compiler-artifact executable set from cargo test --workspace --locked --no-run --message-format=json under cargo llvm-cov show-env instrumentation; LLVM export/show retains tool-default filename exclusions",
-    "workspace_executables": 11,
-    "executed_test_binaries": 10,
-    "logical_source_files": 386,
-    "byte_identical_reused_source_files": 21,
-    "duplicate_logical_source_paths": 0,
-    "mismatched_functions": 0
   },
   "exclusions": [
     "Ignored live-provider test",
     "Doctests",
     "Python process checks",
-    "JavaScript browser/cleanup probes",
     "Manual TUI workflows",
     "Branch coverage",
-    "Historical shared-target executables not in the complete current Cargo artifact set"
+    "Unrelated .voyage-worktrees source paths discovered from cached binaries in shared target; report-only filter, current workspace Rust files retained"
   ],
   "notes": [
-    "Raw profiles were cleared before this independent measurement; compiled artifacts and prior reports were preserved.",
-    "The default shared-target report mixed stale main/worktree binaries and was not used for the published totals. Exact current-artifact selection corrected this; all current workspace members/targets and executed test binaries were retained. See issue #251.",
-    "Unchanged installer artifacts retained primary-checkout debug paths; their source bytes matched the measured tree and every logical source path was unique. No production source was removed to raise coverage.",
-    "Compared with prior record: lines +0.5634 percentage points, functions +0.5039 percentage points, regions +0.6065 percentage points. The prior record measured a dirty tree with unrelated account/UI work; this record measures the clean integrated browser/duplex tree, so this is not a controlled like-for-like improvement claim.",
-    "Out-of-process shared-browser, privacy, cleanup and duplex journeys passed separately and are not included in these Rust percentages.",
-    "Coverage measures execution, not correctness. No paid-provider, native macOS/Windows or production TLS deployment certification is implied."
-  ]
+    "Independent measurement: raw profiles cleared first; compiled artifacts and previous reports preserved. HTML, detailed JSON, logs and source maps retained under ignored target/.",
+    "Seven focused offline title tests passed, including actual run execution with a blocked main provider, queued steering refresh, persistence after reopen, stale and manual-name protection, exact retries, failure and cancellation.",
+    "Compared with previous record: lines +1.6251 percentage points, functions +1.8636 percentage points, regions +1.4787 percentage points.",
+    "Unfiltered report included 745 files and 142083 lines (9.0672% covered), including unrelated worktree sources. Workspace-only report retains 380 current workspace files from the same passing measurement, using the same exclusion as the prior record.",
+    "HTML report emitted an LLVM warning about 15 functions with mismatched data in cached instrumented objects. Summary report generation exited successfully; coverage remains an approximate execution measurement, not correctness proof.",
+    "Linux only. No live-provider, native macOS/Windows or manual TUI validation. Strict voyage Clippy remains blocked by three unrelated existing provider/account warnings."
+  ],
+  "report_command": "cargo llvm-cov report --ignore-filename-regex '/\\.voyage-worktrees/' --json --summary-only --output-path target/coverage-report/title-input/workspace-summary.json"
 }

@@ -597,7 +597,8 @@ impl Config {
     pub fn resolve_workspace(&self, cli: Option<PathBuf>) -> Result<PathBuf> {
         let raw = cli
             .or_else(|| self.workspace.clone())
-            .unwrap_or(env::current_dir()?);
+            .map(Ok)
+            .unwrap_or_else(env::current_dir)?;
         raw.canonicalize()
             .with_context(|| format!("workspace does not exist: {}", raw.display()))
     }

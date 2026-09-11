@@ -86,7 +86,7 @@ async fn observe(directory: &std::path::Path, request: &RuntimeRequest) -> Resul
             if let Some(original) = original {
                 super::dispatch::validate_public(
                     original,
-                    &config(&owner, &registration, &directory).await?,
+                    &observation_config(&owner, &registration).await?,
                 )?;
             }
             let authorization = super::authorization::authorize_parts(
@@ -239,6 +239,7 @@ async fn inspect(
                     "Saved conversation restored. This older run did not retain enough process information to verify cleanup automatically. Its unfinished commands have not been repeated."
                 });
             }
+            bootstrap::annotate_workspace(&mut snapshot, directory, registration);
             Ok(snapshot)
         }
         RuntimeCommand::History {
@@ -307,6 +308,22 @@ async fn inspect(
         }
         _ => anyhow::bail!("command requires resumed runtime"),
     }
+}
+
+#[cfg(unix)]
+async fn observation_config(
+    owner: &ManagedSessionOwner,
+    registration: &ProcessRegistration,
+) -> Result<Config> {
+    // Resolving a delivery only validates its public payload and fences its ID.
+    // Execution policy resolution depends on workspace files that may no longer
+    // exist. Never recreate directories or load new defaults from this observer.
+    let settings = owner
+        .saved_configuration()
+        .await?
+        .context("retained configuration unavailable for delivery resolution")?;
+    serde_json::from_str::<crate::launch_config::LaunchConfig>(&settings)?
+        .observation_config(&registration.workspace)
 }
 
 #[cfg(unix)]

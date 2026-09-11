@@ -57,6 +57,16 @@ impl LaunchConfig {
                 .map(|selection| selection.confirmation().to_owned()),
         })
     }
+    /// Private retained settings for public-envelope validation only. This does
+    /// not resolve policy or grant execution authority, and needs no live root.
+    pub(crate) fn observation_config(self, workspace: &Path) -> Result<Config> {
+        ensure!(
+            self.version == 1 && workspace == self.workspace,
+            "launch configuration workspace/version mismatch"
+        );
+        Ok(self.config)
+    }
+
     /// Caller must first authenticate ownership, privacy and session binding of
     /// the local launch file. Re-resolve profile revisions and ceilings here.
     pub fn resolve(mut self, workspace: &Path) -> Result<Config> {

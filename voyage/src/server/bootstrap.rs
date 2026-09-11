@@ -6,8 +6,13 @@ mod source;
 mod validate;
 pub use validate::{ValidateStartArgs, validate_start};
 mod config;
+mod workspace;
 pub(super) use config::load as load_config;
 pub use source::{ImportPlanArgs, import_plan};
+pub(crate) use workspace::NOTICE as WORKSPACE_RECREATED_NOTICE;
+pub(super) use workspace::annotate as annotate_workspace;
+pub(super) use workspace::prepare as prepare_workspace;
+pub(super) use workspace::recreated as workspace_recreated;
 pub(super) async fn initialize(
     directory: &std::path::Path,
     registration: &ProcessRegistration,

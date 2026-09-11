@@ -159,6 +159,21 @@ Evidence is retained under the printed `/tmp/vdr-*` directory. Cleanup succeeds 
 after fixture-owned processes disappear and matching durable cleanup evidence is
 observed. This is not a live-provider, native macOS/Windows, or full TUI check.
 
+## Deleted working directories
+
+Deleted-directory recovery has a focused offline Linux check:
+
+```sh
+cargo build -p vessel -p voyage --locked -j 8
+python3 voyage/tests/missing_workspace.py --bin-dir target/debug
+```
+
+It checks saved history and delivery resolution with a missing workspace, same-session
+continuation in a private recreated directory, retained access restrictions,
+parent Git isolation, duplicate refusal, and recovery after a failed startup.
+The [runtime contract](runtime-contract.md#deleted-working-directories) describes
+filesystem limits and the explicit steps needed to use Git again.
+
 ## Isolation and evidence
 
 The runner locks the repository's common Git directory, including linked worktrees.

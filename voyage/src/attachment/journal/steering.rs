@@ -268,7 +268,7 @@ impl Journal {
                 && matches!(run.state, RunState::Accepted | RunState::Running),
             "steering requires active matching run"
         );
-        let current = read_session(&tx, request.session_id)?;
+        let mut current = read_session(&tx, request.session_id)?;
         // Steering appends guidance to an exact active run, not to a frozen
         // transcript. Checkpoints and other steering admissions may advance the
         // observed revision while the sender composes its message. Preserve the
@@ -318,6 +318,7 @@ impl Journal {
                 serde_json::to_string(&record)?
             ],
         )?;
+        current.session.request_title(request.receipt_id);
         update_session(&tx, &current)?;
         append_event(&tx, &run, EventKind::SteeringQueued(request.receipt_id))?;
         commit(tx, &self.commit_fence)?;
