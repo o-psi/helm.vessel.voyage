@@ -40,3 +40,6 @@ pub mod duplex;
 pub mod terminal;
 #[cfg(test)]
 mod workflow_preview_tests;
+
+/// Bounded notification references and independent recipient receipts.
+pub mod notifications;
