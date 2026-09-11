@@ -422,6 +422,22 @@ directories. Two nonfatal coverage CLI warnings (renamed `export-prefix` and the
 the initially empty coverage target and current-object exports were verified.
 These results belong to `71bc7d2`, not later main changes.
 
+After merging published #32/#63, exact source
+`9cd4b4386a6e3af9e98a2194ef2ae9824dfad9b2` passed the final independent job
+`d11f644a-c25a-457c-8bfd-091569acdf7f`: fresh plain binaries and all four fixture
+groups passed before **250 passed / 0 failed / 1 ignored** workspace Rust tests
+under coverage. All 11 current objects, 10 executed test binaries and 415 logical
+source files were retained; duplicate paths and mismatched functions were zero.
+The measured totals are **24,349 / 84,442 lines (28.8352%)**, **2,355 / 8,438
+functions (27.9095%)**, and **38,157 / 137,349 regions (27.7811%)**. Source and
+plain binary hashes stayed unchanged. Independent cleanup verified no remaining
+descendants, an absent job cgroup, an exited observer and zero key-test directories.
+The same two nonfatal coverage CLI warnings were retained; current-object exports
+were clean. The infrastructure's later model timeout affected only result handoff,
+not this completed job, and caused no remote retry. The compact measurement in
+`coverage/latest.json` records the exact source, command, tools, exclusions and
+retained report hashes; earlier measurements remain in Git history.
+
 The retained issue scope is now implemented and has Linux regression evidence:
 
 | Requirement | Implementation and supporting evidence |
