@@ -15,9 +15,50 @@ import select
 import sys
 import threading
 import time
+import uuid
+import urllib.request
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tests"))
 from voyage_fixture import Fixture, wait_for
+
+
+class ContextFixture(Fixture):
+    """Reuse process ownership/cleanup, with the current public Vessel contract."""
+    def request(self, command, *, envelope=False):
+        credential = json.loads((self.directory / "process-http.json").read_text())
+        request = urllib.request.Request(credential["endpoint"] + "/v1/vessel/command",
+            data=encoded({"protocol": 1, "command": command}),
+            headers={"Authorization": "Bearer " + credential["token"], "Content-Type": "application/json"})
+        with urllib.request.urlopen(request, timeout=30) as incoming:
+            payload = incoming.read(4 * 1024 * 1024 + 1)
+        assert 0 < len(payload) <= 4 * 1024 * 1024
+        reply = json.loads(payload)
+        assert reply["protocol"] == 1
+        if envelope:
+            return reply
+        assert reply.get("error") is None, reply
+        return reply["result"]
+
+    def raw_command(self, session, command):
+        routing = {"session_id": session}
+        if command["op"] == "cancel":
+            routing["incarnation"] = self.request({"op": "inspect", "session_id": session})["incarnation"]
+        envelope = self.request({**routing, **command}, envelope=True)
+        if envelope.get("error") is not None:
+            return {"error": envelope["error"], "result": None}
+        reply = envelope["result"]
+        self.sessions[session] = reply["incarnation"]
+        return {"error": None, "result": reply["result"]}
+
+    def new(self, configured=True):
+        session = str(uuid.uuid4())
+        self.sessions[session] = None
+        command = {"op": "start_configured", "session_id": session, "command_id": str(uuid.uuid4()),
+                   "workspace": str(self.workspace), "config_path": str(self.config)}
+        info = self.request(command)
+        assert info["state"] in ("live", "suspended"), info
+        self.sessions[session] = info["incarnation"]
+        return session
 
 
 CALL = "effect-once"
@@ -79,6 +120,8 @@ def events(mode, *, tool=False, partial=False, call_id=CALL):
 def validate_request(body, mode, prompt):
     """Reject dangling/duplicated tool identities, but permit whole-group summaries."""
     assert body["stream"] is True
+    if mode != "anthropic":
+        assert not {"max_tokens", "max_completion_tokens", "max_output_tokens"}.intersection(body), "default output cap was sent"
     calls, results = [], []
     if mode == "responses":
         items = body["input"]
@@ -195,7 +238,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.send_error(500)
 
     def reject(self):
-        payload = encoded(CONTEXT_ERROR)
+        error = CONTEXT_ERROR if self.server.scenario.mode != "anthropic" else {
+            "type": "error", "error": {"type": "invalid_request_error", "message": "prompt is too long: 210000 tokens > 200000 maximum"}}
+        payload = encoded(error)
         self.send_response(400)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(payload)))
@@ -233,7 +278,7 @@ class Scenario:
             f'provider = "{MODES[mode][0]}"\nmodel = "fixture-model"\n'
             'api_key_env = "FIXTURE_API_KEY"\n'
             f'base_url = "http://127.0.0.1:{fixture.provider.server_port}/v1"\n'
-            'access = "unrestricted"\nmax_tokens = 64\ncontext_window = 0\n'
+            f'access = "unrestricted"\nmax_tokens = {64 if mode == "anthropic" else 0}\ncontext_window = 0\n'
             'provider_retry_attempts = 1\nmax_output_bytes = 524288\n'
             'command_timeout_secs = 10\n')
 
@@ -275,7 +320,7 @@ def assert_canonical(snapshot, scenario):
 
 
 def run_case(binaries, mode, kind):
-    fixture = Fixture(binaries)
+    fixture = ContextFixture(binaries)
     scenario = Scenario(fixture, mode, kind)
     print(f"evidence ({mode}/{kind}): {fixture.root}", flush=True)
     try:
@@ -305,6 +350,10 @@ def run_case(binaries, mode, kind):
             assert_canonical(snapshot, scenario)
             if kind == "manual":
                 before = full_snapshot(fixture, session)
+                legacy = fixture.mutation(session, "compact", retain=1)
+                refused = fixture.raw_command(session, legacy)
+                assert refused.get("error") and "preserve_canonical" in refused["error"], refused
+                assert full_snapshot(fixture, session)["messages"] == before["messages"]
                 compact = fixture.mutation(session, "compact", retain=1, preserve_canonical=True)
                 receipt = fixture.command(session, compact)
                 assert receipt.get("compacted_messages", 0) > 0, receipt

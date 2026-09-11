@@ -346,3 +346,28 @@ async fn repeated_provider_rejection_is_bounded_and_each_dispatch_shrinks() {
     }
     assert!(checkpoint.canonical.lock().unwrap()[1].content.len() > 60_000);
 }
+
+#[tokio::test]
+async fn explicit_context_limit_still_refuses_dispatch_and_retains_input() {
+    let root = tempfile::tempdir().unwrap();
+    let (agent, requests, effects, checkpoint) = fixture(root.path(), false);
+    let error = agent
+        .with_context_window(1)
+        .run_checkpointed(
+            vec![],
+            "Keep my exact task".into(),
+            CancellationToken::new(),
+            None,
+            &checkpoint,
+            "fixture".into(),
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(error, AgentError::Context(_)));
+    assert_eq!(
+        error.recovery().unwrap().messages[0].content,
+        "Keep my exact task"
+    );
+    assert!(requests.lock().unwrap().is_empty());
+    assert_eq!(effects.load(Ordering::SeqCst), 0);
+}

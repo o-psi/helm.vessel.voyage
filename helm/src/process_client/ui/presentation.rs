@@ -268,3 +268,19 @@ pub(super) fn structured_message(content: &str, operator: &str) -> Option<String
         _ => (value.is_object() || value.is_array()).then(|| fields(&value)),
     }
 }
+
+#[cfg(test)]
+mod compaction_receipt_tests {
+    use super::*;
+    #[test]
+    fn manual_compaction_displays_verified_count_and_noop_without_claiming_legacy_preservation() {
+        let applied = serde_json::json!({"status":"applied","canonical_preserved":true,"compacted_messages":12,"removed_messages":0});
+        let text = receipt(&applied);
+        assert!(text.contains("12 messages") && text.contains("Full history is retained"));
+        assert!(receipt(&serde_json::json!({"status":"applied","canonical_preserved":true,"compacted_messages":0})).contains("No further safe"));
+        assert!(
+            !receipt(&serde_json::json!({"status":"applied","removed_messages":12}))
+                .contains("history is retained")
+        );
+    }
+}
