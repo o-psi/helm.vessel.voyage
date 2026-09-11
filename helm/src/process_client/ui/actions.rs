@@ -63,6 +63,9 @@ impl App {
         if command_text == "/browser" || command_text.starts_with("/browser ") {
             return self.browser_command(target, command_text);
         }
+        if command_text == "/workflows" {
+            return self.open_workflows();
+        }
         if command_text == "/vessels" {
             self.open_vessels();
             return Ok(());

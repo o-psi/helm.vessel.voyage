@@ -17,7 +17,7 @@ half the available width, capped at 64 columns.
 - In a question or permission request, click a choice, then **Confirm**. Selecting
   **Allow once** never sends approval by itself. **Prev / Next** navigate multiple
   requests; leave the custom editor with **Back** first.
-- Custom answers, names, branch labels and deletion confirmation have **Paste**
+- Custom answers, names, branch labels and history-action confirmations have **Paste**
   and **Clear** controls. Paste reads text from the local Helm machine's clipboard,
   not the Vessel's machine. Type normally or use terminal text paste as alternatives.
   Clear replaces the field with empty text; it never submits it.
@@ -42,8 +42,11 @@ Esc retains its original meaning:
 
 Mouse buttons use those same operations, not a separate submission path. Pending
 or expired decisions cannot be answered. Action availability and the last rendered
-target/incarnation are checked; deletion still requires the exact `DELETE` text
-and reviewed conversation revision. Access review can scroll instead of demanding
+target/incarnation are checked. Delete requires `DELETE`; Clear requires `CLEAR`;
+Compact requires `KEEP N` with N between 1 and 100000. All three check the reviewed
+conversation revision and preserve the unsent composer. Clear resets current
+conversation; compact omits older content with an explicit marker, not a generated
+summary; deletion does not recall external copies. Access review can scroll instead of demanding
 a larger terminal, but **Confirm** stays disabled until its final lines are visible.
 Owner-side access and command checks remain authoritative.
 

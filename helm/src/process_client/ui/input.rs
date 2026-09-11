@@ -10,6 +10,9 @@ impl App {
         if matches!(event, Event::Resize(..)) {
             self.resize_previews()?;
         }
+        if self.workflow_input(&event)? {
+            return Ok(());
+        }
         // Private connection input (especially paste) precedes every composer path.
         if self.vessel_input(&event)? {
             return Ok(());
@@ -18,6 +21,12 @@ impl App {
             return Ok(());
         }
         self.sync_interactions();
+        if self.operator_input(&event) {
+            return Ok(());
+        }
+        if self.voyage_picker_input(&event) {
+            return Ok(());
+        }
         if self.paste_input(&event)? {
             return Ok(());
         }

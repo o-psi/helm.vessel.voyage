@@ -26,6 +26,8 @@ pub(super) enum Action {
     Branch,
     Cancel,
     Details,
+    Clear,
+    Compact,
     Delete,
 }
 impl Action {
@@ -41,6 +43,8 @@ impl Action {
             Self::Branch => "Branch",
             Self::Cancel => "Cancel current run",
             Self::Details => "Details",
+            Self::Clear => "Clear conversation",
+            Self::Compact => "Compact older messages",
             Self::Delete => "Delete permanently",
         }
     }
@@ -172,7 +176,12 @@ impl App {
         {
             actions.push(Action::Cancel);
         }
-        actions.extend([Action::Details, Action::Delete]);
+        actions.extend([
+            Action::Details,
+            Action::Compact,
+            Action::Clear,
+            Action::Delete,
+        ]);
         actions
     }
     fn action_reason(&self, menu: &Menu, action: Action) -> Option<&'static str> {
@@ -328,8 +337,10 @@ impl App {
     pub(super) fn action_editor(&self) -> Option<(super::right_panel::Editor, String)> {
         let menu = self.sidebar.menu.as_ref()?;
         let action = menu.editor?;
-        if !matches!(action, Action::Rename | Action::Branch | Action::Delete)
-            || self.sidebar.visible.get() != Some((menu.target, menu.incarnation, menu.editor))
+        if !matches!(
+            action,
+            Action::Rename | Action::Branch | Action::Delete | Action::Clear | Action::Compact
+        ) || self.sidebar.visible.get() != Some((menu.target, menu.incarnation, menu.editor))
             || self.action_reason(menu, action).is_some()
         {
             return None;

@@ -206,11 +206,28 @@ which checks actually ran, with their limits.
 ## Product interaction acceptance
 
 Feature validation also needs the relevant journeys and adverse states in
-[UX readiness](ux-readiness.md). That manual inventory records functional evidence
-and product-owner review separately. A build/package pass is not a ship-ready UX
-verdict. The full interface audit remains open on
-[#14](https://github.com/o-psi/voyage/issues/14); a completed feature slice does not
-close it. No automated test suite is introduced by this acceptance document.
+[UX readiness](ux-readiness.md). The current operator instruction requires objective
+executable verification, not human testing or product-owner visual/adoption sign-off.
+A build/package pass is not a complete functional-journey verdict. The full interface
+scope remains tracked on [#14](https://github.com/o-psi/helm.vessel.voyage/issues/14);
+a completed slice does not close real remaining dependencies.
+
+The focused offline Helm journey check exercises actual PTYs at 40×18, 80×24 and
+120×32, Unicode draft preservation, name-based switching, concurrent voyages,
+detach/reconnect, branch/archive targeting, pasted-consent refusal, typed manual
+tool execution and private workflow submission. It uses isolated HOME/XDG paths and
+scripted loopback responses, not the operator's credentials or a paid provider:
+
+```sh
+cargo build -p helm -p vessel -p voyage --locked -j 8
+python3 voyage/tests/ui_journeys.py --bin-dir target/debug
+```
+
+This is a scoped executable check, not restored broad regression infrastructure,
+public TLS evidence or native macOS/Windows certification. Its private temporary
+evidence records binary hashes, canonical results, request counts and cleanup.
+Failures must be reported as failures; the command's existence is not evidence
+that it passed.
 
 ## Direct image paste verification (#74)
 

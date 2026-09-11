@@ -142,6 +142,20 @@ pub fn draw(frame: &mut Frame<'_>, app: &App) {
     app.working.begin_frame();
     app.vessel_sidebar_button.set(Rect::default());
     draw_inner(frame, app);
+    if frame.area().width >= 40 && frame.area().height >= 18 {
+        if let Some(picker) = &app.voyage_picker {
+            super::voyage_picker::draw(frame, picker, frame.area());
+        }
+        if let Some(panel) = &app.operator {
+            panel.render(frame, frame.area());
+        }
+        super::workflows::draw(frame, app);
+    }
+    // A late account observation must never leave private input focused behind
+    // an opaque operator/navigation screen.
+    if app.voyage_picker.is_some() || app.operator.is_some() || app.workflows_open() {
+        app.draw_accounts(frame);
+    }
     app.draw_vessel_control(frame);
     app.draw_workspace_picker(frame, frame.area());
     if let Some(manager) = &app.vessels {
@@ -165,6 +179,13 @@ fn draw_inner(frame: &mut Frame<'_>, app: &App) {
             view.terminals.clear_displayed();
         }
         frame.render_widget(Paragraph::new(presentation::wrap(Text::raw("Helm\nEnlarge to at least 40 columns x 18 rows.\nCtrl+C leaves; your work continues."), area.width)), area);
+        return;
+    }
+    if app.voyage_picker.is_some() || app.operator.is_some() || app.workflows_open() {
+        app.sidebar.resize.clear();
+        if let Some(view) = view {
+            view.terminals.clear_displayed();
+        }
         return;
     }
     if app.help || app.explore.is_some() {
@@ -379,9 +400,10 @@ fn footer(app: &App, width: u16, reviewing: bool, overlay: bool, status: &str) -
     };
     let mut line = Line::styled(hint.to_owned(), muted());
     for shortcuts in [
-        "F1 Help · F3 Console · F6 Browser · F9 Actions · Ctrl+C Leave",
-        "F1 Help · F6 Browser · F9 Actions",
-        "F1 Help",
+        "F1 Help · F2 Voyages · F3 Console · F6 Browser · F8 Explore · F9 Actions · Ctrl+C Leave",
+        "F2 Voyages · F8 Explore · F9 Actions",
+        "F2 Voyages · F8 Explore",
+        "F2 Voyages",
     ] {
         let shortcuts = if reviewing { "Ctrl+C Leave" } else { shortcuts };
         let separator = if hint.is_empty() { "" } else { " · " };

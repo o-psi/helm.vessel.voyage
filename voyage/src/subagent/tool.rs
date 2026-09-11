@@ -108,9 +108,9 @@ fn archive_limit() -> usize {
     20
 }
 
-#[async_trait]
-impl Tool for SubagentTool {
-    fn definition(&self) -> ToolDefinition {
+// Pure contract shared by execution and idle preflight; no runtime/store is opened.
+impl SubagentTool {
+    pub(crate) fn builtin_definition() -> ToolDefinition {
         ToolDefinition {
             output_schema: None,
             annotations: None,
@@ -129,6 +129,13 @@ impl Tool for SubagentTool {
             ("commit", &["id","message"], &[]), ("integrate", &["id","target"], &[]), ("cleanup", &["id"], &[]),
         ]),
     }
+    }
+}
+
+#[async_trait]
+impl Tool for SubagentTool {
+    fn definition(&self) -> ToolDefinition {
+        Self::builtin_definition()
     }
     async fn execute(&self, arguments: Value, context: &ToolContext) -> Result<String, ToolError> {
         context.policy.check_current().map_err(failed)?;
