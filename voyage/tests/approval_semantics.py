@@ -23,6 +23,24 @@ def uid():
     return str(uuid.uuid4())
 
 
+class ApprovalFixture(Fixture):
+    def session(self, approval=False):
+        # Consent routing needs no account enrollment. Explicit anonymous native
+        # loopback Responses avoids the retired implicit ChatGPT login contract.
+        session = uid()
+        self.sessions.append(session)
+        config = self.root / (session + ".toml")
+        config.write_text('provider = "openai-responses"\nmodel = "fixture-model"\n'
+            f'base_url = "http://127.0.0.1:{self.provider.server_port}/v1"\n'
+            'api_key_required = false\nprovider_retry_attempts = 1\n'
+            'context_window = 0\ncommand_timeout_secs = 2\n'
+            f'access = "{"approval" if approval else "read-only"}"\n')
+        config.chmod(0o600)
+        self.request({"op": "start_configured", "session_id": session, "command_id": uid(),
+            "workspace": str(self.workspace), "config_path": str(config)})
+        return session
+
+
 class Gateway:
     def __init__(self, fixture):
         self.fixture = fixture
@@ -206,7 +224,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--bin-dir", type=Path, required=True)
     args = parser.parse_args()
-    fixture = Fixture(args.bin_dir.resolve())
+    fixture = ApprovalFixture(args.bin_dir.resolve())
     gateway = None
     try:
         fixture.start()
