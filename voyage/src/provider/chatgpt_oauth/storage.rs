@@ -103,10 +103,9 @@ pub(crate) fn read_tokens(path: &Path) -> Result<Option<Vec<u8>>> {
     };
     let _lock = directory.lock()?;
     if let Some(bytes) = directory.read_bounded(&fence_name(name), LIMIT)? {
-        ensure!(
-            bytes == b"null",
-            "OAuth refresh pending or uncertain; reauthentication required"
-        );
+        if bytes != b"null" {
+            return Err(super::RefreshPending.into());
+        }
     }
     directory.read_bounded(name, LIMIT)
 }
@@ -155,7 +154,9 @@ pub(crate) fn commit_refresh(
             .context("OAuth login required")?,
     )?;
     ensure!(
-        current.as_ref() == Some(expected) && expected.account_id == tokens.account_id,
+        current.as_ref() == Some(expected)
+            && super::login_identity(expected)?.is_some()
+            && super::login_identity(expected)? == super::login_identity(tokens)?,
         "OAuth identity changed or revoked"
     );
     directory.publish(name, &serde_json::to_vec(tokens)?)?;

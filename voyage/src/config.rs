@@ -79,6 +79,9 @@ pub struct Config {
     /// Process-local access updates; never persisted or delegated as authority.
     #[serde(skip)]
     pub live_access: Option<std::sync::Arc<crate::policy::LiveAccess>>,
+    /// Admitted run's current grant check, never restored from serialized settings.
+    #[serde(skip)]
+    pub provider_authority: Option<std::sync::Arc<dyn crate::policy::ExecutionAuthority>>,
     /// Runtime-owned artifact storage; never accepted from configuration.
     #[serde(skip)]
     pub artifact_scope: Option<crate::artifacts::Scope>,
@@ -455,6 +458,7 @@ impl Default for Config {
             inherit_env: vec!["PATH".into(), "LANG".into(), "LC_ALL".into(), "TERM".into()],
             redact_values: Vec::new(),
             live_access: None,
+            provider_authority: None,
             artifact_scope: None,
             policy_profile: None,
             policy_defaults: None,
@@ -709,6 +713,7 @@ impl Config {
         // retain it so the next rebuild checks the same profile and transition.
         updated.vessel_context = self.vessel_context.clone();
         updated.live_access = self.live_access.clone();
+        updated.provider_authority = self.provider_authority.clone();
         updated.artifact_scope = self.artifact_scope.clone();
         updated.chat_preferences = self.chat_preferences.clone();
         updated.policy_profile = self.policy_profile.clone();

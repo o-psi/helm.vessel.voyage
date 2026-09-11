@@ -11,7 +11,7 @@ fn ensure_access_revision(
 ) -> Result<()> {
     let current = read_session(connection, session)?.revision;
     let changed: bool = connection.query_row(
-        "SELECT EXISTS(SELECT 1 FROM process_commands WHERE json_extract(request, '$.op') IN ('configure','set_access','set_inference','set_model') AND json_extract(receipt, '$.status')='applied' AND json_extract(receipt, '$.revision') > ?1)",
+        "SELECT EXISTS(SELECT 1 FROM process_commands WHERE json_extract(request, '$.op') IN ('configure','set_access','set_inference','set_account_inference','set_model') AND json_extract(receipt, '$.status')='applied' AND json_extract(receipt, '$.revision') > ?1)",
         [i64::try_from(expected)?], |row| row.get(0),
     )?;
     ensure!(

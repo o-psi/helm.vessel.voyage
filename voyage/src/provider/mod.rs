@@ -38,6 +38,8 @@ pub use openai::OpenAiProvider;
 pub use openai_responses::OpenAiResponsesProvider;
 
 #[cfg(test)]
+mod account_identity_tests;
+#[cfg(test)]
 mod failure_tests;
 
 pub(crate) const USAGE_LIMIT_MESSAGE: &str = "Provider account usage limit reached. Wait for the account allowance to reset before sending another message.";
@@ -304,12 +306,15 @@ fn native_from_config(config: &Config) -> Result<Box<dyn Provider>, ProviderErro
     validate_inference_settings(config)
         .map_err(|error| ProviderError::Request(error.to_string()))?;
     match config.provider {
-        ProviderKind::OpenaiResponses => Ok(Box::new(OpenAiResponsesProvider::new(
-            config
-                .api_key()
-                .map_err(|e| ProviderError::Authentication(e.to_string()))?,
-            config.base_url.clone(),
-        ).with_account(config.account.as_ref()))),
+        ProviderKind::OpenaiResponses => Ok(Box::new(
+            OpenAiResponsesProvider::new(
+                config
+                    .api_key()
+                    .map_err(|e| ProviderError::Authentication(e.to_string()))?,
+                config.base_url.clone(),
+            )
+            .with_account(config),
+        )),
         ProviderKind::OpenaiChat => Ok(Box::new(
             OpenAiProvider::new(
                 config
@@ -317,14 +322,17 @@ fn native_from_config(config: &Config) -> Result<Box<dyn Provider>, ProviderErro
                     .map_err(|e| ProviderError::Authentication(e.to_string()))?,
                 config.base_url.clone(),
             )
-            .with_account(config.account.as_ref())
+            .with_account(config)
             .with_max_tokens_parameter(config.chat_use_max_tokens),
         )),
         ProviderKind::ChatGptOauth => {
             if let Some(binding) = &config.account {
                 return crate::accounts::Registry::default_host()
                     .and_then(|registry| registry.oauth_provider(binding))
-                    .map(|provider| Box::new(provider) as Box<dyn Provider>)
+                    .map(|provider| {
+                        Box::new(provider.with_authority(config.provider_authority.clone()))
+                            as Box<dyn Provider>
+                    })
                     .map_err(|e| ProviderError::Authentication(e.to_string()));
             }
             let store = ChatGptTokenStore::new(ChatGptTokenStore::default_path()?);
@@ -336,12 +344,15 @@ fn native_from_config(config: &Config) -> Result<Box<dyn Provider>, ProviderErro
             }
             Ok(Box::new(ChatGptOauthProvider::from_store(store, endpoints)))
         }
-        ProviderKind::Anthropic => Ok(Box::new(AnthropicProvider::new(
-            config
-                .api_key()
-                .map_err(|e| ProviderError::Authentication(e.to_string()))?,
-            config.base_url.clone(),
-        ).with_account(config.account.as_ref()))),
+        ProviderKind::Anthropic => Ok(Box::new(
+            AnthropicProvider::new(
+                config
+                    .api_key()
+                    .map_err(|e| ProviderError::Authentication(e.to_string()))?,
+                config.base_url.clone(),
+            )
+            .with_account(config),
+        )),
     }
 }
 
@@ -532,4 +543,15 @@ impl Provider for BoundProvider {
     async fn stream(&self, request: ModelRequest) -> Result<ProviderStream, ProviderError> {
         native_from_config(&self.config)?.stream(request).await
     }
+}
+
+fn check_provider_authority(
+    authority: &Option<std::sync::Arc<dyn crate::policy::ExecutionAuthority>>,
+) -> Result<(), ProviderError> {
+    if let Some(authority) = authority {
+        authority.check().map_err(|_| {
+            ProviderError::Authentication("executing-host account authority withdrawn".into())
+        })?;
+    }
+    Ok(())
 }

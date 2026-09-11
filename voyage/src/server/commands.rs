@@ -129,6 +129,7 @@ pub(super) async fn dispatch_admitted(
                 "rename",
                 "set_model",
                 "set_inference",
+                "set_account_inference",
                 "set_access",
                 "decisions",
                 "respond",

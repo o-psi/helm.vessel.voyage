@@ -496,7 +496,14 @@ impl Supervisor {
                 _ => None,
             };
             if let Some(account) = selected {
-                super::accounts::Scope::Session(grant.clone()).use_account(&self.directory, &grant.workspace, account)?;
+                let scope = super::accounts::Scope::Session(grant.clone());
+                if matches!(request.command, VoyageCommand::Resolve { .. }) {
+                    // Resolving a retained command is not new inference admission.
+                    // Logout must not make its original receipt unknowable.
+                    scope.observe_account_intent(&self.directory, &grant.workspace, account)?;
+                } else {
+                    scope.use_account(&self.directory, &grant.workspace, account)?;
+                }
             }
         }
         let command = runtime(request.command)?;

@@ -29,6 +29,12 @@ use crate::model::{ModelRequest, ModelResponse};
 const CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
 const REFRESH_SKEW_SECS: u64 = 300;
 
+#[derive(Debug, thiserror::Error)]
+#[error("OAuth refresh pending or uncertain")]
+pub(crate) struct RefreshPending;
+
+const REFRESH_PENDING: &str = "OAuth refresh pending or uncertain; wait for the owning exchange or explicitly reauthenticate if it stopped";
+
 pub(crate) mod storage;
 
 #[derive(Clone, Debug)]
@@ -277,7 +283,7 @@ fn device_poll_interval<'de, D: serde::Deserializer<'de>>(
 }
 
 #[derive(Deserialize)]
-struct DeviceToken {
+pub(crate) struct DeviceToken {
     authorization_code: String,
     code_verifier: String,
 }
@@ -353,7 +359,7 @@ impl TokenStore {
             ));
         }
         // Re-read after bounded waits so independent voyages reuse completed rotation.
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(35);
         loop {
             let result = if let Some((registry, binding)) = &self.binding {
                 if self.legacy_default
@@ -371,7 +377,7 @@ impl TokenStore {
                 let bytes = tokio::task::spawn_blocking(move || storage::read_tokens(&path))
                     .await
                     .map_err(|_| private_cache_error())?
-                    .map_err(|_| private_cache_error());
+                    .map_err(account_error);
                 bytes.and_then(|bytes| match bytes {
                     None => Ok(None),
                     Some(bytes) => serde_json::from_slice::<Option<OAuthTokens>>(&bytes)
@@ -385,8 +391,12 @@ impl TokenStore {
                     }
                     return Ok(tokens);
                 }
-                Err(error) if tokio::time::Instant::now() >= deadline => return Err(error),
-                Err(_) => tokio::time::sleep(Duration::from_millis(100)).await,
+                Err(ProviderError::Unavailable(message))
+                    if message == REFRESH_PENDING && tokio::time::Instant::now() < deadline =>
+                {
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                }
+                Err(error) => return Err(error),
             }
         }
     }
@@ -545,6 +555,7 @@ impl TokenStore {
 }
 
 pub struct ChatGptOAuth {
+    authority: Option<Arc<dyn crate::policy::ExecutionAuthority>>,
     client: reqwest::Client,
     endpoints: OAuthEndpoints,
     store: TokenStore,
@@ -557,11 +568,19 @@ pub type ChatGptOauthProvider = ChatGptOAuth;
 impl ChatGptOAuth {
     pub fn from_store(store: TokenStore, endpoints: OAuthEndpoints) -> Self {
         Self {
+            authority: None,
             client: super::native_http_client(),
             endpoints,
             store,
             tokens: Arc::new(Mutex::new(None)),
         }
+    }
+    pub(crate) fn with_authority(
+        mut self,
+        authority: Option<Arc<dyn crate::policy::ExecutionAuthority>>,
+    ) -> Self {
+        self.authority = authority;
+        self
     }
 
     pub async fn new(store: TokenStore, endpoints: OAuthEndpoints) -> Result<Self, ProviderError> {
@@ -725,6 +744,16 @@ impl ChatGptOAuth {
         &self,
         device: &DeviceAuthorization,
     ) -> Result<OAuthTokens, ProviderError> {
+        let grant = self.poll_device_grant(device).await?;
+        self.exchange_device_grant(grant).await
+    }
+
+    /// Poll only. Host services must recheck cancellation and authority before
+    /// claiming and dispatching the separate token exchange effect.
+    pub(crate) async fn poll_device_grant(
+        &self,
+        device: &DeviceAuthorization,
+    ) -> Result<DeviceToken, ProviderError> {
         super::validate_native_endpoint(&self.endpoints.device_token)?;
         let response = super::endpoint_http_client(&self.client, &self.endpoints.device_token).post(&self.endpoints.device_token).timeout(Duration::from_secs(30)).json(&serde_json::json!({"device_auth_id":device.device_auth_id,"user_code":device.user_code})).send().await.map_err(map_request)?;
         super::reject_redirect(&response)?;
@@ -757,7 +786,13 @@ impl ChatGptOAuth {
                 )),
             };
         }
-        let grant: DeviceToken = auth_json(response).await?;
+        auth_json(response).await
+    }
+
+    pub(crate) async fn exchange_device_grant(
+        &self,
+        grant: DeviceToken,
+    ) -> Result<OAuthTokens, ProviderError> {
         let tokens = self
             .exchange(&[
                 ("grant_type", "authorization_code"),
@@ -818,8 +853,10 @@ impl ChatGptOAuth {
     }
 
     async fn valid_tokens(&self) -> Result<OAuthTokens, ProviderError> {
+        super::check_provider_authority(&self.authority)?;
         let mut guard = self.tokens.lock().await;
         *guard = self.store.load().await?;
+        super::check_provider_authority(&self.authority)?;
         let current = guard
             .clone()
             .ok_or_else(|| ProviderError::Authentication("ChatGPT login required".into()))?;
@@ -851,6 +888,7 @@ impl ChatGptOAuth {
                 return Err(error);
             }
         };
+        super::check_provider_authority(&self.authority)?;
         let mut refreshed = self
             .exchange(&[
                 ("grant_type", "refresh_token"),
@@ -862,6 +900,10 @@ impl ChatGptOAuth {
             refreshed.refresh_token = current.refresh_token.clone();
         }
         validate_tokens(&refreshed)?;
+        let identity = login_identity(&current)?;
+        if identity.is_none() || identity != login_identity(&refreshed)? {
+            return Err(ProviderError::Authentication("OAuth identity changed or cannot be established; explicit reauthentication required".into()));
+        }
         if let Some((registry, binding)) = &self.store.binding {
             registry
                 .oauth_save(binding, &refreshed, Some(fence))
@@ -878,6 +920,7 @@ impl ChatGptOAuth {
             .map_err(|_| private_cache_error())?;
         }
         *guard = Some(refreshed.clone());
+        super::check_provider_authority(&self.authority)?;
         Ok(refreshed)
     }
 
@@ -947,9 +990,9 @@ fn device_verification_uri() -> String {
 }
 fn map_request(error: reqwest::Error) -> ProviderError {
     if error.is_timeout() {
-        ProviderError::Timeout(error.to_string())
+        ProviderError::Timeout("OAuth request deadline elapsed".into())
     } else {
-        ProviderError::Request(error.to_string())
+        ProviderError::Request("OAuth connection failed; outcome may be uncertain".into())
     }
 }
 
@@ -970,7 +1013,58 @@ pub(crate) fn validate_tokens(value: &OAuthTokens) -> Result<(), ProviderError> 
             "ChatGPT token set is incomplete".into(),
         ));
     }
+    login_identity(value)?;
     Ok(())
+}
+
+/// Identity asserted by the trusted OAuth response (or explicitly owner-imported
+/// token set), not an independent JWT signature/entitlement verification. Never
+/// expose this tuple in account descriptors. Legacy opaque tokens have no proven
+/// subject and cannot support an identity-preserving replacement or refresh.
+pub(crate) fn login_identity(tokens: &OAuthTokens) -> Result<Option<String>, ProviderError> {
+    let invalid = || {
+        ProviderError::Authentication(
+            "OAuth identity claims are missing or inconsistent; explicit reauthentication required"
+                .into(),
+        )
+    };
+    let mut subject: Option<String> = None;
+    for token in tokens
+        .id_token
+        .iter()
+        .map(String::as_str)
+        .chain(std::iter::once(tokens.access_token.as_str()))
+    {
+        let Some(claims) = jwt_payload(token) else {
+            continue;
+        };
+        for path in [
+            "/chatgpt_account_id",
+            "/account_id",
+            "/https:~1~1api.openai.com~1auth/chatgpt_account_id",
+        ] {
+            if let Some(value) = claims.pointer(path) {
+                if value.as_str() != Some(tokens.account_id.as_str()) {
+                    return Err(invalid());
+                }
+            }
+        }
+        if let Some(value) = claims.get("sub") {
+            let value = value
+                .as_str()
+                .filter(|s| !s.is_empty() && s.len() <= 512 && !s.chars().any(char::is_control))
+                .ok_or_else(invalid)?;
+            if subject.as_deref().is_some_and(|old| old != value) {
+                return Err(invalid());
+            }
+            subject = Some(value.to_owned());
+        }
+    }
+    subject
+        .map(|subject| {
+            serde_json::to_string(&(tokens.account_id.as_str(), subject)).map_err(|_| invalid())
+        })
+        .transpose()
 }
 fn required_string(value: &Value, key: &str) -> Result<String, ProviderError> {
     value
@@ -1128,9 +1222,12 @@ fn filter_response_tier(response: &mut ModelResponse, tokens: &OAuthTokens) {
     }
 }
 
-fn account_error(_: anyhow::Error) -> ProviderError {
+fn account_error(error: anyhow::Error) -> ProviderError {
+    if error.downcast_ref::<RefreshPending>().is_some() {
+        return ProviderError::Unavailable(REFRESH_PENDING.into());
+    }
     ProviderError::Authentication(
-        "account revoked, changed, busy or uncertain; inspect host account status".into(),
+        "account revoked, changed or unavailable; inspect host account status".into(),
     )
 }
 

@@ -26,13 +26,15 @@ impl AnthropicProvider {
                 .into(),
         }
     }
-    pub(super) fn with_account(mut self, binding: Option<&voyage_protocol::accounts::AccountBinding>) -> Self {
-        if let Some(binding) = binding {
-            self.api_key = super::api_credential::ApiCredential::Account(binding.clone());
+    pub(super) fn with_account(mut self, config: &crate::Config) -> Self {
+        if let Some(binding) = &config.account {
+            self.api_key = super::api_credential::ApiCredential::Account {
+                binding: binding.clone(),
+                authority: config.provider_authority.clone(),
+            };
         }
         self
     }
-
 
     // Anthropic requires max_tokens. Resolve its supported maximum rather than
     // imposing a harness default: https://platform.claude.com/docs/en/api/http/models/retrieve
@@ -118,7 +120,10 @@ impl Provider for AnthropicProvider {
                 model.input_modalities = super::multimodal::discovered_modalities(item)?;
                 model.display_name =
                     super::catalog::optional_text(item, "display_name", id)?.to_owned();
-                super::validate_model(&model, &observed_keys.iter().map(String::as_str).collect::<Vec<_>>())?;
+                super::validate_model(
+                    &model,
+                    &observed_keys.iter().map(String::as_str).collect::<Vec<_>>(),
+                )?;
                 models.push(model);
             }
             match value.get("has_more") {
@@ -136,7 +141,12 @@ impl Provider for AnthropicProvider {
                 .ok_or_else(|| {
                     ProviderError::InvalidResponse("model pagination omitted cursor".into())
                 })?;
-            super::catalog::validate_text(cursor, 512, true, &observed_keys.iter().map(String::as_str).collect::<Vec<_>>())?;
+            super::catalog::validate_text(
+                cursor,
+                512,
+                true,
+                &observed_keys.iter().map(String::as_str).collect::<Vec<_>>(),
+            )?;
             if !cursors.insert(cursor.to_owned()) || cursors.len() >= super::catalog::MAX_PAGES {
                 return Err(ProviderError::InvalidResponse(
                     "model pagination repeated or exceeded 16 pages".into(),
@@ -144,7 +154,10 @@ impl Provider for AnthropicProvider {
             }
             after_id = Some(cursor.to_owned());
         }
-        super::validate_models(&models, &observed_keys.iter().map(String::as_str).collect::<Vec<_>>())?;
+        super::validate_models(
+            &models,
+            &observed_keys.iter().map(String::as_str).collect::<Vec<_>>(),
+        )?;
         normalize_models(&mut models);
         Ok(models)
     }

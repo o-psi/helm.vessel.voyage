@@ -270,7 +270,10 @@ fn check_account(
                         .as_ref()
                         .map_or(grant.grant_id, |b| b.grant_id),
                     grant.principal_id,
-                    grant.revision
+                    grant
+                        .connection_binding
+                        .as_ref()
+                        .map_or(grant.revision, |b| b.revision)
                 )
                 && actor.workspace == grant.workspace.to_string_lossy()
                 && grant.rights.contains(&ProcessRight::AccountEnroll)

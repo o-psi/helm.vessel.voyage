@@ -110,6 +110,7 @@ pub(super) async fn submit(
             .push_str(bootstrap::WORKSPACE_RECREATED_NOTICE);
     }
     super::authorization::account_authority(state, &mut authorization, &config)?;
+    config.provider_authority = authorization.authority.clone();
     config.model = saved
         .session
         .pending_model

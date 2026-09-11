@@ -27,9 +27,12 @@ impl OpenAiProvider {
                 .into(),
         }
     }
-    pub(super) fn with_account(mut self, binding: Option<&voyage_protocol::accounts::AccountBinding>) -> Self {
-        if let Some(binding) = binding {
-            self.api_key = super::api_credential::ApiCredential::Account(binding.clone());
+    pub(super) fn with_account(mut self, config: &crate::Config) -> Self {
+        if let Some(binding) = &config.account {
+            self.api_key = super::api_credential::ApiCredential::Account {
+                binding: binding.clone(),
+                authority: config.provider_authority.clone(),
+            };
         }
         self
     }
