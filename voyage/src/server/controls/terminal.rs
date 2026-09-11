@@ -27,7 +27,8 @@ pub(super) async fn execute(
         }
         TerminalOperation::Resize { columns, rows } => {
             ensure!(
-                (1..=500).contains(&columns) && (1..=500).contains(&rows),
+                (1..=voyage_protocol::terminal::MAX_COLUMNS).contains(&columns)
+                    && (1..=voyage_protocol::terminal::MAX_ROWS).contains(&rows),
                 "invalid terminal size"
             );
             manager.attach(id).await?;
@@ -36,10 +37,23 @@ pub(super) async fn execute(
         }
     };
     policy.check_execution_authority()?;
-    Ok(match snapshot {
+    let frame = match snapshot {
         Some(screen) => {
-            json!({"terminal_id":id,"run_id":run,"title":screen.title,"revision":screen.revision,"state":screen.state,"cursor":screen.cursor,"rows":screen.cells.iter().map(|row|row.iter().map(|cell|cell.text.as_str()).collect::<String>()).collect::<Vec<_>>(),"privacy":"human_only"})
+            let typed = crate::terminal::TerminalScreen {
+                version: voyage_protocol::terminal::SCREEN_VERSION,
+                columns: screen.cells.first().map_or(0, |row| row.len() as u16),
+                height: screen.cells.len() as u16,
+                cells: screen.cells.clone(),
+                modes: screen.modes,
+            };
+            typed.validate().map_err(anyhow::Error::msg)?;
+            json!({"terminal_id":id,"run_id":run,"title":screen.title,"revision":screen.revision,"state":screen.state,"cursor":screen.cursor,"rows":screen.cells.iter().map(|row|row.iter().map(|cell|cell.text.as_str()).collect::<String>()).collect::<Vec<_>>(),"privacy":"human_only","screen":typed})
         }
         None => json!({"terminal_id":id,"run_id":run,"accepted":true,"replay":"never"}),
-    })
+    };
+    ensure!(
+        serde_json::to_vec(&frame)?.len() < 4 * 1024 * 1024,
+        "terminal frame exceeds transport limit"
+    );
+    Ok(frame)
 }
