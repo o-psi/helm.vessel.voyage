@@ -536,16 +536,12 @@ fn sidebar(frame: &mut Frame<'_>, app: &App, area: Rect) {
             .pointer
             .is_some_and(|point| button.contains(point));
         if !over_button {
+            // Only add hover modifiers: keep title status and muted host colours.
             // A wrapped row includes padding; underlining it draws horizontal rules.
             frame.buffer_mut().set_style(
                 area,
                 app.hover_style(area, false)
-                    .remove_modifier(Modifier::UNDERLINED)
-                    .patch(sidebar_style(
-                        &app.views[target],
-                        app.presentation_now,
-                        app.settle_after_secs,
-                    )),
+                    .remove_modifier(Modifier::UNDERLINED),
             );
         }
         frame.render_widget(
@@ -713,6 +709,29 @@ mod sidebar_tests {
         assert_eq!(sidebar_style(&view, now, 0), Role::Muted.style());
         view.connection_unavailable = true;
         assert_eq!(sidebar_style(&view, now, 0), Role::AwaitingInput.style());
+    }
+
+    #[test]
+    fn process_attention_and_suspension_keep_their_styles() {
+        use voyage_protocol::process::ProcessState;
+        let now = chrono::Utc::now();
+        let mut view = view("running");
+        for process in [
+            ProcessState::Unavailable,
+            ProcessState::Stopped,
+            ProcessState::Relinquished,
+            ProcessState::CleanupUnconfirmed,
+        ] {
+            view.process.state = process;
+            assert_eq!(sidebar_style(&view, now, 300), Role::AwaitingInput.style());
+        }
+        view.process.state = ProcessState::Starting;
+        assert_eq!(sidebar_style(&view, now, 300), Role::Running.style());
+        view.process.state = ProcessState::Suspended;
+        view.snapshot.as_mut().unwrap().run = None;
+        assert_eq!(sidebar_style(&view, now, 300), Role::Completed.style());
+        view.snapshot.as_mut().unwrap().recovery_pending = true;
+        assert_eq!(sidebar_style(&view, now, 300), Role::AwaitingInput.style());
     }
 
     #[test]
