@@ -22,6 +22,7 @@ pub mod plain;
 mod access;
 
 mod commands;
+mod inbox;
 
 pub mod terminal;
 

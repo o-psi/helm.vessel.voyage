@@ -11,6 +11,7 @@ mod controls;
 mod explore;
 mod export;
 mod inference;
+mod inbox;
 mod input;
 mod interactions;
 mod lifecycle;

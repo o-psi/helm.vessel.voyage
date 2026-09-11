@@ -25,6 +25,11 @@ pub struct ConnectArgs {
 
 #[derive(Subcommand)]
 pub enum ConnectedCommand {
+    /// Configure destinations and read the durable metadata-only notification inbox.
+    Inbox {
+        #[command(subcommand)]
+        command: super::inbox::InboxCommand,
+    },
     /// Open a locally controlled browser companion for this voyage; sharing requires local consent.
     Browser {
         session: Uuid,
@@ -203,6 +208,13 @@ pub async fn run(args: ConnectArgs) -> Result<()> {
             "CLI operations require a single selected Vessel"
         );
         match command {
+            ConnectedCommand::Inbox {
+                command: super::inbox::InboxCommand::Watch {
+                    destination,
+                    after,
+                    seconds,
+                },
+            } => super::inbox::watch(&clients[0], destination, after, seconds).await,
             ConnectedCommand::Browser { session, reconcile } => {
                 if reconcile {
                     let info: voyage_protocol::vessel::ProcessInfo = serde_json::from_value(
