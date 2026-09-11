@@ -56,7 +56,9 @@ impl Supervisor {
         };
         let has = |right| ensure_right(&grant, right);
         match command {
-            VesselCommand::Notifications { operation } => self.notifications(operation, Some(binding)).await,
+            VesselCommand::Notifications { operation } => {
+                self.notifications(operation, Some(binding)).await
+            }
             VesselCommand::FenceAssignment { request } => {
                 self.fence_assignment(&grant, request).await
             }

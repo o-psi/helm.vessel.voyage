@@ -110,6 +110,8 @@ pub struct BudgetDetail {
 #[serde(rename_all = "snake_case")]
 pub enum BudgetDimension {
     Tokens,
+    EstimatedTokens,
+    UnsettledAttempts,
     EstimatedMicrocurrency,
     RuntimeMilliseconds,
     CpuMilliseconds,

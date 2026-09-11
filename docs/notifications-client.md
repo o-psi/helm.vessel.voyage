@@ -1,10 +1,9 @@
-# Notification client — #72 integration draft
+# Notification client
 
-**Status: source/test draft; unverified pending full #72 integration.** No Cargo,
-build, executable test or coverage run was admitted for this isolated client work.
-The parent delivery must integrate the protocol, store, source outbox and Vessel
-service, run the agreed verification and coverage, and update this status. This
-page does not claim deployed notification support or issue completion.
+The CLI/TUI notification slice has offline Linux real-component evidence.
+See [verification](notifications-verification.md) for exact results and remaining
+#72 scope. The accounting backend integration and broader crash matrix are not
+implicitly established by these client checks.
 
 See [architecture](architecture.md) for Helm/Vessel/Voyage authority boundaries
 and [validation](quality.md) for verification requirements.
@@ -33,7 +32,7 @@ Configuration is a local JSON file, read with a 64 KiB bound into the strict
 through to the service. Do not put secrets, transcripts, labels, URLs, shell
 commands, or free-form message content in it. Unknown fields are refused.
 
-Destination fields in the protocol draft:
+Destination fields:
 
 | Field | Value |
 | --- | --- |
@@ -125,12 +124,11 @@ To read the full authorized request and approve/deny, explicitly select its owne
 voyage and use the existing Questions and permissions flow, which validates the
 current owner/request again. Stale/unavailable metadata grants no fallback action.
 
-## Draft verification scope
+## Verification scope
 
-Focused source tests cover CLI input bounds and required mutation identity,
+Focused tests cover CLI input bounds and required mutation identity,
 non-echoing malformed destination diagnostics, watch cursor progression, strict
 slash-operation parsing, unsolicited-content exclusion, unknown Open statuses,
-and synthetic test wording. These tests are **not yet run**. Full #72 integration
-must additionally exercise real service response schemas, two-sided consent,
-revocation, TTL/quiet-hour behavior, disconnection/uncertain mutation outcomes,
-owner-decision freshness, terminal/modal/composer preservation and coverage.
+and synthetic test wording. All eight inbox-focused tests passed. The real-component
+journeys and remaining failure-matrix limits are recorded in
+[verification](notifications-verification.md).

@@ -169,6 +169,20 @@ def revoked_and_expired(fixture, gateway, session, recipient, vessel):
         fixture.record("notification-adverse-" + mode, {"event": receipt["event_id"], "payload_hidden": True})
 
 
+def begin_writer(connection):
+    # Arrange the barrier before starting the experiment; a concurrent courier
+    # may own SQLite briefly. This does not extend any runtime busy/deadline limit.
+    def acquire():
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            return True
+        except sqlite3.OperationalError as error:
+            if "locked" not in str(error):
+                raise
+            return False
+    wait_for(acquire, timeout=1)
+
+
 def lock_crossing_expiry(fixture, gateway, session, recipient, vessel):
     dest = destination(fixture, session, recipient, vessel)
     dest["event_kinds"] = ["test"]
@@ -184,7 +198,7 @@ def lock_crossing_expiry(fixture, gateway, session, recipient, vessel):
         return inbox(fixture, gateway, recipient, dest)
     # URI mode=rw forbids silently creating a wrong-path replacement database.
     with sqlite3.connect(database.as_uri() + "?mode=rw", uri=True, timeout=0) as locked:
-        locked.execute("BEGIN IMMEDIATE")
+        begin_writer(locked)
         acquired = time.monotonic()
         try:
             assert dest["expires_at_ms"] - int(time.time() * 1000) > 700, "setup consumed lock window"
@@ -226,7 +240,7 @@ def revoke_during_lock(fixture, gateway, session, vessel):
     database = fixture.directory / "notifications/notifications.sqlite3"
     grant_path = fixture.directory / "access/grants" / (credential["grant_id"] + ".json")
     with sqlite3.connect(database.as_uri() + "?mode=rw", uri=True, timeout=0) as locked:
-        locked.execute("BEGIN IMMEDIATE")
+        begin_writer(locked)
         acquired = time.monotonic()
         try:
             with ThreadPoolExecutor(max_workers=1) as pool:

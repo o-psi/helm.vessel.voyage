@@ -22,7 +22,17 @@ impl Supervisor {
         };
         let operation = command.clone();
         match command {
-            VesselCommand::Notifications { operation } => self.notifications(operation, Some(GrantBinding { grant_id: grant.grant_id, principal_id: grant.principal_id, revision: grant.revision })).await,
+            VesselCommand::Notifications { operation } => {
+                self.notifications(
+                    operation,
+                    Some(GrantBinding {
+                        grant_id: grant.grant_id,
+                        principal_id: grant.principal_id,
+                        revision: grant.revision,
+                    }),
+                )
+                .await
+            }
             VesselCommand::Capabilities => Ok(json!({
                 "protocol": VESSEL_API_VERSION, "version": env!("CARGO_PKG_VERSION"),
                 "vessel_id": grant.vessel_id, "principal_id": grant.principal_id,

@@ -86,12 +86,23 @@ def client_checks(fixture, credential_file, destination_id, event_id):
         def observed():
             assert pty["process"].poll() is None, "Helm exited"
             return text in ui.screen(pty)
-        return wait_for(observed, timeout=15)
+        try:
+            return wait_for(observed, timeout=15)
+        except BaseException:
+            (fixture.root / "notification-failed-screen.txt").write_text(ui.screen(pty))
+            raise
     try:
-        expect("F2")
+        credential = json.loads(credential_file.read_text())
+        snapshot = fixture.command(credential["session_id"], {"op": "snapshot"})
+        title = "notification real terminal fixture"
+        assert any(m.get("role") == "user" and m.get("content") == title for m in snapshot["messages"])
+        expect(title[:16])
         ui.send(pty, ui.F2)
-        time.sleep(.2)
+        expect("Find voyages")
+        ui.paste(pty, title)
+        expect(title)
         ui.send(pty, ui.ENTER)
+        wait_for(lambda: "Find voyages" not in ui.screen(pty), timeout=15)
         # The only scoped source is selected explicitly, never by a notification.
         command = f"/inbox list {destination_id}"
         ui.paste(pty, command)

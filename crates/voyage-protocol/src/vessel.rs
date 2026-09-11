@@ -389,7 +389,9 @@ pub enum TerminalAction {
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 pub enum VesselCommand {
     /// Metadata-only destination/inbox operations; never approval or execution.
-    Notifications { operation: crate::notifications::NotificationOperation },
+    Notifications {
+        operation: crate::notifications::NotificationOperation,
+    },
     /// Owner-local, sessionless model metadata. Configuration stays on this host;
     /// scoped grants cannot use this operation or supply host configuration.
     DiscoverModels {

@@ -50,6 +50,12 @@ const MAX_DATABASE_PAGES: u32 = 16_384;
 pub struct Store {
     connection: Connection,
     current_clock: bool,
+    authority: Option<(
+        std::path::PathBuf,
+        Destination,
+        voyage_protocol::process::ProcessRight,
+        voyage_protocol::process::ProcessRegistration,
+    )>,
     #[cfg(test)]
     event_capacity: usize,
 }
@@ -115,6 +121,7 @@ impl Store {
         Ok(Self {
             connection,
             current_clock: false,
+            authority: None,
             #[cfg(test)]
             event_capacity: MAX_EVENTS,
         })
@@ -126,6 +133,21 @@ impl Store {
         let mut store = Self::open(directory)?;
         store.current_clock = true;
         Ok(store)
+    }
+
+    pub fn authorize(
+        &mut self,
+        root: &Path,
+        destination: &Destination,
+        right: voyage_protocol::process::ProcessRight,
+        registration: &voyage_protocol::process::ProcessRegistration,
+    ) {
+        self.authority = Some((
+            root.to_owned(),
+            destination.clone(),
+            right,
+            registration.clone(),
+        ));
     }
 
     pub fn configure(
@@ -327,7 +349,7 @@ impl Store {
     /// Clock rollback does not prevent revocation (uses the durable high-water).
     pub fn revoke(&self, command_id: Uuid, id: Uuid, now: u64) -> Result<()> {
         ensure!(!command_id.is_nil(), "nil notification command ID");
-        let (tx, now) = self.begin(now, false)?;
+        let (tx, _now) = self.begin(now, false)?;
         if let Some((old_id, operation)) = command(&tx, command_id)? {
             ensure!(
                 old_id == id && operation == 1,
@@ -551,6 +573,9 @@ impl Store {
         } else {
             now
         };
+        if let Some((root, destination, right, registration)) = &self.authority {
+            super::current_authority(root, destination, *right, registration)?;
+        }
         if strict_clock {
             check_clock(&tx, now)?;
         }
@@ -906,6 +931,69 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.directory);
         }
+    }
+
+    #[test]
+    fn revoked_authority_after_sqlite_wait_cannot_disclose_existing_payload() {
+        use crate::process::{access::store as access, identity, registry};
+        use voyage_protocol::process::{ProcessGrant, ProcessRegistration, ProcessRight};
+        let fixture = Fixture::new();
+        let mut store = fixture.open();
+        let mut destination = fixture.destination();
+        destination.source_vessel_id = identity::public(&fixture.directory).unwrap().vessel_id;
+        let grant:ProcessGrant=serde_json::from_value(serde_json::json!({
+            "grant_id":destination.recipient_grant_id,"principal_id":destination.recipient_principal_id,
+            "session_id":destination.source_session_id,"workspace":fixture.directory,
+            "revision":destination.recipient_grant_revision,"rights":["observe"],
+            "expires_at_ms":access::now().unwrap()+60_000,"revoked":false,"token_hash":"synthetic-hash"
+        })).unwrap();
+        let registration:ProcessRegistration=serde_json::from_value(serde_json::json!({
+            "protocol":1,"session_id":destination.source_session_id,"incarnation":Uuid::new_v4(),
+            "command_id":Uuid::new_v4(),"workspace":fixture.directory,"state":"live","token":"synthetic-runtime"
+        })).unwrap();
+        registry::private_directory(&fixture.directory.join("access")).unwrap();
+        registry::private_directory(&fixture.directory.join("access/grants")).unwrap();
+        let grant_path = access::grant_path(&fixture.directory, grant.grant_id);
+        access::save(&grant_path, &grant).unwrap();
+        store
+            .configure(Uuid::new_v4(), destination.clone(), fixture.now())
+            .unwrap();
+        store
+            .accept(Uuid::new_v4(), destination.id, fixture.now())
+            .unwrap();
+        let event = fixture.event(&destination);
+        store
+            .publish(destination.id, event.clone(), fixture.now())
+            .unwrap();
+        store.authorize(
+            &fixture.directory,
+            &destination,
+            ProcessRight::Observe,
+            &registration,
+        );
+        assert!(
+            store
+                .get(destination.id, event.event_id, fixture.now())
+                .unwrap()
+                .is_some()
+        );
+        let blocker = Connection::open(fixture.directory.join("notifications.sqlite3")).unwrap();
+        blocker.execute_batch("BEGIN IMMEDIATE").unwrap();
+        let (started, observed) = std::sync::mpsc::channel();
+        let now = fixture.now();
+        let reader = std::thread::spawn(move || {
+            started.send(()).unwrap();
+            store.get(destination.id, event.event_id, now)
+        });
+        observed.recv_timeout(Duration::from_secs(1)).unwrap();
+        let mut revoked = grant;
+        revoked.revoked = true;
+        access::save(&grant_path, &revoked).unwrap();
+        blocker.execute_batch("ROLLBACK").unwrap();
+        assert!(
+            reader.join().unwrap().is_err(),
+            "pre-wait authority disclosed revoked metadata"
+        );
     }
 
     #[test]

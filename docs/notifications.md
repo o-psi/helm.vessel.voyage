@@ -1,8 +1,9 @@
 # Vessel notifications and owner handoff
 
-Status: **integration draft for #72; executable verification and coverage are
-pending the coordinated build slot**. Source and test definitions are not a
-passing deployment claim. Browser/mobile and #257 condition subscriptions or
+Status: implemented notification slice with focused Rust and offline Linux
+real-component evidence; see [verification and remaining scope](notifications-verification.md).
+#72 remains open for the actual #71 budget-source integration and the retained
+broader failure matrix. Browser/mobile and #257 condition subscriptions or
 automatic voyage wake-up are not part of this service.
 
 See [client commands](notifications-client.md), [architecture](architecture.md),
@@ -167,19 +168,19 @@ delivery; no guessed or model-generated fallback is used.
 
 ## Verification plan and current limits
 
-Focused Rust test drafts cover strict protocol fields, UTC boundaries, independent
+Focused Rust tests cover strict protocol fields, UTC boundaries, independent
 consent, identity/dedup conflicts, restart, monotonic receipts, retention/clock
 fencing, capacity, private-file refusal and atomic owner transaction rollback.
-`voyage/tests/notifications.py` drafts an offline real Voyage/Vessel/independent
+`voyage/tests/notifications.py` exercises an offline real Voyage/Vessel/independent
 Helm CLI/TUI journey using existing controlled-loopback fixtures: actual completion,
 wrong recipient, duplicate/conflicting commands, receipt race, restart/reconnect,
 revocation/stale restoration, passive narrow/resized inbox and preserved Unicode
 composer, plus exact decision opening/dismissal with zero tool effects before a
-separate explicit owner denial. These checks have **not run yet**.
+separate explicit owner denial. The final primary and adversarial journeys passed; exact outcomes, failed attempts
+and evidence limits are in the [verification record](notifications-verification.md).
 
-Required next evidence: compile/tests on final merged source, adversarial fixture
-execution and fixes, workspace coverage with current-artifact selection, committed
-measurement, normal main integration/publication and issue results. A Linux
+Final delivery also records workspace coverage with current-artifact selection,
+committed measurement, normal main publication and issue results. A Linux
 synthetic endpoint is not installed HTTPS, live-provider, real-user-message or
 native macOS/Windows certification. No such external activity is authorized by
 this implementation task.

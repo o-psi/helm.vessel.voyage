@@ -15,89 +15,108 @@ use voyage_protocol::{
     vessel::{VoyageCommand, VoyageRequest},
 };
 
+enum RecipientAuthority {
+    Local,
+    Session(ProcessGrant),
+    Connection(ConnectionGrant),
+}
+
+/// Sample current on-disk human authority after storage waits as well as at routing.
+fn current_authority(
+    root: &std::path::Path,
+    destination: &Destination,
+    right: ProcessRight,
+    registration: &ProcessRegistration,
+) -> Result<RecipientAuthority> {
+    let vessel = super::identity::public(root)?.vessel_id;
+    ensure!(
+        destination.source_vessel_id == vessel,
+        "notification source unavailable"
+    );
+    ensure!(
+        registration.session_id == destination.source_session_id,
+        "notification source unavailable"
+    );
+    ensure!(
+        registration.state != ProcessState::Relinquished
+            && !matches!(
+                registration.initialize,
+                Some(RuntimeInitialization::Participant { .. })
+            ),
+        "notification source unavailable"
+    );
+    if destination.recipient_grant_id == vessel {
+        ensure!(
+            destination.recipient_principal_id == vessel
+                && destination.recipient_grant_revision == 1,
+            "notification recipient unavailable"
+        );
+        return Ok(RecipientAuthority::Local);
+    }
+    let id = destination.recipient_grant_id;
+    if access::connection_path(root, id).exists() {
+        let grant: ConnectionGrant = access::load(&access::connection_path(root, id))?;
+        access::current_connection(root, &grant)?;
+        ensure!(
+            grant.grant_id == id
+                && grant.principal_id == destination.recipient_principal_id
+                && grant.revision == destination.recipient_grant_revision
+                && grant.rights.contains(&right)
+                && destination.expires_at_ms <= grant.expires_at_ms
+                && (!destination.event_kinds.contains(&NotificationKind::Budget)
+                    || grant.rights.contains(&ProcessRight::History))
+                && grant
+                    .workspaces
+                    .iter()
+                    .any(|w| w.path == registration.workspace),
+            "notification recipient unavailable"
+        );
+        return Ok(RecipientAuthority::Connection(grant));
+    }
+    let grant: ProcessGrant = access::load(&access::grant_path(root, id))?;
+    access::current(&grant)?;
+    // Delegated participant/derived session tokens are not human inbox identities.
+    // Use the originating workspace connection, not its derived credential.
+    ensure!(
+        grant.grant_id == id
+            && grant.principal_id == destination.recipient_principal_id
+            && grant.revision == destination.recipient_grant_revision
+            && grant.session_id == registration.session_id
+            && grant.workspace == registration.workspace
+            && grant.parent_grant.is_none()
+            && grant.participant_binding.is_none()
+            && grant.connection_binding.is_none()
+            && grant.rights.contains(&right)
+            && (!destination.event_kinds.contains(&NotificationKind::Budget)
+                || grant.rights.contains(&ProcessRight::History))
+            && destination.expires_at_ms <= grant.expires_at_ms,
+        "notification recipient unavailable"
+    );
+    Ok(RecipientAuthority::Session(grant))
+}
+
 impl Supervisor {
-    /// Re-read authority on each observation, including after asynchronous owner reads.
-    /// Configured destinations are not authority caches and never contain credentials.
     fn notification_authority(
         &self,
         destination: &Destination,
         right: ProcessRight,
         registration: &ProcessRegistration,
     ) -> Result<Option<GrantBinding>> {
-        let vessel = super::identity::public(&self.directory)?.vessel_id;
-        ensure!(
-            destination.source_vessel_id == vessel,
-            "notification source unavailable"
-        );
-        ensure!(
-            registration.session_id == destination.source_session_id,
-            "notification source unavailable"
-        );
-        ensure!(
-            registration.state != ProcessState::Relinquished
-                && !matches!(
-                    registration.initialize,
-                    Some(RuntimeInitialization::Participant { .. })
-                ),
-            "notification source unavailable"
-        );
-        if destination.recipient_grant_id == vessel {
-            ensure!(
-                destination.recipient_principal_id == vessel
-                    && destination.recipient_grant_revision == 1,
-                "notification recipient unavailable"
-            );
-            return Ok(None);
-        }
-        let id = destination.recipient_grant_id;
-        if access::connection_path(&self.directory, id).exists() {
-            let grant: ConnectionGrant =
-                access::load(&access::connection_path(&self.directory, id))?;
-            access::current_connection(&self.directory, &grant)?;
-            ensure!(
-                grant.grant_id == id
-                    && grant.principal_id == destination.recipient_principal_id
-                    && grant.revision == destination.recipient_grant_revision
-                    && grant.rights.contains(&right)
-                    && destination.expires_at_ms <= grant.expires_at_ms
-                    && (!destination.event_kinds.contains(&NotificationKind::Budget)
-                        || grant.rights.contains(&ProcessRight::History))
-                    && grant
-                        .workspaces
-                        .iter()
-                        .any(|w| w.path == registration.workspace),
-                "notification recipient unavailable"
-            );
-            return Ok(Some(self.connection_session(
-                &grant,
-                registration.session_id,
-                &registration.workspace,
-            )?));
-        }
-        let grant: ProcessGrant = access::load(&access::grant_path(&self.directory, id))?;
-        access::current(&grant)?;
-        // Delegated participant/derived session tokens are not human inbox identities.
-        // Use the originating workspace connection, not its derived credential.
-        ensure!(
-            grant.grant_id == id
-                && grant.principal_id == destination.recipient_principal_id
-                && grant.revision == destination.recipient_grant_revision
-                && grant.session_id == registration.session_id
-                && grant.workspace == registration.workspace
-                && grant.parent_grant.is_none()
-                && grant.participant_binding.is_none()
-                && grant.connection_binding.is_none()
-                && grant.rights.contains(&right)
-                && (!destination.event_kinds.contains(&NotificationKind::Budget)
-                    || grant.rights.contains(&ProcessRight::History))
-                && destination.expires_at_ms <= grant.expires_at_ms,
-            "notification recipient unavailable"
-        );
-        Ok(Some(GrantBinding {
-            grant_id: id,
-            principal_id: grant.principal_id,
-            revision: grant.revision,
-        }))
+        Ok(
+            match current_authority(&self.directory, destination, right, registration)? {
+                RecipientAuthority::Local => None,
+                RecipientAuthority::Session(grant) => Some(GrantBinding {
+                    grant_id: grant.grant_id,
+                    principal_id: grant.principal_id,
+                    revision: grant.revision,
+                }),
+                RecipientAuthority::Connection(grant) => Some(self.connection_session(
+                    &grant,
+                    registration.session_id,
+                    &registration.workspace,
+                )?),
+            },
+        )
     }
 
     fn notification_recipient(
@@ -138,7 +157,7 @@ impl Supervisor {
         // This is also the local grant/revocation ordering lock. No network wait
         // occurs while it is held. A subsequent owner read rechecks separately.
         let registrations = self.registrations.lock().await;
-        let store = store::Store::open_current(self.directory.join("notifications"))?;
+        let mut store = store::Store::open_current(self.directory.join("notifications"))?;
         let vessel = super::identity::public(&self.directory)?.vessel_id;
         let now = access::now()?;
         if let NotificationOperation::Configure {
@@ -154,6 +173,12 @@ impl Supervisor {
                 .get(&destination.source_session_id)
                 .ok_or_else(|| anyhow::anyhow!("notification source unavailable"))?;
             self.notification_authority(&destination, ProcessRight::Observe, registration)?;
+            store.authorize(
+                &self.directory,
+                &destination,
+                ProcessRight::Observe,
+                registration,
+            );
             return Ok(serde_json::to_value(store.configure(
                 command_id,
                 destination,
@@ -173,6 +198,14 @@ impl Supervisor {
                                 .is_ok()
                         })
                 {
+                    store.authorize(
+                        &self.directory,
+                        d,
+                        ProcessRight::Observe,
+                        registrations
+                            .get(&d.source_session_id)
+                            .expect("checked registration"),
+                    );
                     available += store.attention_count(d.id, now)?;
                 }
             }
@@ -234,6 +267,12 @@ impl Supervisor {
             .get(&destination.source_session_id)
             .ok_or_else(|| anyhow::anyhow!("notification source unavailable"))?;
         self.notification_authority(destination, ProcessRight::Observe, registration)?;
+        store.authorize(
+            &self.directory,
+            destination,
+            ProcessRight::Observe,
+            registration,
+        );
         match operation {
             NotificationOperation::Accept { command_id, .. } => {
                 ensure!(recipient, "notification destination unavailable");
@@ -287,7 +326,7 @@ impl Supervisor {
     ) -> Result<Value> {
         let (destination, entry, binding) = {
             let registrations = self.registrations.lock().await;
-            let store = store::Store::open_current(self.directory.join("notifications"))?;
+            let mut store = store::Store::open_current(self.directory.join("notifications"))?;
             let vessel = super::identity::public(&self.directory)?.vessel_id;
             let record = store
                 .destination(destination_id)?
@@ -306,6 +345,12 @@ impl Supervisor {
             {
                 return Ok(json!({"status":"unavailable","actionable":false}));
             }
+            store.authorize(
+                &self.directory,
+                &record.destination,
+                ProcessRight::Observe,
+                registration,
+            );
             let Some(entry) = store.get(destination_id, event_id, access::now()?)? else {
                 return Ok(json!({"status":"expired_or_revoked","actionable":false}));
             };
@@ -379,11 +424,17 @@ impl Supervisor {
         // Current identity, request and lifetime are sampled again after the owner
         // wait. The existing explicit Respond admission remains the final arbiter.
         let registrations = self.registrations.lock().await;
-        let store = store::Store::open_current(self.directory.join("notifications"))?;
+        let mut store = store::Store::open_current(self.directory.join("notifications"))?;
         let now = access::now()?;
         let Some(registration) = registrations.get(&destination.source_session_id) else {
             return Ok(json!({"status":"unavailable","actionable":false}));
         };
+        store.authorize(
+            &self.directory,
+            &destination,
+            ProcessRight::Decide,
+            registration,
+        );
         if registration.incarnation != incarnation
             || self
                 .notification_authority(&destination, ProcessRight::Decide, registration)
@@ -550,7 +601,7 @@ impl Supervisor {
         )
         .await;
         let registrations = self.registrations.lock().await;
-        let store = store::Store::open_current(self.directory.join("notifications"))?;
+        let mut store = store::Store::open_current(self.directory.join("notifications"))?;
         let now = access::now()?;
         let latest = store
             .destination(destination_id)?
@@ -573,6 +624,12 @@ impl Supervisor {
             )?;
             return Ok(());
         }
+        store.authorize(
+            &self.directory,
+            &destination,
+            ProcessRight::Observe,
+            current,
+        );
         let page = match result {
             Ok(Ok(response)) if response.error.is_none() => {
                 serde_json::from_value::<SourcePage>(response.result).ok()
@@ -802,7 +859,7 @@ impl Supervisor {
             Err(_) => None,
         };
         let registrations = self.registrations.lock().await;
-        let store = store::Store::open_current(self.directory.join("notifications"))?;
+        let mut store = store::Store::open_current(self.directory.join("notifications"))?;
         let now = access::now()?;
         let Some(record) = store.destination(destination_id)? else {
             return Ok(());
@@ -820,6 +877,12 @@ impl Supervisor {
         {
             return Ok(());
         }
+        store.authorize(
+            &self.directory,
+            &destination,
+            ProcessRight::History,
+            current,
+        );
         let page = response
             .filter(|response| response.error.is_none())
             .and_then(|response| serde_json::from_value::<SourceBudgetPage>(response.result).ok());
