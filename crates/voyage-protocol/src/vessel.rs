@@ -527,6 +527,16 @@ pub enum VesselCommand {
         alias: String,
         label: String,
     },
+    /// Resolve the exact original start without repeating provider effects.
+    /// An absent original is durably fenced as not admitted.
+    ResolveAccountEnrollment {
+        command_id: Uuid,
+        enrollment_id: Uuid,
+        workspace: PathBuf,
+        connection_id: Uuid,
+        alias: String,
+        label: String,
+    },
     CancelAccountEnrollment {
         command_id: Uuid,
         enrollment_id: Uuid,

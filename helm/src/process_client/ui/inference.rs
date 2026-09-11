@@ -129,18 +129,10 @@ pub(super) fn parse(text: &str) -> Option<(Field, &str)> {
 pub(super) struct Controls {
     picker: Option<Picker>,
     access: access::AccessControls,
-    catalogs: std::collections::BTreeMap<Uuid, DraftCatalog>,
     draft_generations: std::collections::BTreeMap<Uuid, Uuid>,
-    draft_checks: std::collections::BTreeMap<Uuid, std::time::Instant>,
     visible: std::cell::Cell<bool>,
     hits: std::cell::RefCell<Vec<(ratatui::layout::Rect, Destination, Field)>>,
     choices: std::cell::RefCell<Vec<(ratatui::layout::Rect, usize)>>,
-}
-struct DraftCatalog {
-    provider: String,
-    context: [u8; 32],
-    observed: std::time::Instant,
-    models: Vec<crate::provider::ModelInfo>,
 }
 struct Picker {
     id: Uuid,
@@ -451,7 +443,8 @@ impl App {
         }) else {
             return;
         };
-        if picker.original.model != latest.model
+        if picker.original.account != latest.account
+            || picker.original.model != latest.model
             || picker.original.provider != latest.provider
             || picker.original.reasoning_effort != latest.reasoning_effort
             || picker.original.service_tier != latest.service_tier
@@ -476,10 +469,30 @@ impl App {
     pub(super) fn inference_models(
         &mut self,
         id: Uuid,
-        context: Option<[u8; 32]>,
+        _context: Option<[u8; 32]>,
         generation: Option<Uuid>,
         result: std::result::Result<serde_json::Value, String>,
     ) {
+        let stale = self
+            .inference
+            .picker
+            .as_ref()
+            .filter(|p| p.id == id)
+            .is_some_and(|p| {
+                self.inference_settings(p.destination)
+                    .map_or(true, |current| {
+                        current.account != p.original.account
+                            || current.provider != p.original.provider
+                            || current.model != p.original.model
+                    })
+            });
+        if stale {
+            if let Some(picker) = self.inference.picker.as_mut() {
+                picker.loading = false;
+                picker.notice = "Account/model changed while loading; reopen the picker. Stale catalog discarded.".into();
+            }
+            return;
+        }
         let Some(picker) = self.inference.picker.as_mut().filter(|p| p.id == id) else {
             return;
         };
@@ -497,74 +510,10 @@ impl App {
                 serde_json::from_value::<Vec<crate::provider::ModelInfo>>(value.clone()).ok()
             })
             .filter(|models| crate::provider::validate_models(models, &[]).is_ok());
-        if let Destination::Draft(draft_id) = picker.destination {
-            self.inference.catalogs.remove(&draft_id);
-            if let (Some(context), Some(models)) = (context, models.as_ref()) {
-                self.inference.catalogs.insert(
-                    draft_id,
-                    DraftCatalog {
-                        provider: picker.original.provider.clone(),
-                        context,
-                        observed: std::time::Instant::now(),
-                        models: models.clone(),
-                    },
-                );
-            }
-        }
         picker.install_models(models);
     }
     pub(super) fn refresh_draft_capabilities(&mut self) {
         self.account_tick();
-    }
-    pub(super) fn draft_inference_models(
-        &mut self,
-        id: Uuid,
-        provider: String,
-        context: Option<[u8; 32]>,
-        generation: Uuid,
-        models: Option<Vec<crate::provider::ModelInfo>>,
-    ) {
-        if !self.new_drafts.contains_key(&id)
-            || self.inference.draft_generations.get(&id) != Some(&generation)
-        {
-            return;
-        }
-        self.inference.catalogs.remove(&id);
-        let models = models.filter(|models| {
-            context.is_some() && crate::provider::validate_models(models, &[]).is_ok()
-        });
-        if let (Some(context), Some(models)) = (context, models.as_ref()) {
-            self.inference.catalogs.insert(
-                id,
-                DraftCatalog {
-                    provider,
-                    context,
-                    observed: std::time::Instant::now(),
-                    models: models.clone(),
-                },
-            );
-        }
-        if let Some(picker) = self
-            .inference
-            .picker
-            .as_mut()
-            .filter(|p| p.destination == Destination::Draft(id))
-        {
-            self.inference.choices.borrow_mut().clear();
-            picker.install_models(models);
-        }
-    }
-    pub(super) fn draft_known_model(
-        &self,
-        id: Uuid,
-        provider: &str,
-        model: &str,
-    ) -> Option<&crate::provider::ModelInfo> {
-        self.inference
-            .catalogs
-            .get(&id)
-            .filter(|c| c.provider == provider && c.observed.elapsed().as_secs() < 300)
-            .and_then(|c| c.models.iter().find(|m| m.id == model))
     }
     fn select_inference(&mut self, mut picker: Picker, value: &str) -> Result<()> {
         ensure!(

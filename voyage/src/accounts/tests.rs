@@ -955,3 +955,22 @@ fn private_registry_lock_contention_is_bounded_and_failed_mutation_is_atomic() {
     assert_eq!(r.list(|_| true).unwrap().1.len(), 0);
     assert_eq!(std::fs::read(r.root.join("registry.json")).unwrap(), before);
 }
+
+#[tokio::test]
+async fn resolve_enrollment_fences_absent_start_and_never_replays_provider_effects() {
+    let (_dir, r) = registry();
+    let mut fixture = HttpFixture::new(vec![]).await;
+    let s = service(&r, &fixture);
+    let req = request(&r);
+    let fenced = s.resolve(req.clone()).unwrap();
+    assert_eq!(fenced.state, EnrollmentState::Cancelled);
+    assert!(!fenced.effects_may_have_occurred);
+    assert_eq!(s.start(req.clone()).await.unwrap(), fenced);
+    let mut conflict = req.clone();
+    conflict.alias = "different".into();
+    assert!(s.resolve(conflict).is_err());
+    let status = s.status(req.enrollment_id, &req.actor).unwrap();
+    assert!(status.user_code.is_none());
+    assert_eq!(status.status, fenced);
+    fixture.complete(0).await;
+}

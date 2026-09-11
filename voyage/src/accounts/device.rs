@@ -61,6 +61,60 @@ impl DeviceService {
             OAuthEndpoints::default(),
         )
     }
+    /// Exact observation/negative-admission fence. A late start under this
+    /// envelope sees the retained terminal record and cannot contact the provider.
+    pub fn resolve(&self, request: EnrollmentRequest) -> Result<EnrollmentStatus> {
+        ensure!(
+            !request.command_id.is_nil()
+                && !request.enrollment_id.is_nil()
+                && request.command_id != request.enrollment_id,
+            "invalid enrollment identity"
+        );
+        text(&request.alias)?;
+        text(&request.label)?;
+        self.authorized(&request.actor, request.connection_id)?;
+        self.registry.transaction(|db| {
+            if let Some(r) = db.enrollments.iter_mut().find(|r| {
+                [request.command_id, request.enrollment_id]
+                    .iter()
+                    .any(|id| {
+                        *id == r.request.command_id
+                            || *id == r.request.enrollment_id
+                            || r.cancellations.contains(id)
+                    })
+            }) {
+                ensure!(r.request == request, "enrollment command identity conflict");
+                expire(r);
+                return Ok(r.status.clone());
+            }
+            ensure!(
+                db.enrollments.len() < 64,
+                "retained enrollment capacity reached; owner recovery required"
+            );
+            ensure!(
+                db.connections.iter().any(|c| c.id == request.connection_id
+                    && c.transports == [Transport::ChatgptOauth]
+                    && c.endpoint == "https://chatgpt.com/backend-api/codex"),
+                "unsupported enrollment connection"
+            );
+            let status = EnrollmentStatus {
+                enrollment_id: request.enrollment_id,
+                state: EnrollmentState::Cancelled,
+                account_id: None,
+                expires_at: now(),
+                effects_may_have_occurred: false,
+            };
+            db.enrollments.push(Record {
+                request,
+                status: status.clone(),
+                device: None,
+                next_poll: 0,
+                cancellations: Vec::new(),
+            });
+            Ok(status)
+        })
+    }
+
     pub async fn start(&self, request: EnrollmentRequest) -> Result<EnrollmentStatus> {
         ensure!(
             !request.command_id.is_nil()

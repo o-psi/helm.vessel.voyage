@@ -646,8 +646,24 @@ impl App {
                     caps["vessel_id"] == host.to_string(),
                     "Host identity changed"
                 );
-                let v = client.request(command).await?;
+                let resolve = match &command {
+                    VesselCommand::ResolveAccountEnrollment {
+                        enrollment_id,
+                        workspace,
+                        ..
+                    } => Some((*enrollment_id, workspace.clone())),
+                    _ => None,
+                };
+                let mut v = client.request(command).await?;
                 if private {
+                    if let Some((enrollment_id, workspace)) = resolve {
+                        v = client
+                            .request(VesselCommand::PrivateAccountEnrollment {
+                                enrollment_id,
+                                workspace,
+                            })
+                            .await?;
+                    }
                     Ok(Reply::Private(serde_json::from_value(v)?))
                 } else {
                     Ok(Reply::Mutation)
@@ -661,16 +677,29 @@ impl App {
     }
     fn poll_account_enrollment(&mut self) -> Result<()> {
         let p = self.accounts.picker.as_ref().context("view closed")?;
-        let Some(id) = p.intent.as_ref().and_then(enrollment_id) else {
+        let Some(intent) = &p.intent else {
             return Ok(());
         };
-        self.private_request(
-            VesselCommand::PrivateAccountEnrollment {
-                enrollment_id: id,
-                workspace: p.workspace.clone(),
-            },
-            true,
-        )
+        let VesselCommand::EnrollAccount {
+            command_id,
+            enrollment_id,
+            workspace,
+            connection_id,
+            alias,
+            label,
+        } = &intent.command
+        else {
+            anyhow::bail!("invalid original enrollment intent");
+        };
+        let command = VesselCommand::ResolveAccountEnrollment {
+            command_id: *command_id,
+            enrollment_id: *enrollment_id,
+            workspace: workspace.clone(),
+            connection_id: *connection_id,
+            alias: alias.clone(),
+            label: label.clone(),
+        };
+        self.private_request(command, true)
     }
     fn begin_enrollment(&mut self, connection: Uuid) -> Result<()> {
         let p = self.accounts.picker.as_mut().context("view closed")?;

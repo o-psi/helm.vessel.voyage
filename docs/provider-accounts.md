@@ -56,7 +56,9 @@ The executing host retains the polling secret, exchanges authorization, and stor
 provider tokens privately. They are never forwarded through Helm or another Vessel.
 Enrollment does not switch a voyage or start inference. Reopen the original retained
 enrollment after disconnect; do not create another attempt because a response was
-lost. Cancel is an explicit stable command. If publication won the race, the result
+lost. Resolving the exact original start either observes its retained state or
+atomically fences an absent request as not admitted; a late original start cannot
+then contact the provider. Cancel is an explicit stable command. If publication won the race, the result
 is success, not a fictitious undo. If an exchange outcome is uncertain, the host
 retains that state and does not retry the exchange. Local cancellation/expiry is not
 proof of upstream revocation.

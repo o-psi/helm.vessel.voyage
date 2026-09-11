@@ -432,6 +432,29 @@ impl Supervisor {
                 drop(workers);
                 Ok(serde_json::to_value(receive.await??)?)
             }
+            VesselCommand::ResolveAccountEnrollment {
+                command_id,
+                enrollment_id,
+                workspace,
+                connection_id,
+                alias,
+                label,
+            } => {
+                scope.check(&self.directory, &workspace, ProcessRight::AccountEnroll)?;
+                ensure!(
+                    scope.connection_allowed(connection_id),
+                    "enrollment connection denied"
+                );
+                let request = EnrollmentRequest {
+                    command_id,
+                    enrollment_id,
+                    connection_id,
+                    alias,
+                    label,
+                    actor: scope.actor(&workspace),
+                };
+                Ok(serde_json::to_value(self.devices.resolve(request)?)?)
+            }
             VesselCommand::CancelAccountEnrollment {
                 command_id,
                 enrollment_id,

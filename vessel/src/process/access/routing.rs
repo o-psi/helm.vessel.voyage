@@ -34,6 +34,7 @@ impl Supervisor {
                 | VesselCommand::ResolveStartAccount { .. }
                 | VesselCommand::EnrollAccount { .. }
                 | VesselCommand::CancelAccountEnrollment { .. }
+                | VesselCommand::ResolveAccountEnrollment { .. }
                 | VesselCommand::PrivateAccountEnrollment { .. }
         ) {
             ensure!(
@@ -75,6 +76,7 @@ impl Supervisor {
             | VesselCommand::ResolveStartAccount { .. }
             | VesselCommand::EnrollAccount { .. }
             | VesselCommand::CancelAccountEnrollment { .. }
+            | VesselCommand::ResolveAccountEnrollment { .. }
             | VesselCommand::PrivateAccountEnrollment { .. }) => {
                 self.host_accounts(
                     command,

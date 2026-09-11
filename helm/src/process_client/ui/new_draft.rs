@@ -696,17 +696,6 @@ impl App {
             .clone()
             .context("Resolve executing-host inference with /account first")
     }
-    pub(super) fn draft_inference_catalog(&self, id: Uuid) -> Result<(crate::Config, PathBuf)> {
-        let draft = self.new_drafts.get(&id).context("draft unavailable")?;
-        Ok((
-            draft
-                .saved
-                .config
-                .clone()
-                .context("Remote draft catalog unavailable; use an explicit model ID")?,
-            draft.saved.workspace.clone(),
-        ))
-    }
     pub(super) fn save_draft_inference(
         &mut self,
         id: Uuid,
