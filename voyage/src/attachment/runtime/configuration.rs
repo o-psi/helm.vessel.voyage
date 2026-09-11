@@ -1,4 +1,5 @@
 use super::*;
+use anyhow::{Context, ensure};
 impl ManagedSessionOwner {
     pub(crate) async fn check_access_revision(&self, expected: u64) -> anyhow::Result<()> {
         let shared = self.store.clone();

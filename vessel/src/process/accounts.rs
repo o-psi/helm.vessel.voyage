@@ -303,10 +303,21 @@ impl Supervisor {
                 workspace,
                 transport,
             } => {
-                scope.check(&self.directory, &workspace, ProcessRight::AccountUse)?;
+                let can_use = scope
+                    .check(&self.directory, &workspace, ProcessRight::AccountUse)
+                    .is_ok();
+                let right = if can_use {
+                    ProcessRight::AccountUse
+                } else {
+                    ProcessRight::AccountEnroll
+                };
+                scope.check(&self.directory, &workspace, right)?;
+                let can_enroll = scope
+                    .check(&self.directory, &workspace, ProcessRight::AccountEnroll)
+                    .is_ok();
                 let registry = Registry::default_host()?;
                 // Avoid reentering Registry from its locked list callback.
-                let (revision, all) = registry.list(|_| true)?;
+                let (revision, all) = registry.list(|_| can_use)?;
                 let accounts: Vec<_> = all
                     .into_iter()
                     .filter(|a| scope.account_allowed(&registry, a.id, a.connection_id, &workspace))
@@ -323,11 +334,11 @@ impl Supervisor {
                     .into_iter()
                     .filter(|c| {
                         accounts.iter().any(|a| a.connection_id == c.id)
-                            || scope.connection_allowed(c.id)
+                            || (can_enroll && scope.connection_allowed(c.id))
                     })
                     .filter(|c| transport.is_none_or(|t| c.transports.contains(&t)))
                     .collect();
-                scope.check(&self.directory, &workspace, ProcessRight::AccountUse)?;
+                scope.check(&self.directory, &workspace, right)?;
                 Ok(json!({"revision": revision, "accounts": accounts, "connections": connections}))
             }
             VesselCommand::AccountDefaults { workspace } => {
@@ -456,6 +467,7 @@ impl Supervisor {
             command_id,
             session_id,
             workspace,
+            base_config_path,
             account,
             model,
             reasoning_effort,
@@ -465,6 +477,7 @@ impl Supervisor {
                 command_id,
                 session_id,
                 workspace,
+                config_path,
                 account,
                 model,
                 reasoning_effort,
@@ -474,6 +487,7 @@ impl Supervisor {
                 *command_id,
                 *session_id,
                 workspace.clone(),
+                config_path.clone(),
                 account.clone(),
                 model.clone(),
                 reasoning_effort.clone(),
@@ -483,6 +497,7 @@ impl Supervisor {
                 command_id,
                 session_id,
                 workspace,
+                config_path,
                 account,
                 model,
                 reasoning_effort,
@@ -492,6 +507,7 @@ impl Supervisor {
                 *command_id,
                 *session_id,
                 workspace.clone(),
+                config_path.clone(),
                 account.clone(),
                 model.clone(),
                 reasoning_effort.clone(),
@@ -508,6 +524,13 @@ impl Supervisor {
             _ => ProcessRight::Create,
         };
         scope.check(&self.directory, &workspace, right)?;
+        ensure!(
+            base_config_path.is_none() || matches!(scope, Scope::Owner),
+            "configured account creation requires owner-local authority"
+        );
+        if let Some(path) = &base_config_path {
+            ensure!(path.is_absolute(), "configuration path must be absolute");
+        }
         if let Scope::Session(g) = &scope {
             ensure!(g.session_id == session_id, "session creation scope denied");
         }
@@ -517,6 +540,7 @@ impl Supervisor {
             command_id,
             session_id,
             workspace: workspace.clone(),
+            config_path: base_config_path.clone(),
             account: account.clone(),
             model: model.clone(),
             reasoning_effort: reasoning_effort.clone(),
@@ -547,7 +571,12 @@ impl Supervisor {
                 .clone()
         };
         let _lock = lock.lock().await;
-        let mut config = voyage_runtime::Config::load(None)?;
+        let mut config = if let Some(path) = &base_config_path {
+            store::load_bounded::<voyage_runtime::launch_config::LaunchConfig>(path, 1024 * 1024)?
+                .resolve(&workspace)?
+        } else {
+            voyage_runtime::Config::load(None)?
+        };
         config.select_account(account)?;
         config.model = model;
         config.reasoning_effort = reasoning_effort;
