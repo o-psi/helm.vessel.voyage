@@ -96,7 +96,11 @@ execution authority and authorized canonical roots, opens every component withou
 following a replaced symlink, requires a bounded regular file, and checks authority
 again before returning data. A delegated registry excluding `read_file` also
 excludes the broker capability. Private account/session/configuration stores are
-refused even beneath a broadly allowed host root. No private ToolContext, provider credential,
+refused even beneath a broadly allowed host root. Actual loaded configuration
+sources retain deny-only pathname and file-identity provenance in private launch
+settings across resume/reconfiguration; hard-linked host files are refused. Legacy
+settings without source provenance cannot activate the host-read capability until
+a fresh configuration load establishes that boundary. This never widens roots. No private ToolContext, provider credential,
 workflow environment, human terminal input, shell, write or network capability is
 sent to the extension. The initial broker requires offset zero and the complete
 file to fit the requested bound, at most 64 KiB, then redacts the complete value.
@@ -104,9 +108,11 @@ It refuses partial/range reads rather than enabling reconstruction of secret
 fragments across separately redacted ranges.
 
 Progress is protocol-bounded and retained privately for the final typed result,
-with a total of at most 64 KiB and the current output budget. Full output passes
-the existing split-text/structured-content confidentiality checks and artifact
-adapter. **Live progress presentation is not integrated.** Raw stderr goes to
+with a total of at most 64 KiB and the current output budget. Decoded progress/result/input leaves are checked together before JSON punctuation
+can hide split configured-secret fragments. Full output additionally passes the
+existing split-text/structured-content confidentiality checks and artifact adapter.
+Post-protocol confidentiality/budget/artifact failure quarantines the package and
+records a failed result instead of claiming protocol success was accepted output. **Live progress presentation is not integrated.** Raw stderr goes to
 null; refusal diagnostics are bounded authored strings, not child error bodies.
 
 ## Update, disable, removal and interruption
@@ -128,7 +134,10 @@ there is no hot-swapped command path under a running call.
 Owned child observers survive dropped callers and bounded cleanup waits. They
 retain the original process-session identity until positive descendant observation
 and child wait. A timed-out observation retains its original task; retries do not
-start duplicate kills. Run resource management closes SDK admission, drains its
+start duplicate kills. Blocking host-read workers remain owned by their invocation
+and must drain before its reservation can be released or bytes replaced. Positive
+child observation is retained across a failed ledger write, avoiding unsafe PID
+recapture and permitting a later persistence retry. Run resource management closes SDK admission, drains its
 tasks and checks all retained children. Terminal results, cancellation requests,
 EOF, released locks and stored PIDs are not cleanup proof.
 
@@ -163,6 +172,10 @@ restart never replays a previously admitted handler. No model-authored messages
 are fabricated to represent runtime lifecycle effects.
 
 ## Explicit remaining scope
+
+See the [scheduled verification plan](test-executable-packages.md) for commands,
+prerequisites and the distinction between written tests and actual evidence.
+
 
 - Live progress presentation and the complete package-specific diagnostic surface
   remain unfinished. Progress is currently retained in the checked final result.

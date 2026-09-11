@@ -3,7 +3,9 @@ mod catalog;
 pub mod cli;
 pub(crate) mod executable;
 mod index;
+mod private_files;
 pub(crate) mod runtime;
+pub use private_files::PrivateFile;
 mod store;
 
 use anyhow::{Result, ensure};

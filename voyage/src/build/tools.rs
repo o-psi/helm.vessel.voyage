@@ -57,7 +57,7 @@ pub async fn build_tools(
         let manager = Arc::new(crate::extensions::runtime::Manager::default());
         resources.own_extensions(manager.clone())?;
         tools.own_extensions(manager.clone());
-        if crate::extensions::runtime::register(&mut tools, manager, policy).is_err() {
+        if crate::extensions::runtime::register(&mut tools, manager, policy, config).is_err() {
             tracing::warn!(
                 "executable package registration unavailable; inspect exact package reviews"
             );

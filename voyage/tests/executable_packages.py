@@ -19,12 +19,12 @@ from delivery_recovery import Fixture, wait_for
 
 
 class Extensions(Fixture):
-    def session(self, required=True, access="unrestricted"):
+    def session(self, required=True, access="unrestricted", config_in_workspace=False):
         session = str(uuid.uuid4())
         self.sessions.append(session)
-        config = self.root / (session + ".toml")
-        config.write_text('provider = "chatgpt-oauth"\nmodel = "fixture-model"\n'
-            f'chatgpt_base_url = "http://127.0.0.1:{self.provider.server_port}"\n'
+        config = (self.workspace if config_in_workspace else self.root) / (session + ".toml")
+        config.write_text('provider = "openai-responses"\nmodel = "fixture-model"\napi_key_required = false\n'
+            f'base_url = "http://127.0.0.1:{self.provider.server_port}"\n'
             'provider_retry_attempts = 1\ncontext_window = 0\ncommand_timeout_secs = 20\n'
             f'access = {json.dumps(access)}\n[sandbox]\nmode = "{"required" if required else "off"}"\n')
         config.chmod(0o600)
@@ -180,6 +180,10 @@ def main():
         _, snapshot = fixture.tool(session, "ext_reader_read_text", {"path": "allowed.txt"})
         assert "brokered-file-marker" in last_output(snapshot)
         fixture.tool(session, "ext_reader_read_text", {"path": "/etc/passwd"}, success=False)
+        private_session = fixture.session(config_in_workspace=True)
+        fixture.tool(private_session, "ext_reader_read_text", {"path": private_session + ".toml"}, success=False)
+        os.link(fixture.workspace / "allowed.txt", fixture.workspace / "hardlink.txt")
+        fixture.tool(session, "ext_reader_read_text", {"path": "hardlink.txt"}, success=False)
         fixture.record("separately-authorized-host-read-and-refusal", snapshot)
         fixture.cli("disable", "conformance", "--expected", next_sha)
         fixture.tool(session, "ext_conformance_probe", {"mode": "echo"}, success=False)

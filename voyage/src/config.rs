@@ -67,6 +67,10 @@ impl ProviderKind {
     }
 }
 
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
@@ -79,6 +83,12 @@ pub struct Config {
     #[serde(skip)]
     pub vessel_context: Option<crate::tools::VesselContext>,
     pub sandbox: crate::sandbox::Settings,
+    /// Deny-only source provenance retained in private launch settings. These
+    /// entries never grant file access or execution; display projections omit them.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub extension_private_files: Vec<crate::extensions::PrivateFile>,
+    #[serde(skip_serializing_if = "is_false")]
+    pub extension_private_files_complete: bool,
     /// Process-local access updates; never persisted or delegated as authority.
     #[serde(skip)]
     pub live_access: Option<std::sync::Arc<crate::policy::LiveAccess>>,
@@ -464,6 +474,8 @@ impl Default for Config {
             live_access: None,
             provider_authority: None,
             artifact_scope: None,
+            extension_private_files: Vec::new(),
+            extension_private_files_complete: false,
             policy_profile: None,
             policy_defaults: None,
             policy_explicit: Default::default(),
@@ -477,6 +489,8 @@ impl Config {
     /// placeholders deliberately cannot restore the concealed bindings.
     pub fn diagnostic_toml(&self) -> Result<String> {
         let mut displayed = self.clone();
+        displayed.extension_private_files.clear();
+        displayed.extension_private_files_complete = false;
         displayed.access = Some(self.access_mode());
         for value in displayed
             .env
@@ -518,15 +532,39 @@ impl Config {
         config.validate()?;
         Ok(config)
     }
+    pub(crate) fn protect_extension_file(
+        &mut self,
+        path: &Path,
+        metadata: &std::fs::Metadata,
+    ) -> Result<()> {
+        let source = crate::extensions::PrivateFile::capture(path, metadata)?;
+        if !self.extension_private_files.contains(&source) {
+            anyhow::ensure!(
+                self.extension_private_files.len() < 256,
+                "private configuration provenance capacity reached"
+            );
+            self.extension_private_files.push(source);
+        }
+        Ok(())
+    }
     pub fn load(explicit: Option<&Path>) -> Result<Self> {
+        use std::io::Read;
         let path = explicit.map(PathBuf::from).or_else(default_config_path);
         let mut config = if let Some(path) = path.filter(|p| p.exists()) {
-            let text = fs::read_to_string(&path)
+            let file = fs::File::open(&path)
                 .with_context(|| format!("failed to read config {}", path.display()))?;
-            toml::from_str(&text).with_context(|| format!("invalid config {}", path.display()))?
+            let metadata = file.metadata()?;
+            let mut text = String::new();
+            file.take(1024 * 1024 + 1).read_to_string(&mut text)?;
+            anyhow::ensure!(text.len() <= 1024 * 1024, "configuration exceeds 1 MiB");
+            let mut config: Self = toml::from_str(&text)
+                .with_context(|| format!("invalid config {}", path.display()))?;
+            config.protect_extension_file(&path, &metadata)?;
+            config
         } else {
             Self::default()
         };
+        config.extension_private_files_complete = true;
         config.apply_provider_defaults();
         config.validate()?;
         Ok(config)
@@ -774,6 +812,14 @@ impl Config {
     }
 
     pub fn validate(&self) -> Result<()> {
+        anyhow::ensure!(
+            self.extension_private_files.len() <= 256
+                && self
+                    .extension_private_files
+                    .iter()
+                    .all(|file| file.path.is_absolute()),
+            "invalid private configuration provenance"
+        );
         for server in self.mcp_servers.values() {
             if let Some(url) = &server.url {
                 crate::tools::mcp::validate_http_endpoint(url)?;

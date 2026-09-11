@@ -22,6 +22,7 @@ use uuid::Uuid;
 pub(crate) struct Manager {
     state: Mutex<State>,
     read_allowed: AtomicBool,
+    private_files: Mutex<Vec<super::PrivateFile>>,
 }
 #[derive(Default)]
 struct State {
@@ -29,7 +30,30 @@ struct State {
     executors: Vec<Arc<sdk::Executor>>,
     children: Vec<Arc<OwnedChild>>,
 }
+struct OwnedRead {
+    task: tokio::sync::Mutex<Option<tokio::task::JoinHandle<Result<String>>>>,
+}
+impl OwnedRead {
+    async fn take(&self) -> Result<String> {
+        let mut task = self.task.lock().await;
+        let result = task
+            .as_mut()
+            .ok_or_else(|| anyhow::anyhow!("host read already drained"))?
+            .await;
+        *task = None;
+        result.map_err(|_| anyhow::anyhow!("host read worker interrupted"))?
+    }
+    async fn drain(&self) {
+        let mut task = self.task.lock().await;
+        if let Some(handle) = task.as_mut() {
+            let _ = handle.await;
+        }
+        *task = None;
+    }
+}
 struct OwnedChild {
+    invocation: Uuid,
+    reads: Mutex<Vec<Arc<OwnedRead>>>,
     child: tokio::sync::Mutex<Option<tokio::process::Child>>,
     #[cfg(target_os = "linux")]
     identity: Option<Arc<crate::tools::process::SessionIdentity>>,
@@ -41,6 +65,8 @@ struct OwnedChild {
 impl OwnedChild {
     fn no_child(reservation: crate::host_resources::extensions::ExtensionReservation) -> Arc<Self> {
         Arc::new(Self {
+            invocation: Uuid::nil(),
+            reads: Mutex::new(Vec::new()),
             child: tokio::sync::Mutex::new(None),
             #[cfg(target_os = "linux")]
             identity: None,
@@ -106,6 +132,13 @@ impl OwnedChild {
                     // failure; never try to recapture a PID we already reaped.
                     owned.process_observed.store(true, Ordering::Release);
                 }
+                let reads = match owned.reads.lock() {
+                    Ok(reads) => reads.clone(),
+                    Err(_) => return false,
+                };
+                // A cancelled broker future must not let package replacement
+                // race a still-running blocking filesystem worker.
+                futures_util::future::join_all(reads.iter().map(|read| read.drain())).await;
                 if owned.reservation.release_observed().is_err() {
                     return false;
                 }
@@ -134,6 +167,35 @@ impl sdk::Lease for ChildLease {
     }
 }
 impl Manager {
+    fn start_read(
+        &self,
+        invocation: Uuid,
+        work: impl FnOnce() -> Result<String> + Send + 'static,
+    ) -> Result<Arc<OwnedRead>> {
+        let state = self
+            .state
+            .lock()
+            .map_err(|_| anyhow::anyhow!("extension read owner unavailable"))?;
+        ensure!(!state.closed, "extension read admission closed");
+        let child = state
+            .children
+            .iter()
+            .find(|child| child.invocation == invocation)
+            .ok_or_else(|| anyhow::anyhow!("extension read invocation unowned"))?;
+        let mut reads = child
+            .reads
+            .lock()
+            .map_err(|_| anyhow::anyhow!("extension reads unavailable"))?;
+        ensure!(
+            reads.len() < 32 && !child.process_observed.load(Ordering::Acquire),
+            "extension read admission closed or full"
+        );
+        let read = Arc::new(OwnedRead {
+            task: tokio::sync::Mutex::new(Some(tokio::task::spawn_blocking(work))),
+        });
+        reads.push(read.clone());
+        Ok(read)
+    }
     pub(crate) fn restrict_host_read(&self, allowed: bool) {
         if !allowed {
             self.read_allowed.store(false, Ordering::Release);
@@ -198,7 +260,7 @@ impl sdk::LaunchAdapter for Adapter {
             .get(&identity.invocation)
             .cloned()
             .ok_or_else(|| anyhow::anyhow!("extension invocation context expired"))?;
-        context.policy.check_execution_authority()?;
+        context.policy.check_current()?;
         ensure!(
             Instant::now() < deadline && !context.cancellation.is_cancelled(),
             "extension launch cancelled or expired"
@@ -259,7 +321,7 @@ impl sdk::LaunchAdapter for Adapter {
             identity.run,
             &action,
         )?;
-        if context.policy.check_execution_authority().is_err()
+        if context.policy.check_current().is_err()
             || context.cancellation.is_cancelled()
             || Instant::now() >= deadline
         {
@@ -283,6 +345,8 @@ impl sdk::LaunchAdapter for Adapter {
         let reader = child.stdout.take();
         let writer = child.stdin.take();
         let owned = Arc::new(OwnedChild {
+            invocation: identity.invocation,
+            reads: Mutex::new(Vec::new()),
             child: tokio::sync::Mutex::new(Some(child)),
             #[cfg(target_os = "linux")]
             identity: process_identity,
@@ -335,7 +399,7 @@ impl sdk::Host for Broker {
             Instant::now() < deadline && !context.cancellation.is_cancelled(),
             "extension host read expired"
         );
-        context.policy.check_execution_authority()?;
+        context.policy.check_current()?;
         let path = context.policy.resolve_read(std::path::Path::new(path))?;
         // A broad user root is not consent to disclose Voyage account/session
         // stores to an extension. These private interfaces are never brokered.
@@ -356,48 +420,73 @@ impl sdk::Host for Broker {
                 );
             }
         }
+        let private_files = self
+            .manager
+            .private_files
+            .lock()
+            .map_err(|_| anyhow::anyhow!("private file provenance unavailable"))?
+            .clone();
         let policy = context.policy.clone();
-        let value = tokio::task::spawn_blocking(move || -> Result<String> {
-            use cap_fs_ext::{DirExt, FollowSymlinks, OpenOptionsFollowExt, OpenOptionsSyncExt};
-            use std::io::{Read, Seek};
-            policy.check_execution_authority()?;
-            // Traverse the exact authorized canonical path descriptor-relatively,
-            // refusing symlink replacement at every component and bounded I/O.
-            let mut dir = cap_std::fs::Dir::open_ambient_dir("/", cap_std::ambient_authority())?;
-            let parent = path
-                .parent()
-                .ok_or_else(|| anyhow::anyhow!("invalid host read path"))?;
-            for part in parent.components() {
-                match part {
-                    std::path::Component::RootDir => {}
-                    std::path::Component::Normal(part) => dir = dir.open_dir_nofollow(part)?,
-                    _ => anyhow::bail!("invalid host read path"),
+        let read = self
+            .manager
+            .start_read(identity.invocation, move || -> Result<String> {
+                use cap_fs_ext::{
+                    DirExt, FollowSymlinks, OpenOptionsFollowExt, OpenOptionsSyncExt,
+                };
+                use std::io::{Read, Seek};
+                policy.check_current()?;
+                // Traverse the exact authorized canonical path descriptor-relatively,
+                // refusing symlink replacement at every component and bounded I/O.
+                let mut dir =
+                    cap_std::fs::Dir::open_ambient_dir("/", cap_std::ambient_authority())?;
+                let parent = path
+                    .parent()
+                    .ok_or_else(|| anyhow::anyhow!("invalid host read path"))?;
+                for part in parent.components() {
+                    match part {
+                        std::path::Component::RootDir => {}
+                        std::path::Component::Normal(part) => dir = dir.open_dir_nofollow(part)?,
+                        _ => anyhow::bail!("invalid host read path"),
+                    }
                 }
-            }
-            let mut options = cap_std::fs::OpenOptions::new();
-            options.read(true).follow(FollowSymlinks::No).nonblock(true);
-            let mut file = dir.open_with(
-                path.file_name()
-                    .ok_or_else(|| anyhow::anyhow!("invalid host read name"))?,
-                &options,
-            )?;
-            ensure!(
-                file.metadata()?.is_file() && file.metadata()?.len() <= sdk::MAX_READ as u64,
-                "host file exceeds bounded read contract"
-            );
-            file.seek(std::io::SeekFrom::Start(offset))?;
-            let mut bytes = Vec::new();
-            file.take(max_bytes as u64 + 1).read_to_end(&mut bytes)?;
-            ensure!(
-                bytes.len() <= max_bytes,
-                "host read exceeds requested bound"
-            );
-            policy.check_execution_authority()?;
-            String::from_utf8(bytes).map_err(|_| anyhow::anyhow!("host file is not UTF-8"))
-        })
-        .await
-        .map_err(|_| anyhow::anyhow!("extension host read interrupted"))??;
-        context.policy.check_execution_authority()?;
+                let mut options = cap_std::fs::OpenOptions::new();
+                options.read(true).follow(FollowSymlinks::No).nonblock(true);
+                let mut file = dir.open_with(
+                    path.file_name()
+                        .ok_or_else(|| anyhow::anyhow!("invalid host read name"))?,
+                    &options,
+                )?;
+                let metadata = file.metadata()?;
+                ensure!(
+                    metadata.is_file() && metadata.len() <= sdk::MAX_READ as u64,
+                    "host file exceeds bounded read contract"
+                );
+                #[cfg(unix)]
+                {
+                    use cap_std::fs::MetadataExt;
+                    ensure!(
+                        metadata.nlink() == 1,
+                        "hard-linked files are not brokered to executable extensions"
+                    );
+                }
+                ensure!(
+                    !private_files
+                        .iter()
+                        .any(|private| private.matches(&path, &metadata)),
+                    "extension host read targets a private configuration source"
+                );
+                file.seek(std::io::SeekFrom::Start(offset))?;
+                let mut bytes = Vec::new();
+                file.take(max_bytes as u64 + 1).read_to_end(&mut bytes)?;
+                ensure!(
+                    bytes.len() <= max_bytes,
+                    "host read exceeds requested bound"
+                );
+                policy.check_current()?;
+                String::from_utf8(bytes).map_err(|_| anyhow::anyhow!("host file is not UTF-8"))
+            })?;
+        let value = read.take().await?;
+        context.policy.check_current()?;
         ensure!(
             Instant::now() < deadline && !context.cancellation.is_cancelled(),
             "extension host read expired"
@@ -409,7 +498,7 @@ impl sdk::Host for Broker {
             identity.run == self.context.execution_id && !self.context.cancellation.is_cancelled(),
             "extension progress expired"
         );
-        self.context.policy.check_execution_authority()?;
+        self.context.policy.check_current()?;
         let mut progress = self
             .progress
             .lock()
@@ -429,6 +518,66 @@ impl sdk::Host for Broker {
         );
         Ok(())
     }
+}
+/// Check decoded leaves across progress and structured output before JSON
+/// punctuation can separate reconstructable fragments. Serialized/typed output
+/// checks remain additional independent protections in the ordinary adapter.
+fn confidential(
+    redactor: &crate::tools::Redactor,
+    progress: &[String],
+    value: &Value,
+) -> Result<()> {
+    fn walk(value: &Value, out: &mut String) {
+        match value {
+            Value::String(text) => out.push_str(text),
+            Value::Array(values) => {
+                for value in values {
+                    walk(value, out)
+                }
+            }
+            Value::Object(values) => {
+                for (key, value) in values {
+                    out.push_str(key);
+                    walk(value, out)
+                }
+            }
+            Value::Number(number) => out.push_str(&number.to_string()),
+            Value::Bool(value) => out.push_str(if *value { "true" } else { "false" }),
+            Value::Null => {}
+        }
+    }
+    let mut decoded = progress.concat();
+    walk(value, &mut decoded);
+    ensure!(
+        decoded.len() <= 2 * 1024 * 1024 && !redactor.contains_secret(&decoded),
+        "executable data contains configured confidential values"
+    );
+    // Keys must not be usable as separators between string-value fragments.
+    fn values(value: &Value, out: &mut String) {
+        match value {
+            Value::String(text) => out.push_str(text),
+            Value::Array(items) => {
+                for value in items {
+                    values(value, out)
+                }
+            }
+            Value::Object(items) => {
+                for value in items.values() {
+                    values(value, out)
+                }
+            }
+            Value::Number(number) => out.push_str(&number.to_string()),
+            Value::Bool(value) => out.push_str(if *value { "true" } else { "false" }),
+            Value::Null => {}
+        }
+    }
+    let mut strings = progress.concat();
+    values(value, &mut strings);
+    ensure!(
+        !redactor.contains_secret(&strings),
+        "executable output contains split configured confidential values"
+    );
+    Ok(())
 }
 struct ExtensionTool {
     manager: Arc<Manager>,
@@ -469,6 +618,11 @@ impl Tool for ExtensionTool {
         fn fail(_: impl std::fmt::Display) -> ToolError {
             ToolError::Failed("executable extension failed; inspect review and cleanup; do not replay uncertain effects".into())
         }
+        confidential(&context.redactor, &[], &arguments).map_err(|_| {
+            ToolError::Denied(
+                "configured confidential values cannot be passed to executable extensions".into(),
+            )
+        })?;
         let deadline = Instant::now() + context.timeout.min(Duration::from_secs(120));
         if context.policy.access_mode() == crate::config::AccessMode::ReadOnly {
             return Err(ToolError::Denied(
@@ -543,24 +697,37 @@ impl Tool for ExtensionTool {
             )
             .map_err(fail)?;
         let completion = handle.completion().await;
-        // Persist fixed effect outcome independently of positive process cleanup.
-        crate::host_resources::extensions::outcome(invocation, completion.result.is_ok())
-            .map_err(fail)?;
-        let value = completion.result.map_err(fail)?;
-        if completion.cleanup != sdk::Cleanup::Observed {
-            return Err(fail(anyhow::anyhow!("cleanup pending")));
+        let accepted = (|| -> Result<voyage_protocol::tool_result::ToolOutput, ToolError> {
+            let value = completion.result.map_err(fail)?;
+            if completion.cleanup != sdk::Cleanup::Observed {
+                return Err(fail(anyhow::anyhow!("cleanup pending")));
+            }
+            let progress = progress
+                .lock()
+                .map_err(|_| fail(anyhow::anyhow!("progress unavailable")))?;
+            confidential(&context.redactor, &progress, &value).map_err(fail)?;
+            let mut content = progress
+                .iter()
+                .map(|text| json!({"type":"text","text":text}))
+                .collect::<Vec<_>>();
+            content
+                .push(json!({"type":"text","text":serde_json::to_string(&value).map_err(fail)?}));
+            crate::tools::output::ingest(
+                json!({"content":content,"structuredContent":value}),
+                context,
+            )
+        })();
+        if accepted.is_err() {
+            self.executor.close();
         }
-        let mut content = progress
-            .lock()
-            .map_err(|_| fail(anyhow::anyhow!("progress unavailable")))?
-            .iter()
-            .map(|text| json!({"type":"text","text":text}))
-            .collect::<Vec<_>>();
-        content.push(json!({"type":"text","text":serde_json::to_string(&value).map_err(fail)?}));
-        crate::tools::output::ingest(
-            json!({"content":content,"structuredContent":value}),
-            context,
-        )
+        // Protocol success alone is not runtime result acceptance. Confidentiality,
+        // budget and artifact failures quarantine this package and record failure.
+        if let Err(error) = crate::host_resources::extensions::outcome(invocation, accepted.is_ok())
+        {
+            self.executor.close();
+            return Err(fail(error));
+        }
+        accepted
     }
 }
 
@@ -568,10 +735,16 @@ pub(crate) fn register(
     tools: &mut crate::tools::ToolRegistry,
     manager: Arc<Manager>,
     policy: &crate::policy::Policy,
+    config: &crate::Config,
 ) -> Result<()> {
     if !policy.sandbox().required() || crate::host_resources::process_scope().is_none() {
         return Ok(());
     }
+    *manager
+        .private_files
+        .lock()
+        .map_err(|_| anyhow::anyhow!("private file provenance unavailable"))? =
+        config.extension_private_files.clone();
     manager.read_allowed.store(
         tools
             .definitions()
@@ -584,6 +757,19 @@ pub(crate) fn register(
         &crate::config::default_data_dir(),
     )?);
     for snapshot in catalog.executable_snapshots()? {
+        if snapshot
+            .archive
+            .manifest
+            .capabilities
+            .iter()
+            .any(|capability| capability == "host.file.read")
+            && !config.extension_private_files_complete
+        {
+            tracing::warn!(
+                "executable host-read capability unavailable: reload configuration to establish private source provenance"
+            );
+            continue;
+        }
         let snapshot = Arc::new(snapshot);
         let definitions = sdk::Definitions::parse(
             &snapshot.archive.manifest.definitions,
@@ -661,4 +847,50 @@ pub(crate) fn register(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod confidentiality_tests {
+    use super::*;
+    #[tokio::test]
+    async fn cancelled_broker_wait_retains_blocking_read_until_drained() {
+        let (release, wait) = std::sync::mpsc::channel();
+        let read = Arc::new(OwnedRead {
+            task: tokio::sync::Mutex::new(Some(tokio::task::spawn_blocking(move || {
+                wait.recv()
+                    .map_err(|_| anyhow::anyhow!("fixture released"))?;
+                Ok("private fixture value".into())
+            }))),
+        });
+        assert!(
+            tokio::time::timeout(Duration::from_millis(10), read.take())
+                .await
+                .is_err()
+        );
+        assert!(
+            tokio::time::timeout(Duration::from_millis(10), read.drain())
+                .await
+                .is_err()
+        );
+        release.send(()).unwrap();
+        tokio::time::timeout(Duration::from_secs(1), read.drain())
+            .await
+            .unwrap();
+        assert!(read.task.lock().await.is_none());
+    }
+    #[test]
+    fn catches_progress_and_decoded_result_fragments() {
+        let redactor = crate::tools::Redactor::new(vec!["abcdef".into()]);
+        assert!(confidential(&redactor, &["abc".into()], &json!("def")).is_err());
+        assert!(confidential(&redactor, &[], &json!(["abc", "def"])).is_err());
+        assert!(confidential(&redactor, &[], &json!({"a":"abc","b":"def"})).is_err());
+        assert!(
+            confidential(
+                &redactor,
+                &["safe progress".into()],
+                &json!({"answer":"safe"})
+            )
+            .is_ok()
+        );
+    }
 }
