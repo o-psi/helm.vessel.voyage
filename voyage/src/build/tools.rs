@@ -24,24 +24,12 @@ pub async fn build_tools(
     policy: &Policy,
 ) -> Result<ToolRegistry> {
     policy.check_current()?;
-    let mut tools = ToolRegistry::standard_with_terminal_limits(
-        config.terminal_max_count,
-        config.terminal_max_unread_bytes,
-    );
-    if config.vessel.enabled {
-        tools.register(crate::tools::VesselTool::new(
-            config.vessel.clone(),
-            config.vessel_context.clone(),
-        ));
-    }
+    let mut tools = builtin_tools(config);
     if let Some(tool) = subagents {
         tools.register_subagents(tool)?;
     }
     if let Some(tool) = todos {
         tools.register_todos(tool)?;
-    }
-    if config.github_enabled && crate::github::Credential::from_config(config).is_some() {
-        tools.register(crate::github::tool::GithubTool);
     }
     if config.access_mode() == AccessMode::ReadOnly {
         // Do not even start external MCP servers in read-only mode: their
@@ -128,4 +116,24 @@ pub async fn build_tools(
         });
     }
     Ok(tools)
+}
+
+/// Built-in assembly only: no agent, inference, persistent stores, MCP discovery or
+/// PTY processes. The empty terminal manager does not open a PTY until dispatch.
+/// Keep configured capability admission shared with idle preflight.
+pub(crate) fn builtin_tools(config: &Config) -> ToolRegistry {
+    let mut tools = ToolRegistry::standard_with_terminal_limits(
+        config.terminal_max_count,
+        config.terminal_max_unread_bytes,
+    );
+    if config.vessel.enabled {
+        tools.register(crate::tools::VesselTool::new(
+            config.vessel.clone(),
+            config.vessel_context.clone(),
+        ));
+    }
+    if config.github_enabled && crate::github::Credential::from_config(config).is_some() {
+        tools.register(crate::github::tool::GithubTool);
+    }
+    tools
 }
