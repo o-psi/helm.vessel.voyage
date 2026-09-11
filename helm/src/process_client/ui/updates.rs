@@ -41,6 +41,7 @@ impl App {
             view.transcript.borrow_mut().dirty = true;
         }
         match update {
+            Update::Operator(loaded) => self.operator_loaded(*loaded),
             Update::Browser { target: _, result } => {
                 self.status = result.unwrap_or_else(|e| e);
             }
@@ -354,7 +355,11 @@ impl App {
                     }
                 }
             }
-            Update::Created { route, result } => match result {
+            Update::Created {
+                origin,
+                route,
+                result,
+            } => match result {
                 Ok(process) => {
                     let target = Target {
                         route,
@@ -368,8 +373,17 @@ impl App {
                             view.rendered.take();
                         })
                         .or_insert_with(|| View::new(process));
-                    self.archives = false;
-                    self.selected = Some(target);
+                    // A delayed branch/restore reply cannot steal a different
+                    // voyage's composer or a navigation draft already being edited.
+                    if activate_created(
+                        self.selected,
+                        origin,
+                        self.active_draft.is_some(),
+                        self.voyage_picker.is_some(),
+                    ) {
+                        self.archives = false;
+                        self.selected = Some(target);
+                    }
                     self.status = format!("New voyage ready on {}", self.route_label(route));
                 }
                 Err(error) => self.status = safe(&error),
@@ -560,5 +574,49 @@ impl App {
         }) {
             self.selected = self.ordered_targets().first().copied();
         }
+    }
+}
+
+fn activate_created(
+    selected: Option<Target>,
+    origin: Target,
+    drafting: bool,
+    navigating: bool,
+) -> bool {
+    selected == Some(origin) && !drafting && !navigating
+}
+
+#[cfg(test)]
+mod created_target_tests {
+    use super::*;
+    #[test]
+    fn late_lifecycle_reply_does_not_redirect_input() {
+        let origin = Target {
+            route: Route {
+                id: uuid::Uuid::new_v4(),
+                generation: 1,
+            },
+            session: uuid::Uuid::new_v4(),
+        };
+        let other = Target {
+            session: uuid::Uuid::new_v4(),
+            ..origin
+        };
+        assert!(activate_created(Some(origin), origin, false, false));
+        assert!(!activate_created(Some(other), origin, false, false));
+        assert!(!activate_created(Some(origin), origin, true, false));
+        assert!(!activate_created(Some(origin), origin, false, true));
+        assert!(!activate_created(
+            Some(Target {
+                route: Route {
+                    generation: 2,
+                    ..origin.route
+                },
+                ..origin
+            }),
+            origin,
+            false,
+            false
+        ));
     }
 }

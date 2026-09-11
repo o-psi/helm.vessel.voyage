@@ -99,12 +99,14 @@ pub(super) fn runtime(command: VoyageCommand) -> Result<RuntimeCommand> {
             user_directory,
             inputs,
             trust_digest,
+            optional_secret_names,
         } => RuntimeCommand::WorkflowPreview {
             id,
             scope,
             user_directory,
             inputs,
             trust_digest,
+            optional_secret_names,
         },
         VoyageCommand::WorkflowSubmit {
             command_id,
@@ -587,5 +589,32 @@ pub(super) fn required_right(command: &VoyageCommand) -> Option<ProcessRight> {
         | VoyageCommand::SetAccess { .. }
         | VoyageCommand::SetInference { .. } => None,
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod workflow_preview_tests {
+    use super::*;
+
+    #[test]
+    fn preview_translation_preserves_optional_selection() {
+        for names in [None, Some(vec![]), Some(vec!["optional".into()])] {
+            let command = VoyageCommand::WorkflowPreview {
+                id: "example".into(),
+                scope: None,
+                user_directory: None,
+                inputs: vec![],
+                trust_digest: None,
+                optional_secret_names: names.clone(),
+            };
+            let RuntimeCommand::WorkflowPreview {
+                optional_secret_names,
+                ..
+            } = runtime(command).unwrap()
+            else {
+                panic!("expected runtime preview")
+            };
+            assert_eq!(optional_secret_names, names);
+        }
     }
 }

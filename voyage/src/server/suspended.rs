@@ -55,6 +55,17 @@ async fn observe(directory: &std::path::Path, request: &RuntimeRequest) -> Resul
     }
     let registration = super::transport::registration(&directory)?;
     authenticate(&registration, request)?;
+    ensure!(
+        !(request.authorization.is_some()
+            && matches!(
+                &request.command,
+                RuntimeCommand::WorkflowPreview {
+                    user_directory: Some(_),
+                    ..
+                }
+            )),
+        "custom workflow directories require local owner authority"
+    );
     let check_retirement = || {
         check_retired(
             &directory,
@@ -295,6 +306,22 @@ async fn inspect(
             owner.observations(after, limit).await
         }
         RuntimeCommand::Decisions => owner.decisions(registration.incarnation).await,
+        RuntimeCommand::WorkflowPreview {
+            id,
+            scope,
+            user_directory,
+            inputs,
+            trust_digest,
+            optional_secret_names,
+        } => super::workflows::preview(
+            &registration.workspace,
+            &id,
+            scope.as_deref(),
+            user_directory.as_deref(),
+            &inputs,
+            trust_digest.as_deref(),
+            optional_secret_names.as_deref(),
+        ),
         RuntimeCommand::Controls { run_id, section } => {
             let mut config = config(owner, registration, directory).await?;
             {

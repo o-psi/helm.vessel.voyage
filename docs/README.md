@@ -28,7 +28,7 @@ are not presented as usable commands.
 | [Process access](process-access.md) | Scoped grants, participant execution, signed owner transfer and recovery |
 | [Security](security.md) | Authority, credentials, disclosure, terminal safety and first-release audit |
 | [Development](development.md) | Source layout, build commands and contribution workflow |
-| [UX readiness](ux-readiness.md) | Interaction inventory, known gaps and manual product acceptance gate |
+| [UX readiness](ux-readiness.md) | Interaction inventory, known gaps and objective executable verification |
 | [Design lessons](design-lessons.md) | Consolidated design principles from 13 terminal apps, source evidence and Helm design guidance |
 | [Quality](quality.md) | The remaining non-test checks and limits of their evidence |
 | [Releasing](releasing.md) | Archive contents, packaging and publication boundaries |

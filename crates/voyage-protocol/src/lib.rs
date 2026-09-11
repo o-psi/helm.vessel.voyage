@@ -35,3 +35,6 @@ pub mod coordination;
 
 pub mod browser;
 pub mod duplex;
+
+#[cfg(test)]
+mod workflow_preview_tests;

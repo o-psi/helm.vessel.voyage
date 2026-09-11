@@ -112,6 +112,9 @@ impl LiveControls {
             "policy" => active.agent.operator_policy()?,
             "todos" => active.agent.operator_todos().await?,
             "subagents" => serde_json::to_value(active.subagents.list().await)?,
+            "subagents_archive" => {
+                serde_json::to_value(active.subagents.list_archived(None, 100).await?)?
+            }
             "terminals" => {
                 let (manager, _) = active.agent.plain_terminals()?;
                 serde_json::to_value(manager.list().await?)?

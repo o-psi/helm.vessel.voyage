@@ -10,7 +10,7 @@ use crossterm::event::{KeyEvent, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::{Terminal, backend::TestBackend};
 use std::collections::BTreeMap;
 
-fn app(dir: &std::path::Path) -> App {
+pub(in crate::process_client::ui) fn app(dir: &std::path::Path) -> App {
     let clients = super::super::routes::Routes::new(vec![Client::local(dir.join("no-vessel"))]);
     let (sender, _receiver) = tokio::sync::mpsc::channel(32);
     let app = App {
@@ -50,6 +50,10 @@ fn app(dir: &std::path::Path) -> App {
         archives: false,
         help_scroll: 0,
         explore: None,
+        workflows: Default::default(),
+        operator: None,
+        operator_loading: None,
+        voyage_picker: None,
         interactions: Default::default(),
         terminal_request: None,
         completion: Default::default(),

@@ -409,11 +409,14 @@ reported terminal focus loss and private-terminal handoff. With an empty compose
 or sidebar focus, Up/Down navigate voyages; Right focuses the button and Enter
 opens its submenu. Left/Escape back out, typing focuses the composer, and F9 opens
 Actions even when the narrow layout hides the sidebar. The menu offers Rename,
-Archive/Restore, Branch, Cancel for an observed active run, Details, and separated
-Delete; Export is intentionally absent. Disabled actions explain their state
+Archive/Restore, Branch, Cancel for an observed active run, Details, Compact older
+messages, Clear conversation and separated Delete; Export is intentionally absent. Disabled actions explain their state
 requirements. Rename/branch input and typed DELETE confirmation are separate from
 the saved composer draft. Menus retain their target/incarnation and deletion
-confirmation checks that the observed history revision has not changed. Archived
+confirmation checks that the observed history revision has not changed. Clear
+requires `CLEAR`; compact requires `KEEP N` (1–100000), with the same history
+revision check. These controls explain retained evidence/omitted content and keep
+the unsent composer; compaction does not generate a summary. Archived
 voyages must be restored before rename, branch or delete. Successful deletion
 shuts down the runtime, retains its receipt with cleanup evidence, and removes
 the tombstone from Helm's voyage lists without reusing its identity.
@@ -568,8 +571,34 @@ history and message chunks, bounded to 16,384 messages / 64 MiB per reading wind
 Archived views preserve cached history but cannot fetch from a stopped owner;
 restoration is required after reopening an uncached archive. Older owners without
 stream-boundary metadata show canonical text without a speculative live preview.
-F8 opens a keyboard chooser for existing read-only overviews without editing the
-draft. A quiet voyage rail, borderless conversation and compact composer adapt
+F8 opens a keyboard chooser for typed tool/task/subagent actions, saved workflows,
+Access and Model selectors, plus machine cleanup information. Tool forms use
+executing-Voyage schemas, named task/agent references and a separate scrollable
+review before dispatch through the normal durable command path. Drafts stay intact;
+changed observations require reopening the form. Unsupported structured/private
+fields are unavailable rather than raw-JSON fallbacks. Idle tool discovery shares
+the runtime's built-in definitions without starting an agent, MCP transport or PTY
+process. It is preflight metadata, not permission/readiness; configured MCP tools
+remain unavailable there until an active runtime discovers them.
+
+Saved workflows use named executing-host inventory, exact digest trust, typed
+public inputs, isolated masked private inputs and a separate executing-host preview
+and submit confirmation. Required and supplied optional private references must
+match the preview; values never enter composer drafts or public pending envelopes.
+Private entry is discarded on cancellation, focus loss, route/owner changes or a
+five-minute deadline. Automatic invalidation keeps an input-blocking notice until
+explicit Escape, so queued private keystrokes/paste cannot fall into the composer.
+Once submission starts, the original public command is
+persisted before private handoff. Lost results reconcile that identity without
+replaying private values. Preview of a cleanly suspended voyage uses a read-only
+helper and does not start an executor merely to review a workflow.
+
+F2 opens a searchable named voyage/draft picker at all supported viewport widths.
+It searches the selected current/archive catalogue, preserves unsent composers,
+and captures stable route/session identities rather than list positions. Search
+paste never submits or selects. Opening it over a pending request does not answer
+that request; returning to the voyage restores review. F5 changes to Archives.
+ A quiet voyage rail, borderless conversation and compact composer adapt
 the supplied conversation-interface reference to terminal cells.
 Helm automatically resolves uncertain ordinary runtime commands, including interaction
 responses, without resending work. `/receipt` remains an optional diagnostic command. Helm saves its full public request, ID, revision and expiry before dispatch.
@@ -630,7 +659,17 @@ controls. Operator tool calls use the real authorized registry and admitted run
 resources, including approval and completion accounting, without inventing a model
 request. Saved workflows retain digest-bound trust and typed public inputs; secret
 shell bindings travel through an expiring private input channel and are excluded
-from durable command/history payloads. GitHub operator commands run in voyage with
+from durable command/history payloads. `WorkflowPreview` accepts an optional
+`optional_secret_names` array of declared optional secret names (not values), at
+most 32 unique names of 1–64 ASCII identifier bytes. Omission or an empty array
+retains required-only preview behavior; required names are always included
+implicitly and must not be repeated in the optional selection. Unknown names,
+public parameters and malformed or duplicate names are refused. Preview responses
+include sorted `secret_names` for the complete rendered reference set. Clients
+selecting optional secrets must require exact name-set parity before submission:
+an older Vessel/runtime rejects the new request field, and a missing or mismatched
+response set is not permission to execute a different prompt. Private submission
+and its mutation identity are unchanged. GitHub operator commands run in voyage with
 exact attended publication decisions and canonical session references.
 
 ## Human Vessel connections

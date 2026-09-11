@@ -1,12 +1,12 @@
 {
   "schema_version": 1,
-  "measured_at_utc": "2026-09-11T16:15:46.209376+00:00",
+  "measured_at_utc": "2026-09-11T17:12:09.665144+00:00",
   "source": {
-    "base_commit": "e08c54032b8d2ea9cba962696ffdea950b81df1a",
+    "base_commit": "e1f2f6f0358d5bb624ed0d5a78f3c2d4f7d68e53",
     "dirty": false,
-    "fingerprint_sha256": "f82545cd5806699440f960d54fee0e8e1a43d920e23d01749c91f4829910662a",
+    "fingerprint_sha256": "c1a84e4387d4ce9da9635c8266e831c7773746aa45e216b132cf3a2157d52b66",
     "fingerprint_method": "SHA-256 of compact sorted JSON mapping all tracked regular-file contents and symlink target text to SHA-256 hashes",
-    "note": "Clean isolated turn-end ordering worktree based on published account main. All tracked bytes remained unchanged through workspace tests and current-artifact export. Subsequent summary publication does not change measured Rust source."
+    "note": "Clean isolated issue #14 source after merging published accounts, ordering and decision fixes. All tracked bytes remained unchanged through workspace tests and current-artifact export; subsequent measurement publication does not change measured Rust source."
   },
   "platform": "x86_64-unknown-linux-gnu",
   "tools": {
@@ -14,7 +14,7 @@
     "llvm": "22.1.8",
     "cargo_llvm_cov": "0.9.1"
   },
-  "command": "cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir \"$CARGO_LLVM_COV_TARGET_DIR/coverage-report/turn-end-254-final/default-report\" -j 8",
+  "command": "cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir \"$CARGO_LLVM_COV_TARGET_DIR/coverage-report/issue14-final/default-report\" -j 8",
   "environment": {
     "CARGO_LLVM_COV_TARGET_DIR": "existing shared workspace target",
     "LLVM_COV": "llvm-cov",
@@ -22,33 +22,33 @@
   },
   "scope": "All existing workspace Rust tests and current workspace executable artifacts, default features",
   "tests": {
-    "passed": 174,
+    "passed": 212,
     "failed": 0,
     "ignored": 1
   },
   "coverage": {
     "lines": {
-      "count": 77426,
-      "covered": 17236,
-      "percent": 22.26125590886782
+      "count": 80421,
+      "covered": 20204,
+      "percent": 25.1227913107273
     },
     "functions": {
-      "count": 7817,
-      "covered": 1722,
-      "percent": 22.028911347064092
+      "count": 8017,
+      "covered": 1972,
+      "percent": 24.59772982412374
     },
     "regions": {
-      "count": 125633,
-      "covered": 26537,
-      "notcovered": 99096,
-      "percent": 21.12263497647911
+      "count": 130512,
+      "covered": 31353,
+      "notcovered": 99159,
+      "percent": 24.023078337624128
     }
   },
   "report_selection": {
-    "method": "Complete current Cargo compiler-artifact executable set from cargo test --workspace --locked --no-run --message-format=json under cargo llvm-cov show-env instrumentation; LLVM export/show retains tool-default filename exclusions; exclude distribution Rust standard-library expansion paths outside the workspace",
+    "method": "Complete current Cargo compiler-artifact executable set from instrumented cargo test --workspace --locked --no-run --message-format=json; LLVM export/show retains tool-default exclusions plus distribution Rust standard-library debug paths",
     "workspace_executables": 11,
     "executed_test_binaries": 10,
-    "logical_source_files": 398,
+    "logical_source_files": 402,
     "byte_identical_reused_source_files": 0,
     "duplicate_logical_source_paths": 0,
     "mismatched_functions": 0
@@ -56,19 +56,19 @@
   "exclusions": [
     "Ignored live-provider test",
     "Doctests",
-    "Python process checks",
-    "JavaScript browser/cleanup probes",
-    "Manual TUI workflows",
+    "Python process and PTY checks",
     "Branch coverage",
-    "Historical shared-target executables not in the complete current Cargo artifact set",
-    "Distribution Rust standard-library macro expansion paths under /usr/src/debug/rust/ (not workspace source)"
+    "Historical shared-target executable artifacts outside the complete current Cargo artifact set",
+    "Tool-default dependency/test-source exclusions and distribution Rust standard-library debug paths"
   ],
   "notes": [
-    "Raw profiles were preserved then cleared before this independent measurement; compiled artifacts and previous reports retained.",
-    "The default shared-target report included historical executables and mismatched profiles. Published totals use all 11 current Cargo workspace executables, including all 10 executed test binaries; no current workspace source was omitted. See #251.",
-    "Workspace entrypoint mtimes were refreshed without changing bytes to avoid stale cross-worktree Cargo artifacts. Corrected export has zero mismatched functions, duplicate logical paths, or reused foreign source paths.",
-    "Three focused ordering regressions passed: concurrent messages do not change last-end recency; all terminal outcomes count independent of vector order; missing ends fall back to creation, not message/observation time. Existing settled grouping, filters, and deterministic identity ties remain unchanged.",
-    "No manual TUI or live-provider journey was performed for this delivery. Linux workspace tests do not establish native macOS/Windows behavior. Coverage measures execution, not correctness.",
-    "Compared with previous account-main measurement: lines +0.0535 percentage points, functions +0.0727 percentage points, regions +0.0608 percentage points. Measurement scope and exclusions are unchanged."
+    "Workspace Rust tests passed: 212 passed, 0 failed, 1 ignored. The focused Helm UI subset and 11 real PTY assertion groups are separate evidence in docs/ux-readiness.md.",
+    "Raw profiles were cleared before this independent measurement, preserving compiled artifacts and prior report evidence. All 11 current workspace executables and the final profdata are retained with hashes locally.",
+    "The default shared-target report mixed historical objects and is not used for these totals. Complete current Cargo artifact selection retained every executed test binary and current non-test executable. See #251.",
+    "The first current-artifact export included one distribution Rust standard-library source outside the workspace; that raw report is preserved. Its toolchain-library path is excluded consistently with the existing standard-library exclusion. No current workspace source was hidden; every final filename belongs to the measured worktree with no duplicate logical source or mismatched functions.",
+    "Workspace entrypoint timestamps were refreshed before measurement to avoid stale cross-worktree artifacts, without changing tracked bytes or deleting caches.",
+    "Strict Clippy remains failing on inherited account/provider/transcript warnings; warning-mode analysis completed. Neither formatting nor coverage implies that strict lint gate passed.",
+    "Compared with prior committed record: lines +2.3444 percentage points, functions +2.2080 percentage points, regions +2.3391 percentage points.",
+    "Coverage measures execution, not correctness. No live-provider, deployed public TLS, native macOS/Windows, or whole-product certification is implied."
   ]
 }

@@ -237,6 +237,7 @@ pub fn redactor(config: &Config) -> Arc<Redactor> {
 }
 
 mod tools;
+pub(crate) use tools::builtin_tools;
 pub use tools::{build_tools, todo_tool};
 
 struct SilentEvents;
