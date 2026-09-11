@@ -65,7 +65,7 @@ Start with the [documentation index](docs/README.md). The main paths are:
 - [Current behavior](docs/current-state.md), [configuration](docs/configuration.md)
   and [operations](docs/operations.md).
 - [Security boundaries](docs/security.md) and [implementation sequence](docs/implementation.md).
-- [Native Android Helm](docs/android.md) — build, scoped WSS setup, recovery and verification limits
+- [Native Android Helm](https://github.com/o-psi/voyage/blob/main/docs/android.md) — build, scoped WSS setup, recovery and verification limits
 - [Development](docs/development.md), [validation](docs/quality.md)
   and [release procedure](docs/releasing.md).
 

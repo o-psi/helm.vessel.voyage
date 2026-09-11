@@ -28,6 +28,8 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 `connectedDebugAndroidTest` requires a running device or emulator. For an emulator,
 install `emulator` and `system-images;android-35;google_apis;x86_64` with
 `sdkmanager`, create an AVD with `avdmanager`, and start it before that command.
+Android source/APKs are not included in the existing Rust/Linux release archives;
+the release documentation index links to this repository guide.
 There is no hosted CI or signing-key setup. Debug APKs use the local Android debug
 key; production signing/distribution is not asserted. Do not commit signing keys,
 `local.properties`, SDKs, build output, or grants.
