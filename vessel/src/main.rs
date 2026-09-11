@@ -52,6 +52,15 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Read bounded content-free workspace-grant lifecycle history (runtime key required).
+    #[cfg(target_os = "linux")]
+    ConnectionAudit(vessel::process::pair_cli::ConnectionAuditArgs),
+    /// Encrypt retained workspace-pairing recovery secrets with an external runtime key.
+    #[cfg(target_os = "linux")]
+    ProtectConnections {
+        #[arg(long)]
+        directory: PathBuf,
+    },
     /// Manage provider credentials for this local executing account.
     Auth {
         #[command(subcommand)]
@@ -132,6 +141,12 @@ async fn main() -> Result<()> {
             .init(),
     }
     match &cli.command {
+        #[cfg(target_os = "linux")]
+        Some(Command::ProtectConnections { directory }) => {
+            vessel::process::pairing::protect_credentials(directory)?;
+            println!("Protected workspace-pairing recovery state; identities unchanged.");
+            return Ok(());
+        }
         Some(Command::Auth { command }) => return auth::auth(command).await,
         #[cfg(target_os = "linux")]
         Some(Command::ProcessGrant(_)) => {}
@@ -189,6 +204,8 @@ async fn main() -> Result<()> {
         Some(Command::ProcessGrant(args)) => return vessel::process::grant_cli::issue(args).await,
         Some(Command::PairInvite(args)) => return vessel::process::pair_cli::invite(args),
         Some(Command::ListConnections(args)) => return vessel::process::pair_cli::list(args),
+        #[cfg(target_os = "linux")]
+        Some(Command::ConnectionAudit(args)) => return vessel::process::pair_cli::audit(args),
         Some(Command::RevokeConnection(args)) => return vessel::process::pair_cli::revoke(args),
         _ => {}
     }

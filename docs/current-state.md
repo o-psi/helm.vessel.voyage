@@ -686,6 +686,17 @@ exact attended publication decisions and canonical session references.
 
 ## Human Vessel connections
 
+Linux human-connection secret writes now use authenticated encryption with an
+externally provisioned owner-private tmpfs key. Absent/wrong keys fail closed;
+existing plaintext remains unchanged until explicit `helm protect-connections` /
+`vessel protect-connections` migration. Provider credentials are separate. Local
+`vessel connection-audit` pages content-free current workspace-grant lifecycle
+intents and publication observations, with exact-retry deduplication, fixed page
+horizons and explicit 4,096-event retention/legacy-history gaps. It does not prove
+runtime cleanup. See [connection storage and audit](vessel-connections.md#encrypted-connection-secrets-linux)
+for key custody, headless provisioning, backup/key-loss recovery and platform limits.
+
+
 Helm treats failed three-second catalogue probes as unavailable Vessels, pauses
 observation and background recovery for those routes, and keeps cached conversations,
 drafts and exact pending identities. It does not infer remote completion or cancel
