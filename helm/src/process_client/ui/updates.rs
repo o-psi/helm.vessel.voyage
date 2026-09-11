@@ -11,7 +11,8 @@ impl App {
             | Update::Control { target, .. }
             | Update::Snapshot { target, .. }
             | Update::Command { target, .. } => Some(target.route),
-            Update::FirstSend { route, .. }
+            Update::InboxAttention { route, .. }
+            | Update::FirstSend { route, .. }
             | Update::Catalogue { route, .. }
             | Update::RouteError { route, .. }
             | Update::RouteUnavailable { route, .. }
@@ -41,6 +42,12 @@ impl App {
             view.transcript.borrow_mut().dirty = true;
         }
         match update {
+            Update::InboxAttention { route: _, count } => {
+                // Passive footer only: no modal, voyage switch, composer edit or decision.
+                self.status = format!(
+                    "{count} notification(s) available on a connected Vessel; /inbox destinations on that connection."
+                );
+            }
             Update::Operator(loaded) => self.operator_loaded(*loaded),
             Update::Browser { target: _, result } => {
                 self.status = result.unwrap_or_else(|e| e);

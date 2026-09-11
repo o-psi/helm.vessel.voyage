@@ -98,11 +98,24 @@ pub struct Notification {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BudgetDetail {
+    pub dimension: BudgetDimension,
     pub scope: BudgetScope,
     pub scope_id: Uuid,
     pub revision: u64,
     pub threshold: BudgetThreshold,
     pub ledger_sequence: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BudgetDimension {
+    Tokens,
+    EstimatedMicrocurrency,
+    RuntimeMilliseconds,
+    CpuMilliseconds,
+    DiskReadBytes,
+    DiskWriteBytes,
+    NetworkBytes,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -175,6 +188,8 @@ pub struct InboxPage {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
 pub enum NotificationOperation {
+    /// Current authorized unread count; quiet hours defer attention, never expiry.
+    Attention,
     Configure {
         command_id: Uuid,
         destination: Destination,

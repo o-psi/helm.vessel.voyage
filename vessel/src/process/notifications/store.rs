@@ -49,6 +49,7 @@ const MAX_DATABASE_PAGES: u32 = 16_384;
 
 pub struct Store {
     connection: Connection,
+    current_clock: bool,
     #[cfg(test)]
     event_capacity: usize,
 }
@@ -113,9 +114,18 @@ impl Store {
         fs::File::open(directory)?.sync_all()?;
         Ok(Self {
             connection,
+            current_clock: false,
             #[cfg(test)]
             event_capacity: MAX_EVENTS,
         })
+    }
+
+    /// Service path samples the clock after acquiring SQLite's write lock.
+    /// Explicit-clock open remains available to deterministic unit fixtures.
+    pub fn open_current(directory: impl AsRef<Path>) -> Result<Self> {
+        let mut store = Self::open(directory)?;
+        store.current_clock = true;
+        Ok(store)
     }
 
     pub fn configure(
@@ -125,7 +135,7 @@ impl Store {
         now: u64,
     ) -> Result<DestinationRecord> {
         ensure!(!command_id.is_nil(), "nil notification command ID");
-        let tx = self.begin(now, false)?;
+        let (tx, now) = self.begin(now, false)?;
         if let Some((id, operation)) = command(&tx, command_id)? {
             ensure!(
                 id == destination.id && operation == 0,
@@ -189,7 +199,7 @@ impl Store {
         now: u64,
     ) -> Result<DestinationRecord> {
         ensure!(!command_id.is_nil(), "nil notification command ID");
-        let tx = self.begin(now, false)?;
+        let (tx, now) = self.begin(now, false)?;
         if let Some((id, operation)) = command(&tx, command_id)? {
             ensure!(
                 id == destination_id && operation == 2,
@@ -237,21 +247,15 @@ impl Store {
             !command_id.is_nil() && !incarnation.is_nil(),
             "nil test identity"
         );
-        let tx = self.begin(now, false)?;
+        let (tx, now) = self.begin(now, false)?;
         if let Some((id, operation)) = command(&tx, command_id)? {
             ensure!(
                 id == destination_id && operation == 3,
                 "notification command conflict"
             );
-            let argument: String = tx.query_row(
-                "SELECT argument FROM commands WHERE id=?1",
-                [command_id.to_string()],
-                |row| row.get(0),
-            )?;
-            ensure!(
-                argument == incarnation.to_string(),
-                "notification test command conflict"
-            );
+            // Incarnation is server-derived, not part of the public test request.
+            // Exact command/destination retry after source restart recovers the
+            // original synthetic receipt without re-attributing or re-publishing.
             let receipt = tx.query_row("SELECT sequence,event_id,state FROM events WHERE destination_id=?1 AND event_id=?2", params![destination_id.to_string(), command_id.to_string()], receipt_row)?;
             tx.commit()?;
             return Ok(receipt);
@@ -323,7 +327,7 @@ impl Store {
     /// Clock rollback does not prevent revocation (uses the durable high-water).
     pub fn revoke(&self, command_id: Uuid, id: Uuid, now: u64) -> Result<()> {
         ensure!(!command_id.is_nil(), "nil notification command ID");
-        let tx = self.begin(now, false)?;
+        let (tx, now) = self.begin(now, false)?;
         if let Some((old_id, operation)) = command(&tx, command_id)? {
             ensure!(
                 old_id == id && operation == 1,
@@ -376,7 +380,7 @@ impl Store {
     ) -> Result<NotificationReceipt> {
         let payload = encode(&notification)?;
         let fingerprint = Sha256::digest(payload.as_bytes()).to_vec();
-        let tx = self.begin(now, false)?;
+        let (tx, now) = self.begin(now, false)?;
         let prior = tx.query_row(
             "SELECT sequence,event_id,state,fingerprint FROM events WHERE destination_id=?1 AND event_id=?2",
             params![destination_id.to_string(), notification.event_id.to_string()],
@@ -435,6 +439,17 @@ impl Store {
         })
     }
 
+    pub fn attention_count(&self, destination_id: Uuid, now: u64) -> Result<u64> {
+        let (tx, now) = self.begin(now, true)?;
+        let count = if is_active(&tx, destination_id, now)? {
+            tx.query_row("SELECT count(*) FROM events WHERE destination_id=?1 AND state=0 AND payload IS NOT NULL AND expires>?2", params![destination_id.to_string(), integer(now)?], |row| row.get::<_, u64>(0))?
+        } else {
+            0
+        };
+        tx.commit()?;
+        Ok(count)
+    }
+
     pub fn inbox(
         &self,
         destination_id: Uuid,
@@ -447,7 +462,7 @@ impl Store {
             "invalid notification page size"
         );
         let after_sql = integer(after)?;
-        let tx = self.begin(now, true)?;
+        let (tx, now) = self.begin(now, true)?;
         // Absent/revoked/expired destinations have no visible notification payload.
         if !is_active(&tx, destination_id, now)? {
             tx.commit()?;
@@ -491,7 +506,7 @@ impl Store {
         state: ReceiptState,
         now: u64,
     ) -> Result<NotificationReceipt> {
-        let tx = self.begin(now, false)?;
+        let (tx, _now) = self.begin(now, false)?;
         let changed = tx.execute(
             "UPDATE events SET state=max(state,?3) WHERE destination_id=?1 AND event_id=?2",
             params![
@@ -516,7 +531,7 @@ impl Store {
         event_id: Uuid,
         now: u64,
     ) -> Result<Option<InboxEntry>> {
-        let tx = self.begin(now, true)?;
+        let (tx, now) = self.begin(now, true)?;
         let entry = if is_active(&tx, destination_id, now)? {
             tx.query_row("SELECT sequence,event_id,state,payload FROM events WHERE destination_id=?1 AND event_id=?2 AND payload IS NOT NULL AND expires>?3",
                 params![destination_id.to_string(), event_id.to_string(), integer(now)?], entry_row)
@@ -528,9 +543,14 @@ impl Store {
         Ok(entry)
     }
 
-    fn begin(&self, now: u64, strict_clock: bool) -> Result<Transaction<'_>> {
+    fn begin(&self, now: u64, strict_clock: bool) -> Result<(Transaction<'_>, u64)> {
         integer(now)?;
         let tx = Transaction::new_unchecked(&self.connection, TransactionBehavior::Immediate)?;
+        let now = if self.current_clock {
+            crate::process::access::store::now()?
+        } else {
+            now
+        };
         if strict_clock {
             check_clock(&tx, now)?;
         }
@@ -539,7 +559,7 @@ impl Store {
             [integer(now)?],
         )?;
         tx.execute("UPDATE events SET payload=NULL WHERE payload IS NOT NULL AND (expires<=(SELECT now FROM clock WHERE id=1) OR destination_id IN (SELECT id FROM destinations WHERE revoked IS NOT NULL OR expires<=(SELECT now FROM clock WHERE id=1)))", [])?;
-        Ok(tx)
+        Ok((tx, now))
     }
 }
 
@@ -886,6 +906,52 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.directory);
         }
+    }
+
+    #[test]
+    fn service_clock_and_attention_never_resurrect_expired_or_seen_payload() {
+        let fixture = Fixture::new();
+        let store = fixture.open();
+        let destination = fixture.ready(&store);
+        let event = fixture.event(&destination);
+        store
+            .publish(destination.id, event.clone(), fixture.now())
+            .unwrap();
+        assert_eq!(
+            store
+                .attention_count(destination.id, fixture.now())
+                .unwrap(),
+            1
+        );
+        store
+            .receipt(
+                destination.id,
+                event.event_id,
+                ReceiptState::Seen,
+                fixture.now(),
+            )
+            .unwrap();
+        assert_eq!(
+            store
+                .attention_count(destination.id, fixture.now())
+                .unwrap(),
+            0
+        );
+        drop(store);
+        // A stale caller clock cannot override the service's post-lock clock.
+        let current = Store::open_current(&fixture.directory).unwrap();
+        assert!(
+            current
+                .get(destination.id, event.event_id, fixture.now())
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(
+            current
+                .attention_count(destination.id, fixture.now())
+                .unwrap(),
+            0
+        );
     }
 
     #[test]
@@ -1248,10 +1314,11 @@ mod tests {
                 .unwrap(),
             accepted
         );
-        assert!(
+        assert_eq!(
             store
                 .test(command, destination.id, Uuid::new_v4(), fixture.now())
-                .is_err()
+                .unwrap(),
+            accepted
         );
         assert!(
             store

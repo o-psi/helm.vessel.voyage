@@ -78,6 +78,7 @@ pub async fn serve(directory: PathBuf, binary: PathBuf) -> Result<()> {
         lifecycle_locks: Mutex::new(HashMap::new()),
     });
     supervisor.resume_enrollments().await?;
+    let notification_delivery = supervisor.start_notification_delivery();
     let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).await?;
     let address = listener.local_addr()?;
     let token = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
@@ -111,6 +112,8 @@ pub async fn serve(directory: PathBuf, binary: PathBuf) -> Result<()> {
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
         .await?;
+    notification_delivery.abort();
+    let _ = notification_delivery.await;
     // Runtime processes own their lifetimes; service shutdown only detaches routing.
     let access = directory.join("process-http.json");
     if registry::load_local_access(&directory).is_ok_and(|current| current.token == token) {
@@ -368,6 +371,7 @@ async fn local_command(
 impl Supervisor {
     pub(super) async fn handle(&self, command: VesselCommand) -> Result<Value> {
         match command {
+            VesselCommand::Notifications { operation } => self.notifications(operation, None).await,
             VesselCommand::DiscoverModels {
                 workspace,
                 configuration,
@@ -409,7 +413,7 @@ impl Supervisor {
             }
             command @ VesselCommand::ManagedImport { .. } => self.initialize_managed(command).await,
             VesselCommand::Capabilities => Ok(
-                json!({"protocol":VESSEL_API_VERSION,"version":env!("CARGO_PKG_VERSION"),"vessel_id":super::identity::public(&self.directory)?.vessel_id,"platform":std::env::consts::OS,"features":["sessionless_models","provider_accounts","account_start","private_account_enrollment","catalogue","start","start_configured","start_resolution","inspect","voyage_operations","stop","restart","explicit_recovery","durable_receipts","history_paging","events","sse_events","duplex_socket","decisions","lifecycle","branch","ordinary_import","managed_import","scoped_grants","revocation","participant_bindings","participant_assignments","signed_owner_transfer"],"max_frame_bytes":MAX_VESSEL_BODY,"capacity":null,"max_connections":64}),
+                json!({"protocol":VESSEL_API_VERSION,"version":env!("CARGO_PKG_VERSION"),"vessel_id":super::identity::public(&self.directory)?.vessel_id,"platform":std::env::consts::OS,"features":["notifications","sessionless_models","provider_accounts","account_start","private_account_enrollment","catalogue","start","start_configured","start_resolution","inspect","voyage_operations","stop","restart","explicit_recovery","durable_receipts","history_paging","events","sse_events","duplex_socket","decisions","lifecycle","branch","ordinary_import","managed_import","scoped_grants","revocation","participant_bindings","participant_assignments","signed_owner_transfer"],"max_frame_bytes":MAX_VESSEL_BODY,"capacity":null,"max_connections":64}),
             ),
             command @ (VesselCommand::Accounts { .. }
             | VesselCommand::AccountDefaults { .. }

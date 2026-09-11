@@ -51,7 +51,7 @@ Destination fields in the protocol draft:
 Quiet hours use UTC minutes after midnight, start inclusive, end exclusive;
 wraparound is allowed, equal endpoints are invalid. They suppress attention
 presentation, not explicit inbox reads or expiry. There is no local timezone or
-DST conversion. This passive client does not trigger unsolicited bells/popups.
+DST conversion. Passive attention counts use a bounded 15-second probe; there are no unsolicited bells/popups.
 
 Source consent and recipient acceptance are separate: the local source owner
 configures disclosure, and the configured recipient explicitly accepts storage
@@ -71,7 +71,7 @@ Changing consent requires a new destination and separate acceptance.
 
 Ordinary commands print JSON. Destination-list responses contain `destinations`
 and `local_recipient_id`; inbox responses contain `page`, `producer`,
-`attention_deferred` and `destination_expires_at_ms`. Watch prints one JSON page per line, polls at most
+`attention_deferred`, `budget_delivery` and `destination_expires_at_ms`. Watch prints one JSON page per line, polls at most
 once per second, has a 1–3600 second deadline (default 60), and stops on the first
 error or Ctrl+C. Each request has a ten-second client timeout; the overall watch
 deadline also bounds an in-flight read. It never retries a mutation. List limits
@@ -111,7 +111,8 @@ composer text; Esc closes the overview, leaving that text available for editing.
 It never changes the selected voyage, activates a private terminal, opens a URL,
 runs a command, or sends an approval/denial. Existing modal, permission and
 private-terminal input routing is unchanged. No background notification steals
-focus; polling happens only on explicit CLI watch.
+focus. A bounded passive metadata-count probe can update the footer without
+changing the composer, modal, active voyage or private terminal.
 
 Open fetches the service's fresh owner envelope:
 `current`, `resolved_or_expired`, `stale`, `unavailable`, `expired_or_revoked`, or
