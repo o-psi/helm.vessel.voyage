@@ -35,10 +35,10 @@ def encoded(value):
     return json.dumps(value, separators=(",", ":"), ensure_ascii=False).encode()
 
 
-def events(mode, *, tool=False, partial=False):
+def events(mode, *, tool=False, partial=False, call_id=CALL):
     arguments = {"command": "printf 'effect\\n' >> counter.txt; cat payload.txt"}
     if mode == "chat":
-        delta = ({"tool_calls": [{"index": 0, "id": CALL, "type": "function",
+        delta = ({"tool_calls": [{"index": 0, "id": call_id, "type": "function",
                   "function": {"name": "shell", "arguments": json.dumps(arguments)}}]}
                  if tool else {"content": PARTIAL if partial else ANSWER})
         result = [{"choices": [{"index": 0, "delta": delta, "finish_reason": None}]}]
@@ -51,7 +51,7 @@ def events(mode, *, tool=False, partial=False):
             return [{"type": "response.output_text.delta", "delta": PARTIAL},
                     {"type": "response.failed", "response": {
                         "status": "failed", "error": CONTEXT_ERROR["error"]}}]
-        output = ([{"type": "function_call", "call_id": CALL, "name": "shell",
+        output = ([{"type": "function_call", "call_id": call_id, "name": "shell",
                     "arguments": json.dumps(arguments)}] if tool else
                   [{"type": "message", "role": "assistant", "content": [
                       {"type": "output_text", "text": ANSWER}]}])
@@ -62,7 +62,7 @@ def events(mode, *, tool=False, partial=False):
         "id": "fixture-message", "type": "message", "role": "assistant",
         "model": "fixture-model", "content": [],
         "usage": {"input_tokens": 1, "output_tokens": 0}}}]
-    block = ({"type": "tool_use", "id": CALL, "name": "shell", "input": {}}
+    block = ({"type": "tool_use", "id": call_id, "name": "shell", "input": {}}
              if tool else {"type": "text", "text": ""})
     delta = ({"type": "input_json_delta", "partial_json": json.dumps(arguments)}
              if tool else {"type": "text_delta", "text": PARTIAL if partial else ANSWER})
@@ -129,7 +129,19 @@ class Handler(http.server.BaseHTTPRequestHandler):
             scenario.bodies.append(body)
             step = len(scenario.bodies)
             validate_request(body, scenario.mode, scenario.prompt)
-            if scenario.kind == "irreducible":
+            if scenario.kind == "long":
+                completed = len(scenario.counter.read_text().splitlines()) if scenario.counter.exists() else 0
+                if completed == 6 and not scenario.rejected:
+                    scenario.rejected = len(encoded(body))
+                    scenario.check_reduction = True
+                    self.reject()
+                else:
+                    if scenario.check_reduction:
+                        assert completed == 6, "effect repeated during context recovery"
+                        assert len(encoded(body)) < scenario.rejected * 0.8
+                        scenario.check_reduction = False
+                    self.stream(events(scenario.mode, tool=completed < 12, call_id=f"loop-{completed}"))
+            elif scenario.kind == "irreducible":
                 assert step == 1, "unchanged irreducible request was retried"
                 self.reject()
             elif step == 1:
@@ -168,6 +180,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
                             return
                     raise AssertionError("cancel did not close held reduced request")
                 self.stream(events(scenario.mode))
+            elif step == 4 and scenario.kind == "rejection":
+                assert len(encoded(body)) < len(encoded(scenario.bodies[1])) * 0.75
+                assert scenario.middle.encode() not in encoded(body)
+                assert scenario.counter.read_text() == "effect\n"
+                self.stream(events(scenario.mode))
             else:
                 raise AssertionError(f"unexpected request/replay {step} in {scenario.kind}")
         except (BrokenPipeError, ConnectionResetError) as error:
@@ -200,13 +217,14 @@ class Scenario:
     def __init__(self, fixture, mode, kind):
         self.mode, self.kind = mode, kind
         self.bodies, self.errors = [], []
+        self.rejected, self.check_reduction = 0, False
         self.held, self.disconnected, self.stop = (threading.Event() for _ in range(3))
         self.middle = "CANONICAL-MIDDLE-MUST-SURVIVE-" + kind
         size = 256 * 1024 if kind == "automatic" else 24 * 1024
         self.payload = "BEGIN\n" + "a" * (size // 2) + self.middle + "z" * (size // 2) + "\nEND\n"
         self.prompt = "Run the fixture effect once and report its result."
         if kind == "irreducible":
-            self.prompt = "Preserve this exact user input: " + "u" * (256 * 1024)
+            self.prompt = "Preserve this exact user input: " + "u" * (32 * 1024)
         self.counter = fixture.workspace / "counter.txt"
         (fixture.workspace / "payload.txt").write_text(self.payload)
         fixture.provider.scenario = self
@@ -226,13 +244,34 @@ def suspended(fixture, session):
         "automatic suspension")
 
 
+def full_snapshot(fixture, session):
+    snapshot = fixture.snapshot(session)
+    for index, message in enumerate(snapshot["messages"]):
+        if not message.get("projection_truncated"):
+            continue
+        chunks, offset = [], 0
+        while True:
+            chunk = fixture.command(session, {"op": "message_chunk", "index": message["message_index"],
+                "offset": offset, "limit": 65536, "expected_revision": snapshot["revision"]})
+            assert chunk["offset"] == offset
+            chunks.append(chunk["data"])
+            offset = chunk["next_offset"]
+            if not chunk["has_more"]:
+                break
+        snapshot["messages"][index] = json.loads("".join(chunks))
+    return snapshot
+
+
 def assert_canonical(snapshot, scenario):
     tools = [message for message in snapshot["messages"] if message["role"] == "tool"]
-    assert len(tools) == 1, "canonical result missing or tool repeated"
-    assert tools[0]["tool_call_id"] == CALL
-    assert tools[0]["tool_outcome"]["execution"] == "succeeded"
-    assert scenario.payload in tools[0]["content"], "canonical tool text was compacted/truncated"
-    assert scenario.counter.read_text() == "effect\n"
+    count = 12 if scenario.kind == "long" else 1
+    assert len(tools) == count, "canonical result missing or tool repeated"
+    expected = [f"loop-{i}" for i in range(count)] if scenario.kind == "long" else [CALL]
+    assert [message["tool_call_id"] for message in tools] == expected
+    for message in tools:
+        assert message["tool_outcome"]["execution"] == "succeeded"
+        assert scenario.payload in message["content"], "canonical tool text was compacted/truncated"
+    assert scenario.counter.read_text() == "effect\n" * count
 
 
 def run_case(binaries, mode, kind):
@@ -254,6 +293,7 @@ def run_case(binaries, mode, kind):
             expected_state = {"partial": "incomplete", "irreducible": "failed"}.get(kind, "completed")
             snapshot = fixture.finished(session, state=expected_state)
         info = suspended(fixture, session)
+        snapshot = full_snapshot(fixture, session)
         assert not scenario.errors, scenario.errors
         if kind == "irreducible":
             assert len(scenario.bodies) == 1
@@ -264,13 +304,13 @@ def run_case(binaries, mode, kind):
         else:
             assert_canonical(snapshot, scenario)
             if kind == "manual":
-                before = fixture.snapshot(session)
+                before = full_snapshot(fixture, session)
                 compact = fixture.mutation(session, "compact", retain=1, preserve_canonical=True)
                 receipt = fixture.command(session, compact)
                 assert receipt.get("compacted_messages", 0) > 0, receipt
                 assert receipt.get("canonical_preserved") is True, receipt
                 assert receipt.get("removed_messages") == 0, receipt
-                compacted = fixture.snapshot(session)
+                compacted = full_snapshot(fixture, session)
                 assert compacted["messages"] == before["messages"], "Compact changed canonical history"
                 recorded = fixture.command(session, {"op": "receipt", "command_id": compact["command_id"]})
                 assert fixture.command(session, compact) == receipt, "duplicate Compact receipt changed"
@@ -279,12 +319,21 @@ def run_case(binaries, mode, kind):
                 old = suspended(fixture, session)["incarnation"]
                 followup = "Continue without repeating the completed effect."
                 fixture.command(session, fixture.mutation(session, "submit", prompt=followup))
-                snapshot = fixture.finished(session)
+                fixture.finished(session)
                 info = suspended(fixture, session)
+                snapshot = full_snapshot(fixture, session)
                 assert info["incarnation"] != old, "next turn did not use a fresh voyage incarnation"
                 assert followup in json.dumps(scenario.bodies[-1]), "fresh turn omitted"
                 assert_canonical(snapshot, scenario)
-            expected = 3 if kind in ("manual", "rejection", "cancel") else 2
+            if kind == "rejection":
+                old = info["incarnation"]
+                fixture.command(session, fixture.mutation(session, "submit", prompt="Use the saved reduced context; do not repeat effects."))
+                fixture.finished(session)
+                info = suspended(fixture, session)
+                assert info["incarnation"] != old
+                snapshot = full_snapshot(fixture, session)
+                assert_canonical(snapshot, scenario)
+            expected = {"long": 14, "rejection": 4, "manual": 3, "cancel": 3}.get(kind, 2)
             assert len(scenario.bodies) == expected, "inference replay or missing recovery"
         # Suspension is the end-of-run barrier: no sleep-only claim of non-replay.
         assert not scenario.errors, scenario.errors
@@ -305,13 +354,13 @@ def main():
     parser.add_argument("--bin-dir", required=True, type=Path)
     parser.add_argument("--mode", choices=["all", *MODES], default="all")
     parser.add_argument("--case", choices=["all", "rejection", "automatic", "irreducible",
-                                         "manual", "cancel", "partial"], default="all")
+                                         "manual", "cancel", "partial", "long"], default="all")
     args = parser.parse_args()
     binaries = args.bin_dir.resolve()
     for binary in ("voyage", "vessel"):
         assert (binaries / binary).is_file(), f"missing {binary} binary"
     modes = MODES if args.mode == "all" else [args.mode]
-    cases = ("rejection", "automatic", "irreducible", "manual", "cancel", "partial") if args.case == "all" else [args.case]
+    cases = ("rejection", "automatic", "irreducible", "manual", "cancel", "partial", "long") if args.case == "all" else [args.case]
     for mode in modes:
         for kind in cases:
             run_case(binaries, mode, kind)

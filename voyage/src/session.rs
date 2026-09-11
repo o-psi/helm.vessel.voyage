@@ -21,42 +21,6 @@ use tokio::fs;
 
 use uuid::Uuid;
 
-/// Shrink a conversation without breaking tool-call groups. The system message and
-/// most recent messages are retained; removed history is represented by a durable
-/// summary marker so providers are told that context was intentionally compacted.
-pub fn compact_messages(messages: &mut Vec<Message>, retain: usize) -> usize {
-    if messages.len() <= retain.max(2) {
-        return 0;
-    }
-    let system = messages
-        .first()
-        .filter(|message| message.role == crate::model::Role::System)
-        .cloned();
-    let keep = retain.max(2).saturating_sub(usize::from(system.is_some()));
-    let nominal_split = messages.len().saturating_sub(keep);
-    // Never retain a tool result without the user turn which led to its call.
-    let mut split = (nominal_split..messages.len())
-        .find(|index| messages[*index].role == crate::model::Role::User)
-        .unwrap_or(nominal_split);
-    // A long tool loop may have no later user turn. Keep the assistant
-    // call together with all of its results at the fallback boundary.
-    while split > 0 && messages[split].role == crate::model::Role::Tool {
-        split -= 1;
-    }
-    let removed = split.saturating_sub(usize::from(system.is_some()));
-    let mut recent = messages.split_off(split);
-    messages.clear();
-    if let Some(system) = system {
-        messages.push(system);
-    }
-    messages.push(Message::new(
-        crate::model::Role::System,
-        format!("[Earlier conversation compacted: {removed} messages omitted.]"),
-    ));
-    messages.append(&mut recent);
-    removed
-}
-
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Session {
     pub id: Uuid,
@@ -990,9 +954,10 @@ mod working_context_tests {
             session
                 .messages
                 .push(Message::new(Role::User, format!("question {index}")));
-            session
-                .messages
-                .push(Message::new(Role::Assistant, format!("answer {index}")));
+            session.messages.push(Message::new(
+                Role::Assistant,
+                format!("answer {index}: {}", "source details ".repeat(1000)),
+            ));
         }
         session.begin_run_summary(Uuid::new_v4());
         session

@@ -2,6 +2,9 @@
 use crate::model::{ModelRequest, Role};
 use thiserror::Error;
 
+mod working;
+pub use working::WorkingContext;
+
 /// Zero disables local token admission checks. Providers enforce their own capacity.
 pub const DEFAULT_CONTEXT_WINDOW: usize = 0;
 

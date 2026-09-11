@@ -415,8 +415,10 @@ requirements. Rename/branch input and typed DELETE confirmation are separate fro
 the saved composer draft. Menus retain their target/incarnation and deletion
 confirmation checks that the observed history revision has not changed. Clear
 requires `CLEAR`; compact requires `KEEP N` (1–100000), with the same history
-revision check. These controls explain retained evidence/omitted content and keep
-the unsent composer; compaction does not generate a summary. Archived
+revision check. These controls explain retained evidence and keep
+the unsent composer. Compact reduces only saved provider working context using
+extractive records; the complete canonical conversation stays readable. It is not
+a paid model-generated summary. See [working-context compaction](configuration.md#working-context-compaction). Archived
 voyages must be restored before rename, branch or delete. Successful deletion
 shuts down the runtime, retains its receipt with cleanup evidence, and removes
 the tombstone from Helm's voyage lists without reusing its identity.
@@ -506,8 +508,10 @@ need a clean stop/restart to acquire the new archive shutdown behavior.
 Idle lifecycle commands support rename, next-turn model/configuration, branch,
 archive/restore, clear, compaction and confirmed deletion. Branches have new UUIDs
 and omit provider continuation. Clear resets the current conversation; prior run
-and receipt evidence remains. Compaction removes earlier whole conversation turns
-with an explicit omission marker. Delete purges retained canonical text and session
+and receipt evidence remains. Compaction preserves canonical history and saves a separate fingerprint-bound
+working projection. Large active-turn results are prepared automatically; explicit
+provider context rejection triggers bounded materially smaller requests without
+replaying tools. Task and steering messages remain intact. Delete purges retained canonical text and session
 resources after cleanup, preserving identity and deduplication tombstones. This is
 application deletion on the executing host, not forensic erasure of storage media
 or removal of independently retained source/transfer archives on other hosts. `--no-save` uses a

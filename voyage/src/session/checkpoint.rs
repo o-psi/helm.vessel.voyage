@@ -235,9 +235,10 @@ mod working_context_tests {
             session
                 .messages
                 .push(Message::new(Role::User, format!("question {index}")));
-            session
-                .messages
-                .push(Message::new(Role::Assistant, format!("answer {index}")));
+            session.messages.push(Message::new(
+                Role::Assistant,
+                format!("answer {index}: {}", "source details ".repeat(1000)),
+            ));
         }
         let run_id = Uuid::new_v4();
         session.begin_run_summary(run_id);
@@ -264,12 +265,10 @@ mod working_context_tests {
             serde_json::to_value(&context).unwrap()
         );
         assert!(
-            loaded
-                .working_context
-                .project(&loaded.messages)
+            serde_json::to_vec(&loaded.working_context.project(&loaded.messages).unwrap())
                 .unwrap()
                 .len()
-                < loaded.messages.len()
+                < serde_json::to_vec(&loaded.messages).unwrap().len()
         );
     }
 

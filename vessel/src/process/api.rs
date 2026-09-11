@@ -27,11 +27,13 @@ pub(super) fn runtime(command: VoyageCommand) -> Result<RuntimeCommand> {
             expected_revision,
             expires_at_ms,
             retain,
+            preserve_canonical,
         } => RuntimeCommand::Compact {
             command_id,
             expected_revision,
             expires_at_ms,
             retain,
+            preserve_canonical,
         },
         VoyageCommand::AssignmentObserve {
             run_id,

@@ -86,6 +86,7 @@ pub(super) fn failure_summary(reason: Option<&str>) -> Option<&str> {
             | "Local inference admission or accounting failed."
             | "Completion records could not be verified."
             | "Configured context limit prevented the request."
+            | "Provider context exhausted after safe compaction. Full history is retained; narrow the task or select a larger-context model."
             | "Execution policy prevented the run."
             | "Workspace instructions could not be loaded."
             | "Provider usage accounting overflowed."),

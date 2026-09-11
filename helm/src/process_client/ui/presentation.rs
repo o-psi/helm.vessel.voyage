@@ -90,6 +90,13 @@ fn scalar(value: &Value) -> String {
 }
 
 pub(super) fn receipt(value: &Value) -> String {
+    if value["status"] == "applied" && value["canonical_preserved"] == true {
+        if let Some(count) = value["compacted_messages"].as_u64() {
+            return format!(
+                "Working context reduced for {count} messages. Full history is retained; subsequent requests use the saved projection."
+            );
+        }
+    }
     let status = match value["status"].as_str().unwrap_or("received") {
         "accepted" => "Request received. Waiting for the result.",
         "applied" => "Update confirmed.",

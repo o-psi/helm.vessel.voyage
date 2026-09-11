@@ -73,7 +73,7 @@ impl App {
                     Action::Rename => "Rename voyage\nEnter a new name:".into(),
                     Action::Branch => "Branch conversation\nOptional name for the new voyage:".into(),
                     Action::Clear => "Clear conversation\nRemove this voyage’s current messages and provider continuation. The voyage identity and prior run/receipt evidence remain. This is not forensic erasure. Export or branch first if you need a copy. Your unsent draft is preserved.\nType CLEAR to confirm:".into(),
-                    Action::Compact => "Compact older messages\nRemove older conversation content with an omission marker, not a generated summary. The recent-message target preserves tool-call groups and may differ from the exact retained count. Export or branch first if needed. Your unsent draft is preserved.\nType KEEP followed by a number (1–100000), for example KEEP 128:".into(),
+                    Action::Compact => "Compact older messages\nReduce older provider working context using extractive summaries and canonical references. Full conversation history remains saved and readable. Task and steering stay intact; tool groups remain valid. The newest-message target stays verbatim. Reduced context survives restart; your unsent draft is preserved.\nType KEEP followed by a number (1–100000), for example KEEP 128:".into(),
                     Action::Delete => format!("Delete permanently\nThis removes the selected voyage's conversation history.\nVoyage: {}\nType DELETE to confirm:", menu.target.session),
                     _ => String::new(),
                 };

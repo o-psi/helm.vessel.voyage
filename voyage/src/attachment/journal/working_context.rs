@@ -76,9 +76,10 @@ mod tests {
             session
                 .messages
                 .push(Message::new(Role::User, format!("question {index}")));
-            session
-                .messages
-                .push(Message::new(Role::Assistant, format!("answer {index}")));
+            session.messages.push(Message::new(
+                Role::Assistant,
+                format!("answer {index}: {}", "source details ".repeat(1000)),
+            ));
         }
         let mut journal = Journal::open(directory.clone()).unwrap();
         journal.create_session(&session).unwrap();
@@ -151,13 +152,16 @@ mod tests {
             serde_json::to_value(&context).unwrap()
         );
         assert!(
-            loaded
-                .session
-                .working_context
-                .project(&loaded.session.messages)
-                .unwrap()
-                .len()
-                < loaded.session.messages.len()
+            serde_json::to_vec(
+                &loaded
+                    .session
+                    .working_context
+                    .project(&loaded.session.messages)
+                    .unwrap()
+            )
+            .unwrap()
+            .len()
+                < serde_json::to_vec(&loaded.session.messages).unwrap().len()
         );
     }
 }

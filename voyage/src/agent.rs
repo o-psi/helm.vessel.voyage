@@ -4,6 +4,8 @@ mod tool_replay;
 pub use retry::RetryJitter;
 #[cfg(test)]
 mod completion_tests;
+#[cfg(test)]
+mod context_tests;
 mod gate;
 
 pub use gate::{CompletionPhase, FinalizationFailure, OwnedShutdown};
@@ -183,6 +185,17 @@ pub trait EventSink: Send + Sync {
 pub trait RunCheckpoint: Send + Sync {
     fn run_id(&self) -> uuid::Uuid;
     async fn canonical(&self, messages: &[Message], usage: &Usage) -> Result<(), CheckpointError>;
+    /// Durable request-only reductions; canonical history remains independently readable.
+    async fn working_context(&self) -> Result<crate::context::WorkingContext, CheckpointError> {
+        Ok(Default::default())
+    }
+    async fn save_working_context(
+        &self,
+        _context: &crate::context::WorkingContext,
+    ) -> Result<(), CheckpointError> {
+        Err(CheckpointError)
+    }
+
     /// Publish and return the canonical history. Managed journals may atomically
     /// reject expired, not-yet-canonical steering; accepted history is immutable.
     async fn reconciled(
@@ -288,6 +301,10 @@ pub enum AgentError {
     Cancelled,
     #[error(transparent)]
     Checkpoint(#[from] CheckpointError),
+    #[error(
+        "Provider context is exhausted and no further safe reduction remains. Full history is retained; narrow the task or select a model with a larger context."
+    )]
+    ContextExhausted(Option<Box<CanonicalRecovery>>),
     #[error("provider usage accounting overflowed")]
     UsageOverflow,
 }
@@ -322,18 +339,28 @@ impl AgentError {
             Self::Cancelled => "run cancelled",
             Self::Checkpoint(_) => "durable checkpoint failed",
             Self::UsageOverflow => "Provider usage accounting overflowed.",
+            Self::ContextExhausted(_) => {
+                "Provider context exhausted after safe compaction. Full history is retained; narrow the task or select a larger-context model."
+            }
         }
     }
 
     pub fn recovery(&self) -> Option<&CanonicalRecovery> {
         match self {
             Self::Context(failure) => failure.recovery.as_deref(),
+            Self::ContextExhausted(recovery) => recovery.as_deref(),
             Self::Finalization(failure) => Some(&failure.recovery),
             _ => None,
         }
     }
 
     fn with_recovery(mut self, messages: &[Message], usage: &Usage) -> Self {
+        if let Self::ContextExhausted(recovery) = &mut self {
+            *recovery = Some(Box::new(CanonicalRecovery {
+                messages: messages.to_vec(),
+                usage: usage.clone(),
+            }));
+        }
         if let Self::Context(failure) = &mut self {
             failure.recovery = Some(Box::new(CanonicalRecovery {
                 messages: messages
@@ -1215,6 +1242,10 @@ impl Agent {
             }
             result = tokio::task::spawn_blocking(move || crate::extensions::guidance(extension_policy.workspace())) => result.unwrap_or_default(),
         };
+        let mut working_context = if let Some(checkpoint) = checkpoint {
+            gate::guarded(tokio::time::timeout(context.timeout, checkpoint.working_context()), &cancel).await?
+                .map_err(|_| CheckpointError)??
+        } else { crate::context::WorkingContext::default() };
         'execution: loop {
             // Diagnostic accounting only; progress never imposes an execution cutoff.
             turn = turn.saturating_add(1);
@@ -1242,23 +1273,48 @@ impl Agent {
                 return Err(AgentError::Cancelled);
             }
             self.sink.emit(AgentEvent::Thinking { turn }).await;
-            let mut messages = history.clone();
-            completion_continuation.project(&mut messages);
-            crate::model::visual::project(&mut messages, context.artifact_scope.as_ref())?;
-            let mut instructions = self.effective_system_prompt(workspace.as_deref(), &extension_guidance);
-            completion_continuation.append_to(&mut instructions);
-            messages.insert(0, Message::new(crate::model::Role::System, instructions));
-            let request = ModelRequest {
-                model: active_model.clone(),
-                messages,
-                tools: self.tools.definitions(),
-                temperature: self.temperature,
-                reasoning_effort: self.reasoning_effort.clone(),
-                service_tier: self.service_tier.clone(),
-                max_tokens: (self.max_tokens > 0).then_some(self.max_tokens),
+            let prepared = working_context.prepare(&history).map_err(|_| CheckpointError)?;
+            if prepared > 0 {
+                if let Some(checkpoint) = checkpoint {
+                    gate::guarded(tokio::time::timeout(context.timeout, checkpoint.save_working_context(&working_context)), &cancel).await?
+                        .map_err(|_| CheckpointError)??;
+                }
+            }
+            let mut recovery_attempt = 0;
+            let mut rejected_size = None;
+            let (response, permit) = loop {
+                let mut messages = working_context.project(&history).map_err(|_| CheckpointError)?;
+                completion_continuation.project(&mut messages);
+                crate::model::visual::project(&mut messages, context.artifact_scope.as_ref())?;
+                let mut instructions = self.effective_system_prompt(workspace.as_deref(), &extension_guidance);
+                completion_continuation.append_to(&mut instructions);
+                messages.insert(0, Message::new(crate::model::Role::System, instructions));
+                let request = ModelRequest {
+                    model: active_model.clone(), messages, tools: self.tools.definitions(),
+                    temperature: self.temperature, reasoning_effort: self.reasoning_effort.clone(),
+                    service_tier: self.service_tier.clone(), max_tokens: (self.max_tokens > 0).then_some(self.max_tokens),
+                };
+                let result = gate::guarded(self.stream_with_retry(request, &cancel, checkpoint, &mut partial_output, context.completion.as_ref().map(|run| run.reference()).as_ref(), &mut rejected_size), &cancel).await?;
+                match result {
+                    Ok(response) => break response,
+                    Err(AgentError::Provider(ProviderError::ContextLength)) => {
+                        // Stay inside this provider boundary: tools already checkpointed above
+                        // are never replayed, and each changed request receives new admission.
+                        let mut changed = 0;
+                        while recovery_attempt < 4 && changed == 0 {
+                            changed = working_context.recover(&history, recovery_attempt).map_err(|_| CheckpointError)?;
+                            recovery_attempt += 1;
+                        }
+                        if changed == 0 { return Err(AgentError::ContextExhausted(None).with_recovery(&history, &usage)); }
+                        if let Some(checkpoint) = checkpoint {
+                            gate::guarded(tokio::time::timeout(context.timeout, checkpoint.save_working_context(&working_context)), &cancel).await?
+                                .map_err(|_| CheckpointError)??;
+                        }
+                        tracing::info!(recovery_attempt, compacted_messages=changed, "provider context rejection: durable working context reduced");
+                    }
+                    Err(error) => return Err(error.with_recovery(&history, &usage)),
+                }
             };
-            let (response, permit) = gate::guarded(self.stream_with_retry(request, &cancel, checkpoint, &mut partial_output, context.completion.as_ref().map(|run| run.reference()).as_ref()), &cancel).await?
-                .map_err(|error| error.with_recovery(&history, &usage))?;
             let had_streamed_text = !partial_output.is_empty();
             partial_output.clear();
             usage.input_tokens = usage
@@ -1543,6 +1599,7 @@ impl Agent {
         checkpoint: Option<&dyn RunCheckpoint>,
         partial_output: &mut String,
         reference: Option<&crate::completion::runtime::RunReference>,
+        previous_request_size: &mut Option<usize>,
     ) -> Result<
         (
             crate::model::ModelResponse,
@@ -1607,6 +1664,15 @@ impl Agent {
             );
             self.sink.emit(AgentEvent::ContextBudget(report)).await;
         }
+        // Compare the actual post-redaction, tool-replay and explicit-limit projection.
+        // A raw-history decrease is insufficient if preflight had already omitted it.
+        let request_size = crate::context::estimate(&request);
+        if previous_request_size
+            .is_some_and(|previous| request_size.saturating_add(128) >= previous)
+        {
+            return Err(AgentError::ContextExhausted(None));
+        }
+        *previous_request_size = Some(request_size);
         let mut delay = self.retry.initial_delay;
         for attempt in 1..=self.retry.max_attempts.max(1) {
             self.context
@@ -1708,6 +1774,11 @@ impl Agent {
                         break;
                     }
                     Some(Err(error)) => {
+                        let error = if partial && matches!(error, ProviderError::ContextLength) {
+                            ProviderError::Incomplete
+                        } else {
+                            error
+                        };
                         self.inference_finish(
                             permit.as_ref(),
                             crate::inference::AttemptOutcome::Failed,
