@@ -76,7 +76,15 @@ pub async fn attach(
             .request(VesselCommand::Inspect { session_id })
             .await?,
     )?;
-    attach_observed(client, session_id, process.incarnation, run_id, terminal_id).await
+    attach_guarded(
+        client,
+        session_id,
+        process.incarnation,
+        run_id,
+        terminal_id,
+        false,
+    )
+    .await
 }
 
 pub async fn attach_observed(
@@ -86,6 +94,17 @@ pub async fn attach_observed(
     run_id: Uuid,
     terminal_id: Uuid,
 ) -> Result<()> {
+    attach_guarded(client, session_id, incarnation, run_id, terminal_id, true).await
+}
+
+async fn attach_guarded(
+    client: &Client,
+    session_id: Uuid,
+    incarnation: Uuid,
+    run_id: Uuid,
+    terminal_id: Uuid,
+    resume_frontend: bool,
+) -> Result<()> {
     ensure!(
         std::io::stdin().is_terminal() && std::io::stdout().is_terminal(),
         "terminal attachment requires a human terminal"
@@ -93,7 +112,12 @@ pub async fn attach_observed(
     let mut guard = Screen { finished: false };
     let result = attach_inner(client, session_id, incarnation, run_id, terminal_id).await;
     guard.finish()?;
-    result
+    // Crossterm has no public reset for a partially decoded paste/UTF-8 sequence.
+    // Without an explicit detach chord it cannot safely become composer input.
+    if resume_frontend && !matches!(result, Ok(true)) {
+        return Err(CleanupFailure.into());
+    }
+    result.map(|_| ())
 }
 
 async fn attach_inner(
@@ -102,7 +126,7 @@ async fn attach_inner(
     incarnation: Uuid,
     run_id: Uuid,
     terminal_id: Uuid,
-) -> Result<()> {
+) -> Result<bool> {
     let stop = stop_signal()?;
     tokio::pin!(stop);
     let mut styles = TerminalStyles::from_env()?;
@@ -251,6 +275,7 @@ async fn attach_inner(
     });
     let observer = tokio_util::task::AbortOnDropHandle::new(observer);
     let mut worker_finished = false;
+    let mut explicit_detach = false;
     let result = async {
         loop {
             tokio::select! {
@@ -260,7 +285,7 @@ async fn attach_inner(
                     let Some(event) = event else {break};
                     let operation = match event? {
                         Event::Key(key) if key.kind != crossterm::event::KeyEventKind::Release => {
-                            if input::detached(key.code, key.modifiers) { break; }
+                            if input::detached(key.code, key.modifiers) { explicit_detach = true; break; }
                             let Some(bytes) = input::keypad(key.code, key.state, key.modifiers, &observation.modes()).or_else(|| input::key_bytes(key.code, key.modifiers, &observation.modes())) else {continue};
                             TerminalAction::Write { bytes }
                         }
@@ -285,7 +310,7 @@ async fn attach_inner(
                 }
             }
         }
-        Ok(())
+        Ok(explicit_detach)
     }.await;
     worker.abort();
     observer.abort();

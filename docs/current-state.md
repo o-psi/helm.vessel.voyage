@@ -615,8 +615,9 @@ explicit wide continuations, child cursor visibility and application input modes
 through the human-only channel, with sanitized monochrome row fallback for older
 peers. The connected encoder supports application cursor/keypad indications and
 child-enabled bracketed paste. Helm observes its private worker cancellation and
-conservatively discards queued input on return; unconfirmed disposal/restoration
-stops that interface. A dedicated `helm connect terminal` command provides plain-user
+conservatively drains queued events on return; missing explicit detach or
+unconfirmed disposal/restoration stops that interface rather than exposing
+incomplete private input to the composer. A dedicated `helm connect terminal` command provides plain-user
 access; historical inline plain-chat terminal commands are not wired. See the
 [private terminal contract](private-terminal.md) for exact bounds, supported keys,
 rendering decisions and Linux/native evidence limits.

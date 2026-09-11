@@ -94,9 +94,18 @@ Ctrl+5 alias and raw control representation. Ctrl+T is not a connected detach ke
   Human attach waits for the model writer's cutoff before acknowledging it; failure
   to confirm quiescence refuses attachment, never reopens capture.
 - On detach, error or child exit, Helm cancels and observes its writer/observer,
-  discards queued local input even after the detach chord, then restores raw mode,
-  alternate screen, paste mode and cursor. A queued suffix is **not** a new prompt.
-  Unconfirmed local disposal/restoration is fatal to that Helm interface.
+  drains complete queued events and native input, then restores raw mode, alternate
+  screen, paste mode and cursor. Nothing is automatically submitted as a prompt.
+  Crossterm does not expose a reset for a partially decoded paste/UTF-8 sequence:
+  therefore a TUI attachment that ends **without an explicit detach chord** stops
+  that Helm interface rather than resuming its composer with ambiguous input.
+  This includes refused attachment, child exit, transport/error and signal paths.
+  The dedicated terminal CLI exits and has no composer to expose buffered input.
+  Explicit Ctrl+] authorizes the transition to Helm input; do not continue typing
+  private data after it. Complete queued suffix events are discarded; an incomplete
+  post-chord sequence may finish on later deliberate Helm input. No private input
+  preceding the consumed chord is handed off. Unconfirmed native disposal or
+  restoration is always fatal to that interface.
 - Unix console writes have a 250 ms deadline per frame/restoration batch. Native Windows
   synchronous console-output boundedness is not established. Process kill/SIGKILL,
   terminal disappearance and OS failure cannot guarantee restoration. Panic guards
