@@ -338,11 +338,9 @@ impl Redactor {
         output
     }
     pub fn redact(&self, input: impl Into<String>) -> String {
-        self.current_secrets()
-            .iter()
-            .fold(input.into(), |text, secret| {
-                text.replace(secret, "[REDACTED]")
-            })
+        // Use the same non-recursive overlap handling for canonical text and
+        // streaming prefixes, including old keys that prefix a rotated key.
+        self.redact_public_prefix(&input.into())
     }
 }
 

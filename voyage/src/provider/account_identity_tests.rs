@@ -213,6 +213,9 @@ fn refreshed_credentials_share_stream_redaction_without_debug_disclosure() {
     redactor.remember_credential("synthetic-rotated").unwrap();
     assert!(child.contains_secret("synthetic-rotated"));
     assert_eq!(child.redact("synthetic-rotated"), "[REDACTED]");
+    let prefix = crate::tools::Redactor::new(["synthetic".into()]);
+    prefix.remember_credential("synthetic-rotated").unwrap();
+    assert_eq!(prefix.redact("synthetic-rotated"), "[REDACTED]");
     assert_eq!(
         child.stable_prefix("prefix synthetic-ro", false),
         "prefix ".len()

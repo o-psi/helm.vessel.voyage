@@ -239,7 +239,7 @@ class NamedAccounts(unittest.TestCase):
                          ["Bearer synthetic-personal", "Bearer synthetic-personal-rotated"])
         public = json.dumps(snapshot)
         self.assertNotIn("synthetic-personal-rotated", public)
-        self.assertIn("[REDACTED]", public)
+        self.assertEqual(snapshot["messages"][-1]["content"], "[REDACTED]")
         self.assertEqual(snapshot["inference"]["account"], self.personal)
 
     def test_rotation_preserves_binding_logout_refuses_without_fallback(self):
