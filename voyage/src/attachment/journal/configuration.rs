@@ -71,6 +71,39 @@ impl Journal {
         commit(tx, &self.commit_fence)
     }
 
+    /// Deterministic executing-host legacy migration. This is not a user switch:
+    /// only the previously absent account field may be added, under the owner guard.
+    pub(crate) fn materialize_account_configuration(
+        &mut self,
+        guard: &ExecutionGuard,
+        previous: &str,
+        settings: &str,
+    ) -> Result<()> {
+        self.check_guard(guard, guard.session_id)?;
+        let mut before: Value = serde_json::from_str(previous)?;
+        let after: Value = serde_json::from_str(settings)?;
+        ensure!(
+            before["config"]["account"].is_null() && after["config"]["account"].is_object(),
+            "not legacy account materialization"
+        );
+        before["config"]["account"] = after["config"]["account"].clone();
+        ensure!(
+            before == after && settings.len() <= 1024 * 1024,
+            "legacy account migration changed other settings"
+        );
+        let tx = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        ensure!(
+            tx.execute(
+                "UPDATE process_configuration SET settings=?1 WHERE session_id=?2 AND settings=?3",
+                params![settings, guard.session_id.to_string(), previous]
+            )? == 1,
+            "configuration changed during migration"
+        );
+        commit(tx, &self.commit_fence)
+    }
+
     pub(crate) fn configure(
         &mut self,
         guard: &ExecutionGuard,

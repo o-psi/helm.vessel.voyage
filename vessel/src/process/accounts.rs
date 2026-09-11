@@ -99,10 +99,23 @@ impl Scope {
                 && registry.enrollment_actor(id).ok().flatten().as_ref()
                     == Some(&self.actor(workspace)))
     }
-    pub(super) fn observe_account_intent(&self, root: &Path, workspace: &Path, account: &AccountBinding) -> Result<()> {
+    pub(super) fn observe_account_intent(
+        &self,
+        root: &Path,
+        workspace: &Path,
+        account: &AccountBinding,
+    ) -> Result<()> {
         self.check(root, workspace, ProcessRight::AccountUse)?;
         let registry = Registry::default_host()?;
-        ensure!(self.account_allowed(&registry, account.account_id, account.connection_id, workspace), "account intent observation denied");
+        ensure!(
+            self.account_allowed(
+                &registry,
+                account.account_id,
+                account.connection_id,
+                workspace
+            ),
+            "account intent observation denied"
+        );
         Ok(())
     }
     pub(super) fn use_account(
@@ -193,6 +206,11 @@ fn current_session_scope(root: &Path, grant: &ProcessGrant) -> Result<()> {
 /// reenters the account registry while the device publication transaction is held.
 fn enrollment_authorized(root: &Path, actor: &EnrollmentActor, connection: Uuid) -> bool {
     let workspace = Path::new(&actor.workspace);
+    // The private host CLI shares this durable service; supervise its retained
+    // attempts after restart without inventing a remote principal or workspace.
+    if actor.principal == "execution-host-owner" && actor.workspace == "execution-host" {
+        return true;
+    }
     if actor.principal == "owner" {
         return workspace.is_absolute() && workspace.is_dir();
     }
@@ -314,11 +332,19 @@ impl Supervisor {
             }
             VesselCommand::AccountDefaults { workspace } => {
                 scope.check(&self.directory, &workspace, ProcessRight::AccountUse)?;
-                let config = voyage_runtime::Config::load(None)?;
+                let mut config = voyage_runtime::Config::load(None)?;
+                config.materialize_legacy_account()?;
                 if let Some(binding) = &config.account {
                     scope.use_account(&self.directory, &workspace, binding)?;
                 }
                 config.validate_account()?;
+                let secrets = voyage_runtime::build::redactor(&config);
+                voyage_runtime::provider::validate_models_for_display(
+                    &[voyage_runtime::provider::ModelInfo::minimal(
+                        config.model.clone(),
+                    )],
+                    |value| secrets.contains_secret(value),
+                )?;
                 Ok(
                     json!({"account":config.account,"provider":config.provider,"model":config.model,"reasoning_effort":config.reasoning_effort,"service_tier":config.service_tier}),
                 )

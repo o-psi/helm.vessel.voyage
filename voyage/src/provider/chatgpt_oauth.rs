@@ -586,6 +586,7 @@ impl ChatGptOAuth {
     pub async fn new(store: TokenStore, endpoints: OAuthEndpoints) -> Result<Self, ProviderError> {
         let tokens = store.load().await?;
         Ok(Self {
+            authority: None,
             client: super::native_http_client(),
             endpoints,
             store,
@@ -880,6 +881,7 @@ impl ChatGptOAuth {
             Err(error) => {
                 // Another process may have rotated since our read. Never replay its effect.
                 if let Some(latest) = self.store.load().await? {
+                    super::check_provider_authority(&self.authority)?;
                     if latest.expires_at > now_secs().saturating_add(REFRESH_SKEW_SECS) {
                         *guard = Some(latest.clone());
                         return Ok(latest);

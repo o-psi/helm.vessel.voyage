@@ -44,6 +44,8 @@ struct Database {
     enrollments: Vec<device::Record>,
     legacy: Option<Uuid>,
     #[serde(default)]
+    legacy_binding: Option<AccountBinding>,
+    #[serde(default)]
     legacy_api: std::collections::BTreeMap<String, AccountBinding>,
 }
 impl Registry {
@@ -139,13 +141,15 @@ impl Registry {
                 .iter()
                 .find(|c| c.id == a.descriptor.connection_id)
                 .ok_or_else(|| anyhow::anyhow!("legacy connection unavailable"))?;
-            Ok(Some(AccountBinding {
+            // Legacy references retain the original migration identity, never
+            // silently adopt a later replacement at the same profile UUID.
+            Ok(Some(db.legacy_binding.clone().unwrap_or(AccountBinding {
                 account_id: id,
                 connection_id: c.id,
-                identity_generation: a.descriptor.identity_generation,
-                connection_revision: c.revision,
+                identity_generation: 1,
+                connection_revision: 1,
                 transport: Transport::ChatgptOauth,
-            }))
+            })))
         })?;
         Ok(binding.map(|b| (registry, b)))
     }
@@ -681,6 +685,13 @@ impl Registry {
                 None,
             )?;
             db.legacy = Some(a.id);
+            db.legacy_binding = Some(AccountBinding {
+                account_id: a.id,
+                connection_id: connection.id,
+                identity_generation: a.identity_generation,
+                connection_revision: connection.revision,
+                transport: Transport::ChatgptOauth,
+            });
             Ok(Some(a.id))
         })
     }

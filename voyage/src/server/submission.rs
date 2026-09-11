@@ -109,7 +109,16 @@ pub(super) async fn submit(
             .system_prompt
             .push_str(bootstrap::WORKSPACE_RECREATED_NOTICE);
     }
+    let legacy = config.account.is_none();
+    config.materialize_legacy_account()?;
     super::authorization::account_authority(state, &mut authorization, &config)?;
+    if legacy && let Some(account) = &config.account {
+        state
+            .owner
+            .materialize_account_configuration(account)
+            .await?;
+        state.config.write().await.account = Some(account.clone());
+    }
     config.provider_authority = authorization.authority.clone();
     config.model = saved
         .session

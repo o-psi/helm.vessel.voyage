@@ -529,6 +529,45 @@ impl Config {
     }
 
     /// Apply an explicit, exact host selection. Never refresh a saved generation.
+    /// Executing-host migration only. Never call this on a remote Helm draft.
+    /// Existing OAuth caches require the explicit old-writers-stopped CLI boundary;
+    /// once migrated their original identity is retained, including tombstones.
+    pub fn materialize_legacy_account(&mut self) -> Result<()> {
+        if self.account.is_some() {
+            return Ok(());
+        }
+        use voyage_protocol::accounts::Transport;
+        let binding = match self.provider {
+            ProviderKind::ChatGptOauth => {
+                crate::accounts::Registry::legacy_store_binding()?.map(|(_, binding)| binding)
+            }
+            _ if !self.api_key_required => None,
+            _ => {
+                let (transport, endpoint) = match self.provider {
+                    ProviderKind::OpenaiResponses => {
+                        (Transport::OpenaiResponses, "https://api.openai.com/v1")
+                    }
+                    ProviderKind::OpenaiChat => {
+                        (Transport::OpenaiChat, "https://api.openai.com/v1")
+                    }
+                    ProviderKind::Anthropic => {
+                        (Transport::Anthropic, "https://api.anthropic.com/v1")
+                    }
+                    ProviderKind::ChatGptOauth => unreachable!(),
+                };
+                Some(
+                    crate::accounts::Registry::default_host()?.migrate_legacy_api(
+                        self.base_url.clone().unwrap_or_else(|| endpoint.into()),
+                        transport,
+                        self.api_key_env.clone(),
+                    )?,
+                )
+            }
+        };
+        self.account = binding;
+        Ok(())
+    }
+
     pub fn select_account(
         &mut self,
         binding: voyage_protocol::accounts::AccountBinding,
