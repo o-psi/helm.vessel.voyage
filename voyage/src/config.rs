@@ -140,6 +140,7 @@ pub struct Config {
     pub provider_retry_attempts: usize,
     pub provider_retry_initial_ms: u64,
     pub provider_retry_max_ms: u64,
+    pub provider_retry_elapsed_ms: u64,
     pub command_timeout_secs: u64,
     pub max_output_bytes: usize,
     pub terminal_max_count: usize,
@@ -307,6 +308,11 @@ pub const CONFIG_OVERRIDE_SPECS: &[ConfigOverrideSpec] = &[
         kind: ConfigValueKind::NonNegativeInteger,
     },
     ConfigOverrideSpec {
+        key: "provider_retry_elapsed_ms",
+        description: "Elapsed provider retry admission window (milliseconds)",
+        kind: ConfigValueKind::PositiveInteger,
+    },
+    ConfigOverrideSpec {
         key: "command_timeout_secs",
         description: "Shell command timeout",
         kind: ConfigValueKind::PositiveInteger,
@@ -452,9 +458,10 @@ impl Default for Config {
             temperature: None,
             reasoning_effort: None,
             service_tier: None,
-            provider_retry_attempts: 4,
-            provider_retry_initial_ms: 500,
-            provider_retry_max_ms: 8000,
+            provider_retry_attempts: 8,
+            provider_retry_initial_ms: 1000,
+            provider_retry_max_ms: 30000,
+            provider_retry_elapsed_ms: 120000,
             command_timeout_secs: 120,
             max_output_bytes: 128 * 1024,
             terminal_max_count: 16,
@@ -871,6 +878,9 @@ impl Config {
             || self.subagent_event_history == 0
         {
             bail!("subagent limits must be greater than zero");
+        }
+        if self.provider_retry_elapsed_ms == 0 {
+            bail!("provider_retry_elapsed_ms must be greater than zero");
         }
         if self.provider_retry_attempts == 0 {
             bail!("provider_retry_attempts must be greater than zero");

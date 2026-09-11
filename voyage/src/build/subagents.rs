@@ -250,6 +250,7 @@ impl SubagentExecutor for CliSubagentExecutor {
             max_attempts: config.provider_retry_attempts,
             initial_delay: std::time::Duration::from_millis(config.provider_retry_initial_ms),
             max_delay: std::time::Duration::from_millis(config.provider_retry_max_ms),
+            max_elapsed: std::time::Duration::from_millis(config.provider_retry_elapsed_ms),
         });
         let mut inbox = context.take_inbox();
         let (input_tx, input_rx) = crate::agent::steering_channel(64);

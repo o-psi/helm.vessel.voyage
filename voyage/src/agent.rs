@@ -1,4 +1,7 @@
+mod provider_attempts;
 mod retry;
+#[cfg(test)]
+mod retry_tests;
 
 mod tool_replay;
 pub use retry::RetryJitter;
@@ -185,6 +188,14 @@ pub trait EventSink: Send + Sync {
 pub trait RunCheckpoint: Send + Sync {
     fn run_id(&self) -> uuid::Uuid;
     async fn canonical(&self, messages: &[Message], usage: &Usage) -> Result<(), CheckpointError>;
+    /// Content-free attempt state, persisted before dispatch and before retry.
+    /// Nonpersistent embedders may ignore it; managed and saved sessions must commit.
+    async fn provider_attempt(
+        &self,
+        _attempt: &voyage_protocol::provider_attempt::ProviderAttempt,
+    ) -> Result<(), CheckpointError> {
+        Ok(())
+    }
     /// Durable request-only reductions; canonical history remains independently readable.
     async fn working_context(&self) -> Result<crate::context::WorkingContext, CheckpointError> {
         Ok(Default::default())
@@ -322,7 +333,7 @@ impl AgentError {
     pub(crate) fn is_incomplete(&self) -> bool {
         match self {
             Self::Finalization(failure) => failure.source.is_incomplete(),
-            Self::Provider(ProviderError::Incomplete) => true,
+            Self::Provider(error) => error.is_incomplete(),
             _ => false,
         }
     }
@@ -406,14 +417,17 @@ pub struct RetryPolicy {
     pub max_attempts: usize,
     pub initial_delay: Duration,
     pub max_delay: Duration,
+    /// Maximum elapsed time in which another attempt may be dispatched.
+    pub max_elapsed: Duration,
 }
 
 impl Default for RetryPolicy {
     fn default() -> Self {
         Self {
-            max_attempts: 4,
-            initial_delay: Duration::from_millis(500),
-            max_delay: Duration::from_secs(8),
+            max_attempts: 8,
+            initial_delay: Duration::from_secs(1),
+            max_delay: Duration::from_secs(30),
+            max_elapsed: Duration::from_secs(120),
         }
     }
 }
@@ -832,14 +846,6 @@ impl Agent {
     pub fn with_retry_jitter(mut self, jitter: Arc<dyn RetryJitter>) -> Self {
         self.retry_jitter = jitter;
         self
-    }
-
-    fn retry_allowed(&self, error: &ProviderError, attempt: usize) -> bool {
-        error.is_retryable()
-            && attempt < self.retry.max_attempts
-            && error
-                .retry_after()
-                .is_none_or(|wait| wait <= self.retry.max_delay)
     }
 
     pub fn with_model_mirror(mut self, mirror: Arc<RwLock<String>>) -> Self {
@@ -1295,10 +1301,10 @@ impl Agent {
                     temperature: self.temperature, reasoning_effort: self.reasoning_effort.clone(),
                     service_tier: self.service_tier.clone(), max_tokens: (self.max_tokens > 0).then_some(self.max_tokens),
                 };
-                let result = gate::guarded(self.stream_with_retry(request, &cancel, checkpoint, &mut partial_output, context.completion.as_ref().map(|run| run.reference()).as_ref(), &mut rejected_size), &cancel).await?;
+                let result = self.stream_with_retry(request, &cancel, checkpoint, &mut partial_output, context.completion.as_ref().map(|run| run.reference()).as_ref(), &mut rejected_size).await;
                 match result {
                     Ok(response) => break response,
-                    Err(AgentError::Provider(ProviderError::ContextLength)) => {
+                    Err(AgentError::Provider(error)) if error.is_context_length() => {
                         // Stay inside this provider boundary: tools already checkpointed above
                         // are never replayed, and each changed request receives new admission.
                         let mut changed = 0;
@@ -1612,8 +1618,6 @@ impl Agent {
         ),
         AgentError,
     > {
-        use crate::provider::{ProviderDelta, ProviderStreamEvent};
-        use futures_util::StreamExt;
         if cancel.is_cancelled() {
             return Err(AgentError::Cancelled);
         }
@@ -1678,154 +1682,8 @@ impl Agent {
             return Err(AgentError::ContextExhausted(None));
         }
         *previous_request_size = Some(request_size);
-        let mut delay = self.retry.initial_delay;
-        for attempt in 1..=self.retry.max_attempts.max(1) {
-            self.context
-                .policy
-                .check_execution_authority()
-                .map_err(|_| {
-                    AgentError::Policy("foreground execution authority unavailable".into())
-                })?;
-            let permit = self
-                .inference_admit(
-                    reference,
-                    &request.model,
-                    crate::inference::Purpose::Conversation,
-                )
-                .await?;
-            self.check_current_policy()?;
-            let stream_result = tokio::select! {biased; _ = cancel.cancelled()=>{self.sink.emit(AgentEvent::Cancelled).await;return Err(AgentError::Cancelled);}, value=self.provider.stream(request.clone())=>value};
-            let mut stream = match stream_result {
-                Ok(value) => value,
-                Err(error) if self.retry_allowed(&error, attempt) => {
-                    self.inference_finish(
-                        permit.as_ref(),
-                        crate::inference::AttemptOutcome::Failed,
-                    )
-                    .await?;
-                    self.retry_wait(attempt, &error, delay, cancel).await?;
-                    delay = delay.saturating_mul(2).min(self.retry.max_delay);
-                    continue;
-                }
-                Err(error) => {
-                    self.inference_finish(
-                        permit.as_ref(),
-                        crate::inference::AttemptOutcome::Failed,
-                    )
-                    .await?;
-                    return Err(error.into());
-                }
-            };
-            let mut partial = false;
-            let mut pending_text = String::new();
-            loop {
-                let event = tokio::select! {_ = cancel.cancelled()=>{self.sink.emit(AgentEvent::Cancelled).await;return Err(AgentError::Cancelled);}, value=stream.next()=>value};
-                match event {
-                    Some(Ok(ProviderStreamEvent::UsageReported(report))) => {
-                        self.inference_report(permit.as_ref(), report).await?
-                    }
-                    Some(Ok(ProviderStreamEvent::Delta(delta))) => {
-                        if matches!(&delta, ProviderDelta::Text(text) if text.is_empty()) {
-                            continue;
-                        }
-                        partial = true;
-                        if let ProviderDelta::Text(text) = delta {
-                            pending_text.push_str(&text);
-                            let end = self.context.redactor.stable_prefix(&pending_text, false);
-                            let safe = self
-                                .context
-                                .redactor
-                                .redact_public_prefix(&pending_text[..end]);
-                            pending_text.drain(..end);
-                            self.project_provider_text(safe, checkpoint, partial_output)
-                                .await?;
-                        }
-                    }
-                    Some(Ok(ProviderStreamEvent::Completed(mut response))) => {
-                        if let Some((_, resolution)) = self.resolved_inference.lock().await.as_mut()
-                        {
-                            resolution.service.provider_reported = response
-                                .service_tier
-                                .as_ref()
-                                .filter(|tier| !self.context.redactor.contains_secret(tier))
-                                .cloned();
-                        }
-                        if let Err(error) = crate::provider::redact_message(
-                            &mut response.message,
-                            &self.context.redactor,
-                        ) {
-                            self.inference_finish(
-                                permit.as_ref(),
-                                crate::inference::AttemptOutcome::Failed,
-                            )
-                            .await?;
-                            return Err(error.into());
-                        }
-                        // Only a completed response flushes the withheld suffix.
-                        // Failure/cancellation cannot disclose a partial secret.
-                        let safe = self.context.redactor.redact_public_prefix(&pending_text);
-                        self.project_provider_text(safe, checkpoint, partial_output)
-                            .await?;
-                        return Ok((response, permit));
-                    }
-                    Some(Err(error)) if !partial && self.retry_allowed(&error, attempt) => {
-                        self.inference_finish(
-                            permit.as_ref(),
-                            crate::inference::AttemptOutcome::Failed,
-                        )
-                        .await?;
-                        self.retry_wait(attempt, &error, delay, cancel).await?;
-                        delay = delay.saturating_mul(2).min(self.retry.max_delay);
-                        break;
-                    }
-                    Some(Err(error)) => {
-                        let error = if partial && matches!(error, ProviderError::ContextLength) {
-                            ProviderError::Incomplete
-                        } else {
-                            error
-                        };
-                        self.inference_finish(
-                            permit.as_ref(),
-                            crate::inference::AttemptOutcome::Failed,
-                        )
-                        .await?;
-                        return Err(error.into());
-                    }
-                    None => {
-                        self.inference_finish(
-                            permit.as_ref(),
-                            crate::inference::AttemptOutcome::Failed,
-                        )
-                        .await?;
-                        return Err(ProviderError::InvalidResponse(
-                            "provider stream ended without completion".into(),
-                        )
-                        .into());
-                    }
-                }
-            }
-        }
-        unreachable!("retry loop always returns")
-    }
-
-    async fn retry_wait(
-        &self,
-        attempt: usize,
-        error: &ProviderError,
-        delay: Duration,
-        cancel: &CancellationToken,
-    ) -> Result<(), AgentError> {
-        let wait = error.retry_after().unwrap_or_else(|| {
-            retry::jittered(delay.min(self.retry.max_delay), self.retry_jitter.sample())
-        });
-        self.sink
-            .emit(AgentEvent::ProviderRetry {
-                attempt,
-                delay: wait,
-                error: error.to_string(),
-            })
-            .await;
-        tokio::select! {_ = cancel.cancelled()=>Err(AgentError::Cancelled),_ = tokio::time::sleep(wait)=>Ok(())}
+        self.provider_request_attempts(request, cancel, checkpoint, partial_output, reference)
+            .await
     }
 
     pub fn workspace(&self) -> &std::path::Path {
