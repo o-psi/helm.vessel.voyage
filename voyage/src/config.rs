@@ -592,6 +592,8 @@ impl Config {
             self.base_url = Some(connection.endpoint);
         }
         self.account = Some(binding);
+        // Explicit named authentication is not an anonymous compatible endpoint.
+        self.api_key_required = true;
         self.validate_account()
     }
     pub fn validate_account(&self) -> Result<()> {

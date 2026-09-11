@@ -8,6 +8,7 @@ import subprocess
 import time
 import unittest
 import uuid
+import urllib.request
 
 from voyage_fixture import Fixture, ProviderHandler, wait_for
 
@@ -44,6 +45,20 @@ class AccountsFixture(Fixture):
         host_config.parent.mkdir(mode=0o700)
         host_config.write_bytes(self.config.read_bytes())
         host_config.chmod(0o600)
+
+    def request(self, command, *, envelope=False):
+        credential = json.loads((self.directory / "process-http.json").read_text())
+        payload = json.dumps({"protocol": 1, "command": command}).encode()
+        request = urllib.request.Request(credential["endpoint"] + "/v1/vessel/command",
+            data=payload, headers={"Authorization": "Bearer " + credential["token"],
+                                  "Content-Type": "application/json"}, method="POST")
+        with urllib.request.urlopen(request, timeout=30) as incoming:
+            response = json.loads(incoming.read(4 * 1024 * 1024 + 1))
+        assert response["protocol"] == 1
+        if envelope:
+            return response
+        assert response.get("error") is None, response
+        return response["result"]
 
     def cli(self, *args, ok=True):
         result = subprocess.run([str(self.bin_dir / "vessel"), "auth", "accounts", *args],
@@ -154,6 +169,46 @@ class NamedAccounts(unittest.TestCase):
         public = json.dumps([f.snapshot(a), f.snapshot(b), f.snapshot(branch)])
         for secret in ("synthetic-personal", "synthetic-work", "ACCOUNT_PERSONAL", "ACCOUNT_WORK"):
             self.assertNotIn(secret, public)
+
+    def test_scoped_catalogue_and_selection_use_current_explicit_authority(self):
+        f = self.f
+        session, _ = f.new_account(self.personal)
+        host = f.request({"op": "capabilities"})["vessel_id"]
+        def grant(rights, accounts, connections):
+            return f.request({"op": "grant", "command_id": str(uuid.uuid4()),
+                "grant_id": str(uuid.uuid4()), "principal_id": str(uuid.uuid4()),
+                "session_id": session, "workspace": str(f.workspace), "rights": rights,
+                "accounts": accounts, "enrollment_connections": connections,
+                "expires_at_ms": int(time.time() * 1000) + 120_000,
+                "endpoint": "https://synthetic-vessel.invalid"})
+        def scoped(credential, command, envelope=False):
+            return f.request({"op": "granted", "expected_vessel_id": host,
+                "grant_id": credential["grant_id"], "token": credential["token"],
+                "command": command}, envelope=envelope)
+        user = grant(["account_use"], [self.personal["account_id"]], [])
+        catalogue = scoped(user, {"op": "accounts", "workspace": str(f.workspace), "transport": None})
+        self.assertEqual([a["id"] for a in catalogue["accounts"]], [self.personal["account_id"]])
+        forbidden = f.mutation(session, "set_account_inference", account=self.work,
+            model="fixture-model", reasoning_effort=None, service_tier=None)
+        result = scoped(user, {"session_id": session, **forbidden}, envelope=True)
+        self.assertIsNotNone(result["error"])
+        self.assertEqual(f.snapshot(session)["inference"]["account"], self.personal)
+        all_accounts = f.request({"op": "accounts", "workspace": str(f.workspace), "transport": None})
+        oauth = next(c for c in all_accounts["connections"] if c["transports"] == ["chatgpt_oauth"])
+        enroller = grant(["account_enroll"], [], [oauth["id"]])
+        limited = scoped(enroller, {"op": "accounts", "workspace": str(f.workspace), "transport": None})
+        self.assertEqual(limited["accounts"], [])
+        self.assertEqual([c["id"] for c in limited["connections"]], [oauth["id"]])
+        # Unsupported/ungranted connection refuses BEFORE any provider authorization.
+        denied = scoped(enroller, {"op": "enroll_account", "command_id": str(uuid.uuid4()),
+            "enrollment_id": str(uuid.uuid4()), "workspace": str(f.workspace),
+            "connection_id": self.personal["connection_id"], "alias": "forbidden", "label": "Forbidden"}, envelope=True)
+        self.assertIsNotNone(denied["error"])
+        f.request({"op": "revoke_grant", "command_id": str(uuid.uuid4()),
+                   "grant_id": user["grant_id"], "expected_revision": 1})
+        denied = scoped(user, {"op": "accounts", "workspace": str(f.workspace), "transport": None}, envelope=True)
+        self.assertIsNotNone(denied["error"])
+        self.assertEqual(f.provider.account_requests, [])
 
     def test_rotation_preserves_binding_logout_refuses_without_fallback(self):
         f = self.f

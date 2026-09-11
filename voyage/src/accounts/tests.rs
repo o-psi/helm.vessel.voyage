@@ -170,6 +170,9 @@ fn child(root: &std::path::Path, mode: &str, value: Option<&str>) -> std::proces
     let mut command = std::process::Command::new(std::env::current_exe().unwrap());
     command
         .args(["--exact", "accounts::tests::account_child", "--nocapture"])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
         .env(CHILD_MODE, mode)
         .env(CHILD_ROOT, root)
         .env_remove(ENV_KEY);

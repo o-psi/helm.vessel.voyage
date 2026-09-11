@@ -64,6 +64,24 @@ async fn configure_inner(
     if let Some(receipt) = state.owner.process_receipt(*command_id).await? {
         return Ok(receipt);
     }
+    if let RuntimeCommand::SetAccountInference {
+        expires_at_ms,
+        expected_revision,
+        ..
+    } = &command
+    {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_millis();
+        ensure!(
+            u128::from(*expires_at_ms) > now && u128::from(*expires_at_ms) - now <= 300_000,
+            "invalid account selection deadline"
+        );
+        ensure!(
+            state.owner.snapshot().await?.revision == *expected_revision,
+            "session revision conflict"
+        );
+    }
     let mut config = match &command {
         RuntimeCommand::Configure { config_path, .. } => {
             ensure!(
@@ -197,6 +215,9 @@ async fn configure_inner(
             .close_for_command(&state.owner, &command)
             .await?;
     }
+    // Discovery may have awaited the provider; selection still needs current
+    // host grant/account authority at durable publication, not just picker time.
+    super::authorization::account_authority(state, &mut authorization, &config)?;
     let mut current = state.config.write().await;
     let receipt = state
         .owner

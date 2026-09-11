@@ -1,7 +1,8 @@
-# Account backend integration (#213, sequential backend phase)
+# Account backend integration (#213)
 
-This is a host backend, not a completed Helm/runtime/remote-account feature. No
-commit or publication is part of this phase. The new protocol module is
+This is the internal host API reference. The integrated user workflow and evidence
+limits are documented in [named accounts](../../../docs/provider-accounts.md).
+The protocol module is
 `voyage_protocol::accounts`; runtime types are in `voyage::accounts` (imported as
 `voyage_runtime::accounts` by Vessel).
 
@@ -169,8 +170,8 @@ private enrollment lifecycle is not claimed in this backend phase.
 One atomic **private** checkpoint contains separate credential and metadata
 structures; only safe projections leave storage. It uses existing native
 owner-private, symlink/hardlink-safe directory primitives. Registry lock waits
-are bounded to 750 ms; credential readers wait up to three seconds for another
-process's refresh. Refresh intent is per account and durable before network IO;
+are bounded to 750 ms; credential readers wait up to 35 seconds for another
+process's refresh; permanent authentication failures do not consume that wait. Refresh intent is per account and durable before network IO;
 no network exchange holds the registry lock. The legacy file store has an
 analogous durable refresh fence. OAuth requests have bounded timeouts and response
 sizes. Refresh failure/crash stays fenced until explicit reauthentication.
@@ -183,9 +184,19 @@ lost/failed post-exchange publication stays unresolved rather than reissuing the
 exchange. Retained command identities are not pruned automatically. Expanding or
 compacting this bounded store is not part of this phase.
 
-Parent still owns account-aware Config/launch persistence, endpoint matching and
-per-request API credential resolution, scoped remote grants/endpoints, private
-Helm presentation, atomic next-run selection, and active-run/cache integration.
-This phase does not claim remote/UI end-to-end completion, native macOS/Windows
-security evidence, live provider validation, or new organization/project headers.
-No provider bridge, paid inference, or real login was used.
+Config/launch persistence, endpoint matching, per-request native credential resolution,
+scoped grant checks, Helm private presentation, and next-run selection use these APIs.
+An admitted provider also retains its execution-authority check; API requests and
+OAuth dispatch recheck it after asynchronous metadata/refresh work. AccountModels
+runs in the bounded Voyage metadata helper, not inside the Vessel supervisor.
+
+The login identity is a private billing-account/subject tuple asserted by the trusted
+OAuth response or explicitly imported by the owner. Conflicting claims fail closed;
+opaque legacy credentials do not prove same-login replacement. Both registry and
+legacy refresh publication compare this identity, not only a shared organization ID.
+Device polling and token exchange are separate methods with a durable state/current
+authority check between them. Removed account state is absorbing.
+
+Synthetic tests do not establish native macOS/Windows security, live provider
+validation, new organization/project headers, or deployed remote TLS qualification.
+No provider bridge or automatic account rotation is part of this integration.
