@@ -285,6 +285,7 @@ impl App {
         );
         let command = super::attachments::prepare(command, &view.draft, &view.images)?;
         view.pending = Some(Pending {
+            account_host: None,
             command_id,
             original: Some(Box::new(command.clone())),
             receipt_only: false,
@@ -325,6 +326,10 @@ impl App {
         }
         self.command_checks.insert((target, command_id), None);
         let incarnation = self.views[&target].process.incarnation;
+        let account_host = self.views[&target]
+            .pending
+            .as_ref()
+            .and_then(|p| p.account_host);
         let images = if super::attachments::is_image_submission(&command) {
             self.views[&target].images.clone()
         } else {
@@ -340,17 +345,35 @@ impl App {
             self.status = "Sending...".into();
         }
         let job = tokio::spawn(async move {
-            let mut result = super::attachments::upload_then_submit(
-                &client,
-                target.session,
-                incarnation,
-                command_id,
-                command.clone(),
-                &images,
-            )
+            let checked_host = async {
+                if let Some(host) = account_host {
+                    let caps = client
+                        .request(voyage_protocol::vessel::VesselCommand::Capabilities)
+                        .await?;
+                    ensure!(
+                        caps["vessel_id"] == host.to_string(),
+                        "Authenticated account host changed; pending command retained"
+                    );
+                }
+                Ok::<_, anyhow::Error>(())
+            }
             .await;
+            let mut result = match checked_host {
+                Err(e) => Err(e),
+                Ok(()) => {
+                    super::attachments::upload_then_submit(
+                        &client,
+                        target.session,
+                        incarnation,
+                        command_id,
+                        command.clone(),
+                        &images,
+                    )
+                    .await
+                }
+            };
             // Bounded status recovery only. Never replay the submitted mutation.
-            if resolving {
+            if resolving && account_host.is_none() {
                 for _ in 1..3 {
                     if result
                         .as_ref()

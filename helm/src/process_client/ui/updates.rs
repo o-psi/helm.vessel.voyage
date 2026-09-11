@@ -397,6 +397,7 @@ impl App {
                     matches!(
                         command,
                         voyage_protocol::vessel::VoyageCommand::SetInference { .. }
+                            | voyage_protocol::vessel::VoyageCommand::SetAccountInference { .. }
                     )
                 });
                 match result {

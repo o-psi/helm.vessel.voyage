@@ -112,7 +112,10 @@ pub(super) async fn validate_live(client: &Client, saved: &Saved) -> Result<()> 
         "Workspace is no longer authorized; refresh Vessel access"
     );
     anyhow::ensure!(
-        matches!(saved.start, Some(VesselCommand::Start { .. })),
+        matches!(
+            saved.start,
+            Some(VesselCommand::Start { .. } | VesselCommand::StartAccount { .. })
+        ),
         "Remote creation must use executing-host configuration, not StartConfigured"
     );
     Ok(())
