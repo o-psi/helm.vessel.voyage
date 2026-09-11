@@ -37,7 +37,12 @@ fn url(raw: &str) -> Result<reqwest::Url> {
     );
     Ok(url)
 }
-async fn download(client: &reqwest::Client, url: reqwest::Url, sha: &str) -> Result<Vec<u8>> {
+async fn download(
+    client: &reqwest::Client,
+    url: reqwest::Url,
+    sha: &str,
+    limit: usize,
+) -> Result<Vec<u8>> {
     ensure!(super::hash(sha), "invalid expected download digest");
     let mut response = client
         .get(url)
@@ -51,7 +56,7 @@ async fn download(client: &reqwest::Client, url: reqwest::Url, sha: &str) -> Res
     ensure!(
         response
             .content_length()
-            .is_none_or(|len| len <= super::MAX_ARCHIVE as u64),
+            .is_none_or(|len| len <= limit as u64),
         "package download exceeds limit"
     );
     let mut bytes = Vec::new();
@@ -61,7 +66,7 @@ async fn download(client: &reqwest::Client, url: reqwest::Url, sha: &str) -> Res
         .map_err(|_| anyhow::anyhow!("package HTTPS body failed"))?
     {
         ensure!(
-            bytes.len() + chunk.len() <= super::MAX_ARCHIVE,
+            bytes.len() + chunk.len() <= limit,
             "package download exceeds limit"
         );
         bytes.extend_from_slice(&chunk);
@@ -95,7 +100,13 @@ pub(super) async fn acquire(config: &Path, id: &str) -> Result<Vec<u8>> {
         );
     }
     let client = builder.build()?;
-    let raw = download(&client, origin.clone(), &configuration.sha256).await?;
+    let raw = download(
+        &client,
+        origin.clone(),
+        &configuration.sha256,
+        super::MAX_ARCHIVE,
+    )
+    .await?;
     let index: Index =
         serde_json::from_slice(&raw).map_err(|_| anyhow::anyhow!("invalid package index"))?;
     ensure!(
@@ -118,9 +129,15 @@ pub(super) async fn acquire(config: &Path, id: &str) -> Result<Vec<u8>> {
         .iter()
         .find(|e| e.id == id)
         .ok_or_else(|| anyhow::anyhow!("package absent from index"))?;
-    let bytes = download(&client, url(&entry.url)?, &entry.sha256).await?;
+    let bytes = download(
+        &client,
+        url(&entry.url)?,
+        &entry.sha256,
+        super::executable::MAX_ARCHIVE,
+    )
+    .await?;
     ensure!(
-        super::Archive::parse(&bytes)?.manifest.id == id,
+        super::Package::parse(&bytes)?.id() == id,
         "downloaded identity mismatch"
     );
     Ok(bytes)

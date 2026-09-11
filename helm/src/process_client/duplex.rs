@@ -285,6 +285,44 @@ impl Slot {
         *connection = Some(handle.clone());
         Ok(handle)
     }
+    /// Use only the already observed private-input socket. Never open a replacement.
+    pub(super) async fn exchange_bound(
+        &self,
+        client: &super::transport::Client,
+        socket_id: Uuid,
+        command: VesselCommand,
+    ) -> Result<serde_json::Value> {
+        let connection = self.connection.lock().await;
+        ensure!(
+            self.state.borrow().socket_id == Some(socket_id),
+            "private terminal socket changed; detach without replay"
+        );
+        let handle = connection
+            .as_ref()
+            .filter(|h| !h.stop.is_cancelled() && !h.sender.is_closed())
+            .ok_or_else(|| {
+                anyhow::anyhow!("private terminal socket unavailable; detach without replay")
+            })?;
+        let (reply, result) = oneshot::channel();
+        handle
+            .sender
+            .try_send(Outbound::Command {
+                request: Box::new(VesselRequest {
+                    protocol: VESSEL_API_VERSION,
+                    command,
+                }),
+                reply,
+            })
+            .map_err(|_| {
+                anyhow::anyhow!("private terminal socket queue unavailable; input not replayed")
+            })?;
+        drop(connection);
+        let response = result
+            .await
+            .map_err(|_| anyhow::anyhow!("private terminal socket lost; delivery unknown"))??;
+        super::access::public_response(response, client.is_local())
+    }
+
     pub(super) async fn exchange(
         &self,
         client: &super::transport::Client,
@@ -525,4 +563,57 @@ fn encoded(frame: &ClientFrame) -> Result<Message> {
         "Vessel request exceeds socket frame limit"
     );
     Ok(Message::Text(text.into()))
+}
+
+#[cfg(test)]
+mod terminal_socket_tests {
+    use super::*;
+    #[tokio::test]
+    async fn private_terminal_never_reconnects_or_requeues_after_loss() {
+        let socket = slot(Uuid::new_v4(), 0);
+        let client = super::super::transport::Client::local(std::path::PathBuf::from(
+            "/nonexistent-private-terminal-fixture",
+        ));
+        let expected = Uuid::new_v4();
+        assert!(
+            socket
+                .exchange_bound(&client, expected, VesselCommand::Capabilities)
+                .await
+                .is_err()
+        );
+        assert!(socket.connection.lock().await.is_none());
+        let (sender, mut receiver) = mpsc::channel(2);
+        let stop = CancellationToken::new();
+        *socket.connection.lock().await = Some(Handle {
+            sender,
+            stop: stop.clone(),
+        });
+        socket
+            .state
+            .send_modify(|state| state.socket_id = Some(expected));
+        assert!(
+            socket
+                .exchange_bound(&client, Uuid::new_v4(), VesselCommand::Capabilities)
+                .await
+                .is_err()
+        );
+        assert!(receiver.try_recv().is_err());
+        let request = socket.exchange_bound(&client, expected, VesselCommand::Capabilities);
+        tokio::pin!(request);
+        tokio::select! { biased; _ = &mut request => panic!("request completed without response"), _ = tokio::task::yield_now() => {} }
+        let Outbound::Command { reply, .. } = receiver.try_recv().unwrap() else {
+            panic!("wrong operation")
+        };
+        stop.cancel();
+        socket.state.send_modify(|state| state.socket_id = None);
+        drop(reply); // An uncertain accepted request is not a command to replay.
+        assert!(request.await.is_err());
+        assert!(
+            socket
+                .exchange_bound(&client, expected, VesselCommand::Capabilities)
+                .await
+                .is_err()
+        );
+        assert!(receiver.try_recv().is_err());
+    }
 }

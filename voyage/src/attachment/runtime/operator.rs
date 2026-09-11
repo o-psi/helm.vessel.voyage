@@ -15,6 +15,9 @@ impl RunOwner {
         let result: anyhow::Result<()> = async {
             anyhow::ensure!(!cancel.is_cancelled(), "operator action cancelled");
             self.start_operator_scope(agent).await?;
+            agent
+                .operator_run_lifecycle(self.run_id, cancel.clone(), "run_start")
+                .await;
             reason = "Operator tool failed.";
             let session_id = self.record().await?.session_id;
             let text = self
@@ -26,6 +29,10 @@ impl RunOwner {
                 )
                 .await?;
             reason = "Operator action failed during finalization.";
+            anyhow::ensure!(!cancel.is_cancelled(), "operator action cancelled");
+            agent
+                .operator_run_lifecycle(self.run_id, cancel.clone(), "run_finish")
+                .await;
             anyhow::ensure!(!cancel.is_cancelled(), "operator action cancelled");
             let lease = agent.operator_lease(session_id, self.run_id).await?;
             self.finish_operator_scoped(redactor.redact(text), lease, cancel.clone())

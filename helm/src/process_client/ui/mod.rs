@@ -288,6 +288,9 @@ pub async fn run_with_notice(
                 execute!(io::stdout(),crossterm::event::DisableMouseCapture,crossterm::event::DisableFocusChange)?;
                 drop(events);
                 let result=super::terminal::attach_observed(&app.clients[target.route],target.session,incarnation,run,terminal_id).await;
+                if result.as_ref().err().is_some_and(|error| error.downcast_ref::<super::terminal::CleanupFailure>().is_some()) {
+                    return result;
+                }
                 terminal::enable_raw_mode()?;
                 execute!(io::stdout(),terminal::EnterAlternateScreen,crossterm::event::EnableBracketedPaste,crossterm::event::EnableMouseCapture,crossterm::event::EnableFocusChange)?;
                 let (width,height) = terminal::size()?;

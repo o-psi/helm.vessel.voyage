@@ -47,14 +47,16 @@ resource bounds, passive terminal selection and measured verification.
 
 ## Private terminals
 
-Structured terminal cells and input-mode fidelity remain under
-[#32](https://github.com/o-psi/helm.vessel.voyage/issues/32). The current human-only
-response contains sanitized plain screen rows; a tui-term renderer alone cannot
-recover discarded styling. That work requires both protocol ends, bounded cell
-transport, wide-cell/cursor semantics and preservation of private input ordering,
-capture cutoff, leases and restoration. Its default vt100 adapter must not
-silently introduce a competing parser version. This epic changes semantic chrome,
-not the private terminal wire contract or cell serialization costs.
+Structured terminal cells and input-mode fidelity are implemented under
+[#32](https://github.com/o-psi/helm.vessel.voyage/issues/32); see the
+[private terminal contract](private-terminal.md) for bounds and evidence. The
+human-only response now carries typed cells alongside sanitized row fallback.
+Direct Ratatui buffer rendering retains width validation and the existing backend
+cursor without adding tui-term's default vt100 0.16 adapter to Voyage's 0.15 stack.
+The published tui-term 0.3.4 manifest and Screen/Cell interface were evaluated;
+a custom adapter is possible but would not replace protocol/input validation.
+#196 remains the completed semantic-chrome delivery, not retrospective evidence
+for #32's new terminal contract.
 
 ## Effects and component gallery
 
