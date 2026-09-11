@@ -11,7 +11,8 @@ are not presented as usable commands.
 | [Implementation](implementation.md) | Work needed to deliver the target, in dependency order |
 | [Current state](current-state.md) | What the existing code implements and what remains unfinished |
 | [Configuration](configuration.md) | Current provider, policy and storage configuration |
-| [Provider accounts plan](provider-accounts-plan.md) | Proposed accounts, Helm device sign-in and selection, executing-host credentials; not implemented |
+| [Named provider accounts](provider-accounts.md) | Helm account selection/private device sign-in, host-only credentials, migration and authority |
+| [Provider accounts plan](provider-accounts-plan.md) | Design decisions and acceptance matrix for named native accounts |
 | [Operations](operations.md) | Connected HTTP(S) voyages and legacy chat/managed/worker procedures |
 | [Vessel connections](vessel-connections.md) | In-app connection manager, remembered Vessels, pairing, workspaces and access recovery |
 | [Connection verification](vessel-connections-verification.md) | Observed Linux UI, protocol, recovery, transport and deployment checks |
@@ -27,7 +28,7 @@ are not presented as usable commands.
 | [Process access](process-access.md) | Scoped grants, participant execution, signed owner transfer and recovery |
 | [Security](security.md) | Authority, credentials, disclosure, terminal safety and first-release audit |
 | [Development](development.md) | Source layout, build commands and contribution workflow |
-| [UX readiness](ux-readiness.md) | Interaction inventory, known gaps and manual product acceptance gate |
+| [UX readiness](ux-readiness.md) | Interaction inventory, known gaps and objective executable verification |
 | [Design lessons](design-lessons.md) | Consolidated design principles from 13 terminal apps, source evidence and Helm design guidance |
 | [Quality](quality.md) | The remaining non-test checks and limits of their evidence |
 | [Releasing](releasing.md) | Archive contents, packaging and publication boundaries |

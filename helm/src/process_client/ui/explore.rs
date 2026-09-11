@@ -1,4 +1,4 @@
-//! Discover existing read-only views without entering a command or losing a draft.
+//! Discover operational controls without entering a command or losing a draft.
 use super::App;
 use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent};
@@ -10,10 +10,18 @@ use ratatui::{
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph},
 };
 
-const ITEMS: [(&str, &str, &str); 7] = [
-    ("Available tools", "What this voyage can do", "tools"),
-    ("Permissions", "What this voyage may do", "policy"),
-    ("Tasks", "Progress and remaining work", "todos"),
+const ITEMS: [(&str, &str, &str); 8] = [
+    (
+        "Run a tool",
+        "Typed actions with runtime permission checks",
+        "tools",
+    ),
+    ("Access", "Review and change execution access", "policy"),
+    (
+        "Manage tasks",
+        "Create, update and record task evidence",
+        "todos",
+    ),
     (
         "Delegated work",
         "Work assigned to other agents",
@@ -26,6 +34,11 @@ const ITEMS: [(&str, &str, &str); 7] = [
     ),
     ("Models", "Available and selected models", "models"),
     ("This machine", "Cleanup records", "host_resources"),
+    (
+        "Policy details",
+        "Read effective constraints",
+        "policy_details",
+    ),
 ];
 
 impl App {
@@ -52,7 +65,20 @@ impl App {
             KeyCode::Down => self.explore = Some((index + 1).min(ITEMS.len() - 1)),
             KeyCode::Enter => {
                 if let Some(target) = self.selected {
-                    self.inspect_control(target, ITEMS[index].2)?;
+                    match ITEMS[index].2 {
+                        "workflows" => self.open_workflows()?,
+                        "tools" => self.open_operator(target, None)?,
+                        "todos" => self.open_operator(target, Some("todo"))?,
+                        "subagents" => self.open_operator(target, Some("subagent"))?,
+                        "models" => self.inference_command(
+                            super::inference::Destination::Live(target),
+                            "/model",
+                            true,
+                        )?,
+                        "policy" => self.open_access(target, None)?,
+                        "policy_details" => self.inspect_control(target, "policy")?,
+                        section => self.inspect_control(target, section)?,
+                    }
                     if let Some(view) = self.views.get_mut(&target) {
                         view.terminals.open = false;
                         view.scroll = 0;

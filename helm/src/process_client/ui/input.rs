@@ -2,9 +2,16 @@ use super::*;
 
 impl App {
     pub(super) fn input(&mut self, event: Event) -> Result<()> {
+        // Private enrollment consumes every event before clipboard/composer/history handlers.
+        if self.account_input(&event)? {
+            return Ok(());
+        }
         self.cancel_panel_paste_on_input(&event);
         if matches!(event, Event::Resize(..)) {
             self.resize_previews()?;
+        }
+        if self.workflow_input(&event)? {
+            return Ok(());
         }
         // Private connection input (especially paste) precedes every composer path.
         if self.vessel_input(&event)? {
@@ -14,6 +21,12 @@ impl App {
             return Ok(());
         }
         self.sync_interactions();
+        if self.operator_input(&event) {
+            return Ok(());
+        }
+        if self.voyage_picker_input(&event) {
+            return Ok(());
+        }
         if self.paste_input(&event)? {
             return Ok(());
         }

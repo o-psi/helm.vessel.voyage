@@ -99,12 +99,14 @@ pub(super) fn runtime(command: VoyageCommand) -> Result<RuntimeCommand> {
             user_directory,
             inputs,
             trust_digest,
+            optional_secret_names,
         } => RuntimeCommand::WorkflowPreview {
             id,
             scope,
             user_directory,
             inputs,
             trust_digest,
+            optional_secret_names,
         },
         VoyageCommand::WorkflowSubmit {
             command_id,
@@ -293,6 +295,23 @@ pub(super) fn runtime(command: VoyageCommand) -> Result<RuntimeCommand> {
             reasoning_effort,
             service_tier,
         },
+        VoyageCommand::SetAccountInference {
+            command_id,
+            expected_revision,
+            expires_at_ms,
+            model,
+            reasoning_effort,
+            service_tier,
+            account,
+        } => RuntimeCommand::SetAccountInference {
+            command_id,
+            expected_revision,
+            expires_at_ms,
+            model,
+            reasoning_effort,
+            service_tier,
+            account,
+        },
         VoyageCommand::SetModel {
             command_id,
             expected_revision,
@@ -441,11 +460,16 @@ impl Supervisor {
         // an applied receipt: the owning Voyage remains the configuration authority.
         // Resolution checks the same envelope but never dispatches it automatically.
         let inference = match &request.command {
-            command @ VoyageCommand::SetInference { .. } => Some((command.clone(), true)),
+            command @ (VoyageCommand::SetInference { .. }
+            | VoyageCommand::SetAccountInference { .. }) => Some((command.clone(), true)),
             VoyageCommand::Resolve {
                 command_id,
                 original: Some(original),
-            } if matches!(original.as_ref(), VoyageCommand::SetInference { .. }) => {
+            } if matches!(
+                original.as_ref(),
+                VoyageCommand::SetInference { .. } | VoyageCommand::SetAccountInference { .. }
+            ) =>
+            {
                 ensure!(
                     original.mutation_id() == Some(*command_id),
                     "resolution identity mismatch"
@@ -456,7 +480,8 @@ impl Supervisor {
         };
         if let Some((command, reserve)) = inference {
             ensure!(
-                authorization.is_none(),
+                authorization.is_none()
+                    || matches!(command, VoyageCommand::SetAccountInference { .. }),
                 "inference settings require owner authority"
             );
             self.registration(request.session_id).await?;
@@ -472,6 +497,32 @@ impl Supervisor {
                 }),
                 reserve,
             )?;
+        }
+        if let Some(binding) = &authorization {
+            let grant: ProcessGrant = super::access::store::load(
+                &super::access::store::grant_path(&self.directory, binding.grant_id),
+            )?;
+            let selected = match &request.command {
+                VoyageCommand::SetAccountInference { account, .. } => Some(account),
+                VoyageCommand::Resolve {
+                    original: Some(original),
+                    ..
+                } => match original.as_ref() {
+                    VoyageCommand::SetAccountInference { account, .. } => Some(account),
+                    _ => None,
+                },
+                _ => None,
+            };
+            if let Some(account) = selected {
+                let scope = super::accounts::Scope::Session(grant.clone());
+                if matches!(request.command, VoyageCommand::Resolve { .. }) {
+                    // Resolving a retained command is not new inference admission.
+                    // Logout must not make its original receipt unknowable.
+                    scope.observe_account_intent(&self.directory, &grant.workspace, account)?;
+                } else {
+                    scope.use_account(&self.directory, &grant.workspace, account)?;
+                }
+            }
         }
         let command = runtime(request.command)?;
         let result = self
@@ -533,9 +584,37 @@ pub(super) fn required_right(command: &VoyageCommand) -> Option<ProcessRight> {
             Some(ProcessRight::Execute)
         }
         VoyageCommand::Terminal { .. } => Some(ProcessRight::Terminal),
+        VoyageCommand::SetAccountInference { .. } => Some(ProcessRight::AccountUse),
         VoyageCommand::Configure { .. }
         | VoyageCommand::SetAccess { .. }
         | VoyageCommand::SetInference { .. } => None,
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod workflow_preview_tests {
+    use super::*;
+
+    #[test]
+    fn preview_translation_preserves_optional_selection() {
+        for names in [None, Some(vec![]), Some(vec!["optional".into()])] {
+            let command = VoyageCommand::WorkflowPreview {
+                id: "example".into(),
+                scope: None,
+                user_directory: None,
+                inputs: vec![],
+                trust_digest: None,
+                optional_secret_names: names.clone(),
+            };
+            let RuntimeCommand::WorkflowPreview {
+                optional_secret_names,
+                ..
+            } = runtime(command).unwrap()
+            else {
+                panic!("expected runtime preview")
+            };
+            assert_eq!(optional_secret_names, names);
+        }
     }
 }

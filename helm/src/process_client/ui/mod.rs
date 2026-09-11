@@ -1,4 +1,7 @@
 //! Multiplexed presentation; dropping this interface only drops observations.
+#[cfg(test)]
+mod account_test_support;
+mod accounts;
 mod actions;
 mod archive;
 mod attachments;
@@ -11,6 +14,8 @@ mod inference;
 mod input;
 mod interactions;
 mod lifecycle;
+mod operator;
+mod operator_bridge;
 mod paste;
 mod previews;
 mod reconcile;
@@ -18,6 +23,8 @@ mod routes;
 mod transcript;
 mod updates;
 mod vessels;
+mod voyage_picker;
+mod workflows;
 use crate::composer;
 mod drafts;
 mod effects;
@@ -87,9 +94,14 @@ pub(super) struct App {
     archives: bool,
     help_scroll: u16,
     explore: Option<usize>,
+    workflows: workflows::State,
+    operator: Option<operator::Panel>,
+    operator_loading: Option<(uuid::Uuid, Instant)>,
+    voyage_picker: Option<voyage_picker::Picker>,
     interactions: std::cell::RefCell<interactions::Review>,
     completion: completion::Completion,
     inference: inference::Controls,
+    accounts: accounts::Controls,
     sidebar: sidebar::Sidebar,
     terminal_request: Option<(Target, uuid::Uuid, uuid::Uuid, uuid::Uuid)>,
 }
@@ -212,10 +224,15 @@ pub async fn run_with_notice(
         archives: false,
         help_scroll: 0,
         explore: None,
+        workflows: Default::default(),
+        operator: None,
+        operator_loading: None,
+        voyage_picker: None,
         interactions: Default::default(),
         terminal_request: None,
         completion: Default::default(),
         inference: Default::default(),
+        accounts: Default::default(),
         sidebar: Default::default(),
     };
     app.start_observers();
@@ -239,6 +256,8 @@ pub async fn run_with_notice(
     let mut repaint = tokio::time::interval(Duration::from_millis(100));
     let result = async {
         while !app.quit {
+            app.poll_operator();
+            app.poll_workflows();
             app.poll_browsers();
             app.poll_clipboard();
             app.poll_previews()?;
@@ -269,6 +288,9 @@ pub async fn run_with_notice(
                 execute!(io::stdout(),crossterm::event::DisableMouseCapture,crossterm::event::DisableFocusChange)?;
                 drop(events);
                 let result=super::terminal::attach_observed(&app.clients[target.route],target.session,incarnation,run,terminal_id).await;
+                if result.as_ref().err().is_some_and(|error| error.downcast_ref::<super::terminal::CleanupFailure>().is_some()) {
+                    return result;
+                }
                 terminal::enable_raw_mode()?;
                 execute!(io::stdout(),terminal::EnterAlternateScreen,crossterm::event::EnableBracketedPaste,crossterm::event::EnableMouseCapture,crossterm::event::EnableFocusChange)?;
                 let (width,height) = terminal::size()?;

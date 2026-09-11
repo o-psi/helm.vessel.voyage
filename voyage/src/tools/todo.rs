@@ -142,9 +142,9 @@ impl From<StatusArg> for TodoStatus {
     }
 }
 
-#[async_trait]
-impl Tool for TodoTool {
-    fn definition(&self) -> ToolDefinition {
+// Pure contract shared by execution and idle preflight; no runtime/store is opened.
+impl TodoTool {
+    pub(crate) fn builtin_definition() -> ToolDefinition {
         ToolDefinition {
             output_schema: None,
             annotations: None,
@@ -152,6 +152,13 @@ impl Tool for TodoTool {
             description: "Manage durable workspace tasks. Each action accepts only its branch's keys. Use block with id and blockers to explain blocked work; [] clears reasons and reopens blocked work. Record verification via evidence, not title/progress text. Status changes do not record evidence. Run completion uses recorded outcomes automatically; no separate completion sign-off is required. Remove/archive/clear_completed never erase run-owned obligations. clear_completed archives all completed items and accepts no id. Examples show shapes; copy actual IDs and record only real evidence.".into(),
             input_schema: schema::input_schema(),
         }
+    }
+}
+
+#[async_trait]
+impl Tool for TodoTool {
+    fn definition(&self) -> ToolDefinition {
+        Self::builtin_definition()
     }
     async fn execute(&self, args: Value, context: &ToolContext) -> Result<String, ToolError> {
         let args: Args = serde_json::from_value(args).map_err(invalid)?;

@@ -132,11 +132,30 @@ limits and shared inference accounting apply across all voyages.
 
 ### Interactive terminals and passwords
 
-Press **F8 Explore** to choose a readable overview of tools, permissions, tasks,
-delegated work, workflows, models or machine capacity. Up/Down chooses, Enter
-opens, and Esc returns without changing the message draft. These are read-only
-overviews; they do not change configuration. The wide layout keeps voyages in a
-full-height rail, with the conversation and composer together on the right.
+Press **F2** to search named voyages and drafts even when the sidebar is hidden.
+Type or paste a name, host, status or workspace; Up/Down chooses and Enter opens.
+Escape returns without changing the composer or answering a pending request.
+F5 selects Archives; F2 searches that catalogue.
+
+Press **F8 Explore** to choose tool/task/subagent actions, saved workflows, Access,
+Models or machine cleanup information. Tool actions use the executing host's schema:
+search an action, enter typed fields, use left/right and Space for choices, Tab for
+the next field, and review before execution. PageDown reads the complete review;
+Enter dispatches only at its end. Public arguments enter the voyage history: never
+use these forms for passwords or tokens. Task/agent references use names rather
+than UUID input. Unknown structured/private fields are explicitly unavailable.
+Idle preflight lists built-ins without starting MCP, terminals or model inference;
+the actual runtime still checks tool availability and permissions before effects.
+
+Saved workflows have their own digest review, typed inputs and executing-host
+preview. Secret fields are masked and transient, never ordinary composer text.
+Cancellation, focus loss or timeout discards private values. Automatic invalidation
+keeps input blocked until explicit Escape; it never drops queued private text into
+the composer. Pending submissions
+retain only the original public envelope and a private handoff reference. Lost
+responses never replay secret values. Access and Models open the existing
+confirmed/selectable controls; machine cleanup information is not a usage/cost
+dashboard.
 
 Press **F3** (or type `/terminals`) to open the selected voyage's terminal browser.
 Use Up/Down to select a named running terminal and **Enter** to attach. No UUID
@@ -195,8 +214,9 @@ does not cancel work: reconnect before the deadline to answer the same request.
 The wait uses `command_timeout_secs`, capped at 120 seconds. Expired requests are
 closed; a later reconnect does not retry the action. Workers with no approval
 interface refuse actions needing fresh consent. Worker questions are not routed.
-`/tools`, `/policy`, `/todos`, `/subagents`, `/workflows` and `/models`
-inspect runtime controls; Esc returns to history. `/tool NAME JSON`
+`/tools`, `/policy`, `/todos`, `/subagents` and `/models` inspect runtime controls;
+Esc returns to history. `/workflows` opens the same private workflow flow as F8.
+`/tool NAME JSON` remains an expert alternative to the F8 typed form and
 executes a real authorized tool, using an operator run when idle. `/terminal UUID`
 opens a separate private attachment (Ctrl+] detaches). `/configure /absolute/host/file`
 applies trusted host settings while idle. `/branch [name]`, `/archive`, `/restore`,

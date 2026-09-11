@@ -18,8 +18,12 @@ use voyage_protocol::vessel::{ProcessInfo, VesselCommand, VoyageCommand};
 pub(super) struct Saved {
     pub(super) id: Uuid,
     route: String,
-    workspace: PathBuf,
+    pub(super) workspace: PathBuf,
     config: Option<crate::Config>,
+    #[serde(default)]
+    pub(super) account_host: Option<Uuid>,
+    #[serde(default)]
+    pub(super) account_settings: Option<super::inference::Settings>,
     explicit: voyage_runtime::policy_profile::Overrides,
     selection: Option<voyage_runtime::policy_profile::selection::SelectionRequest>,
     confirmation: Option<String>,
@@ -46,7 +50,79 @@ pub(super) struct Draft {
     _lock: std::fs::File,
 }
 
+impl Draft {
+    pub(super) fn navigation_title(&self) -> &str {
+        self.composer
+            .text
+            .lines()
+            .next()
+            .filter(|s| !s.is_empty())
+            .unwrap_or("New voyage")
+    }
+    pub(super) fn navigation_workspace(&self) -> &std::path::Path {
+        &self.saved.workspace
+    }
+}
+
 impl Saved {
+    pub(super) fn start_resolution(&self) -> Result<(Uuid, VesselCommand)> {
+        let original = self
+            .start
+            .as_ref()
+            .context("original creation envelope missing; recovery retained")?;
+        Ok(match original {
+            VesselCommand::StartAccount {
+                config_path,
+                command_id,
+                session_id,
+                workspace,
+                account,
+                model,
+                reasoning_effort,
+                service_tier,
+            } => (
+                *command_id,
+                VesselCommand::ResolveStartAccount {
+                    config_path: config_path.clone(),
+                    command_id: *command_id,
+                    session_id: *session_id,
+                    workspace: workspace.clone(),
+                    account: account.clone(),
+                    model: model.clone(),
+                    reasoning_effort: reasoning_effort.clone(),
+                    service_tier: service_tier.clone(),
+                },
+            ),
+            VesselCommand::Start {
+                command_id,
+                workspace,
+                ..
+            } => (
+                *command_id,
+                VesselCommand::ResolveStart {
+                    command_id: *command_id,
+                    session_id: self.id,
+                    workspace: workspace.clone(),
+                    config_path: None,
+                },
+            ),
+            VesselCommand::StartConfigured {
+                command_id,
+                workspace,
+                config_path,
+                ..
+            } => (
+                *command_id,
+                VesselCommand::ResolveStart {
+                    command_id: *command_id,
+                    session_id: self.id,
+                    workspace: workspace.clone(),
+                    config_path: Some(config_path.clone()),
+                },
+            ),
+            _ => anyhow::bail!("Unsupported original creation envelope; recovery retained"),
+        })
+    }
     fn validate_identity(&self) -> Result<()> {
         anyhow::ensure!(
             !self.id.is_nil() && !self.turn.is_nil(),
@@ -59,6 +135,12 @@ impl Saved {
                     command_id,
                     workspace,
                 }
+                | VesselCommand::StartAccount {
+                    session_id,
+                    command_id,
+                    workspace,
+                    ..
+                }
                 | VesselCommand::StartConfigured {
                     session_id,
                     command_id,
@@ -70,6 +152,27 @@ impl Saved {
             anyhow::ensure!(
                 session == self.id && !command.is_nil() && workspace == &self.workspace,
                 "Saved start identity mismatch; original retained"
+            );
+        }
+        if let Some(VesselCommand::StartAccount {
+            account,
+            model,
+            reasoning_effort,
+            service_tier,
+            ..
+        }) = &self.start
+        {
+            let settings = self
+                .account_settings
+                .as_ref()
+                .context("Saved account creation settings missing")?;
+            anyhow::ensure!(
+                self.account_host.is_some()
+                    && settings.account.as_ref() == Some(account)
+                    && &settings.model == model
+                    && &settings.reasoning_effort == reasoning_effort
+                    && &settings.service_tier == service_tier,
+                "Saved account creation envelope changed; original retained"
             );
         }
         anyhow::ensure!(
@@ -272,6 +375,8 @@ impl App {
         }
         let mut saved = Saved {
             id: Uuid::new_v4(),
+            account_host: None,
+            account_settings: None,
             route: storage::route(client)?,
             workspace,
             config: if client.is_local() {
@@ -346,27 +451,28 @@ impl App {
             }
             let command_id = Uuid::new_v4();
             let workspace = draft.saved.workspace.clone();
-            draft.saved.start = Some(if client.is_local() && draft.saved.config.is_some() {
-                let config = draft
-                    .saved
-                    .launch_config()?
-                    .context("local configuration missing")?;
-                VesselCommand::StartConfigured {
-                    command_id,
-                    session_id: id,
-                    workspace: workspace.clone(),
-                    config_path: super::super::frontend::launch::persist(
-                        &config,
-                        &workspace,
-                        &client.directory,
-                    )?,
-                }
-            } else {
-                VesselCommand::Start {
+            draft.saved.start = Some(if let Some(settings) = &draft.saved.account_settings {
+                let config_path = draft.saved.launch_config()?.map(|config| {
+                    anyhow::ensure!(client.is_local(), "Configured account creation is owner-local only; remote configuration remains host-owned");
+                    super::super::frontend::launch::persist(&config, &draft.saved.workspace, &client.directory)
+                }).transpose()?;
+                VesselCommand::StartAccount {
+                    config_path,
                     command_id,
                     session_id: id,
                     workspace,
+                    account: settings
+                        .account
+                        .clone()
+                        .context("Choose an available account with /account before sending")?,
+                    model: settings.model.clone(),
+                    reasoning_effort: settings.reasoning_effort.clone(),
+                    service_tier: settings.service_tier.clone(),
                 }
+            } else {
+                anyhow::bail!(
+                    "Resolve and review the executing-host account with /account before sending"
+                );
             });
         }
         draft.saved.text = draft.composer.text.clone();
@@ -440,7 +546,7 @@ impl App {
                     }
                 }
                 if handoff.pending.is_none() {
-                    handoff.pending = Some(state::Pending { command_id: draft.saved.turn, incarnation: process.incarnation, draft: draft.saved.text.clone(), preserve_draft: false, original: draft.saved.submit.clone().map(Box::new), receipt_only: false });
+                    handoff.pending = Some(state::Pending { account_host: None, command_id: draft.saved.turn, incarnation: process.incarnation, draft: draft.saved.text.clone(), preserve_draft: false, original: draft.saved.submit.clone().map(Box::new), receipt_only: false });
                 }
                 if let Err(error) = drafts::save(&self.clients[target.route], &handoff) {
                     self.status = format!("First-send receipt found; draft handoff could not be saved: {error}. Helm will retry recovery automatically.");
@@ -484,6 +590,8 @@ pub(in crate::process_client) async fn start_plain(
     let workspace = config.resolve_workspace(None)?;
     let mut saved = Saved {
         id: Uuid::new_v4(),
+        account_host: None,
+        account_settings: None,
         route: storage::route(client)?,
         workspace,
         config: Some(config),
@@ -544,6 +652,43 @@ pub(in crate::process_client) async fn start_plain(
 }
 
 impl App {
+    /// Read only safe configuration metadata. Never construct a provider or resolve a key here.
+    pub(super) fn draft_account_seed(&self, id: Uuid) -> Option<super::inference::Settings> {
+        let config = self.new_drafts.get(&id)?.saved.config.as_ref()?;
+        Some(super::inference::Settings {
+            account: config.account.clone(),
+            model: config.model.clone(),
+            provider: serde_json::to_value(&config.provider)
+                .ok()?
+                .as_str()?
+                .to_owned(),
+            reasoning_effort: config.reasoning_effort.clone(),
+            service_tier: config.service_tier.clone(),
+            ..Default::default()
+        })
+    }
+    pub(super) fn set_draft_account(
+        &mut self,
+        id: Uuid,
+        host: Uuid,
+        settings: super::inference::Settings,
+    ) -> Result<()> {
+        let draft = self.new_drafts.get_mut(&id).context("draft unavailable")?;
+        anyhow::ensure!(
+            draft.saved.start.is_none() && !draft.busy,
+            "Creation pending; original account retained"
+        );
+        anyhow::ensure!(
+            draft.saved.account_host.is_none_or(|h| h == host),
+            "Authenticated host changed; create a new draft after review"
+        );
+        let mut saved = draft.saved.clone();
+        saved.account_host = Some(host);
+        saved.account_settings = Some(settings);
+        storage::save(&saved)?;
+        draft.saved = saved;
+        Ok(())
+    }
     pub(super) fn ensure_draft_inference_editable(&self, id: Uuid) -> Result<()> {
         let draft = self.new_drafts.get(&id).context("draft unavailable")?;
         anyhow::ensure!(
@@ -551,48 +696,19 @@ impl App {
             "Wait for automatic first-send confirmation before changing this draft"
         );
         anyhow::ensure!(
-            draft.saved.config.is_some(),
-            "Remote draft inference uses executing-host settings; configure that host before sending"
+            draft.saved.account_settings.is_some(),
+            "Resolve executing-host settings with /account first"
         );
         Ok(())
     }
     pub(super) fn draft_inference_settings(&self, id: Uuid) -> Result<super::inference::Settings> {
-        let config = self
-            .new_drafts
+        self.new_drafts
             .get(&id)
             .context("draft unavailable")?
             .saved
-            .config
-            .as_ref()
-            .context("Remote drafts use executing-host inference settings")?;
-        let provider = serde_json::to_value(&config.provider)?
-            .as_str()
-            .unwrap_or("unknown")
-            .to_owned();
-        let known = self.draft_known_model(id, &provider, &config.model);
-        let resolution = crate::provider::resolve_inference(config, known);
-        let reasoning_efforts = resolution.thinking.values.clone();
-        let service_tiers = resolution.service.values.clone();
-        Ok(super::inference::Settings {
-            model: config.model.clone(),
-            reasoning_effort: config.reasoning_effort.clone(),
-            service_tier: config.service_tier.clone(),
-            provider,
-            resolution: Some(resolution),
-            reasoning_efforts,
-            service_tiers,
-        })
-    }
-    pub(super) fn draft_inference_catalog(&self, id: Uuid) -> Result<(crate::Config, PathBuf)> {
-        let draft = self.new_drafts.get(&id).context("draft unavailable")?;
-        Ok((
-            draft
-                .saved
-                .config
-                .clone()
-                .context("Remote draft catalog unavailable; use an explicit model ID")?,
-            draft.saved.workspace.clone(),
-        ))
+            .account_settings
+            .clone()
+            .context("Resolve executing-host inference with /account first")
     }
     pub(super) fn save_draft_inference(
         &mut self,
@@ -604,14 +720,7 @@ impl App {
         let draft = self.new_drafts.get_mut(&id).context("draft unavailable")?;
         // Validate a clone, persist the complete replacement, then update memory.
         let mut saved = draft.saved.clone();
-        let config = saved
-            .config
-            .as_mut()
-            .context("draft configuration unavailable")?;
-        config.model = settings.model.clone();
-        config.reasoning_effort = settings.reasoning_effort.clone();
-        config.service_tier = settings.service_tier.clone();
-        crate::provider::validate_inference_settings(config)?;
+        saved.account_settings = Some(settings.clone());
         let clear_command = command.is_some_and(|text| draft.composer.text.trim() == text);
         if clear_command {
             saved.text.clear();

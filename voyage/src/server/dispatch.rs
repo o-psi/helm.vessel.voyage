@@ -31,6 +31,7 @@ pub(super) async fn dispatch(
         | RuntimeCommand::Rename { command_id, .. }
         | RuntimeCommand::SetModel { command_id, .. }
         | RuntimeCommand::SetInference { command_id, .. }
+        | RuntimeCommand::SetAccountInference { command_id, .. }
         | RuntimeCommand::Respond { command_id, .. }
         | RuntimeCommand::Archive { command_id, .. }
         | RuntimeCommand::Delete { command_id, .. }
@@ -112,6 +113,7 @@ pub(super) fn validate_public(command: &RuntimeCommand, config: &Config) -> Resu
         command,
         RuntimeCommand::SetModel { .. }
             | RuntimeCommand::SetInference { .. }
+            | RuntimeCommand::SetAccountInference { .. }
             | RuntimeCommand::OperatorTool { .. }
             | RuntimeCommand::ExecuteTool { .. }
             | RuntimeCommand::Github { .. }

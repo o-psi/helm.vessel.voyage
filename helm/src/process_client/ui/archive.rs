@@ -40,6 +40,7 @@ impl App {
         let command_id = Uuid::new_v4();
         let incarnation = view.process.incarnation;
         view.pending = Some(Pending {
+            account_host: None,
             command_id,
             incarnation,
             original: None,
@@ -68,6 +69,7 @@ impl App {
                 )?;
                 let _ = sender
                     .send(Update::Created {
+                        origin: target,
                         route: target.route,
                         result: Ok(process.clone()),
                     })

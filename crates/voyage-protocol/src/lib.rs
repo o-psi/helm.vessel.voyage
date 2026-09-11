@@ -27,6 +27,9 @@ pub mod inference;
 
 pub mod tool_result;
 
+/// Executing-host account and private enrollment contracts.
+pub mod accounts;
+
 /// Voyage-to-voyage presentation provenance.
 pub mod coordination;
 
@@ -35,3 +38,5 @@ pub mod duplex;
 
 /// Human-only emulated terminal frames.
 pub mod terminal;
+#[cfg(test)]
+mod workflow_preview_tests;

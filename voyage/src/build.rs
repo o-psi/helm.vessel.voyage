@@ -148,7 +148,7 @@ pub async fn build_authorized_agent_bundle(
         context.policy.check_execution_authority()?;
         stage = "provider configuration";
         let agent = Agent::new(
-            provider::from_config(config)?,
+            provider::from_config_with_redactor(config, Some(context.redactor.clone()))?,
             tools,
             context,
             sink.unwrap_or_else(|| Arc::new(SilentEvents)),
@@ -237,6 +237,7 @@ pub fn redactor(config: &Config) -> Arc<Redactor> {
 }
 
 mod tools;
+pub(crate) use tools::builtin_tools;
 pub use tools::{build_tools, todo_tool};
 
 struct SilentEvents;

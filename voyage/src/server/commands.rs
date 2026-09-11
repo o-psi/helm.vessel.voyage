@@ -2,7 +2,7 @@ pub(super) use super::dispatch::{Rejected, dispatch};
 use super::*;
 use crate::attachment::journal::{SteeringActor, SteeringAdmission};
 use serde_json::{Value, json};
-use voyage_protocol::process::RuntimeCommand;
+use voyage_protocol::process::{PROCESS_PROTOCOL, RuntimeCommand, RuntimeRequest};
 pub(super) async fn dispatch_admitted(
     state: &Arc<State>,
     command: RuntimeCommand,
@@ -94,7 +94,8 @@ pub(super) async fn dispatch_admitted(
         }
         command @ (RuntimeCommand::Configure { .. }
         | RuntimeCommand::SetAccess { .. }
-        | RuntimeCommand::SetInference { .. }) => {
+        | RuntimeCommand::SetInference { .. }
+        | RuntimeCommand::SetAccountInference { .. }) => {
             super::configuration::configure(state, command, authorization).await
         }
         RuntimeCommand::WorkflowInputs { input_id, values } => {
@@ -109,6 +110,7 @@ pub(super) async fn dispatch_admitted(
             user_directory,
             inputs,
             trust_digest,
+            optional_secret_names,
         } => {
             ensure!(
                 authorization.grant.is_none() || user_directory.is_none(),
@@ -121,6 +123,7 @@ pub(super) async fn dispatch_admitted(
                 user_directory.as_deref(),
                 &inputs,
                 trust_digest.as_deref(),
+                optional_secret_names.as_deref(),
             )
         }
         RuntimeCommand::WorkflowSubmit { .. } => {
@@ -168,6 +171,7 @@ pub(super) async fn dispatch_admitted(
                 "rename",
                 "set_model",
                 "set_inference",
+                "set_account_inference",
                 "set_access",
                 "decisions",
                 "respond",
@@ -457,9 +461,23 @@ pub(super) async fn dispatch_admitted(
         command @ RuntimeCommand::Respond { .. } => {
             let _admission = state.admission.lock().await;
             ensure!(!state.shutdown.is_cancelled(), "runtime stopping");
+            // Recheck the responder after admission/store/SQLite waits, not only
+            // at transport entry. This is consent admission, not effect dispatch.
+            let request = RuntimeRequest {
+                protocol: PROCESS_PROTOCOL,
+                session_id: state.registration.session_id,
+                incarnation: state.registration.incarnation,
+                token: String::new(), // Internal recheck does not authenticate transport.
+                authorization: authorization.grant,
+                command: command.clone(),
+            };
+            let current = state.clone();
             state
                 .owner
-                .respond_decision(state.registration.incarnation, command)
+                .respond_decision(state.registration.incarnation, command, move || {
+                    super::authorization::authorize(&current, &request, &current.directory)?;
+                    Ok(())
+                })
                 .await
         }
         RuntimeCommand::Stop => {

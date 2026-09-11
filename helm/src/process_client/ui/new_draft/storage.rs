@@ -8,6 +8,8 @@ use std::{
 
 fn root() -> Result<PathBuf> {
     let root = super::super::super::cli::default_directory().with_file_name("helm-new-drafts");
+    #[cfg(test)]
+    let root = crate::process_client::ui::account_test_support::root("helm-new-drafts", root);
     #[cfg(unix)]
     {
         use std::os::unix::fs::DirBuilderExt;

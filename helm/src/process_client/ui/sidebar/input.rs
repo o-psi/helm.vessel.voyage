@@ -242,7 +242,13 @@ impl App {
         if let Event::Paste(text) = event {
             if matches!(
                 menu.editor,
-                Some(Action::Rename | Action::Branch | Action::Delete)
+                Some(
+                    Action::Rename
+                        | Action::Branch
+                        | Action::Delete
+                        | Action::Clear
+                        | Action::Compact
+                )
             ) {
                 let text = super::super::safe(text).replace(['\n', '\r'], " ");
                 ensure!(
@@ -305,6 +311,17 @@ impl App {
                             format!("/rename {text}")
                         }
                         Action::Branch => format!("/branch {text}"),
+                        Action::Clear | Action::Compact => {
+                            ensure!(
+                                self.views[&menu.target]
+                                    .snapshot
+                                    .as_ref()
+                                    .map(|s| s.revision)
+                                    == menu.revision,
+                                "Voyage changed; reopen this action to review its current history"
+                            );
+                            history_command(action, text, menu.target.session)?
+                        }
                         Action::Delete => {
                             ensure!(
                                 text == "DELETE",
@@ -388,7 +405,12 @@ impl App {
                 Ok(false)
             }
             Action::ReadOnly | Action::Approval | Action::Unrestricted => unreachable!(),
-            Action::Rename | Action::Branch | Action::Delete | Action::Details => {
+            Action::Rename
+            | Action::Branch
+            | Action::Delete
+            | Action::Clear
+            | Action::Compact
+            | Action::Details => {
                 self.sidebar.visible.set(None);
                 menu.editor = Some(action);
                 menu.scroll.set(0);
@@ -418,5 +440,53 @@ impl App {
                 Ok(true)
             }
         }
+    }
+}
+
+fn history_command(action: Action, text: &str, session: Uuid) -> Result<String> {
+    match action {
+        Action::Clear => {
+            ensure!(
+                text == "CLEAR",
+                "Type CLEAR to remove the current conversation"
+            );
+            Ok(format!("/clear {session}"))
+        }
+        Action::Compact => {
+            let count = text
+                .strip_prefix("KEEP ")
+                .context("Type KEEP followed by a recent-message target (1–100000)")?
+                .parse::<u32>()
+                .context("Recent-message target must be a whole number")?;
+            ensure!(
+                (1..=100000).contains(&count),
+                "Recent-message target must be 1–100000"
+            );
+            Ok(format!("/compact {count}"))
+        }
+        _ => anyhow::bail!("Not a history action"),
+    }
+}
+
+#[cfg(test)]
+mod history_tests {
+    use super::*;
+    #[test]
+    fn destructive_history_requires_explicit_text_and_valid_bounds() {
+        let id = Uuid::from_u128(42);
+        for text in ["", "clear", "DELETE"] {
+            assert!(history_command(Action::Clear, text, id).is_err());
+        }
+        assert_eq!(
+            history_command(Action::Clear, "CLEAR", id).unwrap(),
+            format!("/clear {id}")
+        );
+        for text in ["", "128", "KEEP 0", "KEEP 100001", "KEEP -1", "KEEP 1.5"] {
+            assert!(history_command(Action::Compact, text, id).is_err());
+        }
+        assert_eq!(
+            history_command(Action::Compact, "KEEP 128", id).unwrap(),
+            "/compact 128"
+        );
     }
 }

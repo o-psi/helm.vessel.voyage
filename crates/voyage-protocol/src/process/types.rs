@@ -78,6 +78,11 @@ pub enum RuntimeCommand {
         user_directory: Option<PathBuf>,
         inputs: Vec<(String, String)>,
         trust_digest: Option<String>,
+        /// Optional declared secret names to render as references, never values.
+        /// Required secret names are always included. None preserves legacy preview.
+        /// Clients selecting optional names must check response `secret_names` parity.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        optional_secret_names: Option<Vec<String>>,
     },
     WorkflowSubmit {
         command_id: Uuid,
@@ -192,6 +197,15 @@ pub enum RuntimeCommand {
         reasoning_effort: Option<String>,
         service_tier: Option<String>,
     },
+    SetAccountInference {
+        command_id: Uuid,
+        expected_revision: u64,
+        expires_at_ms: u64,
+        model: String,
+        reasoning_effort: Option<String>,
+        service_tier: Option<String>,
+        account: crate::accounts::AccountBinding,
+    },
     SetModel {
         command_id: Uuid,
         expected_revision: u64,
@@ -266,6 +280,7 @@ impl RuntimeCommand {
             | Self::Rename { command_id, .. }
             | Self::SetModel { command_id, .. }
             | Self::SetInference { command_id, .. }
+            | Self::SetAccountInference { command_id, .. }
             | Self::Respond { command_id, .. }
             | Self::Archive { command_id, .. }
             | Self::Delete { command_id, .. }
@@ -292,6 +307,7 @@ impl RuntimeCommand {
                 | Self::Events { .. }
                 | Self::Decisions
                 | Self::Controls { .. }
+                | Self::WorkflowPreview { .. }
         )
     }
 }

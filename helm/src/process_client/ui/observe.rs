@@ -11,6 +11,7 @@ use tokio::sync::{Semaphore, mpsc};
 use voyage_protocol::vessel::{ProcessInfo, VesselCommand, VesselEventSubscription, VoyageCommand};
 
 pub enum Update {
+    Operator(Box<super::operator_bridge::Loaded>),
     Browser {
         target: Target,
         result: Result<String, String>,
@@ -21,13 +22,6 @@ pub enum Update {
         result: Result<Box<super::transcript::navigation::Located>, String>,
     },
     Vessels(super::vessels::Event),
-    DraftInferenceModels {
-        id: uuid::Uuid,
-        provider: String,
-        context: Option<[u8; 32]>,
-        generation: uuid::Uuid,
-        models: Option<Vec<crate::provider::ModelInfo>>,
-    },
     InferenceModels {
         route: Option<Route>,
         id: uuid::Uuid,
@@ -95,6 +89,7 @@ pub enum Update {
         result: Result<serde_json::Value, String>,
     },
     Created {
+        origin: Target,
         route: Route,
         result: Result<ProcessInfo, String>,
     },
