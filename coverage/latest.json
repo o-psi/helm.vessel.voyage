@@ -1,12 +1,12 @@
 {
   "schema_version": 1,
-  "measured_at_utc": "2026-09-11T16:15:46.209376+00:00",
+  "measured_at_utc": "2026-09-11T16:36:08.420097+00:00",
   "source": {
-    "base_commit": "e08c54032b8d2ea9cba962696ffdea950b81df1a",
+    "base_commit": "307b49503008a9c0223cac058687d42edc4ddf02",
     "dirty": false,
-    "fingerprint_sha256": "f82545cd5806699440f960d54fee0e8e1a43d920e23d01749c91f4829910662a",
+    "fingerprint_sha256": "45f00c7390b0464f2c566fcef7552db583f06c8e17b878a7e78c9e07979c7991",
     "fingerprint_method": "SHA-256 of compact sorted JSON mapping all tracked regular-file contents and symlink target text to SHA-256 hashes",
-    "note": "Clean isolated turn-end ordering worktree based on published account main. All tracked bytes remained unchanged through workspace tests and current-artifact export. Subsequent summary publication does not change measured Rust source."
+    "note": "Clean isolated #21 worktree after merging published account/#254 main. All tracked bytes remained unchanged through focused tests, process matrix, workspace coverage and current-artifact export. Subsequent summary/documentation publication does not change measured Rust source."
   },
   "platform": "x86_64-unknown-linux-gnu",
   "tools": {
@@ -14,7 +14,7 @@
     "llvm": "22.1.8",
     "cargo_llvm_cov": "0.9.1"
   },
-  "command": "cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir \"$CARGO_LLVM_COV_TARGET_DIR/coverage-report/turn-end-254-final/default-report\" -j 8",
+  "command": "cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir \"$CARGO_LLVM_COV_TARGET_DIR/coverage-report/issue21/default-report\" -j 8",
   "environment": {
     "CARGO_LLVM_COV_TARGET_DIR": "existing shared workspace target",
     "LLVM_COV": "llvm-cov",
@@ -22,26 +22,26 @@
   },
   "scope": "All existing workspace Rust tests and current workspace executable artifacts, default features",
   "tests": {
-    "passed": 174,
+    "passed": 177,
     "failed": 0,
     "ignored": 1
   },
   "coverage": {
     "lines": {
-      "count": 77426,
-      "covered": 17236,
-      "percent": 22.26125590886782
+      "count": 77670,
+      "covered": 17692,
+      "percent": 22.77842152697309
     },
     "functions": {
-      "count": 7817,
-      "covered": 1722,
-      "percent": 22.028911347064092
+      "count": 7825,
+      "covered": 1752,
+      "percent": 22.389776357827476
     },
     "regions": {
-      "count": 125633,
-      "covered": 26537,
-      "notcovered": 99096,
-      "percent": 21.12263497647911
+      "count": 126038,
+      "covered": 27330,
+      "notcovered": 98708,
+      "percent": 21.683936590552054
     }
   },
   "report_selection": {
@@ -64,11 +64,12 @@
     "Distribution Rust standard-library macro expansion paths under /usr/src/debug/rust/ (not workspace source)"
   ],
   "notes": [
-    "Raw profiles were preserved then cleared before this independent measurement; compiled artifacts and previous reports retained.",
-    "The default shared-target report included historical executables and mismatched profiles. Published totals use all 11 current Cargo workspace executables, including all 10 executed test binaries; no current workspace source was omitted. See #251.",
-    "Workspace entrypoint mtimes were refreshed without changing bytes to avoid stale cross-worktree Cargo artifacts. Corrected export has zero mismatched functions, duplicate logical paths, or reused foreign source paths.",
-    "Three focused ordering regressions passed: concurrent messages do not change last-end recency; all terminal outcomes count independent of vector order; missing ends fall back to creation, not message/observation time. Existing settled grouping, filters, and deterministic identity ties remain unchanged.",
-    "No manual TUI or live-provider journey was performed for this delivery. Linux workspace tests do not establish native macOS/Windows behavior. Coverage measures execution, not correctness.",
-    "Compared with previous account-main measurement: lines +0.0535 percentage points, functions +0.0727 percentage points, regions +0.0608 percentage points. Measurement scope and exclusions are unchanged."
+    "Cleared raw profiles only before independent measurement; compiled artifacts, prior reports and failed fixture evidence retained.",
+    "Default shared-target report included historical objects, unmatched source paths and distribution standard-library expansions. Published totals and corrected HTML use all 11 current Cargo workspace executables, including all 10 executed test binaries. No current workspace source omitted; see #251.",
+    "Refreshed workspace entrypoint mtimes without changing bytes to avoid cross-worktree stale Cargo artifacts. Corrected export has zero foreign/reused source paths, duplicate logical paths or mismatched functions.",
+    "Final source passed two decision admission tests, the browser cleanup contention positive/negative regression, and ten session/workspace scoped HTTP approval cases with observed fixture cleanup. Process checks are separate from Rust coverage.",
+    "The browser regression first failed with SQLite DatabaseBusy on pre-fix code. A prior process-matrix run retained a Tools and terminals cleanup blocker; its evidence was not cleared and its exact cause remains unproven. A final passing run does not repair that historical journal.",
+    "No live-provider, installed HTTPS, native macOS/Windows, or current Helm UI journey is claimed. Remaining #21 acceptance is documented separately. Coverage measures execution, not correctness.",
+    "Change versus prior #254 measurement, percentage points: lines +0.5172, functions +0.3609, regions +0.5613. Scope and exclusions unchanged."
   ]
 }
