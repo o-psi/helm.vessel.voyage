@@ -263,6 +263,17 @@ impl BrowserBroker {
             .inner
             .lock()
             .map_err(|_| anyhow::anyhow!("browser lock poisoned"))?;
+        // An unused broker has no durable fence delta. Do not turn unrelated
+        // journal contention into a cleanup obligation for an approval-only run.
+        // Entries, captures/observations and live waiters still require the full
+        // checkpoint path below; an unresolved effect must never take this path.
+        if inner.durable.entries.is_empty()
+            && inner.durable.observations.is_empty()
+            && inner.guards.is_empty()
+        {
+            inner.run = None;
+            return Ok(true);
+        }
         let mut d = inner.durable.clone();
         fence(&mut d);
         self.commit(&mut inner, d)?;
@@ -934,5 +945,123 @@ fn target(action: &BrowserAction) -> Option<&BrowserTarget> {
             operation: BrowserTabs::Select { target } | BrowserTabs::Close { target },
         } => Some(target),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unused_browser_cleanup_needs_no_write_but_fences_still_do() {
+        let root = tempfile::tempdir().unwrap();
+        let directory = root.path().join("journal");
+        let session = crate::session::Session::new(root.path().into(), "fixture".into());
+        let mut journal = Journal::open(directory.clone()).unwrap();
+        journal.create_session(&session).unwrap();
+        let broker = BrowserBroker::open(directory.clone(), session.id, Uuid::new_v4()).unwrap();
+        let writer = rusqlite::Connection::open(directory.join("journal.sqlite3")).unwrap();
+        writer.execute_batch("BEGIN IMMEDIATE").unwrap();
+        // An unused browser has no durable fence delta. Unrelated journal activity
+        // must not strand an approval-only run's cleanup.
+        assert!(broker.finish_run().unwrap());
+        // A retained observation DOES require a fence checkpoint. Contention must
+        // remain a refusal, with the observation retained until commit succeeds.
+        let observation = Uuid::new_v4();
+        broker
+            .inner
+            .lock()
+            .unwrap()
+            .durable
+            .observations
+            .insert(observation, Uuid::new_v4());
+        assert!(storage_busy(&broker.finish_run().unwrap_err()));
+        assert!(
+            broker
+                .inner
+                .lock()
+                .unwrap()
+                .durable
+                .observations
+                .contains_key(&observation)
+        );
+        writer.execute_batch("ROLLBACK").unwrap();
+        assert!(broker.finish_run().unwrap());
+        assert!(broker.inner.lock().unwrap().durable.observations.is_empty());
+
+        // Real dispatched metadata must still retain an unresolved cleanup
+        // obligation, both under contention and after its fence commits.
+        let guard = journal.acquire_execution(session.id).unwrap();
+        let run = journal
+            .admit_turn(
+                &guard,
+                &crate::attachment::journal::TurnAdmission {
+                    coordination: None,
+                    operator_name: None,
+                    command_id: Uuid::new_v4(),
+                    machine_id: Uuid::new_v4(),
+                    principal_id: Uuid::new_v4(),
+                    session_id: session.id,
+                    expected_revision: 0,
+                    expires_at_ms: 10000,
+                    prompt: "fixture".into(),
+                    parts: vec![],
+                },
+                1,
+            )
+            .unwrap()
+            .run;
+        journal.mark_running(&guard, run.id).unwrap();
+        let id = Uuid::new_v4();
+        let entry = Entry {
+            request: BrowserRequest {
+                request_id: id,
+                binding: BrowserBinding {
+                    session_id: session.id,
+                    incarnation: broker.incarnation,
+                    run_id: Some(run.id),
+                    browser_id: Uuid::new_v4(),
+                    resource_id: Uuid::new_v4(),
+                    executor_id: Uuid::new_v4(),
+                    controller_epoch: 1,
+                    capture_epoch: 1,
+                    expires_at_ms: 10000,
+                },
+                action: BrowserAction::Inspect { page_id: None },
+                action_sha256: "fixture".into(),
+                expires_at_ms: 10000,
+            },
+            receipt: BrowserReceipt {
+                request_id: id,
+                action_sha256: "fixture".into(),
+                state: BrowserRequestState::Dispatched,
+                cleanup_pending: true,
+            },
+            result: None,
+            result_hash: None,
+        };
+        {
+            let mut inner = broker.inner.lock().unwrap();
+            let mut durable = inner.durable.clone();
+            durable.entries.insert(id, entry);
+            broker.commit(&mut inner, durable).unwrap();
+        }
+        writer.execute_batch("BEGIN IMMEDIATE").unwrap();
+        assert!(storage_busy(&broker.finish_run().unwrap_err()));
+        assert_eq!(
+            broker.inner.lock().unwrap().durable.entries[&id]
+                .receipt
+                .state,
+            BrowserRequestState::Dispatched
+        );
+        writer.execute_batch("ROLLBACK").unwrap();
+        assert!(!broker.finish_run().unwrap());
+        let persisted: Durable =
+            serde_json::from_str(&journal.browser_load(session.id).unwrap().unwrap()).unwrap();
+        assert_eq!(
+            persisted.entries[&id].receipt.state,
+            BrowserRequestState::Unresolved
+        );
+        assert!(persisted.entries[&id].receipt.cleanup_pending);
     }
 }

@@ -373,7 +373,10 @@ starting Helm to change this period; `0` settles immediately. Invalid values fai
 before terminal setup. This is a Helm presentation setting, loaded at startup.
 
 Settled voyages are grey. They sort below active and recent results, retaining
-recency within each group. Every entry uses two terminal rows (title and divider),
+newest turn-end order within each group (including failed, cancelled and interrupted
+turns). Voyages with no recorded turn end use creation time; unknown timestamps
+sort last, with stable identity ties. In-flight messages do not change recency.
+Every entry uses two terminal rows (title and divider),
 with mouse and keyboard using the same order. Muted rules separate entries; titles
 stay on one clipped row. Selection uses bold/reverse styling. A muted trailing
 Vessel label appears only when the list spans multiple Vessels; Actions → Details

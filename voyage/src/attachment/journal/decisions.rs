@@ -100,7 +100,7 @@ impl Journal {
         guard: &ExecutionGuard,
         incarnation: Uuid,
         command: &RuntimeCommand,
-        now: i64,
+        admit: impl FnOnce() -> Result<i64>,
     ) -> Result<Value> {
         self.check_guard(guard, guard.session_id)?;
         let RuntimeCommand::Respond {
@@ -120,6 +120,10 @@ impl Journal {
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        // SQLite may have waited behind a writer. Current responder authority
+        // and the deadline clock must be sampled after that wait. A later grant
+        // revocation does not undo already committed consent or replay effects.
+        let now = admit()?;
         let prior: Option<(String, String)> = tx
             .query_row(
                 "SELECT request,receipt FROM process_commands WHERE id=?1",
@@ -198,5 +202,94 @@ impl Journal {
         )?;
         commit(tx, &self.commit_fence)?;
         Ok(receipt)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn response_authority_and_time_are_checked_inside_write_transaction() {
+        let root = tempfile::tempdir().unwrap();
+        let session = Session::new(root.path().into(), "fixture".into());
+        let mut journal = Journal::open(root.path().join("journal")).unwrap();
+        journal.create_session(&session).unwrap();
+        let guard = journal.acquire_execution(session.id).unwrap();
+        journal.initialize_decisions(&guard).unwrap();
+        journal.initialize_process_commands(&guard).unwrap();
+        let run = journal
+            .admit_turn(
+                &guard,
+                &TurnAdmission {
+                    coordination: None,
+                    operator_name: None,
+                    command_id: Uuid::new_v4(),
+                    machine_id: Uuid::new_v4(),
+                    principal_id: Uuid::new_v4(),
+                    session_id: session.id,
+                    expected_revision: 0,
+                    expires_at_ms: 10000,
+                    prompt: "fixture".into(),
+                    parts: vec![],
+                },
+                1,
+            )
+            .unwrap()
+            .run;
+        journal.mark_running(&guard, run.id).unwrap();
+        let incarnation = Uuid::new_v4();
+        let decision = Uuid::new_v4();
+        journal
+            .create_decision(
+                &guard,
+                run.id,
+                incarnation,
+                decision,
+                100,
+                json!({"kind":"approval"}),
+            )
+            .unwrap();
+        let revision = read_session(&journal.connection, session.id)
+            .unwrap()
+            .revision;
+        let command = RuntimeCommand::Respond {
+            command_id: Uuid::new_v4(),
+            expected_revision: revision,
+            expires_at_ms: 1000,
+            run_id: run.id,
+            decision_id: decision,
+            response: json!("approved"),
+        };
+        let other = Connection::open(root.path().join("journal/journal.sqlite3")).unwrap();
+        other.busy_timeout(Duration::ZERO).unwrap();
+        let rejected = journal
+            .respond_decision(&guard, incarnation, &command, || {
+                // Admission callback must run under the decision write transaction.
+                assert!(other.execute_batch("BEGIN IMMEDIATE").is_err());
+                anyhow::bail!("responder revoked while queued")
+            })
+            .unwrap_err();
+        assert!(rejected.to_string().contains("responder revoked"));
+        assert_eq!(journal.decision_response(decision, 2).unwrap(), None);
+        let expired = journal
+            .respond_decision(&guard, incarnation, &command, || Ok(100))
+            .unwrap_err();
+        assert!(expired.to_string().contains("expired"), "{expired:#}");
+        assert_eq!(journal.decision_response(decision, 2).unwrap(), None);
+        let receipt = journal
+            .respond_decision(&guard, incarnation, &command, || Ok(99))
+            .unwrap();
+        assert_eq!(receipt["status"], "applied");
+        assert_eq!(
+            journal.decision_response(decision, 101).unwrap(),
+            Some(json!("approved"))
+        );
+        assert_eq!(
+            journal
+                .respond_decision(&guard, incarnation, &command, || Ok(101))
+                .unwrap(),
+            receipt
+        );
     }
 }
