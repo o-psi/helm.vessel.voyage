@@ -5,7 +5,7 @@ use std::{
     io::{Read, Write},
     path::{Component, Path},
 };
-pub(super) const MAX_CATALOG: usize = 1_048_576;
+pub(super) const MAX_CATALOG: usize = 16 * 1024 * 1024;
 pub(super) fn directory(base: &Path, parts: &[&str], create: bool) -> Result<Option<Dir>> {
     let mut dir = Dir::open_ambient_dir(base, cap_std::ambient_authority())?;
     for part in parts {
@@ -71,6 +71,9 @@ pub(super) fn publish_observed(
     result
 }
 pub(super) fn local(path: &Path) -> Result<Vec<u8>> {
+    local_bounded(path, super::MAX_ARCHIVE)
+}
+pub(super) fn local_bounded(path: &Path, limit: usize) -> Result<Vec<u8>> {
     let parent = path
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
@@ -81,7 +84,7 @@ pub(super) fn local(path: &Path) -> Result<Vec<u8>> {
         path.file_name()
             .and_then(|p| p.to_str())
             .ok_or_else(|| anyhow::anyhow!("invalid source path"))?,
-        super::MAX_ARCHIVE,
+        limit,
     )?
     .ok_or_else(|| anyhow::anyhow!("source missing"))
 }
@@ -99,8 +102,17 @@ pub(super) fn pack(path: &Path) -> Result<Vec<u8>> {
     } else {
         Dir::open_ambient_dir(path, cap_std::ambient_authority())?
     };
-    let raw = read(&root, "manifest.json", super::MAX_ARCHIVE)?
+    let raw = read(&root, "manifest.json", 768 * 1024)?
         .ok_or_else(|| anyhow::anyhow!("manifest.json missing"))?;
+    #[derive(serde::Deserialize)]
+    struct Format {
+        format: u32,
+    }
+    let format: Format = serde_json::from_slice(&raw)
+        .map_err(|_| anyhow::anyhow!("invalid package manifest format"))?;
+    if format.format == 2 {
+        return pack_executable(&root, &raw);
+    }
     let manifest: super::Manifest =
         serde_json::from_slice(&raw).map_err(|_| anyhow::anyhow!("invalid manifest JSON"))?;
     ensure!(
@@ -144,6 +156,50 @@ pub(super) fn pack(path: &Path) -> Result<Vec<u8>> {
     archive.validate()?;
     let bytes = serde_json::to_vec(&archive)?;
     super::Archive::parse(&bytes)?;
+    Ok(bytes)
+}
+
+fn pack_executable(root: &Dir, raw: &[u8]) -> Result<Vec<u8>> {
+    use base64::Engine;
+    let manifest: super::executable::Manifest = serde_json::from_slice(raw)
+        .map_err(|_| anyhow::anyhow!("invalid executable manifest JSON"))?;
+    manifest.validate()?;
+    let mut files = std::collections::BTreeMap::new();
+    for item in &manifest.contents {
+        let mut dir = root.try_clone()?;
+        let path = Path::new(&item.path);
+        for part in path.parent().unwrap().components() {
+            let Component::Normal(part) = part else {
+                anyhow::bail!("invalid content component")
+            };
+            dir = dir.open_dir_nofollow(part)?;
+        }
+        let bytes = read(
+            &dir,
+            path.file_name().unwrap().to_str().unwrap(),
+            super::executable::MAX_EXECUTABLE,
+        )?
+        .ok_or_else(|| anyhow::anyhow!("executable content missing"))?;
+        files.insert(
+            item.path.clone(),
+            base64::engine::general_purpose::STANDARD.encode(bytes),
+        );
+    }
+    let mut found = std::collections::BTreeSet::new();
+    enumerate(root, "", &mut found, &mut 0)?;
+    let expected = files
+        .keys()
+        .cloned()
+        .chain(std::iter::once("manifest.json".into()))
+        .collect();
+    ensure!(
+        found == expected,
+        "executable package has undeclared or missing files"
+    );
+    let archive = super::executable::Archive { manifest, files };
+    archive.validate()?;
+    let bytes = serde_json::to_vec(&archive)?;
+    super::executable::Archive::parse(&bytes)?;
     Ok(bytes)
 }
 

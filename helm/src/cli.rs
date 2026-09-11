@@ -90,7 +90,7 @@ pub(crate) enum Command {
     Connect(helm::process_client::cli::ConnectArgs),
     /// Inspect GitHub context and publish only after exact attended review.
     Github(GithubArgs),
-    /// Install, inspect and explicitly enable declarative packages.
+    /// Install, inspect and explicitly review declarative or executable packages.
     Extension(helm::extensions::cli::ExtensionArgs),
     /// Inspect and configure local session/project inference attempt allowances.
     Inference(helm::inference::cli::InferenceArgs),

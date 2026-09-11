@@ -148,6 +148,18 @@ async fn configure_inner(
         }
         _ => unreachable!(),
     };
+    if matches!(&command, RuntimeCommand::Configure { .. }) {
+        // Reconfiguration cannot expose an earlier known private source file.
+        for source in &state.config.read().await.extension_private_files {
+            if !config.extension_private_files.contains(source) {
+                ensure!(
+                    config.extension_private_files.len() < 256,
+                    "private configuration provenance capacity reached"
+                );
+                config.extension_private_files.push(source.clone());
+            }
+        }
+    }
     super::authorization::account_authority(state, &mut authorization, &config)?;
     bootstrap::limit_participant(&mut config, &state.registration)?;
     let known = if access_only {

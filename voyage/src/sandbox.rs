@@ -118,6 +118,25 @@ pub struct Sandbox {
     #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
     roots: std::sync::Arc<Vec<linux::Root>>,
 }
+/// Immutable package bytes; never a user-supplied executable path.
+pub(crate) struct ExtensionImage {
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    file: std::sync::Arc<std::fs::File>,
+}
+impl ExtensionImage {
+    pub(crate) fn seal(bytes: &[u8]) -> Result<Self, Error> {
+        crate::extensions::executable::validate_elf(bytes)
+            .map_err(|_| Error::Invalid("unsupported executable artifact"))?;
+        #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+        {
+            linux::seal_extension(bytes)
+        }
+        #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
+        {
+            Err(Error::Unsupported)
+        }
+    }
+}
 impl Sandbox {
     pub fn new(settings: &Settings, read: &[PathBuf], write: &[PathBuf]) -> Result<Self, Error> {
         settings.validate()?;
@@ -145,6 +164,38 @@ impl Sandbox {
     }
     pub fn required(&self) -> bool {
         self.settings.mode == Mode::Required
+    }
+    /// Dedicated SDK profile: reuse enforced limits/filter/namespaces, but do
+    /// not expose ordinary process roots, runtime mounts, environment or network.
+    /// Callers must retain image, process ownership and durable admission intent.
+    pub(crate) fn apply_extension(
+        &self,
+        command: &mut Command,
+        image: &ExtensionImage,
+    ) -> Result<(), Error> {
+        if !self.required() {
+            return Err(Error::Invalid(
+                "executable extensions require enforced isolation",
+            ));
+        }
+        if command.get_program() != std::ffi::OsStr::new("/extension")
+            || command.get_args().next().is_some()
+            || command.get_envs().any(|(_, value)| value.is_some())
+        {
+            return Err(Error::Invalid(
+                "executable launch contains unsupported arguments or environment",
+            ));
+        }
+        command.current_dir("/").env_clear();
+        #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+        {
+            linux::apply_extension(self, command, image)
+        }
+        #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
+        {
+            let _ = image;
+            Err(Error::Unsupported)
+        }
     }
     /// Apply last, after payload arguments, environment, stdio and pre-exec hooks.
     /// The adapter receives an empty environment; payload bindings travel in a private FD.

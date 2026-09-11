@@ -1,0 +1,417 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:voyage:extension:protocol:1",
+  "title": "Voyage private extension protocol 1",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "initialize"
+        },
+        "protocol": {
+          "const": 1
+        },
+        "identity": {
+          "$ref": "#/$defs/identity"
+        },
+        "definitions": {
+          "$ref": "#/$defs/definitions"
+        },
+        "capabilities": {
+          "enum": [
+            [
+              "execute"
+            ],
+            [
+              "execute",
+              "host.file.read"
+            ]
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "protocol",
+        "identity",
+        "definitions",
+        "capabilities"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "initialized"
+        },
+        "protocol": {
+          "const": 1
+        },
+        "identity": {
+          "$ref": "#/$defs/identity"
+        },
+        "definitions": {
+          "$ref": "#/$defs/definitions"
+        },
+        "capabilities": {
+          "enum": [
+            [
+              "execute"
+            ],
+            [
+              "execute",
+              "host.file.read"
+            ]
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "protocol",
+        "identity",
+        "definitions",
+        "capabilities"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "invoke"
+        },
+        "invocation": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "kind": {
+          "enum": [
+            "tool",
+            "command",
+            "lifecycle"
+          ]
+        },
+        "name": {
+          "type": "string",
+          "maxLength": 48
+        },
+        "arguments": {}
+      },
+      "required": [
+        "type",
+        "invocation",
+        "kind",
+        "name",
+        "arguments"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "progress"
+        },
+        "invocation": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "text": {
+          "type": "string",
+          "maxLength": 4096
+        }
+      },
+      "required": [
+        "type",
+        "invocation",
+        "text"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "result"
+        },
+        "invocation": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "value": {}
+      },
+      "required": [
+        "type",
+        "invocation",
+        "value"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "error"
+        },
+        "invocation": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "code": {
+          "enum": [
+            "invalid_input",
+            "failed",
+            "cancelled"
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "invocation",
+        "code"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "host.file.read"
+        },
+        "invocation": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "request": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32
+        },
+        "path": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        },
+        "max_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65536
+        }
+      },
+      "required": [
+        "type",
+        "invocation",
+        "request",
+        "path",
+        "offset",
+        "max_bytes"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "host_result"
+        },
+        "invocation": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "request": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32
+        },
+        "text": {
+          "type": "string",
+          "maxLength": 65536
+        }
+      },
+      "required": [
+        "type",
+        "invocation",
+        "request",
+        "text"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "host_error"
+        },
+        "invocation": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "request": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32
+        },
+        "code": {
+          "const": "denied"
+        }
+      },
+      "required": [
+        "type",
+        "invocation",
+        "request",
+        "code"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "cancel"
+        },
+        "invocation": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "required": [
+        "type",
+        "invocation"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "shutdown"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "shutdown_ack"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false
+    }
+  ],
+  "$defs": {
+    "identity": {
+      "type": "object",
+      "properties": {
+        "session": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "run": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "invocation": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "package": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "digest": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "incarnation": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "required": [
+        "session",
+        "run",
+        "invocation",
+        "package",
+        "digest",
+        "incarnation"
+      ],
+      "additionalProperties": false
+    },
+    "definition": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]{0,47}$"
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "input_schema": {
+          "type": [
+            "object",
+            "boolean"
+          ]
+        },
+        "output_schema": {
+          "type": [
+            "object",
+            "boolean"
+          ]
+        }
+      },
+      "required": [
+        "name",
+        "description",
+        "input_schema",
+        "output_schema"
+      ],
+      "additionalProperties": false
+    },
+    "definitions": {
+      "type": "object",
+      "properties": {
+        "tools": {
+          "type": "array",
+          "maxItems": 32,
+          "items": {
+            "$ref": "#/$defs/definition"
+          }
+        },
+        "commands": {
+          "type": "array",
+          "maxItems": 16,
+          "items": {
+            "$ref": "#/$defs/definition"
+          }
+        },
+        "lifecycle": {
+          "type": "array",
+          "maxItems": 2,
+          "items": {
+            "$ref": "#/$defs/definition"
+          }
+        }
+      },
+      "required": [
+        "tools",
+        "commands",
+        "lifecycle"
+      ],
+      "additionalProperties": false
+    }
+  }
+}
