@@ -9,6 +9,8 @@ use uuid::Uuid;
 pub enum ProcessRight {
     /// Workspace catalogue access; distinct from per-session observation.
     Catalogue,
+    AccountUse,
+    AccountEnroll,
     /// Creation inside an explicitly approved workspace.
     Create,
     Observe,
@@ -39,6 +41,10 @@ pub struct ProcessGrant {
     pub workspace: PathBuf,
     pub revision: u64,
     pub rights: Vec<ProcessRight>,
+    #[serde(default)]
+    pub accounts: Vec<Uuid>,
+    #[serde(default)]
+    pub enrollment_connections: Vec<Uuid>,
     pub expires_at_ms: u64,
     pub revoked: bool,
     pub token_hash: String,
@@ -118,6 +124,7 @@ pub fn required_process_right(command: &RuntimeCommand) -> Option<ProcessRight> 
             Some(ProcessRight::Execute)
         }
         RuntimeCommand::Terminal { .. } => Some(ProcessRight::Terminal),
+        RuntimeCommand::SetAccountInference { .. } => Some(ProcessRight::AccountUse),
         RuntimeCommand::Configure { .. }
         | RuntimeCommand::SetAccess { .. }
         | RuntimeCommand::SetInference { .. } => None,
@@ -157,6 +164,10 @@ pub struct ConnectionGrant {
     pub vessel_id: Uuid,
     pub revision: u64,
     pub rights: Vec<ProcessRight>,
+    #[serde(default)]
+    pub accounts: Vec<Uuid>,
+    #[serde(default)]
+    pub enrollment_connections: Vec<Uuid>,
     pub expires_at_ms: u64,
     pub revoked: bool,
     pub token_hash: String,

@@ -23,6 +23,8 @@ struct Draft {
 
 fn path(client: &Client, view: &View) -> Result<PathBuf> {
     let root = super::super::cli::default_directory().with_file_name("helm-views");
+    #[cfg(test)]
+    let root = crate::process_client::ui::account_test_support::root("helm-views", root);
     #[cfg(unix)]
     {
         use std::os::unix::fs::DirBuilderExt;

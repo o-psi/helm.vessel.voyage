@@ -27,6 +27,8 @@ pub(super) struct Supervisor {
     pub(super) directory: PathBuf,
     pub(super) binary: PathBuf,
     pub(super) model_slots: Arc<Semaphore>,
+    pub(super) devices: voyage_runtime::accounts::device::DeviceService,
+    pub(super) enrollment_workers: Mutex<HashMap<Uuid, tokio::task::JoinHandle<()>>>,
     pub(super) assignment_locks: Mutex<HashMap<Uuid, Arc<Mutex<()>>>>,
     pub(super) lifecycle_locks: Mutex<HashMap<Uuid, Arc<Mutex<()>>>>,
     pub(super) registrations: Mutex<HashMap<Uuid, ProcessRegistration>>,
@@ -69,10 +71,13 @@ pub async fn serve(directory: PathBuf, binary: PathBuf) -> Result<()> {
         directory: directory.clone(),
         binary,
         model_slots: Arc::new(Semaphore::new(4)),
+        devices: super::accounts::device_service(directory.clone())?,
+        enrollment_workers: Mutex::new(HashMap::new()),
         registrations: Mutex::new(registrations),
         assignment_locks: Mutex::new(HashMap::new()),
         lifecycle_locks: Mutex::new(HashMap::new()),
     });
+    supervisor.resume_enrollments().await?;
     let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).await?;
     let address = listener.local_addr()?;
     let token = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
@@ -404,8 +409,20 @@ impl Supervisor {
             }
             command @ VesselCommand::ManagedImport { .. } => self.initialize_managed(command).await,
             VesselCommand::Capabilities => Ok(
-                json!({"protocol":VESSEL_API_VERSION,"version":env!("CARGO_PKG_VERSION"),"vessel_id":super::identity::public(&self.directory)?.vessel_id,"platform":std::env::consts::OS,"features":["sessionless_models","catalogue","start","start_configured","start_resolution","inspect","voyage_operations","stop","restart","explicit_recovery","durable_receipts","history_paging","events","sse_events","duplex_socket","decisions","lifecycle","branch","ordinary_import","managed_import","scoped_grants","revocation","participant_bindings","participant_assignments","signed_owner_transfer"],"max_frame_bytes":MAX_VESSEL_BODY,"capacity":null,"max_connections":64}),
+                json!({"protocol":VESSEL_API_VERSION,"version":env!("CARGO_PKG_VERSION"),"vessel_id":super::identity::public(&self.directory)?.vessel_id,"platform":std::env::consts::OS,"features":["sessionless_models","provider_accounts","account_start","private_account_enrollment","catalogue","start","start_configured","start_resolution","inspect","voyage_operations","stop","restart","explicit_recovery","durable_receipts","history_paging","events","sse_events","duplex_socket","decisions","lifecycle","branch","ordinary_import","managed_import","scoped_grants","revocation","participant_bindings","participant_assignments","signed_owner_transfer"],"max_frame_bytes":MAX_VESSEL_BODY,"capacity":null,"max_connections":64}),
             ),
+            command @ (VesselCommand::Accounts { .. }
+            | VesselCommand::AccountDefaults { .. }
+            | VesselCommand::AccountModels { .. }
+            | VesselCommand::StartAccount { .. }
+            | VesselCommand::ResolveStartAccount { .. }
+            | VesselCommand::EnrollAccount { .. }
+            | VesselCommand::CancelAccountEnrollment { .. }
+            | VesselCommand::ResolveAccountEnrollment { .. }
+            | VesselCommand::PrivateAccountEnrollment { .. }) => {
+                self.host_accounts(command, super::accounts::Scope::Owner)
+                    .await
+            }
             VesselCommand::Catalogue => {
                 let registrations: Vec<_> = self
                     .registrations

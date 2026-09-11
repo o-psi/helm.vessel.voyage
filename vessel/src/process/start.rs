@@ -235,6 +235,17 @@ impl Supervisor {
                 workspace: workspace.clone(),
             },
         };
+        self.resolve_start_original(command_id, session_id, workspace, config_path, original)
+            .await
+    }
+    pub(super) async fn resolve_start_original(
+        &self,
+        command_id: Uuid,
+        session_id: Uuid,
+        workspace: PathBuf,
+        config_path: Option<PathBuf>,
+        original: VesselCommand,
+    ) -> Result<Value> {
         let registrations = self.registrations.lock().await;
         let fenced = resolution_record(&self.directory, "intent", command_id, &original, false)?;
         let admitted = registry::command_record(&self.directory, command_id, &original, false)?;

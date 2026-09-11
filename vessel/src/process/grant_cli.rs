@@ -27,6 +27,10 @@ pub struct GrantArgs {
     pub endpoint: Option<String>,
     #[arg(long, value_delimiter = ',', default_value = "observe")]
     pub rights: Vec<String>,
+    #[arg(long, value_delimiter = ',')]
+    pub accounts: Vec<Uuid>,
+    #[arg(long, value_delimiter = ',')]
+    pub enrollment_connections: Vec<Uuid>,
     #[arg(long, default_value_t = 86400)]
     pub ttl_seconds: u64,
 }
@@ -89,6 +93,8 @@ pub async fn issue(args: GrantArgs) -> Result<()> {
                         .ok_or_else(|| anyhow::anyhow!("workspace required"))?,
                 )?,
                 rights,
+                accounts: args.accounts,
+                enrollment_connections: args.enrollment_connections,
                 expires_at_ms: super::access::store::now()?
                     .checked_add(args.ttl_seconds * 1000)
                     .ok_or_else(|| anyhow::anyhow!("expiry overflow"))?,

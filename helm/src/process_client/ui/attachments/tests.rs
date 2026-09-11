@@ -130,6 +130,7 @@ fn legacy_private_drafts_migrate_without_changing_pending_command_identity() {
     view.draft = restore_draft(text.into(), None, &images).unwrap();
     view.images = images;
     let pending = state::Pending {
+        account_host: None,
         command_id: Uuid::from_u128(74),
         incarnation: Uuid::from_u128(2),
         draft: text.into(),

@@ -174,9 +174,20 @@ impl ApprovalOutcome {
     }
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Default)]
 pub struct Redactor {
     secrets: Vec<String>,
+    // Shared with native dispatch so rotated credentials are protected before
+    // any response/error chunk can enter history or a subordinate context.
+    credentials: std::sync::Arc<std::sync::RwLock<Vec<String>>>,
+}
+
+impl std::fmt::Debug for Redactor {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Redactor")
+            .field("configured_values", &self.secrets.len())
+            .finish_non_exhaustive()
+    }
 }
 
 impl Redactor {
@@ -185,7 +196,10 @@ impl Redactor {
         combined.extend(secrets.into_iter().filter(|secret| secret.len() >= 4));
         combined.sort_by_key(|secret| std::cmp::Reverse(secret.len()));
         combined.dedup();
-        Self { secrets: combined }
+        Self {
+            secrets: combined,
+            credentials: self.credentials.clone(),
+        }
     }
     pub fn new(secrets: impl IntoIterator<Item = String>) -> Self {
         Self {
@@ -193,12 +207,45 @@ impl Redactor {
                 .into_iter()
                 .filter(|value| value.len() >= 4)
                 .collect(),
+            credentials: Default::default(),
         }
+    }
+    fn current_secrets(&self) -> Vec<String> {
+        let mut values = self.secrets.clone();
+        values.extend(
+            self.credentials
+                .read()
+                .unwrap_or_else(|p| p.into_inner())
+                .iter()
+                .cloned(),
+        );
+        values
+    }
+    pub(crate) fn remember_credential(&self, value: &str) -> anyhow::Result<()> {
+        if value.len() < 4 {
+            return Ok(());
+        }
+        let mut credentials = self
+            .credentials
+            .write()
+            .map_err(|_| anyhow::anyhow!("credential redaction unavailable"))?;
+        if credentials.iter().any(|old| old == value) {
+            return Ok(());
+        }
+        anyhow::ensure!(
+            credentials.len() < 128
+                && credentials.iter().map(String::len).sum::<usize>() + value.len() <= 1024 * 1024,
+            "credential redaction capacity reached; start a new turn"
+        );
+        credentials.push(value.to_owned());
+        Ok(())
     }
 
     /// Test confidentiality without relying on the replacement text differing.
     pub fn contains_secret(&self, text: &str) -> bool {
-        self.secrets.iter().any(|secret| text.contains(secret))
+        self.current_secrets()
+            .iter()
+            .any(|secret| text.contains(secret))
     }
 
     /// Return the raw prefix safe to commit to a public stream. Any suffix that
@@ -208,7 +255,8 @@ impl Redactor {
             return text.len();
         }
         let mut hold = 0;
-        for secret in &self.secrets {
+        let secrets = self.current_secrets();
+        for secret in &secrets {
             let pattern = secret.as_bytes();
             let mut prefix = vec![0; pattern.len()];
             for i in 1..pattern.len() {
@@ -243,8 +291,7 @@ impl Redactor {
         }
         // Descending starts reach the transitive safe boundary in one pass,
         // including overlapping configured values, without quadratic rescans.
-        let mut matches = self
-            .secrets
+        let mut matches = secrets
             .iter()
             .flat_map(|secret| {
                 text.match_indices(secret)
@@ -261,8 +308,8 @@ impl Redactor {
     }
     /// Redact source bytes once; replacement markers are never reprocessed.
     pub(crate) fn redact_public_prefix(&self, text: &str) -> String {
-        let mut matches = self
-            .secrets
+        let secrets = self.current_secrets();
+        let mut matches = secrets
             .iter()
             .flat_map(|secret| {
                 text.match_indices(secret)
@@ -291,9 +338,9 @@ impl Redactor {
         output
     }
     pub fn redact(&self, input: impl Into<String>) -> String {
-        self.secrets.iter().fold(input.into(), |text, secret| {
-            text.replace(secret, "[REDACTED]")
-        })
+        // Use the same non-recursive overlap handling for canonical text and
+        // streaming prefixes, including old keys that prefix a rotated key.
+        self.redact_public_prefix(&input.into())
     }
 }
 

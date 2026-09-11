@@ -41,6 +41,7 @@ impl LaunchConfig {
         )
     }
     pub fn capture(config: &Config, workspace: &Path) -> Result<Self> {
+        config.validate_account()?;
         crate::runtime_policy::RuntimePolicy::resolve(config, workspace)?;
         Ok(Self {
             version: 1,

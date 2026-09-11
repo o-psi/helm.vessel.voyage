@@ -50,13 +50,6 @@ impl App {
                 result,
             } => self.coordination_arrived(origin, request, result),
             Update::Vessels(event) => self.vessel_update(event),
-            Update::DraftInferenceModels {
-                id,
-                provider,
-                context,
-                generation,
-                models,
-            } => self.draft_inference_models(id, provider, context, generation, models),
             Update::InferenceModels {
                 route: _,
                 id,
@@ -402,6 +395,7 @@ impl App {
                     matches!(
                         command,
                         voyage_protocol::vessel::VoyageCommand::SetInference { .. }
+                            | voyage_protocol::vessel::VoyageCommand::SetAccountInference { .. }
                     )
                 });
                 match result {
