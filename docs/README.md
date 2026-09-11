@@ -16,6 +16,7 @@ are not presented as usable commands.
 | [Named provider accounts](provider-accounts.md) | Helm account selection/private device sign-in, host-only credentials, migration and authority |
 | [Provider accounts plan](provider-accounts-plan.md) | Design decisions and acceptance matrix for named native accounts |
 | [Operations](operations.md) | Connected HTTP(S) voyages and legacy chat/managed/worker procedures |
+| [Native Android Helm](https://github.com/o-psi/voyage/blob/main/docs/android.md) | Kotlin/Compose app, scoped WSS, durable recovery and verification limits |
 | [Vessel connections](vessel-connections.md) | In-app connection manager, remembered Vessels, pairing, workspaces and access recovery |
 | [Connection verification](vessel-connections-verification.md) | Observed Linux UI, protocol, recovery, transport and deployment checks |
 | [Vessel coordination](vessel-coordination.md) | Native model inspection, steering, independent voyage creation and follow-up |
