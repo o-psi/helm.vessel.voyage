@@ -101,7 +101,11 @@ impl App {
                             && c.endpoint == "https://chatgpt.com/backend-api/codex"
                     })
                     .collect();
-                for (row, (index, c)) in (body.y..body.bottom()).zip(connections.iter().enumerate())
+                let offset = p
+                    .selected
+                    .saturating_sub(body.height.saturating_sub(1) as usize);
+                for (row, (index, c)) in
+                    (body.y..body.bottom()).zip(connections.iter().enumerate().skip(offset))
                 {
                     frame.render_widget(
                         Paragraph::new(format!(
@@ -111,6 +115,10 @@ impl App {
                         )),
                         Rect::new(body.x, row, body.width, 1),
                     );
+                    self.accounts
+                        .hits
+                        .borrow_mut()
+                        .push((Rect::new(body.x, row, body.width, 1), index));
                 }
             }
             Mode::Alias(_) => {
@@ -144,10 +152,12 @@ impl App {
                 frame.render_widget(Paragraph::new(text).wrap(Wrap { trim: false }), body);
             }
             Mode::Enrollment => {
-                let private = p
-                    .private
-                    .as_ref()
-                    .filter(|v| active_material(v) && self.clients.available(p.route));
+                let private = p.private.as_ref().filter(|v| {
+                    active_material(v)
+                        && !p.disconnected
+                        && p.connection.borrow().loss_generation == p.loss_generation
+                        && self.clients.available(p.route)
+                });
                 let text = if let Some(v) = private {
                     format!(
                         "PRIVATE SIGN-IN — never copy into chat\nProvider: https://auth.openai.com/codex/device\nCode: {}\nExpires in {} seconds\nO explicitly opens local browser · C cancels sign-in\nR refreshes original operation · Esc hides sensitive material",

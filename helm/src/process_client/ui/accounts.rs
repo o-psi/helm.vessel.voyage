@@ -31,6 +31,7 @@ pub(super) struct Controls {
     pub(super) initializing: std::collections::BTreeSet<Uuid>,
     hits: std::cell::RefCell<Vec<(ratatui::layout::Rect, usize)>>,
     visible: std::cell::Cell<bool>,
+    browser_pending: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 impl Controls {
     pub(super) fn open(&self) -> bool {
@@ -81,6 +82,9 @@ struct Picker {
     intent: Option<storage::Intent>,
     private: Option<PrivateEnrollmentStatus>,
     poll: Instant,
+    connection: tokio::sync::watch::Receiver<crate::process_client::duplex::ConnectionState>,
+    loss_generation: u64,
+    disconnected: bool,
     models: Vec<crate::provider::ModelInfo>,
 }
 fn now() -> u64 {
@@ -115,8 +119,69 @@ fn active_material(p: &PrivateEnrollmentStatus) -> bool {
         && p.status.expires_at > now()
         && p.verification_uri.as_deref() == Some("https://auth.openai.com/codex/device")
         && p.user_code.as_ref().is_some_and(|c| {
-            c.len() <= 64 && c.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+            !c.is_empty()
+                && c.len() <= 64
+                && c.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
         })
+}
+// Only the explicit O action calls this fixed provider URL. Test substitution is
+// at the OS effect boundary; no network/provider or real browser is used by fixtures.
+fn open_browser(pending: &std::sync::Arc<std::sync::atomic::AtomicBool>) -> Result<()> {
+    use std::sync::atomic::Ordering;
+    ensure!(
+        !pending.swap(true, Ordering::AcqRel),
+        "Browser launcher is still finishing; use the displayed URL manually"
+    );
+    const URL: &str = "https://auth.openai.com/codex/device";
+    #[cfg(test)]
+    {
+        pending.store(false, Ordering::Release);
+        return super::account_test_support::browser(URL);
+    }
+    #[cfg(all(not(test), any(target_os = "linux", target_os = "macos")))]
+    {
+        #[cfg(target_os = "linux")]
+        let mut cmd = tokio::process::Command::new("xdg-open");
+        #[cfg(target_os = "macos")]
+        let mut cmd = tokio::process::Command::new("open");
+        let mut child = cmd
+            .kill_on_drop(true)
+            .arg(URL)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .map_err(|_| {
+                pending.store(false, Ordering::Release);
+                anyhow::anyhow!("Browser could not be opened; use the displayed URL manually")
+            })?;
+        let pending = pending.clone();
+        tokio::spawn(async move {
+            let observed = matches!(
+                tokio::time::timeout(Duration::from_secs(10), child.wait()).await,
+                Ok(Ok(_))
+            );
+            // Bound only our launcher, not the user's browser/navigation. A
+            // failed/unobserved reap keeps the repeated-open guard fail-closed.
+            let reaped = observed
+                || matches!(
+                    tokio::time::timeout(Duration::from_secs(2), child.kill()).await,
+                    Ok(Ok(()))
+                );
+            if reaped {
+                pending.store(false, Ordering::Release);
+            }
+            // kill_on_drop also protects runtime shutdown/cancellation.
+        });
+        Ok(())
+    }
+    #[cfg(all(not(test), not(any(target_os = "linux", target_os = "macos"))))]
+    {
+        pending.store(false, Ordering::Release);
+        anyhow::bail!(
+            "Open the displayed provider URL manually; automatic browser launch is unavailable on this platform"
+        )
+    }
 }
 impl Picker {
     fn choices(&self) -> Vec<(String, Option<AccountBinding>)> {
@@ -262,8 +327,15 @@ impl App {
                 "Creation pending; exact original account retained"
             );
         }
-        let original = self.inference_settings(destination).unwrap_or_default();
+        let original = match destination {
+            Destination::Draft(_) => self.inference_settings(destination).unwrap_or_default(),
+            Destination::Live(_) => self.inference_settings(destination)?,
+        };
+        self.accounts.visible.set(false);
+        self.accounts.hits.borrow_mut().clear();
         let id = Uuid::new_v4();
+        let connection = self.clients[route].connection_state();
+        let loss_generation = connection.borrow().loss_generation;
         self.accounts.picker = Some(Picker {
             id,
             destination,
@@ -287,6 +359,9 @@ impl App {
             intent: None,
             private: None,
             poll: Instant::now(),
+            connection,
+            loss_generation,
+            disconnected: false,
             models: vec![],
         });
         let client = self.clients[route].clone();
@@ -334,12 +409,30 @@ impl App {
                 }))
             }
             .await;
-            let _ = tx.send(result.map_err(|_| anyhow::anyhow!("Accounts unavailable or access denied. Reconnect/refresh access; host owner must grant account-use. No selection changed.")));
+            let _ = tx.send(result.map_err(|_| anyhow::anyhow!("Accounts unavailable or access denied. Reconnect/refresh access; host owner must grant account-use or device-enrollment access. No selection changed.")));
         });
         Ok(())
     }
     // Called from the regular UI tick; private responses never reach general updates.
+    fn account_connection_tick(&mut self) {
+        let Some(p) = self.accounts.picker.as_mut() else {
+            return;
+        };
+        let state = *p.connection.borrow();
+        if state.loss_generation != p.loss_generation || !self.clients.available(p.route) {
+            p.loss_generation = state.loss_generation;
+            p.disconnected = true;
+            p.private = None;
+            p.busy = false;
+            // Invalidate even an already queued one-shot. A reconnect cannot authorize
+            // material fetched on an earlier socket, nor replay an enrollment mutation.
+            p.id = Uuid::new_v4();
+            self.accounts.reply = None;
+            p.notice = "Disconnected. Sensitive material cleared; reopen or press R to privately inspect the original enrollment under current authority.".into();
+        }
+    }
     pub(super) fn account_tick(&mut self) {
+        self.account_connection_tick();
         if let Some((id, mut rx)) = self.accounts.reply.take() {
             match rx.try_recv() {
                 Ok(result) => {
@@ -374,6 +467,7 @@ impl App {
             }
             if matches!(p.mode, Mode::Enrollment)
                 && !p.busy
+                && !p.disconnected
                 && p.poll.elapsed() >= Duration::from_secs(3)
             {
                 let _ = self.poll_account_enrollment();
@@ -394,7 +488,11 @@ impl App {
         let Some(mut p) = self.accounts.picker.take() else {
             return Ok(());
         };
-        if p.id != id || !self.clients.current(p.route) {
+        if p.id != id
+            || p.disconnected
+            || p.connection.borrow().loss_generation != p.loss_generation
+            || !self.clients.current(p.route)
+        {
             self.accounts.picker = Some(p);
             return Ok(());
         }
@@ -426,7 +524,11 @@ impl App {
                         );
                     }
                     if let Destination::Draft(d) = p.destination {
-                        let saved = &self.new_drafts[&d].saved;
+                        let saved = &self
+                            .new_drafts
+                            .get(&d)
+                            .context("Draft closed while reading accounts")?
+                            .saved;
                         ensure!(
                             saved.account_host.is_none_or(|h| h == v.host),
                             "Vessel identity changed; create a new draft after review"
@@ -531,6 +633,8 @@ impl App {
         );
         p.busy = true;
         p.private = None;
+        p.disconnected = false;
+        p.loss_generation = p.connection.borrow().loss_generation;
         let client = self.clients[p.route].clone();
         let host = p.host.context("authenticated host missing")?;
         let (tx, rx) = oneshot::channel();
@@ -607,6 +711,7 @@ impl App {
     }
     fn cancel_enrollment(&mut self) -> Result<()> {
         let p = self.accounts.picker.as_mut().context("view closed")?;
+        p.private = None;
         let i = p.intent.as_mut().context("No pending enrollment")?;
         let id = enrollment_id(i).context("Invalid original enrollment")?;
         let command_id = *i.cancel.get_or_insert_with(Uuid::new_v4);
@@ -622,6 +727,10 @@ impl App {
     }
     fn choose_account(&mut self, binding: AccountBinding) -> Result<()> {
         let p = self.accounts.picker.as_mut().context("view closed")?;
+        ensure!(
+            !p.disconnected,
+            "Socket changed; reopen the account picker before selecting"
+        );
         let mut settings = p.original.clone();
         settings.provider = provider(binding.transport).into();
         settings.account = Some(binding.clone());
@@ -659,8 +768,8 @@ impl App {
     fn apply_account(&mut self, settings: Settings) -> Result<()> {
         let p = self.accounts.picker.as_ref().context("view closed")?;
         ensure!(
-            !p.busy,
-            "Wait for the account catalog response before confirming"
+            !p.busy && !p.disconnected,
+            "Wait for the account catalog response; reopen the picker after a socket change"
         );
         ensure!(
             !settings.model.is_empty()
@@ -687,6 +796,7 @@ impl App {
         let current = self.inference_settings(p.destination)?;
         ensure!(
             current.account == p.original.account
+                && current.provider == p.original.provider
                 && current.model == p.original.model
                 && current.reasoning_effort == p.original.reasoning_effort
                 && current.service_tier == p.original.service_tier,
@@ -745,6 +855,7 @@ impl App {
     }
     pub(super) fn account_input(&mut self, event: &Event) -> Result<bool> {
         use crossterm::event::{KeyEventKind, MouseButton, MouseEventKind};
+        self.account_connection_tick();
         let Some(p) = self.accounts.picker.as_mut() else {
             return Ok(false);
         };
@@ -760,9 +871,6 @@ impl App {
             self.accounts.hits.borrow_mut().clear();
             return Ok(true);
         }
-        if !self.accounts.visible.get() {
-            return Ok(true);
-        }
         let key = match event {
             Event::Key(k) if k.kind != KeyEventKind::Release => Some(*k),
             _ => None,
@@ -775,6 +883,9 @@ impl App {
                 self.quit = true;
                 return Ok(true);
             }
+        }
+        if !self.accounts.visible.get() {
+            return Ok(true);
         }
         let mut select = None;
         if let Event::Mouse(m) = event {
@@ -790,6 +901,25 @@ impl App {
         }
         if p.busy {
             return Ok(true);
+        }
+        if matches!(p.mode, Mode::Connections) {
+            if let Some(index) = select {
+                if let Some(c) = p
+                    .catalogue
+                    .connections
+                    .iter()
+                    .filter(|c| {
+                        c.transports.contains(&Transport::ChatgptOauth)
+                            && c.endpoint == "https://chatgpt.com/backend-api/codex"
+                    })
+                    .nth(index)
+                {
+                    p.mode = Mode::Alias(c.id);
+                    p.query.clear();
+                    p.notice = "Type a new safe alias; Enter explicitly starts device sign-in. No browser opens automatically.".into();
+                }
+                return Ok(true);
+            }
         }
         if let Some(k) = key {
             match &mut p.mode {
@@ -829,27 +959,7 @@ impl App {
                         }
                         KeyCode::Char('o') => {
                             if p.private.as_ref().is_some_and(active_material) {
-                                // Static allowlisted URL only. No remote command/URL is passed to a shell.
-                                #[cfg(target_os = "linux")]
-                                let mut cmd = std::process::Command::new("xdg-open");
-                                #[cfg(target_os = "macos")]
-                                let mut cmd = std::process::Command::new("open");
-                                #[cfg(any(target_os = "linux", target_os = "macos"))]
-                                {
-                                    cmd.arg("https://auth.openai.com/codex/device")
-                                        .stdin(std::process::Stdio::null())
-                                        .stdout(std::process::Stdio::null())
-                                        .stderr(std::process::Stdio::null());
-                                    let child = cmd.spawn().map_err(|_| anyhow::anyhow!("Browser could not be opened; use the displayed URL manually"))?;
-                                    std::thread::spawn(move || {
-                                        let mut child = child;
-                                        let _ = child.wait();
-                                    });
-                                }
-                                #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-                                {
-                                    p.notice = "Open the displayed provider URL manually; automatic browser launch is unavailable on this platform.".into();
-                                }
+                                open_browser(&self.accounts.browser_pending)?;
                             }
                         }
                         _ => (),
@@ -985,7 +1095,7 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
-    fn binding() -> AccountBinding {
+    pub(super) fn binding() -> AccountBinding {
         AccountBinding {
             account_id: Uuid::new_v4(),
             connection_id: Uuid::new_v4(),
@@ -1133,3 +1243,7 @@ mod tests {
         assert_eq!(restored.cancel, intent.cancel);
     }
 }
+
+#[cfg(test)]
+#[path = "accounts/app_tests.rs"]
+mod app_tests;

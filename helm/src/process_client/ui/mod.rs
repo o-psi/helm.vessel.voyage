@@ -1,5 +1,7 @@
 //! Multiplexed presentation; dropping this interface only drops observations.
 mod accounts;
+#[cfg(test)]
+mod account_test_support;
 mod actions;
 mod archive;
 mod attachments;

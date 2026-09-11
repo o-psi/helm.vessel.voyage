@@ -114,7 +114,13 @@ pub(super) async fn validate_live(client: &Client, saved: &Saved) -> Result<()> 
     anyhow::ensure!(
         matches!(
             saved.start,
-            Some(VesselCommand::Start { .. } | VesselCommand::StartAccount { .. })
+            Some(
+                VesselCommand::Start { .. }
+                    | VesselCommand::StartAccount {
+                        config_path: None,
+                        ..
+                    }
+            )
         ),
         "Remote creation must use executing-host configuration, not StartConfigured"
     );

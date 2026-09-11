@@ -51,6 +51,64 @@ pub(super) struct Draft {
 }
 
 impl Saved {
+    pub(super) fn start_resolution(&self) -> Result<(Uuid, VesselCommand)> {
+        let original = self
+            .start
+            .as_ref()
+            .context("original creation envelope missing; recovery retained")?;
+        Ok(match original {
+            VesselCommand::StartAccount {
+                config_path,
+                command_id,
+                session_id,
+                workspace,
+                account,
+                model,
+                reasoning_effort,
+                service_tier,
+            } => (
+                *command_id,
+                VesselCommand::ResolveStartAccount {
+                    config_path: config_path.clone(),
+                    command_id: *command_id,
+                    session_id: *session_id,
+                    workspace: workspace.clone(),
+                    account: account.clone(),
+                    model: model.clone(),
+                    reasoning_effort: reasoning_effort.clone(),
+                    service_tier: service_tier.clone(),
+                },
+            ),
+            VesselCommand::Start {
+                command_id,
+                workspace,
+                ..
+            } => (
+                *command_id,
+                VesselCommand::ResolveStart {
+                    command_id: *command_id,
+                    session_id: self.id,
+                    workspace: workspace.clone(),
+                    config_path: None,
+                },
+            ),
+            VesselCommand::StartConfigured {
+                command_id,
+                workspace,
+                config_path,
+                ..
+            } => (
+                *command_id,
+                VesselCommand::ResolveStart {
+                    command_id: *command_id,
+                    session_id: self.id,
+                    workspace: workspace.clone(),
+                    config_path: Some(config_path.clone()),
+                },
+            ),
+            _ => anyhow::bail!("Unsupported original creation envelope; recovery retained"),
+        })
+    }
     fn validate_identity(&self) -> Result<()> {
         anyhow::ensure!(
             !self.id.is_nil() && !self.turn.is_nil(),
@@ -377,14 +435,15 @@ impl App {
             if observe_only {
                 return Ok(());
             }
-            anyhow::ensure!(
-                draft.saved.config.is_none(),
-                "Account-aware creation cannot yet preserve this local configured draft: StartAccount has no configuration/policy envelope. Original configuration and text retained. The coordinator must integrate that contract before this draft can be sent"
-            );
             let command_id = Uuid::new_v4();
             let workspace = draft.saved.workspace.clone();
             draft.saved.start = Some(if let Some(settings) = &draft.saved.account_settings {
+                let config_path = draft.saved.launch_config()?.map(|config| {
+                    anyhow::ensure!(client.is_local(), "Configured account creation is owner-local only; remote configuration remains host-owned");
+                    super::super::frontend::launch::persist(&config, &draft.saved.workspace, &client.directory)
+                }).transpose()?;
                 VesselCommand::StartAccount {
+                    config_path,
                     command_id,
                     session_id: id,
                     workspace,

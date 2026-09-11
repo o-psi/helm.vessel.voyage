@@ -17,6 +17,8 @@ pub(super) struct Preferences {
 fn path(host: Uuid, workspace: &std::path::Path) -> Result<PathBuf> {
     let root =
         crate::process_client::cli::default_directory().with_file_name("helm-account-choices");
+    #[cfg(test)]
+    let root = crate::process_client::ui::account_test_support::root("helm-account-choices", root);
     #[cfg(unix)]
     {
         use std::os::unix::fs::DirBuilderExt;
