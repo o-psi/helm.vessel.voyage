@@ -4,7 +4,7 @@ use serde::{Serialize, de::DeserializeOwned};
 use sha2::{Digest, Sha256};
 use std::{
     fs::{File, OpenOptions},
-    io::Write,
+    io::{Read, Write},
     os::unix::fs::{MetadataExt, OpenOptionsExt},
     path::{Path, PathBuf},
 };
@@ -32,9 +32,13 @@ pub(crate) fn load<T: DeserializeOwned>(path: &Path) -> Result<T> {
     load_bounded(path, 16384)
 }
 pub(crate) fn load_bounded<T: DeserializeOwned>(path: &Path, limit: u64) -> Result<T> {
+    let bytes = read_bounded(path, limit)?;
+    Ok(serde_json::from_slice(&bytes)?)
+}
+pub(crate) fn read_bounded(path: &Path, limit: u64) -> Result<Vec<u8>> {
     let file = OpenOptions::new()
         .read(true)
-        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK)
         .open(path)?;
     let meta = file.metadata()?;
     ensure!(
@@ -45,12 +49,20 @@ pub(crate) fn load_bounded<T: DeserializeOwned>(path: &Path, limit: u64) -> Resu
             && meta.len() <= limit,
         "invalid private access record"
     );
-    Ok(serde_json::from_reader(file)?)
+    let mut bytes = Vec::new();
+    file.take(limit + 1).read_to_end(&mut bytes)?;
+    ensure!(bytes.len() as u64 <= limit, "access record too large");
+    Ok(bytes)
 }
 pub(crate) fn save<T: Serialize>(path: &Path, value: &T) -> Result<()> {
     save_bounded(path, value, 16384)
 }
 pub(crate) fn save_bounded<T: Serialize>(path: &Path, value: &T, limit: usize) -> Result<()> {
+    let bytes = serde_json::to_vec(value)?;
+    save_bytes(path, &bytes, limit)
+}
+pub(crate) fn save_bytes(path: &Path, bytes: &[u8], limit: usize) -> Result<()> {
+    ensure!(bytes.len() <= limit, "access record too large");
     let parent = path
         .parent()
         .ok_or_else(|| anyhow::anyhow!("missing access directory"))?;
@@ -61,9 +73,7 @@ pub(crate) fn save_bounded<T: Serialize>(path: &Path, value: &T, limit: usize) -
         .mode(0o600)
         .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
         .open(&tmp)?;
-    let bytes = serde_json::to_vec(value)?;
-    ensure!(bytes.len() <= limit, "access record too large");
-    file.write_all(&bytes)?;
+    file.write_all(bytes)?;
     file.sync_all()?;
     std::fs::rename(tmp, path)?;
     File::open(parent)?.sync_all()?;

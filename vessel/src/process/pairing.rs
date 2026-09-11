@@ -1,7 +1,9 @@
 //! Account-owner invitations and secret-only redemption, outside command receipts.
 //! All writers (including local CLI) serialize on the same private OS file lock.
+mod audit;
 use super::{access::store, registry};
 use anyhow::{Result, ensure};
+use audit::Kind;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
@@ -63,12 +65,18 @@ pub struct Invitation {
     pub code: String,
 }
 #[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct Redemption {
     command_id: Uuid,
     credential: WorkspaceCredential,
     grant: ConnectionGrant,
+    #[serde(default)]
+    publication_observed: bool,
+    #[serde(default)]
+    audit_tracked: bool,
 }
 #[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct Pending {
     invitation_id: Uuid,
     principal_id: Uuid,
@@ -82,13 +90,21 @@ struct Pending {
     redemption: Option<Redemption>,
 }
 #[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct Revocation {
     command_id: Uuid,
     grant_id: Uuid,
     expected_revision: u64,
+    #[serde(default)]
+    publication_observed: bool,
+    #[serde(default)]
+    audit_tracked: bool,
 }
 #[derive(Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct State {
+    #[serde(default)]
+    audit: Option<audit::Journal>,
     invitations: Vec<Pending>,
     revocations: Vec<Revocation>,
     window_ms: u64,
@@ -134,10 +150,98 @@ fn load(root: &Path) -> Result<State> {
     if !state_path(root).try_exists()? {
         return Ok(State::default());
     }
-    store::load_bounded(&state_path(root), STATE_BYTES as u64)
+    let bytes = store::read_bounded(
+        &state_path(root),
+        (STATE_BYTES + voyage_storage::credentials::OVERHEAD) as u64,
+    )?;
+    let bytes = voyage_storage::credentials::open(b"vessel-workspace-pairing-state-v1", &bytes)?;
+    ensure!(bytes.len() <= STATE_BYTES, "pairing state exceeds limit");
+    let state: State = serde_json::from_slice(&bytes)
+        .map_err(|_| anyhow::anyhow!("invalid private pairing state"))?;
+    ensure!(
+        state.invitations.len() <= LIMIT && state.revocations.len() <= LIMIT,
+        "pairing state capacity exceeded"
+    );
+    if let Some(audit) = &state.audit {
+        audit.validate()?;
+    }
+    Ok(state)
 }
 fn save(root: &Path, state: &State) -> Result<()> {
-    store::save_bounded(&state_path(root), state, STATE_BYTES)
+    let bytes = serde_json::to_vec(state)?;
+    ensure!(bytes.len() <= STATE_BYTES, "pairing state exceeds limit");
+    let sealed = voyage_storage::credentials::seal(b"vessel-workspace-pairing-state-v1", &bytes)?;
+    store::save_bytes(
+        &state_path(root),
+        &sealed,
+        STATE_BYTES + voyage_storage::credentials::OVERHEAD,
+    )
+}
+fn start_audit(root: &Path, state: &mut State, now: u64) -> Result<()> {
+    if state.audit.is_none() {
+        let vessel = identity(root)?;
+        let mut journal = audit::Journal::new(vessel, state_path(root).try_exists()?);
+        journal.append(audit::event(
+            Kind::AuditStarted,
+            now,
+            vessel,
+            None,
+            None,
+            None,
+        ))?;
+        state.audit = Some(journal);
+    }
+    Ok(())
+}
+fn append(state: &mut State, event: audit::Event) -> Result<()> {
+    state
+        .audit
+        .as_mut()
+        .ok_or_else(|| anyhow::anyhow!("audit not initialized"))?
+        .append(event)
+}
+fn save_intent(root: &Path, state: &State) -> Result<()> {
+    // Reserve space for the bounded publication-observation event before effects.
+    ensure!(
+        serde_json::to_vec(state)?.len() <= STATE_BYTES - 8192,
+        "pairing audit capacity exhausted"
+    );
+    save(root, state)
+}
+fn same_grant(a: &ConnectionGrant, b: &ConnectionGrant) -> Result<bool> {
+    Ok(serde_json::to_vec(a)? == serde_json::to_vec(b)?)
+}
+fn observe_redemption(root: &Path, state: &mut State, position: usize, now: u64) -> Result<()> {
+    let p = &state.invitations[position];
+    let r = p
+        .redemption
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("redemption unavailable"))?;
+    if r.publication_observed {
+        return Ok(());
+    }
+    let current: ConnectionGrant = store::load(&connection_path(root, r.grant.grant_id))?;
+    ensure!(
+        same_grant(&current, &r.grant)?,
+        "grant publication changed; original intent retained"
+    );
+    let event = audit::event(
+        Kind::GrantPublicationObserved,
+        now,
+        current.vessel_id,
+        Some(r.command_id),
+        Some(p.invitation_id),
+        Some(&current),
+    );
+    append(state, event)?;
+    state.invitations[position]
+        .redemption
+        .as_mut()
+        .expect("checked redemption")
+        .publication_observed = true;
+    #[cfg(test)]
+    tests::failpoint("audit_finalize")?;
+    save(root, state)
 }
 fn identity(root: &Path) -> Result<Uuid> {
     // Do not create a competing signing identity from an administrative CLI.
@@ -328,6 +432,7 @@ pub fn invite(
     let _lock = lock(root)?;
     let mut state = load(root)?;
     let now = store::now()?;
+    start_audit(root, &mut state, now)?;
     ensure!(!principal_id.is_nil(), "principal must not be nil");
     ensure!(
         (1..=MAX_INVITATION_TTL_SECONDS).contains(&ttl_seconds),
@@ -368,9 +473,9 @@ pub fn invite(
         .map_err(|_| anyhow::anyhow!("endpoint requires HTTPS or literal loopback"))?;
     // Retain redemption material until grant expiry; never evict live retry evidence.
     state.invitations.retain(|p| {
-        p.redemption
-            .as_ref()
-            .map_or(p.expires_at_ms > now, |r| r.grant.expires_at_ms > now)
+        p.redemption.as_ref().map_or(p.expires_at_ms > now, |r| {
+            !r.publication_observed || r.grant.expires_at_ms > now
+        })
     });
     ensure!(
         state.invitations.len() < LIMIT,
@@ -387,6 +492,19 @@ pub fn invite(
             .ok_or_else(|| anyhow::anyhow!("expiry overflow"))?,
         code: secret(),
     };
+    let mut event = audit::event(
+        Kind::InvitationRecorded,
+        now,
+        invitation.vessel_id,
+        None,
+        Some(invitation.invitation_id),
+        None,
+    );
+    event.principal_id = Some(principal_id);
+    event.expires_at_ms = Some(invitation.expires_at_ms);
+    event.workspace_ids = workspaces.iter().map(|w| w.id).collect();
+    event.rights = rights.clone();
+    append(&mut state, event)?;
     state.invitations.push(Pending {
         invitation_id: invitation.invitation_id,
         principal_id,
@@ -425,6 +543,7 @@ pub fn redeem(
     let _lock = lock(root)?;
     let mut state = load(root)?;
     let now = store::now()?;
+    start_audit(root, &mut state, now)?;
     let position = state
         .invitations
         .iter()
@@ -508,9 +627,21 @@ pub fn redeem(
             command_id: request.command_id,
             credential,
             grant,
+            publication_observed: false,
+            audit_tracked: true,
         });
-        // Intent with original credential is durable before authority publication.
-        save(root, &state)?;
+        let r = p.redemption.as_ref().expect("new redemption");
+        let event = audit::event(
+            Kind::GrantPublicationIntended,
+            now,
+            r.grant.vessel_id,
+            Some(r.command_id),
+            Some(p.invitation_id),
+            Some(&r.grant),
+        );
+        append(&mut state, event)?;
+        // Intent and event are one durable encrypted replacement before authority.
+        save_intent(root, &state)?;
     }
     let redemption = state.invitations[position]
         .redemption
@@ -531,22 +662,23 @@ pub fn redeem(
     if path.try_exists()? {
         let current: ConnectionGrant = store::load(&path)?;
         ensure!(
-            !current.revoked
-                && current.expires_at_ms > now
-                && current.grant_id == redemption.grant.grant_id
-                && current.principal_id == request.principal_id
-                && current.vessel_id == redemption.grant.vessel_id
-                && bool::from(
-                    current
-                        .token_hash
-                        .as_bytes()
-                        .ct_eq(redemption.grant.token_hash.as_bytes())
-                ),
+            same_grant(&current, &redemption.grant)?,
             PairRefusal::Denied
         );
     } else {
+        ensure!(
+            !redemption.publication_observed,
+            "observed grant disappeared; authority will not be recreated"
+        );
+        #[cfg(test)]
+        tests::failpoint("grant_publish")?;
         store::save(&path, &redemption.grant)?;
     }
+    observe_redemption(root, &mut state, position, now)?;
+    let redemption = state.invitations[position]
+        .redemption
+        .as_ref()
+        .expect("retained redemption");
     // Avoid requiring a Debug implementation or leaking through a receipt type.
     Ok(serde_json::from_value(serde_json::to_value(
         &redemption.credential,
@@ -566,11 +698,10 @@ pub fn revoke(
     );
     let _lock = lock(root)?;
     let mut state = load(root)?;
-    let path = connection_path(root, grant_id);
-    let mut grant: ConnectionGrant = store::load(&path)?;
-    let revision = expected_revision
-        .checked_add(1)
-        .ok_or_else(|| anyhow::anyhow!("revision overflow"))?;
+    let now = store::now()?;
+    start_audit(root, &mut state, now)?;
+    // Completed exact retries return the retained historical outcome, even if a
+    // later explicit revocation advanced the current grant revision.
     if let Some(prior) = state
         .revocations
         .iter()
@@ -580,9 +711,65 @@ pub fn revoke(
             prior.grant_id == grant_id && prior.expected_revision == expected_revision,
             "revocation command conflict"
         );
-        if grant.revoked && grant.revision == revision {
-            return Ok(json!({"grant_id":grant_id,"revision":revision,"revoked":true}));
+        if prior.publication_observed {
+            let revision = expected_revision
+                .checked_add(1)
+                .ok_or_else(|| anyhow::anyhow!("revision overflow"))?;
+            return Ok(
+                json!({"grant_id":grant_id,"revision":revision,"revoked":true,"cleanup":"not_observed"}),
+            );
         }
+    }
+    // Before changing a published grant, preserve any pending publication observation.
+    if let Some(position) = state.invitations.iter().position(|p| {
+        p.redemption.as_ref().is_some_and(|r| {
+            r.grant.grant_id == grant_id && r.audit_tracked && !r.publication_observed
+        })
+    }) {
+        observe_redemption(root, &mut state, position, now)?;
+    }
+    let path = connection_path(root, grant_id);
+    let mut grant: ConnectionGrant = store::load(&path)?;
+    // Finalize an earlier exact observed revocation before another changes revision.
+    let pending: Vec<_> = state
+        .revocations
+        .iter()
+        .enumerate()
+        .filter(|(_, r)| {
+            r.audit_tracked
+                && !r.publication_observed
+                && r.grant_id == grant_id
+                && r.expected_revision.checked_add(1) == Some(grant.revision)
+                && grant.revoked
+        })
+        .map(|(i, _)| i)
+        .collect();
+    for position in pending {
+        observe_revocation(root, &mut state, position, &grant, now)?;
+    }
+    let revision = expected_revision
+        .checked_add(1)
+        .ok_or_else(|| anyhow::anyhow!("revision overflow"))?;
+    let prior_position = state
+        .revocations
+        .iter()
+        .position(|r| r.command_id == command_id);
+    if let Some(position) = prior_position {
+        let prior = &state.revocations[position];
+        ensure!(
+            prior.grant_id == grant_id && prior.expected_revision == expected_revision,
+            "revocation command conflict"
+        );
+        if grant.revoked && grant.revision == revision {
+            observe_revocation(root, &mut state, position, &grant, now)?;
+            return Ok(
+                json!({"grant_id":grant_id,"revision":revision,"revoked":true,"cleanup":"not_observed"}),
+            );
+        }
+        ensure!(
+            !prior.publication_observed,
+            "observed revocation changed; original outcome retained"
+        );
     } else {
         ensure!(
             state.revocations.len() < LIMIT,
@@ -596,8 +783,19 @@ pub fn revoke(
             command_id,
             grant_id,
             expected_revision,
+            publication_observed: false,
+            audit_tracked: true,
         });
-        save(root, &state)?;
+        let event = audit::event(
+            Kind::RevocationIntended,
+            now,
+            grant.vessel_id,
+            Some(command_id),
+            None,
+            Some(&grant),
+        );
+        append(&mut state, event)?;
+        save_intent(root, &state)?;
     }
     ensure!(
         grant.revision == expected_revision,
@@ -606,7 +804,131 @@ pub fn revoke(
     grant.revoked = true;
     grant.revision = revision;
     store::save(&path, &grant)?;
-    Ok(
-        json!({"grant_id":grant_id,"revision":revision,"revoked":true,"cleanup":"requested_by_authority_watch"}),
-    )
+    let position = state
+        .revocations
+        .iter()
+        .position(|r| r.command_id == command_id)
+        .expect("retained revocation");
+    observe_revocation(root, &mut state, position, &grant, now)?;
+    Ok(json!({"grant_id":grant_id,"revision":revision,"revoked":true,"cleanup":"not_observed"}))
 }
+
+/// Explicit offline conversion; retains original transaction/credential identities.
+pub fn protect_credentials(root: &Path) -> Result<()> {
+    ensure!(
+        root.is_absolute() && root.is_dir() && std::fs::canonicalize(root)? == root,
+        "protection requires an existing canonical Vessel directory"
+    );
+    voyage_storage::credentials::check_key()?;
+    let _lock = lock(root)?;
+    if state_path(root).try_exists()? {
+        load(root)?; // Validate without changing the canonical plaintext representation.
+        let bytes = store::read_bounded(
+            &state_path(root),
+            (STATE_BYTES + voyage_storage::credentials::OVERHEAD) as u64,
+        )?;
+        let plaintext =
+            voyage_storage::credentials::open(b"vessel-workspace-pairing-state-v1", &bytes)?;
+        let sealed =
+            voyage_storage::credentials::seal(b"vessel-workspace-pairing-state-v1", &plaintext)?;
+        store::save_bytes(
+            &state_path(root),
+            &sealed,
+            STATE_BYTES + voyage_storage::credentials::OVERHEAD,
+        )?;
+    }
+    // Legacy interrupted atomic-write files may also contain recovery secrets.
+    // Encrypt their opaque bytes without interpreting them as committed state.
+    for (i, entry) in std::fs::read_dir(directory(root))?.enumerate() {
+        ensure!(i < LIMIT * 2, "pairing migration entry limit exceeded");
+        let entry = entry?;
+        let name = entry.file_name();
+        if name
+            .to_str()
+            .and_then(|n| n.strip_prefix(".pending-"))
+            .is_some_and(|id| Uuid::parse_str(id).is_ok())
+        {
+            let bytes = store::read_bounded(
+                &entry.path(),
+                (STATE_BYTES + voyage_storage::credentials::OVERHEAD) as u64,
+            )?;
+            if !voyage_storage::credentials::encrypted(&bytes) {
+                let sealed = voyage_storage::credentials::seal(
+                    b"vessel-workspace-pairing-state-v1",
+                    &bytes,
+                )?;
+                store::save_bytes(
+                    &entry.path(),
+                    &sealed,
+                    STATE_BYTES + voyage_storage::credentials::OVERHEAD,
+                )?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn observe_revocation(
+    root: &Path,
+    state: &mut State,
+    position: usize,
+    grant: &ConnectionGrant,
+    now: u64,
+) -> Result<()> {
+    if state.revocations[position].publication_observed {
+        return Ok(());
+    }
+    let observed: ConnectionGrant = store::load(&connection_path(root, grant.grant_id))?;
+    ensure!(
+        same_grant(&observed, grant)?,
+        "revocation publication changed; original intent retained"
+    );
+    let event = audit::event(
+        Kind::RevocationObserved,
+        now,
+        grant.vessel_id,
+        Some(state.revocations[position].command_id),
+        None,
+        Some(grant),
+    );
+    append(state, event)?;
+    state.revocations[position].publication_observed = true;
+    #[cfg(test)]
+    tests::failpoint("audit_finalize")?;
+    save(root, state)
+}
+
+/// Read-only local-owner journal view. Unlocks private state, emits allowlisted metadata only.
+pub fn connection_audit(root: &Path, limit: usize, cursor: Option<&str>) -> Result<Value> {
+    ensure!(
+        root.is_absolute() && std::fs::canonicalize(root)? == root,
+        "audit requires a canonical absolute directory"
+    );
+    ensure!(
+        inventory_directory(root)?,
+        "Vessel state directory unavailable"
+    );
+    if !inventory_directory(&root.join("access"))? || !inventory_directory(&directory(root))? {
+        return audit::page(None, limit, cursor);
+    }
+    let lock = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK)
+        .open(directory(root).join("lock"))
+        .map_err(|_| anyhow::anyhow!("connection audit lock unavailable"))?;
+    let m = lock.metadata()?;
+    ensure!(
+        m.is_file()
+            && m.nlink() == 1
+            && m.uid() == unsafe { libc::geteuid() }
+            && m.mode() & 0o077 == 0,
+        "unsafe connection audit lock"
+    );
+    lock.try_lock_shared()
+        .map_err(|_| anyhow::anyhow!("pairing busy; retry audit read"))?;
+    let state = load(root)?;
+    audit::page(state.audit.as_ref(), limit, cursor)
+}
+
+#[cfg(test)]
+mod tests;

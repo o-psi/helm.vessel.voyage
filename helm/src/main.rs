@@ -22,6 +22,11 @@ mod managed;
 #[tokio::main]
 async fn main() -> Result<()> {
     let mut cli = Cli::parse();
+    if let Some(Command::ProtectConnections { directory }) = &cli.command {
+        let count = helm::process_client::connections::protect_credentials(directory)?;
+        println!("Protected {count} retained connection secret records; identities unchanged.");
+        return Ok(());
+    }
     if let Some(Command::Browser(args)) = &cli.command {
         return helm::process_client::browser::run_cli(args).await;
     }
@@ -313,6 +318,9 @@ async fn main() -> Result<()> {
         resume: None,
         plain: false,
     }) {
+        Command::ProtectConnections { .. } => {
+            unreachable!("connection protection handled before provider configuration")
+        }
         Command::Browser(_) => unreachable!("browser setup handled before provider configuration"),
         Command::Connect(_) => {
             unreachable!("connected client handled before execution configuration")

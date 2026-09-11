@@ -6,6 +6,7 @@ license.workspace = true
 description = "Voyage management plane"
 
 [dependencies]
+voyage-storage.workspace = true
 voyage-runtime = { package = "voyage", path = "../voyage" }
 log.workspace = true
 anyhow.workspace = true

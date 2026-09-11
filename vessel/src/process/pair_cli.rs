@@ -157,3 +157,25 @@ pub fn revoke(args: RevokeConnectionArgs) -> Result<()> {
     println!("{}", serde_json::to_string(&result)?);
     Ok(())
 }
+
+#[derive(Args)]
+pub struct ConnectionAuditArgs {
+    /// Existing account-private Vessel directory. Never creates or repairs state.
+    #[arg(long)]
+    pub directory: PathBuf,
+    #[arg(long, default_value_t = 64)]
+    pub limit: usize,
+    /// Exact next_cursor returned by the preceding page; retain the same limit.
+    #[arg(long)]
+    pub cursor: Option<String>,
+}
+pub fn audit(args: ConnectionAuditArgs) -> Result<()> {
+    let value = pairing::connection_audit(&args.directory, args.limit, args.cursor.as_deref())?;
+    let output = serde_json::to_string(&value)?;
+    ensure!(
+        output.len() <= 512 * 1024,
+        "connection audit output exceeds limit"
+    );
+    println!("{output}");
+    Ok(())
+}

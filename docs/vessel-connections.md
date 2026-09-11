@@ -202,10 +202,179 @@ records are separate from provider configuration. Updates use locks, per-record
 revision checks and atomic writes; unsafe ownership, permissions or symlinks are
 refused rather than silently repaired.
 
-This is filesystem protection, not application-level encryption at rest. Processes
-running as the owning account can read the credentials; backup copies need the
-same protection. Additional credential encryption and key custody remain open
-under [issue #10](https://github.com/o-psi/voyage/issues/10).
+### Encrypted connection secrets (Linux)
+
+New managed `.credential` and `.redemption` writes in Helm, and the Vessel's
+`access/pairing/state.json` journal, require a separately provisioned encryption
+key. Missing provisioning refuses the write; there is no plaintext fallback and
+no automatically generated replacement key. This can prevent new pairing/import
+or owner grant changes after upgrading until the executing process is provisioned.
+Ordinary local voyages and provider credentials do not use this key.
+
+Each host sets `VOYAGE_CREDENTIAL_KEY_FILE` to an **absolute path**, not key material.
+The file must contain exactly 32 high-entropy random bytes, be owned by the executing
+account, owner-only, a single-link regular file without symlink path components,
+and reside on Linux **tmpfs**. Persistent key files are refused. Use an independent
+secret manager/unlock service to provision the same key at startup; never put the
+bytes in argv, environment values, conversations, issues or logs. Do not change the
+key or provisioning file while Helm/Vessel or a migration is using it. This release
+does not provide online key rotation. Host keys must remain independent; pairing
+never transfers the encryption key.
+
+For example, after private provisioning (the commands below contain only paths):
+
+```sh
+VOYAGE_CREDENTIAL_KEY_FILE=/run/user/1000/voyage-secrets/connections.key helm
+VOYAGE_CREDENTIAL_KEY_FILE=/run/user/1000/voyage-secrets/connections.key \
+  vessel connection-audit --directory /absolute/private/vessel-state
+```
+
+Substitute the actual executing UID and provisioned path. For an independently
+running/headless Vessel, configure that service's environment and unlock dependency
+explicitly; a variable set later in Helm cannot unlock an already-running Vessel.
+A systemd runtime credential is usable only if its actual file satisfies the checks
+above. Its durable source must have independently protected key custody (for example,
+an appropriately configured TPM-backed or external secret manager), not an unprotected
+host key beside the encrypted archive. The installer does not generate keys or
+silently install an unlock service. No key is fetched over a network by Helm/Vessel,
+no unlock prompt can hang unattended execution, and errors do not disclose key bytes.
+
+Records use AES-256-GCM with a fresh random nonce and authenticated record-purpose
+binding. Helm credentials retain their original filenames; renaming ciphertext
+invalidates that binding. A private authenticated marker catches using a different
+key for subsequent Helm secret writes. Both applications retain private-file checks,
+bounded reads, exclusive writer locks and atomic publication. The key is reread rather
+than cached between storage operations. Removing provisioning prevents subsequent
+protected reads/writes; this is **not** a cancellation or revocation mechanism for
+credentials already loaded into a connection or running operation.
+
+**Threat boundary:** encryption protects copied managed persistent files and their
+backups when the thief does not have the separately held key. It does not protect
+against the owning account, root, a compromised running process, memory capture,
+unencrypted swap/hibernation, or an attacker who can roll back whole storage snapshots.
+Tmpfs can swap: provision encrypted/disabled swap and appropriate hibernation policy
+if disk-theft protection includes those assets. Authentication detects changed
+ciphertext, not a coherent old backup. Application policy is not an OS sandbox.
+
+| Asset | Protection and ownership |
+| --- | --- |
+| Helm immutable credentials, pending redemption requests (including invitation codes), retained forgotten-access/recovery secrets | Encrypted on new writes, including temporary publication bytes. |
+| Helm principal UUID, address book, pending-operation IDs and preview metadata | Owner-private filesystem records, not secret authentication material; not an encrypted conversation store. |
+| Vessel pairing journal: original returned credentials, invitation verifiers, exact redemption/revocation intents and audit | Encrypted on new writes, including temporary publication bytes. |
+| Vessel connection grants | Owner-private authority metadata and high-entropy bearer verifiers; inventory remains available without unlocking the journal. No bearer token is stored in these files. |
+| Invitation output and imported access files | Explicit private exchange/export files; not automatically encrypted with a key the other host lacks. Transfer through an authenticated confidential channel, control their retention, and protect their backups separately. Import does not erase the source. |
+| Provider credentials, Vessel signing identity, session-only sharing and participant stores | Separate authority/storage surfaces, not migrated or claimed protected by this connection feature. |
+
+### Existing data, backups, key loss and interrupted migration
+
+Existing plaintext records remain readable and are **not** silently rewritten on
+startup. This is legacy compatibility, not acceptance of filesystem-only protection
+for an installation claiming encrypted storage. Provision the original host-local
+key, retain separately protected recovery material, stop concurrent administration,
+and explicitly migrate each applicable host:
+
+```sh
+helm protect-connections --directory /absolute/private/helm-connections
+vessel protect-connections --directory /absolute/private/vessel-state
+```
+
+Both commands require `VOYAGE_CREDENTIAL_KEY_FILE` in their environment. They perform
+no network/provider request and preserve credentials, principals, grant scope and
+pending command identities. Helm also protects retained legacy `.tmp` records;
+Vessel protects legacy `.pending-UUID` journal files. Already encrypted orphan
+publication files remain retained, not promoted into canonical state. Migration is
+atomic **per file**, not across the directory: an interruption can leave a mixed
+legacy/encrypted directory. Repeat the same command with the same key to finish.
+Unreadable/unsafe/damaged records fail without replacing that record or guessing a
+new identity. A failed run is not proof that earlier files were unchanged.
+
+Back up ciphertext and exact identity/recovery records together; keep the decryption
+key separately under independent protection. Migration cannot erase old filesystem
+blocks, plaintext backups or independently exported files. Inventory/rotate those
+copies explicitly before claiming the entire backup set encrypted. Do not delete
+pending records or edit envelope fields to bypass a locked state. Downgrading to an
+older binary cannot read the new envelopes; never strip encryption to make it run.
+
+A missing or incorrect key leaves encrypted records intact. Restore the **same** key
+through the independent provisioning channel, then reopen/retry the original pending
+operation. There is no key escrow, password reset, implicit re-pair or key resurrection.
+Permanent key loss means the protected recovery contents cannot be recovered. Helm
+can be replaced as a new installation using the lost-installation procedure above.
+If the Vessel journal key is lost, credential-free inventory is still available but
+journal-based pairing/revocation/audit cannot proceed: restore the key or explicitly
+retire access through the host's service/network administration and establish a new
+Vessel identity. Stopping a gateway alone does not establish cleanup of existing
+voyages. Never claim old grants revoked or processes cleaned up without evidence.
+
+### Current-grant lifecycle audit
+
+The executing account can read a bounded, content-free projection:
+
+```sh
+vessel connection-audit --directory /absolute/private/vessel-state --limit 64
+```
+
+This is a local-owner operation, including with Vessel stopped, not a remote model
+or scoped-client audit API. It opens the encrypted pairing journal and therefore
+requires its key, unlike `list-connections`. It never initializes, reconciles or
+repairs state. Private ownership checks and a shared nonblocking pairing lock apply;
+contention returns a bounded busy error. Output is prepared completely before printing,
+with at most 128 events per page and a 512 KiB output cap.
+
+Events distinguish `audit_started`, `invitation_recorded`,
+`grant_publication_intended`, `grant_publication_observed`, `revocation_intended`,
+and `revocation_observed`. Intent and its event share one atomic journal write before
+publishing authority. Publication observation and its persistent deduplication marker
+share another. Interrupted finalization leaves uncertainty; an explicit exact retry
+observes the existing grant and finalizes once. It never invents a second invitation,
+replays a voyage command or recreates a grant known to have been published and then
+removed. Full authority fields are checked before accepting a retained publication.
+
+Events expose only typed lifecycle kind, sequence, observation time, relevant UUIDs,
+revision/expiry, workspace UUIDs and enumerated rights. They exclude tokens/verifiers,
+codes, endpoints, paths/names, conversation/provider data, raw errors and free text.
+An invitation event does not prove delivery of its private output file. A principal
+UUID is public metadata, not an authenticated person's identity. Expiry is enforced
+from the retained deadline, not fabricated as an event when someone reads history.
+Anonymous failures, connection/disconnection/forget actions, session grants and
+participant bindings are not covered. Renewal/replacement is a distinct grant.
+Revocation reports `cleanup: not_observed` on first success and retry: Voyage authority
+watchers enforce changes independently, and neither an audit nor a CLI receipt proves
+that resources stopped.
+
+Ordering uses checked monotonically increasing sequence numbers, not wall time.
+The first page pins an upper sequence and digest; pass its exact `next_cursor` as
+`--cursor` with the same `--limit`. Concurrent appends cannot enter that page sequence,
+and the continuation works after restart with the same journal. It is an observation
+cursor, not an authority token. Changed generation/horizon, invalid cursor, sequence
+gaps or retention overtaking the continuation cause explicit refusal rather than
+silently skipping history. Start a new read explicitly after such a refusal.
+
+Retention keeps the newest **4,096 events**, not a promised number of days. The
+response reports the first retained sequence and `history_pruned`; operation markers
+outlive event pruning so exact retries do not duplicate old lifecycle events. Existing
+invitation/revocation capacity limits still apply, and unresolved new publication
+intents are not silently discarded merely because their grant expiry passed. Recording
+begins on the first new journal mutation. Legacy pre-audit history is explicitly
+unavailable, never reconstructed from inventory or described as empty. No old enrollment
+audit data is imported and no retired enrollment subsystem is restored.
+
+Focused offline verification commands (use the shared build lock in coordinated
+workspaces):
+
+```sh
+cargo test -p voyage-storage -p helm -p vessel --locked --lib
+cargo build -p helm -p vessel -p voyage --locked -j 8
+python3 vessel/tests/connection_protection.py --bin-dir target/debug
+```
+
+The Rust cases exercise authenticated envelopes, wrong/missing keys, explicit
+migration, corrupted/private-file refusal, exact publication recovery failpoints,
+deduplicated audit events, cursor horizons and retention. The process fixture uses
+isolated HOME/XDG directories, synthetic credentials and loopback-only pairing;
+it makes no provider requests or native macOS/Windows claim. Its printed private
+evidence directory retains process/CLI results. These commands describe the checks;
+actual run results must accompany the delivered source revision.
 
 Human connections do not automatically populate `[vessel.remotes]` or grant a
 model coordination authority. That configuration belongs to the executing host
