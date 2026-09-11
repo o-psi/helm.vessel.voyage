@@ -108,9 +108,6 @@ pub(crate) struct InvocationHandle {
     receiver: Option<oneshot::Receiver<Completion>>,
 }
 impl InvocationHandle {
-    pub(crate) fn cancel(&self) {
-        self.cancel.cancel();
-    }
     pub(crate) async fn completion(mut self) -> Completion {
         match self.receiver.take().expect("completion receiver").await {
             Ok(completion) => completion,

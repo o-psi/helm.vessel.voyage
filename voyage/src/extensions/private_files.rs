@@ -54,7 +54,7 @@ mod tests {
     fn explicit_source_is_retained_privately_and_matches_renamed_identity() -> Result<()> {
         let temp = tempfile::tempdir()?;
         let source = temp.path().join("explicit-private-config.toml");
-        std::fs::write(&source, "model = \"fixture\"\napi_key_required = false\n")?;
+        std::fs::write(&source, "model = \"fixture\"\napi_key_required = false\nbase_url = \"http://127.0.0.1:9/v1\"\n")?;
         let config = crate::Config::load(Some(&source))?;
         assert!(config.extension_private_files_complete);
         assert_eq!(config.extension_private_files.len(), 1);
