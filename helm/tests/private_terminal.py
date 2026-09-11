@@ -239,9 +239,9 @@ class OuterPTY:
             return predicate(screen)
         return wait_for(observed, label, timeout)
 
-    def exited_restored(self):
+    def exited_restored(self, success=True):
         wait_for(lambda: (self.pump(), self.process.poll() is not None)[1], "Helm exit")
-        assert self.process.returncode == 0, "Helm exit was not successful"
+        assert (self.process.returncode == 0) == success, "unexpected Helm exit status"
         assert termios.tcgetattr(self.slave) == self.original, "outer termios not restored"
         assert not self.screen.alternate, "alternate screen not restored"
         assert not self.screen.paste, "bracketed paste not restored"
@@ -339,7 +339,7 @@ def main():
     binaries = args.bin_dir.resolve()
     for name in ("helm", "vessel", "voyage"):
         assert (binaries / name).is_file(), "missing binary: " + name
-    root = Path(tempfile.mkdtemp(prefix="helm-private-terminal-"))
+    root = Path(tempfile.mkdtemp(prefix="hpt-"))
     print("evidence: " + str(root), flush=True)
     workspace, directory = root / "workspace", root / "vessel"
     workspace.mkdir(mode=0o700)
@@ -354,7 +354,7 @@ def main():
     session = str(uuid.uuid4())
     evidence = {"session_id": session, "checks": [], "binary_sha256": {},
                 "limitations": ["Linux synthetic PTY, not a human terminal or native macOS/Windows",
-                                "No deployed remote TLS, link failure, or terminal hardware check",
+                                "Local socket loss tested; no deployed remote TLS or terminal hardware check",
                                 "Small outer CSI probe; not a complete VT emulator"]}
     for name in ("helm", "vessel", "voyage"):
         with (binaries / name).open("rb") as handle:
@@ -378,7 +378,7 @@ def main():
         logs.append(handle)
         return handle
 
-    def request(command):
+    def request(command, allow_error=False):
         credential = json.loads((directory / "process-http.json").read_text())
         req = urllib.request.Request(credential["endpoint"] + "/v1/vessel/command",
             data=json.dumps({"protocol": 1, "command": command}).encode(),
@@ -387,7 +387,13 @@ def main():
             payload = response.read(4 * 1024 * 1024 + 1)
         assert 0 < len(payload) <= 4 * 1024 * 1024
         result = json.loads(payload)
-        assert result["protocol"] == 1 and result.get("error") is None and not result.get("outcome_unknown")
+        assert result["protocol"] == 1
+        if allow_error:
+            assert result.get("error"), "expected terminal operation error"
+            evidence.setdefault("terminal_errors", []).append({"error": result["error"], "outcome_unknown": result.get("outcome_unknown")})
+            return result
+        assert not result.get("outcome_unknown"), "unexpected uncertain operation; do not replay"
+        assert result.get("error") is None, result.get("error")
         return result["result"]
 
     def snapshot():
@@ -455,6 +461,17 @@ def main():
         assert terminal, "process.start did not return a terminal UUID"
         terminal = terminal.group()
         evidence.update(run_id=run, terminal_id=terminal)
+        resources = initial.get("session_resources", [])
+        assert any(r.get("kind") == "root_terminals" and r.get("run_id") == run for r in resources), "live PTY obligation missing"
+        evidence["live_resource_obligations"] = resources
+        incarnation = request({"op": "inspect", "session_id": session})["incarnation"]
+        def voyage(command, allow_error=False, owner=incarnation):
+            return request({**command, "session_id": session, "incarnation": owner}, allow_error)
+        operation = {"op": "terminal", "run_id": run, "terminal_id": terminal, "operation": {"action": "snapshot"}}
+        voyage(operation, True, owner=str(uuid.uuid4()))
+        voyage({**operation, "run_id": str(uuid.uuid4())}, True)
+        voyage({**operation, "terminal_id": str(uuid.uuid4())}, True)
+        evidence["checks"].append("live root-terminal obligation and stale incarnation/run/terminal refusal")
 
         tui = connect()
         tui.until(lambda s: "F3" in s.text(), "Helm supervised voyage view")
@@ -502,6 +519,19 @@ def main():
         tui.exited_restored()
         evidence["checks"].append("Ctrl+] detaches without input forwarding; TUI exit restores outer modes")
 
+        # Measure complete private HTTP round trips (not a remote-network benchmark).
+        costs = []
+        for columns, rows in ((80, 24), (240, 120)):
+            voyage({**operation, "operation": {"action": "resize", "columns": columns, "rows": rows}})
+            start = time.monotonic_ns()
+            measured = voyage(operation)
+            elapsed = (time.monotonic_ns() - start) / 1_000_000
+            screen_value = measured["result"]["screen"]
+            assert (screen_value["columns"], screen_value["height"]) == (columns, rows)
+            costs.append({"columns": columns, "rows": rows, "roundtrip_ms": elapsed,
+                          "reserialized_reply_bytes": len(json.dumps(measured, separators=(",", ":"), ensure_ascii=False).encode())})
+        evidence["loopback_private_screen_costs"] = costs
+        evidence["checks"].append("bounded 80x24 and maximal 240x120 private snapshot round trips")
         explicit = connect("terminal", session, "--run", run, "--terminal", terminal)
         explicit.until(lambda s: "PRIVATE TERMINAL" in s.text() and canary in s.text(), "explicit CLI reattachment")
         explicit.send(b"\x1d")
@@ -517,10 +547,58 @@ def main():
             assert observed_bytes() == expected, "signal detach injected private input"
             assert alive(json.loads((workspace / "child-identity.json").read_text())), "detach cancelled child"
         evidence["checks"].append("SIGTERM and SIGHUP detach restore modes without cancelling child")
+        # Runtime policy remains authoritative after a human attachment.
+        for access in ("read-only", "unrestricted"):
+            voyage({"op": "set_access", "command_id": str(uuid.uuid4()),
+                    "expected_revision": snapshot()["revision"],
+                    "expires_at_ms": int(time.time() * 1000) + 60_000, "access": access})
+            if access == "read-only":
+                voyage({**operation, "operation": {"action": "write", "bytes": list(b"POLICY_DENIED_INPUT")}}, True)
+                assert observed_bytes() == expected, "read-only policy allowed private input"
+        evidence["checks"].append("live read-only policy refuses private writes without replay")
+
+        lost = connect("terminal", session, "--run", run, "--terminal", terminal)
+        lost.until(lambda s: "PRIVATE TERMINAL" in s.text(), "attachment before socket loss")
+        survivor = json.loads((workspace / "child-identity.json").read_text())
+        supervisor.terminate()
+        assert supervisor.wait(timeout=10) == 0, "supervisor shutdown failed"
+        lost.exited_restored(success=False)
+        assert alive(survivor), "Vessel disconnect cancelled independent Voyage PTY"
+        assert observed_bytes() == expected, "socket loss replayed input"
+        supervisor = subprocess.Popen([str(binaries / "vessel"), "local-serve", "--directory",
+            str(directory), "--voyage-binary", str(binaries / "voyage")], cwd=workspace, env=env,
+            stdin=subprocess.DEVNULL, stdout=log("vessel-restart.log"), stderr=subprocess.STDOUT)
+        def reconnected():
+            try:
+                return request({"op": "inspect", "session_id": session}).get("incarnation") == incarnation
+            except (OSError, ValueError, AssertionError):
+                return False
+        wait_for(reconnected, "same independent owner after Vessel restart")
+        assert observed_bytes() == expected, "supervisor restart replayed input"
+        evidence["checks"].append("socket loss restores CLI and does not cancel/replay; restarted Vessel observes same owner")
+
+        # A partially decoded paste cannot be reset through Crossterm's public API.
+        # With no consumed detach chord, child exit must stop the TUI, not resume chat.
+        abnormal = connect()
+        abnormal.until(lambda s: "F3" in s.text(), "second TUI ready")
+        abnormal.send(b"\x1bOR")
+        abnormal.until(lambda s: TITLE in s.text() and "Choose a program" in s.text(), "second F3 inventory")
+        abnormal.send(b"\r")
+        abnormal.until(lambda s: "PRIVATE TERMINAL" in s.text(), "abnormal-handoff attachment")
+        abnormal.send(b"\x1b[200~INCOMPLETE_PRIVATE_" + canary.encode())
         server.release.set()
+        abnormal.exited_restored(success=False)
+        evidence["checks"].append("child exit with incomplete private paste stops TUI and restores outer modes")
         completed = wait_for(lambda: (s if (s := snapshot()).get("run", {}).get("state") == "completed"
                                      and s.get("pending_cleanup_run") is None else None), "run completion")
-        assert runner.wait(timeout=10) == 0, "run frontend failed"
+        # Its socket was deliberately stopped above; the follower must report loss,
+        # not claim that the independent accepted run was cancelled or replay it.
+        assert runner.wait(timeout=10) != 0, "run follower hid the injected socket loss"
+        evidence["run_follower_exit_after_injected_loss"] = runner.returncode
+        assert completed.get("session_resources") == [], "root-terminal obligation not released"
+        assert completed.get("cleanup", {}).get("phase") == "observed", "cleanup not positively observed"
+        assert completed.get("cleanup", {}).get("pending") == [], "cleanup tasks still pending"
+        evidence["observed_cleanup"] = completed["cleanup"]
         assert len(server.requests) == 5, "unexpected provider replay"
         assert canary not in json.dumps(server.requests), "private canary reached provider"
         assert canary not in json.dumps(completed), "private canary reached canonical snapshot"

@@ -109,10 +109,7 @@ impl TerminalScreen {
                     0 if cell.text.is_empty() && column > 0 && row[column - 1].width == 2 => (),
                     1 if !cell.text.is_empty() => (),
                     2 if !cell.text.is_empty()
-                        && row.get(column + 1).is_some_and(|next| next.width == 0) =>
-                    {
-                        ()
-                    }
+                        && row.get(column + 1).is_some_and(|next| next.width == 0) => {}
                     _ => return Err("invalid terminal cell width or continuation"),
                 }
             }

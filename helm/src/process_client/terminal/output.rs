@@ -7,7 +7,7 @@ pub(super) struct Output {
     #[cfg(unix)]
     saved: i32,
     #[cfg(unix)]
-    deadline: Instant,
+    budget: Budget,
 }
 impl Output {
     pub fn new() -> io::Result<Self> {
@@ -23,18 +23,48 @@ impl Output {
             }
             Ok(Self {
                 saved,
-                deadline: Instant::now() + Duration::from_millis(250),
+                budget: Budget::new(),
             })
         }
         #[cfg(not(unix))]
         Ok(Self {})
     }
 }
-impl Output {
-    pub fn begin_frame(&mut self) {
+#[derive(Clone)]
+pub(super) struct Budget {
+    #[cfg(unix)]
+    deadline: std::sync::Arc<std::sync::Mutex<Instant>>,
+}
+impl Budget {
+    fn new() -> Self {
+        Self {
+            #[cfg(unix)]
+            deadline: std::sync::Arc::new(std::sync::Mutex::new(
+                Instant::now() + Duration::from_millis(250),
+            )),
+        }
+    }
+    pub fn begin_frame(&self) -> io::Result<()> {
         #[cfg(unix)]
         {
-            self.deadline = Instant::now() + Duration::from_millis(250);
+            *self
+                .deadline
+                .lock()
+                .map_err(|_| io::Error::other("terminal output budget unavailable"))? =
+                Instant::now() + Duration::from_millis(250);
+        }
+        Ok(())
+    }
+}
+impl Output {
+    pub fn budget(&self) -> Budget {
+        #[cfg(unix)]
+        {
+            self.budget.clone()
+        }
+        #[cfg(not(unix))]
+        {
+            Budget::new()
         }
     }
 }
@@ -42,7 +72,11 @@ impl Write for Output {
     fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
         #[cfg(unix)]
         {
-            let end = self.deadline;
+            let end = *self
+                .budget
+                .deadline
+                .lock()
+                .map_err(|_| io::Error::other("terminal output budget unavailable"))?;
             loop {
                 if Instant::now() >= end {
                     return Err(io::Error::new(
@@ -82,7 +116,14 @@ impl Write for Output {
         io::stdout().write(bytes)
     }
     fn flush(&mut self) -> io::Result<()> {
-        Ok(())
+        #[cfg(unix)]
+        {
+            Ok(())
+        }
+        #[cfg(not(unix))]
+        {
+            io::stdout().flush()
+        }
     }
 }
 impl Drop for Output {

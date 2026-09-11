@@ -174,8 +174,10 @@ async fn attach_inner(
             },
         )
         .await?;
+    let output = output::Output::new()?;
+    let budget = output.budget();
     let mut display = ratatui::Terminal::with_options(
-        ratatui::backend::CrosstermBackend::new(output::Output::new()?),
+        ratatui::backend::CrosstermBackend::new(output),
         ratatui::TerminalOptions {
             viewport: ratatui::Viewport::Fixed(view::viewport(columns, rows)),
         },
@@ -201,6 +203,7 @@ async fn attach_inner(
     );
     draw_screen(
         &mut display,
+        &budget,
         &initial,
         observation.screen(),
         &client.label(),
@@ -291,7 +294,7 @@ async fn attach_inner(
                         }
                         Event::Paste(text) => TerminalAction::Write { bytes: input::paste(text, &observation.modes())? },
                         Event::Resize(columns, rows) => {
-                            display.backend_mut().writer_mut().begin_frame();
+                            budget.begin_frame()?;
                             display.resize(view::viewport(columns,rows))?;
                             let (columns,rows) = (columns.clamp(1,240), rows.saturating_sub(4).clamp(1,120));
                             observation.resize((columns,rows));
@@ -304,7 +307,7 @@ async fn attach_inner(
                 screen = snapshots.recv() => {
                     let screen=screen.context("terminal observation stopped")?.map_err(anyhow::Error::msg)?;
                     if observation.accept(&screen)? {
-                        draw_screen(&mut display, &screen, observation.screen(), &client.label(), &mut styles)?;
+                        draw_screen(&mut display, &budget, &screen, observation.screen(), &client.label(), &mut styles)?;
                         if screen["state"] != "running" { break; }
                     }
                 }
@@ -339,6 +342,7 @@ fn clipped(value: &str, columns: u16) -> String {
 
 fn draw_screen(
     display: &mut ratatui::Terminal<ratatui::backend::CrosstermBackend<output::Output>>,
+    budget: &output::Budget,
     screen: &serde_json::Value,
     structured: Option<&voyage_protocol::terminal::TerminalScreen>,
     host: &str,
@@ -350,7 +354,7 @@ fn draw_screen(
     } else {
         host
     };
-    display.backend_mut().writer_mut().begin_frame();
+    budget.begin_frame()?;
     display.draw(|frame| {
         let area = frame.area();
         let (columns, rows) = (area.width, area.height);
@@ -435,5 +439,120 @@ fn stop_signal() -> Result<std::pin::Pin<Box<dyn std::future::Future<Output = ()
         Ok(Box::pin(async {
             let _ = tokio::signal::ctrl_c().await;
         }))
+    }
+}
+
+#[cfg(all(test, unix))]
+mod restoration_tests {
+    use super::*;
+    use std::{
+        io::Read,
+        time::{Duration, Instant},
+    };
+    #[test]
+    fn panic_restores_native_outer_terminal() {
+        const CHILD: &str = "HELM_PRIVATE_TERMINAL_RESTORATION_CHILD";
+        if std::env::var_os(CHILD).is_some() {
+            let result = std::panic::catch_unwind(|| {
+                let _guard = Screen { finished: false };
+                terminal::enable_raw_mode().unwrap();
+                execute!(
+                    output::Output::new().unwrap(),
+                    terminal::EnterAlternateScreen,
+                    crossterm::event::EnableBracketedPaste,
+                    crossterm::cursor::Hide
+                )
+                .unwrap();
+                panic!("synthetic terminal restoration panic");
+            });
+            assert!(result.is_err());
+            return;
+        }
+        let pair = portable_pty::native_pty_system()
+            .openpty(portable_pty::PtySize {
+                rows: 24,
+                cols: 80,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .unwrap();
+        let fd = pair.master.as_raw_fd().unwrap();
+        fn attributes(fd: i32) -> libc::termios {
+            let mut value = std::mem::MaybeUninit::uninit();
+            assert_eq!(unsafe { libc::tcgetattr(fd, value.as_mut_ptr()) }, 0);
+            unsafe { value.assume_init() }
+        }
+        let original = attributes(fd);
+        let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+        assert!(flags >= 0);
+        assert_eq!(
+            unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) },
+            0
+        );
+        let mut command = portable_pty::CommandBuilder::new(std::env::current_exe().unwrap());
+        command.args([
+            "--exact",
+            "process_client::terminal::restoration_tests::panic_restores_native_outer_terminal",
+            "--nocapture",
+        ]);
+        command.env(CHILD, "1");
+        command.env("TERM", "xterm-256color");
+        struct Child(Box<dyn portable_pty::Child + Send + Sync>);
+        impl Drop for Child {
+            fn drop(&mut self) {
+                let _ = self.0.kill();
+                let _ = self.0.wait();
+            }
+        }
+        let mut child = Child(pair.slave.spawn_command(command).unwrap());
+        drop(pair.slave);
+        let mut reader = pair.master.try_clone_reader().unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut captured = Vec::new();
+        let status = loop {
+            let mut bytes = [0; 4096];
+            while let Ok(count @ 1..) = reader.read(&mut bytes) {
+                captured.extend_from_slice(&bytes[..count]);
+                assert!(captured.len() < 65536);
+            }
+            if let Some(status) = child.0.try_wait().unwrap() {
+                break status;
+            }
+            assert!(Instant::now() < deadline, "restoration subprocess deadline");
+            std::thread::sleep(Duration::from_millis(5));
+        };
+        let mut bytes = [0; 4096];
+        while let Ok(count @ 1..) = reader.read(&mut bytes) {
+            captured.extend_from_slice(&bytes[..count]);
+        }
+        assert!(status.success(), "restoration subprocess failed");
+        let restored = attributes(fd);
+        assert_eq!(
+            (
+                original.c_iflag,
+                original.c_oflag,
+                original.c_cflag,
+                original.c_lflag,
+                original.c_cc
+            ),
+            (
+                restored.c_iflag,
+                restored.c_oflag,
+                restored.c_cflag,
+                restored.c_lflag,
+                restored.c_cc
+            )
+        );
+        let text = String::from_utf8_lossy(&captured);
+        for marker in [
+            "\x1b[?1049h",
+            "\x1b[?2004h",
+            "\x1b[?25l",
+            "\x1b[?1049l",
+            "\x1b[?2004l",
+            "\x1b[?25h",
+        ] {
+            assert!(text.contains(marker), "missing terminal mode transition");
+        }
     }
 }

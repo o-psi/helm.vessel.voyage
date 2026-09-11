@@ -275,7 +275,13 @@ mod tests {
         .unwrap();
         let (first, _first_guard) = input.enqueue(vec![b'a'; 2048], true).unwrap();
         observed.recv_timeout(Duration::from_secs(2)).unwrap();
-        let (queued, _queued_guard) = input.enqueue(b"queued model input".to_vec(), true).unwrap();
+        let queued = (0..QUEUED_WRITES)
+            .map(|_| input.enqueue(b"queued model input".to_vec(), true).unwrap())
+            .collect::<Vec<_>>();
+        assert!(matches!(
+            input.enqueue(b"saturated".to_vec(), true),
+            Err(InputError::Busy)
+        ));
         let attaching = input.clone();
         let attach = tokio::spawn(async move { attaching.make_private().await });
         while !input.private.load(Ordering::Acquire) {
@@ -297,7 +303,9 @@ mod tests {
             assert_eq!(attach.await.unwrap(), Ok(()));
         }
         assert_eq!(first.await.unwrap(), Err(InputError::Private));
-        assert_eq!(queued.await.unwrap(), Err(InputError::Private));
+        for (reply, _guard) in queued {
+            assert_eq!(reply.await.unwrap(), Err(InputError::Private));
+        }
         input.make_private().await.unwrap();
         assert_eq!(
             accepted.lock().unwrap().len(),
