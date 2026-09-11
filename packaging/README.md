@@ -114,3 +114,39 @@ inputs and run ordinary local Git/OpenSSH diagnostics privately if necessary.
 No automatic installer trust enforcement, container image, native service, backup
 restore or reproducible-build certification is supplied by this utility. Those
 remain separate acceptance under [issue #18](https://github.com/o-psi/helm.vessel.voyage/issues/18).
+
+## Recorded Linux verification (issue #18)
+
+Source implementation commit `0e0b03b` was checked on Linux x86-64 with Python
+3.14.7 and OpenSSH 10.5p1. Temporary offline fixtures verified deterministic
+metadata/inventory, exact copied bytes, existing-output preservation, real SSH
+signing and signature no-clobber, independent signer verification, wrong
+signer/version/target rejection, unsigned bundles, modified/extra/missing/symlinked
+assets, changed manifests, corrupt signatures, input/output ancestor symlinks,
+dangling destinations, duplicate names and dirty source refusal. The final
+original bundle still verified after the adverse cases.
+
+A separate run prepared a Git source archive of that commit, generated the actual
+473-package workspace inventory, signed it with an ephemeral **test** key and
+verified every byte. Both fixture and workspace inventories passed the upstream
+SPDX 2.3 JSON schema using jsonschema 4.25.1 (schema SHA-256
+`239208b7ac287b3cf5d9a9af23f9d69863971102a5e1587a27a398b43490b89b`).
+An earlier schema check rejected the document-level `documentComment` field; it
+was corrected to SPDX's `comment`, then both schema checks passed. Test private
+keys were removed after use; no production signing or trust policy was configured.
+
+Python syntax, command help, relative documentation paths and diff checks passed.
+No Rust source, Cargo manifest/lockfile or repository tests changed, so the Rust
+coverage measurement was not refreshed. Existing release archives and deleted
+root scripts/tests were not changed or restored. The actual source-archive check
+is **not** an executable release, binary SBOM or reproducible-build result.
+
+Remaining #18 limitations are concrete: no trusted production release signer was
+supplied; no product release/assets or hosted bootstrap/default/pinned install was
+published/exercised; no native macOS/Windows execution target was supplied; and
+Docker daemon access on this Linux account failed with socket permission denied.
+No container execution is claimed. Reboot/logout validation requires a disposable
+or separately scheduled deployment, not rebooting the host running concurrent
+voyages. Backup/restore must preserve current grant revocation and key custody;
+this utility neither copies private state nor establishes that recovery contract.
+The broad issue remains open, without a human acceptance gate.
