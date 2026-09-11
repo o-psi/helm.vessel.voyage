@@ -149,7 +149,9 @@ the actual runtime still checks tool availability and permissions before effects
 
 Saved workflows have their own digest review, typed inputs and executing-host
 preview. Secret fields are masked and transient, never ordinary composer text.
-Cancellation, focus loss or timeout discards private values; pending submissions
+Cancellation, focus loss or timeout discards private values. Automatic invalidation
+keeps input blocked until explicit Escape; it never drops queued private text into
+the composer. Pending submissions
 retain only the original public envelope and a private handoff reference. Lost
 responses never replay secret values. Access and Models open the existing
 confirmed/selectable controls; machine cleanup information is not a usage/cost

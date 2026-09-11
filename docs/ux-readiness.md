@@ -268,3 +268,65 @@ These are concrete ownership boundaries, not automatic exclusions from #14's
 umbrella. Full issue closure requires their retained interface obligations to be
 implemented and verified or an explicit scope decision. No historical visual
 sign-off requirement may be used as a substitute blocker.
+
+## Objective Linux verification for the operator-journey delivery
+
+The focused `voyage/tests/ui_journeys.py` pass completed **11 assertion groups**
+using development Helm/Vessel/Voyage binaries and isolated temporary HOME/XDG
+storage. It uses explicit native loopback Chat Completions with
+`api_key_required = false` and a synthetic named host account for the TUI's
+account-selection contract; no real account, implicit ChatGPT login or paid
+provider was used. Binary SHA-256 identities:
+
+| Program | SHA-256 |
+| --- | --- |
+| Helm | `95f205d18fd1da2052948ce7dca32b7f65047286a7d2ebad9539ccabd5111609` |
+| Vessel | `988dc36e6cc1f2aace4398af3ba34c5b59ea8dae6b31fdd60d9f85a03f36c7ab` |
+| Voyage | `11f2ab49d4fab742623be854b1011149881456e9276d281ed704f63bfa928177` |
+
+Observed assertions cover:
+
+- 40×18, 80×24 and 120×32 startup/composer/navigation, exact Unicode and multiline
+  drafts, empty-search Enter without submission, and NO_COLOR without emitted
+  foreground/background/underline color SGR. Private account controls retain
+  their explicit 44×22 minimum and Escape path; this does not claim account
+  editing works at 40×18.
+- Distinct simultaneous Voyage owners and canonical histories, unchanged prompts,
+  detach without cancellation, reconnect and exact named selection.
+- Actions branch of the selected canonical history and archive of only that child.
+- Real approval review ignoring pasted consent, retaining the same decision over
+  reconnect, then explicit Escape denial with zero file effect.
+- Idle typed `read_file` and task creation without model inference; persisted task
+  names available in management forms after reconnect, without UUID input.
+- Named workflow selection, exact-digest trust, executing-host preview, optional
+  private-reference parity and one submission. A synthetic private canary is
+  absent from provider requests and persisted files, including PTY output.
+- No fixture-owned Voyage PIDs remain; all seven Helm processes and the supervisor
+  exit successfully, and the provider thread is joined. This is observed local
+  process cleanup, not rollback of arbitrary external effects.
+
+The focused Helm UI Rust run passed **65 tests**, including field/schema bounds,
+rendered-review gates, named identities, grapheme-safe editing, late lifecycle
+responses not redirecting another view, and private workflow invalidation retaining
+an input quarantine until explicit Escape. Workspace coverage and its exact source
+identity are recorded separately in [coverage/latest.json](../coverage/latest.json).
+Coverage is execution evidence, not proof of whole-product correctness.
+
+Earlier failures were retained, not converted into successful runs: a clipped F2
+hint at 40×18 (fixed without weakening its assertion); stale shared-target protocol
+artifacts (workspace entrypoint timestamps refreshed, no cache deletion); a fixture
+Unix-socket path exceeding Linux's limit (shortened private paths, no timeout
+increase); premature fixture checks before a named branch/menu was rendered; and
+an invalidated private workflow form returning input to the composer (fixed with
+quarantine and a regression). The task fixture's initial nested API envelope was
+corrected to the actual flat public contract. Logs and private fixture directories
+are indexed under ignored `target/issue14-verification/`.
+
+Rust formatting passed. **Strict Clippy was not passing** on the integrated base:
+account/provider and transcript lints remain in the retained logs; they are not
+silently suppressed or described as a successful strict gate. The new operator
+bridge lint found during this pass was corrected. No public TLS deployment,
+independent-principal positive-approval UI, native macOS/Windows, arbitrary terminal
+application fidelity, all MCP schema forms, large-inventory paging or full broader
+policy/resource editor certification is implied. Those retained obligations, not
+historical human visual approval, prevent umbrella closure.

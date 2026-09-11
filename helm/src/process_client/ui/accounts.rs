@@ -1275,4 +1275,4 @@ mod tests {
 
 #[cfg(test)]
 #[path = "accounts/app_tests.rs"]
-mod app_tests;
+pub(super) mod app_tests;

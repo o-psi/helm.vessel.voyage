@@ -72,6 +72,7 @@ enum Phase {
     Inputs,
     Preview,
     Confirm,
+    Invalidated,
 }
 
 impl Entry {
@@ -83,6 +84,16 @@ impl Entry {
     }
 }
 impl Panel {
+    fn invalidate(&mut self, reason: &str) {
+        self.clear_inputs();
+        self.request = None;
+        self.phase = Phase::Invalidated;
+        self.notice = format!(
+            "{reason}. Private inputs discarded. Input remains blocked until Esc; pending submissions reconcile without replay."
+        );
+        self.scroll.set(0);
+        self.rendered.set(false);
+    }
     fn entry(&self) -> &Entry {
         &self.entries[self.selected]
     }
@@ -310,6 +321,9 @@ impl App {
         let Some(panel) = self.workflows.panel.as_mut() else {
             return;
         };
+        if panel.phase == Phase::Invalidated {
+            return;
+        }
         if Instant::now() >= panel.deadline
             || !self.clients.available(panel.target.route)
             || self.selected != Some(panel.target)
@@ -319,8 +333,9 @@ impl App {
                 .get(&panel.target)
                 .is_none_or(|v| v.process.incarnation != panel.incarnation)
         {
-            self.workflows.panel = None;
-            self.status = "Workflow editor closed; transient private inputs discarded. Pending submissions still reconcile.".into();
+            panel.invalidate("Workflow context changed or entry expired");
+            self.status =
+                "Workflow invalidated; Esc acknowledges before returning to the composer.".into();
             return;
         }
         let Some(receiver) = panel.request.as_mut() else {
@@ -342,8 +357,15 @@ impl App {
         if self.workflows.panel.is_none() {
             return Ok(false);
         }
-        if matches!(event, Event::FocusLost)
-            || matches!(event, Event::Key(k) if k.code == KeyCode::Esc || (k.modifiers.contains(KeyModifiers::CONTROL) && matches!(k.code, KeyCode::Char('c' | 'q'))))
+        if matches!(event, Event::FocusLost) {
+            self.workflows
+                .panel
+                .as_mut()
+                .expect("open panel")
+                .invalidate("Focus lost");
+            return Ok(true);
+        }
+        if matches!(event, Event::Key(k) if k.code == KeyCode::Esc || (k.modifiers.contains(KeyModifiers::CONTROL) && matches!(k.code, KeyCode::Char('c' | 'q'))))
         {
             if matches!(event, Event::Key(k) if k.modifiers.contains(KeyModifiers::CONTROL) && matches!(k.code, KeyCode::Char('c' | 'q')))
             {
@@ -357,6 +379,9 @@ impl App {
         let Some(panel) = self.workflows.panel.as_mut() else {
             return Ok(true);
         };
+        if panel.phase == Phase::Invalidated {
+            return Ok(true);
+        }
         if matches!(event, Event::Resize(..)) {
             panel.rendered.set(false);
             return Ok(true);
@@ -644,6 +669,7 @@ fn draw_panel(frame: &mut Frame<'_>, panel: &Panel) {
         panel.host, panel.title
     );
     match panel.phase {
+        Phase::Invalidated => {}
         Phase::Inventory => {
             for (i, entry) in panel.entries.iter().enumerate() {
                 text.push_str(&format!(
@@ -705,7 +731,7 @@ fn draw_panel(frame: &mut Frame<'_>, panel: &Panel) {
                 }
                 Phase::Preview => text.push_str("Waiting for executing-host preview…\n"),
                 Phase::Confirm => text.push_str(&panel.preview),
-                Phase::Inventory => {}
+                Phase::Inventory | Phase::Invalidated => {}
             }
         }
     }
@@ -739,6 +765,7 @@ fn draw_panel(frame: &mut Frame<'_>, panel: &Panel) {
         Phase::Trust => "Read to end · t trusts exact definition",
         Phase::Confirm => "Read to end · y submits once",
         Phase::Inputs => "Enter validates and advances",
+        Phase::Invalidated => "Input blocked · Esc returns",
         _ => "↑↓ select · Enter inspect",
     };
     frame.render_widget(
@@ -990,5 +1017,34 @@ mod tests {
             terminal.draw(|frame| draw_panel(frame, &p)).unwrap();
             assert_eq!(p.scroll.get(), p.scroll_max.get());
         }
+    }
+    #[test]
+    fn invalidation_erases_private_values_but_quarantines_following_input() {
+        let fixture = super::super::account_test_support::Fixture::new();
+        let mut app = super::super::accounts::app_tests::app(fixture.0.path());
+        let mut p = panel();
+        p.select();
+        p.phase = Phase::Inputs;
+        p.private
+            .insert("token".into(), Zeroizing::new("secret-before-loss".into()));
+        p.editor.push_str("private-editor");
+        app.workflows.panel = Some(p);
+        assert!(app.workflow_input(&Event::FocusLost).unwrap());
+        assert!(
+            app.workflow_input(&Event::Paste("must-not-enter-composer".into()))
+                .unwrap()
+        );
+        let p = app.workflows.panel.as_ref().unwrap();
+        assert!(p.phase == Phase::Invalidated && p.private.is_empty() && p.editor.is_empty());
+        assert!(app.views.is_empty() && app.new_drafts.is_empty());
+        assert!(!p.notice.contains("must-not-enter-composer"));
+        assert!(
+            app.workflow_input(&Event::Key(crossterm::event::KeyEvent::new(
+                KeyCode::Esc,
+                KeyModifiers::NONE
+            )))
+            .unwrap()
+        );
+        assert!(app.workflows.panel.is_none());
     }
 }

@@ -196,7 +196,7 @@ def main():
     assert sys.platform == 'linux' and hasattr(os, 'pidfd_open'), 'Linux pidfds required'
     for name in ('helm', 'vessel', 'voyage'):
         assert (binary / name).is_file(), binary / name
-    root = Path(tempfile.mkdtemp(prefix='helm-ui-journeys-'))
+    root = Path(tempfile.mkdtemp(prefix='h14-'))
     print('evidence:', root, flush=True)
     (root / 'build-identity.json').write_text(json.dumps({
         'binaries': {name: file_sha256(binary / name)
@@ -206,7 +206,7 @@ def main():
     }, indent=2))
     env = {'PATH': '/usr/bin:/bin', 'LANG': 'C.UTF-8', 'TERM': 'xterm-256color', 'UI_FIXTURE_KEY': 'synthetic-ui-fixture-key-not-a-real-credential'}
     for key in ('HOME', 'XDG_DATA_HOME', 'XDG_STATE_HOME', 'XDG_CONFIG_HOME', 'XDG_CACHE_HOME'):
-        path = root / key.lower()
+        path = root / {'HOME': 'h', 'XDG_DATA_HOME': 'd', 'XDG_STATE_HOME': 's', 'XDG_CONFIG_HOME': 'c', 'XDG_CACHE_HOME': 'k'}[key]
         path.mkdir(mode=0o700)
         env[key] = str(path)
     workspace = root / 'workspace'
@@ -357,6 +357,10 @@ def main():
         wait_for(lambda: (directory / 'process-http.json').exists())
         # Each size is a real startup, with no sessions and no provider calls.
         for columns, rows in ((40, 18), (80, 24), (120, 32)):
+            if columns == 80:
+                env['NO_COLOR'] = '1'
+            else:
+                env.pop('NO_COLOR', None)
             pty = start(columns, rows)
             expect(pty, 'New voyage')
             expect(pty, 'First message')
@@ -380,6 +384,11 @@ def main():
             expect(pty, 'First message')
             stop(pty)
             assert saved(text), 'detach lost the draft'
+            if columns == 80:
+                for sgr in re.findall(rb'\x1b\[([0-9;:]*)m', bytes(pty['output'])):
+                    codes = [int(n) for n in re.split(rb'[;:]', sgr) if n]
+                    assert not any(n in (38, 48, 58) or 30 <= n <= 37 or 40 <= n <= 47 or 90 <= n <= 97 or 100 <= n <= 107 for n in codes), sgr
+                checks.append('NO_COLOR 80x24: no foreground/background/underline color SGR emitted')
             checks.append(f'{columns}x{rows}: normal startup, exact Unicode draft, empty F2 search cannot submit')
 
         pty = start()
@@ -442,11 +451,15 @@ def main():
         branch = wait_for(branched)
         branch_value = wait_for(lambda: snapshot(branch) if snapshot(branch).get('messages') else None)
         assert branch_value['messages'] == snapshot(sid_a)['messages'], 'branch changed canonical history'
+        # Creation exists on the server before the client has received its named view.
+        wait_for(lambda: 'branch-unique' in screen(pty) and 'Optional name' not in screen(pty) and 'Creating a separate voyage' not in screen(pty), timeout=15)
         pick(pty, 'branch-unique')
         expect(pty, server.prompts[alpha])
         send(pty, F9)
-        expect(pty, 'Archive')
-        send(pty, DOWN + ENTER)
+        expect(pty, 'Voyage actions')
+        send(pty, DOWN)
+        expect(pty, '> Archive')
+        send(pty, ENTER)
         wait_for(lambda: snapshot(branch).get('lifecycle', {}).get('archived') is True)
         assert not snapshot(sid_a).get('lifecycle', {}).get('archived'), 'archived parent instead of branch'
         assert not snapshot(sid_b).get('lifecycle', {}).get('archived'), 'archived peer instead of branch'
@@ -517,6 +530,49 @@ def main():
         assert server.counts == {alpha: 1, beta: 1, server.approval: 2}, server.counts
         checks.append('F8 idle built-in discovery and typed read_file execute without model inference or raw JSON input')
 
+        expect(pty, 'OPERATOR-READ-CANARY')  # Wait for the new incarnation's rendered canonical snapshot.
+        # A real task action uses typed fields and then offers the persisted name,
+        # not its implementation UUID, in subsequent management forms.
+        send(pty, '\x1b[19~')
+        expect(pty, 'Explore your voyage')
+        send(pty, DOWN * 2 + ENTER)
+        expect(pty, 'Search actions:')
+        paste(pty, 'create')
+        send(pty, ENTER)
+        expect(pty, 'Field 1 of 5')
+        send(pty, '\t' * 4)
+        expect(pty, 'title *:')
+        paste(pty, 'UI-TASK-NAMED-REFERENCE')
+        send(pty, '\t' + ENTER)
+        expect(pty, 'Review todo')
+        send(pty, '\x1b[6~' * 20)
+        time.sleep(.2)
+        send(pty, ENTER)
+        def task_created():
+            reply = request({'op': 'controls', 'session_id': sid_b,
+                'run_id': None, 'section': 'todos'})
+            value = reply.get('result', reply)['value']
+            return next((t for t in value['items'].values() if t['title'] == 'UI-TASK-NAMED-REFERENCE'), None)
+        task = wait_for(task_created)
+        assert task['status'] == 'pending'
+        wait_for(lambda: snapshot(sid_b).get('pending_cleanup_run') is None)
+        (root / 'task-created.json').write_text(json.dumps(task, indent=2))
+        stop(pty)
+        pty = start()
+        pick(pty, 'harbor-unique')
+        expect(pty, 'UI-TASK-NAMED-REFERENCE')
+        send(pty, '\x1b[19~')
+        expect(pty, 'Explore your voyage')
+        send(pty, DOWN * 2 + ENTER)
+        expect(pty, 'Search actions:')
+        paste(pty, 'status')
+        send(pty, ENTER)
+        expect(pty, 'UI-TASK-NAMED-REFERENCE')
+        send(pty, ESC)
+        expect(pty, 'Search actions:')
+        send(pty, ESC)
+        assert server.counts == {alpha: 1, beta: 1, server.approval: 2}, server.counts
+        checks.append('F8 typed task creation persists across reconnect and status management offers its name without UUID input or model inference')
         # Exact digest preview and optional secret references, with no secret persistence.
         workflows = workspace / '.helm' / 'workflows'
         workflows.mkdir(parents=True)
@@ -536,7 +592,7 @@ def main():
         send(pty, ENTER)
         expect(pty, 'word')
         send(pty, ENTER)
-        expect(pty, 'WORKFLOW-UI ready')
+        expect(pty, 'WORKFLOW-UI "ready"')
         send(pty, '\x1b[6~' * 20)
         time.sleep(.2)
         send(pty, 'y')

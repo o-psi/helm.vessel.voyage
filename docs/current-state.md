@@ -586,7 +586,9 @@ public inputs, isolated masked private inputs and a separate executing-host prev
 and submit confirmation. Required and supplied optional private references must
 match the preview; values never enter composer drafts or public pending envelopes.
 Private entry is discarded on cancellation, focus loss, route/owner changes or a
-five-minute deadline. Once submission starts, the original public command is
+five-minute deadline. Automatic invalidation keeps an input-blocking notice until
+explicit Escape, so queued private keystrokes/paste cannot fall into the composer.
+Once submission starts, the original public command is
 persisted before private handoff. Lost results reconcile that identity without
 replaying private values. Preview of a cleanly suspended voyage uses a read-only
 helper and does not start an executor merely to review a workflow.

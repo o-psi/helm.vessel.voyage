@@ -10,7 +10,7 @@ use crossterm::event::{KeyEvent, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::{Terminal, backend::TestBackend};
 use std::collections::BTreeMap;
 
-fn app(dir: &std::path::Path) -> App {
+pub(in crate::process_client::ui) fn app(dir: &std::path::Path) -> App {
     let clients = super::super::routes::Routes::new(vec![Client::local(dir.join("no-vessel"))]);
     let (sender, _receiver) = tokio::sync::mpsc::channel(32);
     let app = App {

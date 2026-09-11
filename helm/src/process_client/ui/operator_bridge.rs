@@ -102,10 +102,10 @@ impl App {
                     .await;
                 match archive {
                     Ok(archive) if archive["section"] == "subagents_archive" => {
-                        if let Some(agents) = archive["value"]["agents"].as_array() {
-                            if let Some(retained) = values[2]["value"].as_array_mut() {
-                                retained.extend(agents.iter().cloned());
-                            }
+                        if let Some(agents) = archive["value"]["agents"].as_array()
+                            && let Some(retained) = values[2]["value"].as_array_mut()
+                        {
+                            retained.extend(agents.iter().cloned());
                         }
                         values[2]["incomplete"] =
                             serde_json::json!(!archive["value"]["next_after"].is_null());

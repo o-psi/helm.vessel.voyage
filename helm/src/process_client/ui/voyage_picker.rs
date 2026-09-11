@@ -232,9 +232,7 @@ pub(super) fn draw(frame: &mut Frame<'_>, picker: &Picker, area: Rect) {
         );
     }
     frame.render_widget(
-        Paragraph::new(
-            "Type to search · ↑↓ choose · Enter open\nEsc back · F5 Archives after closing",
-        ),
+        Paragraph::new("Type search · ↑↓ · Enter open\nEsc back · F5 Archives after closing"),
         rows[2],
     );
 }
