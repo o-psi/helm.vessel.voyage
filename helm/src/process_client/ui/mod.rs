@@ -1,4 +1,5 @@
 //! Multiplexed presentation; dropping this interface only drops observations.
+mod accounts;
 mod actions;
 mod archive;
 mod attachments;
@@ -86,6 +87,7 @@ pub(super) struct App {
     interactions: std::cell::RefCell<interactions::Review>,
     completion: completion::Completion,
     inference: inference::Controls,
+    accounts: accounts::Controls,
     sidebar: sidebar::Sidebar,
     terminal_request: Option<(Target, uuid::Uuid, uuid::Uuid, uuid::Uuid)>,
 }
@@ -209,6 +211,7 @@ pub async fn run_with_notice(
         terminal_request: None,
         completion: Default::default(),
         inference: Default::default(),
+        accounts: Default::default(),
         sidebar: Default::default(),
     };
     app.start_observers();

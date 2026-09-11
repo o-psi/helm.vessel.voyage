@@ -24,6 +24,13 @@ async fn advance_mode(
     if let Some(receipt) = &saved.receipt {
         return Ok(Some(receipt.clone()));
     }
+    if let Some(host) = saved.account_host {
+        let caps = client.request(VesselCommand::Capabilities).await?;
+        ensure!(
+            caps["vessel_id"] == host.to_string(),
+            "Authenticated account host changed; original draft retained"
+        );
+    }
     if saved.process.is_none() {
         // Recovery is observation only, not even an exact Start replay. A
         // registration may establish that the intended session now exists; an
@@ -34,28 +41,61 @@ async fn advance_mode(
                 .as_array()
                 .is_some_and(|features| features.iter().any(|f| f == "start_resolution"))
             {
-                let (command_id, workspace, config_path) = match saved.start.as_ref() {
-                    Some(VesselCommand::Start {
+                let original = saved
+                    .start
+                    .as_ref()
+                    .context("original creation envelope missing; recovery retained")?;
+                let (command_id, resolve) = match original {
+                    VesselCommand::StartAccount {
+                        command_id,
+                        session_id,
+                        workspace,
+                        account,
+                        model,
+                        reasoning_effort,
+                        service_tier,
+                    } => (
+                        *command_id,
+                        VesselCommand::ResolveStartAccount {
+                            command_id: *command_id,
+                            session_id: *session_id,
+                            workspace: workspace.clone(),
+                            account: account.clone(),
+                            model: model.clone(),
+                            reasoning_effort: reasoning_effort.clone(),
+                            service_tier: service_tier.clone(),
+                        },
+                    ),
+                    VesselCommand::Start {
                         command_id,
                         workspace,
                         ..
-                    }) => (*command_id, workspace.clone(), None),
-                    Some(VesselCommand::StartConfigured {
+                    } => (
+                        *command_id,
+                        VesselCommand::ResolveStart {
+                            command_id: *command_id,
+                            session_id: saved.id,
+                            workspace: workspace.clone(),
+                            config_path: None,
+                        },
+                    ),
+                    VesselCommand::StartConfigured {
                         command_id,
                         workspace,
                         config_path,
                         ..
-                    }) => (*command_id, workspace.clone(), Some(config_path.clone())),
-                    _ => anyhow::bail!("original creation envelope missing; recovery retained"),
+                    } => (
+                        *command_id,
+                        VesselCommand::ResolveStart {
+                            command_id: *command_id,
+                            session_id: saved.id,
+                            workspace: workspace.clone(),
+                            config_path: Some(config_path.clone()),
+                        },
+                    ),
+                    _ => anyhow::bail!("Unsupported original creation envelope; recovery retained"),
                 };
-                let resolution = client
-                    .request(VesselCommand::ResolveStart {
-                        command_id,
-                        session_id: saved.id,
-                        workspace,
-                        config_path,
-                    })
-                    .await?;
+                let resolution = client.request(resolve).await?;
                 ensure!(
                     resolution["command_id"] == command_id.to_string()
                         && resolution["session_id"] == saved.id.to_string(),

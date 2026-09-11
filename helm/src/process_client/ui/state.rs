@@ -174,6 +174,8 @@ pub struct Decision {
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Pending {
+    #[serde(default)]
+    pub account_host: Option<Uuid>,
     pub command_id: Uuid,
     pub incarnation: Uuid,
     pub draft: String,

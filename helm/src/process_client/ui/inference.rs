@@ -9,12 +9,14 @@ use super::{
     state::{Pending, Target},
 };
 use anyhow::{Context, ensure};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use voyage_protocol::vessel::VoyageCommand;
 
-#[derive(Clone, Default, Deserialize, PartialEq)]
+#[derive(Clone, Default, Serialize, Deserialize, PartialEq)]
 pub(super) struct Settings {
+    #[serde(default)]
+    pub account: Option<voyage_protocol::accounts::AccountBinding>,
     pub model: String,
     #[serde(default)]
     pub reasoning_effort: Option<String>,
@@ -32,6 +34,13 @@ pub(super) struct Settings {
 impl Settings {
     fn label(&self, field: Field) -> String {
         let (requested, resolved) = match field {
+            Field::Account => {
+                return self
+                    .account
+                    .as_ref()
+                    .map(|a| a.account_id.to_string())
+                    .unwrap_or_else(|| "Host default (unresolved)".into());
+            }
             Field::Model => return self.model.clone(),
             Field::Thinking => (
                 &self.reasoning_effort,
@@ -80,6 +89,7 @@ pub(super) enum Destination {
 }
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum Field {
+    Account,
     Model,
     Thinking,
     Service,
@@ -87,6 +97,7 @@ pub(super) enum Field {
 impl Field {
     fn name(self) -> &'static str {
         match self {
+            Self::Account => "Account",
             Self::Model => "Model",
             Self::Thinking => "Thinking",
             Self::Service => "Service",
@@ -94,6 +105,7 @@ impl Field {
     }
     fn command(self) -> &'static str {
         match self {
+            Self::Account => "/account",
             Self::Model => "/model",
             Self::Thinking => "/thinking",
             Self::Service => "/service",
@@ -104,6 +116,7 @@ pub(super) fn parse(text: &str) -> Option<(Field, &str)> {
     let (command, value) = text.split_once(char::is_whitespace).unwrap_or((text, ""));
     Some((
         match command {
+            "/account" => Field::Account,
             "/model" => Field::Model,
             "/thinking" => Field::Thinking,
             "/service" => Field::Service,
@@ -152,6 +165,7 @@ impl Picker {
         self.models = models.unwrap_or_default();
         self.original.resolve(&self.models);
         self.options = match self.field {
+            Field::Account => Vec::new(),
             Field::Model => self
                 .models
                 .iter()
@@ -207,7 +221,9 @@ impl Picker {
 }
 impl App {
     pub(super) fn inference_picker_open(&self) -> bool {
-        self.inference.picker.is_some() || self.inference.access.draft.is_some()
+        self.accounts.open()
+            || self.inference.picker.is_some()
+            || self.inference.access.draft.is_some()
     }
 
     fn inference_destination(&self) -> Option<Destination> {
@@ -215,7 +231,7 @@ impl App {
             .map(Destination::Draft)
             .or_else(|| self.selected.map(Destination::Live))
     }
-    fn inference_settings(&self, destination: Destination) -> Result<Settings> {
+    pub(super) fn inference_settings(&self, destination: Destination) -> Result<Settings> {
         match destination {
             Destination::Draft(id) => self.draft_inference_settings(id),
             Destination::Live(target) => {
@@ -236,6 +252,9 @@ impl App {
     ) -> Result<()> {
         let (field, value) = parse(text).context("invalid inference command")?;
         self.inference.choices.borrow_mut().clear();
+        if field == Field::Account {
+            return self.open_accounts(destination, value);
+        }
         let original = self.inference_settings(destination)?;
         match destination {
             Destination::Live(target) => {
@@ -254,6 +273,7 @@ impl App {
             }
         };
         let mut options = match field {
+            Field::Account => Vec::new(),
             Field::Model => vec![original.model.clone()],
             Field::Thinking => original.reasoning_efforts.clone(),
             Field::Service => original.service_tiers.clone(),
@@ -310,6 +330,39 @@ impl App {
         let destination = picker.destination;
         picker.loading = true;
         let sender = self.sender.clone();
+        if let Some(account) = picker.original.account.clone() {
+            let (route, workspace) = self.account_destination(destination)?;
+            let client = self.clients[route].clone();
+            if let Destination::Draft(draft_id) = destination {
+                self.inference.draft_generations.insert(draft_id, id);
+            }
+            tokio::spawn(async move {
+                let result = client
+                    .request(voyage_protocol::vessel::VesselCommand::AccountModels {
+                        workspace,
+                        account: account.clone(),
+                    })
+                    .await
+                    .and_then(|v| {
+                        ensure!(
+                            v["account"] == serde_json::to_value(&account)?,
+                            "account catalog identity changed"
+                        );
+                        Ok(v["models"].clone())
+                    })
+                    .map_err(|_| "Executing-host account catalog unavailable".to_owned());
+                let _ = sender
+                    .send(Update::InferenceModels {
+                        route: Some(route),
+                        id,
+                        context: None,
+                        generation: matches!(destination, Destination::Draft(_)).then_some(id),
+                        result,
+                    })
+                    .await;
+            });
+            return Ok(());
+        }
         match destination {
             Destination::Live(target) => {
                 let view = &self.views[&target];
@@ -348,28 +401,33 @@ impl App {
                 });
             }
             Destination::Draft(draft_id) => {
-                let (config, workspace) = self.draft_inference_catalog(draft_id)?;
+                let (route, workspace) = self.account_destination(Destination::Draft(draft_id))?;
+                let account = self
+                    .draft_inference_settings(draft_id)?
+                    .account
+                    .context("Resolve an account with /account before model discovery")?;
+                let client = self.clients[route].clone();
                 self.inference.draft_generations.insert(draft_id, id);
-                self.inference
-                    .draft_checks
-                    .insert(draft_id, std::time::Instant::now());
                 tokio::spawn(async move {
-                    let context = crate::provider::inference_context(&config).await;
-                    let mut result =
-                        crate::process_client::frontend::models::discover(&config, &workspace)
-                            .await
-                            .and_then(|models| Ok(serde_json::to_value(models)?))
-                            .map_err(|e| e.to_string());
-                    if context.is_none()
-                        || context != crate::provider::inference_context(&config).await
-                    {
-                        result = Err("catalog context changed".into());
-                    }
+                    let result = client
+                        .request(voyage_protocol::vessel::VesselCommand::AccountModels {
+                            workspace,
+                            account: account.clone(),
+                        })
+                        .await
+                        .and_then(|v| {
+                            ensure!(
+                                v["account"] == serde_json::to_value(&account)?,
+                                "account catalog context changed"
+                            );
+                            Ok(v["models"].clone())
+                        })
+                        .map_err(|_| "Executing-host catalog unavailable".to_owned());
                     let _ = sender
                         .send(Update::InferenceModels {
-                            route: None,
+                            route: Some(route),
                             id,
-                            context,
+                            context: None,
                             generation: Some(id),
                             result,
                         })
@@ -456,86 +514,7 @@ impl App {
         picker.install_models(models);
     }
     pub(super) fn refresh_draft_capabilities(&mut self) {
-        let Some(id) = self.active_draft else {
-            return;
-        };
-        if self
-            .new_drafts
-            .get(&id)
-            .is_none_or(|draft| !self.clients.available(draft.route))
-        {
-            return;
-        }
-        if self
-            .inference
-            .picker
-            .as_ref()
-            .is_some_and(|p| p.destination == Destination::Draft(id) && p.loading)
-            || self
-                .inference
-                .draft_checks
-                .get(&id)
-                .is_some_and(|at| at.elapsed().as_secs() < 30)
-        {
-            return;
-        }
-        if self.ensure_draft_inference_editable(id).is_err() {
-            return;
-        }
-        let Ok((config, workspace)) = self.draft_inference_catalog(id) else {
-            return;
-        };
-        self.inference
-            .draft_checks
-            .retain(|id, _| self.new_drafts.contains_key(id));
-        self.inference
-            .draft_generations
-            .retain(|id, _| self.new_drafts.contains_key(id));
-        self.inference.catalogs.retain(|id, c| {
-            self.new_drafts.contains_key(id) && c.observed.elapsed().as_secs() < 300
-        });
-        self.inference
-            .draft_checks
-            .insert(id, std::time::Instant::now());
-        let generation = Uuid::new_v4();
-        self.inference.draft_generations.insert(id, generation);
-        let previous = self
-            .inference
-            .catalogs
-            .get(&id)
-            .map(|c| (c.context, c.observed));
-        let sender = self.sender.clone();
-        tokio::spawn(async move {
-            let context = crate::provider::inference_context(&config).await;
-            if let (Some(context), Some((key, at))) = (context, previous)
-                && key == context
-                && at.elapsed().as_secs() < 300
-            {
-                return;
-            }
-            let provider = serde_json::to_value(&config.provider)
-                .ok()
-                .and_then(|v| v.as_str().map(str::to_owned))
-                .unwrap_or_default();
-            let result =
-                crate::process_client::frontend::models::discover(&config, &workspace).await;
-            let models = if context.is_some()
-                && context == crate::provider::inference_context(&config).await
-            {
-                result.ok()
-            } else {
-                None
-            };
-            let _ = sender
-                .send(Update::DraftInferenceModels {
-                    id,
-                    provider,
-                    context,
-                    generation,
-                    models,
-                })
-                .await;
-        });
+        self.account_tick();
     }
     pub(super) fn draft_inference_models(
         &mut self,
@@ -597,6 +576,7 @@ impl App {
         );
         let mut settings = picker.original.clone();
         match picker.field {
+            Field::Account => unreachable!("account has a dedicated private picker"),
             Field::Model => settings.model = value.into(),
             Field::Thinking => {
                 settings.reasoning_effort =
@@ -624,7 +604,8 @@ impl App {
             latest.model == picker.original.model
                 && latest.reasoning_effort == picker.original.reasoning_effort
                 && latest.service_tier == picker.original.service_tier
-                && latest.provider == picker.original.provider,
+                && latest.provider == picker.original.provider
+                && latest.account == picker.original.account,
             "Inference settings changed while selecting; reopen the selector. Nothing sent; text preserved"
         );
         match picker.destination {
@@ -640,6 +621,11 @@ impl App {
                 ensure!(
                     self.clients.available(target.route),
                     "Vessel unavailable · Ctrl+G to manage / retry; settings retained"
+                );
+                let account_host = self.account_host(target.route);
+                ensure!(
+                    settings.account.is_none() || account_host.is_some(),
+                    "Review /account on this authenticated Vessel before changing account-bound settings"
                 );
                 let view = self.views.get_mut(&target).context("voyage unavailable")?;
                 ensure!(
@@ -657,16 +643,29 @@ impl App {
                         .as_millis(),
                 )?
                 .saturating_add(60_000);
-                let command = VoyageCommand::SetInference {
-                    command_id,
-                    expected_revision: snapshot.revision,
-                    expires_at_ms,
-                    model: settings.model,
-                    reasoning_effort: settings.reasoning_effort,
-                    service_tier: settings.service_tier,
+                let command = if let Some(account) = settings.account.clone() {
+                    VoyageCommand::SetAccountInference {
+                        command_id,
+                        expected_revision: snapshot.revision,
+                        expires_at_ms,
+                        model: settings.model,
+                        reasoning_effort: settings.reasoning_effort,
+                        service_tier: settings.service_tier,
+                        account,
+                    }
+                } else {
+                    VoyageCommand::SetInference {
+                        command_id,
+                        expected_revision: snapshot.revision,
+                        expires_at_ms,
+                        model: settings.model,
+                        reasoning_effort: settings.reasoning_effort,
+                        service_tier: settings.service_tier,
+                    }
                 };
                 let active = snapshot.run.as_ref().is_some_and(|r| r.active());
                 view.pending = Some(Pending {
+                    account_host,
                     command_id,
                     incarnation: view.process.incarnation,
                     draft: picker.command_text,
@@ -688,6 +687,9 @@ impl App {
     }
     pub(super) fn inference_input(&mut self, event: &Event) -> Result<bool> {
         use crossterm::event::{KeyEventKind, MouseButton, MouseEventKind};
+        if self.account_input(event)? {
+            return Ok(true);
+        }
         if self.composer_access_input(event)? {
             return Ok(true);
         }

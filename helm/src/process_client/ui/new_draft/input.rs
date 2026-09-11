@@ -49,7 +49,7 @@ impl App {
                 }
             }
             if key.code == KeyCode::F(1) {
-                self.status = "Draft commands: /vessels, /model [NAME], /thinking [VALUE], /service [VALUE], /access MODE, /workspace PATH, /new [PATH], /discard. Enter sends; Tab changes view; Alt+P toggles attachment previews. Receipt checks are automatic; no creation or message is replayed on reconnect.".into();
+                self.status = "Draft commands: /vessels, /account, /model [NAME], /thinking [VALUE], /service [VALUE], /access MODE, /workspace PATH, /new [PATH], /discard. Enter sends; Tab changes view; Alt+P toggles attachment previews. Receipt checks are automatic; no creation or message is replayed on reconnect.".into();
                 return Ok(true);
             }
             if key.code == KeyCode::F(5) {
@@ -160,7 +160,7 @@ impl App {
             return Ok(());
         }
         if text == "/help" {
-            self.status = "Draft commands: /vessels, /model [NAME], /thinking [VALUE], /service [VALUE], /access read-only|approval|unrestricted, /workspace PATH, /new [PATH], /discard. Enter sends; Tab changes view; Alt+P toggles attachment previews. Receipt checks are automatic; no creation or message is replayed on reconnect.".into();
+            self.status = "Draft commands: /vessels, /account, /model [NAME], /thinking [VALUE], /service [VALUE], /access read-only|approval|unrestricted, /workspace PATH, /new [PATH], /discard. Enter sends; Tab changes view; Alt+P toggles attachment previews. Receipt checks are automatic; no creation or message is replayed on reconnect.".into();
         } else {
             let draft = self.new_drafts.get_mut(&id).context("draft unavailable")?;
             anyhow::ensure!(
@@ -202,6 +202,9 @@ impl App {
                     workspaces::select(&choices, workspace)?;
                 }
                 draft.saved.workspace = path;
+                draft.saved.account_host = None;
+                draft.saved.account_settings = None;
+                self.accounts.initializing.remove(&id);
             } else if text != "/help" && text != "/new" && !text.starts_with("/new ") {
                 anyhow::bail!(
                     "This is a Helm draft. /help lists commands available before first send"
