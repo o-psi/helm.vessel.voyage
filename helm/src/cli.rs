@@ -84,6 +84,12 @@ pub(crate) enum LogFormat {
 }
 #[derive(Subcommand)]
 pub(crate) enum Command {
+    /// Encrypt retained human connection secrets with an externally provisioned runtime key.
+    ProtectConnections {
+        /// Existing private helm-connections directory; no network or provider access.
+        #[arg(long)]
+        directory: PathBuf,
+    },
     /// Install or inspect the local shared-browser adapter (never shares a browser).
     Browser(helm::process_client::browser::BrowserArgs),
     /// Connect through local HTTP or scoped HTTPS.
