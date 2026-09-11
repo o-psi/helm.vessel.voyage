@@ -297,6 +297,7 @@ impl RuntimeCommand {
                 | Self::Events { .. }
                 | Self::Decisions
                 | Self::Controls { .. }
+                | Self::WorkflowPreview { .. }
         )
     }
 }

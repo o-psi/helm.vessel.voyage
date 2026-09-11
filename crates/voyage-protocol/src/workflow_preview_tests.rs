@@ -47,3 +47,24 @@ fn old_peers_refuse_explicit_selection_and_values_are_not_a_selection() {
     assert!(serde_json::from_value::<VoyageCommand>(wire.clone()).is_err());
     assert!(serde_json::from_value::<RuntimeCommand>(wire).is_err());
 }
+
+#[test]
+fn workflow_preview_observes_suspended_without_executor() {
+    let command = crate::process::RuntimeCommand::WorkflowPreview {
+        id: "demo".into(),
+        scope: None,
+        user_directory: None,
+        inputs: vec![],
+        trust_digest: None,
+        optional_secret_names: None,
+    };
+    assert!(command.observes_suspended());
+    let private = crate::process::RuntimeCommand::WorkflowInputs {
+        input_id: uuid::Uuid::new_v4(),
+        values: vec![],
+    };
+    assert!(
+        !private.observes_suspended(),
+        "private values require a live volatile owner"
+    );
+}

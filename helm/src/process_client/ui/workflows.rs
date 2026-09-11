@@ -41,6 +41,7 @@ struct Panel {
     target: Target,
     incarnation: Uuid,
     host: String,
+    title: String,
     entries: Vec<Entry>,
     selected: usize,
     phase: Phase,
@@ -52,7 +53,9 @@ struct Panel {
     preview: String,
     revision: u64,
     notice: String,
-    scroll: u16,
+    scroll: std::cell::Cell<u16>,
+    scroll_max: std::cell::Cell<u16>,
+    rendered: std::cell::Cell<bool>,
     deadline: Instant,
     request: Option<oneshot::Receiver<Result<Value, &'static str>>>,
 }
@@ -96,11 +99,14 @@ impl Panel {
         self.clear_inputs();
         self.fields = self.entry().document.parameters.keys().cloned().collect();
         self.field = 0;
-        self.scroll = 0;
+        self.scroll.set(0);
+        self.rendered.set(false);
         self.phase = Phase::Trust;
     }
     fn load_field(&mut self) {
         self.editor = Zeroizing::new(String::new());
+        self.scroll.set(0);
+        self.rendered.set(false);
         if let Some(name) = self.fields.get(self.field) {
             let p = &self.entry().document.parameters[name];
             let text = if p.secret {
@@ -118,12 +124,6 @@ impl Panel {
     }
     fn commit_field(&mut self) -> Result<()> {
         let p = self.parameter();
-        // The current host preview API models required secrets only. Never show
-        // a null optional binding then silently execute with a private value.
-        ensure!(
-            !(p.secret && !p.required && !self.editor.is_empty()),
-            "Optional private input is not supported by this host preview protocol; leave it omitted"
-        );
         if self.editor.is_empty() && !p.required && p.default.is_none() {
             return Ok(());
         }
@@ -145,7 +145,14 @@ impl Panel {
             .collect()
     }
     fn preview_command(&self) -> VoyageCommand {
+        let names: Vec<_> = self
+            .private
+            .keys()
+            .filter(|name| !self.entry().document.parameters[*name].required)
+            .cloned()
+            .collect();
         VoyageCommand::WorkflowPreview {
+            optional_secret_names: (!names.is_empty()).then_some(names),
             id: self.entry().document.id.clone(),
             scope: Some(self.entry().scope().into()),
             user_directory: None,
@@ -253,6 +260,7 @@ impl App {
             target,
             incarnation: view.process.incarnation,
             host: self.route_label(target.route),
+            title: view.title(),
             entries: Vec::new(),
             selected: 0,
             phase: Phase::Inventory,
@@ -264,7 +272,9 @@ impl App {
             preview: String::new(),
             revision: snapshot.revision,
             notice: "Loading saved workflows from executing host…".into(),
-            scroll: 0,
+            scroll: Default::default(),
+            scroll_max: Default::default(),
+            rendered: Default::default(),
             deadline: Instant::now() + Duration::from_secs(300),
             request: None,
         };
@@ -334,6 +344,10 @@ impl App {
         if matches!(event, Event::FocusLost)
             || matches!(event, Event::Key(k) if k.code == KeyCode::Esc || (k.modifiers.contains(KeyModifiers::CONTROL) && matches!(k.code, KeyCode::Char('c' | 'q'))))
         {
+            if matches!(event, Event::Key(k) if k.modifiers.contains(KeyModifiers::CONTROL) && matches!(k.code, KeyCode::Char('c' | 'q')))
+            {
+                self.quit = true;
+            }
             self.workflows.panel = None;
             self.status = "Workflow entry cancelled; private inputs discarded".into();
             return Ok(true);
@@ -342,6 +356,10 @@ impl App {
         let Some(panel) = self.workflows.panel.as_mut() else {
             return Ok(true);
         };
+        if matches!(event, Event::Resize(..)) {
+            panel.rendered.set(false);
+            return Ok(true);
+        }
         if panel.request.is_some() {
             return Ok(true);
         }
@@ -371,6 +389,11 @@ impl App {
                 panel.notice.clear();
             }
             (Phase::Trust, KeyCode::Char('t')) if plain_activation(key) => {
+                if !panel.rendered.get() || panel.scroll.get() != panel.scroll_max.get() {
+                    panel.notice =
+                        "Read the complete definition with PageDown before trusting".into();
+                    return Ok(true);
+                }
                 panel.phase = Phase::Inputs;
                 panel.load_field();
                 panel.notice.clear();
@@ -411,8 +434,14 @@ impl App {
                     }
                 }
             }
-            (_, KeyCode::PageDown) => panel.scroll = panel.scroll.saturating_add(8),
-            (_, KeyCode::PageUp) => panel.scroll = panel.scroll.saturating_sub(8),
+            (_, KeyCode::PageDown) => panel.scroll.set(
+                panel
+                    .scroll
+                    .get()
+                    .saturating_add(8)
+                    .min(panel.scroll_max.get()),
+            ),
+            (_, KeyCode::PageUp) => panel.scroll.set(panel.scroll.get().saturating_sub(8)),
             _ => {}
         }
         Ok(true)
@@ -421,7 +450,8 @@ impl App {
         let panel = self.workflows.panel.as_mut().expect("workflow panel");
         let command = panel.preview_command();
         panel.phase = Phase::Preview;
-        panel.scroll = 0;
+        panel.scroll.set(0);
+        panel.rendered.set(false);
         panel.notice = "Validating public inputs and rendering on executing host…".into();
         self.workflow_request(command);
         Ok(())
@@ -433,8 +463,10 @@ impl App {
             .as_ref()
             .context("Workflow editor closed")?;
         ensure!(
-            panel.phase == Phase::Confirm,
-            "Executing-host preview required"
+            panel.phase == Phase::Confirm
+                && panel.rendered.get()
+                && panel.scroll.get() == panel.scroll_max.get(),
+            "Read the complete executing-host preview with PageDown before submitting"
         );
         let target = panel.target;
         ensure!(
@@ -524,8 +556,7 @@ impl App {
             .entry(target.route.id)
             .or_default()
             .push(job);
-        self.status =
-            format!("Workflow submitted for admission · command {command_id}; not yet confirmed");
+        self.status = "Workflow awaiting admission; original identity retained and checked automatically. Not yet confirmed.".into();
         Ok(())
     }
 }
@@ -565,6 +596,17 @@ fn apply_response(panel: &mut Panel, result: Result<Value, &'static str>) -> Res
                 && fresh.document.id == panel.entry().document.id,
             "Workflow changed on executing host; close and inspect again"
         );
+        let expected: Vec<_> = panel.private.keys().cloned().collect();
+        let optional = expected
+            .iter()
+            .any(|name| !panel.entry().document.parameters[name].required);
+        if optional || value.get("secret_names").is_some() {
+            let actual: Vec<String> = serde_json::from_value(value["secret_names"].clone()).map_err(|_| anyhow::anyhow!("Host does not support exact private-input preview; update the executing Vessel and Voyage"))?;
+            ensure!(
+                actual == expected,
+                "Host preview private references differ from selected inputs; nothing submitted"
+            );
+        }
         panel.preview = value["prompt"]
             .as_str()
             .context("Host omitted workflow preview")?
@@ -574,6 +616,8 @@ fn apply_response(panel: &mut Panel, result: Result<Value, &'static str>) -> Res
             "Host preview exceeds limit"
         );
         panel.phase = Phase::Confirm;
+        panel.scroll.set(0);
+        panel.rendered.set(false);
         panel.notice = "Read executing-host preview. y submits this digest to this voyage · Esc cancels. Recommendations do not change authority.".into();
     }
     Ok(())
@@ -583,6 +627,10 @@ pub(super) fn draw(frame: &mut Frame<'_>, app: &App) {
     let Some(panel) = &app.workflows.panel else {
         return;
     };
+    draw_panel(frame, panel);
+}
+
+fn draw_panel(frame: &mut Frame<'_>, panel: &Panel) {
     let full = frame.area();
     let area = Rect::new(
         full.x + 1,
@@ -592,7 +640,7 @@ pub(super) fn draw(frame: &mut Frame<'_>, app: &App) {
     );
     let mut text = format!(
         "Executing host: {}\nVoyage: {}\n\n",
-        panel.host, panel.target.session
+        panel.host, panel.title
     );
     match panel.phase {
         Phase::Inventory => {
@@ -653,9 +701,6 @@ pub(super) fn draw(frame: &mut Frame<'_>, app: &App) {
                         text.push_str(&format!("Value: {}\n", *panel.editor));
                     }
                     text.push_str("Enter validates and advances. Optional blank input is omitted.\nPrivate entry expires after five minutes; focus loss discards it.\n");
-                    if p.secret && !p.required {
-                        text.push_str("Optional private values are unsupported by the current host preview API; leave omitted.\n");
-                    }
                 }
                 Phase::Preview => text.push_str("Waiting for executing-host preview…\n"),
                 Phase::Confirm => text.push_str(&panel.preview),
@@ -668,16 +713,42 @@ pub(super) fn draw(frame: &mut Frame<'_>, app: &App) {
         panel.notice
     ));
     frame.render_widget(Clear, area);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title("Saved workflows · private input isolated");
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    let body = Rect::new(
+        inner.x,
+        inner.y,
+        inner.width,
+        inner.height.saturating_sub(3),
+    );
+    let text = super::presentation::wrap(ratatui::text::Text::raw(super::safe(&text)), body.width);
+    let max = text
+        .lines
+        .len()
+        .saturating_sub(body.height as usize)
+        .min(u16::MAX as usize) as u16;
+    panel.scroll_max.set(max);
+    panel.scroll.set(panel.scroll.get().min(max));
+    panel.rendered.set(true);
+    frame.render_widget(Paragraph::new(text).scroll((panel.scroll.get(), 0)), body);
+    let hint = match panel.phase {
+        Phase::Trust => "Read to end · t trusts exact definition",
+        Phase::Confirm => "Read to end · y submits once",
+        Phase::Inputs => "Enter validates and advances",
+        _ => "↑↓ select · Enter inspect",
+    };
     frame.render_widget(
-        Paragraph::new(super::safe(&text))
-            .wrap(Wrap { trim: false })
-            .scroll((panel.scroll, 0))
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .title("Saved workflows · private input isolated"),
-            ),
-        area,
+        Paragraph::new(format!("{hint}\nPageUp/PageDown read · Esc cancel"))
+            .wrap(Wrap { trim: false }),
+        Rect::new(
+            inner.x,
+            body.bottom(),
+            inner.width,
+            inner.height - body.height,
+        ),
     );
 }
 
@@ -707,6 +778,7 @@ mod tests {
             },
             incarnation: Uuid::new_v4(),
             host: "remote".into(),
+            title: "test voyage".into(),
             entries: vec![entry()],
             selected: 0,
             phase: Phase::Inventory,
@@ -718,7 +790,9 @@ mod tests {
             preview: String::new(),
             revision: 7,
             notice: String::new(),
-            scroll: 0,
+            scroll: Default::default(),
+            scroll_max: Default::default(),
+            rendered: Default::default(),
             deadline: Instant::now() + Duration::from_secs(300),
             request: None,
         }
@@ -845,12 +919,25 @@ mod tests {
             .unwrap()
             .required = false;
         p.editor.push_str("private-sentinel");
-        let error = p.commit_field().unwrap_err().to_string();
-        assert!(error.contains("not supported"));
+        p.commit_field().unwrap();
+        assert_eq!(
+            serde_json::to_value(p.preview_command()).unwrap()["optional_secret_names"],
+            serde_json::json!(["token"])
+        );
+        p.phase = Phase::Preview;
+        let response = serde_json::json!({"definition":{"scope":"repository","digest":p.entry().digest,"document":p.entry().document},"prompt":"public reference"});
+        let error = apply_response(&mut p, Ok(response.clone()))
+            .unwrap_err()
+            .to_string();
         assert!(!error.contains("private-sentinel"));
-        assert!(p.private.is_empty());
-        p.editor = Zeroizing::new(String::new());
-        assert!(p.commit_field().is_ok());
+        assert!(p.phase == Phase::Preview);
+        let mut wrong = response.clone();
+        wrong["secret_names"] = serde_json::json!([]);
+        assert!(apply_response(&mut p, Ok(wrong)).is_err());
+        let mut matching = response;
+        matching["secret_names"] = serde_json::json!(["token"]);
+        apply_response(&mut p, Ok(matching)).unwrap();
+        assert!(p.phase == Phase::Confirm);
     }
     #[test]
     fn malformed_inventory_and_transport_failure_do_not_fabricate_success() {
@@ -871,5 +958,36 @@ mod tests {
         .unwrap();
         assert!(p.entries.is_empty());
         assert!(p.notice.contains("No saved workflows"));
+    }
+    #[test]
+    fn private_fields_and_review_controls_remain_bounded_at_supported_sizes() {
+        for (width, height) in [(40, 18), (80, 24), (120, 32), (180, 48)] {
+            let mut p = panel();
+            p.select();
+            p.phase = Phase::Inputs;
+            p.field = 1;
+            p.editor.push_str("never-display-this-private-marker");
+            let mut terminal =
+                ratatui::Terminal::new(ratatui::backend::TestBackend::new(width, height)).unwrap();
+            terminal.draw(|frame| draw_panel(frame, &p)).unwrap();
+            let visible = terminal
+                .backend()
+                .buffer()
+                .content
+                .iter()
+                .map(|c| c.symbol())
+                .collect::<String>();
+            assert!(!visible.contains("never-display-this-private-marker"));
+            assert!(visible.contains("Esc cancel"), "{width}x{height}");
+            p.phase = Phase::Confirm;
+            p.preview = "A long public preview\n".repeat(100);
+            p.rendered.set(false);
+            terminal.draw(|frame| draw_panel(frame, &p)).unwrap();
+            assert!(p.scroll_max.get() > 0);
+            assert_ne!(p.scroll.get(), p.scroll_max.get());
+            p.scroll.set(p.scroll_max.get());
+            terminal.draw(|frame| draw_panel(frame, &p)).unwrap();
+            assert_eq!(p.scroll.get(), p.scroll_max.get());
+        }
     }
 }

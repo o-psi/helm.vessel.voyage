@@ -96,6 +96,10 @@ impl super::App {
             let view = self.views.get(&target)?;
             if self.help
                 || self.explore.is_some()
+                || self.workflows_open()
+                || self.operator.is_some()
+                || self.operator_loading.is_some()
+                || self.voyage_picker.is_some()
                 || self.sidebar.menu.is_some()
                 || view.panel.is_some()
                 || view.terminals.open

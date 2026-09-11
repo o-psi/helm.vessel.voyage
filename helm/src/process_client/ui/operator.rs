@@ -60,7 +60,7 @@ struct Field {
     name: String,
     schema: Value,
     required: bool,
-    text: String,
+    text: crate::composer::Composer,
     choices: Vec<Choice>,
     selected: Vec<usize>,
     cursor: usize,
@@ -76,8 +76,11 @@ struct Action {
 
 pub(super) struct Panel {
     pub observation: Observation,
+    pub context: String,
+    inventory_note: String,
     actions: Vec<Action>,
     selected: usize,
+    query: String,
     fields: Option<Vec<Field>>,
     focus: usize,
     reviewing: bool,
@@ -85,6 +88,9 @@ pub(super) struct Panel {
     tasks: Vec<Choice>,
     agents: Vec<Choice>,
     incomplete: bool,
+    scroll: std::cell::Cell<u16>,
+    scroll_max: std::cell::Cell<u16>,
+    rendered: std::cell::Cell<bool>,
 }
 
 fn value(envelope: &Value) -> &Value {
@@ -115,8 +121,13 @@ fn named(envelope: &Value, tasks: bool) -> Vec<Choice> {
                 .as_str()
                 .unwrap_or("Unnamed");
             let status = item["status"].as_str().unwrap_or("unknown");
+            let archived = if item.get("archived_at").is_some_and(|v| !v.is_null()) {
+                " · archived"
+            } else {
+                ""
+            };
             Some(Choice {
-                label: format!("{}. {} ({})", index + 1, name, status),
+                label: format!("{}. {} ({}{})", index + 1, name, status, archived),
                 value: json!(id),
             })
         })
@@ -154,7 +165,9 @@ impl Panel {
     ) -> Result<Self> {
         let inventory = value(tools);
         let inventory = inventory.get("inventory").unwrap_or(inventory);
-        let incomplete = entries(inventory).len() > MAX_CHOICES
+        let incomplete = agents["incomplete"] == true
+            || agents["archive_unavailable"] == true
+            || entries(inventory).len() > MAX_CHOICES
             || entries(value(tasks).get("items").unwrap_or(value(tasks))).len() > MAX_CHOICES
             || entries(value(agents)).len() > MAX_CHOICES
             || entries(inventory).iter().any(|t| {
@@ -208,8 +221,16 @@ impl Panel {
         actions.sort_by(|a, b| a.label.cmp(&b.label));
         Ok(Self {
             observation,
+            context: String::new(),
+            inventory_note: if value(tools)["source"] == "builtin_preflight" {
+                "Built-in preflight only; execution revalidates. Configured MCP tools require an active runtime.".into()
+            } else {
+                "Observed runtime registry; permissions and readiness are rechecked at execution."
+                    .into()
+            },
             actions,
             selected: 0,
+            query: String::new(),
             fields: None,
             focus: 0,
             reviewing: false,
@@ -217,10 +238,42 @@ impl Panel {
             tasks: named(tasks, true),
             agents: named(agents, false),
             incomplete,
+            scroll: Default::default(),
+            scroll_max: Default::default(),
+            rendered: Default::default(),
         })
     }
 
+    pub fn set_error(&mut self, error: String) {
+        self.error = error;
+    }
+
+    fn filtered_actions(&self) -> Vec<usize> {
+        let query = self.query.to_lowercase();
+        self.actions
+            .iter()
+            .enumerate()
+            .filter(|(_, a)| a.label.to_lowercase().contains(&query))
+            .map(|(i, _)| i)
+            .collect()
+    }
+    fn search(&mut self, text: &str) {
+        for ch in super::safe(text).chars().filter(|c| !c.is_control()) {
+            if self.query.len() + ch.len_utf8() > 256 {
+                break;
+            }
+            self.query.push(ch);
+        }
+        self.selected = self.filtered_actions().first().copied().unwrap_or(0);
+        self.scroll.set(0);
+    }
     fn open(&mut self) -> Result<()> {
+        ensure!(
+            self.filtered_actions().contains(&self.selected),
+            "No matching tool actions"
+        );
+        self.scroll.set(0);
+        self.rendered.set(false);
         let action = self
             .actions
             .get(self.selected)
@@ -291,7 +344,7 @@ impl Panel {
                 name: name.clone(),
                 schema: schema.clone(),
                 required: required.contains(&json!(name)),
-                text: String::new(),
+                text: Default::default(),
                 choices,
                 selected: vec![],
                 cursor: 0,
@@ -339,10 +392,11 @@ impl Panel {
                         .context(format!("Choose {}", field.name))?
                 }
             } else if kind(&field.schema) == "array" {
-                let items = if field.text.is_empty() {
+                let items = if field.text.text.is_empty() {
                     vec![]
                 } else {
                     field
+                        .text
                         .text
                         .lines()
                         .map(|line| scalar(line, &field.schema["items"]))
@@ -350,12 +404,17 @@ impl Panel {
                 };
                 Value::Array(items)
             } else {
-                scalar(&field.text, &field.schema)?
+                scalar(&field.text.text, &field.schema)?
             };
             validate(&v, &field.schema).with_context(|| format!("Invalid {}", field.name))?;
             arguments.insert(field.name.clone(), v);
         }
-        Ok(Value::Object(arguments))
+        let arguments = Value::Object(arguments);
+        ensure!(
+            serde_json::to_vec(&arguments)?.len() <= 60 * 1024,
+            "Public arguments exceed the 60 KiB form limit"
+        );
+        Ok(arguments)
     }
 
     pub fn input(&mut self, event: &Event) -> Outcome {
@@ -369,7 +428,15 @@ impl Panel {
         }
     }
     fn handle(&mut self, event: &Event) -> Result<Outcome> {
+        if matches!(event, Event::Resize(..)) {
+            self.rendered.set(false);
+            return Ok(Outcome::Stay);
+        }
         if let Event::Paste(text) = event {
+            if self.fields.is_none() {
+                self.search(text);
+                return Ok(Outcome::Stay);
+            }
             if !self.reviewing
                 && let Some(field) = self.fields.as_mut().and_then(|f| f.get_mut(self.focus))
             {
@@ -380,10 +447,26 @@ impl Panel {
         let Event::Key(key) = event else {
             return Ok(Outcome::Stay);
         };
-        if key.kind == KeyEventKind::Release {
+        if key.kind == KeyEventKind::Release
+            || (key.code == KeyCode::Enter && key.kind != KeyEventKind::Press)
+        {
+            return Ok(Outcome::Stay);
+        }
+        if matches!(key.code, KeyCode::PageUp | KeyCode::PageDown) {
+            self.scroll.set(if key.code == KeyCode::PageUp {
+                self.scroll.get().saturating_sub(5)
+            } else {
+                self.scroll
+                    .get()
+                    .saturating_add(5)
+                    .min(self.scroll_max.get())
+            });
+            self.rendered.set(false);
             return Ok(Outcome::Stay);
         }
         if key.code == KeyCode::Esc {
+            self.scroll.set(0);
+            self.rendered.set(false);
             if self.reviewing {
                 self.reviewing = false;
             } else if self.fields.is_some() {
@@ -395,6 +478,10 @@ impl Panel {
         }
         if self.reviewing {
             if key.code == KeyCode::Enter {
+                ensure!(
+                    self.rendered.get() && self.scroll.get() == self.scroll_max.get(),
+                    "Read the full review with PageDown before executing"
+                );
                 return Ok(Outcome::Submit(Request {
                     observation: self.observation,
                     name: self.actions[self.selected].name.clone(),
@@ -403,34 +490,69 @@ impl Panel {
             }
             return Ok(Outcome::Stay);
         }
-        let Some(fields) = self.fields.as_mut() else {
+        if self.fields.is_none() {
+            let choices = self.filtered_actions();
+            let at = choices
+                .iter()
+                .position(|i| *i == self.selected)
+                .unwrap_or(0);
             match key.code {
-                KeyCode::Up => self.selected = self.selected.saturating_sub(1),
+                KeyCode::Up => {
+                    self.selected = choices.get(at.saturating_sub(1)).copied().unwrap_or(0)
+                }
                 KeyCode::Down => {
-                    self.selected = (self.selected + 1).min(self.actions.len().saturating_sub(1))
+                    self.selected = choices
+                        .get((at + 1).min(choices.len().saturating_sub(1)))
+                        .copied()
+                        .unwrap_or(0)
+                }
+                KeyCode::Backspace => {
+                    self.query.pop();
+                    self.selected = self.filtered_actions().first().copied().unwrap_or(0);
+                }
+                KeyCode::Char(ch)
+                    if !key
+                        .modifiers
+                        .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+                {
+                    self.search(&ch.to_string())
                 }
                 KeyCode::Enter => self.open()?,
                 _ => {}
             }
+            self.scroll.set(0);
             return Ok(Outcome::Stay);
-        };
+        }
+        let fields = self.fields.as_mut().expect("checked fields");
         if key.code == KeyCode::Enter && key.modifiers.contains(KeyModifiers::CONTROL) {
             self.arguments()?;
             self.reviewing = true;
+            self.scroll.set(0);
+            self.rendered.set(false);
             return Ok(Outcome::Stay);
         }
         match key.code {
-            KeyCode::Tab | KeyCode::Down => self.focus = (self.focus + 1).min(fields.len()),
-            KeyCode::BackTab | KeyCode::Up => self.focus = self.focus.saturating_sub(1),
+            KeyCode::Tab | KeyCode::Down => {
+                self.focus = (self.focus + 1).min(fields.len());
+                self.scroll.set(0);
+            }
+            KeyCode::BackTab | KeyCode::Up => {
+                self.focus = self.focus.saturating_sub(1);
+                self.scroll.set(0);
+            }
             KeyCode::Enter if self.focus == fields.len() => {
                 self.arguments()?;
                 self.reviewing = true;
+                self.scroll.set(0);
+                self.rendered.set(false);
             }
             _ => {
                 if let Some(field) = fields.get_mut(self.focus) {
                     match key.code {
-                        KeyCode::Left => field.cursor = field.cursor.saturating_sub(1),
-                        KeyCode::Right => {
+                        KeyCode::Left if !field.choices.is_empty() => {
+                            field.cursor = field.cursor.saturating_sub(1)
+                        }
+                        KeyCode::Right if !field.choices.is_empty() => {
                             field.cursor =
                                 (field.cursor + 1).min(field.choices.len().saturating_sub(1))
                         }
@@ -449,11 +571,11 @@ impl Panel {
                         }
                         KeyCode::Delete => {
                             field.included = false;
-                            field.text.clear();
+                            field.text = Default::default();
                             field.selected.clear();
                         }
                         KeyCode::Backspace => {
-                            field.text.pop();
+                            field.text.backspace();
                         }
                         KeyCode::Enter if key.modifiers.contains(KeyModifiers::ALT) => {
                             field.append("\n")?
@@ -469,6 +591,16 @@ impl Panel {
                         {
                             field.append(&c.to_string())?
                         }
+                        _ if field.choices.is_empty() => {
+                            let before = field.text.clone();
+                            if field.text.edit_key(*key) {
+                                if field.text.text.len() > MAX_TEXT {
+                                    field.text = before;
+                                    bail!("Field input limit is 16 KiB; original retained");
+                                }
+                                field.included = true;
+                            }
+                        }
                         _ => {}
                     }
                 }
@@ -479,14 +611,14 @@ impl Panel {
 
     pub fn render(&self, frame: &mut Frame, area: Rect) {
         let safe = crate::process_client::safe;
-        let mut lines =
-            vec!["Operator action · runtime permissions and approvals still apply".to_owned()];
+        let mut lines = vec![self.context.chars().take(72).collect::<String>()];
         if self.incomplete {
-            lines.push("INCOMPLETE: inventory or named choices exceed 256 entries; omitted entries are not selectable.".into());
+            lines.push("INCOMPLETE: named choices are bounded (256; first 100 archives), or archive discovery is unavailable. Omitted entries are not selectable.".into());
         }
         if self.reviewing {
+            lines.push(self.inventory_note.clone());
             lines.push(format!(
-                "Review {} · Enter executes once; Esc edits",
+                "Review {} · Read to the end; Enter executes once; Esc edits",
                 self.actions[self.selected].label
             ));
             lines.push(
@@ -504,15 +636,22 @@ impl Panel {
                 self.actions[self.selected].label
             ));
             lines.push("Alt+Enter newline · Delete omit · Ctrl+Enter review · Esc back".into());
-            let visible = usize::from(area.height.saturating_sub(8)).max(1);
-            let start = self.focus.saturating_sub(visible / 2);
-            for (index, field) in fields.iter().enumerate().skip(start).take(visible) {
+            lines.push(format!(
+                "Field {} of {}",
+                (self.focus + 1).min(fields.len()),
+                fields.len()
+            ));
+            for (index, field) in fields.iter().enumerate().skip(self.focus).take(1) {
                 lines.push(format!(
                     "{} {}{}: {}",
                     if self.focus == index { "›" } else { " " },
                     field.name,
                     if field.required { " *" } else { "" },
-                    field.display()
+                    if field.choices.is_empty() && !field.unsupported {
+                        field.edit_display()
+                    } else {
+                        field.display()
+                    }
                 ));
             }
             lines.push(format!(
@@ -542,8 +681,11 @@ impl Panel {
                 }
             }
         } else {
-            lines.push("Choose a live tool action · ↑/↓ · Enter · Esc closes".into());
-            if self.actions.is_empty() {
+            lines.push(format!(
+                "Search actions: {} · ↑/↓ choose · Enter",
+                self.query
+            ));
+            if self.filtered_actions().is_empty() {
                 lines.push("No matching tools. Initialize a run, then reopen to refresh the live registry.".into());
             }
             let visible = usize::from(area.height.saturating_sub(6)).max(1);
@@ -551,8 +693,15 @@ impl Panel {
                 .actions
                 .iter()
                 .enumerate()
-                .skip(self.selected.saturating_sub(visible / 2))
-                .take(visible)
+                .filter(|(index, _)| self.filtered_actions().contains(index))
+                .skip(
+                    self.filtered_actions()
+                        .iter()
+                        .position(|i| *i == self.selected)
+                        .unwrap_or(0)
+                        .saturating_sub(2),
+                )
+                .take(visible.min(5))
             {
                 lines.push(format!(
                     "{} {}",
@@ -565,19 +714,39 @@ impl Panel {
             lines.push(format!("Error: {}", self.error));
         }
         frame.render_widget(Clear, area);
-        frame.render_widget(
-            Paragraph::new(safe(&lines.join("\n")))
-                .block(
-                    Block::default()
-                        .title(" Operator actions ")
-                        .borders(Borders::ALL),
-                )
-                .wrap(Wrap { trim: false }),
-            area,
+        let block = Block::default()
+            .title(" Operator actions ")
+            .borders(Borders::ALL);
+        let inner = block.inner(area);
+        frame.render_widget(block, area);
+        let body = Rect::new(
+            inner.x,
+            inner.y,
+            inner.width,
+            inner.height.saturating_sub(3),
         );
+        let text = super::presentation::wrap(
+            ratatui::text::Text::raw(safe(&lines.join("\n"))),
+            body.width,
+        );
+        let max = text
+            .lines
+            .len()
+            .saturating_sub(body.height as usize)
+            .min(u16::MAX as usize) as u16;
+        self.scroll_max.set(max);
+        self.scroll.set(self.scroll.get().min(max));
+        self.rendered.set(true);
+        frame.render_widget(Paragraph::new(text).scroll((self.scroll.get(), 0)), body);
+        frame.render_widget(Paragraph::new("PageUp/PageDown read · Esc back\nTab next field · Ctrl+Enter review\nEnter confirms only at review end").wrap(Wrap { trim: false }), Rect::new(inner.x, body.bottom(), inner.width, inner.height - body.height));
     }
 }
 impl Field {
+    fn edit_display(&self) -> String {
+        let mut text = self.text.text.clone();
+        text.insert(self.text.cursor, '│');
+        text.replace('\n', " ↵ ")
+    }
     fn append(&mut self, text: &str) -> Result<()> {
         ensure!(
             !self.unsupported,
@@ -588,7 +757,7 @@ impl Field {
             "Use left/right and Space to choose a value"
         );
         ensure!(
-            self.text.len().saturating_add(text.len()) <= MAX_TEXT,
+            self.text.insertion_len(text.len()) <= MAX_TEXT,
             "Field input limit is 16 KiB"
         );
         ensure!(
@@ -597,7 +766,7 @@ impl Field {
                 .any(|c| c.is_control() && c != '\n' && c != '\t'),
             "Control characters are not accepted"
         );
-        self.text.push_str(text);
+        self.text.insert_str(text);
         self.included = true;
         Ok(())
     }
@@ -616,10 +785,10 @@ impl Field {
                 .collect::<Vec<_>>()
                 .join(", ");
         }
-        if self.text.is_empty() {
+        if self.text.text.is_empty() {
             "Empty (explicit)".into()
         } else {
-            self.text.replace('\n', " ↵ ")
+            self.text.text.replace('\n', " ↵ ")
         }
     }
 }
@@ -739,6 +908,19 @@ mod tests {
             Outcome::Stay
         ));
         assert!(panel.reviewing);
+        assert!(matches!(
+            press(&mut panel, KeyCode::Enter, KeyModifiers::NONE),
+            Outcome::Stay
+        ));
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 24)).unwrap();
+        terminal
+            .draw(|frame| panel.render(frame, frame.area()))
+            .unwrap();
+        panel.scroll.set(panel.scroll_max.get());
+        terminal
+            .draw(|frame| panel.render(frame, frame.area()))
+            .unwrap();
         let Outcome::Submit(request) = press(&mut panel, KeyCode::Enter, KeyModifiers::NONE) else {
             panic!("expected submission")
         };
@@ -836,5 +1018,66 @@ mod tests {
         assert!(validate(&json!(["a", "a"]), &json!({"uniqueItems":true})).is_err());
         assert!(validate(&json!("  "), &json!({"pattern":"\\S"})).is_err());
         assert!(scalar("NaN", &json!({"type":"number"})).is_err());
+    }
+    #[test]
+    fn filtered_empty_enter_and_repeated_review_enter_never_dispatch() {
+        let mut p = panel(
+            json!({"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}),
+        );
+        p.input(&Event::Paste("missing".into()));
+        assert!(matches!(
+            press(&mut p, KeyCode::Enter, KeyModifiers::NONE),
+            Outcome::Stay
+        ));
+        assert!(p.fields.is_none());
+        p.query.clear();
+        p.open().unwrap();
+        p.input(&Event::Paste("a\n".repeat(2000)));
+        press(&mut p, KeyCode::Enter, KeyModifiers::CONTROL);
+        for (width, height) in [(40, 18), (80, 24), (120, 32)] {
+            let mut terminal =
+                ratatui::Terminal::new(ratatui::backend::TestBackend::new(width, height)).unwrap();
+            p.scroll.set(0);
+            terminal
+                .draw(|frame| p.render(frame, frame.area()))
+                .unwrap();
+            assert!(p.scroll_max.get() > 0);
+            assert!(matches!(
+                press(&mut p, KeyCode::Enter, KeyModifiers::NONE),
+                Outcome::Stay
+            ));
+            let mut key = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
+            key.kind = KeyEventKind::Repeat;
+            p.scroll.set(p.scroll_max.get());
+            terminal
+                .draw(|frame| p.render(frame, frame.area()))
+                .unwrap();
+            assert!(matches!(p.input(&Event::Key(key)), Outcome::Stay));
+        }
+    }
+    #[test]
+    fn archived_agent_choices_use_names_and_disclose_incomplete_pages() {
+        let id = Uuid::new_v4();
+        let agents = json!({"value":[{"id":id,"name":"Finished research","status":"completed","archived_at":"2026-09-01T00:00:00Z"}],"incomplete":true});
+        let names = named(&agents, false);
+        assert_eq!(names.len(), 1);
+        assert!(names[0].label.contains("Finished research"));
+        assert!(names[0].label.contains("archived"));
+        assert!(!names[0].label.contains(&id.to_string()));
+        let p = Panel::new(observation(), &json!([]), &Value::Null, &agents, None).unwrap();
+        assert!(p.incomplete);
+    }
+    #[test]
+    fn typed_public_field_reuses_grapheme_safe_cursor_and_undo() {
+        let mut p = panel(
+            json!({"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}),
+        );
+        p.open().unwrap();
+        p.input(&Event::Paste("a界e\u{301}".into()));
+        press(&mut p, KeyCode::Left, KeyModifiers::NONE);
+        p.input(&Event::Paste("X".into()));
+        assert_eq!(p.arguments().unwrap()["path"], "a界Xe\u{301}");
+        press(&mut p, KeyCode::Char('z'), KeyModifiers::CONTROL);
+        assert_eq!(p.arguments().unwrap()["path"], "a界e\u{301}");
     }
 }

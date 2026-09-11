@@ -11,6 +11,7 @@ use tokio::sync::{Semaphore, mpsc};
 use voyage_protocol::vessel::{ProcessInfo, VesselCommand, VesselEventSubscription, VoyageCommand};
 
 pub enum Update {
+    Operator(Box<super::operator_bridge::Loaded>),
     Browser {
         target: Target,
         result: Result<String, String>,

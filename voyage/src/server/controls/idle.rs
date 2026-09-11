@@ -36,6 +36,13 @@ pub(super) async fn inspect(
             .list()
             .await?,
         )?,
+        "subagents_archive" => serde_json::to_value(
+            crate::subagent::AgentTreeStore::new(
+                root.join("subagents").join(format!("{key}.json")),
+            )
+            .list_archived(None, 100)
+            .await?,
+        )?,
         "terminals" => {
             use crate::terminal::InteractiveTerminals;
             let retained = controls.retained.read().await.clone();

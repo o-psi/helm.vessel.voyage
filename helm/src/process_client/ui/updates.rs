@@ -41,6 +41,7 @@ impl App {
             view.transcript.borrow_mut().dirty = true;
         }
         match update {
+            Update::Operator(loaded) => self.operator_loaded(*loaded),
             Update::Browser { target: _, result } => {
                 self.status = result.unwrap_or_else(|e| e);
             }

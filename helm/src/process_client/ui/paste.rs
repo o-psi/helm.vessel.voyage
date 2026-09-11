@@ -95,6 +95,10 @@ impl App {
             || self.workspace_picker.is_some()
             || self.help
             || self.explore.is_some()
+            || self.workflows_open()
+            || self.operator.is_some()
+            || self.operator_loading.is_some()
+            || self.voyage_picker.is_some()
             || self.sidebar.menu.is_some()
             || self.interactions.borrow().focused
             || self.inference_picker_open()

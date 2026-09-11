@@ -84,6 +84,9 @@ impl super::App {
         if self.vessels_open()
             || self.help
             || self.explore.is_some()
+            || self.workflows_open()
+            || self.operator.is_some()
+            || self.operator_loading.is_some()
             || self.workspace_picker.is_some()
         {
             return None;

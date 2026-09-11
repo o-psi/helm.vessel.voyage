@@ -46,6 +46,20 @@ pub(super) struct Draft {
     _lock: std::fs::File,
 }
 
+impl Draft {
+    pub(super) fn navigation_title(&self) -> &str {
+        self.composer
+            .text
+            .lines()
+            .next()
+            .filter(|s| !s.is_empty())
+            .unwrap_or("New voyage")
+    }
+    pub(super) fn navigation_workspace(&self) -> &std::path::Path {
+        &self.saved.workspace
+    }
+}
+
 impl Saved {
     fn validate_identity(&self) -> Result<()> {
         anyhow::ensure!(

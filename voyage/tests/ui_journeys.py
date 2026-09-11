@@ -146,12 +146,16 @@ class Provider(http.server.BaseHTTPRequestHandler):
             messages = body['messages']
             users = [m['content'] for m in messages if m['role'] == 'user']
             prompt = users[-1]
-            assert prompt in self.server.prompts, users
+            assert prompt in self.server.prompts or prompt.startswith('WORKFLOW-UI '), users
             with self.server.lock:
                 self.server.requests.append(body)
                 self.server.counts[prompt] = self.server.counts.get(prompt, 0) + 1
                 step = self.server.counts[prompt]
-            if prompt == self.server.approval:
+            if prompt.startswith('WORKFLOW-UI '):
+                assert 'private-ui-sentinel-14' not in json.dumps(body)
+                assert 'HELM_WORKFLOW_TOKEN' in prompt and 'ready' in prompt
+                delta = {'content': 'WORKFLOW-UI-COMPLETED'}
+            elif prompt == self.server.approval:
                 if step == 1:
                     assert 'write_file' in {t['function']['name'] for t in body['tools']}
                     delta = ToolProvider.tool('denied-write', 'write_file', {
@@ -465,6 +469,66 @@ def main():
         assert server.counts == {alpha: 1, beta: 1, server.approval: 2}, server.counts
         (root / 'approval-denied.json').write_text(json.dumps(value, indent=2))
         checks.append('approval review ignores pasted consent; reconnect retains decision identity; Esc denies without file effect')
+        # Idle built-in discovery and typed manual execution must not need a model turn.
+        pick(pty, 'harbor-unique')
+        (workspace / 'operator-input.txt').write_text('OPERATOR-READ-CANARY')
+        prior = snapshot(sid_b)
+        prior_run = prior['run']['run_id']
+        send(pty, '\x1b[19~')  # F8
+        expect(pty, 'Run a tool')
+        send(pty, ENTER)
+        expect(pty, 'Search actions:')
+        paste(pty, 'read_file')
+        send(pty, ENTER)
+        expect(pty, 'path *:')
+        paste(pty, 'operator-input.txt')
+        send(pty, '\t' + ENTER)
+        expect(pty, 'Review read_file')
+        send(pty, '\x1b[6~' * 20)
+        time.sleep(.2)
+        send(pty, ENTER)
+        def operator_done():
+            value = snapshot(sid_b)
+            if (value.get('run') or {}).get('run_id') == prior_run or value.get('pending_cleanup_run'):
+                return None
+            return value if any('OPERATOR-READ-CANARY' in m.get('content', '') for m in value['messages']) else None
+        op_result = wait_for(operator_done)
+        (root / 'operator-read.json').write_text(json.dumps(op_result, indent=2))
+        assert server.counts == {alpha: 1, beta: 1, server.approval: 2}, server.counts
+        checks.append('F8 idle built-in discovery and typed read_file execute without model inference or raw JSON input')
+
+        # Exact digest preview and optional secret references, with no secret persistence.
+        workflows = workspace / '.helm' / 'workflows'
+        workflows.mkdir(parents=True)
+        (workflows / 'ui-flow.toml').write_text('schema_version = 1\nid = "ui-flow"\nversion = "1"\ndescription = "UI workflow"\nprompt = "WORKFLOW-UI {{word}} {{token}}"\n[parameters.token]\ntype = "string"\nsecret = true\n[parameters.word]\ntype = "string"\ndefault = "ready"\n')
+        send(pty, '\x1b[19~')
+        expect(pty, 'Saved workflows')
+        send(pty, DOWN * 4 + ENTER)
+        expect(pty, 'ui-flow')
+        send(pty, ENTER)
+        expect(pty, 'Definition (untrusted content)')
+        send(pty, '\x1b[6~' * 20)
+        time.sleep(.2)
+        send(pty, 't')
+        expect(pty, 'PRIVATE')
+        paste(pty, 'private-ui-sentinel-14')
+        assert 'private-ui-sentinel-14' not in screen(pty)
+        send(pty, ENTER)
+        expect(pty, 'word')
+        send(pty, ENTER)
+        expect(pty, 'WORKFLOW-UI ready')
+        send(pty, '\x1b[6~' * 20)
+        time.sleep(.2)
+        send(pty, 'y')
+        wait_for(lambda: any('WORKFLOW-UI-COMPLETED' in m.get('content', '') for m in snapshot(sid_b)['messages']))
+        completed_workflow = finished(sid_b)
+        (root / 'workflow-completed.json').write_text(json.dumps(completed_workflow, indent=2))
+        stop(pty)
+        for path in root.rglob('*'):
+            if path.is_file():
+                assert b'private-ui-sentinel-14' not in path.read_bytes(), f'private workflow value persisted: {path}'
+        assert sum(count for prompt, count in server.counts.items() if prompt.startswith('WORKFLOW-UI ')) == 1
+        checks.append('F8 workflow named selection, exact digest trust/host preview, optional masked secret and single submission; private canary absent from provider requests and persisted files')
         assert not server.errors, server.errors
     finally:
         server.release.set()
