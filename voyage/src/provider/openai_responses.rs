@@ -792,9 +792,8 @@ fn validate_status(value: &Value) -> Result<(), ProviderError> {
     match value.get("status").and_then(Value::as_str) {
         None | Some("completed") => Ok(()),
         Some("incomplete") => Err(ProviderError::Incomplete),
-        Some("failed") => Err(super::rejection::classify(value, None).unwrap_or_else(|| {
-            ProviderError::InvalidResponse("response did not complete".into())
-        })),
+        Some("failed") => Err(super::rejection::classify(value, None)
+            .unwrap_or_else(|| ProviderError::InvalidResponse("response did not complete".into()))),
         _ => Err(ProviderError::InvalidResponse(
             "response did not complete".into(),
         )),
