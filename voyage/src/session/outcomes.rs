@@ -20,6 +20,8 @@ pub struct RunSummary {
     pub message_fingerprints: Vec<String>,
     #[serde(default)]
     pub partial_output: String,
+    #[serde(default)]
+    pub provider_attempts: Vec<voyage_protocol::provider_attempt::ProviderAttempt>,
 }
 
 fn fingerprint(message: &Message) -> String {
@@ -48,7 +50,44 @@ impl Session {
             message_end: Some(self.messages.len()),
             message_fingerprints: self.messages[start..].iter().map(fingerprint).collect(),
             partial_output: String::new(),
+            provider_attempts: Vec::new(),
         });
+    }
+
+    /// Upsert observation metadata only; never authorize an external effect.
+    pub fn upsert_provider_attempt(
+        &mut self,
+        run_id: Uuid,
+        attempt: &voyage_protocol::provider_attempt::ProviderAttempt,
+    ) -> Result<()> {
+        anyhow::ensure!(
+            !run_id.is_nil() && !attempt.request_id.is_nil() && !attempt.attempt_id.is_nil(),
+            "invalid attempt identity"
+        );
+        let summary = self
+            .run_summaries
+            .last_mut()
+            .context("no active run summary")?;
+        anyhow::ensure!(summary.run_id == run_id, "provider attempt run mismatch");
+        if let Some(previous) = summary
+            .provider_attempts
+            .iter_mut()
+            .find(|a| a.attempt_id == attempt.attempt_id)
+        {
+            anyhow::ensure!(
+                previous.request_id == attempt.request_id
+                    && previous.attempt == attempt.attempt
+                    && previous.limit == attempt.limit
+                    && previous.started_at_ms == attempt.started_at_ms
+                    && previous.provider == attempt.provider
+                    && previous.model == attempt.model,
+                "provider attempt identity changed"
+            );
+            *previous = attempt.clone();
+        } else {
+            summary.provider_attempts.push(attempt.clone());
+        }
+        Ok(())
     }
 
     /// Cumulative current-response partial text; never canonical provider history.

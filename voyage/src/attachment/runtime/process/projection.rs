@@ -129,13 +129,16 @@ pub(super) fn run(
     let (live, live_truncated) = text_prefix(live, 65536);
     let (partial, truncated) = text_prefix(&run.partial_text, 65536);
     json!({"run_id":run.id,"state":run.state,"failure_summary":failure_summary(run.terminal_reason.as_deref()),
+        "provider_attempts":summary.map(|s| s.provider_attempts.as_slice()).unwrap_or_default(),
+        "provider_attempt_summary":summary.and_then(|s| s.provider_attempts.last()).map(|a| a.summary()),
         "partial_text":partial,"partial_text_truncated":truncated,"partial_text_bytes":run.partial_text.len(),
         "live_text":live,"live_text_truncated":live_truncated,"live_text_offset":offset,
         "stream_reconciled":offset.is_some(),"message_start":summary.and_then(|s| s.message_start)})
 }
 pub(super) fn turns(session: &crate::session::Session) -> Vec<Value> {
-    session.run_summaries.iter().rev().take(1024).rev().map(|s| json!({
-        "run_id":s.run_id,"phase":s.phase,"failure_summary":failure_summary(s.detail.as_deref()),"message_start":s.message_start,"message_end":s.message_end,"started_at":s.started_at,"finished_at":s.finished_at
+    session.run_summaries.iter().map(|s| json!({
+        "run_id":s.run_id,"phase":s.phase,"provider_attempts":s.provider_attempts,
+        "provider_attempt_summary":s.provider_attempts.last().map(|a| a.summary()),"failure_summary":failure_summary(s.detail.as_deref()),"message_start":s.message_start,"message_end":s.message_end,"started_at":s.started_at,"finished_at":s.finished_at
     })).collect()
 }
 
@@ -155,5 +158,48 @@ mod reliability_tests {
         assert_eq!(a["tool_outcome"], b["tool_outcome"]);
         assert_eq!(b["projection_truncated"], true);
         assert_eq!(b["tool_call_id"], "call");
+    }
+}
+
+#[cfg(test)]
+mod provider_attempt_tests {
+    use super::*;
+    use voyage_protocol::provider_attempt::{AttemptPhase, ProviderAttempt, RetryDecision};
+
+    #[test]
+    fn projection_retains_every_attempt_and_authors_summary() {
+        let mut session = crate::session::Session::new(".".into(), "fixture".into());
+        let run_id = uuid::Uuid::new_v4();
+        session.begin_run_summary(run_id);
+        for index in 1..=130 {
+            session
+                .upsert_provider_attempt(
+                    run_id,
+                    &ProviderAttempt {
+                        request_id: uuid::Uuid::new_v4(),
+                        attempt_id: uuid::Uuid::new_v4(),
+                        provider: "fixture".into(),
+                        model: "fixture".into(),
+                        attempt: index,
+                        limit: 130,
+                        started_at_ms: 0,
+                        duration_ms: 1,
+                        phase: AttemptPhase::Dispatch,
+                        category: Some("SECRET-error".into()),
+                        http_status: None,
+                        text_observed: false,
+                        tool_fragment_observed: false,
+                        retry_delay_ms: None,
+                        decision: RetryDecision::InFlight,
+                    },
+                )
+                .unwrap();
+        }
+        let turns = turns(&session);
+        assert_eq!(turns[0]["provider_attempts"].as_array().unwrap().len(), 130);
+        let summary = turns[0]["provider_attempt_summary"].as_str().unwrap();
+        assert!(summary.contains("outcome not yet recorded"));
+        assert!(!summary.contains("SECRET-error"));
+        assert!(session.messages.is_empty());
     }
 }

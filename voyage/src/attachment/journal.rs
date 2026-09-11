@@ -38,6 +38,7 @@ mod catalogue;
 pub use catalogue::{
     CancelRequestOutcome, LocalCancelRequest, RunSummary, SessionPage, SessionSummary,
 };
+mod provider_attempt;
 mod steering;
 mod titles;
 mod working_context;

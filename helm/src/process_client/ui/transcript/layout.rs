@@ -321,6 +321,17 @@ fn build(view: &View, state: &State, width: u16) -> Vec<Row> {
                 "interrupted" => Some("Interrupted · Work was not confirmed complete"),
                 _ => None,
             };
+            // Render saved history once at its turn boundary, except for the
+            // active run whose latest metadata is displayed with live output.
+            if snapshot
+                .run
+                .as_ref()
+                .is_none_or(|r| r.run_id != turn.run_id || !r.active())
+            {
+                for attempt in &turn.provider_attempts {
+                    note(&mut out, Key::Turn(turn.run_id), attempt.summary(), width);
+                }
+            }
             if let Some(label) = label {
                 note(
                     &mut out,
@@ -335,6 +346,33 @@ fn build(view: &View, state: &State, width: u16) -> Vec<Row> {
         }
     }
     super::activity::flush(&mut out, &mut calls, messages, snapshot, state, width);
+    // Unanchored/older turns still retain retry history; do not silently lose it
+    // just because their canonical message range is outside the loaded window.
+    for turn in &snapshot.turns {
+        let anchored = messages
+            .iter()
+            .any(|message| turn.message_end == Some(message.message_index + 1));
+        let live = snapshot.run.as_ref().is_some_and(|run| {
+            run.run_id == turn.run_id
+                && (run.state != "completed"
+                    || snapshot.pending_cleanup_run.is_some()
+                    || run.live_text.as_ref().is_some_and(|text| !text.is_empty()))
+        });
+        if !anchored && !live && !turn.provider_attempts.is_empty() {
+            note(
+                &mut out,
+                Key::Turn(turn.run_id),
+                format!(
+                    "Provider history · run {} · messages outside loaded range",
+                    turn.run_id
+                ),
+                width,
+            );
+            for attempt in &turn.provider_attempts {
+                note(&mut out, Key::Turn(turn.run_id), attempt.summary(), width);
+            }
+        }
+    }
     if let Some(delivery) = &state.delivery {
         let saved = messages.iter().any(|m| delivery.matches(m));
         if !saved {
@@ -416,6 +454,18 @@ fn build(view: &View, state: &State, width: u16) -> Vec<Row> {
                 "Loading the rest of the live response…",
                 width,
             );
+        }
+        let history_rendered = !run.active()
+            && snapshot.turns.iter().any(|turn| {
+                turn.run_id == run.run_id
+                    && messages
+                        .iter()
+                        .any(|message| turn.message_end == Some(message.message_index + 1))
+            });
+        if !history_rendered {
+            for attempt in &run.provider_attempts {
+                note(&mut out, key.clone(), attempt.summary(), width);
+            }
         }
         if let Some(reason) = &run.failure_summary {
             note(&mut out, key.clone(), safe(reason), width);
@@ -693,5 +743,39 @@ fn hit_rect(row: &Row, area: Rect, y: usize) -> Rect {
         Rect::new(area.x + offset, area.y + y as u16, width, 1)
     } else {
         Rect::new(area.x, area.y + y as u16, area.width, 1)
+    }
+}
+
+#[cfg(test)]
+mod provider_attempt_tests {
+    use super::*;
+
+    #[test]
+    fn saved_attempts_render_authored_retry_history_not_diagnostics() {
+        let run_id = uuid::Uuid::new_v4();
+        let turn: super::super::super::state::Turn = serde_json::from_value(serde_json::json!({
+            "run_id": run_id, "phase": "failed", "message_start": null, "message_end": null,
+            "provider_attempts": [{
+                "request_id": uuid::Uuid::new_v4(), "attempt_id": uuid::Uuid::new_v4(),
+                "provider": "SECRET-provider", "model": "SECRET-model", "category": "SECRET-error\u{1b}",
+                "attempt": 1, "limit": 8, "started_at_ms": 10, "duration_ms": 500,
+                "phase": "stream", "http_status": 503, "text_observed": true,
+                "tool_fragment_observed": false, "retry_delay_ms": null, "decision": "partial_response"
+            }]
+        })).unwrap();
+        let mut out = Vec::new();
+        for attempt in &turn.provider_attempts {
+            note(&mut out, Key::Turn(run_id), attempt.summary(), 80);
+        }
+        let text = out
+            .iter()
+            .map(|row| row.line.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(text.contains("1/8"));
+        assert!(text.contains("partial response retained"));
+        assert!(text.contains("duplicate effects"));
+        assert!(!text.contains("SECRET"));
+        assert!(!text.contains('\u{1b}'));
     }
 }

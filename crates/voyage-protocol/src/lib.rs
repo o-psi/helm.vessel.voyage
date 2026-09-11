@@ -40,3 +40,6 @@ pub mod duplex;
 pub mod terminal;
 #[cfg(test)]
 mod workflow_preview_tests;
+
+/// Durable, secret-safe provider attempt observations.
+pub mod provider_attempt;

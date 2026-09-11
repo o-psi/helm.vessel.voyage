@@ -95,6 +95,20 @@ impl RunCheckpoint for SessionCheckpoint {
         self.run_id
     }
 
+    async fn provider_attempt(
+        &self,
+        attempt: &voyage_protocol::provider_attempt::ProviderAttempt,
+    ) -> Result<(), CheckpointError> {
+        let mut session = self.session.lock().await;
+        self.validate(&session)?;
+        let mut next = session.clone();
+        next.upsert_provider_attempt(self.run_id, attempt)
+            .map_err(|_| CheckpointError)?;
+        self.persist(&mut next).await?;
+        *session = next;
+        Ok(())
+    }
+
     async fn working_context(&self) -> Result<crate::context::WorkingContext, CheckpointError> {
         let session = self.session.lock().await;
         self.validate(&session)?;
@@ -284,6 +298,79 @@ mod working_context_tests {
                 .save_working_context(&Default::default())
                 .await
                 .is_err()
+        );
+    }
+}
+
+#[cfg(test)]
+mod provider_attempt_tests {
+    use super::*;
+    use voyage_protocol::provider_attempt::{AttemptPhase, ProviderAttempt, RetryDecision};
+
+    #[tokio::test]
+    async fn attempts_reload_without_changing_canonical_history() {
+        let root = tempfile::tempdir().unwrap();
+        let store = SessionStore::new(root.path().join("sessions"));
+        let mut session = Session::new(root.path().into(), "fixture".into());
+        session
+            .messages
+            .push(Message::new(crate::model::Role::User, "hello"));
+        let run_id = Uuid::new_v4();
+        session.begin_run_summary(run_id);
+        store.save(&mut session).await.unwrap();
+        let id = session.id;
+        let canonical = serde_json::to_value(&session.messages).unwrap();
+        let mut old = serde_json::to_value(&session.run_summaries[0]).unwrap();
+        old.as_object_mut().unwrap().remove("provider_attempts");
+        let old: crate::session::outcomes::RunSummary = serde_json::from_value(old).unwrap();
+        assert!(old.provider_attempts.is_empty());
+        let wrong = SessionCheckpoint::new(session.clone(), None, Uuid::new_v4());
+        let checkpoint = SessionCheckpoint::new(session, Some(store.clone()), run_id);
+        let mut attempt = ProviderAttempt {
+            request_id: Uuid::new_v4(),
+            attempt_id: Uuid::new_v4(),
+            provider: "fixture".into(),
+            model: "fixture".into(),
+            attempt: 1,
+            limit: 8,
+            started_at_ms: 1,
+            duration_ms: 0,
+            phase: AttemptPhase::Dispatch,
+            category: None,
+            http_status: None,
+            text_observed: false,
+            tool_fragment_observed: false,
+            retry_delay_ms: None,
+            decision: RetryDecision::InFlight,
+        };
+        assert!(wrong.provider_attempt(&attempt).await.is_err());
+        checkpoint.provider_attempt(&attempt).await.unwrap();
+        attempt.decision = RetryDecision::RetryScheduled;
+        attempt.retry_delay_ms = Some(1000);
+        checkpoint.provider_attempt(&attempt).await.unwrap();
+        let first = attempt.clone();
+        attempt.attempt_id = Uuid::new_v4();
+        attempt.attempt = 2;
+        attempt.decision = RetryDecision::Completed;
+        attempt.retry_delay_ms = None;
+        checkpoint.provider_attempt(&attempt).await.unwrap();
+        let loaded = store.load(id).await.unwrap();
+        assert_eq!(
+            loaded.run_summaries[0].provider_attempts,
+            vec![first, attempt]
+        );
+        assert_eq!(serde_json::to_value(&loaded.messages).unwrap(), canonical);
+        // A conflicting durable revision must not leak a failed update into the
+        // in-memory checkpoint snapshot used for finalization.
+        let before = checkpoint.snapshot_for_finish().await;
+        let mut concurrent = loaded;
+        store.save(&mut concurrent).await.unwrap();
+        let mut failed = before.run_summaries[0].provider_attempts[1].clone();
+        failed.decision = RetryDecision::LocalFailure;
+        assert!(checkpoint.provider_attempt(&failed).await.is_err());
+        assert_eq!(
+            checkpoint.snapshot_for_finish().await.run_summaries[0].provider_attempts,
+            before.run_summaries[0].provider_attempts
         );
     }
 }

@@ -65,6 +65,8 @@ pub struct ToolCall {
 #[derive(Clone, Deserialize, PartialEq)]
 pub struct Turn {
     #[serde(default)]
+    pub provider_attempts: Vec<voyage_protocol::provider_attempt::ProviderAttempt>,
+    #[serde(default)]
     pub failure_summary: Option<String>,
     #[serde(default)]
     pub started_at: Option<chrono::DateTime<chrono::Utc>>,
@@ -78,6 +80,8 @@ pub struct Turn {
 
 #[derive(Clone, Deserialize, PartialEq)]
 pub struct Run {
+    #[serde(default)]
+    pub provider_attempts: Vec<voyage_protocol::provider_attempt::ProviderAttempt>,
     #[serde(default)]
     pub message_start: Option<usize>,
     #[serde(default)]

@@ -654,6 +654,20 @@ impl RunCheckpoint for ManagedRunCheckpoint {
     fn run_id(&self) -> Uuid {
         self.token.run_id
     }
+    async fn provider_attempt(
+        &self,
+        attempt: &voyage_protocol::provider_attempt::ProviderAttempt,
+    ) -> Result<(), CheckpointError> {
+        let attempt = attempt.clone();
+        // Outcome recording remains possible after cancellation/revocation. The
+        // storage token and journal execution guard fence ownership, not effects.
+        self.storage(move |store| {
+            store
+                .journal
+                .provider_attempt(&store.guard, store.run_id, &attempt)
+        })
+        .await
+    }
     async fn working_context(&self) -> Result<crate::context::WorkingContext, CheckpointError> {
         let token = self.token.clone();
         self.storage(move |store| {
@@ -797,6 +811,12 @@ impl RunCheckpoint for ManagedRunCheckpoint {
 impl RunCheckpoint for RunOwner {
     fn run_id(&self) -> Uuid {
         self.run_id
+    }
+    async fn provider_attempt(
+        &self,
+        attempt: &voyage_protocol::provider_attempt::ProviderAttempt,
+    ) -> Result<(), CheckpointError> {
+        self.checkpoint().provider_attempt(attempt).await
     }
     async fn working_context(&self) -> Result<crate::context::WorkingContext, CheckpointError> {
         self.checkpoint().working_context().await
