@@ -280,14 +280,15 @@ impl Registry {
                         && c.transports == [Transport::ChatgptOauth]),
                 "not an OAuth account"
             );
-            if a.provider_identity.as_deref() != Some(&tokens.account_id) {
+            let identity = crate::provider::chatgpt_oauth::login_identity(&tokens)?;
+            if identity.is_none() || a.provider_identity != identity {
                 ensure!(
                     allow_identity_replacement,
                     "different OAuth identity requires explicit replacement"
                 );
                 a.descriptor.identity_generation += 1;
             }
-            a.provider_identity = Some(tokens.account_id.clone());
+            a.provider_identity = identity;
             a.credential = Credential::OAuth(tokens);
             a.refresh = None;
             a.descriptor.state = AccountState::Ready;
@@ -501,6 +502,10 @@ impl Registry {
                 .iter_mut()
                 .find(|a| a.descriptor.id == id)
                 .ok_or_else(|| anyhow::anyhow!("unknown account"))?;
+            // Removal is absorbing: a later ordinary logout cannot make this UUID recoverable.
+            if a.descriptor.state == AccountState::Removed {
+                return Ok(());
+            }
             a.descriptor.identity_generation += 1;
             a.descriptor.credential_revision += 1;
             a.descriptor.capability_revision += 1;
@@ -525,10 +530,9 @@ impl Registry {
     pub(crate) fn oauth_load(&self, binding: &AccountBinding) -> Result<OAuthTokens> {
         self.transaction(|db| {
             let a = checked(db, binding)?;
-            ensure!(
-                a.refresh.is_none(),
-                "OAuth refresh pending or uncertain; reauthenticate if prior process stopped"
-            );
+            if a.refresh.is_some() {
+                return Err(crate::provider::chatgpt_oauth::RefreshPending.into());
+            }
             match &a.credential {
                 Credential::OAuth(t) => Ok(t.clone()),
                 _ => bail!("OAuth login required"),
@@ -561,9 +565,10 @@ impl Registry {
         self.transaction(|db| {
             let a = checked(db, binding)?;
             ensure!(a.refresh == fence, "stale OAuth refresh fence");
+            let identity = crate::provider::chatgpt_oauth::login_identity(tokens)?;
             ensure!(
-                matches!(&a.credential, Credential::OAuth(t) if t.account_id == tokens.account_id),
-                "OAuth identity changed; explicit replacement required"
+                identity.is_some() && a.provider_identity == identity,
+                "OAuth identity unavailable or changed; explicit replacement required"
             );
             a.credential = Credential::OAuth(tokens.clone());
             a.refresh = None;
@@ -772,7 +777,7 @@ fn insert(
         },
     };
     let provider_identity = match &credential {
-        Credential::OAuth(t) => Some(t.account_id.clone()),
+        Credential::OAuth(t) => crate::provider::chatgpt_oauth::login_identity(t)?,
         _ => None,
     };
     let account = Account {
@@ -820,3 +825,6 @@ fn describe(a: &Account) -> AccountDescriptor {
     };
     descriptor
 }
+
+#[cfg(test)]
+mod tests;

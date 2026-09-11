@@ -14,6 +14,8 @@ pub type Authorize = Arc<dyn Fn(&EnrollmentActor, Uuid) -> bool + Send + Sync>;
 pub struct DeviceService {
     registry: Registry,
     authorize: Authorize,
+    #[cfg(test)]
+    test_endpoints: Option<OAuthEndpoints>,
 }
 #[derive(Serialize, Deserialize)]
 pub(super) struct Record {
@@ -34,6 +36,8 @@ impl DeviceService {
         Self {
             registry,
             authorize,
+            #[cfg(test)]
+            test_endpoints: None,
         }
     }
     fn authorized(&self, actor: &EnrollmentActor, connection: Uuid) -> Result<()> {
@@ -45,6 +49,13 @@ impl DeviceService {
     }
     fn provider(&self) -> ChatGptOauthProvider {
         // Store is never read or written: only unpublished device methods are used.
+        #[cfg(test)]
+        if let Some(endpoints) = &self.test_endpoints {
+            return ChatGptOauthProvider::from_store(
+                ChatGptTokenStore::new(PathBuf::new()),
+                endpoints.clone(),
+            );
+        }
         ChatGptOauthProvider::from_store(
             ChatGptTokenStore::new(PathBuf::new()),
             OAuthEndpoints::default(),
@@ -72,18 +83,17 @@ impl DeviceService {
                 expire(r);
             }
             if let Some(r) = db.enrollments.iter().find(|r| {
-                r.request.command_id == request.command_id
-                    || r.request.enrollment_id == request.enrollment_id
+                [request.command_id, request.enrollment_id]
+                    .iter()
+                    .any(|id| {
+                        *id == r.request.command_id
+                            || *id == r.request.enrollment_id
+                            || r.cancellations.contains(id)
+                    })
             }) {
                 ensure!(r.request == request, "enrollment command identity conflict");
                 return Ok((r.status.clone(), false));
             }
-            ensure!(
-                !db.enrollments
-                    .iter()
-                    .any(|r| r.cancellations.contains(&request.command_id)),
-                "command identity conflict"
-            );
             let c = db
                 .connections
                 .iter()
@@ -220,11 +230,14 @@ impl DeviceService {
     ) -> Result<EnrollmentStatus> {
         self.registry.transaction(|db| {
             ensure!(
-                !db.enrollments
-                    .iter()
-                    .any(|r| r.request.command_id == command_id
-                        || (r.request.enrollment_id != id
-                            && r.cancellations.contains(&command_id))),
+                !command_id.is_nil()
+                    && !db
+                        .enrollments
+                        .iter()
+                        .any(|r| r.request.command_id == command_id
+                            || r.request.enrollment_id == command_id
+                            || (r.request.enrollment_id != id
+                                && r.cancellations.contains(&command_id))),
                 "cancel command identity conflict"
             );
             let r = record(db, id, actor)?;
@@ -303,10 +316,39 @@ impl DeviceService {
         let Some(device) = device else {
             return Ok(status);
         };
-        let result = tokio::time::timeout(
-            Duration::from_secs(45),
-            self.provider().poll_device_unpublished(&device),
-        )
+        let result = tokio::time::timeout(Duration::from_secs(45), async {
+            let provider = self.provider();
+            let grant = provider.poll_device_grant(&device).await?;
+            // Poll and exchange are separate external effects. A late poll result must
+            // not start a token exchange after cancellation, expiry or revocation.
+            // Keep Exchanging durable throughout: a crash never replays either effect.
+            let proceed = self
+                .registry
+                .transaction(|db| {
+                    let r = record(db, id, actor)?;
+                    if r.status.state != EnrollmentState::Exchanging {
+                        return Ok(false);
+                    }
+                    if !(self.authorize)(actor, r.request.connection_id) {
+                        r.status.state = EnrollmentState::Cancelled;
+                    } else if now() >= r.status.expires_at {
+                        r.status.state = EnrollmentState::Expired;
+                    } else {
+                        return Ok(true);
+                    }
+                    r.device = None;
+                    Ok(false)
+                })
+                .map_err(|_| {
+                    ProviderError::Authentication("device publication state unavailable".into())
+                })?;
+            if !proceed {
+                return Err(ProviderError::Authentication(
+                    "device authorization no longer active".into(),
+                ));
+            }
+            provider.exchange_device_grant(grant).await
+        })
         .await;
         self.registry.transaction(|db| {
             let r = record(db, id, actor)?;
@@ -413,4 +455,38 @@ pub(super) fn enrollment_actor(db: &Database, account: Uuid) -> Option<Enrollmen
             r.status.state == EnrollmentState::Succeeded && r.status.account_id == Some(account)
         })
         .map(|r| r.request.actor.clone())
+}
+
+// Fixtures cannot select a remote host, even in a test binary. No runtime configuration seam.
+#[cfg(test)]
+impl DeviceService {
+    pub(super) fn loopback_fixture(mut self, address: std::net::SocketAddr) -> Self {
+        assert!(address.ip().is_loopback());
+        let base = format!("http://{address}");
+        self.test_endpoints = Some(OAuthEndpoints {
+            authorize: format!("{base}/unused-authorize"),
+            token: format!("{base}/token"),
+            device_user_code: format!("{base}/device"),
+            device_token: format!("{base}/poll"),
+            responses: format!("{base}/unused-responses"),
+            models: format!("{base}/unused-models"),
+        });
+        self
+    }
+
+    // Advance only retained scheduling metadata: actual HTTP parsing/exchange/publication runs.
+    pub(super) fn fixture_due(&self, id: Uuid, expire_now: bool) -> Result<u64> {
+        self.registry.transaction(|db| {
+            let r = db
+                .enrollments
+                .iter_mut()
+                .find(|r| r.request.enrollment_id == id)
+                .unwrap();
+            r.next_poll = 0;
+            if expire_now {
+                r.status.expires_at = 0;
+            }
+            Ok(r.device.as_ref().map(|d| d.interval).unwrap_or(0))
+        })
+    }
 }
