@@ -780,21 +780,13 @@ async fn compact_account_settings_distinguish_current_default_and_real_identity_
     let mut app = app(fixture.0.path());
     let t = live(&mut app);
     let _socket = picker(&mut app, t);
-    let binding = app
-        .accounts
-        .picker
-        .as_ref()
-        .unwrap()
-        .original
-        .account
+    let binding = app.accounts.picker.as_ref().unwrap().choices()[0]
+        .1
         .clone()
         .unwrap();
-    app.accounts
-        .picker
-        .as_mut()
-        .unwrap()
-        .catalogue
-        .default_account = Some(binding.clone());
+    let p = app.accounts.picker.as_mut().unwrap();
+    p.original.account = Some(binding.clone());
+    p.catalogue.default_account = Some(binding.clone());
     let text = draw(&app, 160, 50);
     assert!(
         text.contains("Choose account") && text.contains("Current") && text.contains("Default")
@@ -832,7 +824,7 @@ async fn usage_replies_require_current_identity_and_capability_revision() {
     let p = app.accounts.picker.as_ref().unwrap();
     let id = p.id;
     let mut observation = AccountUsageObservation {
-        account: p.original.account.clone().unwrap(),
+        account: p.choices()[0].1.clone().unwrap(),
         capability_revision: 2,
         snapshot: None,
         refresh_status: AccountUsageRefreshStatus::NeverObserved,

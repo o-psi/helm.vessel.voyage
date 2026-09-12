@@ -95,7 +95,19 @@ impl App {
                         Paragraph::new(format!(
                             "{} {}{}",
                             if p.selected == i { "›" } else { " " },
-                            safe(label),
+                            {
+                                let max = body.width.saturating_sub(if default { 12 } else { 2 })
+                                    as usize;
+                                let mut label = safe(label);
+                                if label.chars().count() > max {
+                                    label = label
+                                        .chars()
+                                        .take(max.saturating_sub(1))
+                                        .collect::<String>()
+                                        + "…";
+                                }
+                                label
+                            },
                             if default { " · Default" } else { "" }
                         )),
                         rect,
@@ -172,7 +184,7 @@ impl App {
                                 "Enter a model ID · host validates access".into()
                             } else {
                                 format!(
-                                    "Suggestions: {}",
+                                    "Catalog (access unverified): {}",
                                     p.models
                                         .iter()
                                         .take(3)
