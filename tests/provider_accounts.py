@@ -130,6 +130,9 @@ class NamedAccounts(unittest.TestCase):
         self.f.cli("add", "--connection", connection["id"], "--account", "personal",
                    "--env", "ACCOUNT_WORK", ok=False)
         self.f.start()
+        self.f.request({"op": "account_set_default", "command_id": str(uuid.uuid4()),
+                        "workspace": str(self.f.workspace), "account": self.personal,
+                        "expected_revision": 0})
 
     def switch(self, session, account):
         command = self.f.mutation(session, "set_account_inference", account=account,
@@ -203,6 +206,17 @@ class NamedAccounts(unittest.TestCase):
         user = grant(["account_use"], [self.personal["account_id"]], [])
         catalogue = scoped(user, {"op": "accounts", "workspace": str(f.workspace), "transport": None})
         self.assertEqual([a["id"] for a in catalogue["accounts"]], [self.personal["account_id"]])
+        denied_usage = scoped(user, {"op": "account_usage", "workspace": str(f.workspace),
+                                    "account": self.personal, "refresh": False}, envelope=True)
+        self.assertIsNotNone(denied_usage["error"])  # session grants are not private human views
+        observed = f.request({"op": "account_usage", "workspace": str(f.workspace),
+                              "account": self.personal, "refresh": False})
+        self.assertEqual(observed["refresh_status"], "unsupported")
+        self.assertIsNone(observed["snapshot"])
+        self.assertEqual(catalogue["default_account"], self.personal)
+        self.assertFalse(catalogue["can_set_default"])
+        self.assertTrue(f.request({"op": "accounts", "workspace": str(f.workspace),
+                                   "transport": None})["can_set_default"])
         forbidden = f.mutation(session, "set_account_inference", account=self.work,
             model="fixture-model", reasoning_effort=None, service_tier=None)
         result = scoped(user, {"session_id": session, **forbidden}, envelope=True)
