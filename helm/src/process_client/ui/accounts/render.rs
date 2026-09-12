@@ -67,6 +67,22 @@ impl App {
             inner.width,
             inner.height.saturating_sub(7),
         );
+        if p.disconnected {
+            frame.render_widget(
+                Paragraph::new(format!(
+                    "{}\n\nEnter {}\nCtrl+G Vessels · Esc Close",
+                    safe(&p.notice),
+                    if self.clients.available(p.route) {
+                        "Reload accounts"
+                    } else {
+                        "Open Vessels to reconnect"
+                    }
+                ))
+                .wrap(Wrap { trim: false }),
+                body,
+            );
+            return;
+        }
         match &p.mode {
             Mode::List => {
                 frame.render_widget(

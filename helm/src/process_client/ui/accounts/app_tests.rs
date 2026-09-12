@@ -842,3 +842,89 @@ async fn usage_replies_require_current_identity_and_capability_revision() {
     assert_eq!(app.accounts.picker.as_ref().unwrap().usage.len(), 1);
     assert!(app.views[&t].pending.is_none());
 }
+
+#[tokio::test]
+async fn disconnected_enter_opens_vessels_and_preserves_composer() {
+    let fixture = support::Fixture::new();
+    let mut app = app(fixture.0.path());
+    app.vessels = Some(std::cell::RefCell::new(
+        super::super::vessels::Manager::open(fixture.0.path().join("connections")).unwrap(),
+    ));
+    let t = live(&mut app);
+    let _watch = picker(&mut app, t);
+    material(&mut app);
+    app.clients.mark_unavailable(t.route);
+    app.account_tick();
+    let id = app.accounts.picker.as_ref().unwrap().id;
+    app.account_tick();
+    assert_eq!(app.accounts.picker.as_ref().unwrap().id, id);
+    let screen = draw(&app, 110, 32);
+    assert!(screen.contains("Open Vessels to reconnect"));
+    assert!(!screen.contains("SYNTHETIC-1234"));
+    key(&mut app, KeyCode::Enter);
+    assert!(app.accounts.picker.is_none());
+    assert!(app.accounts.reply.is_none());
+    assert!(app.vessels_open());
+    assert_eq!(app.views[&t].draft.text, "preserve my composer");
+}
+
+#[tokio::test]
+async fn account_ctrl_g_reaches_vessels_even_while_busy() {
+    let fixture = support::Fixture::new();
+    let mut app = app(fixture.0.path());
+    app.vessels = Some(std::cell::RefCell::new(
+        super::super::vessels::Manager::open(fixture.0.path().join("connections")).unwrap(),
+    ));
+    let t = live(&mut app);
+    let _watch = picker(&mut app, t);
+    material(&mut app);
+    app.accounts.picker.as_mut().unwrap().busy = true;
+    app.input(Event::Key(KeyEvent::new(
+        KeyCode::Char('g'),
+        KeyModifiers::CONTROL,
+    )))
+    .unwrap();
+    assert!(app.accounts.picker.is_none());
+    assert!(app.vessels_open());
+    assert!(support::browsers().is_empty());
+}
+
+#[tokio::test]
+async fn enter_failure_is_visible_inside_account_modal() {
+    let fixture = support::Fixture::new();
+    let mut app = app(fixture.0.path());
+    let t = live(&mut app);
+    let _watch = picker(&mut app, t);
+    let p = app.accounts.picker.as_mut().unwrap();
+    p.enroll = false;
+    p.selected = p.choices().len() - 2;
+    key(&mut app, KeyCode::Enter);
+    assert!(draw(&app, 110, 32).contains("Device sign-in is not authorized/supported here"));
+    app.account_tick();
+    assert!(draw(&app, 110, 32).contains("Device sign-in is not authorized/supported here"));
+    assert_eq!(app.views[&t].draft.text, "preserve my composer");
+}
+
+#[tokio::test]
+async fn reconnected_enter_reloads_accounts_without_replaying_enrollment() {
+    let fixture = support::Fixture::new();
+    let mut app = app(fixture.0.path());
+    let t = live(&mut app);
+    let watch = picker(&mut app, t);
+    let old_id = app.accounts.picker.as_ref().unwrap().id;
+    watch
+        .send(ConnectionState {
+            socket_id: Some(Uuid::new_v4()),
+            loss_generation: 5,
+        })
+        .unwrap();
+    app.account_tick();
+    assert!(draw(&app, 110, 32).contains("Reload accounts"));
+    key(&mut app, KeyCode::Enter);
+    let p = app.accounts.picker.as_ref().unwrap();
+    assert_ne!(p.id, old_id);
+    assert!(!p.disconnected);
+    assert!(p.busy && p.private.is_none() && p.intent.is_none());
+    assert!(app.accounts.reply.is_some());
+    assert_eq!(app.views[&t].draft.text, "preserve my composer");
+}

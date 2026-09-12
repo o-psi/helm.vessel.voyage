@@ -504,7 +504,9 @@ impl App {
             return;
         };
         let state = *p.connection.borrow();
-        if state.loss_generation != p.loss_generation || !self.clients.available(p.route) {
+        if state.loss_generation != p.loss_generation
+            || (!p.disconnected && !self.clients.available(p.route))
+        {
             p.loss_generation = state.loss_generation;
             p.disconnected = true;
             p.private = None;
@@ -515,7 +517,7 @@ impl App {
             p.id = Uuid::new_v4();
             self.accounts.reply = None;
             self.accounts.usage_reply = None;
-            p.notice = "Disconnected. Sensitive material cleared; reopen or press R to privately inspect the original enrollment under current authority.".into();
+            p.notice = "Connection lost. Sensitive material cleared. Enter reloads accounts when connected; Ctrl+G opens Vessels to reconnect.".into();
         }
     }
     pub(super) fn account_tick(&mut self) {
@@ -564,7 +566,6 @@ impl App {
         if let Some(p) = self.accounts.picker.as_mut() {
             if !self.clients.available(p.route) {
                 p.private = None;
-                p.notice = "Disconnected. Sensitive material cleared; reconnect then reopen the original enrollment.".into();
                 return;
             }
             if p.private
@@ -1128,6 +1129,16 @@ impl App {
         Ok(())
     }
     pub(super) fn account_input(&mut self, event: &Event) -> Result<bool> {
+        match self.account_input_inner(event) {
+            Err(error) if self.accounts.picker.is_some() => {
+                // Global status is covered by this modal. Keep action failures visible here.
+                self.accounts.picker.as_mut().unwrap().notice = safe(&error.to_string());
+                Ok(true)
+            }
+            result => result,
+        }
+    }
+    fn account_input_inner(&mut self, event: &Event) -> Result<bool> {
         use crossterm::event::{KeyEventKind, MouseButton, MouseEventKind};
         self.account_connection_tick();
         let Some(p) = self.accounts.picker.as_mut() else {
@@ -1151,6 +1162,25 @@ impl App {
             _ => None,
         };
         if let Some(k) = key {
+            if (k.modifiers.contains(KeyModifiers::CONTROL) && k.code == KeyCode::Char('g'))
+                || (p.disconnected && !self.clients.available(p.route) && k.code == KeyCode::Enter)
+            {
+                self.accounts.picker = None;
+                self.accounts.reply = None;
+                self.accounts.usage_reply = None;
+                self.accounts.visible.set(false);
+                self.open_vessels();
+                return Ok(true);
+            }
+            if p.disconnected && k.code == KeyCode::Enter {
+                let destination = p.destination;
+                // Drop the private view/lock before re-reading the original saved intent.
+                self.accounts.picker = None;
+                self.accounts.reply = None;
+                self.accounts.usage_reply = None;
+                self.open_accounts(destination, "")?;
+                return Ok(true);
+            }
             if k.modifiers.contains(KeyModifiers::CONTROL)
                 && matches!(k.code, KeyCode::Char('c' | 'q'))
             {

@@ -125,6 +125,13 @@ is success, not a fictitious undo. If an exchange outcome is uncertain, the host
 retains that state and does not retry the exchange. Local cancellation/expiry is not
 proof of upstream revocation.
 
+If the account picker loses its connection, **Enter** opens Vessels when the route
+is unavailable, or reloads the account view when the route is available again.
+**Ctrl+G** opens Vessels even while an account request is pending. Reconnect there,
+then reopen Accounts to inspect any retained enrollment. These actions clear private
+view material and never repeat the sign-in mutation. Account action errors appear
+inside the picker rather than behind it in the main status line.
+
 ## Execution-host API enrollment
 
 Run these commands **on the machine executing Voyage**, as its OS account. UUIDs
