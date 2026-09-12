@@ -29,6 +29,8 @@ pub enum RetryDecision {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub struct ProviderAttempt {
+    #[serde(default)]
+    pub retry: RetryObservation,
     pub request_id: Uuid,
     pub attempt_id: Uuid,
     /// Executing runtime supplies bounded, redacted identifiers and an allowlisted category.
@@ -45,6 +47,23 @@ pub struct ProviderAttempt {
     pub tool_fragment_observed: bool,
     pub retry_delay_ms: Option<u64>,
     pub decision: RetryDecision,
+}
+
+/// Numeric/allowlisted facts only; absent legacy observations remain unknown.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct RetryObservation {
+    pub upstream_request_id: Option<String>,
+    pub response_timeout_ms: Option<u64>,
+    pub stream_idle_ms: Option<u64>,
+    pub server_delay_ms: Option<u64>,
+    pub max_delay_ms: Option<u64>,
+    pub max_elapsed_ms: Option<u64>,
+    pub elapsed_ms: Option<u64>,
+    pub backoff_ms: Option<u64>,
+    pub eligible: bool,
+    pub failure_phase: Option<AttemptPhase>,
+    pub provider_code: Option<String>,
 }
 
 impl ProviderAttempt {
@@ -86,6 +105,7 @@ impl ProviderAttempt {
             Some("rate_limit") => "rate limit",
             Some("unavailable") => "service unavailable",
             Some("timeout") => "timeout",
+            Some("connection") => "connection establishment failed",
             Some("transport") => "transport failure; remote outcome uncertain",
             Some("request") => "request failure",
             Some("invalid_response") => "invalid or truncated response",
@@ -103,6 +123,15 @@ impl ProviderAttempt {
             && let Some(delay) = self.retry_delay_ms
         {
             summary.push_str(&format!(" · wait {delay} ms"));
+        }
+        if let Some(wait) = self.retry.server_delay_ms {
+            summary.push_str(&format!(" · server wait {wait} ms"));
+        }
+        if let Some(max) = self.retry.max_delay_ms {
+            summary.push_str(&format!(" · wait limit {max} ms"));
+        }
+        if let Some(max) = self.retry.max_elapsed_ms {
+            summary.push_str(&format!(" · retry window {max} ms"));
         }
         summary
     }
@@ -122,7 +151,11 @@ mod tests {
             "tool_fragment_observed": false, "retry_delay_ms": 500, "decision": "retry_scheduled"
         });
         let attempt: ProviderAttempt = serde_json::from_value(value.clone()).unwrap();
-        assert_eq!(serde_json::to_value(&attempt).unwrap(), value);
+        assert_eq!(
+            serde_json::from_value::<ProviderAttempt>(serde_json::to_value(&attempt).unwrap())
+                .unwrap(),
+            attempt
+        );
         let summary = attempt.summary();
         assert!(summary.contains("2/3"));
         assert!(summary.contains("HTTP 429"));

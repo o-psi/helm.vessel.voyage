@@ -519,3 +519,7 @@ missing parent. It uses synthetic credentials and a local provider, with bounded
 waits and observed cleanup of fixture-owned processes. It does not establish live
 provider or full-screen Helm behavior. Evidence stays under the printed `/tmp/vdr-*`
 directory. This process check is separate from workspace Rust coverage.
+
+Provider connection/response-start and decoded-event idle deadlines are independent
+of the retry-admission window. See [provider attempts](provider-attempts.md) for
+metadata, paging, heartbeat semantics and safe explicit continuation.

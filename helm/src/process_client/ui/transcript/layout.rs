@@ -328,8 +328,19 @@ fn build(view: &View, state: &State, width: u16) -> Vec<Row> {
                 .as_ref()
                 .is_none_or(|r| r.run_id != turn.run_id || !r.active())
             {
-                for attempt in &turn.provider_attempts {
+                for attempt in turn.provider_attempts.iter().filter(|a| {
+                    a.decision != voyage_protocol::provider_attempt::RetryDecision::Completed
+                }) {
                     note(&mut out, Key::Turn(turn.run_id), attempt.summary(), width);
+                    note(
+                        &mut out,
+                        Key::Turn(turn.run_id),
+                        format!(
+                            "{} recorded attempts · /attempts {}",
+                            turn.provider_attempt_count, turn.run_id
+                        ),
+                        width,
+                    );
                 }
             }
             if let Some(label) = label {
@@ -368,8 +379,19 @@ fn build(view: &View, state: &State, width: u16) -> Vec<Row> {
                 ),
                 width,
             );
-            for attempt in &turn.provider_attempts {
+            for attempt in turn.provider_attempts.iter().filter(|a| {
+                a.decision != voyage_protocol::provider_attempt::RetryDecision::Completed
+            }) {
                 note(&mut out, Key::Turn(turn.run_id), attempt.summary(), width);
+                note(
+                    &mut out,
+                    Key::Turn(turn.run_id),
+                    format!(
+                        "{} recorded attempts · /attempts {}",
+                        turn.provider_attempt_count, turn.run_id
+                    ),
+                    width,
+                );
             }
         }
     }
@@ -463,7 +485,9 @@ fn build(view: &View, state: &State, width: u16) -> Vec<Row> {
                         .any(|message| turn.message_end == Some(message.message_index + 1))
             });
         if !history_rendered {
-            for attempt in &run.provider_attempts {
+            for attempt in run.provider_attempts.iter().filter(|a| {
+                a.decision != voyage_protocol::provider_attempt::RetryDecision::Completed
+            }) {
                 note(&mut out, key.clone(), attempt.summary(), width);
             }
         }
@@ -764,7 +788,11 @@ mod provider_attempt_tests {
             }]
         })).unwrap();
         let mut out = Vec::new();
-        for attempt in &turn.provider_attempts {
+        for attempt in turn
+            .provider_attempts
+            .iter()
+            .filter(|a| a.decision != voyage_protocol::provider_attempt::RetryDecision::Completed)
+        {
             note(&mut out, Key::Turn(run_id), attempt.summary(), 80);
         }
         let text = out
@@ -773,7 +801,12 @@ mod provider_attempt_tests {
             .collect::<Vec<_>>()
             .join("\n");
         assert!(text.contains("1/8"));
-        assert!(text.contains("partial response retained"));
+        assert!(
+            text.split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ")
+                .contains("partial response retained")
+        );
         assert!(text.contains("duplicate effects"));
         assert!(!text.contains("SECRET"));
         assert!(!text.contains('\u{1b}'));

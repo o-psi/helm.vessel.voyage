@@ -419,6 +419,8 @@ pub struct RetryPolicy {
     pub max_delay: Duration,
     /// Maximum elapsed time in which another attempt may be dispatched.
     pub max_elapsed: Duration,
+    pub response_timeout: Duration,
+    pub stream_idle: Duration,
 }
 
 impl Default for RetryPolicy {
@@ -428,6 +430,8 @@ impl Default for RetryPolicy {
             initial_delay: Duration::from_secs(1),
             max_delay: Duration::from_secs(30),
             max_elapsed: Duration::from_secs(120),
+            response_timeout: Duration::from_secs(60),
+            stream_idle: Duration::from_secs(300),
         }
     }
 }
@@ -990,6 +994,7 @@ impl Agent {
                     }
                 };
                 match event {
+                    crate::provider::ProviderStreamEvent::ResponseMetadata { .. } => {}
                     crate::provider::ProviderStreamEvent::UsageReported(report) => {
                         self.inference_report(permit.as_ref(), report).await.ok()?
                     }

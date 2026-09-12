@@ -199,6 +199,13 @@ pub enum VoyageCommand {
         operation: TerminalAction,
     },
     Snapshot,
+    /// Bounded persisted diagnostic history; never starts or retries inference.
+    ProviderAttempts {
+        run_id: Option<Uuid>,
+        offset: u64,
+        limit: u32,
+        expected_revision: Option<u64>,
+    },
     History {
         offset: u64,
         limit: u32,

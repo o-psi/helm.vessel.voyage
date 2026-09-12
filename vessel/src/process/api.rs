@@ -164,6 +164,17 @@ pub(super) fn runtime(command: VoyageCommand) -> Result<RuntimeCommand> {
             },
         },
         VoyageCommand::Snapshot => RuntimeCommand::Snapshot,
+        VoyageCommand::ProviderAttempts {
+            run_id,
+            offset,
+            limit,
+            expected_revision,
+        } => RuntimeCommand::ProviderAttempts {
+            run_id,
+            offset,
+            limit,
+            expected_revision,
+        },
         VoyageCommand::History {
             offset,
             limit,
@@ -560,6 +571,7 @@ pub(super) fn required_right(command: &VoyageCommand) -> Option<ProcessRight> {
         }
         VoyageCommand::AssignmentObserve { .. } => Some(ProcessRight::History),
         VoyageCommand::Snapshot
+        | VoyageCommand::ProviderAttempts { .. }
         | VoyageCommand::History { .. }
         | VoyageCommand::MessageChunk { .. }
         | VoyageCommand::RunOutput { .. }

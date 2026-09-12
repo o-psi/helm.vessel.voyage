@@ -141,6 +141,8 @@ pub struct Config {
     pub provider_retry_initial_ms: u64,
     pub provider_retry_max_ms: u64,
     pub provider_retry_elapsed_ms: u64,
+    pub provider_response_timeout_ms: u64,
+    pub provider_stream_idle_ms: u64,
     pub command_timeout_secs: u64,
     pub max_output_bytes: usize,
     pub terminal_max_count: usize,
@@ -313,6 +315,16 @@ pub const CONFIG_OVERRIDE_SPECS: &[ConfigOverrideSpec] = &[
         kind: ConfigValueKind::PositiveInteger,
     },
     ConfigOverrideSpec {
+        key: "provider_response_timeout_ms",
+        description: "Connection and response-start timeout (milliseconds)",
+        kind: ConfigValueKind::PositiveInteger,
+    },
+    ConfigOverrideSpec {
+        key: "provider_stream_idle_ms",
+        description: "Provider event idle timeout (milliseconds)",
+        kind: ConfigValueKind::PositiveInteger,
+    },
+    ConfigOverrideSpec {
         key: "command_timeout_secs",
         description: "Shell command timeout",
         kind: ConfigValueKind::PositiveInteger,
@@ -462,6 +474,8 @@ impl Default for Config {
             provider_retry_initial_ms: 1000,
             provider_retry_max_ms: 30000,
             provider_retry_elapsed_ms: 120000,
+            provider_response_timeout_ms: 60000,
+            provider_stream_idle_ms: 300000,
             command_timeout_secs: 120,
             max_output_bytes: 128 * 1024,
             terminal_max_count: 16,
@@ -878,6 +892,9 @@ impl Config {
             || self.subagent_event_history == 0
         {
             bail!("subagent limits must be greater than zero");
+        }
+        if self.provider_response_timeout_ms == 0 || self.provider_stream_idle_ms == 0 {
+            bail!("provider response and stream idle timeouts must be greater than zero");
         }
         if self.provider_retry_elapsed_ms == 0 {
             bail!("provider_retry_elapsed_ms must be greater than zero");

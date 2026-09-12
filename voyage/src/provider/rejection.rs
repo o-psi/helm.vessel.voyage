@@ -18,11 +18,22 @@ pub(super) fn classify(value: &Value, status: Option<u16>) -> Option<ProviderErr
         .flatten()
         .any(|code| matches!(code, "usage_limit_reached" | "insufficient_quota"))
     {
-        return Some(ProviderError::UsageLimit);
+        let code = if code == Some("insufficient_quota") || kind == Some("insufficient_quota") {
+            "insufficient_quota"
+        } else {
+            "usage_limit_reached"
+        };
+        return Some(ProviderError::Code {
+            source: Box::new(ProviderError::UsageLimit),
+            code,
+        });
     }
     // OpenAI Chat, Responses and ChatGPT use this explicit input rejection code.
     if code == Some("context_length_exceeded") || kind == Some("context_length_exceeded") {
-        return Some(ProviderError::ContextLength);
+        return Some(ProviderError::Code {
+            source: Box::new(ProviderError::ContextLength),
+            code: "context_length_exceeded",
+        });
     }
     // Anthropic uses invalid_request_error with "prompt is too long: N tokens >
     // M maximum". Older OpenAI errors use "This model's maximum context length

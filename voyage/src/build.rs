@@ -169,6 +169,8 @@ pub async fn build_authorized_agent_bundle(
             initial_delay: std::time::Duration::from_millis(config.provider_retry_initial_ms),
             max_delay: std::time::Duration::from_millis(config.provider_retry_max_ms),
             max_elapsed: std::time::Duration::from_millis(config.provider_retry_elapsed_ms),
+            response_timeout: std::time::Duration::from_millis(config.provider_response_timeout_ms),
+            stream_idle: std::time::Duration::from_millis(config.provider_stream_idle_ms),
         });
         Ok(ManagedAgent {
             agent: Arc::new(agent),

@@ -102,10 +102,10 @@ pub(crate) fn read_tokens(path: &Path) -> Result<Option<Vec<u8>>> {
         return Ok(None);
     };
     let _lock = directory.lock()?;
-    if let Some(bytes) = directory.read_bounded(&fence_name(name), LIMIT)? {
-        if bytes != b"null" {
-            return Err(super::RefreshPending.into());
-        }
+    if let Some(bytes) = directory.read_bounded(&fence_name(name), LIMIT)?
+        && bytes != b"null"
+    {
+        return Err(super::RefreshPending.into());
     }
     directory.read_bounded(name, LIMIT)
 }

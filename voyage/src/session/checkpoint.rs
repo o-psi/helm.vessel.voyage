@@ -327,6 +327,7 @@ mod provider_attempt_tests {
         let wrong = SessionCheckpoint::new(session.clone(), None, Uuid::new_v4());
         let checkpoint = SessionCheckpoint::new(session, Some(store.clone()), run_id);
         let mut attempt = ProviderAttempt {
+            retry: Default::default(),
             request_id: Uuid::new_v4(),
             attempt_id: Uuid::new_v4(),
             provider: "fixture".into(),

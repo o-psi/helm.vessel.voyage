@@ -191,17 +191,19 @@ impl Provider for ChatGptOAuth {
                 let response = checked_stream_response(response).await?;
                 use futures_util::StreamExt;
                 Ok(Box::pin(
-                    super::openai_responses::responses_stream(response.bytes_stream()).map(
-                        move |event| {
-                            event.map(|mut event| {
-                                if let super::ProviderStreamEvent::Completed(response) = &mut event
-                                {
-                                    filter_response_tier(response, &tokens);
-                                }
-                                event
-                            })
-                        },
-                    ),
+                    super::observed_stream(response, |response| {
+                        Box::pin(super::openai_responses::responses_stream(
+                            response.bytes_stream(),
+                        ))
+                    })
+                    .map(move |event| {
+                        event.map(|mut event| {
+                            if let super::ProviderStreamEvent::Completed(response) = &mut event {
+                                filter_response_tier(response, &tokens);
+                            }
+                            event
+                        })
+                    }),
                 ) as ProviderStream)
             })
             .await;
@@ -1074,10 +1076,10 @@ pub(crate) fn login_identity(tokens: &OAuthTokens) -> Result<Option<String>, Pro
             "/account_id",
             "/https:~1~1api.openai.com~1auth/chatgpt_account_id",
         ] {
-            if let Some(value) = claims.pointer(path) {
-                if value.as_str() != Some(tokens.account_id.as_str()) {
-                    return Err(invalid());
-                }
+            if let Some(value) = claims.pointer(path)
+                && value.as_str() != Some(tokens.account_id.as_str())
+            {
+                return Err(invalid());
             }
         }
         if let Some(value) = claims.get("sub") {

@@ -77,9 +77,11 @@ fn independent_refresh_child() {
             voyage_protocol::accounts::Transport::ChatgptOauth,
         )
         .unwrap();
-    let mut endpoints = super::OAuthEndpoints::default();
-    endpoints.token = format!("{endpoint}/token");
-    endpoints.models = format!("{endpoint}/models");
+    let endpoints = super::OAuthEndpoints {
+        token: format!("{endpoint}/token"),
+        models: format!("{endpoint}/models"),
+        ..Default::default()
+    };
     let p = super::ChatGptOauthProvider::from_store(
         super::ChatGptTokenStore::bound(r, binding),
         endpoints,

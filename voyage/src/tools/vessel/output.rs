@@ -53,6 +53,24 @@ pub(super) fn output(
             next["after"] = value["cursor"].clone();
         }
         value["next_read"] = next;
+    } else if action == "provider_attempts" && value["attempts"].is_array() {
+        loop {
+            let count = value["attempts"].as_array().unwrap().len();
+            let offset = value["offset"].as_u64().unwrap_or(0) + count as u64;
+            value["next_offset"] = json!(offset);
+            value["has_more"] = json!(offset < value["total"].as_u64().unwrap_or(0));
+            if value["has_more"] == true {
+                let mut next = request.clone();
+                next["offset"] = json!(offset);
+                next["limit"] = json!(count.max(1));
+                next["expected_revision"] = value["revision"].clone();
+                value["next_read"] = next;
+            }
+            if value.to_string().len() <= context.max_output_bytes || count <= 1 {
+                break;
+            }
+            value["attempts"].as_array_mut().unwrap().pop();
+        }
     } else if action == "history" && value["messages"].is_array() {
         value = super::history::page(value, request, context.max_output_bytes);
     } else if action == "history_search" && value["entries"].is_array() {
@@ -103,7 +121,7 @@ pub(super) fn output(
         limited["detail"] = json!(
             "The output budget cannot fit this observation. Read individual public snapshot fields through details; missing cleanup and state remain unknown."
         );
-    } else if matches!(action, "details" | "history_search") {
+    } else if matches!(action, "details" | "history_search" | "provider_attempts") {
         limited["detail"] = json!(
             "The output budget cannot fit even one field or a small text chunk with its identity. Increase the configured output budget; repeating this read unchanged cannot provide details."
         );

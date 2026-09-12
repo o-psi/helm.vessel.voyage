@@ -414,7 +414,7 @@ impl DeviceService {
                 r.device = None;
                 return Ok(r.status.clone());
             }
-            match result {
+            match result.map(|value| value.map_err(ProviderError::into_semantic)) {
                 Ok(Ok(tokens)) => {
                     // Cancellation and publication use the SAME lock and atomic checkpoint.
                     let request = r.request.clone();
@@ -437,10 +437,10 @@ impl DeviceService {
                     r.device = None;
                 }
                 Ok(Err(ProviderError::Unavailable(message))) => {
-                    if message == "device authorization slow_down" {
-                        if let Some(d) = &mut r.device {
-                            d.interval = d.interval.saturating_add(5).min(600);
-                        }
+                    if message == "device authorization slow_down"
+                        && let Some(d) = &mut r.device
+                    {
+                        d.interval = d.interval.saturating_add(5).min(600);
                     }
                     r.next_poll = now() + r.device.as_ref().map(|d| d.interval).unwrap_or(5);
                     r.status.state = EnrollmentState::Pending;

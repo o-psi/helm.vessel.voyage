@@ -11,6 +11,8 @@ use voyage_protocol::provider_attempt::{AttemptPhase, ProviderAttempt, RetryDeci
 #[derive(Clone, Copy)]
 enum Failure {
     Timeout,
+    SilentStart,
+    Idle,
     Text,
     Tool,
     Request,
@@ -33,6 +35,8 @@ impl Provider for ProviderFixture {
     async fn stream(&self, _: ModelRequest) -> Result<ProviderStream, ProviderError> {
         self.calls.fetch_add(1, Ordering::SeqCst);
         match self.failure {
+            Failure::SilentStart => futures_util::future::pending().await,
+            Failure::Idle => Ok(Box::pin(futures_util::stream::pending())),
             Failure::Timeout => Err(ProviderError::Timeout("SECRET_DIAGNOSTIC".into())),
             Failure::Request => Err(ProviderError::Request("SECRET_DIAGNOSTIC".into())),
             Failure::LongWait => Err(ProviderError::RateLimit {
@@ -175,6 +179,7 @@ fn fixture(
         initial_delay: Duration::from_millis(1),
         max_delay: Duration::from_millis(4),
         max_elapsed: Duration::from_secs(10),
+        ..Default::default()
     });
     let checkpoint = Checkpoint {
         attempts: Mutex::new(vec![]),
@@ -197,7 +202,7 @@ fn request() -> ModelRequest {
 }
 async fn execute(
     agent: &Agent,
-    checkpoint: &Checkpoint,
+    checkpoint: &dyn RunCheckpoint,
     cancel: &CancellationToken,
 ) -> Result<
     (
@@ -338,4 +343,75 @@ async fn missing_durable_intent_prevents_provider_dispatch() {
         Err(AgentError::Checkpoint(_))
     ));
     assert_eq!(calls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn active_provider_waits_time_out_and_observe_revocation() {
+    for failure in [Failure::SilentStart, Failure::Idle] {
+        let root = tempfile::tempdir().unwrap();
+        let (mut agent, calls, checkpoint, _, authority) = fixture(root.path(), failure);
+        agent.retry.response_timeout = Duration::from_millis(5);
+        agent.retry.stream_idle = Duration::from_millis(5);
+        assert!(
+            execute(&agent, &checkpoint, &CancellationToken::new())
+                .await
+                .is_err()
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 3);
+        assert_eq!(
+            checkpoint.attempts.lock().unwrap().last().unwrap().decision,
+            RetryDecision::AttemptsExhausted
+        );
+        agent.retry.response_timeout = Duration::from_secs(5);
+        agent.retry.stream_idle = Duration::from_secs(5);
+        let revoke = async {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            authority.store(true, Ordering::SeqCst);
+        };
+        let cancel = CancellationToken::new();
+        let (result, _) = tokio::join!(execute(&agent, &checkpoint, &cancel), revoke);
+        assert!(matches!(result, Err(AgentError::Policy(_))));
+        assert_eq!(calls.load(Ordering::SeqCst), 4);
+        assert_eq!(
+            checkpoint.attempts.lock().unwrap().last().unwrap().decision,
+            RetryDecision::PolicyRevoked
+        );
+    }
+}
+
+struct SlowSecondIntent(Checkpoint);
+#[async_trait]
+impl RunCheckpoint for SlowSecondIntent {
+    fn run_id(&self) -> uuid::Uuid {
+        uuid::Uuid::nil()
+    }
+    async fn canonical(&self, _: &[Message], _: &Usage) -> Result<(), CheckpointError> {
+        Ok(())
+    }
+    async fn partial(&self, _: &str) -> Result<(), CheckpointError> {
+        Ok(())
+    }
+    async fn provider_attempt(&self, record: &ProviderAttempt) -> Result<(), CheckpointError> {
+        self.0.provider_attempt(record).await?;
+        if record.attempt == 2 && record.decision == RetryDecision::InFlight {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        Ok(())
+    }
+}
+#[tokio::test]
+async fn checkpoint_delay_cannot_dispatch_beyond_retry_window() {
+    let root = tempfile::tempdir().unwrap();
+    let (mut agent, calls, checkpoint, _, _) = fixture(root.path(), Failure::Timeout);
+    agent.retry.max_elapsed = Duration::from_millis(40);
+    let checkpoint = SlowSecondIntent(checkpoint);
+    assert!(
+        execute(&agent, &checkpoint, &CancellationToken::new())
+            .await
+            .is_err()
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    let rows = checkpoint.0.attempts.lock().unwrap();
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[1].decision, RetryDecision::ElapsedBudget);
 }

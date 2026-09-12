@@ -345,7 +345,7 @@ async fn catalog_transport_and_status_metadata_are_preserved() {
 }
 
 #[tokio::test]
-async fn connection_failure_is_uncertain_and_never_contains_the_endpoint() {
+async fn connection_refusal_is_retryable_and_never_contains_the_endpoint() {
     let error = endpoint_http_client(&native_http_client(), "http://127.0.0.1:0")
         .get("http://127.0.0.1:0/PRIVATE")
         .timeout(std::time::Duration::from_secs(5))
@@ -353,9 +353,9 @@ async fn connection_failure_is_uncertain_and_never_contains_the_endpoint() {
         .await
         .unwrap_err();
     let error = map_transport(error);
-    assert_eq!(error.category(), "transport");
+    assert_eq!(error.category(), "connection");
     assert_eq!(error.http_status(), None);
-    assert!(!error.is_retryable());
+    assert!(error.is_retryable());
     assert!(!format!("{error:?}").contains("PRIVATE"));
     assert!(!format!("{error:?}").contains("127.0.0.1"));
 }

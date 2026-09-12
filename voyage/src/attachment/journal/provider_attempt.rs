@@ -68,6 +68,7 @@ mod tests {
             .unwrap()
             .run;
         let mut attempt = ProviderAttempt {
+            retry: Default::default(),
             request_id: Uuid::new_v4(),
             attempt_id: Uuid::new_v4(),
             provider: "fixture".into(),

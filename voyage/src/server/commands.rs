@@ -163,6 +163,7 @@ pub(super) async fn dispatch_admitted(
                 "snapshot",
                 "read_artifact",
                 "history",
+                "provider_attempts",
                 "message_chunk",
                 "run_output",
                 "submit",
@@ -239,6 +240,17 @@ pub(super) async fn dispatch_admitted(
                 .decisions(state.registration.incarnation)
                 .await?;
             Ok(snapshot)
+        }
+        RuntimeCommand::ProviderAttempts {
+            run_id,
+            offset,
+            limit,
+            expected_revision,
+        } => {
+            state
+                .owner
+                .process_provider_attempts(run_id, offset, limit, expected_revision)
+                .await
         }
         RuntimeCommand::History {
             offset,

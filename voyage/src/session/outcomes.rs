@@ -64,6 +64,60 @@ impl Session {
             !run_id.is_nil() && !attempt.request_id.is_nil() && !attempt.attempt_id.is_nil(),
             "invalid attempt identity"
         );
+        anyhow::ensure!(
+            attempt.attempt > 0 && attempt.attempt <= attempt.limit,
+            "invalid attempt ordinal"
+        );
+        anyhow::ensure!(
+            attempt.provider.len() <= 256
+                && attempt.model.len() <= 1024
+                && !attempt
+                    .provider
+                    .chars()
+                    .chain(attempt.model.chars())
+                    .any(char::is_control),
+            "invalid attempt label"
+        );
+        anyhow::ensure!(
+            attempt.category.as_deref().is_none_or(|v| matches!(
+                v,
+                "authentication"
+                    | "usage_limit"
+                    | "context_length"
+                    | "rate_limit"
+                    | "unavailable"
+                    | "timeout"
+                    | "connection"
+                    | "transport"
+                    | "request"
+                    | "invalid_response"
+                    | "incomplete"
+            )),
+            "invalid attempt category"
+        );
+        anyhow::ensure!(
+            attempt
+                .retry
+                .upstream_request_id
+                .as_deref()
+                .is_none_or(|id| !id.is_empty()
+                    && id.len() <= 128
+                    && id
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b"_-.:".contains(&b))),
+            "invalid upstream request id"
+        );
+        anyhow::ensure!(
+            attempt
+                .retry
+                .provider_code
+                .as_deref()
+                .is_none_or(|code| matches!(
+                    code,
+                    "insufficient_quota" | "usage_limit_reached" | "context_length_exceeded"
+                )),
+            "invalid provider code"
+        );
         let summary = self
             .run_summaries
             .last_mut()

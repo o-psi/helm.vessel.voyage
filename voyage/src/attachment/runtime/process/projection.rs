@@ -82,6 +82,7 @@ pub(super) fn failure_summary(reason: Option<&str>) -> Option<&str> {
             | "Provider request timed out."
             | "Provider rejected the request."
             | "Provider request failed."
+            | "Provider connection could not be established."
             | "Provider connection failed; request outcome may be uncertain."
             | "Provider returned an invalid or incomplete response."
             | "Provider stopped before completing its response."
@@ -131,15 +132,16 @@ pub(super) fn run(
     let (live, live_truncated) = text_prefix(live, 65536);
     let (partial, truncated) = text_prefix(&run.partial_text, 65536);
     json!({"run_id":run.id,"state":run.state,"failure_summary":failure_summary(run.terminal_reason.as_deref()),
-        "provider_attempts":summary.map(|s| s.provider_attempts.as_slice()).unwrap_or_default(),
+        "provider_attempts":summary.and_then(|s| s.provider_attempts.last()).into_iter().collect::<Vec<_>>(),
+        "provider_attempt_count":summary.map_or(0, |s| s.provider_attempts.len()),
         "provider_attempt_summary":summary.and_then(|s| s.provider_attempts.last()).map(|a| a.summary()),
         "partial_text":partial,"partial_text_truncated":truncated,"partial_text_bytes":run.partial_text.len(),
         "live_text":live,"live_text_truncated":live_truncated,"live_text_offset":offset,
         "stream_reconciled":offset.is_some(),"message_start":summary.and_then(|s| s.message_start)})
 }
 pub(super) fn turns(session: &crate::session::Session) -> Vec<Value> {
-    session.run_summaries.iter().map(|s| json!({
-        "run_id":s.run_id,"phase":s.phase,"provider_attempts":s.provider_attempts,
+    session.run_summaries.iter().rev().take(128).rev().map(|s| json!({
+        "run_id":s.run_id,"phase":s.phase,"provider_attempts":s.provider_attempts.last().into_iter().collect::<Vec<_>>(),"provider_attempt_count":s.provider_attempts.len(),
         "provider_attempt_summary":s.provider_attempts.last().map(|a| a.summary()),"failure_summary":failure_summary(s.detail.as_deref()),"message_start":s.message_start,"message_end":s.message_end,"started_at":s.started_at,"finished_at":s.finished_at
     })).collect()
 }
@@ -178,6 +180,7 @@ mod provider_attempt_tests {
                 .upsert_provider_attempt(
                     run_id,
                     &ProviderAttempt {
+                        retry: Default::default(),
                         request_id: uuid::Uuid::new_v4(),
                         attempt_id: uuid::Uuid::new_v4(),
                         provider: "fixture".into(),
@@ -187,7 +190,7 @@ mod provider_attempt_tests {
                         started_at_ms: 0,
                         duration_ms: 1,
                         phase: AttemptPhase::Dispatch,
-                        category: Some("SECRET-error".into()),
+                        category: Some("timeout".into()),
                         http_status: None,
                         text_observed: false,
                         tool_fragment_observed: false,
@@ -198,10 +201,64 @@ mod provider_attempt_tests {
                 .unwrap();
         }
         let turns = turns(&session);
-        assert_eq!(turns[0]["provider_attempts"].as_array().unwrap().len(), 130);
+        assert_eq!(turns[0]["provider_attempts"].as_array().unwrap().len(), 1);
+        assert_eq!(turns[0]["provider_attempt_count"], 130);
+        let mut offset = 0;
+        let mut seen = std::collections::HashSet::new();
+        loop {
+            let page = attempt_page(&session, 1, Some(run_id), offset, 32).unwrap();
+            for item in page["attempts"].as_array().unwrap() {
+                assert!(seen.insert(item["attempt"]["attempt_id"].as_str().unwrap().to_owned()));
+            }
+            offset = page["next_offset"].as_u64().unwrap() as usize;
+            if page["has_more"] == false {
+                break;
+            }
+        }
+        assert_eq!(seen.len(), 130);
         let summary = turns[0]["provider_attempt_summary"].as_str().unwrap();
         assert!(summary.contains("outcome not yet recorded"));
         assert!(!summary.contains("SECRET-error"));
         assert!(session.messages.is_empty());
     }
+}
+
+/// Every persisted attempt is available through revision-bound bounded pages.
+pub(super) fn attempt_page(
+    session: &crate::session::Session,
+    revision: u64,
+    run_id: Option<uuid::Uuid>,
+    offset: usize,
+    limit: usize,
+) -> anyhow::Result<Value> {
+    anyhow::ensure!(
+        (1..=32).contains(&limit),
+        "attempt page limit must be 1..32"
+    );
+    if let Some(id) = run_id {
+        anyhow::ensure!(
+            session.run_summaries.iter().any(|s| s.run_id == id),
+            "unknown run"
+        );
+    }
+    let selected = || {
+        session
+            .run_summaries
+            .iter()
+            .filter(|s| run_id.is_none_or(|id| s.run_id == id))
+    };
+    let total: usize = selected().map(|s| s.provider_attempts.len()).sum();
+    anyhow::ensure!(offset <= total, "attempt offset beyond history");
+    let attempts: Vec<_> = selected()
+        .flat_map(|s| s.provider_attempts.iter().map(move |a| (s.run_id, a)))
+        .skip(offset)
+        .take(limit)
+        .map(|(run_id, a)| json!({"run_id":run_id,"attempt":a,"summary":a.summary()}))
+        .collect();
+    let next = offset + attempts.len();
+    Ok(
+        json!({"session_id":session.id,"revision":revision,"offset":offset,"total":total,
+        "next_offset":next,"has_more":next<total,"attempts":attempts,
+        "legacy_runs_without_diagnostics":selected().filter(|s| s.provider_attempts.is_empty()).count()}),
+    )
 }

@@ -396,6 +396,10 @@ and recovers from recognized provider context rejection without enabling a local
 token gate or repeating completed tools. `provider_retry_attempts` (default 8 total),
 `provider_retry_initial_ms` (1000), `provider_retry_max_ms` (30000) and
 `provider_retry_elapsed_ms` (120000) bound retries before streamed content arrives.
+`provider_response_timeout_ms` (60000) bounds connection/response start, and
+`provider_stream_idle_ms` (300000) bounds time between decoded provider events.
+Raw byte trickles and SSE heartbeats do not reset the idle timer. These are separate
+from the retry-admission window and shell command timeout.
 The elapsed window includes request and backoff time and prevents a new retry once
 exhausted; it does not abort an in-flight response. Native transport deadlines and
 explicit inference/runtime budgets still apply. Existing explicitly configured

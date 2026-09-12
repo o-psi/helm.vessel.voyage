@@ -97,6 +97,7 @@ pub fn required_process_right(command: &RuntimeCommand) -> Option<ProcessRight> 
         }
         RuntimeCommand::AssignmentObserve { .. } => Some(ProcessRight::History),
         RuntimeCommand::Snapshot
+        | RuntimeCommand::ProviderAttempts { .. }
         | RuntimeCommand::History { .. }
         | RuntimeCommand::MessageChunk { .. }
         | RuntimeCommand::RunOutput { .. }

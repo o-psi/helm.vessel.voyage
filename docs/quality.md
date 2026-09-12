@@ -264,3 +264,8 @@ These tests are included in workspace coverage; the Python journey is separate.
 When using a shared build target, retain every current Cargo compiler-artifact
 executable in the LLVM report and exclude historical stale binaries, not workspace
 packages. See [#251](https://github.com/o-psi/voyage/issues/251).
+
+## Provider attempt recovery (#261)
+
+See [provider failures and recovery](provider-attempts.md) for the focused native
+process fixture, diagnostic contract, timeout semantics and explicit continuation.

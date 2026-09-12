@@ -91,9 +91,44 @@ impl ManagedSessionOwner {
             let retained = store.journal.retained_cleanup(store.session_id)?;
             let has_retained = retained["run_ids"].as_array().is_some_and(|v| !v.is_empty()) || retained["resources"].as_array().is_some_and(|v| !v.is_empty());
             let recovery_notice = has_retained.then_some("Conversation ready to continue. Previous interrupted work has unknown effects; its unfinished commands were not repeated.");
-            Ok(json!({"session_id":session.id,"revision":saved.revision,"created_at":session.created_at,"last_message_at":last_message_at,"name":session.name,"model":session.model,"workspace":session.workspace,"turns":projection::turns(&session),"messages":messages,"total_messages":session.messages.len(),"message_offset":offset,"history_truncated":offset>0 || messages.iter().any(|message| message["projection_truncated"]==true),"run":run.map(|run| projection::run(&session, &run)),"pending_cleanup_run":summary.and_then(|s|s.pending_cleanup_run),"cleanup":store.journal.cleanup_progress(store.session_id)?,"retained_cleanup":retained,"recovery_notice":recovery_notice,"decisions":[],"session_resources":store.journal.session_resources(store.session_id)?,"lifecycle":store.journal.lifecycle_status(store.session_id)?,"observation_cursor":store.journal.observation_cursor(store.session_id)?,"observation":"snapshot","projection":"public-v1"}))
+            Ok(json!({"session_id":session.id,"revision":saved.revision,"created_at":session.created_at,"last_message_at":last_message_at,"name":session.name,"model":session.model,"workspace":session.workspace,"turns":projection::turns(&session),"total_turns":session.run_summaries.len(),"turns_truncated":session.run_summaries.len()>128,"messages":messages,"total_messages":session.messages.len(),"message_offset":offset,"history_truncated":offset>0 || messages.iter().any(|message| message["projection_truncated"]==true),"run":run.map(|run| projection::run(&session, &run)),"pending_cleanup_run":summary.and_then(|s|s.pending_cleanup_run),"cleanup":store.journal.cleanup_progress(store.session_id)?,"retained_cleanup":retained,"recovery_notice":recovery_notice,"decisions":[],"session_resources":store.journal.session_resources(store.session_id)?,"lifecycle":store.journal.lifecycle_status(store.session_id)?,"observation_cursor":store.journal.observation_cursor(store.session_id)?,"observation":"snapshot","projection":"public-v1"}))
         }).await?
     }
+    pub(crate) async fn process_provider_attempts(
+        &self,
+        run_id: Option<Uuid>,
+        offset: u64,
+        limit: u32,
+        expected_revision: Option<u64>,
+    ) -> anyhow::Result<Value> {
+        anyhow::ensure!(
+            (1..=32).contains(&limit),
+            "attempt page limit must be 1..32"
+        );
+        let offset = usize::try_from(offset)?;
+        let shared = self.store.clone();
+        tokio::task::spawn_blocking(move || {
+            let store = shared
+                .lock()
+                .map_err(|_| anyhow::anyhow!("owner poisoned"))?;
+            let saved = store.journal.load_session(store.session_id)?;
+            if let Some(expected) = expected_revision {
+                anyhow::ensure!(
+                    expected == saved.revision,
+                    "diagnostic history changed; reload from offset zero"
+                );
+            }
+            projection::attempt_page(
+                &saved.session,
+                saved.revision,
+                run_id,
+                offset,
+                limit as usize,
+            )
+        })
+        .await?
+    }
+
     pub(crate) async fn process_history(
         &self,
         offset: u64,

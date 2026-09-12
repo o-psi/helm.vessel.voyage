@@ -99,7 +99,9 @@ impl Provider for OpenAiResponsesProvider {
                     .await
                     .map_err(map_transport)?;
                 let response = checked_stream_response(response).await?;
-                Ok(Box::pin(responses_stream(response.bytes_stream())) as ProviderStream)
+                Ok(super::observed_stream(response, |response| {
+                    Box::pin(responses_stream(response.bytes_stream()))
+                }))
             })
             .await;
         result.map(|stream| super::multimodal::guard_stream(images, stream))
@@ -533,7 +535,7 @@ where
                     "response.output_item.added"=>if event.pointer("/item/type").and_then(Value::as_str)==Some("function_call"){let index=output_index(&event);let call=assembly.calls.entry(index).or_default();call.id=event.pointer("/item/call_id").and_then(Value::as_str).unwrap_or_default().into();call.name=event.pointer("/item/name").and_then(Value::as_str).unwrap_or_default().into();yield ProviderStreamEvent::Delta(ProviderDelta::ToolCall{index,id:Some(call.id.clone()),name:Some(call.name.clone()),arguments:String::new()});},
                     "response.function_call_arguments.delta"=>{let index=output_index(&event);let call=assembly.calls.entry(index).or_default();let delta=event.get("delta").and_then(Value::as_str).unwrap_or_default();call.arguments.push_str(delta);yield ProviderStreamEvent::Delta(ProviderDelta::ToolCall{index,id:None,name:None,arguments:delta.into()});},
                     "response.output_item.done"=>merge_output_item(&event,&mut assembly)?,
-                    "response.completed"=>{if let Some(response)=event.get("response"){validate_status(response)?;merge_final(response,&mut assembly)?;}yield ProviderStreamEvent::Completed(finish(assembly)?);return},
+                    "response.completed"=>{if let Some(response)=event.get("response"){validate_status(response)?;merge_final(response,&mut assembly)?;}yield ProviderStreamEvent::Completed(Box::new(finish(assembly)?));return},
                     "response.failed"|"response.incomplete"|"response.cancelled"|"error"=>Err(decode_stream_error(&event))?,
                     _=>{}
                 }
@@ -846,7 +848,7 @@ mod context_rejection_tests {
             let stream = responses_stream(source);
             futures_util::pin_mut!(stream);
             let error = stream.next().await.unwrap().unwrap_err();
-            assert!(matches!(error, ProviderError::ContextLength));
+            assert!(error.is_context_length());
             assert!(!error.is_retryable());
             assert_eq!(error.to_string(), super::super::CONTEXT_LENGTH_MESSAGE);
             assert!(stream.next().await.is_none());
@@ -859,7 +861,7 @@ mod context_rejection_tests {
             "code":"context_length_exceeded","message":"PRIVATE"
         }}))
         .unwrap_err();
-        assert!(matches!(error, ProviderError::ContextLength));
+        assert!(error.is_context_length());
         for reason in ["max_output_tokens", "content_filter"] {
             let event = json!({"type":"response.incomplete","response":{
                 "status":"incomplete","incomplete_details":{"reason":reason},
@@ -878,10 +880,7 @@ mod context_rejection_tests {
             let event = json!({"type":"response.failed","response":{"error":{
                 "code":code,"message":"PRIVATE"
             }}});
-            assert!(matches!(
-                decode_stream_error(&event),
-                ProviderError::UsageLimit
-            ));
+            assert_eq!(decode_stream_error(&event).category(), "usage_limit");
         }
         let unknown = json!({"type":"error","code":"rate_limit_exceeded"});
         assert!(matches!(

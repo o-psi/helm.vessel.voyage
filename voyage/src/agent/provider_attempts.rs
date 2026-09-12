@@ -46,7 +46,9 @@ impl Agent {
         record: &ProviderAttempt,
     ) -> Result<(), AgentError> {
         if let Some(checkpoint) = checkpoint {
-            checkpoint.provider_attempt(record).await?;
+            tokio::time::timeout(self.context.timeout, checkpoint.provider_attempt(record))
+                .await
+                .map_err(|_| CheckpointError)??;
         }
         Ok(())
     }
@@ -88,6 +90,13 @@ impl Agent {
                 .await?;
             let started = tokio::time::Instant::now();
             let mut record = ProviderAttempt {
+                retry: voyage_protocol::provider_attempt::RetryObservation {
+                    response_timeout_ms: Some(millis(self.retry.response_timeout)),
+                    stream_idle_ms: Some(millis(self.retry.stream_idle)),
+                    max_delay_ms: Some(millis(self.retry.max_delay)),
+                    max_elapsed_ms: Some(millis(self.retry.max_elapsed)),
+                    ..Default::default()
+                },
                 request_id,
                 attempt_id: permit
                     .as_ref()
@@ -125,6 +134,17 @@ impl Agent {
             };
             // Durable intent precedes the external request; failure here never dispatches.
             self.record_provider_attempt(checkpoint, &record).await?;
+            if attempt > 1 && window.elapsed() >= self.retry.max_elapsed {
+                record.decision = RetryDecision::ElapsedBudget;
+                record.retry.elapsed_ms = Some(millis(window.elapsed()));
+                self.record_provider_attempt(checkpoint, &record).await?;
+                self.inference_finish(permit.as_ref(), crate::inference::AttemptOutcome::Failed)
+                    .await?;
+                return Err(ProviderError::Timeout(
+                    "retry admission window elapsed before dispatch".into(),
+                )
+                .into());
+            }
             let outcome = self
                 .provider_attempt_stream(
                     &request,
@@ -144,7 +164,20 @@ impl Agent {
                 }
                 Err(AgentError::Provider(error)) => {
                     record.category = Some(error.category().into());
-                    record.http_status = error.http_status();
+                    record.http_status = error.http_status().or(record.http_status);
+                    if let Some(id) = error
+                        .upstream_request_id()
+                        .filter(|id| !self.context.redactor.contains_secret(id))
+                    {
+                        record.retry.upstream_request_id = Some(id.to_owned());
+                    }
+                    record.retry.server_delay_ms = error.retry_after().map(millis);
+                    record.retry.elapsed_ms = Some(millis(window.elapsed()));
+                    record.retry.failure_phase = Some(record.phase.clone());
+                    record.retry.eligible = error.is_retryable()
+                        && !record.text_observed
+                        && !record.tool_fragment_observed;
+                    record.retry.provider_code = error.safe_code().map(str::to_owned);
                     let (decision, wait) =
                         self.retry_decision(&error, &record, window.elapsed(), delay);
                     record.decision = decision;
@@ -179,7 +212,11 @@ impl Agent {
                             error: error.public_failure_reason().into(),
                         })
                         .await;
-                    if let Err(stop) = self.retry_wait(wait, cancel).await {
+                    let backoff_start = tokio::time::Instant::now();
+                    let stop = self.retry_wait(wait, cancel).await;
+                    record.retry.backoff_ms = Some(millis(backoff_start.elapsed()));
+                    record.retry.elapsed_ms = Some(millis(window.elapsed()));
+                    if let Err(stop) = stop {
                         record.phase = AttemptPhase::Backoff;
                         record.decision = match &stop {
                             AgentError::Cancelled => RetryDecision::Cancelled,
@@ -195,6 +232,7 @@ impl Agent {
                         self.record_provider_attempt(checkpoint, &record).await?;
                         return Err(error.into());
                     }
+                    self.record_provider_attempt(checkpoint, &record).await?;
                     delay = delay.saturating_mul(2).min(self.retry.max_delay);
                 }
                 Err(error) => {
@@ -225,21 +263,27 @@ impl Agent {
             .policy
             .check_execution_authority()
             .map_err(|_| AgentError::Policy("foreground execution authority unavailable".into()))?;
-        let mut stream = tokio::select! {
-            biased;
-            _ = cancel.cancelled() => return Err(AgentError::Cancelled),
-            value = self.provider.stream(request.clone()) => value?,
-        };
+        let mut stream = self
+            .provider_wait(
+                self.provider.stream(request.clone()),
+                self.retry.response_timeout,
+                cancel,
+            )
+            .await??;
         record.phase = AttemptPhase::Stream;
         self.record_provider_attempt(checkpoint, record).await?;
         let mut pending_text = String::new();
         loop {
-            let event = tokio::select! {
-                biased;
-                _ = cancel.cancelled() => return Err(AgentError::Cancelled),
-                value = stream.next() => value,
-            };
+            let event = self
+                .provider_wait(stream.next(), self.retry.stream_idle, cancel)
+                .await?;
             match event {
+                Some(Ok(ProviderStreamEvent::ResponseMetadata { status, request_id })) => {
+                    record.http_status = Some(status);
+                    record.retry.upstream_request_id =
+                        request_id.filter(|id| !self.context.redactor.contains_secret(id));
+                    self.record_provider_attempt(checkpoint, record).await?;
+                }
                 Some(Ok(ProviderStreamEvent::UsageReported(report))) => {
                     self.inference_report(permit, report).await?
                 }
@@ -281,7 +325,7 @@ impl Agent {
                     let safe = self.context.redactor.redact_public_prefix(&pending_text);
                     self.project_provider_text(safe, checkpoint, partial_output)
                         .await?;
-                    return Ok(response);
+                    return Ok(*response);
                 }
                 Some(Err(error)) => return Err(error.into()),
                 None => {
@@ -290,6 +334,33 @@ impl Agent {
                     )
                     .into());
                 }
+            }
+        }
+    }
+
+    /// Poll one response/event with a real deadline and continuous authority checks.
+    /// Only decoded provider events reset idle time; raw bytes and SSE comments do not.
+    async fn provider_wait<F: std::future::Future>(
+        &self,
+        future: F,
+        timeout: Duration,
+        cancel: &CancellationToken,
+    ) -> Result<F::Output, AgentError> {
+        let work = tokio::time::timeout(timeout, future);
+        tokio::pin!(work);
+        loop {
+            self.check_current_policy()?;
+            self.context
+                .policy
+                .check_execution_authority()
+                .map_err(|_| {
+                    AgentError::Policy("foreground execution authority unavailable".into())
+                })?;
+            tokio::select! {
+                biased;
+                _ = cancel.cancelled() => return Err(AgentError::Cancelled),
+                value = &mut work => return value.map_err(|_| ProviderError::Timeout("provider response/event deadline elapsed".into()).into()),
+                _ = tokio::time::sleep(Duration::from_millis(100)) => {},
             }
         }
     }

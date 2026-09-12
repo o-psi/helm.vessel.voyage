@@ -254,9 +254,10 @@ impl Provider for AnthropicProvider {
                     .send()
                     .await
                     .map_err(map_transport)?;
-                Ok(Box::pin(anthropic_stream(
-                    checked_stream_response(response).await?.bytes_stream(),
-                )) as ProviderStream)
+                Ok(super::observed_stream(
+                    checked_stream_response(response).await?,
+                    |response| Box::pin(anthropic_stream(response.bytes_stream())),
+                ))
             })
             .await;
         result.map(|stream| super::multimodal::guard_stream(images, stream))
@@ -307,7 +308,7 @@ where
                     yield ProviderStreamEvent::UsageReported(super::reported_usage(usage, "input_tokens", "output_tokens")?);
                 }
                 if value.get("type").and_then(Value::as_str)==Some("message_stop") {
-                    yield ProviderStreamEvent::Completed(finish_stream(assembly)?);
+                    yield ProviderStreamEvent::Completed(Box::new(finish_stream(assembly)?));
                     return;
                 }
                 for event in apply_stream_event(&value,&mut assembly){yield ProviderStreamEvent::Delta(event);}
@@ -654,7 +655,7 @@ mod context_rejection_tests {
             let stream = anthropic_stream(source);
             futures_util::pin_mut!(stream);
             let error = stream.next().await.unwrap().unwrap_err();
-            assert_eq!(matches!(error, ProviderError::ContextLength), context);
+            assert_eq!(error.is_context_length(), context);
             assert!(!error.is_retryable());
             assert!(!error.to_string().contains("PRIVATE"));
             assert!(stream.next().await.is_none());

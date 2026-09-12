@@ -904,3 +904,11 @@ workflow; the chooser does not silently activate them. Unrestricted does not rem
 folder limits, blocked commands or administrator policy. Built-in tools remain
 available for later access changes; MCP servers omitted when a run starts in
 read-only mode are not started by a mid-run access change.
+
+## Provider attempt diagnostics
+
+Provider failures retain sanitized attempt history and explicit retry-stop reasons.
+Native connection refusal, bounded retries, response-start and decoded-event idle
+timeouts, and Helm `/attempts` inspection are described in
+[provider failures and recovery](provider-attempts.md). Partial-output failures
+require explicit continuation; uncertain effects are not automatically replayed.

@@ -105,6 +105,9 @@ fn invalid(message: &str) -> ToolError {
 fn failed(message: &str) -> ToolError {
     ToolError::Failed(message.into())
 }
+fn attempt_limit() -> u32 {
+    16
+}
 fn limit() -> u32 {
     50
 }
@@ -180,6 +183,15 @@ enum Action {
         #[serde(default)]
         offset: u64,
         #[serde(default = "limit")]
+        limit: u32,
+        expected_revision: Option<u64>,
+    },
+    ProviderAttempts {
+        session_id: Uuid,
+        run_id: Option<Uuid>,
+        #[serde(default)]
+        offset: u64,
+        #[serde(default = "attempt_limit")]
         limit: u32,
         expected_revision: Option<u64>,
     },
@@ -314,6 +326,11 @@ fn input_schema() -> Value {
             ("search", &["query"], &["offset", "limit"]),
             ("inspect", &["session_id"], &[]),
             (
+                "provider_attempts",
+                &["session_id"],
+                &["run_id", "offset", "limit", "expected_revision"],
+            ),
+            (
                 "details",
                 &["session_id"],
                 &["path", "offset", "limit", "expected_revision"],
@@ -396,11 +413,16 @@ fn input_schema() -> Value {
             .as_str()
             .unwrap()
             .to_owned();
+        if action == "provider_attempts" {
+            branch["properties"]["limit"]["maximum"] = json!(32);
+        }
         if matches!(action.as_str(), "steer" | "cancel" | "run_output") {
             branch["properties"]["run_id"]["type"] = json!("string");
         }
-        if !matches!(action.as_str(), "history" | "details" | "history_search")
-            && branch["properties"].get("expected_revision").is_some()
+        if !matches!(
+            action.as_str(),
+            "history" | "details" | "history_search" | "provider_attempts"
+        ) && branch["properties"].get("expected_revision").is_some()
         {
             branch["properties"]["expected_revision"]["type"] = json!("integer");
         }
@@ -418,7 +440,7 @@ impl Tool for VesselTool {
             output_schema: None,
             annotations: None,
             name: "vessel".into(),
-            description: "Coordinate any voyage authorized by configured Vessel routes, not just related voyages. Public HTTP only; no credentials, terminal access, approval responses, shell, or provider configuration exposed. Ordinary tool policy approvals still apply. routes identifies the owning voyage and configured target aliases. inspect returns a compact observed overview and exact drill-down requests. details pages public snapshot fields using returned JSON pointers; message reads a complete public message as JSON text chunks; run_output reads run text chunks. Follow next_read exactly; offsets for message/run_output count redacted UTF-8 bytes. Start these reads at offset zero; continuations require the returned private cursor (16 cached pages, 15 minute lifetime). total_bytes is unknown until the end. These reads stream bounded chunks without a source-size cap; history_search still has a 4 MiB per-message source cap; snapshots may have upstream omissions; list/search page catalogue metadata (search is not full-text history). history automatically fits canonical conversation pages to the output budget. history_search searches redacted message content with regex and optional role, returning matching-message pages and explicit unsearched entries; follow next_read even on empty match pages until has_more is false. Patterns use Rust regex with inline flags, no look-around/backreferences. It does not search attachment bytes or structured tool-call arguments. follow/wait read bounded events after a cursor; a timeout is not completion. Mutations require a stable caller-generated command_id; reuse it only for the identical request. Durable intents precede effects; unknown outcomes are never replayed. operations pages durable local intent IDs; receipt with session_id queries the server; without it reads the local journal. Create starts a session then submits required initial task; its start command ID is session_id. Use a fresh session ID. Target defaults to local; remote grants enforce their actual rights. No implicit startup, recovery, deletion, or authority broadening.".into(),
+            description: "Coordinate any voyage authorized by configured Vessel routes, not just related voyages. Public HTTP only; no credentials, terminal access, approval responses, shell, or provider configuration exposed. Ordinary tool policy approvals still apply. routes identifies the owning voyage and configured target aliases. inspect returns a compact observed overview and exact drill-down requests. details pages public snapshot fields using returned JSON pointers; message reads a complete public message as JSON text chunks; run_output reads run text chunks. Follow next_read exactly; offsets for message/run_output count redacted UTF-8 bytes. Start these reads at offset zero; continuations require the returned private cursor (16 cached pages, 15 minute lifetime). total_bytes is unknown until the end. These reads stream bounded chunks without a source-size cap; history_search still has a 4 MiB per-message source cap; snapshots may have upstream omissions; list/search page catalogue metadata (search is not full-text history). provider_attempts pages durable provider diagnostics separately from messages (limit 1..32); follow next_read with its revision. history automatically fits canonical conversation pages to the output budget. history_search searches redacted message content with regex and optional role, returning matching-message pages and explicit unsearched entries; follow next_read even on empty match pages until has_more is false. Patterns use Rust regex with inline flags, no look-around/backreferences. It does not search attachment bytes or structured tool-call arguments. follow/wait read bounded events after a cursor; a timeout is not completion. Mutations require a stable caller-generated command_id; reuse it only for the identical request. Durable intents precede effects; unknown outcomes are never replayed. operations pages durable local intent IDs; receipt with session_id queries the server; without it reads the local journal. Create starts a session then submits required initial task; its start command ID is session_id. Use a fresh session ID. Target defaults to local; remote grants enforce their actual rights. No implicit startup, recovery, deletion, or authority broadening.".into(),
             input_schema: input_schema(),
         }
     }
@@ -481,6 +503,11 @@ impl Tool for VesselTool {
             _ => (),
         }
         match &action {
+            Action::ProviderAttempts { limit, .. } => {
+                if !(1..=32).contains(limit) {
+                    return Err(invalid("attempt limit must be 1..32"));
+                }
+            }
             Action::Operations { limit, .. }
             | Action::List { limit, .. }
             | Action::Search { limit, .. }
@@ -841,6 +868,26 @@ async fn perform(
                 page(limit)?,
                 expected_revision,
                 context,
+            )
+            .await
+        }
+        Action::ProviderAttempts {
+            session_id,
+            run_id,
+            offset,
+            limit,
+            expected_revision,
+        } => {
+            voyage(
+                t,
+                session_id,
+                None,
+                VoyageCommand::ProviderAttempts {
+                    run_id,
+                    offset,
+                    limit,
+                    expected_revision,
+                },
             )
             .await
         }

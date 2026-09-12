@@ -215,7 +215,7 @@ async fn inspect(
         RuntimeCommand::Stop => Ok(json!({"status":"stopped","cleanup":"observed"})),
         RuntimeCommand::Health => Ok(json!({"pid":null,"session_id":registration.session_id,
             "incarnation":registration.incarnation,"suspended":true,
-            "capabilities":["notification_events","snapshot","history","message_chunk","run_output","submit",
+            "capabilities":["notification_events","provider_attempts","snapshot","history","message_chunk","run_output","submit",
                 "receipt","resolve","cancel","steer","rename","set_model","set_inference","set_account_inference","set_access","decisions",
                 "respond","archive","delete","branch","clear","compact","events","controls",
                 "operator_tool","configure","workflow_submit","terminal","assignment_observe",
@@ -255,6 +255,16 @@ async fn inspect(
             }
             bootstrap::annotate_workspace(&mut snapshot, directory, registration);
             Ok(snapshot)
+        }
+        RuntimeCommand::ProviderAttempts {
+            run_id,
+            offset,
+            limit,
+            expected_revision,
+        } => {
+            owner
+                .process_provider_attempts(run_id, offset, limit, expected_revision)
+                .await
         }
         RuntimeCommand::History {
             offset,

@@ -401,10 +401,20 @@ pub(crate) fn check_body(body: &Value) -> Result<(), ProviderError> {
 pub(crate) fn redact(error: ProviderError) -> ProviderError {
     const MESSAGE: &str = "image-bearing provider request failed; provider diagnostic omitted";
     match error {
-        ProviderError::HttpStatus { source, status } => ProviderError::HttpStatus {
+        ProviderError::Code { source, code } => ProviderError::Code {
+            source: Box::new(redact(*source)),
+            code,
+        },
+        ProviderError::HttpStatus {
+            source,
+            status,
+            request_id: _,
+        } => ProviderError::HttpStatus {
             source: Box::new(redact(*source)),
             status,
+            request_id: None,
         },
+        ProviderError::Connection => ProviderError::Connection,
         ProviderError::Transport(_) => ProviderError::Transport(MESSAGE.into()),
         ProviderError::Authentication(_) => ProviderError::Authentication(MESSAGE.into()),
         ProviderError::UsageLimit => ProviderError::UsageLimit,

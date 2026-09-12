@@ -13,6 +13,11 @@ use voyage_protocol::vessel::VoyageCommand;
 const COMMANDS: &[(&str, &str, &str)] = &[
     ("help", "Show help", ""),
     (
+        "attempts",
+        "Read provider retry history",
+        "Optional RUN_UUID and OFFSET; all OFFSET for all runs",
+    ),
+    (
         "inbox",
         "Read notification metadata (never responds)",
         "destinations | list DESTINATION [AFTER] | open/seen/dismiss DESTINATION EVENT",

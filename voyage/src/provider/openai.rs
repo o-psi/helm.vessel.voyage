@@ -111,8 +111,9 @@ impl Provider for OpenAiProvider {
                     .await
                     .map_err(map_transport)?;
                 let response = checked_stream_response(response).await?;
-                let byte_stream = response.bytes_stream();
-                Ok(Box::pin(openai_stream(byte_stream)) as ProviderStream)
+                Ok(super::observed_stream(response, |response| {
+                    Box::pin(openai_stream(response.bytes_stream()))
+                }))
             })
             .await;
         result.map(|stream| super::multimodal::guard_stream(images, stream))
@@ -180,7 +181,7 @@ where
                 if data.is_empty() {
                     continue;
                 } else if data == b"[DONE]" {
-                    yield ProviderStreamEvent::Completed(finish_stream(assembly)?);
+                    yield ProviderStreamEvent::Completed(Box::new(finish_stream(assembly)?));
                     return;
                 }
                 let value: Value = serde_json::from_slice(data).map_err(|e| ProviderError::InvalidResponse(format!("invalid OpenAI stream event: {e}")))?;
@@ -194,7 +195,7 @@ where
             }
         }
         if assembly.saw_finish {
-            yield ProviderStreamEvent::Completed(finish_stream(assembly)?);
+            yield ProviderStreamEvent::Completed(Box::new(finish_stream(assembly)?));
             return;
         }
         Err(ProviderError::InvalidResponse("OpenAI stream ended before [DONE]".into()))?;
@@ -531,9 +532,9 @@ mod context_rejection_tests {
             futures_util::pin_mut!(stream);
             let error = stream.next().await.unwrap().unwrap_err();
             if context {
-                assert!(matches!(error, ProviderError::ContextLength));
+                assert!(error.is_context_length());
             } else {
-                assert!(matches!(error, ProviderError::UsageLimit));
+                assert!(error.category() == "usage_limit");
             }
             assert!(!error.is_retryable());
             assert!(!error.to_string().contains("PRIVATE"));

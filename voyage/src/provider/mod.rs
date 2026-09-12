@@ -73,11 +73,19 @@ pub enum ProviderError {
     /// A transport failure does not establish whether the remote effect occurred.
     #[error("provider transport failed: {0}")]
     Transport(String),
+    #[error("provider connection could not be established")]
+    Connection,
     /// Observed HTTP metadata; classification and retry policy belong to the source.
     #[error("{source}")]
     HttpStatus {
         source: Box<ProviderError>,
         status: u16,
+        request_id: Option<String>,
+    },
+    #[error("{source}")]
+    Code {
+        source: Box<ProviderError>,
+        code: &'static str,
     },
     #[error("provider request failed: {0}")]
     Request(String),
@@ -102,8 +110,12 @@ pub enum ProviderDelta {
 pub enum ProviderStreamEvent {
     /// Internal native accounting metadata; not a public Vessel event.
     UsageReported(ReportedUsage),
+    ResponseMetadata {
+        status: u16,
+        request_id: Option<String>,
+    },
     Delta(ProviderDelta),
-    Completed(ModelResponse),
+    Completed(Box<ModelResponse>),
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -214,11 +226,81 @@ pub fn normalize_models(models: &mut Vec<ModelInfo>) {
     });
 }
 
+/// Only opaque bounded correlation identifiers, never arbitrary header text.
+pub(crate) fn upstream_request_id(response: &reqwest::Response) -> Option<String> {
+    ["x-request-id", "request-id", "x-oai-request-id"]
+        .into_iter()
+        .find_map(|name| {
+            let value = response.headers().get(name)?.to_str().ok()?;
+            (!value.is_empty()
+                && value.len() <= 128
+                && value
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b"_-.:".contains(&b)))
+            .then(|| value.to_owned())
+        })
+}
+
+pub(crate) fn observed_stream(
+    response: reqwest::Response,
+    decode: impl FnOnce(reqwest::Response) -> ProviderStream,
+) -> ProviderStream {
+    use futures_util::StreamExt;
+    let status = response.status().as_u16();
+    let request_id = upstream_request_id(&response);
+    let first = ProviderStreamEvent::ResponseMetadata { status, request_id };
+    Box::pin(futures_util::stream::once(async move { Ok(first) }).chain(decode(response)))
+}
+
 impl ProviderError {
+    /// Semantic consumers such as device enrollment must not match metadata wrappers.
+    pub(crate) fn into_semantic(self) -> Self {
+        match self {
+            Self::Code { source, .. }
+            | Self::HttpStatus { source, .. }
+            | Self::RetryAfter { source, .. } => source.into_semantic(),
+            other => other,
+        }
+    }
+
+    pub fn upstream_request_id(&self) -> Option<&str> {
+        match self {
+            Self::HttpStatus {
+                request_id, source, ..
+            } => request_id
+                .as_deref()
+                .or_else(|| source.upstream_request_id()),
+            Self::Code { source, .. } | Self::RetryAfter { source, .. } => {
+                source.upstream_request_id()
+            }
+            _ => None,
+        }
+    }
+    fn with_upstream_id(self, request_id: Option<String>) -> Self {
+        match self {
+            Self::HttpStatus { source, status, .. } => Self::HttpStatus {
+                source,
+                status,
+                request_id,
+            },
+            other => other,
+        }
+    }
+
+    pub fn safe_code(&self) -> Option<&'static str> {
+        match self {
+            Self::Code { code, .. } => Some(code),
+            Self::HttpStatus { source, .. } | Self::RetryAfter { source, .. } => source.safe_code(),
+            _ => None,
+        }
+    }
+
     /// Stable, content-free classification suitable for public failure metadata.
     pub fn category(&self) -> &'static str {
         match self {
-            Self::HttpStatus { source, .. } | Self::RetryAfter { source, .. } => source.category(),
+            Self::Code { source, .. }
+            | Self::HttpStatus { source, .. }
+            | Self::RetryAfter { source, .. } => source.category(),
             Self::Authentication(_) => "authentication",
             Self::UsageLimit => "usage_limit",
             Self::ContextLength => "context_length",
@@ -226,6 +308,7 @@ impl ProviderError {
             Self::Unavailable(_) => "unavailable",
             Self::Timeout(_) => "timeout",
             Self::Transport(_) => "transport",
+            Self::Connection => "connection",
             Self::Request(_) => "request",
             Self::InvalidResponse(_) => "invalid_response",
             Self::Incomplete => "incomplete",
@@ -234,9 +317,9 @@ impl ProviderError {
 
     pub fn is_context_length(&self) -> bool {
         match self {
-            Self::HttpStatus { source, .. } | Self::RetryAfter { source, .. } => {
-                source.is_context_length()
-            }
+            Self::Code { source, .. }
+            | Self::HttpStatus { source, .. }
+            | Self::RetryAfter { source, .. } => source.is_context_length(),
             Self::ContextLength => true,
             _ => false,
         }
@@ -244,9 +327,9 @@ impl ProviderError {
 
     pub fn is_incomplete(&self) -> bool {
         match self {
-            Self::HttpStatus { source, .. } | Self::RetryAfter { source, .. } => {
-                source.is_incomplete()
-            }
+            Self::Code { source, .. }
+            | Self::HttpStatus { source, .. }
+            | Self::RetryAfter { source, .. } => source.is_incomplete(),
             Self::Incomplete => true,
             _ => false,
         }
@@ -255,7 +338,7 @@ impl ProviderError {
     pub fn http_status(&self) -> Option<u16> {
         match self {
             Self::HttpStatus { status, .. } => Some(*status),
-            Self::RetryAfter { source, .. } => source.http_status(),
+            Self::Code { source, .. } | Self::RetryAfter { source, .. } => source.http_status(),
             _ => None,
         }
     }
@@ -264,21 +347,25 @@ impl ProviderError {
         Self::HttpStatus {
             source: Box::new(self),
             status,
+            request_id: None,
         }
     }
 
     pub fn is_retryable(&self) -> bool {
-        if let Self::RetryAfter { source, .. } | Self::HttpStatus { source, .. } = self {
+        if let Self::Code { source, .. }
+        | Self::RetryAfter { source, .. }
+        | Self::HttpStatus { source, .. } = self
+        {
             return source.is_retryable();
         }
         matches!(
             self,
-            Self::RateLimit { .. } | Self::Unavailable(_) | Self::Timeout(_)
+            Self::RateLimit { .. } | Self::Unavailable(_) | Self::Timeout(_) | Self::Connection
         )
     }
     pub fn retry_after(&self) -> Option<std::time::Duration> {
         match self {
-            Self::HttpStatus { source, .. } => source.retry_after(),
+            Self::Code { source, .. } | Self::HttpStatus { source, .. } => source.retry_after(),
             Self::RateLimit { retry_after, .. } => *retry_after,
             Self::RetryAfter { delay, .. } => Some(*delay),
             _ => None,
@@ -287,9 +374,9 @@ impl ProviderError {
 
     pub(crate) fn public_failure_reason(&self) -> &'static str {
         match self {
-            Self::RetryAfter { source, .. } | Self::HttpStatus { source, .. } => {
-                source.public_failure_reason()
-            }
+            Self::Code { source, .. }
+            | Self::RetryAfter { source, .. }
+            | Self::HttpStatus { source, .. } => source.public_failure_reason(),
             Self::Authentication(_) => {
                 "Provider authentication failed. Check credentials on the executing machine."
             }
@@ -299,6 +386,7 @@ impl ProviderError {
             Self::Unavailable(_) => "Provider temporarily unavailable.",
             Self::Timeout(_) => "Provider request timed out.",
             Self::Transport(_) => "Provider connection failed; request outcome may be uncertain.",
+            Self::Connection => "Provider connection could not be established.",
             Self::Request(_) => "Provider request failed.",
             Self::InvalidResponse(_) => "Provider returned an invalid or incomplete response.",
             Self::Incomplete => "Provider stopped before completing its response.",
@@ -353,7 +441,7 @@ pub trait Provider: Send + Sync {
     async fn stream(&self, request: ModelRequest) -> Result<ProviderStream, ProviderError> {
         let response = self.complete(request).await?;
         Ok(Box::pin(futures_util::stream::once(async move {
-            Ok(ProviderStreamEvent::Completed(response))
+            Ok(ProviderStreamEvent::Completed(Box::new(response)))
         })))
     }
 }
@@ -528,9 +616,29 @@ pub(crate) fn reject_redirect(response: &reqwest::Response) -> Result<(), Provid
 
 /// Never retain reqwest diagnostics (which can contain URLs or credentials).
 /// Builder errors are local; other non-timeout transport outcomes are uncertain.
+fn connection_refused(error: &(dyn std::error::Error + 'static)) -> bool {
+    let mut source = Some(error);
+    while let Some(error) = source {
+        if error.downcast_ref::<std::io::Error>().is_some_and(|e| {
+            matches!(
+                e.kind(),
+                std::io::ErrorKind::ConnectionRefused
+                    | std::io::ErrorKind::NetworkUnreachable
+                    | std::io::ErrorKind::HostUnreachable
+            )
+        }) {
+            return true;
+        }
+        source = error.source();
+    }
+    false
+}
+
 pub(crate) fn map_transport(error: reqwest::Error) -> ProviderError {
     if error.is_timeout() {
         ProviderError::Timeout("request deadline elapsed".into())
+    } else if error.is_connect() && connection_refused(&error) {
+        ProviderError::Connection
     } else if error.is_builder() {
         ProviderError::Request("invalid local HTTP request".into())
     } else {
@@ -542,6 +650,7 @@ pub(crate) async fn checked_json(
     response: reqwest::Response,
 ) -> Result<serde_json::Value, ProviderError> {
     reject_redirect(&response)?;
+    let request_id = upstream_request_id(&response);
     let status = response.status();
     let retry_after = response_retry_after(&response);
     let body = response
@@ -575,7 +684,11 @@ pub(crate) async fn checked_json(
     } else {
         Err(ProviderError::Request(format!("HTTP {status}: {body}")))
     };
-    result.map_err(|error| error.with_http_status(status.as_u16()))
+    result.map_err(|error| {
+        error
+            .with_http_status(status.as_u16())
+            .with_upstream_id(request_id)
+    })
 }
 
 pub(crate) async fn checked_stream_response(
