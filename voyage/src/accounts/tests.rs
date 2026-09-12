@@ -7,6 +7,7 @@ use std::sync::{
     Arc, Mutex,
     atomic::{AtomicBool, Ordering},
 };
+use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 fn registry() -> (tempfile::TempDir, Registry) {
@@ -303,6 +304,7 @@ struct Step {
     path: &'static str,
     status: u16,
     body: serde_json::Value,
+    raw_body: Option<String>,
     gate: Option<Arc<Gate>>,
 }
 #[derive(Default)]
@@ -315,6 +317,7 @@ fn step(path: &'static str, status: u16, body: serde_json::Value) -> Step {
         path,
         status,
         body,
+        raw_body: None,
         gate: None,
     }
 }
@@ -402,7 +405,7 @@ impl HttpFixture {
                     gate.entered.notify_one();
                     gate.release.notified().await;
                 }
-                let body = step.body.to_string();
+                let body = step.raw_body.unwrap_or_else(|| step.body.to_string());
                 let response = format!(
                     "HTTP/1.1 {} Synthetic\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
                     step.status,
@@ -541,15 +544,17 @@ async fn device_http_pending_slowdown_success_exact_ids_and_private_projection()
 
 #[tokio::test]
 async fn device_http_denied_expired_and_uncertain_are_terminal_without_replay() {
-    for (error, expected) in [
-        ("access_denied", EnrollmentState::Denied),
-        ("expired_token", EnrollmentState::Expired),
-        ("unexpected", EnrollmentState::Uncertain),
+    for (error, status, expected) in [
+        ("access_denied", 400, EnrollmentState::Denied),
+        ("access_denied", 403, EnrollmentState::Denied),
+        ("expired_token", 400, EnrollmentState::Expired),
+        ("expired_token", 404, EnrollmentState::Expired),
+        ("unexpected", 400, EnrollmentState::Uncertain),
     ] {
         let (_dir, r) = registry();
         let mut http = HttpFixture::new(vec![
             begin(),
-            step("/poll", 400, serde_json::json!({"error":error})),
+            step("/poll", status, serde_json::json!({"error":error})),
         ])
         .await;
         let s = service(&r, &http);
@@ -973,4 +978,164 @@ async fn resolve_enrollment_fences_absent_start_and_never_replays_provider_effec
     assert!(status.user_code.is_none());
     assert_eq!(status.status, fenced);
     fixture.complete(0).await;
+}
+
+#[tokio::test]
+async fn device_pending_http_status_keeps_code_until_actual_approval() {
+    let (_dir, r) = registry();
+    let mut plain = step("/poll", 403, serde_json::Value::Null);
+    plain.raw_body = Some("Authorization pending".into());
+    let mut empty = step("/poll", 404, serde_json::Value::Null);
+    empty.raw_body = Some(String::new());
+    let mut http = HttpFixture::new(vec![
+        begin(),
+        plain,
+        empty,
+        step(
+            "/poll",
+            403,
+            serde_json::json!({"error":"device_authorization_pending"}),
+        ),
+        grant(),
+        exchange(),
+    ])
+    .await;
+    let s = service(&r, &http);
+    let req = request(&r);
+    s.start(req.clone()).await.unwrap();
+    for _ in 0..3 {
+        s.fixture_due(req.enrollment_id, false).unwrap();
+        assert_eq!(
+            s.drive(req.enrollment_id, &req.actor).await.unwrap().state,
+            EnrollmentState::Pending
+        );
+        let private = s.status(req.enrollment_id, &req.actor).unwrap();
+        assert_eq!(private.user_code.as_deref(), Some("SYNTHETIC-CODE"));
+        assert!(private.failure.is_none());
+    }
+    s.fixture_due(req.enrollment_id, false).unwrap();
+    assert_eq!(
+        s.drive(req.enrollment_id, &req.actor).await.unwrap().state,
+        EnrollmentState::Succeeded
+    );
+    http.complete(6).await;
+}
+
+#[tokio::test]
+async fn device_diagnostics_identify_phase_without_body_secrets_or_effect_replay() {
+    for (phase, steps) in [
+        (
+            EnrollmentPhase::RequestCode,
+            vec![step(
+                "/device",
+                502,
+                serde_json::json!({"secret":"DO-NOT-PUBLISH"}),
+            )],
+        ),
+        (
+            EnrollmentPhase::Poll,
+            vec![
+                begin(),
+                step("/poll", 502, serde_json::json!({"secret":"DO-NOT-PUBLISH"})),
+            ],
+        ),
+        (
+            EnrollmentPhase::Exchange,
+            vec![
+                begin(),
+                grant(),
+                step(
+                    "/token",
+                    502,
+                    serde_json::json!({"secret":"DO-NOT-PUBLISH"}),
+                ),
+            ],
+        ),
+    ] {
+        let (_dir, r) = registry();
+        let count = steps.len();
+        let mut http = HttpFixture::new(steps).await;
+        let s = service(&r, &http);
+        let req = request(&r);
+        s.start(req.clone()).await.unwrap();
+        s.fixture_due(req.enrollment_id, false).unwrap();
+        let state = s.drive(req.enrollment_id, &req.actor).await.unwrap();
+        assert_eq!(state.state, EnrollmentState::Uncertain);
+        let private = s.status(req.enrollment_id, &req.actor).unwrap();
+        let diagnostic = private.failure.as_ref().unwrap();
+        assert_eq!(diagnostic.phase, phase);
+        assert_eq!(diagnostic.http_status, Some(502));
+        let restored = service(&Registry::new(r.root.clone()), &http);
+        assert_eq!(
+            restored
+                .status(req.enrollment_id, &req.actor)
+                .unwrap()
+                .failure,
+            private.failure
+        );
+        let mut legacy = serde_json::to_value(&private).unwrap();
+        legacy.as_object_mut().unwrap().remove("failure");
+        assert!(
+            serde_json::from_value::<PrivateEnrollmentStatus>(legacy)
+                .unwrap()
+                .failure
+                .is_none()
+        );
+        assert!(private.user_code.is_none());
+        let encoded = serde_json::to_string(&private).unwrap();
+        assert!(!encoded.contains("DO-NOT-PUBLISH"));
+        assert!(!encoded.contains("synthetic"));
+        assert_eq!(s.drive(req.enrollment_id, &req.actor).await.unwrap(), state);
+        assert_eq!(s.start(req.clone()).await.unwrap(), state);
+        assert_eq!(
+            s.cancel(Uuid::new_v4(), req.enrollment_id, &req.actor)
+                .unwrap()
+                .state,
+            EnrollmentState::Cancelled
+        );
+        // Closing the uncertain attempt frees the alias for a genuinely new intent.
+        let mut next = req.clone();
+        next.command_id = Uuid::new_v4();
+        next.enrollment_id = Uuid::new_v4();
+        assert_eq!(s.resolve(next).unwrap().state, EnrollmentState::Cancelled);
+        http.complete(count).await;
+    }
+}
+
+#[tokio::test]
+async fn device_code_visible_during_poll_but_hidden_before_token_exchange() {
+    let (_dir, r) = registry();
+    let poll_gate = Arc::new(Gate::default());
+    let exchange_gate = Arc::new(Gate::default());
+    let mut poll = grant();
+    poll.gate = Some(poll_gate.clone());
+    let mut token = exchange();
+    token.gate = Some(exchange_gate.clone());
+    let mut http = HttpFixture::new(vec![begin(), poll, token]).await;
+    let s = service(&r, &http);
+    let req = request(&r);
+    s.start(req.clone()).await.unwrap();
+    s.fixture_due(req.enrollment_id, false).unwrap();
+    let driver = s.clone();
+    let request = req.clone();
+    let work = tokio::spawn(async move {
+        driver
+            .drive(request.enrollment_id, &request.actor)
+            .await
+            .unwrap()
+    });
+    tokio::time::timeout(Duration::from_secs(5), poll_gate.entered.notified())
+        .await
+        .unwrap();
+    let private = s.status(req.enrollment_id, &req.actor).unwrap();
+    assert_eq!(private.status.state, EnrollmentState::Exchanging);
+    assert_eq!(private.user_code.as_deref(), Some("SYNTHETIC-CODE"));
+    poll_gate.release.notify_one();
+    tokio::time::timeout(Duration::from_secs(5), exchange_gate.entered.notified())
+        .await
+        .unwrap();
+    no_private_code(&s, &req);
+    exchange_gate.release.notify_one();
+    assert_eq!(work.await.unwrap().state, EnrollmentState::Succeeded);
+    http.complete(3).await;
 }

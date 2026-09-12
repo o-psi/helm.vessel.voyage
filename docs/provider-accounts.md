@@ -51,7 +51,31 @@ A dedicated private view displays the fixed provider verification website,
 temporary user code, authenticated executing host, expiry, and status. Open the
 website only using the view's explicit action (or manually). The code/URL are not
 conversation messages, command receipts, events, saved drafts, or model input.
-Closure, expiry, completion, cancellation, and connection loss clear the material.
+The code stays visible during status refreshes and pending provider polls. It is
+withheld by the host once token exchange begins. Observed expiry, completion,
+cancellation, closure, and connection loss clear the displayed material. **O** opens the provider page; enter the code
+shown after **Device code** in that page. No code is sent through chat.
+
+On failure, Helm shows a fixed diagnostic category, the failed step, and an HTTP
+status when available; provider response bodies are never displayed or retained as
+diagnostics. **N** closes the original attempt using its stable cancellation
+identity, then offers the same alias for a fresh sign-in. Press **Enter** to request
+the new code. The old attempt must be observed as closed before another can begin;
+a lost cancellation response is resolved against the original identity. **R**
+refreshes that attempt rather than replaying authorization. A genuinely uncertain
+token exchange is never retried automatically. Older retained attempts may have no
+failure details.
+
+After successful enrollment, the account list refreshes in place and highlights the
+new account when it is available to the initiating principal. Select it and confirm
+its model/settings to use it. If list refresh fails, **R** retries that read without
+starting another sign-in. Success racing with cancellation is shown as success.
+
+The native polling adapter accepts pending HTTP 403/404 responses even when their
+body is empty or non-JSON, while explicit denial and expiry errors remain terminal.
+Other malformed responses stop with an error rather than replaying an uncertain
+effect. The legacy device CLI also recognizes pending/slow-down responses wrapped
+with HTTP metadata and respects their polling interval.
 
 The executing host retains the polling secret, exchanges authorization, and stores
 provider tokens privately. They are never forwarded through Helm or another Vessel.

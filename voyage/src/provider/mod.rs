@@ -253,6 +253,23 @@ pub(crate) fn observed_stream(
 }
 
 impl ProviderError {
+    /// Only an explicit device pending/slow-down result permits another poll.
+    /// HTTP metadata wrappers must not turn ordinary waiting into a login failure.
+    pub fn device_poll_delay(&self, interval: u64) -> Option<u64> {
+        match self {
+            Self::Code { source, .. }
+            | Self::HttpStatus { source, .. }
+            | Self::RetryAfter { source, .. } => source.device_poll_delay(interval),
+            Self::Unavailable(message) if message == "device authorization pending" => {
+                Some(interval.clamp(1, 600))
+            }
+            Self::Unavailable(message) if message == "device authorization slow_down" => {
+                Some(interval.saturating_add(5).clamp(1, 600))
+            }
+            _ => None,
+        }
+    }
+
     /// Semantic consumers such as device enrollment must not match metadata wrappers.
     pub(crate) fn into_semantic(self) -> Self {
         match self {

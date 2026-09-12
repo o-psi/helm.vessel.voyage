@@ -1,12 +1,12 @@
 {
   "schema_version": 1,
-  "measured_at_utc": "2026-09-12T16:11:21.903387+00:00",
+  "measured_at_utc": "2026-09-12T16:46:58.338311+00:00",
   "source": {
-    "base_commit": "5242d92975af0463d3e4392599e90842ba50e989",
-    "dirty": false,
-    "fingerprint_sha256": "54ea1b5e37d8b0f6ccb3eadbde1ee5cd319d610550b847930ba6bb96403a3231",
-    "fingerprint_method": "SHA-256 of compact sorted JSON mapping all tracked regular-file contents and symlink target text to SHA-256 hashes",
-    "note": "Clean final #261 source. All measured files remained unchanged through tests and current-artifact export. The following coverage-record commit changes no Rust source or tests."
+    "base_commit": "fb596a54563f72b75a81a2c6894ce97903628060",
+    "dirty": true,
+    "fingerprint_sha256": "ad94855613ea9088619a4cb35da8b4ce134f13819fe9449d09f5d54eaddd73ea",
+    "fingerprint_method": "SHA-256 of compact sorted JSON mapping all tracked regular-file contents and symlink target text to SHA-256 hashes, with null for pre-existing deleted files",
+    "note": "Final #262 Rust source and tests, measured in the main checkout with explicitly dirty source. Includes pre-existing staged Helm render changes and deleted scripts/tests; these unrelated edits are preserved and excluded from this delivery. Measured files remained unchanged through tests and export; this coverage-record update follows measurement."
   },
   "platform": "x86_64-unknown-linux-gnu",
   "tools": {
@@ -14,7 +14,7 @@
     "llvm": "22.1.8",
     "cargo_llvm_cov": "0.9.1"
   },
-  "command": "cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir \"$CARGO_LLVM_COV_TARGET_DIR/coverage-report/issue261-final/default-report\" -j 8",
+  "command": "cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir \"$CARGO_LLVM_COV_TARGET_DIR/coverage-report/issue262-final/default-report\" -j 8",
   "environment": {
     "CARGO_LLVM_COV_TARGET_DIR": "existing shared workspace target",
     "LLVM_COV": "llvm-cov",
@@ -23,26 +23,26 @@
   },
   "scope": "All existing workspace Rust tests and current workspace executable artifacts, default features",
   "tests": {
-    "passed": 344,
+    "passed": 350,
     "failed": 0,
     "ignored": 1
   },
   "coverage": {
     "lines": {
-      "count": 89724,
-      "covered": 29161,
-      "percent": 32.50078017030003
+      "count": 89995,
+      "covered": 29423,
+      "percent": 32.69403855769765
     },
     "functions": {
-      "count": 8826,
-      "covered": 2759,
-      "percent": 31.25991389077725
+      "count": 8838,
+      "covered": 2770,
+      "percent": 31.34193256392849
     },
     "regions": {
-      "count": 146367,
-      "covered": 46047,
-      "notcovered": 100320,
-      "percent": 31.459960236938656
+      "count": 146758,
+      "covered": 46423,
+      "notcovered": 100335,
+      "percent": 31.63234712928767
     }
   },
   "report_selection": {
@@ -63,10 +63,11 @@
     "Tool-default dependency/test-source exclusions and distribution Rust standard-library debug paths"
   ],
   "notes": [
-    "Workspace tests passed: 344 passed, 0 failed, 1 ignored (existing live-provider test).",
-    "Default shared-target report retained as evidence but not published: historical objects reference retired worktrees. Corrected export retains every current Cargo executable, with 428 unique current source files, no reused source paths and no mismatched functions.",
-    "51 offline native provider/retry/history scenarios and a Helm PTY attempt-history check passed separately, with observed cleanup. These do not contribute to Rust coverage totals or establish live-provider/native macOS/Windows behavior.",
-    "Strict Clippy passed for voyage and voyage-protocol across targets/features. Strict full-workspace Clippy remains failing on 24 pre-existing diagnostics in unchanged Helm account/inbox and Vessel pairing/account/notification code; source equality with origin/main was checked. No lint result is represented as a test pass.",
-    "Compared with prior measurement: lines +0.7844 percentage points, functions +0.7328 percentage points, regions +0.7424 percentage points. Default scope and exclusions preserved."
+    "Workspace tests passed: 350 passed, 0 failed, 1 ignored (existing live-provider test). No live authentication or model calls made.",
+    "The first measurement under inherited umask 0022 failed two existing private-storage fixtures (348 passed, 2 failed, 1 ignored); failed logs and raw profiles are retained. Final independent measurement uses umask 0077, as in the preceding coverage record, without changing runtime permission checks or tests.",
+    "Default shared-target reports retained but not published because they include historical binaries and retired source paths. Corrected export retains all 11 current Cargo executables, with 428 unique current tracked source files and no mismatched functions. Unchanged installer/storage entrypoint mtimes were refreshed before the final run to regenerate their cached instrumentation against current source paths; file contents were unchanged.",
+    "Focused Helm/backend tests cover pending HTTP response variants, private code visibility, safe durable diagnostics, cancellation/restart and late success without account switching; legacy pending-error metadata classification is included. This establishes offline Linux behavior only.",
+    "Formatting and documentation link/fence checks passed. Strict Clippy across affected packages, targets and features remains blocked by the same 24 pre-existing Helm/Vessel diagnostics. The deleted full-quality scripts were not restored or run.",
+    "Compared with the prior record: lines +0.1933 percentage points, functions +0.0820 percentage points, regions +0.1724 percentage points. Scope/exclusions unchanged."
   ]
 }

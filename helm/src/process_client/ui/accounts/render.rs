@@ -158,17 +158,70 @@ impl App {
                         && p.connection.borrow().loss_generation == p.loss_generation
                         && self.clients.available(p.route)
                 });
-                let text = if let Some(v) = private {
-                    format!(
-                        "PRIVATE SIGN-IN — never copy into chat\nProvider: https://auth.openai.com/codex/device\nCode: {}\nExpires in {} seconds\nO explicitly opens local browser · C cancels sign-in\nR refreshes original operation · Esc hides sensitive material",
-                        v.user_code.as_deref().unwrap_or(""),
-                        v.status.expires_at.saturating_sub(now())
-                    )
+                if let Some(v) = private {
+                    use ratatui::{
+                        style::Modifier,
+                        text::{Line, Span, Text},
+                    };
+                    let text = Text::from(vec![
+                        Line::from("Sign in with ChatGPT"),
+                        Line::from(""),
+                        Line::from(vec![
+                            Span::raw("Device code: "),
+                            Span::styled(
+                                v.user_code.as_deref().unwrap_or(""),
+                                crate::theme::Role::AwaitingInput
+                                    .style()
+                                    .add_modifier(Modifier::BOLD),
+                            ),
+                        ]),
+                        Line::from(""),
+                        Line::from("O opens https://auth.openai.com/codex/device"),
+                        Line::from("Enter this code in that browser page."),
+                        Line::from(format!(
+                            "Code expires in {} seconds. Waiting for approval…",
+                            v.status.expires_at.saturating_sub(now())
+                        )),
+                        Line::from("C cancels · Esc hides this view"),
+                        Line::from("Keep this code private; never paste it into chat."),
+                    ]);
+                    frame.render_widget(Paragraph::new(text).wrap(Wrap { trim: false }), body);
                 } else {
-                    "No current private code displayed.\nR inspect original enrollment · C cancel sign-in\nEsc closes only; host operation may continue.\nOn completion reopen /account to refresh and explicitly select the new profile.".into()
-                };
-                frame.render_widget(Paragraph::new(text).wrap(Wrap { trim: false }), body);
+                    let state = p.private.as_ref().map(|v| v.status.state).or(p.outcome);
+                    let action = match state {
+                        Some(EnrollmentState::Starting) => "Requesting your device code…",
+                        Some(EnrollmentState::Exchanging) => "Completing sign-in…",
+                        Some(EnrollmentState::Succeeded) => {
+                            "Signed in. R refreshes the account list."
+                        }
+                        Some(
+                            EnrollmentState::Uncertain
+                            | EnrollmentState::Cancelled
+                            | EnrollmentState::Denied
+                            | EnrollmentState::Expired,
+                        ) => {
+                            "No usable code for this attempt.
+N new sign-in · R check status"
+                        }
+                        _ => {
+                            "Reading the original sign-in attempt…
+R refreshes its status"
+                        }
+                    };
+                    let text = format!(
+                        "Sign in with ChatGPT\n\n{action}\n\n{}\n\nC cancels the attempt · Esc closes this view",
+                        safe(&p.notice)
+                    );
+                    // Use the otherwise unused notice rows so recovery details remain visible.
+                    frame.render_widget(
+                        Paragraph::new(text).wrap(Wrap { trim: false }),
+                        Rect::new(body.x, body.y, body.width, body.height + 4),
+                    );
+                }
             }
+        }
+        if matches!(p.mode, Mode::Enrollment) {
+            return;
         }
         frame.render_widget(
             Paragraph::new(safe(&p.notice))

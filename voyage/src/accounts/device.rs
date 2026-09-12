@@ -24,6 +24,10 @@ pub(super) struct Record {
     device: Option<DeviceAuthorization>,
     next_poll: u64,
     cancellations: Vec<Uuid>,
+    #[serde(default)]
+    polling: bool,
+    #[serde(default)]
+    failure: Option<EnrollmentFailure>,
 }
 fn now() -> u64 {
     SystemTime::now()
@@ -110,6 +114,8 @@ impl DeviceService {
                 device: None,
                 next_poll: 0,
                 cancellations: Vec::new(),
+                polling: false,
+                failure: None,
             });
             Ok(status)
         })
@@ -205,6 +211,8 @@ impl DeviceService {
                 device: None,
                 next_poll: 0,
                 cancellations: Vec::new(),
+                polling: false,
+                failure: None,
             });
             Ok((status, true))
         })?;
@@ -229,7 +237,7 @@ impl DeviceService {
             }
             if !(self.authorize)(&request.actor, request.connection_id) {
                 r.status.state = EnrollmentState::Cancelled;
-            } else if let Ok(Ok(device)) = result {
+            } else if let Ok(Ok(device)) = &result {
                 // The provider website, not arbitrary remote content, is the only allowed URL.
                 if device.verification_uri != "https://auth.openai.com/codex/device"
                     || device.user_code.len() > 64
@@ -245,16 +253,22 @@ impl DeviceService {
                     || device.expires_in == Some(0)
                 {
                     r.status.state = EnrollmentState::Uncertain;
+                    r.failure = Some(EnrollmentFailure {
+                        phase: EnrollmentPhase::RequestCode,
+                        kind: EnrollmentFailureKind::InvalidResponse,
+                        http_status: Some(200),
+                    });
                 } else {
                     if let Some(expiry) = device.expires_in {
                         r.status.expires_at = r.status.expires_at.min(now().saturating_add(expiry));
                     }
                     r.next_poll = now() + device.interval;
-                    r.device = Some(device);
+                    r.device = Some(device.clone());
                     r.status.state = EnrollmentState::Pending;
                 }
             } else {
                 r.status.state = EnrollmentState::Uncertain;
+                r.failure = failure(&result, EnrollmentPhase::RequestCode);
             }
             Ok(r.status.clone())
         })
@@ -264,13 +278,16 @@ impl DeviceService {
             let r = record(db, id, actor)?;
             self.authorized(actor, r.request.connection_id)?;
             expire(r);
-            let device = if r.status.state == EnrollmentState::Pending {
+            let device = if r.status.state == EnrollmentState::Pending
+                || (r.status.state == EnrollmentState::Exchanging && r.polling)
+            {
                 r.device.as_ref()
             } else {
                 None
             };
             Ok(PrivateEnrollmentStatus {
                 status: r.status.clone(),
+                failure: r.failure.clone(),
                 user_code: device.map(|d| d.user_code.clone()),
                 verification_uri: device.map(|d| d.verification_uri.clone()),
             })
@@ -365,11 +382,14 @@ impl DeviceService {
                 return Ok((r.status.clone(), None));
             }
             r.status.state = EnrollmentState::Exchanging;
+            r.polling = true;
+            r.failure = None;
             Ok((r.status.clone(), r.device.clone()))
         })?;
         let Some(device) = device else {
             return Ok(status);
         };
+        let mut phase = EnrollmentPhase::Poll;
         let result = tokio::time::timeout(Duration::from_secs(45), async {
             let provider = self.provider();
             let grant = provider.poll_device_grant(&device).await?;
@@ -388,6 +408,7 @@ impl DeviceService {
                     } else if now() >= r.status.expires_at {
                         r.status.state = EnrollmentState::Expired;
                     } else {
+                        r.polling = false;
                         return Ok(true);
                     }
                     r.device = None;
@@ -401,6 +422,7 @@ impl DeviceService {
                     "device authorization no longer active".into(),
                 ));
             }
+            phase = EnrollmentPhase::Exchange;
             provider.exchange_device_grant(grant).await
         })
         .await;
@@ -414,6 +436,8 @@ impl DeviceService {
                 r.device = None;
                 return Ok(r.status.clone());
             }
+            r.polling = false;
+            r.failure = failure(&result, phase);
             match result.map(|value| value.map_err(ProviderError::into_semantic)) {
                 Ok(Ok(tokens)) => {
                     // Cancellation and publication use the SAME lock and atomic checkpoint.
@@ -423,20 +447,39 @@ impl DeviceService {
                         r.device = None;
                         return Ok(r.status.clone());
                     }
-                    let a = insert(
+                    let published = insert(
                         db,
                         request.connection_id,
                         request.alias,
                         request.label,
                         Credential::OAuth(tokens),
                         Some(id),
-                    )?;
+                    );
                     let r = record(db, id, actor)?;
-                    r.status.account_id = Some(a.id);
-                    r.status.state = EnrollmentState::Succeeded;
+                    match published {
+                        Ok(a) => {
+                            r.status.account_id = Some(a.id);
+                            r.status.state = EnrollmentState::Succeeded;
+                        }
+                        Err(_) => {
+                            r.status.state = EnrollmentState::Uncertain;
+                            r.failure = Some(EnrollmentFailure {
+                                phase: EnrollmentPhase::Publication,
+                                kind: EnrollmentFailureKind::Storage,
+                                http_status: None,
+                            });
+                        }
+                    }
                     r.device = None;
                 }
-                Ok(Err(ProviderError::Unavailable(message))) => {
+                Ok(Err(ProviderError::Unavailable(message)))
+                    if phase == EnrollmentPhase::Poll
+                        && matches!(
+                            message.as_str(),
+                            "device authorization pending" | "device authorization slow_down"
+                        ) =>
+                {
+                    r.failure = None;
                     if message == "device authorization slow_down"
                         && let Some(d) = &mut r.device
                     {
@@ -466,6 +509,34 @@ impl DeviceService {
         })
     }
 }
+// Do not retain error strings: upstream diagnostics can contain tokens and codes.
+fn failure<T>(
+    result: &std::result::Result<
+        std::result::Result<T, ProviderError>,
+        tokio::time::error::Elapsed,
+    >,
+    phase: EnrollmentPhase,
+) -> Option<EnrollmentFailure> {
+    let (kind, http_status) = match result {
+        Ok(Ok(_)) => return None,
+        Err(_) => (EnrollmentFailureKind::Timeout, None),
+        Ok(Err(error)) => (
+            match error.category() {
+                "timeout" => EnrollmentFailureKind::Timeout,
+                "connection" | "transport" => EnrollmentFailureKind::Connection,
+                "invalid_response" => EnrollmentFailureKind::InvalidResponse,
+                _ => EnrollmentFailureKind::Rejected,
+            },
+            error.http_status(),
+        ),
+    };
+    Some(EnrollmentFailure {
+        phase,
+        kind,
+        http_status,
+    })
+}
+
 fn record<'a>(db: &'a mut Database, id: Uuid, actor: &EnrollmentActor) -> Result<&'a mut Record> {
     db.enrollments
         .iter_mut()
@@ -477,6 +548,18 @@ fn expire(r: &mut Record) {
         match r.status.state {
             EnrollmentState::Starting | EnrollmentState::Exchanging => {
                 r.status.state = EnrollmentState::Uncertain;
+                r.failure = Some(EnrollmentFailure {
+                    phase: if r.device.is_none() {
+                        EnrollmentPhase::RequestCode
+                    } else if r.polling {
+                        EnrollmentPhase::Poll
+                    } else {
+                        EnrollmentPhase::Exchange
+                    },
+                    kind: EnrollmentFailureKind::Interrupted,
+                    http_status: None,
+                });
+                r.polling = false;
                 r.device = None;
             }
             EnrollmentState::Pending => {

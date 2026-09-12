@@ -54,19 +54,24 @@ pub(crate) async fn auth(command: &AuthCommand) -> Result<()> {
                     authorization.verification_uri, authorization.user_code
                 );
                 let deadline = std::time::Instant::now() + std::time::Duration::from_secs(600);
+                let mut interval = authorization.interval.clamp(1, 600);
                 loop {
+                    // Respect the provider's first-poll interval as well as subsequent ones.
+                    tokio::time::sleep(std::time::Duration::from_secs(interval)).await;
+                    anyhow::ensure!(
+                        std::time::Instant::now() < deadline,
+                        "Device code expired; start sign-in again"
+                    );
                     match provider.poll_device(&authorization).await {
                         Ok(_) => {
                             println!("Signed in with ChatGPT");
                             break;
                         }
-                        Err(voyage_runtime::provider::ProviderError::Unavailable(_))
-                            if std::time::Instant::now() < deadline =>
+                        Err(error)
+                            if error.device_poll_delay(interval).is_some()
+                                && std::time::Instant::now() < deadline =>
                         {
-                            tokio::time::sleep(std::time::Duration::from_secs(
-                                authorization.interval.max(1),
-                            ))
-                            .await;
+                            interval = error.device_poll_delay(interval).unwrap();
                         }
                         Err(error) => return Err(error.into()),
                     }

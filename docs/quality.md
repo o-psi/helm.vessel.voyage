@@ -257,6 +257,11 @@ account/enrollment metadata access. It uses the current public `/v1/vessel/comma
 contract while preserving the older concurrent fixture unchanged. It does not
 establish native platform, live-provider, or public TLS results.
 
+The #262 sign-in regressions additionally exercise plain/empty pending HTTP bodies,
+code visibility across polls, private failure phase/status diagnostics, cancellation
+before a fresh enrollment, and success refreshing Helm choices without changing
+selection. These are offline fixtures; they do not establish live sign-in success.
+
 Rust account tests retain actual loopback device polling/exchange races, identity
 conflicts, private storage failure cases, and independent process refresh fencing.
 Helm account tests cover its private view and durable public selection envelopes.

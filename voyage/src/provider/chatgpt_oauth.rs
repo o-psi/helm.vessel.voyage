@@ -785,7 +785,18 @@ impl ChatGptOAuth {
         super::reject_redirect(&response)?;
         if !response.status().is_success() {
             let status = response.status().as_u16();
-            let body: Value = auth_json(response).await?;
+            // This device endpoint uses 403/404 for a code that has not yet
+            // been approved. Its pending body need not be OAuth error JSON.
+            // A complete non-JSON pending response is not a lost token exchange.
+            let body: Value = match auth_json(response).await {
+                Ok(body) => body,
+                Err(error)
+                    if matches!(status, 403 | 404) && error.category() == "invalid_response" =>
+                {
+                    Value::Null
+                }
+                Err(error) => return Err(error),
+            };
             let code = body
                 .get("error")
                 .and_then(Value::as_str)
@@ -804,7 +815,7 @@ impl ChatGptOAuth {
                 Some("expired_token") => Err(ProviderError::Authentication(
                     "device authorization expired".into(),
                 )),
-                None if status == 403 || status == 404 => Err(ProviderError::Unavailable(
+                _ if status == 403 || status == 404 => Err(ProviderError::Unavailable(
                     "device authorization pending".into(),
                 )),
                 _ => Err(ProviderError::Authentication(

@@ -101,4 +101,34 @@ pub struct PrivateEnrollmentStatus {
     pub status: EnrollmentStatus,
     pub user_code: Option<String>,
     pub verification_uri: Option<String>,
+    /// Fixed diagnostic vocabulary only; never provider bodies or credential material.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failure: Option<EnrollmentFailure>,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum EnrollmentPhase {
+    RequestCode,
+    Poll,
+    Exchange,
+    Publication,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum EnrollmentFailureKind {
+    Timeout,
+    Connection,
+    Rejected,
+    InvalidResponse,
+    Storage,
+    Interrupted,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct EnrollmentFailure {
+    pub phase: EnrollmentPhase,
+    pub kind: EnrollmentFailureKind,
+    pub http_status: Option<u16>,
 }

@@ -54,6 +54,7 @@ enum Reply {
     Models(AccountBinding, Vec<crate::provider::ModelInfo>),
     Private(PrivateEnrollmentStatus),
     Mutation,
+    Catalogue(Catalogue, Option<Uuid>),
 }
 enum Mode {
     List,
@@ -81,6 +82,9 @@ struct Picker {
     busy: bool,
     intent: Option<storage::Intent>,
     private: Option<PrivateEnrollmentStatus>,
+    outcome: Option<EnrollmentState>,
+    retry: Option<(Uuid, String)>,
+    restart: bool,
     poll: Instant,
     connection: tokio::sync::watch::Receiver<crate::process_client::duplex::ConnectionState>,
     loss_generation: u64,
@@ -90,6 +94,44 @@ struct Picker {
 fn now() -> u64 {
     chrono::Utc::now().timestamp().max(0) as u64
 }
+fn enrollment_notice(v: &PrivateEnrollmentStatus) -> String {
+    let message = match v.status.state {
+        EnrollmentState::Starting => "Requesting a sign-in code…",
+        EnrollmentState::Pending => "Waiting for you to enter the code in your browser.",
+        EnrollmentState::Exchanging => "Checking browser approval and completing sign-in…",
+        EnrollmentState::Succeeded => {
+            "Signed in. Refreshing accounts; selection still requires confirmation."
+        }
+        EnrollmentState::Cancelled => "Sign-in cancelled. N requests a new sign-in.",
+        EnrollmentState::Expired => "The code expired. N requests a new sign-in.",
+        EnrollmentState::Denied => "Sign-in was denied. N requests a new sign-in.",
+        EnrollmentState::Uncertain => "Sign-in stopped before completion could be confirmed.",
+    };
+    let mut text = message.to_owned();
+    if let Some(failure) = &v.failure {
+        let phase = match failure.phase {
+            EnrollmentPhase::RequestCode => "requesting code",
+            EnrollmentPhase::Poll => "checking browser approval",
+            EnrollmentPhase::Exchange => "exchanging authorization",
+            EnrollmentPhase::Publication => "saving account",
+        };
+        let kind = match failure.kind {
+            EnrollmentFailureKind::Timeout => "timed out",
+            EnrollmentFailureKind::Connection => "connection failed",
+            EnrollmentFailureKind::Rejected => "provider rejected the request",
+            EnrollmentFailureKind::InvalidResponse => "unexpected provider response",
+            EnrollmentFailureKind::Storage => "account could not be saved",
+            EnrollmentFailureKind::Interrupted => "operation was interrupted",
+        };
+        text.push_str(&format!(" Failed while {phase}: {kind}"));
+        if let Some(status) = failure.http_status.filter(|s| (100..=599).contains(s)) {
+            text.push_str(&format!(" (HTTP {status})"));
+        }
+        text.push('.');
+    }
+    text
+}
+
 fn valid_alias(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 64
@@ -115,8 +157,10 @@ fn enrollment_id(intent: &storage::Intent) -> Option<Uuid> {
     }
 }
 fn active_material(p: &PrivateEnrollmentStatus) -> bool {
-    p.status.state == EnrollmentState::Pending
-        && p.status.expires_at > now()
+    matches!(
+        p.status.state,
+        EnrollmentState::Pending | EnrollmentState::Exchanging
+    ) && p.status.expires_at > now()
         && p.verification_uri.as_deref() == Some("https://auth.openai.com/codex/device")
         && p.user_code.as_ref().is_some_and(|c| {
             !c.is_empty()
@@ -358,6 +402,9 @@ impl App {
             busy: true,
             intent: None,
             private: None,
+            outcome: None,
+            retry: None,
+            restart: false,
             poll: Instant::now(),
             connection,
             loss_generation,
@@ -497,6 +544,8 @@ impl App {
             return Ok(());
         }
         p.busy = false;
+        let mut refresh_account = None;
+        let mut refresh = false;
         let result = (|| -> Result<()> {
             match result? {
                 Reply::Loaded(v) => {
@@ -559,7 +608,38 @@ impl App {
                             self.set_draft_account(d, v.host, p.original.clone())?;
                         }
                     }
+                    if p.intent.is_some() {
+                        p.mode = Mode::Enrollment;
+                        p.poll = Instant::now() - Duration::from_secs(4);
+                    }
                     p.notice = "Select an account. Availability is a local observation, not provider entitlement. R resumes the original sign-in. API keys belong only in an execution-host private terminal.".into();
+                }
+                Reply::Catalogue(catalogue, focus) => {
+                    ensure!(
+                        catalogue.accounts.len() <= 128 && catalogue.connections.len() <= 64,
+                        "Account catalogue exceeds limits"
+                    );
+                    self.accounts
+                        .labels
+                        .retain(|(route, _), _| *route != p.route);
+                    for account in &catalogue.accounts {
+                        self.accounts
+                            .labels
+                            .insert((p.route, account.id), safe(&account.label));
+                    }
+                    p.catalogue = catalogue;
+                    p.mode = Mode::List;
+                    p.query.clear();
+                    p.selected = p
+                        .choices()
+                        .iter()
+                        .position(|(_, binding)| {
+                            binding
+                                .as_ref()
+                                .is_some_and(|binding| Some(binding.account_id) == focus)
+                        })
+                        .unwrap_or(0);
+                    p.notice = "Signed in. Select the account and review its model to use it. Your current account has not changed.".into();
                 }
                 Reply::Models(binding, models) => {
                     if let Mode::Confirm(s) = &p.mode {
@@ -590,10 +670,20 @@ impl App {
                             | EnrollmentState::Expired
                             | EnrollmentState::Denied
                     );
-                    p.notice = format!(
-                        "Sign-in {:?}. Upstream authorization may have occurred: {}. Success never switches an account automatically.",
-                        v.status.state, v.status.effects_may_have_occurred
-                    );
+                    p.outcome = Some(v.status.state);
+                    p.notice = enrollment_notice(&v);
+                    if let Some(storage::Intent {
+                        command:
+                            VesselCommand::EnrollAccount {
+                                connection_id,
+                                alias,
+                                ..
+                            },
+                        ..
+                    }) = &p.intent
+                    {
+                        p.retry = Some((*connection_id, alias.clone()));
+                    }
                     if terminal {
                         p.private = None;
                         // Keep the safe outcome visible, but permit a new explicit enrollment after terminal observation.
@@ -602,6 +692,19 @@ impl App {
                         prefs.enrollment = None;
                         storage::save(host, &p.workspace, &prefs)?;
                         p.intent = None;
+                        if v.status.state == EnrollmentState::Succeeded {
+                            p.restart = false;
+                            p.retry = None;
+                            refresh_account = v.status.account_id;
+                            refresh = true;
+                        } else if p.restart {
+                            p.restart = false;
+                            if let Some((connection, alias)) = &p.retry {
+                                p.mode = Mode::Alias(*connection);
+                                p.query = alias.clone();
+                                p.notice = "Previous attempt closed. Enter requests a new code; use only that new code in the browser.".into();
+                            }
+                        }
                     } else {
                         p.private = Some(v);
                     }
@@ -615,7 +718,57 @@ impl App {
             p.notice = safe(&e.to_string());
         }
         self.accounts.picker = Some(p);
-        result
+        result?;
+        if refresh {
+            self.refresh_enrolled_accounts(refresh_account)?;
+        }
+        Ok(())
+    }
+    fn refresh_enrolled_accounts(&mut self, focus: Option<Uuid>) -> Result<()> {
+        let p = self.accounts.picker.as_mut().context("view closed")?;
+        let client = self.clients[p.route].clone();
+        let workspace = p.workspace.clone();
+        let host = p.host.context("host missing")?;
+        let (tx, rx) = oneshot::channel();
+        self.accounts.reply = Some((p.id, rx));
+        p.busy = true;
+        tokio::spawn(async move {
+            let result: Result<Reply> = async {
+                let caps = client.request(VesselCommand::Capabilities).await?;
+                ensure!(
+                    caps["vessel_id"] == host.to_string(),
+                    "Host identity changed"
+                );
+                let value = client
+                    .request(VesselCommand::Accounts {
+                        workspace,
+                        transport: None,
+                    })
+                    .await?;
+                Ok(Reply::Catalogue(serde_json::from_value(value)?, focus))
+            }
+            .await;
+            let _ = tx.send(result.map_err(|_| anyhow::anyhow!("Signed in, but the account list could not refresh. R retries the list; your account selection has not changed.")));
+        });
+        Ok(())
+    }
+    fn restart_enrollment(&mut self) -> Result<()> {
+        let p = self.accounts.picker.as_mut().context("view closed")?;
+        ensure!(
+            p.enroll && !p.disconnected,
+            "Reconnect before starting a new sign-in"
+        );
+        if p.intent.is_some() {
+            p.restart = true;
+            self.cancel_enrollment()
+        } else if let Some((connection, alias)) = &p.retry {
+            p.mode = Mode::Alias(*connection);
+            p.query = alias.clone();
+            p.notice = "Enter requests a new code. The previous code cannot be used.".into();
+            Ok(())
+        } else {
+            Ok(())
+        }
     }
     fn private_request(&mut self, command: VesselCommand, private: bool) -> Result<()> {
         let p = self
@@ -632,7 +785,12 @@ impl App {
             "Original Vessel disconnected"
         );
         p.busy = true;
-        p.private = None;
+        // A same-socket status read must not blink away a still-valid code. Any
+        // mutation, authority failure or socket loss clears it independently.
+        if !private || p.disconnected || p.connection.borrow().loss_generation != p.loss_generation
+        {
+            p.private = None;
+        }
         p.disconnected = false;
         p.loss_generation = p.connection.borrow().loss_generation;
         let client = self.clients[p.route].clone();
@@ -734,6 +892,11 @@ impl App {
         prefs.enrollment = Some(intent.clone());
         storage::save(host, &p.workspace, &prefs)?;
         p.intent = Some(intent);
+        p.outcome = Some(EnrollmentState::Starting);
+        p.retry = Some((connection, p.query.clone()));
+        p.restart = false;
+        p.notice = "Requesting a sign-in code from ChatGPT…".into();
+        self.status.clear();
         p.mode = Mode::Enrollment;
         p.query.clear();
         self.private_request(command, false)
@@ -741,6 +904,7 @@ impl App {
     fn cancel_enrollment(&mut self) -> Result<()> {
         let p = self.accounts.picker.as_mut().context("view closed")?;
         p.private = None;
+        p.notice = "Cancelling the previous sign-in…".into();
         let i = p.intent.as_mut().context("No pending enrollment")?;
         let id = enrollment_id(i).context("Invalid original enrollment")?;
         let command_id = *i.cancel.get_or_insert_with(Uuid::new_v4);
@@ -981,9 +1145,17 @@ impl App {
                 Mode::Enrollment => {
                     match k.code {
                         KeyCode::Char('r') => {
-                            self.poll_account_enrollment()?;
+                            if p.intent.is_some() {
+                                self.poll_account_enrollment()?;
+                            } else if p.outcome == Some(EnrollmentState::Succeeded) {
+                                self.refresh_enrolled_accounts(None)?;
+                            }
                         }
-                        KeyCode::Char('c') => {
+                        KeyCode::Char('n') => {
+                            self.restart_enrollment()?;
+                        }
+                        KeyCode::Char('c') if p.intent.is_some() => {
+                            p.restart = false;
                             self.cancel_enrollment()?;
                         }
                         KeyCode::Char('o') => {
@@ -1230,6 +1402,7 @@ mod tests {
     #[test]
     fn private_material_requires_exact_provider_and_current_expiry() {
         let mut p = PrivateEnrollmentStatus {
+            failure: None,
             status: EnrollmentStatus {
                 enrollment_id: Uuid::new_v4(),
                 state: EnrollmentState::Pending,

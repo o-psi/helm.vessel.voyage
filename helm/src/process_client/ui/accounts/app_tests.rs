@@ -151,6 +151,9 @@ fn picker(app: &mut App, t: Target) -> tokio::sync::watch::Sender<ConnectionStat
         busy: false,
         intent: None,
         private: None,
+        outcome: None,
+        retry: None,
+        restart: false,
         poll: Instant::now(),
         models: vec![],
         connection: rx,
@@ -178,6 +181,7 @@ fn material(app: &mut App) -> PrivateEnrollmentStatus {
     });
     p.mode = Mode::Enrollment;
     let v = PrivateEnrollmentStatus {
+        failure: None,
         status: EnrollmentStatus {
             enrollment_id,
             state: EnrollmentState::Pending,
@@ -439,6 +443,7 @@ async fn expiry_denial_cancel_and_small_layout_clear_or_hide_material() {
     // Publication already won: report success rather than pretending cancellation undid it.
     let p = app.accounts.picker.as_ref().unwrap();
     let result = PrivateEnrollmentStatus {
+        failure: None,
         status: EnrollmentStatus {
             enrollment_id: p.intent.as_ref().and_then(enrollment_id).unwrap(),
             state: EnrollmentState::Succeeded,
@@ -454,7 +459,7 @@ async fn expiry_denial_cancel_and_small_layout_clear_or_hide_material() {
     app.account_reply(id, Ok(Reply::Private(result))).unwrap();
     let p = app.accounts.picker.as_ref().unwrap();
     assert!(p.private.is_none() && p.intent.is_none());
-    assert!(p.notice.contains("Succeeded"));
+    assert!(p.notice.contains("Signed in"));
     assert!(app.views[&t].pending.is_none());
     assert_clean(&app, t, fixture.0.path());
 }
@@ -669,4 +674,95 @@ async fn draft_choice_remembering_is_separate_and_unavailable_preference_never_f
         app.copy_new_draft_images(draft).unwrap().0.text,
         "draft survives account selection"
     );
+}
+
+#[tokio::test]
+async fn enrollment_refresh_keeps_code_and_restart_waits_for_confirmed_close() {
+    let fixture = support::Fixture::new();
+    let mut app = app(fixture.0.path());
+    let t = live(&mut app);
+    let _watch = picker(&mut app, t);
+    let mut value = material(&mut app);
+    let original = value.status.enrollment_id;
+    app.poll_account_enrollment().unwrap();
+    assert!(draw(&app, 80, 24).contains("SYNTHETIC-1234"));
+    app.accounts.reply = None;
+    let id = app.accounts.picker.as_ref().unwrap().id;
+    value.status.state = EnrollmentState::Exchanging;
+    app.account_reply(id, Ok(Reply::Private(value.clone())))
+        .unwrap();
+    assert!(draw(&app, 80, 24).contains("SYNTHETIC-1234"));
+    value.status.state = EnrollmentState::Uncertain;
+    value.failure = Some(EnrollmentFailure {
+        phase: EnrollmentPhase::Poll,
+        kind: EnrollmentFailureKind::InvalidResponse,
+        http_status: Some(502),
+    });
+    app.account_reply(id, Ok(Reply::Private(value.clone())))
+        .unwrap();
+    let screen = draw(&app, 80, 24);
+    assert!(!screen.contains("SYNTHETIC-1234"));
+    assert!(screen.contains("N new sign-in"));
+    assert!(screen.contains("HTTP 502"));
+    key(&mut app, KeyCode::Char('n'));
+    let p = app.accounts.picker.as_ref().unwrap();
+    assert!(p.restart && p.busy);
+    assert_eq!(p.intent.as_ref().and_then(enrollment_id), Some(original));
+    assert!(p.intent.as_ref().unwrap().cancel.is_some());
+    assert!(matches!(p.mode, Mode::Enrollment));
+    app.accounts.reply = None;
+    value.status.state = EnrollmentState::Cancelled;
+    app.account_reply(id, Ok(Reply::Private(value))).unwrap();
+    let p = app.accounts.picker.as_ref().unwrap();
+    assert!(matches!(p.mode, Mode::Alias(_)));
+    assert_eq!(p.query, "work");
+    assert!(p.intent.is_none());
+    assert!(
+        storage::load(p.host.unwrap(), &p.workspace)
+            .unwrap()
+            .enrollment
+            .is_none()
+    );
+    key(&mut app, KeyCode::Enter);
+    let p = app.accounts.picker.as_ref().unwrap();
+    assert_ne!(p.intent.as_ref().and_then(enrollment_id), Some(original));
+    assert!(matches!(p.mode, Mode::Enrollment));
+    assert!(p.busy);
+    assert_clean(&app, t, fixture.0.path());
+}
+
+#[tokio::test]
+async fn late_success_during_restart_refreshes_choices_without_switching_account() {
+    let fixture = support::Fixture::new();
+    let mut app = app(fixture.0.path());
+    let t = live(&mut app);
+    let original = app.inference_settings(Destination::Live(t)).unwrap();
+    let _watch = picker(&mut app, t);
+    let mut value = material(&mut app);
+    draw(&app, 80, 24);
+    key(&mut app, KeyCode::Char('n'));
+    app.accounts.reply = None;
+    let p = app.accounts.picker.as_ref().unwrap();
+    let id = p.id;
+    let account = p.catalogue.accounts[0].id;
+    value.status.state = EnrollmentState::Succeeded;
+    value.status.account_id = Some(account);
+    app.account_reply(id, Ok(Reply::Private(value))).unwrap();
+    let p = app.accounts.picker.as_ref().unwrap();
+    assert!(p.private.is_none() && p.intent.is_none() && p.retry.is_none());
+    assert!(!p.restart && p.busy);
+    let catalogue = Catalogue {
+        accounts: p.catalogue.accounts.clone(),
+        connections: p.catalogue.connections.clone(),
+    };
+    app.accounts.reply = None;
+    app.account_reply(id, Ok(Reply::Catalogue(catalogue, Some(account))))
+        .unwrap();
+    let p = app.accounts.picker.as_ref().unwrap();
+    assert!(matches!(p.mode, Mode::List));
+    assert_eq!(p.selected, 0);
+    assert!(p.notice.contains("Signed in"));
+    assert!(app.views[&t].pending.is_none());
+    assert!(app.inference_settings(Destination::Live(t)).unwrap() == original);
+    assert_clean(&app, t, fixture.0.path());
 }

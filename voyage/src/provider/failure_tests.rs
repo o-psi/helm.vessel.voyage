@@ -377,3 +377,24 @@ async fn actual_reqwest_timeout_keeps_existing_retry_policy() {
     assert!(error.is_retryable());
     assert_eq!(error.http_status(), None);
 }
+
+#[test]
+fn device_poll_wait_survives_http_metadata_but_not_other_failures() {
+    for status in [400, 403, 404] {
+        let pending = ProviderError::Unavailable("device authorization pending".into())
+            .with_http_status(status);
+        assert_eq!(pending.device_poll_delay(5), Some(5));
+        let slow = ProviderError::Unavailable("device authorization slow_down".into())
+            .with_http_status(status);
+        assert_eq!(slow.device_poll_delay(5), Some(10));
+        assert_eq!(slow.device_poll_delay(600), Some(600));
+    }
+    assert_eq!(
+        ProviderError::Unavailable("token exchange failed".into()).device_poll_delay(5),
+        None
+    );
+    assert_eq!(
+        ProviderError::Authentication("device authorization denied".into()).device_poll_delay(5),
+        None
+    );
+}
