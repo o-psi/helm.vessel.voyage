@@ -1,12 +1,12 @@
 {
   "schema_version": 1,
-  "measured_at_utc": "2026-09-11T20:17:50.905348+00:00",
+  "measured_at_utc": "2026-09-12T16:11:21.903387+00:00",
   "source": {
-    "base_commit": "a6b1d3e2e1be4fdad9c62b61774a60ee823d18a8",
+    "base_commit": "5242d92975af0463d3e4392599e90842ba50e989",
     "dirty": false,
-    "fingerprint_sha256": "08839a6c71c36d629ae69a7c655ef7939f1d8937e607af6fba8484420f5ac544",
+    "fingerprint_sha256": "54ea1b5e37d8b0f6ccb3eadbde1ee5cd319d610550b847930ba6bb96403a3231",
     "fingerprint_method": "SHA-256 of compact sorted JSON mapping all tracked regular-file contents and symlink target text to SHA-256 hashes",
-    "note": "Clean #72 source with published #64/#10/Android main merged. Source bytes unchanged through workspace tests and complete current-artifact export. Later measurement/docs commits do not change Rust source or tests."
+    "note": "Clean final #261 source. All measured files remained unchanged through tests and current-artifact export. The following coverage-record commit changes no Rust source or tests."
   },
   "platform": "x86_64-unknown-linux-gnu",
   "tools": {
@@ -14,41 +14,42 @@
     "llvm": "22.1.8",
     "cargo_llvm_cov": "0.9.1"
   },
-  "command": "cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir \"$CARGO_LLVM_COV_TARGET_DIR/coverage-report/issue72-final2/default-report\" -j 8",
+  "command": "cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir \"$CARGO_LLVM_COV_TARGET_DIR/coverage-report/issue261-final/default-report\" -j 8",
   "environment": {
     "CARGO_LLVM_COV_TARGET_DIR": "existing shared workspace target",
     "LLVM_COV": "llvm-cov",
-    "LLVM_PROFDATA": "llvm-profdata"
+    "LLVM_PROFDATA": "llvm-profdata",
+    "umask": "0077"
   },
   "scope": "All existing workspace Rust tests and current workspace executable artifacts, default features",
   "tests": {
-    "passed": 315,
+    "passed": 344,
     "failed": 0,
     "ignored": 1
   },
   "coverage": {
     "lines": {
-      "count": 88456,
-      "covered": 28055,
-      "percent": 31.716333544361035
+      "count": 89724,
+      "covered": 29161,
+      "percent": 32.50078017030003
     },
     "functions": {
-      "count": 8707,
-      "covered": 2658,
-      "percent": 30.527162053520158
+      "count": 8826,
+      "covered": 2759,
+      "percent": 31.25991389077725
     },
     "regions": {
-      "count": 144370,
-      "covered": 44347,
-      "notcovered": 100023,
-      "percent": 30.71760060954492
+      "count": 146367,
+      "covered": 46047,
+      "notcovered": 100320,
+      "percent": 31.459960236938656
     }
   },
   "report_selection": {
     "method": "Complete current Cargo compiler-artifact executable set from instrumented cargo test --workspace --locked --no-run --message-format=json; LLVM export/show retains tool-default exclusions plus distribution Rust standard-library debug paths",
     "workspace_executables": 11,
     "executed_test_binaries": 10,
-    "logical_source_files": 424,
+    "logical_source_files": 428,
     "byte_identical_reused_source_files": 0,
     "duplicate_logical_source_paths": 0,
     "mismatched_functions": 0
@@ -62,10 +63,10 @@
     "Tool-default dependency/test-source exclusions and distribution Rust standard-library debug paths"
   ],
   "notes": [
-    "Workspace tests passed: 315 passed, 0 failed, 1 ignored (existing live-provider test).",
-    "The previous measurement attempt failed a synthetic legacy journal fixture that relabeled schema 12 as schema 10 without removing new tables. The fixture was corrected; runtime migration rejection was not weakened. Failed logs/profiles retained.",
-    "Default shared-target report retained but not used for published totals: it included historical objects and removed source paths. All current Cargo executable artifacts were retained and exported, with 424 unique current source paths and no mismatches.",
-    "Primary and adversarial Linux loopback notification/Helm journeys passed separately; their results are not added to Rust coverage counts. Actual #71 budget-source delivery and broader process-crash matrix remain unverified.",
-    "Compared with prior measurement: lines +1.5426 percentage points, functions +1.1631 percentage points, regions +1.6258 percentage points. Default scope and exclusions preserved."
+    "Workspace tests passed: 344 passed, 0 failed, 1 ignored (existing live-provider test).",
+    "Default shared-target report retained as evidence but not published: historical objects reference retired worktrees. Corrected export retains every current Cargo executable, with 428 unique current source files, no reused source paths and no mismatched functions.",
+    "51 offline native provider/retry/history scenarios and a Helm PTY attempt-history check passed separately, with observed cleanup. These do not contribute to Rust coverage totals or establish live-provider/native macOS/Windows behavior.",
+    "Strict Clippy passed for voyage and voyage-protocol across targets/features. Strict full-workspace Clippy remains failing on 24 pre-existing diagnostics in unchanged Helm account/inbox and Vessel pairing/account/notification code; source equality with origin/main was checked. No lint result is represented as a test pass.",
+    "Compared with prior measurement: lines +0.7844 percentage points, functions +0.7328 percentage points, regions +0.7424 percentage points. Default scope and exclusions preserved."
   ]
 }
