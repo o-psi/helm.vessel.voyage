@@ -1,12 +1,12 @@
 {
   "schema_version": 1,
-  "measured_at_utc": "2026-09-12T22:19:00.075510+00:00",
+  "measured_at_utc": "2026-09-12T22:39:13.254585+00:00",
   "source": {
-    "commit": "e8462b52f545804cb097a8a62724c40de943ca46",
-    "dirty": false,
-    "fingerprint_sha256": "11de4760e5bd5a6614db2dba4798c4426b1cef46211b704b36d7e1ec1b343c57",
-    "fingerprint_method": "SHA-256 of compact sorted JSON mapping tracked file contents and symlink target text to SHA-256 hashes",
-    "note": "Clean isolated checkout; unchanged through tests and current-artifact export. Unrelated primary-checkout edits excluded."
+    "commit": "a3b04385468eb44d7b4f8b03e4425ce2c3188e5e",
+    "dirty": true,
+    "fingerprint_sha256": "55d79e65668d23b9a9633804814f89fbc2a7e9e7056120ac46f3aab35ee79185",
+    "fingerprint_method": "SHA-256 of compact sorted JSON mapping tracked file contents and symlink target text to SHA-256 hashes; missing tracked files represented as null",
+    "note": "Primary checkout, measured source unchanged through tests and current-artifact export. Dirty tree includes preserved unrelated rendering comments and deleted auxiliary scripts/Python fixtures; these changes are not part of this delivery."
   },
   "platform": "x86_64-unknown-linux-gnu",
   "tools": {
@@ -14,7 +14,7 @@
     "llvm": "22.1.8",
     "cargo_llvm_cov": "0.9.1"
   },
-  "command": "cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir \"$CARGO_LLVM_COV_TARGET_DIR/coverage-report/issue255-final/default-report\" -j 8",
+  "command": "cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir \"$CARGO_LLVM_COV_TARGET_DIR/coverage-report/issue264-final/default-report\" -j 8",
   "environment": {
     "CARGO_LLVM_COV_TARGET_DIR": "existing shared workspace target",
     "LLVM_COV": "llvm-cov",
@@ -23,33 +23,33 @@
   },
   "scope": "All existing workspace Rust tests and current workspace executable artifacts, default features",
   "tests": {
-    "passed": 361,
+    "passed": 369,
     "failed": 0,
     "ignored": 1
   },
   "coverage": {
     "lines": {
-      "count": 90956,
-      "covered": 30073,
-      "percent": 33.06323936848587
+      "count": 91619,
+      "covered": 30528,
+      "percent": 33.320599438981
     },
     "functions": {
-      "count": 8918,
-      "covered": 2829,
-      "percent": 31.72235927337968
+      "count": 9032,
+      "covered": 2910,
+      "percent": 32.21877767936226
     },
     "regions": {
-      "count": 148416,
-      "covered": 47540,
-      "notcovered": 100876,
-      "percent": 32.031586890901245
+      "count": 149755,
+      "covered": 48450,
+      "notcovered": 101305,
+      "percent": 32.352842976862206
     }
   },
   "report_selection": {
     "method": "Complete current Cargo compiler-artifact executable set from instrumented cargo test --workspace --locked --no-run --message-format=json; LLVM export/show retains tool-default exclusions plus distribution Rust standard-library debug paths",
     "workspace_executables": 11,
     "executed_test_binaries": 10,
-    "logical_source_files": 431,
+    "logical_source_files": 434,
     "byte_identical_reused_source_files": 0,
     "duplicate_logical_source_paths": 0,
     "mismatched_functions": 0
@@ -63,8 +63,8 @@
     "Tool-default dependency/test-source exclusions and distribution Rust standard-library debug paths"
   ],
   "notes": [
-    "Default shared-target report preserved but not published because it contains historical worktree objects. Current Cargo artifact export includes all 11 current executables, no duplicate logical source and no mismatched functions.",
-    "Prior comparison: lines +0.2116 percentage points, functions +0.1807 percentage points, regions +0.2463 percentage points.",
-    "No live-provider or native macOS/Windows claim. Local Linux PTY evidence is separate. Coverage measures execution, not correctness."
+    "Default shared-target report preserved but not published because it includes historical objects. Current Cargo artifact export retains all 11 current workspace executables, with no duplicate logical sources or mismatched functions.",
+    "Prior comparison: lines +0.2574 percentage points, functions +0.4964 percentage points, regions +0.3213 percentage points.",
+    "No live-provider or native macOS/Windows claim. Synthetic Linux process and Helm PTY checks are separate. Coverage measures execution, not correctness."
   ]
 }
