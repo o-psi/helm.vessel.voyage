@@ -2,6 +2,7 @@
 //! Sensitive replies use a private one-shot, not the ordinary observer/event queue.
 mod render;
 mod storage;
+mod usage;
 use super::{
     App, Event, KeyCode, KeyModifiers, Result, drafts,
     inference::{Destination, Settings},
@@ -28,6 +29,7 @@ pub(super) struct Controls {
     hosts: std::collections::BTreeMap<Route, Uuid>,
     // No Debug/serialization and no Update variant: this channel is private to the view.
     reply: Option<(Uuid, oneshot::Receiver<Result<Reply>>)>,
+    usage_reply: Option<(Uuid, oneshot::Receiver<Result<Reply>>)>,
     pub(super) initializing: std::collections::BTreeSet<Uuid>,
     hits: std::cell::RefCell<Vec<(ratatui::layout::Rect, usize)>>,
     visible: std::cell::Cell<bool>,
@@ -42,6 +44,12 @@ impl Controls {
 struct Catalogue {
     accounts: Vec<AccountDescriptor>,
     connections: Vec<ConnectionDescriptor>,
+    #[serde(default)]
+    default_account: Option<AccountBinding>,
+    #[serde(default)]
+    default_revision: u64,
+    #[serde(default)]
+    can_set_default: bool,
 }
 struct Loaded {
     host: Uuid,
@@ -55,6 +63,8 @@ enum Reply {
     Private(PrivateEnrollmentStatus),
     Mutation,
     Catalogue(Catalogue, Option<Uuid>),
+    Usage(AccountUsageObservation),
+    DefaultAccount(Catalogue),
 }
 enum Mode {
     List,
@@ -76,7 +86,9 @@ struct Picker {
     query: String,
     selected: usize,
     edit: usize,
-    remember: bool,
+    usage: std::collections::HashMap<Uuid, AccountUsageObservation>,
+    usage_requested: std::collections::HashSet<Uuid>,
+    default_change_pending: bool,
     enroll: bool,
     notice: String,
     busy: bool,
@@ -246,12 +258,30 @@ impl Picker {
                 for &t in &c.transports {
                     items.push((
                         format!(
-                            "{} / {} · {} · {:?} / {:?}",
+                            "{}    {}    {}{}",
                             safe(&a.label),
-                            safe(&c.label),
-                            provider(t),
-                            a.state,
-                            a.availability
+                            if c.transports.len() > 1 {
+                                format!("{} ({})", safe(&c.label), provider(t))
+                            } else {
+                                safe(&c.label)
+                            },
+                            match (a.state, a.availability) {
+                                (AccountState::Ready, CredentialAvailability::Available) =>
+                                    "Signed in",
+                                (AccountState::SignInRequired, _) => "Sign in required",
+                                (AccountState::Removed, _) => "Removed",
+                                _ => "Credentials unavailable",
+                            },
+                            if self
+                                .original
+                                .account
+                                .as_ref()
+                                .is_some_and(|b| b.account_id == a.id && b.transport == t)
+                            {
+                                " · Current"
+                            } else {
+                                ""
+                            }
                         ),
                         selectable(a).then(|| AccountBinding {
                             account_id: a.id,
@@ -264,11 +294,8 @@ impl Picker {
                 }
             }
         }
-        items.push(("Add account / Sign in (device)".into(), None));
-        items.push((
-            "API account: private execution-host terminal instructions".into(),
-            None,
-        ));
+        items.push(("+ Sign in to another account".into(), None));
+        items.push(("Set up an API account…".into(), None));
         items
     }
     fn label(&self, s: &Settings) -> String {
@@ -282,7 +309,7 @@ impl Picker {
                     .map(|a| safe(&a.label))
                     .unwrap_or_else(|| b.account_id.to_string())
             })
-            .unwrap_or_else(|| "unresolved host default".into())
+            .unwrap_or_else(|| "No account selected".into())
     }
 }
 impl App {
@@ -390,13 +417,18 @@ impl App {
             catalogue: Catalogue {
                 accounts: vec![],
                 connections: vec![],
+                default_account: None,
+                default_revision: 0,
+                can_set_default: false,
             },
             original,
             mode: Mode::List,
             query: query.into(),
             selected: 0,
             edit: 0,
-            remember: false,
+            usage: Default::default(),
+            usage_requested: Default::default(),
+            default_change_pending: false,
             enroll: false,
             notice: "Reading authenticated executing-host accounts…".into(),
             busy: true,
@@ -439,7 +471,13 @@ impl App {
                 let defaults = client
                     .request(VesselCommand::AccountDefaults { workspace })
                     .await
-                    .and_then(|v| Ok(serde_json::from_value(v)?))
+                    .and_then(|v| {
+                        if v["code"] == "default_account_required" {
+                            Ok(Settings::default())
+                        } else {
+                            Ok(serde_json::from_value(v)?)
+                        }
+                    })
                     .unwrap_or_default();
                 let enroll = caps["features"]
                     .as_array()
@@ -470,16 +508,39 @@ impl App {
             p.loss_generation = state.loss_generation;
             p.disconnected = true;
             p.private = None;
+            p.usage.clear();
             p.busy = false;
             // Invalidate even an already queued one-shot. A reconnect cannot authorize
             // material fetched on an earlier socket, nor replay an enrollment mutation.
             p.id = Uuid::new_v4();
             self.accounts.reply = None;
+            self.accounts.usage_reply = None;
             p.notice = "Disconnected. Sensitive material cleared; reopen or press R to privately inspect the original enrollment under current authority.".into();
         }
     }
     pub(super) fn account_tick(&mut self) {
         self.account_connection_tick();
+        if let Some((id, mut rx)) = self.accounts.usage_reply.take() {
+            match rx.try_recv() {
+                Ok(result) => {
+                    let busy = self.accounts.picker.as_ref().is_some_and(|p| p.busy);
+                    let notice = self.accounts.picker.as_ref().map(|p| p.notice.clone());
+                    let _ = self.account_reply(id, result);
+                    if let Some(p) = self.accounts.picker.as_mut() {
+                        p.busy = busy;
+                        if !matches!(p.mode, Mode::List) || busy {
+                            if let Some(notice) = notice {
+                                p.notice = notice;
+                            }
+                        }
+                    }
+                }
+                Err(oneshot::error::TryRecvError::Empty) => {
+                    self.accounts.usage_reply = Some((id, rx))
+                }
+                Err(_) => (),
+            }
+        }
         if let Some((id, mut rx)) = self.accounts.reply.take() {
             match rx.try_recv() {
                 Ok(result) => {
@@ -511,6 +572,17 @@ impl App {
                 .is_some_and(|v| v.status.expires_at <= now())
             {
                 p.private = None;
+            }
+            if matches!(p.mode, Mode::List)
+                && !p.busy
+                && !p.disconnected
+                && self.accounts.usage_reply.is_none()
+            {
+                let selected = p.choices().get(p.selected).and_then(|(_, b)| b.clone());
+                if selected.is_some_and(|b| !p.usage_requested.contains(&b.account_id)) {
+                    let _ = self.refresh_account_usage(false);
+                    return;
+                }
             }
             if matches!(p.mode, Mode::Enrollment)
                 && !p.busy
@@ -584,8 +656,6 @@ impl App {
                         );
                         if saved.account_settings.is_none() {
                             let explicit = self.draft_account_seed(d);
-                            let explicit_binding =
-                                explicit.as_ref().is_some_and(|s| s.account.is_some());
                             p.original = if let Some(mut seed) = explicit {
                                 if seed.account.is_none() && seed.provider == v.defaults.provider {
                                     seed.account = v.defaults.account.clone();
@@ -594,17 +664,7 @@ impl App {
                             } else {
                                 v.defaults
                             };
-                            if !explicit_binding {
-                                if let Some(b) = &p.original.account {
-                                    if let Some((_, remembered)) =
-                                        prefs.choices.iter().find(|(c, _)| *c == b.connection_id)
-                                    {
-                                        p.original.account = Some(remembered.clone());
-                                        p.original.provider = provider(remembered.transport).into();
-                                    }
-                                }
-                            }
-                            // Persist a remembered unavailable binding too: it must be reviewed, not fall back.
+                            // Legacy per-Helm remembered accounts no longer override the host default.
                             self.set_draft_account(d, v.host, p.original.clone())?;
                         }
                     }
@@ -612,7 +672,8 @@ impl App {
                         p.mode = Mode::Enrollment;
                         p.poll = Instant::now() - Duration::from_secs(4);
                     }
-                    p.notice = "Select an account. Availability is a local observation, not provider entitlement. R resumes the original sign-in. API keys belong only in an execution-host private terminal.".into();
+                    p.notice =
+                        "Choose an account for this voyage; default is set separately.".into();
                 }
                 Reply::Catalogue(catalogue, focus) => {
                     ensure!(
@@ -628,6 +689,8 @@ impl App {
                             .insert((p.route, account.id), safe(&account.label));
                     }
                     p.catalogue = catalogue;
+                    p.usage.clear();
+                    p.usage_requested.clear();
                     p.mode = Mode::List;
                     p.query.clear();
                     p.selected = p
@@ -649,6 +712,30 @@ impl App {
                             p.models = models;
                         }
                     }
+                }
+                Reply::Usage(observation) => {
+                    let valid = p.catalogue.accounts.iter().any(|a| {
+                        a.id == observation.account.account_id
+                            && a.identity_generation == observation.account.identity_generation
+                            && a.capability_revision == observation.capability_revision
+                    }) && p.catalogue.connections.iter().any(|c| {
+                        c.id == observation.account.connection_id
+                            && c.revision == observation.account.connection_revision
+                    });
+                    ensure!(
+                        valid && !p.disconnected,
+                        "Usage identity changed; reopen accounts"
+                    );
+                    p.usage.insert(observation.account.account_id, observation);
+                    p.notice = "Usage observation updated. It does not guarantee access.".into();
+                }
+                Reply::DefaultAccount(catalogue) => {
+                    p.default_change_pending = false;
+                    p.catalogue = catalogue;
+                    p.usage.clear();
+                    p.usage_requested.clear();
+                    p.notice =
+                        "Default account observed from host. This voyage is unchanged.".into();
                 }
                 Reply::Mutation => {
                     p.poll = Instant::now() - Duration::from_secs(4);
@@ -930,7 +1017,7 @@ impl App {
         p.mode = Mode::Confirm(settings);
         p.edit = 0;
         p.models.clear();
-        p.notice = "Review account + model + overrides atomically. Tab chooses an editable field; Ctrl+U clears it; F2 resets both overrides; F4 remembers for NEW voyages only. Enter confirms. Retained conversation/tool context may be sent to the new account and its organization; history is NOT erased.".into();
+        p.notice = "Tab / Shift+Tab Move · Ctrl+U Clear field · F2 Use defaults\nEnter Apply · Esc Cancel settings (running work continues)".into();
         let client = self.clients[p.route].clone();
         let workspace = p.workspace.clone();
         let (tx, rx) = oneshot::channel();
@@ -997,12 +1084,6 @@ impl App {
         );
         let host = p.host.context("authenticated host missing")?;
         let destination = p.destination;
-        if p.remember {
-            let mut prefs = storage::load(host, &p.workspace)?;
-            prefs.choices.retain(|(c, _)| *c != binding.connection_id);
-            prefs.choices.push((binding.connection_id, binding.clone()));
-            storage::save(host, &p.workspace, &prefs)?;
-        }
         match destination {
             Destination::Draft(id) => self.set_draft_account(id, host, settings)?,
             Destination::Live(t) => {
@@ -1056,6 +1137,7 @@ impl App {
         if matches!(event, Event::Key(k) if k.code == KeyCode::Esc) {
             self.accounts.picker = None;
             self.accounts.reply = None;
+            self.accounts.usage_reply = None;
             self.accounts.visible.set(false);
             return Ok(true);
         }
@@ -1095,6 +1177,23 @@ impl App {
         if p.busy {
             return Ok(true);
         }
+        let key = if matches!(p.mode, Mode::Confirm(_)) {
+            if let Some(index) = select.take() {
+                p.edit = index;
+                if index >= 3 {
+                    Some(crossterm::event::KeyEvent::new(
+                        KeyCode::Enter,
+                        KeyModifiers::NONE,
+                    ))
+                } else {
+                    key
+                }
+            } else {
+                key
+            }
+        } else {
+            key
+        };
         if matches!(p.mode, Mode::Connections) {
             if let Some(index) = select {
                 if let Some(c) = p
@@ -1169,18 +1268,25 @@ impl App {
                 }
                 Mode::Confirm(s) => {
                     match k.code {
+                        KeyCode::Enter if p.edit == 4 => {
+                            p.mode = Mode::List;
+                            p.notice =
+                                "Choose an account for this voyage; default is set separately."
+                                    .into();
+                            return Ok(true);
+                        }
                         KeyCode::Enter => {
                             let s = s.clone();
                             self.apply_account(s)?;
                             return Ok(true);
                         }
-                        KeyCode::Tab => p.edit = (p.edit + 1) % 3,
-                        KeyCode::BackTab => p.edit = (p.edit + 2) % 3,
+                        KeyCode::Tab => p.edit = (p.edit + 1) % 5,
+                        KeyCode::BackTab => p.edit = (p.edit + 4) % 5,
                         KeyCode::F(2) => {
                             s.reasoning_effort = None;
                             s.service_tier = None;
                         }
-                        KeyCode::F(4) => p.remember = !p.remember,
+                        _ if p.edit >= 3 => (),
                         _ => {
                             let mut text = match p.edit {
                                 0 => s.model.clone(),
@@ -1232,6 +1338,14 @@ impl App {
                 _ => (),
             }
             match k.code {
+                KeyCode::F(5) if matches!(p.mode, Mode::List) => {
+                    self.refresh_account_usage(true)?;
+                    return Ok(true);
+                }
+                KeyCode::F(6) if matches!(p.mode, Mode::List) => {
+                    self.set_default_account()?;
+                    return Ok(true);
+                }
                 KeyCode::Up => p.selected = p.selected.saturating_sub(1),
                 KeyCode::Down => {
                     p.selected = (p.selected + 1).min(p.choices().len().saturating_sub(1))

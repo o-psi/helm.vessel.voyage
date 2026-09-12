@@ -13,13 +13,20 @@ There is no quota-driven rotation and no external Codex bridge.
 
 Open Account on a new draft or existing voyage. The view identifies the authenticated
 Vessel, available connections, account labels, and locally observed availability.
-Choose an account/transport and review the model, thinking, and service overrides.
+The compact list marks **Current** and **Default** separately. Use arrows to navigate,
+Enter to continue, **F5** to refresh the selected account’s usage, and Escape to close.
+Choose an account and review **Settings for next run**: model, reasoning, and service.
+Tab/Shift+Tab or clicks focus editable fields and **Apply / Cancel** buttons. Empty
+reasoning/service fields use defaults; the effective catalog value and its provenance
+are shown when known, otherwise the UI explicitly says provider-managed/unknown.
+Ctrl+U clears a field; F2 clears reasoning/service overrides.
 Unknown capability support is not entitlement. Explicit edits apply atomically with
 the account; rejection leaves the prior selection intact. Escape preserves composer
 text. Unavailable accounts require review, never silent fallback.
 
 Switching an existing voyage may send retained conversation and tool context to the
-new account and its organization. The confirmation calls this out; switching does
+new account and its organization. The confirmation warns only when account/connection
+identity actually changes, not when reselecting the same identity; switching does
 not erase history. While a turn is active, its root, children, retries, and provider
 requests retain the admitted account/billing/endpoint identity. The picker stages
 **next turn** independently. Safe same-identity credential refresh is allowed; logout
@@ -34,15 +41,45 @@ original identity after a lost response; observation resolves that request inste
 of inventing another one. Old servers without account capability are unsupported,
 not simulated by a local-only selection.
 
-**Remember for new voyages** is a Helm preference keyed by authenticated Vessel,
-workspace, and connection. It does not edit execution-host defaults or change an
-existing/pending draft. Host fallback configuration is owner-managed. An unavailable
-remembered choice needs explicit review. Changing destination clears the host-local
-selection and requires resolving the new host's account.
+## Required default account
+
+The host owner must explicitly choose a **default account** before new voyages can
+start. In the account list, **F6 Set default** changes that host-wide default separately
+from the current voyage selection. There is no automatic first-account selection.
+New voyages inherit the default unless explicitly overridden; model/reasoning/service
+settings do not need explicit defaults. Legacy per-Helm remembered account choices no
+longer override the host default. Existing/frozen voyage selections remain unchanged.
+An unavailable default requires human action, never automatic fallback. Replace the
+default before removing its account. With no accounts, sign in or use private API
+setup first, then explicitly set a default. Scoped users ask the host owner to set it.
+
+## Usage observations
+
+The selected account shows a cached **provider-reported Codex allowance** observation,
+not a locally counted token total or an API-cost estimate. Opening/navigating the picker
+reads the private cache only. **F5** explicitly requests one bounded provider refresh;
+there is no background provider polling or automatic account rotation. OAuth fetches
+execute on the credential host through the native adapter, not a Codex bridge.
+
+The minimal observation includes primary/secondary windows, percent used, actual
+window duration, provider reset timestamp, observation age, and latest refresh status.
+Additional categories, credit balances/purchases, local per-account token attribution,
+and API costs are not included (see [#71](https://github.com/o-psi/voyage/issues/71)).
+Unknown data is never zero. Observations older than five minutes, or retained after a
+failed refresh, are marked stale; passing a reset timestamp never locally refills the
+allowance. Refresh failure preserves the last successful snapshot and does not block
+account selection. Provider observations are not entitlement or guaranteed availability.
+
+Usage reads require a private authorized human connection and the executing host’s
+account-use authority. Session/model grants cannot read account usage. Cached replies
+are fenced by account identity, connection and capability revisions and the current
+Helm socket. Tokens, raw provider bodies, and usage are not added to conversation or
+public tool history. Offline fixtures establish parser/authorization/UI behavior only;
+the read-only upstream endpoint is not a live compatibility guarantee.
 
 ## Device sign-in in Helm
 
-In Account choose **Add account / Sign in**, select the native ChatGPT connection,
+In Account choose **Sign in to another account**, select the native ChatGPT connection,
 and enter a new safe alias. Adding an existing alias fails; it does not overwrite a
 working account. API providers without this device flow offer the private host CLI
 alternative, not a callback relay or API-key form in chat.

@@ -120,6 +120,9 @@ fn picker(app: &mut App, t: Target) -> tokio::sync::watch::Sender<ConnectionStat
         host: Some(Uuid::new_v4()),
         _lock: None,
         catalogue: Catalogue {
+            default_account: None,
+            default_revision: 0,
+            can_set_default: true,
             accounts: vec![AccountDescriptor {
                 id: b.account_id,
                 connection_id: b.connection_id,
@@ -145,7 +148,9 @@ fn picker(app: &mut App, t: Target) -> tokio::sync::watch::Sender<ConnectionStat
         query: String::new(),
         selected: 0,
         edit: 0,
-        remember: false,
+        usage: Default::default(),
+        usage_requested: Default::default(),
+        default_change_pending: false,
         enroll: true,
         notice: String::new(),
         busy: false,
@@ -566,7 +571,7 @@ async fn configured_first_send_persists_policy_and_resolves_the_exact_original_p
 }
 
 #[tokio::test]
-async fn draft_choice_remembering_is_separate_and_unavailable_preference_never_falls_back() {
+async fn draft_override_does_not_change_new_voyage_default() {
     let fixture = support::Fixture::new();
     let mut app = app(fixture.0.path());
     let t = live(&mut app);
@@ -595,7 +600,6 @@ async fn draft_choice_remembering_is_separate_and_unavailable_preference_never_f
     app.account_reply(id, Ok(Reply::Models(binding.clone(), vec![])))
         .unwrap();
     key(&mut app, KeyCode::F(2)); // explicit override reset only
-    key(&mut app, KeyCode::F(4)); // local new-voyage preference only
     key(&mut app, KeyCode::Enter);
     let saved = &app.new_drafts[&draft].saved;
     assert_eq!(
@@ -623,13 +627,10 @@ async fn draft_choice_remembering_is_separate_and_unavailable_preference_never_f
         "draft survives account selection"
     );
     let prefs = storage::load(host, fixture.0.path()).unwrap();
-    assert_eq!(
-        prefs.choices,
-        vec![(binding.connection_id, binding.clone())]
-    );
+    assert!(prefs.choices.is_empty()); // per-voyage selection never sets a default
+
     assert!(app.views[&t].pending.is_none());
-    // New draft receives remembered identity even when absent from the catalogue.
-    // It must remain visibly unresolved/unavailable, not silently use host fallback.
+    // A subsequent draft receives the host default, not the prior draft override.
     app.create(Some(fixture.0.path().to_str().unwrap()))
         .unwrap();
     let next = app.active_draft.unwrap();
@@ -644,10 +645,13 @@ async fn draft_choice_remembering_is_separate_and_unavailable_preference_never_f
         Ok(Reply::Loaded(Loaded {
             host,
             catalogue: Catalogue {
+                default_account: None,
+                default_revision: 0,
+                can_set_default: true,
                 accounts: vec![],
                 connections: vec![],
             },
-            defaults: fallback,
+            defaults: fallback.clone(),
             enroll: true,
         })),
     )
@@ -659,7 +663,7 @@ async fn draft_choice_remembering_is_separate_and_unavailable_preference_never_f
             .as_ref()
             .unwrap()
             .account,
-        Some(binding)
+        fallback.account
     );
     assert!(
         app.accounts
@@ -752,6 +756,9 @@ async fn late_success_during_restart_refreshes_choices_without_switching_account
     assert!(p.private.is_none() && p.intent.is_none() && p.retry.is_none());
     assert!(!p.restart && p.busy);
     let catalogue = Catalogue {
+        default_account: None,
+        default_revision: 0,
+        can_set_default: true,
         accounts: p.catalogue.accounts.clone(),
         connections: p.catalogue.connections.clone(),
     };
@@ -765,4 +772,80 @@ async fn late_success_during_restart_refreshes_choices_without_switching_account
     assert!(app.views[&t].pending.is_none());
     assert!(app.inference_settings(Destination::Live(t)).unwrap() == original);
     assert_clean(&app, t, fixture.0.path());
+}
+
+#[tokio::test]
+async fn compact_account_settings_distinguish_current_default_and_real_identity_changes() {
+    let fixture = support::Fixture::new();
+    let mut app = app(fixture.0.path());
+    let t = live(&mut app);
+    let _socket = picker(&mut app, t);
+    let binding = app
+        .accounts
+        .picker
+        .as_ref()
+        .unwrap()
+        .original
+        .account
+        .clone()
+        .unwrap();
+    app.accounts
+        .picker
+        .as_mut()
+        .unwrap()
+        .catalogue
+        .default_account = Some(binding.clone());
+    let text = draw(&app, 160, 50);
+    assert!(
+        text.contains("Choose account") && text.contains("Current") && text.contains("Default")
+    );
+    assert!(!text.contains("chatgpt-oauth") && !text.contains("Host:"));
+    app.choose_account(binding).unwrap();
+    let p = app.accounts.picker.as_mut().unwrap();
+    p.busy = false;
+    app.accounts.reply = None;
+    let text = draw(&app, 80, 24);
+    assert!(
+        text.contains("Settings for next run") && text.contains("Apply") && text.contains("Cancel")
+    );
+    assert!(!text.contains("Different account:") && !text.contains("inherit"));
+    let p = app.accounts.picker.as_mut().unwrap();
+    if let Mode::Confirm(settings) = &mut p.mode {
+        settings.account.as_mut().unwrap().identity_generation += 1;
+    }
+    assert!(draw(&app, 80, 24).contains("Different account:"));
+    key(&mut app, KeyCode::BackTab); // Cancel button
+    key(&mut app, KeyCode::Enter);
+    assert!(matches!(
+        app.accounts.picker.as_ref().unwrap().mode,
+        Mode::List
+    ));
+    assert!(app.views[&t].pending.is_none());
+}
+
+#[tokio::test]
+async fn usage_replies_require_current_identity_and_capability_revision() {
+    let fixture = support::Fixture::new();
+    let mut app = app(fixture.0.path());
+    let t = live(&mut app);
+    let _socket = picker(&mut app, t);
+    let p = app.accounts.picker.as_ref().unwrap();
+    let id = p.id;
+    let mut observation = AccountUsageObservation {
+        account: p.original.account.clone().unwrap(),
+        capability_revision: 2,
+        snapshot: None,
+        refresh_status: AccountUsageRefreshStatus::NeverObserved,
+        attempted_at: None,
+    };
+    assert!(
+        app.account_reply(id, Ok(Reply::Usage(observation.clone())))
+            .is_err()
+    );
+    assert!(app.accounts.picker.as_ref().unwrap().usage.is_empty());
+    observation.capability_revision = 1;
+    app.account_reply(id, Ok(Reply::Usage(observation)))
+        .unwrap();
+    assert_eq!(app.accounts.picker.as_ref().unwrap().usage.len(), 1);
+    assert!(app.views[&t].pending.is_none());
 }

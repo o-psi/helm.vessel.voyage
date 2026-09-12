@@ -32,7 +32,7 @@ pub(super) struct Settings {
     pub resolution: Option<voyage_protocol::inference::InferenceResolution>,
 }
 impl Settings {
-    fn label(&self, field: Field) -> String {
+    pub(super) fn label(&self, field: Field) -> String {
         let (requested, resolved) = match field {
             Field::Account => {
                 return self
@@ -65,7 +65,7 @@ impl Settings {
             _ => "Provider-managed (unknown)".into(),
         }
     }
-    fn resolve(&mut self, models: &[crate::provider::ModelInfo]) {
+    pub(super) fn resolve(&mut self, models: &[crate::provider::ModelInfo]) {
         if let Ok(provider) =
             serde_json::from_value(serde_json::Value::String(self.provider.clone()))
         {

@@ -249,7 +249,8 @@ fn draw_inner(frame: &mut Frame<'_>, app: &App) {
     let panel_open = view.is_some_and(|v| v.panel.is_some());
     let overlay = terminals_open || panel_open;
     let status = presentation::notice(&app.status);
-    let status = if status.starts_with("Your workspace is ready.")
+    let status = if app.accounts.open()
+        || status.starts_with("Your workspace is ready.")
         || status.starts_with("Overview ready.")
         || status.starts_with("Back in Helm.")
         || status == "Connected. Voyage state refreshed."
