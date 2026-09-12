@@ -216,7 +216,9 @@ fn canonical_journal_reopen_preserves_outcomes_and_fences_old_writers() {
     drop(journal);
     // Synthetic old-version journal, not any user's storage.
     let conn = rusqlite::Connection::open(path.join("journal.sqlite3")).unwrap();
-    conn.execute("UPDATE attachment_schema SET version=10", [])
+    // A real v10 journal has no notification tables. Merely relabeling the
+    // version leaves an inconsistent future layout that must still be refused.
+    conn.execute_batch("DROP TABLE notification_outbox; DROP TABLE notification_cursor; UPDATE attachment_schema SET version=10;")
         .unwrap();
     drop(conn);
     let mut old_observer = Journal::open(path.clone()).unwrap();

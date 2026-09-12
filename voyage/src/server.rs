@@ -180,6 +180,9 @@ pub async fn serve(args: ServeArgs) -> Result<()> {
         }
         drop(journal);
         let owner = suspended::open_owner(journal_dir, args.session).await?;
+        owner
+            .bind_notification_incarnation(args.incarnation)
+            .await?;
         crate::host_resources::set_process_scope(args.session, args.incarnation)?;
         drop(startup);
         // A new lifetime must establish its own shutdown evidence, even when an

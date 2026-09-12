@@ -8,6 +8,7 @@ pub(super) async fn execute(
     command: ConnectedCommand,
 ) -> Result<serde_json::Value> {
     let (session, command) = match command {
+        ConnectedCommand::Inbox { command } => return super::inbox::execute(client, command).await,
         ConnectedCommand::Artifact {
             session,
             artifact,

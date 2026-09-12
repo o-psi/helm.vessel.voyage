@@ -18,6 +18,7 @@ impl App {
         self.send_command()?;
         if let Some((target, draft)) = original
             && super::inference::parse(draft.trim()).is_none()
+            && !super::inbox::is_command(draft.trim())
             && draft.trim_start().starts_with('/')
             && let Some(view) = self.views.get_mut(&target)
             && view.pending.is_none()
@@ -34,6 +35,15 @@ impl App {
     fn send_command(&mut self) -> Result<()> {
         let target = self.selected.context("create or select a voyage first")?;
         self.ensure_paste_finished(super::paste::Destination::Live(target))?;
+        // Inbox commands are local presentation even when the composer retains images.
+        let inbox_text = self
+            .views
+            .get(&target)
+            .map(|view| view.draft.text.trim().to_owned())
+            .filter(|text| super::inbox::is_command(text));
+        if let Some(text) = inbox_text {
+            return self.inbox_command(target, &text);
+        }
         if !self
             .views
             .get(&target)
@@ -60,6 +70,9 @@ impl App {
         preserve_draft: bool,
     ) -> Result<()> {
         let command_text = draft.trim();
+        if super::inbox::is_command(command_text) {
+            return self.inbox_command(target, command_text);
+        }
         if command_text == "/browser" || command_text.starts_with("/browser ") {
             return self.browser_command(target, command_text);
         }

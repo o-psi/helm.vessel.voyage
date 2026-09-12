@@ -5,6 +5,22 @@ native-platform validation. Focused regression and explicitly enabled live check
 are described in [quality](quality.md). The [implementation ledger](implementation.md)
 records delivery evidence and its limits.
 
+## Notification inbox and owner references
+
+Vessel supports explicitly configured source-voyage notification destinations with
+separate recipient acceptance, bounded metadata retention, immutable event receipts,
+expiry/revocation and current grant checks. Helm provides `connect inbox` commands,
+a passive `/inbox` overview and a bounded attention-count notice without switching
+voyages or stealing input. Opening or dismissing a reference never approves or
+executes an action; current owner decisions remain a separate explicit workflow.
+
+The owner journal records actual final outcomes and attention references atomically.
+The notification slice has focused Rust and offline Linux Helm/Vessel/Voyage evidence;
+actual #71 budget-source delivery and the broader retained crash matrix are not yet
+verified. This is not #257 condition-watch/wake scheduling or mobile/browser delivery.
+See [notifications](notifications.md), [client commands](notifications-client.md) and
+[verification and remaining scope](notifications-verification.md).
+
 ## Shared local browser
 
 Helm's F6 and `/browser` open a dedicated local Chromium companion. Browser actions

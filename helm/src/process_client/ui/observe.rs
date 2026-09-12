@@ -11,6 +11,10 @@ use tokio::sync::{Semaphore, mpsc};
 use voyage_protocol::vessel::{ProcessInfo, VesselCommand, VesselEventSubscription, VoyageCommand};
 
 pub enum Update {
+    InboxAttention {
+        route: Route,
+        count: u64,
+    },
     Operator(Box<super::operator_bridge::Loaded>),
     Browser {
         target: Target,
@@ -103,6 +107,8 @@ pub fn spawn(
     tokio::spawn(async move {
         let mut cursors = HashMap::<(uuid::Uuid, uuid::Uuid), u64>::new();
         let mut stream_round = 0usize;
+        let mut inbox_count = 0u64;
+        let mut inbox_probe = Instant::now() - Duration::from_secs(15);
         loop {
             // A read-only probe has a short UI budget; its timeout says nothing
             // about runtime liveness or the outcome of any in-flight command.
@@ -116,6 +122,15 @@ pub fn spawn(
             .and_then(|value| Ok(serde_json::from_value::<Vec<ProcessInfo>>(value)?));
             match result {
                 Ok(processes) => {
+                    if inbox_probe.elapsed() >= Duration::from_secs(15) {
+                        inbox_probe = Instant::now();
+                        if let Some(count) = super::inbox::attention(&client).await {
+                            if count > 0 && count != inbox_count {
+                                let _ = sender.send(Update::InboxAttention { route, count }).await;
+                            }
+                            inbox_count = count;
+                        }
+                    }
                     cursors.retain(|(id, incarnation), _| {
                         processes
                             .iter()

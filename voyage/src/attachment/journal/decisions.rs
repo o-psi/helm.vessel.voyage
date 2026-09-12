@@ -39,6 +39,7 @@ impl Journal {
         request: Value,
     ) -> Result<()> {
         self.check_guard(guard, guard.session_id)?;
+        ensure!(expires >= 0, "negative decision expiry");
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -46,6 +47,13 @@ impl Journal {
         ensure!(
             run.session_id == guard.session_id && matches!(run.state, RunState::Running),
             "decision run is not active"
+        );
+        ensure!(
+            guard.incarnation.is_none_or(|owner| owner == incarnation)
+                && run
+                    .source_incarnation
+                    .is_none_or(|source| source == incarnation),
+            "decision source incarnation mismatch"
         );
         let count: i64 = tx.query_row("SELECT count(*) FROM process_decisions", [], |row| {
             row.get(0)
@@ -63,6 +71,9 @@ impl Journal {
                 encoded
             ],
         )?;
+        if self.opened_schema >= 12 {
+            notifications::append(&tx, &run, Some((id, expires)))?;
+        }
         commit(tx, &self.commit_fence)
     }
     pub(crate) fn decisions(&self, incarnation: Uuid, now: i64) -> Result<Value> {

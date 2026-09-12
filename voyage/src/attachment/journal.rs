@@ -28,8 +28,9 @@ pub(crate) mod storage;
 #[cfg(windows)]
 use std::sync::Arc;
 
-// Version 11 fences older writers before persisting structured outcome metadata.
-const SCHEMA_VERSION: i64 = 11;
+// Version 12 fences writers that cannot atomically persist notification intents.
+const SCHEMA_VERSION: i64 = 12;
+mod notifications;
 mod reconciliation;
 pub use reconciliation::{LocalReconcileOutcome, LocalReconcileRequest};
 const STEERING_SCHEMA_VERSION: i64 = 4;
@@ -85,6 +86,7 @@ pub struct Journal {
 /// A stable OS-sidecar lock, not a lock on an atomically replaced session inode.
 /// Never unlink its file. Process death releases ownership; PID values are not used.
 pub struct ExecutionGuard {
+    incarnation: Option<Uuid>,
     file: File,
     directory: PathBuf,
     session_id: Uuid,
@@ -112,6 +114,9 @@ pub enum RunState {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RunRecord {
+    /// Original executing generation, never inferred from a later recovery owner.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_incarnation: Option<Uuid>,
     pub id: Uuid,
     pub command_id: Uuid,
     pub machine_id: Uuid,
@@ -252,7 +257,10 @@ impl Journal {
             .optional()?;
         if let Some(version) = version {
             ensure!(
-                matches!(version, 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | SCHEMA_VERSION),
+                matches!(
+                    version,
+                    2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | SCHEMA_VERSION
+                ),
                 "unsupported attachment journal schema"
             );
         } else {
@@ -267,6 +275,7 @@ impl Journal {
             tx.execute_batch(steering::SCHEMA)?;
             tx.execute_batch(catalogue::SCHEMA)?;
             tx.execute_batch(reconciliation::SCHEMA)?;
+            notifications::initialize(&tx)?;
             tx.execute(
                 "INSERT INTO attachment_schema VALUES(1, ?1)",
                 [SCHEMA_VERSION],
@@ -348,6 +357,7 @@ impl Journal {
             file.try_lock()
                 .context("session busy during journal upgrade")?;
             guards.push(ExecutionGuard {
+                incarnation: None,
                 file,
                 directory: self.directory.clone(),
                 session_id,
@@ -369,6 +379,7 @@ impl Journal {
         if self.opened_schema < 6 {
             tx.execute_batch(reconciliation::SCHEMA)?;
         }
+        notifications::initialize(&tx)?;
         tx.execute(
             "UPDATE attachment_schema SET version=?1 WHERE id=1",
             [SCHEMA_VERSION],
@@ -508,6 +519,7 @@ impl Journal {
         file.try_lock()
             .context("session busy or execution locking unavailable")?;
         let guard = ExecutionGuard {
+            incarnation: None,
             file,
             directory: self.directory.clone(),
             session_id,
@@ -686,6 +698,7 @@ impl Journal {
         current.session.messages.push(message);
         current.session.request_title(request.command_id);
         let run = RunRecord {
+            source_incarnation: guard.incarnation,
             id: Uuid::new_v4(),
             command_id: request.command_id,
             machine_id: request.machine_id,
@@ -1196,6 +1209,9 @@ impl Journal {
             "UPDATE runs SET record=?1,active=0 WHERE id=?2",
             params![serde_json::to_string(&run)?, run.id.to_string()],
         )?;
+        if self.opened_schema >= 12 {
+            notifications::append(&tx, &run, None)?;
+        }
         append_event(&tx, &run, EventKind::Terminal(state))?;
         commit(tx, &self.commit_fence)?;
         Ok(run)
@@ -1621,7 +1637,7 @@ impl Journal {
             return Ok(());
         }
         ensure!(
-            matches!(self.opened_schema, 8..=10),
+            matches!(self.opened_schema, 8..=11),
             "typed content requires an explicit quiescent journal upgrade"
         );
         let tx = self
@@ -1637,6 +1653,7 @@ impl Journal {
             active == 0,
             "typed content upgrade requires exclusive session execution"
         );
+        notifications::initialize(&tx)?;
         tx.execute(
             "UPDATE attachment_schema SET version=?1 WHERE id=1",
             [SCHEMA_VERSION],

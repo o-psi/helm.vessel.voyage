@@ -10,6 +10,7 @@ mod completion;
 mod controls;
 mod explore;
 mod export;
+mod inbox;
 mod inference;
 mod input;
 mod interactions;
