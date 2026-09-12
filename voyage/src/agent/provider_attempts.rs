@@ -273,6 +273,7 @@ impl Agent {
         record.phase = AttemptPhase::Stream;
         self.record_provider_attempt(checkpoint, record).await?;
         let mut pending_text = String::new();
+        let mut previews = super::tool_preview::Previews::default();
         loop {
             let event = self
                 .provider_wait(stream.next(), self.retry.stream_idle, cancel)
@@ -299,6 +300,18 @@ impl Agent {
                             self.record_provider_attempt(checkpoint, record).await?;
                         }
                         _ => {}
+                    }
+                    if matches!(&delta, ProviderDelta::ToolCall { .. }) {
+                        previews.update(&delta);
+                        if let Some(checkpoint) = checkpoint {
+                            let public = previews.public(record.attempt_id, &self.context.redactor);
+                            self.provider_wait(
+                                checkpoint.tool_previews(&public),
+                                self.context.timeout,
+                                cancel,
+                            )
+                            .await??;
+                        }
                     }
                     if let ProviderDelta::Text(text) = delta {
                         pending_text.push_str(&text);

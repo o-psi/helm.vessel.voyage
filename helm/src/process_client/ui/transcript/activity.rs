@@ -297,6 +297,7 @@ pub(super) fn flush(
             Some(r) if failed(call, r) => "Failed",
             Some(r) if r.tool_success == Some(true) => "Done",
             Some(_) => "Received",
+            None if active && !snapshot.decisions.is_empty() => "Awaiting approval",
             None if active => "Working",
             None => "Unconfirmed",
         };
@@ -696,5 +697,108 @@ mod reliability_tests {
         assert!(old.tool_output.is_some());
         let new: Message = serde_json::from_value(message).unwrap();
         assert!(new.tool_outcome.unwrap().success());
+    }
+}
+
+/// Provisional cards use attempt/index identity, never a tool execution identity.
+pub(super) fn previews(out: &mut Vec<Row>, snapshot: &Snapshot, state: &State, width: u16) {
+    let Some(run) = &snapshot.run else {
+        return;
+    };
+    for preview in &run.tool_previews {
+        let id = preview
+            .call_id
+            .clone()
+            .unwrap_or_else(|| format!("preview:{}:{}", preview.attempt_id, preview.index));
+        let key = Key::Tool(id.clone());
+        let expanded = state.tool_expanded.contains(&id);
+        note(
+            out,
+            key.clone(),
+            format!(
+                "{} {} · {} · Double-click to {}",
+                if expanded { "▼" } else { "▶" },
+                if preview.name.is_empty() {
+                    "Tool".to_owned()
+                } else {
+                    safe(&preview.name)
+                },
+                if run.active() && snapshot.recovery_notice.is_none() && !snapshot.recovery_pending
+                {
+                    "Generating arguments — not executed"
+                } else {
+                    "Unfinished preview — execution not established"
+                },
+                if expanded { "collapse" } else { "expand" }
+            ),
+            width,
+        );
+        note(
+            out,
+            key.clone(),
+            "Partial argument preview (not final JSON)",
+            width,
+        );
+        let lines = safe(&preview.arguments);
+        let limit = if expanded { 128 } else { 3 };
+        for line in lines.lines().take(limit) {
+            note(out, key.clone(), line, width);
+        }
+        if preview.truncated || lines.lines().count() > limit {
+            note(
+                out,
+                key,
+                "… preview bounded; final call details appear after validation",
+                width,
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod preview_tests {
+    use super::*;
+    #[test]
+    fn preview_cards_expand_bound_wrap_and_mark_interruption() {
+        let attempt = uuid::Uuid::new_v4();
+        let mut snapshot: Snapshot = serde_json::from_value(serde_json::json!({
+            "session_id":uuid::Uuid::new_v4(),"revision":1,"name":null,"model":"fixture","messages":[],
+            "run":{"run_id":uuid::Uuid::new_v4(),"state":"running","tool_previews":[{
+                "attempt_id":attempt,"index":4,"name":"shell","arguments":"first\nsecond\nthird\nfourth\u{001b}[31m","truncated":false
+            }]}
+        })).unwrap();
+        for width in [24, 80] {
+            let mut state = State::default();
+            for expanded in [false, true] {
+                if expanded {
+                    state.tool_expanded.insert(format!("preview:{attempt}:4"));
+                }
+                let mut out = vec![];
+                previews(&mut out, &snapshot, &state, width);
+                let text = out
+                    .iter()
+                    .map(|r| r.line.to_string())
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                assert_eq!(text.contains("fourth"), expanded);
+                assert!(!text.contains('\u{1b}'));
+                assert!(out.iter().all(|r| r.line.width() <= usize::from(width)));
+                assert!(
+                    out.iter()
+                        .all(|r| r.key == Key::Tool(format!("preview:{attempt}:4")))
+                );
+            }
+        }
+        snapshot.run.as_mut().unwrap().state = "interrupted".into();
+        let mut out = vec![];
+        previews(&mut out, &snapshot, &State::default(), 80);
+        assert!(
+            out.iter()
+                .any(|r| r.line.to_string().contains("Unfinished preview"))
+        );
+        snapshot.run.as_mut().unwrap().tool_previews.clear();
+        out.clear();
+        previews(&mut out, &snapshot, &State::default(), 80);
+        assert!(out.is_empty());
     }
 }

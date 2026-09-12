@@ -217,7 +217,7 @@ impl Journal {
             [session.to_string()],
         )?;
         tx.execute(
-            "UPDATE runs SET record=json_set(record,'$.partial_text','') WHERE session_id=?1",
+            "UPDATE runs SET record=json_set(record,'$.partial_text','','$.tool_previews',json('[]')) WHERE session_id=?1",
             [session.to_string()],
         )?;
         tx.execute(

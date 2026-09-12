@@ -135,7 +135,7 @@ pub(super) fn run(
         "provider_attempts":summary.and_then(|s| s.provider_attempts.last()).into_iter().collect::<Vec<_>>(),
         "provider_attempt_count":summary.map_or(0, |s| s.provider_attempts.len()),
         "provider_attempt_summary":summary.and_then(|s| s.provider_attempts.last()).map(|a| a.summary()),
-        "partial_text":partial,"partial_text_truncated":truncated,"partial_text_bytes":run.partial_text.len(),
+        "tool_previews":run.tool_previews,"partial_text":partial,"partial_text_truncated":truncated,"partial_text_bytes":run.partial_text.len(),
         "live_text":live,"live_text_truncated":live_truncated,"live_text_offset":offset,
         "stream_reconciled":offset.is_some(),"message_start":summary.and_then(|s| s.message_start)})
 }

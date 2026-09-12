@@ -45,3 +45,5 @@ mod workflow_preview_tests;
 pub mod notifications;
 /// Durable, secret-safe provider attempt observations.
 pub mod provider_attempt;
+
+pub mod tool_preview;

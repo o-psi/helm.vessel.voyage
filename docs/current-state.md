@@ -912,3 +912,10 @@ Native connection refusal, bounded retries, response-start and decoded-event idl
 timeouts, and Helm `/attempts` inspection are described in
 [provider failures and recovery](provider-attempts.md). Partial-output failures
 require explicit continuation; uncertain effects are not automatically replayed.
+
+## Live tool-call generation
+
+Helm displays bounded, privacy-filtered provisional tool-call cards through Voyage
+run snapshots, with double-click expansion and canonical replacement. Reasoning
+display is not yet adopted. See [tool previews](tool-previews.md) for retention,
+provider/privacy scope, Pi review, actual Linux evidence and remaining #255 acceptance.

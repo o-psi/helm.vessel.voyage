@@ -69,6 +69,7 @@ impl Provider for ProviderFixture {
     }
 }
 struct Checkpoint {
+    previews: Mutex<Vec<voyage_protocol::tool_preview::ToolPreview>>,
     attempts: Mutex<Vec<ProviderAttempt>>,
     cancel: Option<CancellationToken>,
     revoke: Option<Arc<AtomicBool>>,
@@ -80,6 +81,13 @@ impl RunCheckpoint for Checkpoint {
         uuid::Uuid::nil()
     }
     async fn canonical(&self, _: &[Message], _: &Usage) -> Result<(), CheckpointError> {
+        Ok(())
+    }
+    async fn tool_previews(
+        &self,
+        previews: &[voyage_protocol::tool_preview::ToolPreview],
+    ) -> Result<(), CheckpointError> {
+        *self.previews.lock().unwrap() = previews.to_vec();
         Ok(())
     }
     async fn partial(&self, _: &str) -> Result<(), CheckpointError> {
@@ -183,6 +191,7 @@ fn fixture(
     });
     let checkpoint = Checkpoint {
         attempts: Mutex::new(vec![]),
+        previews: Mutex::new(vec![]),
         cancel: None,
         revoke: None,
         fail_intent: false,
@@ -256,6 +265,15 @@ async fn text_tool_fragment_and_postdelta_context_rejection_never_retry() {
             assert!(result.unwrap_err().is_incomplete());
         }
         assert_eq!(calls.load(Ordering::SeqCst), 1);
+        let previews = checkpoint.previews.lock().unwrap();
+        assert_eq!(
+            previews.len(),
+            usize::from(matches!(failure, Failure::Tool))
+        );
+        if let Some(preview) = previews.first() {
+            assert_eq!(preview.name, "shell");
+            assert_eq!(preview.arguments, "{");
+        }
         let records = checkpoint.attempts.lock().unwrap();
         assert_eq!(records[0].decision, RetryDecision::PartialResponse);
         assert_eq!(records[0].phase, AttemptPhase::Stream);
@@ -386,6 +404,13 @@ impl RunCheckpoint for SlowSecondIntent {
         uuid::Uuid::nil()
     }
     async fn canonical(&self, _: &[Message], _: &Usage) -> Result<(), CheckpointError> {
+        Ok(())
+    }
+    async fn tool_previews(
+        &self,
+        previews: &[voyage_protocol::tool_preview::ToolPreview],
+    ) -> Result<(), CheckpointError> {
+        *self.0.previews.lock().unwrap() = previews.to_vec();
         Ok(())
     }
     async fn partial(&self, _: &str) -> Result<(), CheckpointError> {

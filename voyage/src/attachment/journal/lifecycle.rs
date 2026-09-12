@@ -225,7 +225,7 @@ impl Journal {
                 saved.session.draft.clear();
                 saved.session.name = None;
                 saved.session.title_state = None;
-                tx.execute("UPDATE runs SET record=json_set(record,'$.partial_text','') WHERE session_id=?1",[guard.session_id.to_string()])?;
+                tx.execute("UPDATE runs SET record=json_set(record,'$.partial_text','','$.tool_previews',json('[]')) WHERE session_id=?1",[guard.session_id.to_string()])?;
                 tx.execute(
                     "DELETE FROM events WHERE session_id=?1",
                     [guard.session_id.to_string()],

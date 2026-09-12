@@ -101,6 +101,8 @@ pub struct Run {
     #[serde(default)]
     pub partial_text: String,
     #[serde(default)]
+    pub tool_previews: Vec<voyage_protocol::tool_preview::ToolPreview>,
+    #[serde(default)]
     pub failure_summary: Option<String>,
     #[serde(default)]
     pub partial_text_truncated: bool,

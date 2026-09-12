@@ -207,6 +207,14 @@ pub trait RunCheckpoint: Send + Sync {
         Err(CheckpointError)
     }
 
+    /// Safe provisional presentation only; never a tool admission.
+    async fn tool_previews(
+        &self,
+        _previews: &[voyage_protocol::tool_preview::ToolPreview],
+    ) -> Result<(), CheckpointError> {
+        Ok(())
+    }
+
     /// Publish and return the canonical history. Managed journals may atomically
     /// reject expired, not-yet-canonical steering; accepted history is immutable.
     async fn reconciled(
@@ -1742,3 +1750,5 @@ fn runtime_guidance(base: &str, tools: &[ToolDefinition], access: AccessMode) ->
          operator's authoritative inventory.\n\n{inventory}"
     )
 }
+
+mod tool_preview;

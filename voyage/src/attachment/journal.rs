@@ -124,6 +124,8 @@ pub struct RunRecord {
     pub session_id: Uuid,
     pub state: RunState,
     pub partial_text: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tool_previews: Vec<voyage_protocol::tool_preview::ToolPreview>,
     pub terminal_reason: Option<String>,
     pub usage: Usage,
     pub final_checkpointed: bool,
@@ -706,6 +708,7 @@ impl Journal {
             session_id: request.session_id,
             state: RunState::Accepted,
             partial_text: String::new(),
+            tool_previews: Vec::new(),
             terminal_reason: None,
             usage: Usage::default(),
             final_checkpointed: false,
@@ -803,6 +806,42 @@ impl Journal {
         let sequence = append_event(&tx, &run, EventKind::TextDelta(delta.to_owned()))?;
         commit(tx, &self.commit_fence)?;
         Ok(sequence)
+    }
+
+    /// Replaces bounded public previews. The durable event carries no argument bytes.
+    pub fn tool_previews(
+        &mut self,
+        guard: &ExecutionGuard,
+        run_id: Uuid,
+        previews: Vec<voyage_protocol::tool_preview::ToolPreview>,
+    ) -> Result<()> {
+        use voyage_protocol::tool_preview::{MAX_ARGUMENT_BYTES, MAX_CALLS};
+        ensure!(
+            previews.len() <= MAX_CALLS
+                && previews.iter().all(|p| p.name.len() <= 128
+                    && p.call_id.as_ref().is_none_or(|id| id.len() <= 1024)
+                    && p.arguments.len() <= MAX_ARGUMENT_BYTES),
+            "preview capacity exceeded"
+        );
+        let run = self.run(run_id)?;
+        self.check_guard(guard, run.session_id)?;
+        let tx = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        check_transaction_schema(&tx, self.opened_schema)?;
+        let mut run = read_run(&tx, run_id)?;
+        ensure!(run.state == RunState::Running, "run is terminal");
+        if run.tool_previews == previews {
+            return Ok(());
+        }
+        run.tool_previews = previews;
+        tx.execute(
+            "UPDATE runs SET record=?1 WHERE id=?2",
+            params![serde_json::to_string(&run)?, run.id.to_string()],
+        )?;
+        append_event(&tx, &run, EventKind::CanonicalCheckpoint)?;
+        commit(tx, &self.commit_fence)?;
+        Ok(())
     }
 
     /// Persist the complete canonical provider/tool history before further effects.
@@ -919,6 +958,13 @@ impl Journal {
         };
         let mut messages = messages[..previous].to_vec();
         messages.extend(appended);
+        if messages
+            .iter()
+            .skip(previous)
+            .any(|message| message.role == crate::model::Role::Assistant)
+        {
+            run.tool_previews.clear();
+        }
         current.session.replace_messages(messages.clone());
         current.session.refresh_active_run_summary();
         current.session.usage.input_tokens = current
@@ -1663,3 +1709,6 @@ impl Journal {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod preview_tests;

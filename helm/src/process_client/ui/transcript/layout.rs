@@ -357,6 +357,7 @@ fn build(view: &View, state: &State, width: u16) -> Vec<Row> {
         }
     }
     super::activity::flush(&mut out, &mut calls, messages, snapshot, state, width);
+    super::activity::previews(&mut out, snapshot, state, width);
     // Unanchored/older turns still retain retry history; do not silently lose it
     // just because their canonical message range is outside the loaded window.
     for turn in &snapshot.turns {
