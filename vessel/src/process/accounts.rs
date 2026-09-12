@@ -140,6 +140,33 @@ impl Scope {
     }
 }
 
+struct UsageAuthority {
+    scope: Scope,
+    root: PathBuf,
+    workspace: PathBuf,
+    account: AccountBinding,
+    capability_revision: u64,
+}
+impl std::fmt::Debug for UsageAuthority {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("UsageAuthority")
+    }
+}
+impl voyage_runtime::policy::ExecutionAuthority for UsageAuthority {
+    fn check(&self) -> Result<()> {
+        self.scope
+            .use_account(&self.root, &self.workspace, &self.account)?;
+        ensure!(
+            Registry::default_host()?
+                .validate_binding(&self.account)?
+                .capability_revision
+                == self.capability_revision,
+            "account authority changed"
+        );
+        Ok(())
+    }
+}
+
 /// Host checks mirror Voyage's inherited-grant checks; a revoked parent cannot
 /// continue enrollment merely because a derived session record is still present.
 fn current_session_scope(root: &Path, grant: &ProcessGrant) -> Result<()> {
@@ -339,12 +366,113 @@ impl Supervisor {
                     .filter(|c| transport.is_none_or(|t| c.transports.contains(&t)))
                     .collect();
                 scope.check(&self.directory, &workspace, right)?;
-                Ok(json!({"revision": revision, "accounts": accounts, "connections": connections}))
+                let (default_revision, default_account) = registry.default_account()?;
+                let default_account =
+                    default_account.filter(|b| accounts.iter().any(|a| a.id == b.account_id));
+                Ok(
+                    json!({"revision": revision, "accounts": accounts, "connections": connections,
+                    "default_revision":default_revision,"default_account":default_account,
+                    "can_set_default":matches!(scope, Scope::Owner)}),
+                )
+            }
+            VesselCommand::AccountSetDefault {
+                command_id,
+                workspace,
+                account,
+                expected_revision,
+            } => {
+                ensure!(
+                    matches!(scope, Scope::Owner),
+                    "only host owner may change default account"
+                );
+                scope.check(&self.directory, &workspace, ProcessRight::AccountUse)?;
+                let (revision, binding) = Registry::default_host()?.set_default_account(
+                    command_id,
+                    &workspace,
+                    expected_revision,
+                    account,
+                )?;
+                Ok(json!({"default_revision":revision,"default_account":binding}))
+            }
+            VesselCommand::AccountUsage {
+                workspace,
+                account,
+                refresh,
+            } => {
+                ensure!(
+                    !matches!(scope, Scope::Session(_)),
+                    "usage observations require a human connection"
+                );
+                scope.use_account(&self.directory, &workspace, &account)?;
+                let registry = Registry::default_host()?;
+                let mut observation = registry.usage_cached(&account)?;
+                if refresh && account.transport == Transport::ChatgptOauth {
+                    // One bounded refresh across the host; opening a picker never queues polls.
+                    static REFRESH: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+                    let Ok(_refresh) = REFRESH.try_lock() else {
+                        observation.refresh_status = AccountUsageRefreshStatus::Unavailable;
+                        scope.use_account(&self.directory, &workspace, &account)?;
+                        return Ok(serde_json::to_value(observation)?);
+                    };
+                    observation = registry.usage_cached(&account)?;
+                    let authority = Arc::new(UsageAuthority {
+                        scope: scope.clone(),
+                        root: self.directory.clone(),
+                        workspace: workspace.clone(),
+                        account: account.clone(),
+                        capability_revision: observation.capability_revision,
+                    });
+                    let mut config = voyage_runtime::Config::load(None)?;
+                    config.select_account(account.clone())?;
+                    let _resolved = voyage_runtime::runtime_policy::RuntimePolicy::resolve(
+                        &config, &workspace,
+                    )?;
+                    let provider = registry
+                        .oauth_provider(&account)?
+                        .with_authority(Some(authority));
+                    observation.attempted_at = Some(
+                        std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)?
+                            .as_secs() as i64,
+                    );
+                    let result = tokio::time::timeout(
+                        std::time::Duration::from_secs(15),
+                        provider.account_usage(),
+                    )
+                    .await;
+                    observation.refresh_status = match result {
+                        Ok(Ok(snapshot)) => {
+                            observation.snapshot = Some(snapshot);
+                            AccountUsageRefreshStatus::Available
+                        }
+                        Ok(Err(error)) => match error.category() {
+                            "authentication" => AccountUsageRefreshStatus::SignInRequired,
+                            "rate_limit" => AccountUsageRefreshStatus::RateLimited,
+                            "invalid_response" => AccountUsageRefreshStatus::InvalidResponse,
+                            _ => AccountUsageRefreshStatus::Unavailable,
+                        },
+                        Err(_) => AccountUsageRefreshStatus::Unavailable,
+                    };
+                    scope.use_account(&self.directory, &workspace, &account)?;
+                    registry.publish_usage(observation)?;
+                    observation = registry.usage_cached(&account)?;
+                }
+                scope.use_account(&self.directory, &workspace, &account)?;
+                ensure!(
+                    registry.validate_binding(&account)?.capability_revision
+                        == observation.capability_revision,
+                    "account usage context changed"
+                );
+                Ok(serde_json::to_value(observation)?)
             }
             VesselCommand::AccountDefaults { workspace } => {
                 scope.check(&self.directory, &workspace, ProcessRight::AccountUse)?;
                 let mut config = voyage_runtime::Config::load(None)?;
-                config.materialize_legacy_account()?;
+                let (_, default) = Registry::default_host()?.default_account()?;
+                let Some(default) = default else {
+                    return Ok(json!({"code":"default_account_required","account":null}));
+                };
+                config.select_account(default)?;
                 if let Some(binding) = &config.account {
                     scope.use_account(&self.directory, &workspace, binding)?;
                 }

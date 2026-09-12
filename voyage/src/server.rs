@@ -135,7 +135,23 @@ pub async fn serve(args: ServeArgs) -> Result<()> {
                     serde_json::from_str::<crate::launch_config::LaunchConfig>(&settings)?
                         .resolve(&workspace)?
                 }
-                None => bootstrap::load_config(args.config.as_deref(), &workspace)?,
+                None => {
+                    let mut config = bootstrap::load_config(args.config.as_deref(), &workspace)?;
+                    if registration.initialize.is_none() {
+                        match Journal::open(directory.join("journal"))?.load_session(args.session) {
+                            Ok(_) => {}
+                            Err(error)
+                                if error.downcast_ref::<rusqlite::Error>().is_some_and(|e| {
+                                    matches!(e, rusqlite::Error::QueryReturnedNoRows)
+                                }) =>
+                            {
+                                config.require_default_account()?
+                            }
+                            Err(error) => return Err(error),
+                        }
+                    }
+                    config
+                }
             };
             let workspace = config.resolve_workspace(Some(workspace))?;
             bootstrap::prepare_identity(&directory, &registration)?;

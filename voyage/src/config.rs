@@ -591,6 +591,21 @@ impl Config {
         Ok(config)
     }
 
+    /// New independent voyages require a host default. Existing frozen configurations
+    /// and explicitly selected accounts are never silently replaced.
+    pub fn require_default_account(&mut self) -> Result<()> {
+        let (_, default) = crate::accounts::Registry::default_host()?.default_account()?;
+        let default = default.ok_or_else(|| {
+            anyhow::anyhow!(
+                "default_account_required: choose a default account before creating a voyage"
+            )
+        })?;
+        if self.account.is_none() {
+            self.select_account(default)?;
+        }
+        Ok(())
+    }
+
     /// Apply an explicit, exact host selection. Never refresh a saved generation.
     /// Executing-host migration only. Never call this on a remote Helm draft.
     /// Existing OAuth caches require the explicit old-writers-stopped CLI boundary;

@@ -101,6 +101,14 @@ impl Supervisor {
                 routing::inspect(&registry::directory(&self.directory, session_id), previous).await,
             )?);
         }
+        if initialize.is_none() {
+            let (_, default) =
+                voyage_runtime::accounts::Registry::default_host()?.default_account()?;
+            ensure!(
+                default.is_some(),
+                "default_account_required: choose a default account before creating a voyage"
+            );
+        }
         ensure!(
             registrations.len() < 4096,
             "supervisor registration retention limit reached"

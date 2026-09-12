@@ -598,7 +598,7 @@ impl ChatGptOAuth {
         }
         Ok(())
     }
-    pub(crate) fn with_authority(
+    pub fn with_authority(
         mut self,
         authority: Option<Arc<dyn crate::policy::ExecutionAuthority>>,
     ) -> Self {
@@ -851,6 +851,31 @@ impl ChatGptOAuth {
         self.store.clear().await?;
         *self.tokens.lock().await = None;
         Ok(())
+    }
+
+    /// Read-only Codex allowance observation. Native endpoint only; no credit actions.
+    pub async fn account_usage(
+        &self,
+    ) -> Result<voyage_protocol::accounts::AccountUsageSnapshot, ProviderError> {
+        let url = "https://chatgpt.com/backend-api/wham/usage";
+        if self.endpoints.responses != "https://chatgpt.com/backend-api/codex/responses" {
+            return Err(ProviderError::Request(
+                "usage observation unsupported for this endpoint".into(),
+            ));
+        }
+        let tokens = self.valid_tokens().await?;
+        super::check_provider_authority(&self.authority)?;
+        let response = super::endpoint_http_client(&self.client, url)
+            .get(url)
+            .bearer_auth(&tokens.access_token)
+            .header("ChatGPT-Account-Id", &tokens.account_id)
+            .header("User-Agent", format!("helm/{}", env!("CARGO_PKG_VERSION")))
+            .send()
+            .await
+            .map_err(super::catalog::transport)?;
+        let value = super::catalog::json(response, &mut 65_536).await?;
+        crate::accounts::usage::parse(&value, now_secs() as i64)
+            .map_err(|_| ProviderError::InvalidResponse("invalid usage observation".into()))
     }
 
     pub async fn status(&self) -> TokenStatus {

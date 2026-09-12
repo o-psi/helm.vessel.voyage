@@ -1139,3 +1139,111 @@ async fn device_code_visible_during_poll_but_hidden_before_token_exchange() {
     assert_eq!(work.await.unwrap().state, EnrollmentState::Succeeded);
     http.complete(3).await;
 }
+
+#[test]
+fn required_default_is_explicit_deduplicated_and_protects_removal() {
+    let (_dir, r) = registry();
+    assert_eq!(r.default_account().unwrap(), (0, None));
+    let c = api_connection(&r);
+    let first = r
+        .add_api(
+            c.id,
+            "default-one".into(),
+            "One".into(),
+            key("synthetic-one"),
+        )
+        .unwrap();
+    let second = r
+        .add_api(
+            c.id,
+            "default-two".into(),
+            "Two".into(),
+            key("synthetic-two"),
+        )
+        .unwrap();
+    assert_eq!(r.default_account().unwrap(), (0, None));
+    let a = r.freeze(first.id, Transport::OpenaiResponses).unwrap();
+    let b = r.freeze(second.id, Transport::OpenaiResponses).unwrap();
+    let command = Uuid::new_v4();
+    assert_eq!(
+        r.set_default_account(command, std::path::Path::new("/synthetic"), 0, a.clone())
+            .unwrap(),
+        (1, a.clone())
+    );
+    assert_eq!(
+        r.set_default_account(command, std::path::Path::new("/synthetic"), 0, a.clone())
+            .unwrap(),
+        (1, a.clone())
+    );
+    assert!(
+        r.set_default_account(command, std::path::Path::new("/synthetic"), 0, b.clone())
+            .is_err()
+    );
+    assert!(
+        r.set_default_account(
+            Uuid::new_v4(),
+            std::path::Path::new("/synthetic"),
+            0,
+            b.clone()
+        )
+        .is_err()
+    );
+    assert!(r.logout(a.account_id, true).is_err());
+    r.logout(a.account_id, false).unwrap();
+    assert_eq!(r.default_account().unwrap(), (1, Some(a.clone())));
+    r.set_default_account(
+        Uuid::new_v4(),
+        std::path::Path::new("/synthetic"),
+        1,
+        b.clone(),
+    )
+    .unwrap();
+    r.logout(a.account_id, true).unwrap();
+    assert_eq!(r.default_account().unwrap(), (2, Some(b)));
+    // The old command remains an exact historical receipt, not a second mutation.
+    assert_eq!(
+        r.set_default_account(command, std::path::Path::new("/synthetic"), 0, a.clone())
+            .unwrap(),
+        (1, a)
+    );
+    assert_eq!(r.default_account().unwrap().0, 2);
+}
+
+#[test]
+fn usage_cache_preserves_success_and_invalidates_capability_changes() {
+    let (_dir, r) = registry();
+    let c = r.ensure_chatgpt_connection().unwrap();
+    let a = r
+        .add_oauth(c.id, "usage".into(), "Usage".into(), tokens("one"))
+        .unwrap();
+    let binding = r.freeze(a.id, Transport::ChatgptOauth).unwrap();
+    let mut u = r.usage_cached(&binding).unwrap();
+    assert_eq!(u.refresh_status, AccountUsageRefreshStatus::NeverObserved);
+    u.snapshot = Some(AccountUsageSnapshot {
+        fetched_at: 10,
+        windows: vec![AccountUsageWindow {
+            kind: UsageWindowKind::Primary,
+            used_percent: 90.0,
+            window_seconds: Some(18000),
+            resets_at: Some(20),
+        }],
+    });
+    u.attempted_at = Some(10);
+    u.refresh_status = AccountUsageRefreshStatus::Available;
+    r.publish_usage(u.clone()).unwrap();
+    let mut failed = u.clone();
+    failed.snapshot = None;
+    failed.attempted_at = Some(12);
+    failed.refresh_status = AccountUsageRefreshStatus::Unavailable;
+    r.publish_usage(failed).unwrap();
+    let cached = r.usage_cached(&binding).unwrap();
+    assert_eq!(cached.snapshot, u.snapshot);
+    assert_eq!(
+        cached.refresh_status,
+        AccountUsageRefreshStatus::Unavailable
+    );
+    r.reauthenticate_oauth(a.id, a.identity_generation, tokens("two"), false)
+        .unwrap();
+    assert!(r.publish_usage(u).is_err());
+    assert!(r.usage_cached(&binding).unwrap().snapshot.is_none());
+}

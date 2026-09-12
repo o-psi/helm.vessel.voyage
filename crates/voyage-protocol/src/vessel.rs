@@ -508,6 +508,19 @@ pub enum VesselCommand {
         workspace: PathBuf,
         transport: Option<crate::accounts::Transport>,
     },
+    /// Private account-use observation. Refresh is an explicit bounded read, not inference.
+    AccountUsage {
+        workspace: PathBuf,
+        account: crate::accounts::AccountBinding,
+        refresh: bool,
+    },
+    /// Host-owner compare-and-set of the required new-voyage default account.
+    AccountSetDefault {
+        command_id: Uuid,
+        workspace: PathBuf,
+        account: crate::accounts::AccountBinding,
+        expected_revision: u64,
+    },
     AccountDefaults {
         workspace: PathBuf,
     },

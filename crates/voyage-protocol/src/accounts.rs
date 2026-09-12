@@ -132,3 +132,42 @@ pub struct EnrollmentFailure {
     pub kind: EnrollmentFailureKind,
     pub http_status: Option<u16>,
 }
+
+/// Private human account observation; never provider entitlement validation.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct AccountUsageObservation {
+    pub account: AccountBinding,
+    pub capability_revision: u64,
+    pub snapshot: Option<AccountUsageSnapshot>,
+    pub refresh_status: AccountUsageRefreshStatus,
+    pub attempted_at: Option<i64>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct AccountUsageSnapshot {
+    pub fetched_at: i64,
+    pub windows: Vec<AccountUsageWindow>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct AccountUsageWindow {
+    pub kind: UsageWindowKind,
+    pub used_percent: f64,
+    pub window_seconds: Option<u64>,
+    pub resets_at: Option<i64>,
+}
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum UsageWindowKind {
+    Primary,
+    Secondary,
+}
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AccountUsageRefreshStatus {
+    NeverObserved,
+    Available,
+    Unsupported,
+    SignInRequired,
+    RateLimited,
+    Unavailable,
+    InvalidResponse,
+}

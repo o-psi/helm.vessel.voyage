@@ -10,6 +10,7 @@ use std::path::PathBuf;
 use uuid::Uuid;
 pub use voyage_protocol::accounts::*;
 pub mod device;
+pub mod usage;
 
 const LIMIT: usize = 65_536;
 #[derive(Clone)]
@@ -39,6 +40,14 @@ struct Account {
 #[derive(Default, Serialize, Deserialize)]
 struct Database {
     revision: u64,
+    #[serde(default)]
+    default_account: Option<AccountBinding>,
+    #[serde(default)]
+    default_revision: u64,
+    #[serde(default)]
+    default_commands: std::collections::BTreeMap<Uuid, (String, u64, AccountBinding, u64)>,
+    #[serde(default)]
+    usage: std::collections::BTreeMap<Uuid, AccountUsageObservation>,
     connections: Vec<ConnectionDescriptor>,
     accounts: Vec<Account>,
     enrollments: Vec<device::Record>,
@@ -501,6 +510,14 @@ impl Registry {
     /// Tombstones locally; cannot recall dispatched requests or revoke upstream tokens.
     pub fn logout(&self, id: Uuid, remove: bool) -> Result<()> {
         self.transaction(|db| {
+            ensure!(
+                !remove
+                    || !db
+                        .default_account
+                        .as_ref()
+                        .is_some_and(|b| b.account_id == id),
+                "Choose a replacement default account before removing this account"
+            );
             let a = db
                 .accounts
                 .iter_mut()

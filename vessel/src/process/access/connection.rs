@@ -43,6 +43,8 @@ impl Supervisor {
             })),
             command @ (VesselCommand::Accounts { .. }
             | VesselCommand::AccountDefaults { .. }
+            | VesselCommand::AccountUsage { .. }
+            | VesselCommand::AccountSetDefault { .. }
             | VesselCommand::AccountModels { .. }
             | VesselCommand::StartAccount { .. }
             | VesselCommand::ResolveStartAccount { .. }
