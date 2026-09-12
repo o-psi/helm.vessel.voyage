@@ -56,7 +56,7 @@ pub fn lock(directory: &Path) -> Result<File> {
 pub fn load(path: &Path) -> Result<ProcessRegistration> {
     let file = OpenOptions::new()
         .read(true)
-        .custom_flags(libc::O_NOFOLLOW)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
         .open(path)?;
     let metadata = file.metadata()?;
     ensure!(
@@ -70,7 +70,16 @@ pub fn load(path: &Path) -> Result<ProcessRegistration> {
     serde_json::from_reader(file).context("invalid process registration")
 }
 
-pub fn save(directory: &Path, registration: &ProcessRegistration) -> Result<()> {
+pub async fn save(directory: &Path, registration: &ProcessRegistration) -> Result<()> {
+    let root = directory
+        .parent()
+        .and_then(Path::parent)
+        .context("invalid session directory")?;
+    super::database::save(root, registration).await?;
+    publish(directory, registration)
+}
+
+pub fn publish(directory: &Path, registration: &ProcessRegistration) -> Result<()> {
     use std::io::Write;
     let bytes = serde_json::to_vec(registration)?;
     ensure!(bytes.len() < 16384, "process registration exceeds limit");
@@ -130,60 +139,11 @@ pub fn directory(root: &Path, session: uuid::Uuid) -> PathBuf {
 }
 
 /// Keep immutable lifecycle IDs across runtime incarnations and supervisor restarts.
-pub fn command_record(
+pub async fn command_record(
     root: &Path,
     id: uuid::Uuid,
     command: &voyage_protocol::process::VesselCommand,
     reserve: bool,
 ) -> Result<bool> {
-    use std::io::{Read, Write};
-    let directory = root.join("commands");
-    private_directory(&directory)?;
-    let path = directory.join(format!("{id}.json"));
-    let bytes = serde_json::to_vec(command)?;
-    ensure!(
-        bytes.len() <= 16384,
-        "lifecycle command exceeds receipt limit"
-    );
-    match OpenOptions::new()
-        .read(true)
-        .custom_flags(libc::O_NOFOLLOW)
-        .open(&path)
-    {
-        Ok(file) => {
-            ensure!(file.metadata()?.len() <= 16384, "invalid lifecycle receipt");
-            let mut previous = Vec::new();
-            file.take(16385).read_to_end(&mut previous)?;
-            ensure!(previous == bytes, "lifecycle command ID payload conflict");
-            return Ok(true);
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => return Err(error.into()),
-    }
-    if reserve {
-        ensure!(
-            std::fs::read_dir(&directory)?.take(65536).count() < 65536,
-            "lifecycle receipt capacity exhausted"
-        );
-        let temporary = directory.join(format!(".{}.tmp", uuid::Uuid::new_v4()));
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(&temporary)?;
-        file.write_all(&bytes)?;
-        file.sync_all()?;
-        // Publish complete immutable bytes without replacing a concurrent ID.
-        let published = fs::hard_link(&temporary, &path);
-        fs::remove_file(&temporary)?;
-        match published {
-            Ok(()) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                return command_record(root, id, command, false);
-            }
-            Err(error) => return Err(error.into()),
-        }
-        File::open(directory)?.sync_all()?;
-    }
-    Ok(false)
+    super::database::command(root, "commands", id, serde_json::to_vec(command)?, reserve).await
 }

@@ -57,7 +57,7 @@ impl Supervisor {
             principal_id: grant.principal_id,
         };
         let has = |right| ensure_right(&grant, right);
-        match command {
+        let mut response = match command {
             VesselCommand::Notifications { operation } => {
                 self.notifications(operation, Some(binding)).await
             }
@@ -72,7 +72,7 @@ impl Supervisor {
                 self.observe_assignment(&grant, assignment_id, true).await
             }
             VesselCommand::Capabilities => Ok(
-                json!({"protocol":VESSEL_API_VERSION,"version":env!("CARGO_PKG_VERSION"),"vessel_id":crate::process::identity::public(&self.directory)?.vessel_id,"principal_id":grant.principal_id,"scope":"session","session_id":grant.session_id,"grant_revision":grant.revision,"rights":grant.rights,"expires_at_ms":grant.expires_at_ms,"features":["notifications","scoped_catalogue","voyage_operations","sse_events","duplex_socket","grant_revocation","start_resolution","provider_accounts","account_start","private_account_enrollment"]}),
+                json!({"protocol":VESSEL_API_VERSION,"version":env!("CARGO_PKG_VERSION"),"vessel_id":crate::process::identity::public(&self.directory)?.vessel_id,"principal_id":grant.principal_id,"scope":"session","session_id":grant.session_id,"grant_revision":grant.revision,"rights":grant.rights,"expires_at_ms":grant.expires_at_ms,"features":["sqlite_catalogue","notifications","scoped_catalogue","voyage_operations","sse_events","duplex_socket","grant_revocation","start_resolution","provider_accounts","account_start","private_account_enrollment"]}),
             ),
             command @ (VesselCommand::Accounts { .. }
             | VesselCommand::AccountDefaults { .. }
@@ -93,14 +93,29 @@ impl Supervisor {
             }
             VesselCommand::Catalogue => {
                 has(ProcessRight::Observe)?;
-                match self.registration(grant.session_id).await {
-                    Ok(registration) => Ok(json!([routing::inspect(
-                        &registry::directory(&self.directory, grant.session_id),
-                        &registration
-                    )
-                    .await])),
-                    Err(_) => Ok(json!([])),
+                let mut entries: Vec<_> = self
+                    .catalogue()
+                    .await?
+                    .into_iter()
+                    .filter(|p| p.session_id == grant.session_id)
+                    .collect();
+                if !grant.rights.contains(&ProcessRight::History) {
+                    for entry in &mut entries {
+                        if let Some(metadata) = &mut entry.catalogue {
+                            metadata.summary = None;
+                        }
+                    }
                 }
+                let latest = store::authenticate(&self.directory, id, &token)?;
+                ensure!(
+                    latest.revision == grant.revision
+                        && latest.rights == grant.rights
+                        && latest.principal_id == grant.principal_id
+                        && latest.workspace == grant.workspace
+                        && latest.session_id == grant.session_id,
+                    "session authority changed"
+                );
+                Ok(serde_json::to_value(entries)?)
             }
             VesselCommand::Inspect { session_id } => {
                 has(ProcessRight::Observe)?;
@@ -184,7 +199,20 @@ impl Supervisor {
                 self.restart(command_id, session_id, incarnation).await
             }
             _ => anyhow::bail!("operation requires local account-owner authority"),
+        }?;
+        let latest = store::authenticate(&self.directory, id, &token)?;
+        ensure!(
+            latest.revision == grant.revision
+                && latest.rights == grant.rights
+                && latest.principal_id == grant.principal_id
+                && latest.workspace == grant.workspace
+                && latest.session_id == grant.session_id,
+            "session authority changed"
+        );
+        if !grant.rights.contains(&ProcessRight::History) {
+            super::redact_catalogue_reply(&mut response);
         }
+        Ok(response)
     }
 }
 fn ensure_right(grant: &ProcessGrant, right: ProcessRight) -> Result<()> {

@@ -56,7 +56,7 @@ impl Supervisor {
         &self,
         command: VesselCommand,
     ) -> Result<serde_json::Value> {
-        let _serial = self.registrations.lock().await;
+        let _serial = self.registrations.lock().await?;
         initialize(&self.directory)?;
         match &command {
             VesselCommand::AcceptParticipant {
@@ -96,7 +96,7 @@ impl Supervisor {
                     );
                 }
                 let path = binding_path(&self.directory, binding.binding_id);
-                if registry::command_record(&self.directory, *command_id, &command, false)?
+                if registry::command_record(&self.directory, *command_id, &command, false).await?
                     && path.exists()
                 {
                     let previous: ParticipantBinding = store::load(&path)?;
@@ -110,7 +110,7 @@ impl Supervisor {
                         < 4096,
                     "participant binding capacity exceeded"
                 );
-                registry::command_record(&self.directory, *command_id, &command, true)?;
+                registry::command_record(&self.directory, *command_id, &command, true).await?;
                 store::save(&path, binding)?;
                 Ok(serde_json::to_value(binding)?)
             }
@@ -122,7 +122,7 @@ impl Supervisor {
             } => {
                 let path = binding_path(&self.directory, *binding_id);
                 let mut binding: ParticipantBinding = store::load(&path)?;
-                if registry::command_record(&self.directory, *command_id, &command, false)?
+                if registry::command_record(&self.directory, *command_id, &command, false).await?
                     && binding.revision > *expected_revision
                 {
                     return Ok(
@@ -133,7 +133,7 @@ impl Supervisor {
                     binding.revision == *expected_revision,
                     "participant binding revision conflict"
                 );
-                registry::command_record(&self.directory, *command_id, &command, true)?;
+                registry::command_record(&self.directory, *command_id, &command, true).await?;
                 binding.revoked = true;
                 binding.cancel_existing = *cancel;
                 binding.revision = binding

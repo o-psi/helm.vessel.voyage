@@ -93,7 +93,7 @@ impl Supervisor {
             !branch_id.is_nil() && branch_id != session_id,
             "invalid branch identity"
         );
-        let registrations = self.registrations.lock().await;
+        let registrations = self.registrations.lock().await?;
         let source = registrations
             .get(session_id)
             .context("source session not registered")?

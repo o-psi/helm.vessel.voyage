@@ -14,6 +14,7 @@ pub(in crate::process_client::ui) fn app(dir: &std::path::Path) -> App {
     let clients = super::super::routes::Routes::new(vec![Client::local(dir.join("no-vessel"))]);
     let (sender, _receiver) = tokio::sync::mpsc::channel(32);
     let app = App {
+        observation_target: tokio::sync::watch::channel(None).0,
         browsers: BTreeMap::new(),
         browser_opened: Default::default(),
         browser_retired: Vec::new(),

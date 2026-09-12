@@ -1,7 +1,7 @@
 //! Merge bounded metadata pages without exposing canonical transcript content.
 use super::*;
 use helm::process_client::transport::Client;
-use voyage_protocol::vessel::{ProcessInfo, VesselCommand, VoyageCommand};
+use voyage_protocol::vessel::{ProcessInfo, VesselCommand};
 
 pub(super) async fn list(
     client: &Client,
@@ -29,31 +29,21 @@ pub(super) async fn list(
         .into_iter()
         .filter(|p| after.is_none_or(|after| p.session_id > after))
     {
-        rows.insert(process.session_id, json!({"id":process.session_id,"state":process.state,"workspace":process.workspace,"incarnation":process.incarnation}));
+        let mut row = json!({"id":process.session_id,"state":process.state,"workspace":process.workspace,"incarnation":process.incarnation,"name":process.name});
+        if let Some(metadata) = process.catalogue {
+            row["observation"] = json!(if metadata.stale { "stale" } else { "catalogue" });
+            if let Some(summary) = metadata.summary {
+                row["revision"] = json!(summary.revision);
+                row["model"] = json!(summary.model);
+                row["pending_cleanup_run"] = json!(summary.pending_cleanup_run);
+                row["lifecycle"] = json!({"archived":summary.archived,"deleted":summary.deleted});
+            }
+        }
+        rows.insert(process.session_id, row);
     }
     let more = legacy_more || rows.len() > limit;
     let mut sessions = Vec::with_capacity(limit);
-    for (id, mut row) in rows.into_iter().take(limit) {
-        if let Some(incarnation) = row.get("incarnation") {
-            let incarnation = serde_json::from_value(incarnation.clone())?;
-            match client
-                .voyage(id, incarnation, VoyageCommand::Snapshot)
-                .await
-            {
-                Ok(snapshot) => {
-                    for key in [
-                        "revision",
-                        "name",
-                        "model",
-                        "pending_cleanup_run",
-                        "lifecycle",
-                    ] {
-                        row[key] = snapshot[key].clone();
-                    }
-                }
-                Err(_) => row["observation"] = json!("unavailable"),
-            }
-        }
+    for (_, row) in rows.into_iter().take(limit) {
         sessions.push(row);
     }
     let next = more

@@ -21,7 +21,7 @@ impl Supervisor {
             Ok(())
         };
         let operation = command.clone();
-        match command {
+        let mut response = match command {
             VesselCommand::Notifications { operation } => {
                 self.notifications(
                     operation,
@@ -39,7 +39,7 @@ impl Supervisor {
                 "scope": "workspaces", "grant_revision": grant.revision,
                 "rights": grant.rights, "expires_at_ms": grant.expires_at_ms,
                 "workspaces": grant.workspaces,
-                "features": ["workspace_pairing", "sse_events","duplex_socket", "notifications","scoped_catalogue", "voyage_operations", "grant_revocation","start_resolution","provider_accounts","account_start","private_account_enrollment"]
+                "features": ["sqlite_catalogue","workspace_pairing", "sse_events","duplex_socket", "notifications","scoped_catalogue", "voyage_operations", "grant_revocation","start_resolution","provider_accounts","account_start","private_account_enrollment"]
             })),
             command @ (VesselCommand::Accounts { .. }
             | VesselCommand::AccountDefaults { .. }
@@ -60,41 +60,20 @@ impl Supervisor {
             }
             VesselCommand::Catalogue => {
                 has(ProcessRight::Catalogue)?;
-                let registrations: Vec<_> = self
-                    .registrations
-                    .lock()
-                    .await
-                    .values()
-                    .filter(|r| {
-                        grant.workspaces.iter().any(|w| w.path == r.workspace)
-                            && !matches!(
-                                r.initialize,
-                                Some(RuntimeInitialization::Participant { .. })
-                            )
-                    })
-                    .cloned()
+                let mut entries: Vec<_> = self
+                    .catalogue()
+                    .await?
+                    .into_iter()
+                    .filter(|p| grant.workspaces.iter().any(|w| w.path == p.workspace))
                     .collect();
-                let mut entries = Vec::with_capacity(registrations.len());
-                let mut tasks = tokio::task::JoinSet::new();
-                for registration in registrations {
-                    ordinary(&registration)?;
-                    approved(&grant, &registration.workspace)?;
-                    let directory = registry::directory(&self.directory, registration.session_id);
-                    tasks.spawn(async move { routing::inspect(&directory, &registration).await });
-                    if tasks.len() >= 16
-                        && let Some(result) = tasks.join_next().await
-                    {
-                        entries.push(result?);
+                if !grant.rights.contains(&ProcessRight::History) {
+                    for entry in &mut entries {
+                        if let Some(metadata) = &mut entry.catalogue {
+                            metadata.summary = None;
+                        }
                     }
                 }
-                while let Some(result) = tasks.join_next().await {
-                    entries.push(result?);
-                }
-                entries.sort_by_key(|entry| entry.session_id);
-                store::current_connection(
-                    &self.directory,
-                    &store::load(&store::connection_path(&self.directory, id))?,
-                )?;
+                store::current_connection(&self.directory, &grant)?;
                 Ok(serde_json::to_value(entries)?)
             }
             VesselCommand::ResolveStart {
@@ -221,7 +200,12 @@ impl Supervisor {
                 self.restart(command_id, session_id, incarnation).await
             }
             _ => anyhow::bail!("operation requires local account-owner authority"),
+        }?;
+        store::current_connection(&self.directory, &grant)?;
+        if !grant.rights.contains(&ProcessRight::History) {
+            super::redact_catalogue_reply(&mut response);
         }
+        Ok(response)
     }
 
     // The public start payload has no bearer. Retain its exact principal/grant
@@ -232,7 +216,7 @@ impl Supervisor {
         id: Uuid,
         command: &VesselCommand,
     ) -> Result<()> {
-        let _serial = self.registrations.lock().await;
+        let _serial = self.registrations.lock().await?;
         store::current_connection(&self.directory, grant)?;
         let directory = self.directory.join("access/connection-commands");
         registry::private_directory(&directory)?;

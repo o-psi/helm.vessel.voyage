@@ -34,3 +34,6 @@ pub mod pairing;
 mod accounts;
 
 mod notifications;
+
+mod catalogue;
+mod database;

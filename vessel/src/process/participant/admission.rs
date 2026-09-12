@@ -19,7 +19,7 @@ impl Supervisor {
                 && request.parent_session_id == grant.session_id,
             "assignment parent scope mismatch"
         );
-        let _serial = self.registrations.lock().await;
+        let _serial = self.registrations.lock().await?;
         initialize(&self.directory)?;
         let path = assignment_path(&self.directory, request.assignment_id);
         let assignment = if path.exists() {

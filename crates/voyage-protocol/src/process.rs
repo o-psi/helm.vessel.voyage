@@ -78,3 +78,6 @@ mod notification_tests {
         ));
     }
 }
+
+mod catalogue;
+pub use catalogue::*;

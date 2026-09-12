@@ -33,7 +33,8 @@ impl Supervisor {
         let path = directory(&self.directory, prepared.transfer_id);
         registry::private_directory(&self.directory.join("transfers"))?;
         registry::private_directory(&path)?;
-        let recorded = registry::command_record(&self.directory, *command_id, &command, false)?;
+        let recorded =
+            registry::command_record(&self.directory, *command_id, &command, false).await?;
         if recorded && path.join("export.json").exists() {
             let manifest: SignedArtifact<TransferManifest> =
                 store::load(&path.join("export.json"))?;
@@ -53,7 +54,7 @@ impl Supervisor {
                 prepared.expires_at_ms > store::now()?,
                 "destination preparation expired before relinquishment"
             );
-            registry::command_record(&self.directory, *command_id, &command, true)?;
+            registry::command_record(&self.directory, *command_id, &command, true).await?;
         }
         if !artifact.exists() {
             let response = self
@@ -119,7 +120,7 @@ impl Supervisor {
         // Keep a source-local artifact location; no canonical content enters the supervision record.
         store::save(&path.join("artifact-location.json"), &artifact)?;
         store::save(&path.join("export.json"), &manifest)?;
-        let mut registrations = self.registrations.lock().await;
+        let mut registrations = self.registrations.lock().await?;
         let current = registrations
             .get_mut(session_id)
             .ok_or_else(|| anyhow::anyhow!("source registration lost"))?;
@@ -128,7 +129,7 @@ impl Supervisor {
             "source incarnation changed during transfer"
         );
         current.state = ProcessState::Relinquished;
-        registry::save(&source, current)?;
+        registry::save(&source, current).await?;
         Ok(serde_json::to_value(manifest)?)
     }
     pub(super) async fn transfer_chunk(

@@ -8,6 +8,22 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 use voyage_protocol::process::*;
 
+/// Creation and resolution return ProcessInfo too, not only catalogue listings.
+/// Remove the optional history projection from every such scoped response.
+fn redact_catalogue_reply(reply: &mut Value) {
+    if let Some(metadata) = reply.get_mut("catalogue").and_then(Value::as_object_mut) {
+        metadata.insert("summary".into(), Value::Null);
+    }
+    if let Some(process) = reply.get_mut("process") {
+        redact_catalogue_reply(process);
+    }
+    if let Some(entries) = reply.as_array_mut() {
+        for entry in entries {
+            redact_catalogue_reply(entry);
+        }
+    }
+}
+
 impl Supervisor {
     pub(super) async fn grant(&self, command: VesselCommand) -> Result<Value> {
         let VesselCommand::Grant {
@@ -32,9 +48,10 @@ impl Supervisor {
                 && !session_id.is_nil(),
             "nil access identity"
         );
-        let _serial = self.registrations.lock().await;
+        let _serial = self.registrations.lock().await?;
         store::initialize(&self.directory)?;
-        let recorded = registry::command_record(&self.directory, *command_id, &command, false)?;
+        let recorded =
+            registry::command_record(&self.directory, *command_id, &command, false).await?;
         if recorded && store::grant_path(&self.directory, *grant_id).exists() {
             let credential: AccessCredential =
                 store::load(&store::credential_path(&self.directory, *grant_id))?;
@@ -104,7 +121,7 @@ impl Supervisor {
             participant_binding: None,
         };
         // Immutable intent precedes publication. Retrying only completes deterministic local metadata.
-        registry::command_record(&self.directory, *command_id, &command, true)?;
+        registry::command_record(&self.directory, *command_id, &command, true).await?;
         store::save(
             &store::credential_path(&self.directory, *grant_id),
             &credential,
@@ -123,9 +140,9 @@ impl Supervisor {
             anyhow::bail!("not a revocation")
         };
         ensure!(!command_id.is_nil(), "nil revocation identity");
-        let _serial = self.registrations.lock().await;
+        let _serial = self.registrations.lock().await?;
         let mut grant: ProcessGrant = store::load(&store::grant_path(&self.directory, *grant_id))?;
-        if registry::command_record(&self.directory, *command_id, &command, false)?
+        if registry::command_record(&self.directory, *command_id, &command, false).await?
             && grant.revoked
             && grant.revision == expected_revision.saturating_add(1)
         {
@@ -135,7 +152,7 @@ impl Supervisor {
             grant.revision == *expected_revision,
             "grant revision conflict"
         );
-        registry::command_record(&self.directory, *command_id, &command, true)?;
+        registry::command_record(&self.directory, *command_id, &command, true).await?;
         grant.revoked = true;
         grant.revision = grant
             .revision

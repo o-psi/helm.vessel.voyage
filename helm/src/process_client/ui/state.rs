@@ -132,6 +132,8 @@ pub struct Cleanup {
 #[derive(Clone, Deserialize, PartialEq)]
 pub struct Snapshot {
     #[serde(default)]
+    pub catalogue_only: bool,
+    #[serde(default)]
     pub recovery_pending: bool,
     #[serde(default)]
     pub recovery_notice: Option<String>,
@@ -241,12 +243,24 @@ impl View {
     pub(super) fn deleted(&self) -> bool {
         self.process.deletion.is_some()
             || self
+                .process
+                .catalogue
+                .as_ref()
+                .and_then(|c| c.summary.as_ref())
+                .is_some_and(|s| s.deleted)
+            || self
                 .snapshot
                 .as_ref()
                 .is_some_and(|s| s.lifecycle["deleted"] == true)
     }
     pub(super) fn archived(&self) -> bool {
         self.process.archive.is_some()
+            || self
+                .process
+                .catalogue
+                .as_ref()
+                .and_then(|c| c.summary.as_ref())
+                .is_some_and(|s| s.archived)
             || self
                 .snapshot
                 .as_ref()
@@ -368,6 +382,24 @@ impl Snapshot {
             .filter_map(|turn| turn.finished_at)
             .max()
             .or(self.created_at)
+    }
+}
+
+impl Snapshot {
+    pub(super) fn from_catalogue(s: &voyage_protocol::process::CatalogueSummary) -> Option<Self> {
+        let run = s
+            .run_id
+            .zip(s.run_state.as_ref())
+            .map(|(id, state)| serde_json::json!({"run_id":id,"state":state}));
+        let turns: Vec<_> = s.run_id.zip(s.run_state.as_ref()).map(|(id,state)| serde_json::json!({"run_id":id,"phase":state,"finished_at":s.last_turn_end})).into_iter().collect();
+        serde_json::from_value(serde_json::json!({
+            "catalogue_only":true,"session_id":s.session_id,"revision":s.revision,
+            "name":s.name,"model":s.model,"created_at":s.created_at,
+            "observation_cursor":s.observation_cursor,"messages":[],"total_messages":s.total_messages,
+            "history_truncated":s.total_messages>0,"run":run,"turns":turns,
+            "pending_cleanup_run":s.pending_cleanup_run,
+            "lifecycle":{"archived":s.archived,"deleted":s.deleted}
+        })).ok()
     }
 }
 

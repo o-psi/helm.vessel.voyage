@@ -62,7 +62,7 @@ impl Supervisor {
         }
 
         // Keep uncertainty visible, but never disable later automatic observation.
-        let mut registrations = self.registrations.lock().await;
+        let mut registrations = self.registrations.lock().await?;
         let current = registrations
             .get_mut(&session_id)
             .ok_or_else(|| anyhow::anyhow!("unknown session"))?;
@@ -71,7 +71,7 @@ impl Supervisor {
             "runtime changed during recovery"
         );
         current.state = ProcessState::CleanupUnconfirmed;
-        registry::save(&directory, current)?;
+        registry::save(&directory, current).await?;
         anyhow::bail!(
             "Saved conversation is available. Previous program cleanup cannot yet be verified; automatic recovery will check again. Older voyages may lack the process evidence needed for automatic cleanup."
         )
@@ -99,7 +99,7 @@ impl Supervisor {
             reconcile_tools.is_none() || expected_revision.is_some(),
             "tool reconciliation requires exact revision"
         );
-        let registrations = self.registrations.lock().await;
+        let registrations = self.registrations.lock().await?;
         let registration = registrations
             .get(session_id)
             .ok_or_else(|| anyhow::anyhow!("unknown session"))?;
@@ -113,8 +113,8 @@ impl Supervisor {
             routing::inspect(&directory, registration).await.state != ProcessState::Live,
             "live owner cannot be recovered"
         );
-        registry::command_record(&self.directory, *command_id, &command, false)?;
-        registry::command_record(&self.directory, *command_id, &command, true)?;
+        registry::command_record(&self.directory, *command_id, &command, false).await?;
+        registry::command_record(&self.directory, *command_id, &command, true).await?;
         let mut child = tokio::process::Command::new(&self.binary);
         child
             .arg("recover")

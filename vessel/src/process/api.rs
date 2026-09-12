@@ -509,7 +509,8 @@ impl Supervisor {
                     command,
                 }),
                 reserve,
-            )?;
+            )
+            .await?;
         }
         if let Some(binding) = &authorization {
             let grant: ProcessGrant = super::access::store::load(

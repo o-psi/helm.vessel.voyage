@@ -44,6 +44,9 @@ for the implemented API and compatibility rules.
 
 Vessel owns supervision metadata; the voyage owns authoritative session state.
 A shared storage engine is possible only if it preserves these ownership fences.
+The source-checkout [embedded SQLite design](https://github.com/o-psi/voyage/blob/main/docs/sqlite-storage.md)
+describes the durable Vessel catalogue and lifecycle schema alongside each
+voyage's separately owned canonical SQLite journal.
 
 ## Terminology and identities
 

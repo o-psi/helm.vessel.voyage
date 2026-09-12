@@ -21,11 +21,11 @@ impl Supervisor {
             !command_id.is_nil() && !transfer_id.is_nil() && !session_id.is_nil(),
             "nil transfer identity"
         );
-        let registrations = self.registrations.lock().await;
+        let registrations = self.registrations.lock().await?;
         registry::private_directory(&self.directory.join("transfers"))?;
         let path = directory(&self.directory, *transfer_id);
         registry::private_directory(&path)?;
-        if registry::command_record(&self.directory, *command_id, &command, false)?
+        if registry::command_record(&self.directory, *command_id, &command, false).await?
             && path.join("prepared.json").exists()
         {
             return Ok(serde_json::to_value(
@@ -99,7 +99,7 @@ impl Supervisor {
                 expires_at_ms: *expires_at_ms,
             },
         )?;
-        registry::command_record(&self.directory, *command_id, &command, true)?;
+        registry::command_record(&self.directory, *command_id, &command, true).await?;
         save(
             &self.directory,
             *transfer_id,

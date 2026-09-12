@@ -413,6 +413,8 @@ pub struct ArchivedVoyage {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ProcessInfo {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub catalogue: Option<Box<super::CatalogueMetadata>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub archive: Option<ArchivedVoyage>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deletion: Option<Value>,
@@ -426,6 +428,7 @@ pub struct ProcessInfo {
 impl From<&ProcessRegistration> for ProcessInfo {
     fn from(value: &ProcessRegistration) -> Self {
         Self {
+            catalogue: None,
             archive: None,
             deletion: None,
             session_id: value.session_id,

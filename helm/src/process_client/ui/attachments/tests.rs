@@ -21,6 +21,7 @@ fn editor(text: &str) -> composer::Composer {
 }
 fn view() -> View {
     View::new(voyage_protocol::vessel::ProcessInfo {
+        catalogue: None,
         archive: None,
         deletion: None,
         session_id: Uuid::from_u128(1),

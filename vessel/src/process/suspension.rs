@@ -100,7 +100,7 @@ impl Supervisor {
             }
             // No process or owned resource remains to cancel. Preserve the runtime's
             // cleanup proof while recording the explicit stop in supervisor metadata.
-            let mut registrations = self.registrations.lock().await;
+            let mut registrations = self.registrations.lock().await?;
             ensure!(
                 registrations
                     .get(&session)
@@ -108,7 +108,7 @@ impl Supervisor {
                 "runtime changed during stop"
             );
             registration.state = ProcessState::Stopped;
-            registry::save(&directory, &registration)?;
+            registry::save(&directory, &registration).await?;
             registrations.insert(session, registration);
             return Ok(RuntimeResponse {
                 protocol: PROCESS_PROTOCOL,
@@ -120,7 +120,7 @@ impl Supervisor {
                 result: serde_json::json!({"status":"stopped","cleanup":"observed"}),
             });
         }
-        let mut registrations = self.registrations.lock().await;
+        let mut registrations = self.registrations.lock().await?;
         ensure!(
             registrations
                 .get(&session)
@@ -128,7 +128,7 @@ impl Supervisor {
             "runtime changed during stop"
         );
         registration.state = ProcessState::CleanupUnconfirmed;
-        registry::save(&directory, &registration)?;
+        registry::save(&directory, &registration).await?;
         registrations.insert(session, registration.clone());
         drop(registrations);
         self.forward_current(
@@ -418,7 +418,7 @@ impl Supervisor {
                 && !name.chars().any(|character| character.is_control()),
             "invalid public voyage name"
         );
-        let mut registrations = self.registrations.lock().await;
+        let mut registrations = self.registrations.lock().await?;
         let registration = registrations.get_mut(&session).context("unknown session")?;
         ensure!(
             registration.incarnation == incarnation,
@@ -426,7 +426,7 @@ impl Supervisor {
         );
         if registration.name.as_deref() != Some(name) {
             registration.name = Some(name.to_owned());
-            registry::save(&registry::directory(&self.directory, session), registration)?;
+            registry::save(&registry::directory(&self.directory, session), registration).await?;
         }
         Ok(())
     }

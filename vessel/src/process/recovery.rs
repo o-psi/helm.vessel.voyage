@@ -122,7 +122,7 @@ impl Supervisor {
         ensure!(!command_id.is_nil(), "command ID must be nonnil");
         let directory = registry::directory(&self.directory, session_id);
         let startup = startup_gate(&directory).await?;
-        let mut registrations = self.registrations.lock().await;
+        let mut registrations = self.registrations.lock().await?;
         let registration = registrations
             .get(&session_id)
             .ok_or_else(|| anyhow::anyhow!("unknown session"))?;
@@ -131,7 +131,7 @@ impl Supervisor {
             session_id,
             incarnation,
         };
-        if registry::command_record(&self.directory, command_id, &command, false)? {
+        if registry::command_record(&self.directory, command_id, &command, false).await? {
             return Ok(serde_json::to_value(
                 routing::inspect(
                     &registry::directory(&self.directory, session_id),
@@ -178,8 +178,10 @@ impl Supervisor {
         next.token = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
         next.state = ProcessState::Starting;
         registry::command_record(&self.directory, command_id, &command, true)
+            .await
             .map_err(|error| error.context(routing::OutcomeUnknown))?;
         registry::save(&directory, &next)
+            .await
             .map_err(|error| error.context(routing::OutcomeUnknown))?;
         registrations.insert(session_id, next.clone());
         drop(registrations);

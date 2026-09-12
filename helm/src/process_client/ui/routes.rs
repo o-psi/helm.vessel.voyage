@@ -100,7 +100,12 @@ impl App {
             self.vessel_state(route, super::vessels::ConnectionState::Connecting);
             self.observers.insert(
                 route.id,
-                observe::spawn(self.clients[route].clone(), route, self.sender.clone()),
+                observe::spawn(
+                    self.clients[route].clone(),
+                    route,
+                    self.sender.clone(),
+                    self.observation_target.subscribe(),
+                ),
             );
         }
     }
@@ -159,7 +164,12 @@ impl App {
             self.vessel_state(route, super::vessels::ConnectionState::Connecting);
             self.observers.insert(
                 route.id,
-                observe::spawn(self.clients[route].clone(), route, self.sender.clone()),
+                observe::spawn(
+                    self.clients[route].clone(),
+                    route,
+                    self.sender.clone(),
+                    self.observation_target.subscribe(),
+                ),
             );
             return;
         }
@@ -207,7 +217,12 @@ impl App {
         }
         self.observers.insert(
             id,
-            observe::spawn(self.clients[route].clone(), route, self.sender.clone()),
+            observe::spawn(
+                self.clients[route].clone(),
+                route,
+                self.sender.clone(),
+                self.observation_target.subscribe(),
+            ),
         );
         self.status = "Connecting · observing only; no command or terminal input replay".into();
     }

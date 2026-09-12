@@ -103,9 +103,13 @@ pub fn spawn(
     client: Client,
     route: Route,
     sender: mpsc::Sender<Update>,
+    mut selected: tokio::sync::watch::Receiver<Option<Target>>,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         let mut cursors = HashMap::<(uuid::Uuid, uuid::Uuid), u64>::new();
+        let mut retry_after = HashMap::<(uuid::Uuid, uuid::Uuid), (u32, Instant)>::new();
+        let mut hydrated_selection = None;
+        let mut route_failures = 0u32;
         let mut stream_round = 0usize;
         let mut inbox_count = 0u64;
         let mut inbox_probe = Instant::now() - Duration::from_secs(15);
@@ -122,6 +126,7 @@ pub fn spawn(
             .and_then(|value| Ok(serde_json::from_value::<Vec<ProcessInfo>>(value)?));
             match result {
                 Ok(processes) => {
+                    route_failures = 0;
                     if inbox_probe.elapsed() >= Duration::from_secs(15) {
                         inbox_probe = Instant::now();
                         if let Some(count) = super::inbox::attention(&client).await {
@@ -131,6 +136,11 @@ pub fn spawn(
                             inbox_count = count;
                         }
                     }
+                    retry_after.retain(|(id, incarnation), _| {
+                        processes
+                            .iter()
+                            .any(|p| p.session_id == *id && p.incarnation == *incarnation)
+                    });
                     cursors.retain(|(id, incarnation), _| {
                         processes
                             .iter()
@@ -147,8 +157,40 @@ pub fn spawn(
                         break;
                     }
                     let streaming = client.supports_events().await;
+                    // New Vessels supply durable sidebar metadata. Only the
+                    // selected voyage needs transcript/configuration observations.
+                    let selected_target = *selected.borrow_and_update();
+                    if selected_target != hydrated_selection {
+                        // An unselected view may have shed its full transcript
+                        // for a catalogue projection while retaining its cursor.
+                        if let Some(target) = selected_target.filter(|t| t.route == route) {
+                            cursors.retain(|(session, _), _| *session != target.session);
+                        }
+                        hydrated_selection = selected_target;
+                    }
+                    for process in &processes {
+                        if let Some(summary) =
+                            process.catalogue.as_ref().and_then(|c| c.summary.as_ref())
+                        {
+                            let key = (process.session_id, process.incarnation);
+                            if cursors
+                                .get(&key)
+                                .is_some_and(|cursor| *cursor != summary.observation_cursor)
+                            {
+                                cursors.remove(&key);
+                            }
+                        }
+                    }
                     let processes = processes
                         .into_iter()
+                        .filter(|process| {
+                            process.catalogue.is_none()
+                                || selected_target
+                                    == Some(Target {
+                                        route,
+                                        session: process.session_id,
+                                    })
+                        })
                         .filter(|process| process.archive.is_none() && process.deletion.is_none())
                         .take(256)
                         .collect::<Vec<_>>();
@@ -156,7 +198,11 @@ pub fn spawn(
                     let mut initial = tokio::task::JoinSet::new();
                     for process in &processes {
                         let key = (process.session_id, process.incarnation);
-                        if !cursors.contains_key(&key) {
+                        if !cursors.contains_key(&key)
+                            && retry_after
+                                .get(&key)
+                                .is_none_or(|(_, when)| Instant::now() >= *when)
+                        {
                             let client = client.clone();
                             let process = process.clone();
                             let sender = sender.clone();
@@ -170,12 +216,32 @@ pub fn spawn(
                         }
                     }
                     while let Some(result) = initial.join_next().await {
-                        if let Ok((key, Some(cursor))) = result {
-                            cursors.insert(key, cursor);
+                        match result {
+                            Ok((key, Some(cursor))) => {
+                                cursors.insert(key, cursor);
+                                retry_after.remove(&key);
+                            }
+                            Ok((key, None)) => {
+                                let attempts = retry_after
+                                    .get(&key)
+                                    .map_or(1, |(attempts, _)| attempts.saturating_add(1))
+                                    .min(6);
+                                retry_after.insert(
+                                    key,
+                                    (
+                                        attempts,
+                                        Instant::now() + Duration::from_secs(1 << attempts),
+                                    ),
+                                );
+                            }
+                            Err(_) => {}
                         }
                     }
                     if !streaming {
                         for process in &processes {
+                            if process.catalogue.is_some() {
+                                continue;
+                            }
                             if let Some(cursor) = refresh(&client, route, process, &sender).await {
                                 cursors.insert((process.session_id, process.incarnation), cursor);
                             }
@@ -215,7 +281,10 @@ pub fn spawn(
                         subscriptions
                     };
                     if subscriptions.is_empty() {
-                        tokio::time::sleep(Duration::from_secs(2)).await;
+                        tokio::select! {
+                            _ = tokio::time::sleep(Duration::from_secs(2)) => {},
+                            _ = selected.changed() => {},
+                        }
                         continue;
                     }
                     match client.events(subscriptions).await {
@@ -225,6 +294,7 @@ pub fn spawn(
                             loop {
                                 tokio::select! {
                                     _ = &mut refresh_catalogue => break,
+                                    _ = selected.changed() => break,
                                     event = events.next() => {
                                         let Some(event) = event else { break; };
                                         match event {
@@ -294,9 +364,11 @@ pub fn spawn(
                             error: error.to_string(),
                         })
                         .await;
-                    // The connection manager owns explicit retry. Do not flood
-                    // an offline host, erase cached views, or replay commands.
-                    break;
+                    // Only repeat the read-only catalogue probe on this same
+                    // activation. Explicit disconnect aborts this observer; no
+                    // creation, submission, or uncertain command is replayed.
+                    route_failures = route_failures.saturating_add(1).min(5);
+                    tokio::time::sleep(Duration::from_secs((1 << route_failures).min(30))).await;
                 }
             }
         }
@@ -329,6 +401,9 @@ async fn refresh(
             result: Box::new(result),
         })
         .await;
+    if process.state != voyage_protocol::vessel::ProcessState::Live {
+        return cursor;
+    }
     let inventory = client
         .voyage(
             target.session,

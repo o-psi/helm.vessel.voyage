@@ -62,18 +62,26 @@ impl Supervisor {
         );
         let workspace = std::fs::canonicalize(workspace)?;
         ensure!(workspace.is_dir(), "workspace must be a directory");
-        let mut registrations = self.registrations.lock().await;
+        let mut registrations = self.registrations.lock().await?;
         ensure!(
-            !resolution_record(&self.directory, "intent", command_id, &command, false)?,
+            !resolution_record(&self.directory, "intent", command_id, &command, false).await?,
             "start command was fenced as not admitted"
         );
-        if registry::command_record(&self.directory, command_id, &command, false)? {
+        if registry::command_record(&self.directory, command_id, &command, false).await? {
+            if let Some(info) =
+                super::database::creation_receipt(&self.directory, command_id).await?
+            {
+                return Ok(serde_json::to_value(info)?);
+            }
             let previous = registrations.get(&session_id).ok_or_else(|| {
                 anyhow::anyhow!("start outcome unconfirmed; retained admission prevents replay")
                     .context(routing::OutcomeUnknown)
             })?;
+            let previous = previous.clone();
+            drop(registrations);
             return Ok(serde_json::to_value(
-                routing::inspect(&registry::directory(&self.directory, session_id), previous).await,
+                routing::inspect(&registry::directory(&self.directory, session_id), &previous)
+                    .await,
             )?);
         }
         if let Some(previous) = registrations
@@ -96,9 +104,13 @@ impl Supervisor {
                 "session workspace conflict"
             );
             registry::command_record(&self.directory, command_id, &command, true)
+                .await
                 .map_err(|error| error.context(routing::OutcomeUnknown))?;
+            let previous = previous.clone();
+            drop(registrations);
             return Ok(serde_json::to_value(
-                routing::inspect(&registry::directory(&self.directory, session_id), previous).await,
+                routing::inspect(&registry::directory(&self.directory, session_id), &previous)
+                    .await,
             )?);
         }
         if initialize.is_none() {
@@ -141,9 +153,14 @@ impl Supervisor {
             state: ProcessState::Starting,
             name: None,
         };
-        registry::command_record(&self.directory, command_id, &command, true)
-            .map_err(|error| error.context(routing::OutcomeUnknown))?;
-        registry::save(&directory, &registration)
+        super::database::admit(
+            &self.directory,
+            &registration,
+            serde_json::to_vec(&command)?,
+        )
+        .await
+        .map_err(|error| error.context(routing::OutcomeUnknown))?;
+        registry::publish(&directory, &registration)
             .map_err(|error| error.context(routing::OutcomeUnknown))?;
         registrations.insert(session_id, registration.clone());
         drop(registrations);
@@ -159,7 +176,19 @@ impl Supervisor {
             }
         })
         .await;
-        if let Ok(info) = observed {
+        if let Ok(mut info) = observed {
+            let _ = super::database::refresh_now(&self.directory, &registration).await;
+            if let Some(cached) = super::database::catalogue(&self.directory)
+                .await
+                .map_err(|error| error.context(routing::OutcomeUnknown))?
+                .into_iter()
+                .find(|p| p.session_id == session_id)
+            {
+                info.catalogue = cached.catalogue;
+            }
+            super::database::settle_creation(&self.directory, command_id, &info)
+                .await
+                .map_err(|error| error.context(routing::OutcomeUnknown))?;
             return Ok(serde_json::to_value(info)?);
         }
         Err(anyhow::anyhow!(
@@ -172,48 +201,21 @@ impl Supervisor {
 // Separate private intent namespace: publication precedes the generic reservation.
 // A crash in that gap must never permit the delayed Start to launch. Completed
 // fences are retained indefinitely with bounded count/size, like lifecycle IDs.
-fn resolution_record(
+async fn resolution_record(
     root: &std::path::Path,
     phase: &str,
     id: Uuid,
     original: &VesselCommand,
     reserve: bool,
 ) -> Result<bool> {
-    use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
-    let directory = root.join("start-resolution");
-    registry::private_directory(&directory)?;
-    let phase_directory = directory.join(phase);
-    registry::private_directory(&phase_directory)?;
-    let records = phase_directory.join("commands");
-    registry::private_directory(&records)?;
-    let path = records.join(format!("{id}.json"));
-    match std::fs::OpenOptions::new()
-        .read(true)
-        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
-        .open(&path)
-    {
-        Ok(file) => {
-            let metadata = file.metadata()?;
-            ensure!(
-                metadata.is_file()
-                    && metadata.nlink() == 1
-                    && metadata.uid() == unsafe { libc::geteuid() }
-                    && metadata.mode() & 0o077 == 0
-                    && metadata.len() <= 16384,
-                "invalid private start resolution record"
-            );
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => return Err(error.into()),
-    }
-    let found = registry::command_record(&phase_directory, id, original, reserve)?;
-    // Persist newly created namespace ancestors as well as the record itself.
-    if reserve {
-        for path in [&records, &phase_directory, &directory, &root.to_path_buf()] {
-            std::fs::File::open(path)?.sync_all()?;
-        }
-    }
-    Ok(found)
+    super::database::command(
+        root,
+        &format!("start-resolution/{phase}"),
+        id,
+        serde_json::to_vec(original)?,
+        reserve,
+    )
+    .await
 }
 
 impl Supervisor {
@@ -254,17 +256,30 @@ impl Supervisor {
         config_path: Option<PathBuf>,
         original: VesselCommand,
     ) -> Result<Value> {
-        let registrations = self.registrations.lock().await;
-        let fenced = resolution_record(&self.directory, "intent", command_id, &original, false)?;
-        let admitted = registry::command_record(&self.directory, command_id, &original, false)?;
+        let registrations = self.registrations.lock().await?;
+        let fenced =
+            resolution_record(&self.directory, "intent", command_id, &original, false).await?;
+        let admitted =
+            registry::command_record(&self.directory, command_id, &original, false).await?;
         if fenced {
-            registry::command_record(&self.directory, command_id, &original, true)?;
-            resolution_record(&self.directory, "not-admitted", command_id, &original, true)?;
+            registry::command_record(&self.directory, command_id, &original, true).await?;
+            resolution_record(&self.directory, "not-admitted", command_id, &original, true).await?;
             return Ok(
                 serde_json::json!({"status":"not_admitted", "command_id":command_id, "session_id":session_id}),
             );
         }
         if admitted {
+            if let Some(process) =
+                super::database::creation_receipt(&self.directory, command_id).await?
+            {
+                ensure!(
+                    process.session_id == session_id,
+                    "creation receipt identity conflict"
+                );
+                return Ok(
+                    serde_json::json!({"status":"created", "command_id":command_id, "session_id":session_id, "process":process}),
+                );
+            }
             if let Some(registration) = registrations.get(&session_id).filter(|registration| {
                 registration.command_id == command_id
                     && registration.config_path == config_path
@@ -274,9 +289,11 @@ impl Supervisor {
                 // a registration is usable only if its canonical workspace agrees.
                 if std::fs::canonicalize(&workspace).ok().as_ref() == Some(&registration.workspace)
                 {
+                    let registration = registration.clone();
+                    drop(registrations);
                     let process = routing::inspect(
                         &registry::directory(&self.directory, session_id),
-                        registration,
+                        &registration,
                     )
                     .await;
                     return Ok(
@@ -309,9 +326,9 @@ impl Supervisor {
                 serde_json::json!({"status":"unknown", "command_id":command_id, "session_id":session_id}),
             );
         }
-        resolution_record(&self.directory, "intent", command_id, &original, true)?;
-        registry::command_record(&self.directory, command_id, &original, true)?;
-        resolution_record(&self.directory, "not-admitted", command_id, &original, true)?;
+        resolution_record(&self.directory, "intent", command_id, &original, true).await?;
+        registry::command_record(&self.directory, command_id, &original, true).await?;
+        resolution_record(&self.directory, "not-admitted", command_id, &original, true).await?;
         Ok(
             serde_json::json!({"status":"not_admitted", "command_id":command_id, "session_id":session_id}),
         )

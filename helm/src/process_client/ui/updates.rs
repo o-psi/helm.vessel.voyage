@@ -221,6 +221,23 @@ impl App {
                         }
                         self.views.insert(target, view);
                     }
+                    let view = self.views.get_mut(&target).expect("catalogued view");
+                    if let Some(summary) = view
+                        .process
+                        .catalogue
+                        .as_ref()
+                        .and_then(|c| c.summary.as_ref())
+                        && view.snapshot.as_ref().is_none_or(|old| {
+                            old.catalogue_only
+                                || (self.selected != Some(target)
+                                    && old.revision <= summary.revision)
+                        })
+                        && let Some(snapshot) = state::Snapshot::from_catalogue(summary)
+                    {
+                        view.rendered.take();
+                        view.snapshot = Some(snapshot);
+                        view.observe_settlement(self.presentation_now);
+                    }
                     if let Some(receipt) = self.views[&target]
                         .process
                         .archive
@@ -338,6 +355,7 @@ impl App {
                 self.sync_live_inference_picker(target);
             }
             Update::RouteUnavailable { route, error } => {
+                self.status = format!("Vessel catalogue unavailable: {}", safe(&error));
                 self.stop_browser_route(route.id);
                 self.clients.mark_unavailable(route);
                 self.vessel_state(route, vessels::classify_error(&error));

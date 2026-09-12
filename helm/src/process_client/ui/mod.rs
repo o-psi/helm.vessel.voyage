@@ -59,6 +59,7 @@ use std::{
 use tokio::sync::mpsc;
 
 pub(super) struct App {
+    observation_target: tokio::sync::watch::Sender<Option<Target>>,
     browsers: BTreeMap<Target, crate::process_client::browser::Handle>,
     browser_opened: std::collections::BTreeSet<Target>,
     browser_retired: Vec<tokio::task::JoinHandle<std::result::Result<(), String>>>,
@@ -187,6 +188,7 @@ pub async fn run_with_notice(
     let selected =
         session.and_then(|session| clients.first_route().map(|route| Target { route, session }));
     let mut app = App {
+        observation_target: tokio::sync::watch::channel(selected).0,
         browsers: BTreeMap::new(),
         browser_opened: Default::default(),
         browser_retired: Vec::new(),
@@ -257,6 +259,10 @@ pub async fn run_with_notice(
     let mut repaint = tokio::time::interval(Duration::from_millis(100));
     let result = async {
         while !app.quit {
+            app.observation_target.send_if_modified(|target| {
+                let next = app.selected.filter(|_| app.active_draft.is_none());
+                if *target == next { false } else { *target = next; true }
+            });
             app.poll_operator();
             app.poll_workflows();
             app.poll_browsers();

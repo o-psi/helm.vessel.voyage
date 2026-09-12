@@ -11,7 +11,7 @@ impl Supervisor {
         &self,
         manifest: SignedArtifact<TransferManifest>,
     ) -> Result<serde_json::Value> {
-        let _serial = self.registrations.lock().await;
+        let _serial = self.registrations.lock().await?;
         let id = manifest.payload.transfer_id;
         let mut prepared = load(&self.directory, id)?;
         identity::verify(
@@ -56,7 +56,7 @@ impl Supervisor {
             !bytes.is_empty() && bytes.len() <= 65536,
             "invalid transfer chunk"
         );
-        let _serial = self.registrations.lock().await;
+        let _serial = self.registrations.lock().await?;
         let prepared = load(&self.directory, id)?;
         ensure!(!prepared.activated, "transfer already activated");
         let manifest = prepared

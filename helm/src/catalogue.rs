@@ -13,18 +13,7 @@ pub(crate) async fn list_sessions() -> Result<()> {
     )?;
     let ids: std::collections::HashSet<_> = processes.iter().map(|p| p.session_id).collect();
     for process in processes {
-        let snapshot = client
-            .voyage(
-                process.session_id,
-                process.incarnation,
-                voyage_protocol::vessel::VoyageCommand::Snapshot,
-            )
-            .await;
-        let name = snapshot
-            .as_ref()
-            .ok()
-            .and_then(|v| v["name"].as_str())
-            .unwrap_or("unnamed");
+        let name = process.name.as_deref().unwrap_or("unnamed");
         println!(
             "{}  {:?}  {}  {}",
             process.session_id,

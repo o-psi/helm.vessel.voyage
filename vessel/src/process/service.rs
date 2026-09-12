@@ -1,5 +1,5 @@
 use super::{registry, routing};
-use anyhow::{Result, ensure};
+use anyhow::Result;
 use axum::{
     Json, Router,
     body::Body,
@@ -31,7 +31,7 @@ pub(super) struct Supervisor {
     pub(super) enrollment_workers: Mutex<HashMap<Uuid, tokio::task::JoinHandle<()>>>,
     pub(super) assignment_locks: Mutex<HashMap<Uuid, Arc<Mutex<()>>>>,
     pub(super) lifecycle_locks: Mutex<HashMap<Uuid, Arc<Mutex<()>>>>,
-    pub(super) registrations: Mutex<HashMap<Uuid, ProcessRegistration>>,
+    pub(super) registrations: super::database::Registrations,
 }
 
 #[derive(Clone)]
@@ -49,23 +49,12 @@ pub async fn serve(directory: PathBuf, binary: PathBuf) -> Result<()> {
     super::identity::public(&directory)?;
     let sessions = directory.join("sessions");
     registry::private_directory(&sessions)?;
-    let mut registrations = HashMap::new();
-    for entry in std::fs::read_dir(&sessions)? {
-        ensure!(
-            registrations.len() < 4096,
-            "supervisor registration retention limit reached"
-        );
-        let path = entry?.path();
-        if path.join("registration.json").exists() {
-            registry::private_directory(&path)?;
-            let registration = registry::load(&path.join("registration.json"))?;
-            ensure!(
-                registration.protocol == PROCESS_PROTOCOL
-                    && path == registry::directory(&directory, registration.session_id),
-                "invalid runtime registration identity"
-            );
-            registrations.insert(registration.session_id, registration);
-        }
+    let registrations = super::database::initialize(&directory).await?;
+    for registration in registrations.values() {
+        registry::publish(
+            &registry::directory(&directory, registration.session_id),
+            registration,
+        )?;
     }
     let supervisor = Arc::new(Supervisor {
         directory: directory.clone(),
@@ -73,12 +62,13 @@ pub async fn serve(directory: PathBuf, binary: PathBuf) -> Result<()> {
         model_slots: Arc::new(Semaphore::new(4)),
         devices: super::accounts::device_service(directory.clone())?,
         enrollment_workers: Mutex::new(HashMap::new()),
-        registrations: Mutex::new(registrations),
+        registrations: super::database::Registrations::new(directory.clone()),
         assignment_locks: Mutex::new(HashMap::new()),
         lifecycle_locks: Mutex::new(HashMap::new()),
     });
     supervisor.resume_enrollments().await?;
     let notification_delivery = supervisor.start_notification_delivery();
+    let catalogue_refresh = supervisor.start_catalogue_refresh();
     let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).await?;
     let address = listener.local_addr()?;
     let token = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
@@ -113,6 +103,7 @@ pub async fn serve(directory: PathBuf, binary: PathBuf) -> Result<()> {
         .with_graceful_shutdown(shutdown_signal())
         .await?;
     notification_delivery.abort();
+    catalogue_refresh.abort();
     let _ = notification_delivery.await;
     // Runtime processes own their lifetimes; service shutdown only detaches routing.
     let access = directory.join("process-http.json");
@@ -388,7 +379,7 @@ impl Supervisor {
                 &self.directory,
             )?)?),
             VesselCommand::TrustVessel { identity } => {
-                let _serial = self.registrations.lock().await;
+                let _serial = self.registrations.lock().await?;
                 super::identity::pin(&self.directory, &identity)?;
                 Ok(serde_json::json!({"trusted":identity.vessel_id}))
             }
@@ -413,7 +404,7 @@ impl Supervisor {
             }
             command @ VesselCommand::ManagedImport { .. } => self.initialize_managed(command).await,
             VesselCommand::Capabilities => Ok(
-                json!({"protocol":VESSEL_API_VERSION,"version":env!("CARGO_PKG_VERSION"),"vessel_id":super::identity::public(&self.directory)?.vessel_id,"platform":std::env::consts::OS,"features":["notifications","sessionless_models","provider_accounts","account_start","private_account_enrollment","catalogue","start","start_configured","start_resolution","inspect","voyage_operations","stop","restart","explicit_recovery","durable_receipts","history_paging","events","sse_events","duplex_socket","decisions","lifecycle","branch","ordinary_import","managed_import","scoped_grants","revocation","participant_bindings","participant_assignments","signed_owner_transfer"],"max_frame_bytes":MAX_VESSEL_BODY,"capacity":null,"max_connections":64}),
+                json!({"protocol":VESSEL_API_VERSION,"version":env!("CARGO_PKG_VERSION"),"vessel_id":super::identity::public(&self.directory)?.vessel_id,"platform":std::env::consts::OS,"features":["sqlite_catalogue","notifications","sessionless_models","provider_accounts","account_start","private_account_enrollment","catalogue","start","start_configured","start_resolution","inspect","voyage_operations","stop","restart","explicit_recovery","durable_receipts","history_paging","events","sse_events","duplex_socket","decisions","lifecycle","branch","ordinary_import","managed_import","scoped_grants","revocation","participant_bindings","participant_assignments","signed_owner_transfer"],"max_frame_bytes":MAX_VESSEL_BODY,"capacity":null,"max_connections":64}),
             ),
             command @ (VesselCommand::Accounts { .. }
             | VesselCommand::AccountDefaults { .. }
@@ -430,29 +421,7 @@ impl Supervisor {
                     .await
             }
             VesselCommand::Catalogue => {
-                let registrations: Vec<_> = self
-                    .registrations
-                    .lock()
-                    .await
-                    .values()
-                    .filter(|registration| {
-                        !matches!(
-                            registration.initialize,
-                            Some(RuntimeInitialization::Participant { .. })
-                        )
-                    })
-                    .cloned()
-                    .collect();
-                let mut tasks = tokio::task::JoinSet::new();
-                for registration in registrations {
-                    let directory = registry::directory(&self.directory, registration.session_id);
-                    tasks.spawn(async move { routing::inspect(&directory, &registration).await });
-                }
-                let mut entries = Vec::new();
-                while let Some(result) = tasks.join_next().await {
-                    entries.push(result?);
-                }
-                entries.sort_by_key(|entry| entry.session_id);
+                let entries = self.catalogue().await?;
                 Ok(serde_json::to_value(entries)?)
             }
             VesselCommand::Start {
@@ -503,11 +472,6 @@ impl Supervisor {
     }
 
     pub(super) async fn registration(&self, session_id: Uuid) -> Result<ProcessRegistration> {
-        self.registrations
-            .lock()
-            .await
-            .get(&session_id)
-            .cloned()
-            .ok_or_else(|| anyhow::anyhow!("unknown session"))
+        super::database::registration(&self.directory, session_id).await
     }
 }

@@ -149,20 +149,34 @@ async fn advance_mode(
         return Ok(None);
     }
     if saved.submit.is_none() {
-        let snapshot = client
-            .voyage(saved.id, process.incarnation, VoyageCommand::Snapshot)
-            .await?;
-        ensure!(
-            snapshot["session_id"] == saved.id.to_string(),
-            "snapshot identity mismatch"
-        );
+        let revision = if let Some(summary) = process
+            .catalogue
+            .as_ref()
+            .filter(|c| !c.stale)
+            .and_then(|c| c.summary.as_ref())
+        {
+            ensure!(
+                summary.session_id == saved.id,
+                "creation summary identity mismatch"
+            );
+            summary.revision
+        } else {
+            let snapshot = client
+                .voyage(saved.id, process.incarnation, VoyageCommand::Snapshot)
+                .await?;
+            ensure!(
+                snapshot["session_id"] == saved.id.to_string(),
+                "snapshot identity mismatch"
+            );
+            snapshot["revision"]
+                .as_u64()
+                .context("snapshot revision missing")?
+        };
         saved.submit = Some(super::super::attachments::prepare(
             VoyageCommand::Submit {
                 coordination: None,
                 command_id: saved.turn,
-                expected_revision: snapshot["revision"]
-                    .as_u64()
-                    .context("snapshot revision missing")?,
+                expected_revision: revision,
                 expires_at_ms: super::super::super::frontend::deadline()?,
                 prompt: saved.text.clone(),
             },

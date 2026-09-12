@@ -43,3 +43,6 @@ pub mod sandbox;
 pub mod artifacts;
 
 pub mod accounts;
+
+#[cfg(unix)]
+pub mod catalogue;

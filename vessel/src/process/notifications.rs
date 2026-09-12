@@ -156,7 +156,7 @@ impl Supervisor {
         }
         // This is also the local grant/revocation ordering lock. No network wait
         // occurs while it is held. A subsequent owner read rechecks separately.
-        let registrations = self.registrations.lock().await;
+        let registrations = self.registrations.lock().await?;
         let mut store = store::Store::open_current(self.directory.join("notifications"))?;
         let vessel = super::identity::public(&self.directory)?.vessel_id;
         let now = access::now()?;
@@ -325,7 +325,7 @@ impl Supervisor {
         actor: Option<GrantBinding>,
     ) -> Result<Value> {
         let (destination, entry, binding) = {
-            let registrations = self.registrations.lock().await;
+            let registrations = self.registrations.lock().await?;
             let mut store = store::Store::open_current(self.directory.join("notifications"))?;
             let vessel = super::identity::public(&self.directory)?.vessel_id;
             let record = store
@@ -423,7 +423,7 @@ impl Supervisor {
         };
         // Current identity, request and lifetime are sampled again after the owner
         // wait. The existing explicit Respond admission remains the final arbiter.
-        let registrations = self.registrations.lock().await;
+        let registrations = self.registrations.lock().await?;
         let mut store = store::Store::open_current(self.directory.join("notifications"))?;
         let now = access::now()?;
         let Some(registration) = registrations.get(&destination.source_session_id) else {
@@ -498,7 +498,10 @@ impl Supervisor {
                     break;
                 };
                 let records = {
-                    let _serial = supervisor.registrations.lock().await;
+                    let Ok(_serial) = supervisor.registrations.lock().await else {
+                        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                        continue;
+                    };
                     store::Store::open_current(supervisor.directory.join("notifications"))
                         .and_then(|store| store.destinations())
                         .unwrap_or_default()
@@ -529,7 +532,7 @@ impl Supervisor {
             .join("notifications")
             .join(format!("delivery-{destination_id}.json"));
         let (destination, accepted_at, registration, cursor, mut attempt, stopped_before) = {
-            let registrations = self.registrations.lock().await;
+            let registrations = self.registrations.lock().await?;
             let store = store::Store::open_current(self.directory.join("notifications"))?;
             let now = access::now()?;
             let record = store
@@ -600,7 +603,7 @@ impl Supervisor {
             ),
         )
         .await;
-        let registrations = self.registrations.lock().await;
+        let registrations = self.registrations.lock().await?;
         let mut store = store::Store::open_current(self.directory.join("notifications"))?;
         let now = access::now()?;
         let latest = store
@@ -791,7 +794,7 @@ impl Supervisor {
             .join("notifications")
             .join(format!("budget-delivery-{destination_id}.json"));
         let (destination, accepted, registration, mut attempt, stopped) = {
-            let registrations = self.registrations.lock().await;
+            let registrations = self.registrations.lock().await?;
             let store = store::Store::open_current(self.directory.join("notifications"))?;
             let Some(record) = store.destination(destination_id)? else {
                 return Ok(());
@@ -858,7 +861,7 @@ impl Supervisor {
             .and_then(Result::ok),
             Err(_) => None,
         };
-        let registrations = self.registrations.lock().await;
+        let registrations = self.registrations.lock().await?;
         let mut store = store::Store::open_current(self.directory.join("notifications"))?;
         let now = access::now()?;
         let Some(record) = store.destination(destination_id)? else {

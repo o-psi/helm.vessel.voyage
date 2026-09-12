@@ -473,6 +473,15 @@ incarnation or its cleanup proof. Initialization and
 management-only processes retire after a short idle grace; volatile private workflow
 preparation retains its existing bounded lifetime. Root terminals close before
 suspension; terminal metadata does not imply a live process across turns.
+Vessel now retains registrations, incarnations, exact lifecycle reservations and
+confirmed creation receipts in its private embedded `catalogue.sqlite3`. Catalogue
+requests read persisted summaries; a bounded producer refreshes them through
+read-only journal projections without launching suspended observers. Helm uses
+these summaries for background listings and fetches full details for the selected
+voyage. Failed refreshes retain details with explicit staleness. See the source
+[SQLite storage guide](https://github.com/o-psi/voyage/blob/main/docs/sqlite-storage.md)
+for the schema, private migration and separate authority boundaries.
+
 Canonical SQLite history, command bindings, streamed checkpoints, decisions,
 steering and cleanup obligations survive interface disconnect. Exact command
 retries retain their original outcome, including definite rejections. A changed
