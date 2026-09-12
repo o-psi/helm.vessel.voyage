@@ -81,6 +81,8 @@ pub(super) fn failure_summary(reason: Option<&str>) -> Option<&str> {
             | "Provider temporarily unavailable."
             | "Provider request timed out."
             | "Provider rejected the request."
+            | "Provider request failed."
+            | "Provider connection failed; request outcome may be uncertain."
             | "Provider returned an invalid or incomplete response."
             | "Provider stopped before completing its response."
             | "Local inference admission or accounting failed."

@@ -17,9 +17,10 @@ api_key_env = "OPENAI_API_KEY"
 # Older compatible Anthropic endpoints without model metadata need an explicit max_tokens.
 max_tokens = 0
 context_window = 0
-provider_retry_attempts = 4
-provider_retry_initial_ms = 500
-provider_retry_max_ms = 8000
+provider_retry_attempts = 8
+provider_retry_initial_ms = 1000
+provider_retry_max_ms = 30000
+provider_retry_elapsed_ms = 120000
 command_timeout_secs = 120
 max_output_bytes = 131072
 terminal_max_count = 16

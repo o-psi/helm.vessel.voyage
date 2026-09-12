@@ -79,8 +79,21 @@ impl ProviderAttempt {
             AttemptPhase::Stream => "stream",
             AttemptPhase::Backoff => "backoff",
         };
+        let category = match self.category.as_deref() {
+            Some("authentication") => "authentication failure",
+            Some("usage_limit") => "account usage limit",
+            Some("context_length") => "context rejection",
+            Some("rate_limit") => "rate limit",
+            Some("unavailable") => "service unavailable",
+            Some("timeout") => "timeout",
+            Some("transport") => "transport failure; remote outcome uncertain",
+            Some("request") => "request failure",
+            Some("invalid_response") => "invalid or truncated response",
+            Some("incomplete") => "incomplete response",
+            _ => "provider observation",
+        };
         let mut summary = format!(
-            "Provider attempt {}/{} · {phase} · {} · {} ms",
+            "Provider attempt {}/{} · {phase} · {category} · {} · {} ms",
             self.attempt, self.limit, detail, self.duration_ms
         );
         if let Some(status) = self.http_status {

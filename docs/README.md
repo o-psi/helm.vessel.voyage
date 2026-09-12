@@ -13,6 +13,7 @@ are not presented as usable commands.
 | [Executable packages](https://github.com/o-psi/helm.vessel.voyage/blob/main/docs/executable-packages.md) | Repository guide for format-2 Linux packaging, exact review, required isolation and recovery |
 | [Executable SDK](https://github.com/o-psi/helm.vessel.voyage/blob/main/docs/extension-sdk.md) | Repository protocol-1 SDK, standalone examples and verification limits |
 | [Configuration](configuration.md) | Current provider, policy and storage configuration |
+| [Provider attempts](provider-attempts.md) | Failure classification, retry history and safe continuation |
 | [Named provider accounts](provider-accounts.md) | Helm account selection/private device sign-in, host-only credentials, migration and authority |
 | [Provider accounts plan](provider-accounts-plan.md) | Design decisions and acceptance matrix for named native accounts |
 | [Operations](operations.md) | Connected HTTP(S) voyages and legacy chat/managed/worker procedures |

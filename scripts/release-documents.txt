@@ -10,6 +10,7 @@ eval/README.md
 docs/README.md
 docs/architecture.md
 docs/configuration.md
+docs/provider-attempts.md
 docs/current-state.md
 docs/development.md
 docs/implementation.md

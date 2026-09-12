@@ -393,14 +393,22 @@ subagent concurrency bound different resources. `max_tokens = 0` and
 `context_window = 0` add no operator token cap; provider-specific requirements still
 apply. [Working-context compaction](#working-context-compaction) prepares large results
 and recovers from recognized provider context rejection without enabling a local
-token gate or repeating completed tools. `provider_retry_attempts`, `provider_retry_initial_ms` and
-`provider_retry_max_ms` bound retries before streamed content arrives. Exponential
+token gate or repeating completed tools. `provider_retry_attempts` (default 8 total),
+`provider_retry_initial_ms` (1000), `provider_retry_max_ms` (30000) and
+`provider_retry_elapsed_ms` (120000) bound retries before streamed content arrives.
+The elapsed window includes request and backoff time and prevents a new retry once
+exhausted; it does not abort an in-flight response. Native transport deadlines and
+explicit inference/runtime budgets still apply. Existing explicitly configured
+attempt/delay values remain effective; the new elapsed bound also applies. Exponential
 waits use half-to-full equal jitter. Explicit `Retry-After` seconds or HTTP dates
 are honored for throttling and transient service errors; a server delay above the
 configured maximum returns a failure instead of retrying early. Cancellation
-interrupts the wait, and exhausted accounts are not retried. Missing usage remains
+interrupts the wait; executing authority and policy freshness are rechecked during
+backoff and before dispatch. Exhausted accounts, authentication, ambiguous transport
+failures and invalid/truncated responses are not retried. Missing usage remains
 unknown in inference history. See the [runtime contract](runtime-contract.md#provider-outcomes-retries-and-accounting)
-for completion signals and replay boundaries. Optional
+for completion signals and replay boundaries, and [provider attempt observations](provider-attempts.md)
+for persisted diagnostics and explicit continuation. Optional
 `helm inference` limits count dispatch attempts, not money or complete token cost.
 
 ## Storage and diagnostics

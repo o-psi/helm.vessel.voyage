@@ -116,9 +116,27 @@ within `provider_retry_attempts`. Exponential delays use equal jitter between ha
 and all of the configured delay ceiling. An explicit `Retry-After` uses the server's
 delay without jitter, including HTTP-date values and service-unavailable responses.
 A delay above `provider_retry_max_ms` stops with the original failure category;
-it is never shortened to retry early. Cancellation interrupts retry waits. Account
+it is never shortened to retry early. The positive `provider_retry_elapsed_ms`
+window includes request and wait time: no further retry starts after it expires.
+This is a retry-admission bound, not a new deadline on an in-flight response.
+Cancellation interrupts retry waits; policy freshness and execution authority are
+rechecked while waiting and again before dispatch. Account
 exhaustion and authentication failures do not retry. These bounds apply to retry
-attempts, not ordinary successful model/tool cycles.
+attempts, not ordinary successful model/tool cycles. Generic transport failures
+are conservatively non-retryable because remote completion is uncertain; a timeout
+before any response delta remains eligible under the configured attempt/window
+bounds. Missing usage never means free or refunded work. Each admitted retry has
+a fresh accounting attempt identity under the same logical request identity.
+
+[Provider attempt observations](provider-attempts.md) persist content-free intent
+before dispatch and the classified outcome before retry, separately from tool
+outcomes and canonical messages. A partial text or tool-call delta prevents retry,
+including context recovery. After terminal state and observed cleanup, the operator
+may submit a new continuation turn after reviewing saved output/effects. It has a
+new command identity; resending the old command identity only retrieves the old
+receipt. No recovery automatically repeats tools or appends synthetic provider
+errors to canonical history. Unknown tool effects retain the existing explicit
+reconciliation requirements below.
 
 Tool identities are checked across the complete response before dispatch. Exact
 ID/name/semantic-JSON duplicates execute once; conflicting identities or malformed
