@@ -433,6 +433,7 @@ async fn dispatch(
     };
     let locally_quiescent = matches!(&local,Some(Ok(value)) if value["cleanup_observed"]==true);
     let mut result = BrowserResult {
+        local_reason: None,
         request_id: request.request_id,
         action_sha256: request.action_sha256.clone(),
         state: BrowserRequestState::Unresolved,

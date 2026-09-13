@@ -16,6 +16,7 @@ enum Failure {
     Activity,
     Text,
     Tool,
+    Reasoning,
     Request,
     LongWait,
     Eof,
@@ -49,8 +50,18 @@ impl Provider for ProviderFixture {
                 retry_after: Some(Duration::from_secs(60)),
             }),
             Failure::Eof => Ok(Box::pin(futures_util::stream::empty())),
-            Failure::Text | Failure::Tool | Failure::ContextText | Failure::TransportText => {
-                let delta = if matches!(self.failure, Failure::Tool) {
+            Failure::Text
+            | Failure::Tool
+            | Failure::Reasoning
+            | Failure::ContextText
+            | Failure::TransportText => {
+                let delta = if matches!(self.failure, Failure::Reasoning) {
+                    ProviderDelta::Reasoning {
+                        index: 2,
+                        kind: voyage_protocol::reasoning_preview::ReasoningKind::Summary,
+                        text: "disclosure".into(),
+                    }
+                } else if matches!(self.failure, Failure::Tool) {
                     ProviderDelta::ToolCall {
                         index: 0,
                         id: Some("effect".into()),
@@ -77,6 +88,7 @@ impl Provider for ProviderFixture {
 }
 struct Checkpoint {
     previews: Mutex<Vec<voyage_protocol::tool_preview::ToolPreview>>,
+    reasoning: Mutex<Vec<voyage_protocol::reasoning_preview::ReasoningPreview>>,
     attempts: Mutex<Vec<ProviderAttempt>>,
     cancel: Option<CancellationToken>,
     revoke: Option<Arc<AtomicBool>>,
@@ -88,6 +100,13 @@ impl RunCheckpoint for Checkpoint {
         uuid::Uuid::nil()
     }
     async fn canonical(&self, _: &[Message], _: &Usage) -> Result<(), CheckpointError> {
+        Ok(())
+    }
+    async fn reasoning_previews(
+        &self,
+        previews: &[voyage_protocol::reasoning_preview::ReasoningPreview],
+    ) -> Result<(), CheckpointError> {
+        *self.reasoning.lock().unwrap() = previews.to_vec();
         Ok(())
     }
     async fn tool_previews(
@@ -199,6 +218,7 @@ fn fixture(
     let checkpoint = Checkpoint {
         attempts: Mutex::new(vec![]),
         previews: Mutex::new(vec![]),
+        reasoning: Mutex::new(vec![]),
         cancel: None,
         revoke: None,
         fail_intent: false,
@@ -495,4 +515,20 @@ async fn activity_flood_remains_cancellable_without_becoming_conversation_text()
     let rows = checkpoint.attempts.lock().unwrap();
     assert_eq!(rows[0].decision, RetryDecision::Cancelled);
     assert!(!rows[0].text_observed && !rows[0].tool_fragment_observed);
+}
+
+#[tokio::test]
+async fn interrupted_reasoning_is_checkpointed_separately_without_tool_or_answer() {
+    let root = tempfile::tempdir().unwrap();
+    let (agent, _, checkpoint, _, _) = fixture(root.path(), Failure::Reasoning);
+    assert!(
+        execute(&agent, &checkpoint, &CancellationToken::new())
+            .await
+            .is_err()
+    );
+    let disclosures = checkpoint.reasoning.lock().unwrap();
+    assert_eq!(disclosures.len(), 1);
+    assert_eq!(disclosures[0].text, "disclosure");
+    assert!(!disclosures[0].finalized);
+    assert!(checkpoint.previews.lock().unwrap().is_empty());
 }

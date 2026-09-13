@@ -1,92 +1,63 @@
-//! Discover operational controls without entering a command or losing a draft.
-use super::App;
+//! One keyboard-searchable catalogue; activation calls handlers, never composer text.
+use super::{App, discovery};
 use anyhow::Result;
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect},
-    style::{Modifier, Style},
-    text::Line,
-    widgets::{Block, Borders, List, ListItem, ListState, Paragraph},
+    widgets::{List, ListItem, ListState, Paragraph},
 };
-
-const ITEMS: [(&str, &str, &str); 8] = [
-    (
-        "Run a tool",
-        "Typed actions with runtime permission checks",
-        "tools",
-    ),
-    ("Access", "Review and change execution access", "policy"),
-    (
-        "Manage tasks",
-        "Create, update and record task evidence",
-        "todos",
-    ),
-    (
-        "Delegated work",
-        "Work assigned to other agents",
-        "subagents",
-    ),
-    (
-        "Saved workflows",
-        "Available reusable workflows",
-        "workflows",
-    ),
-    ("Models", "Available and selected models", "models"),
-    ("This machine", "Cleanup records", "host_resources"),
-    (
-        "Policy details",
-        "Read effective constraints",
-        "policy_details",
-    ),
-];
 
 impl App {
     pub(super) fn explore_input(&mut self, key: &KeyEvent) -> Result<bool> {
         if key.code == KeyCode::F(1) {
-            self.explore = None;
+            self.discovery.settings = false;
+            // The global help overlay retains this catalogue and its query.
             return Ok(false);
         }
         if key.code == KeyCode::F(8) {
-            self.help = false;
-            self.explore = if self.explore.is_some() {
-                None
+            if self.explore.is_some() {
+                self.explore = None;
             } else {
-                Some(0)
-            };
+                self.discovery_open("actions")?;
+            }
             return Ok(true);
         }
         let Some(index) = self.explore else {
             return Ok(false);
         };
+        let results = discovery::matches(&self.discovery.query);
+        if !matches!(key.code, KeyCode::PageUp | KeyCode::PageDown) {
+            self.discovery.detail_scroll = 0;
+        }
         match key.code {
             KeyCode::Esc => self.explore = None,
+            KeyCode::PageDown => {
+                self.discovery.detail_scroll = self.discovery.detail_scroll.saturating_add(1)
+            }
+            KeyCode::PageUp => {
+                self.discovery.detail_scroll = self.discovery.detail_scroll.saturating_sub(1)
+            }
             KeyCode::Up => self.explore = Some(index.saturating_sub(1)),
-            KeyCode::Down => self.explore = Some((index + 1).min(ITEMS.len() - 1)),
+            KeyCode::Down => self.explore = Some((index + 1).min(results.len().saturating_sub(1))),
+            KeyCode::Backspace => {
+                self.discovery.query.pop();
+                self.explore = Some(0);
+            }
+            KeyCode::Char(c)
+                if !key
+                    .modifiers
+                    .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+                    && !c.is_control() =>
+            {
+                if self.discovery.query.len() < 256 {
+                    self.discovery.query.push(c);
+                }
+                self.explore = Some(0);
+            }
             KeyCode::Enter => {
-                if let Some(target) = self.selected {
-                    match ITEMS[index].2 {
-                        "workflows" => self.open_workflows()?,
-                        "tools" => self.open_operator(target, None)?,
-                        "todos" => self.open_operator(target, Some("todo"))?,
-                        "subagents" => self.open_operator(target, Some("subagent"))?,
-                        "models" => self.inference_command(
-                            super::inference::Destination::Live(target),
-                            "/model",
-                            true,
-                        )?,
-                        "policy" => self.open_access(target, None)?,
-                        "policy_details" => self.inspect_control(target, "policy")?,
-                        section => self.inspect_control(target, section)?,
-                    }
-                    if let Some(view) = self.views.get_mut(&target) {
-                        view.terminals.open = false;
-                        view.scroll = 0;
-                    }
-                    self.explore = None;
-                } else {
-                    self.status =
-                        "Start a voyage with Ctrl+N to explore its tools and settings.".into();
+                if let Some(item) = results.get(index) {
+                    self.discovery_open(discovery::COMMANDS[*item].0)?;
                 }
             }
             _ => {}
@@ -94,43 +65,43 @@ impl App {
         Ok(true)
     }
 }
-
 pub(super) fn draw(frame: &mut Frame<'_>, app: &App, area: Rect) {
-    let width = area.width.min(76);
-    let area = Rect::new(
-        area.x + (area.width - width) / 2,
-        area.y,
-        width,
-        area.height,
-    );
+    let results = discovery::matches(&app.discovery.query);
+    let detail = results
+        .get(app.explore.unwrap_or(0))
+        .map(|index| {
+            let (name, description, hint) = discovery::COMMANDS[*index];
+            format!(
+                "/{name} · {description}\n{} · {}\n{}",
+                discovery::scope(name),
+                discovery::shortcut(name),
+                app.discovery_reason(name).unwrap_or_else(|| format!(
+                    "Enter opens existing controls; executing-host checks still apply. {hint}"
+                ))
+            )
+        })
+        .unwrap_or_else(|| "No matching actions. Backspace edits the search; Esc returns.".into());
+    // Reserve at least one result row at small heights. Full details also in /help.
+    let detail_height = if area.height >= 12 { 6 } else { 2 };
     let rows = Layout::vertical([
-        Constraint::Length(3),
-        Constraint::Min(1),
         Constraint::Length(2),
+        Constraint::Min(1),
+        Constraint::Length(detail_height),
+        Constraint::Length(1),
     ])
     .split(area);
-    let title = app
-        .selected
-        .and_then(|t| app.views.get(&t))
-        .map_or_else(|| "Ctrl+N starts a voyage to explore".into(), |v| v.title());
     frame.render_widget(
-        Paragraph::new(vec![
-            Line::styled(
-                "Explore your voyage",
-                Style::default().add_modifier(Modifier::BOLD),
-            ),
-            Line::styled(super::safe(&title), crate::theme::Role::Muted.style()),
-        ]),
+        Paragraph::new(format!(
+            "Actions · type to search\n{}",
+            super::safe(&app.discovery.query)
+        )),
         rows[0],
     );
-    let items = ITEMS
+    let items = results
         .iter()
-        .map(|(name, description, _)| {
-            ListItem::new(vec![
-                Line::from(*name),
-                Line::styled(*description, crate::theme::Role::Muted.style()),
-                Line::default(),
-            ])
+        .map(|index| {
+            let (name, description, _) = discovery::COMMANDS[*index];
+            ListItem::new(format!("/{name} · {description}"))
         })
         .collect::<Vec<_>>();
     frame.render_stateful_widget(
@@ -138,14 +109,19 @@ pub(super) fn draw(frame: &mut Frame<'_>, app: &App, area: Rect) {
             .highlight_symbol("> ")
             .highlight_style(crate::theme::Role::Selection.style()),
         rows[1],
-        &mut ListState::default().with_selected(app.explore),
+        &mut ListState::default().with_selected(if results.is_empty() {
+            None
+        } else {
+            app.explore
+        }),
     );
     frame.render_widget(
-        Paragraph::new("Up/Down Choose  Enter Open  Esc Back").block(
-            Block::default()
-                .borders(Borders::TOP)
-                .border_style(crate::theme::Role::Muted.style()),
-        ),
+        Paragraph::new(super::presentation::wrap(
+            ratatui::text::Text::raw(detail),
+            rows[2].width,
+        ))
+        .scroll((app.discovery.detail_scroll, 0)),
         rows[2],
     );
+    frame.render_widget(Paragraph::new("↑↓ Enter Esc · PgUp/Dn details"), rows[3]);
 }

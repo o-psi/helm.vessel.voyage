@@ -98,13 +98,8 @@ impl Tool for BrowserTool {
         if report.output.is_error {
             let value: Value =
                 serde_json::from_str(&report.output.text_fallback()).unwrap_or(Value::Null);
-            use voyage_protocol::tool_result::{ExecutionOutcome, IncompleteReason};
-            report.outcome.execution = match value["state"].as_str() {
-                Some("unresolved") => ExecutionOutcome::Unknown,
-                Some("cancelled") => ExecutionOutcome::Cancelled,
-                Some("refused") => ExecutionOutcome::PolicyRefused,
-                _ => ExecutionOutcome::ExecutionError,
-            };
+            use voyage_protocol::tool_result::IncompleteReason;
+            report.outcome.execution = browser_execution_outcome(&value);
             if value["state"] == "completed" {
                 report.outcome.incomplete = Some(IncompleteReason::Withheld);
             }
@@ -183,8 +178,9 @@ impl Tool for BrowserTool {
                         "Browser effect requires remote authorization in Approval mode; local confirmation is independent".into());
                     tokio::select! {
                         _ = context.cancellation.cancelled() => return Err(ToolError::Cancelled),
-                        outcome = tokio::time::timeout(context.timeout, context.approver.approve(&request)) =>
-                            outcome.map_err(|_| ToolError::Timeout(context.timeout))?.require_approved()?,
+                        // The approver owns the bounded journal deadline. A competing
+                        // timer could discard an answer already committed on time.
+                        outcome = context.approver.approve(&request) => outcome.require_approved()?,
                     }
                 }
                 crate::config::AccessMode::Unrestricted => {}
@@ -279,7 +275,7 @@ impl Tool for BrowserTool {
             };
             if let Some(result) = result {
                 if result.state != BrowserRequestState::Completed {
-                    return terminal_output(&receipt);
+                    return terminal_result_output(&receipt, result.local_reason);
                 }
                 let metadata = json!({"request_id":id,"state":receipt.state,"page_id":result.page_id,"observation_id":result.observation_id,"text":result.text});
                 if let Some(file) = result.file {
@@ -306,7 +302,15 @@ impl Tool for BrowserTool {
 }
 
 fn terminal_output(receipt: &BrowserReceipt) -> Result<ToolOutput, ToolError> {
+    terminal_result_output(receipt, None)
+}
+
+fn terminal_result_output(
+    receipt: &BrowserReceipt,
+    local_reason: Option<BrowserLocalReason>,
+) -> Result<ToolOutput, ToolError> {
     let mut value = serde_json::to_value(receipt).map_err(failed)?;
+    value["local_reason"] = serde_json::to_value(local_reason).map_err(failed)?;
     value["notice"] = json!(
         "No capture is available. Cancellation/timeout never proves effect success or cleanup; inspect the exact receipt, never replay uncertain effects."
     );
@@ -321,4 +325,67 @@ fn ingest_browser(value: Value, context: &ToolContext) -> Result<ToolOutput, Too
             ToolError::Failed("browser evidence exceeds the executing Voyage's max_output_bytes budget; adjust authorized output limits or use smaller evidence".into()),
         other=>other,
     })
+}
+
+fn browser_execution_outcome(value: &Value) -> voyage_protocol::tool_result::ExecutionOutcome {
+    use voyage_protocol::tool_result::ExecutionOutcome;
+    match value["state"].as_str() {
+        Some("unresolved") => ExecutionOutcome::Unknown,
+        Some("cancelled") => ExecutionOutcome::Cancelled,
+        Some("refused") => match value["local_reason"].as_str() {
+            Some("denied") => ExecutionOutcome::ApprovalDenied,
+            Some("expired") => ExecutionOutcome::ApprovalExpired,
+            Some("invalidated") => ExecutionOutcome::ApprovalInvalidated,
+            Some("unavailable") => ExecutionOutcome::ApprovalUnavailable,
+            Some("cancelled") => ExecutionOutcome::Cancelled,
+            _ => ExecutionOutcome::PolicyRefused,
+        },
+        _ => ExecutionOutcome::ExecutionError,
+    }
+}
+
+#[cfg(test)]
+mod outcome_tests {
+    use super::*;
+    use voyage_protocol::tool_result::ExecutionOutcome;
+
+    #[test]
+    fn local_gate_reason_survives_without_capture_and_never_overrides_unknown() {
+        for (reason, expected) in [
+            (BrowserLocalReason::Denied, ExecutionOutcome::ApprovalDenied),
+            (
+                BrowserLocalReason::Expired,
+                ExecutionOutcome::ApprovalExpired,
+            ),
+            (
+                BrowserLocalReason::Invalidated,
+                ExecutionOutcome::ApprovalInvalidated,
+            ),
+            (
+                BrowserLocalReason::Unavailable,
+                ExecutionOutcome::ApprovalUnavailable,
+            ),
+            (BrowserLocalReason::Cancelled, ExecutionOutcome::Cancelled),
+        ] {
+            let mut receipt = BrowserReceipt {
+                request_id: uuid::Uuid::new_v4(),
+                action_sha256: "a".repeat(64),
+                state: BrowserRequestState::Refused,
+                cleanup_pending: false,
+            };
+            let output = terminal_result_output(&receipt, Some(reason)).unwrap();
+            assert!(output.is_error);
+            let value: Value = serde_json::from_str(&output.text_fallback()).unwrap();
+            assert_eq!(browser_execution_outcome(&value), expected);
+            assert_eq!(value["request_id"], receipt.request_id.to_string());
+            receipt.state = BrowserRequestState::Unresolved;
+            let output = terminal_result_output(&receipt, Some(reason)).unwrap();
+            let value: Value = serde_json::from_str(&output.text_fallback()).unwrap();
+            assert_eq!(browser_execution_outcome(&value), ExecutionOutcome::Unknown);
+        }
+        assert_eq!(
+            browser_execution_outcome(&json!({"state":"refused"})),
+            ExecutionOutcome::PolicyRefused
+        );
+    }
 }

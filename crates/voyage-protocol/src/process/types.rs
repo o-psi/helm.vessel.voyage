@@ -246,6 +246,10 @@ pub enum RuntimeCommand {
         expires_at_ms: u64,
         branch_id: Uuid,
         name: Option<String>,
+        /// Inclusive zero-based canonical saved user-message index. Omitted means full history.
+        /// The owner validates the complete retained tool groups at expected_revision.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        through_message: Option<u64>,
     },
     Events {
         after: u64,
@@ -456,4 +460,70 @@ impl std::fmt::Debug for RuntimeCommand {
 // Preserve legacy command serialization for exact receipt identity.
 fn is_false(value: &bool) -> bool {
     !*value
+}
+
+#[cfg(test)]
+mod branch_wire_tests {
+    use super::*;
+    #[test]
+    fn historical_cutoff_is_optional_exact_and_shared_by_both_commands() {
+        let command = serde_json::json!({"op":"branch", "command_id":Uuid::new_v4(),
+            "expected_revision":17, "expires_at_ms":123456, "branch_id":Uuid::new_v4(), "name":null});
+        let legacy: RuntimeCommand = serde_json::from_value(command.clone()).unwrap();
+        assert!(matches!(
+            legacy,
+            RuntimeCommand::Branch {
+                through_message: None,
+                ..
+            }
+        ));
+        assert!(
+            serde_json::to_value(&legacy)
+                .unwrap()
+                .get("through_message")
+                .is_none()
+        );
+        let mut historical = command;
+        historical["through_message"] = serde_json::json!(3);
+        let runtime: RuntimeCommand = serde_json::from_value(historical.clone()).unwrap();
+        assert!(matches!(
+            runtime,
+            RuntimeCommand::Branch {
+                through_message: Some(3),
+                ..
+            }
+        ));
+        historical["session_id"] = serde_json::json!(Uuid::new_v4());
+        historical["incarnation"] = serde_json::json!(Uuid::new_v4());
+        let vessel: crate::vessel::VesselCommand =
+            serde_json::from_value(historical.clone()).unwrap();
+        assert!(matches!(
+            vessel,
+            crate::vessel::VesselCommand::Branch {
+                through_message: Some(3),
+                ..
+            }
+        ));
+        historical
+            .as_object_mut()
+            .unwrap()
+            .remove("through_message");
+        let vessel: crate::vessel::VesselCommand =
+            serde_json::from_value(historical.clone()).unwrap();
+        assert!(matches!(
+            vessel,
+            crate::vessel::VesselCommand::Branch {
+                through_message: None,
+                ..
+            }
+        ));
+        assert!(
+            serde_json::to_value(vessel)
+                .unwrap()
+                .get("through_message")
+                .is_none()
+        );
+        historical["through_message"] = serde_json::json!(-1);
+        assert!(serde_json::from_value::<crate::vessel::VesselCommand>(historical).is_err());
+    }
 }

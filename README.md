@@ -1,74 +1,39 @@
 # Voyage
 
-Voyage is a system for ongoing AI-assisted work, operated through a terminal
-interface across local and remote machines.
+Use AI assistance for work in a folder, keep the conversation, and return to it
+later. **Helm** is the terminal interface you use; a **Vessel** supervises work on
+a machine; each **voyage** is an independent process with its own conversation.
+Leaving Helm does not cancel that work.
 
-The architecture has three programs:
+## Start here
 
-| Program | Responsibility |
-| --- | --- |
-| **Helm** (`helm`) | The TUI. Connects to local and remote Vessels to view and manage voyages. |
-| **Vessel** (`vessel`) | Supervises and exposes voyage processes on its machine. |
-| **Voyage** (`voyage`) | The execution runtime. Each session has its own independent process, conversation, agent and tools. |
+**[Getting started: install → sign in → first task → return](docs/getting-started.md)**
 
-```text
-Helm TUI
-  ├── local Vessel
-  │     ├── voyage process A — session A
-  │     └── voyage process B — session B
-  └── remote Vessel
-        └── voyage process C — session C
-```
+The guide follows one local Linux path, explains which account pays for requests,
+and keeps credentials out of chat. You do not need to configure a remote machine,
+learn process IDs, or edit a TOML file to understand the first task.
 
-Switching views changes the input target, not which voyages execute. Closing Helm
-must leave voyage processes running. A Vessel supervises those processes; it does
-not run their agent loops inside its own service process. A voyage can admit
-participating Vessels without creating another canonical owner of the session.
-The [architecture](docs/architecture.md) defines these boundaries.
+**First-release development:** the guide uses a source-built Linux installation.
+It does not promise a published installer asset. Named-account setup is implemented,
+but successful sign-in is not proof of model access, available credit, or a passing
+live-provider test. ChatGPT subscription access is experimental; it is not API
+credit. Native macOS/Windows install and credential-security verification have
+separate limitations.
 
-## Current implementation
+## Pick another path
 
-This is a first-release development project. Ordinary Helm chat and run commands,
-managed sessions and connected clients reach independent `voyage` processes through
-Vessel. Local WS and scoped WSS routes share one authenticated full-duplex socket per
-active Helm connection for commands, replies and durable invalidations. See the
-[duplex transport](docs/duplex-transport.md). Session lifecycle, durable decisions,
-private terminal attachment, participant execution
-and positively fenced owner moves are implemented. See the
-[current-state guide](docs/current-state.md) for supported paths and validation limits.
+- Already installed? [Start Helm](docs/getting-started.md#2-launch-helm).
+- Have an API key or an old login? [Accounts and authentication](docs/provider-accounts.md).
+- Need a specific model, endpoint, or policy? [Configuration](docs/configuration.md).
+- Work on another machine? [Connect a Vessel](docs/vessel-connections.md).
+- Administer installation or services? [Installer guide](installer/README.md).
+- Build or contribute? [Development](docs/development.md) and [quality](docs/quality.md).
+- Learn the system? [Documentation index](docs/README.md),
+  [current behavior](docs/current-state.md), and [architecture](docs/architecture.md).
 
-From a source checkout:
-
-```sh
-cargo build --workspace --release --locked
-./target/release/helm --help
-./target/release/helm connect
-```
-
-Configure a provider before starting chat; see [configuration](docs/configuration.md).
-From an extracted full archive, use `./bin/helm` or `.\bin\helm.exe`. Keep its guide
-and configuration directories together. Linux connected mode needs `vessel` and
-`voyage` beside `helm`; it can start an absent local Vessel. The
-[installer](installer/README.md) provides a real Linux installation wizard,
-versioned upgrades and rollback, and user-service setup.
-
-To review and install a built release on Linux, run
-`./target/release/voyage-installer`. For later releases, use the new release's
-installer with `upgrade --start`; `voyage-installer status` shows the installed
-and rollback versions.
-
-## Documentation
-
-Start with the [documentation index](docs/README.md). The main paths are:
-
-- [Architecture](docs/architecture.md) and [runtime contract](docs/runtime-contract.md).
-- [Current behavior](docs/current-state.md), [configuration](docs/configuration.md)
-  and [operations](docs/operations.md).
-- [Security boundaries](docs/security.md) and [implementation sequence](docs/implementation.md).
-- [Native Android Helm](https://github.com/o-psi/voyage/blob/main/docs/android.md) — build, scoped WSS setup, recovery and verification limits
-- [Development](docs/development.md), [validation](docs/quality.md)
-  and [release procedure](docs/releasing.md).
-
-Automated tests and evaluation scenarios are currently absent. Build, static
-analysis and packaging checks do not establish regression coverage. Documentation
-of a capability is not a claim that it has passed behavioral or platform validation.
+Ordinary Helm chat, run, and managed sessions reach independent `voyage` processes
+through Vessel. Switching views changes the input target, not which voyages run.
+The [runtime contract](docs/runtime-contract.md) describes ownership and recovery;
+[security](docs/security.md) explains the limits of application policy. Source and
+focused verification establish only the behaviors actually checked, not universal
+platform or provider readiness.

@@ -842,6 +842,23 @@ impl RunCheckpoint for ManagedRunCheckpoint {
     async fn unstreamed(&self, text: &str) -> Result<(), CheckpointError> {
         self.partial(text).await
     }
+    async fn reasoning_previews(
+        &self,
+        previews: &[voyage_protocol::reasoning_preview::ReasoningPreview],
+    ) -> Result<(), CheckpointError> {
+        let previews = previews.to_vec();
+        let token = self.token.clone();
+        self.storage_named(Operation::ToolPreview, move |store| {
+            anyhow::ensure!(
+                !token.poisoned.load(Ordering::SeqCst),
+                "steering persistence uncertain"
+            );
+            store
+                .journal
+                .reasoning_previews(&store.guard, token.run_id, previews)
+        })
+        .await
+    }
     async fn tool_previews(
         &self,
         previews: &[voyage_protocol::tool_preview::ToolPreview],
@@ -916,6 +933,12 @@ impl RunCheckpoint for RunOwner {
     }
     async fn unstreamed(&self, text: &str) -> Result<(), CheckpointError> {
         self.checkpoint().unstreamed(text).await
+    }
+    async fn reasoning_previews(
+        &self,
+        previews: &[voyage_protocol::reasoning_preview::ReasoningPreview],
+    ) -> Result<(), CheckpointError> {
+        self.checkpoint().reasoning_previews(previews).await
     }
     async fn tool_previews(
         &self,

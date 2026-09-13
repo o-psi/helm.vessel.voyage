@@ -111,6 +111,8 @@ pub struct Run {
     #[serde(default)]
     pub tool_previews: Vec<voyage_protocol::tool_preview::ToolPreview>,
     #[serde(default)]
+    pub reasoning_previews: Vec<voyage_protocol::reasoning_preview::ReasoningPreview>,
+    #[serde(default)]
     pub failure_summary: Option<String>,
     #[serde(default)]
     pub partial_text_truncated: bool,

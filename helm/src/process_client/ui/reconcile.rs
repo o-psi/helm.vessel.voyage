@@ -81,3 +81,58 @@ impl App {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use voyage_protocol::vessel::VoyageCommand;
+
+    #[test]
+    fn uncertain_stop_and_steering_resolve_original_identity_without_replay() {
+        let command_id = uuid::Uuid::new_v4();
+        let run_id = uuid::Uuid::new_v4();
+        for original in [
+            VoyageCommand::Cancel {
+                command_id,
+                expected_revision: 7,
+                expires_at_ms: 100,
+                run_id,
+            },
+            VoyageCommand::Steer {
+                coordination: None,
+                command_id,
+                expected_revision: 7,
+                expires_at_ms: 100,
+                run_id,
+                prompt: "keep this unsent identity".into(),
+            },
+        ] {
+            let pending = state::Pending {
+                account_host: None,
+                command_id,
+                incarnation: uuid::Uuid::new_v4(),
+                draft: "unsent Δ".into(),
+                preserve_draft: true,
+                original: Some(Box::new(original.clone())),
+                receipt_only: false,
+            };
+            // Persistence/reconnect must not mutate original expiry, payload or identity.
+            let restored: state::Pending =
+                serde_json::from_slice(&serde_json::to_vec(&pending).unwrap()).unwrap();
+            let VoyageCommand::Resolve {
+                command_id: recovered,
+                original: Some(command),
+            } = restored.resolution()
+            else {
+                panic!("unknown outcome must resolve, not replay")
+            };
+            assert_eq!(recovered, command_id);
+            assert_eq!(
+                serde_json::to_value(command).unwrap(),
+                serde_json::to_value(original).unwrap()
+            );
+            assert_eq!(restored.draft, "unsent Δ");
+            assert!(restored.preserve_draft);
+        }
+    }
+}

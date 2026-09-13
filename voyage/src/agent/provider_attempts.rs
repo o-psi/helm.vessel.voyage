@@ -381,6 +381,7 @@ impl Agent {
         self.record_provider_attempt(checkpoint, record).await?;
         let mut pending_text = String::new();
         let mut previews = super::tool_preview::Previews::default();
+        let mut reasoning = super::reasoning_preview::Previews::default();
         loop {
             let event = self
                 .provider_wait(stream.next(), self.retry.stream_idle, cancel)
@@ -415,6 +416,19 @@ impl Agent {
                             let public = previews.public(record.attempt_id, &self.context.redactor);
                             self.provider_wait(
                                 checkpoint.tool_previews(&public),
+                                self.context.timeout,
+                                cancel,
+                            )
+                            .await??;
+                        }
+                    }
+                    if matches!(&delta, ProviderDelta::Reasoning { .. }) {
+                        reasoning.update(&delta);
+                        if let Some(checkpoint) = checkpoint {
+                            let public =
+                                reasoning.public(record.attempt_id, &self.context.redactor);
+                            self.provider_wait(
+                                checkpoint.reasoning_previews(&public),
                                 self.context.timeout,
                                 cancel,
                             )

@@ -46,6 +46,7 @@ pub mod notifications;
 /// Durable, secret-safe provider attempt observations.
 pub mod provider_attempt;
 
+pub mod reasoning_preview;
 pub mod tool_preview;
 
 pub mod start_settings;

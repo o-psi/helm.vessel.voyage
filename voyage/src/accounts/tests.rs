@@ -1247,3 +1247,31 @@ fn usage_cache_preserves_success_and_invalidates_capability_changes() {
     assert!(r.publish_usage(u).is_err());
     assert!(r.usage_cached(&binding).unwrap().snapshot.is_none());
 }
+
+#[test]
+fn onboarding_api_destinations_are_stable_official_and_metadata_only() {
+    let (_dir, registry) = registry();
+    for (provider, endpoint, transport) in [
+        (
+            "openai",
+            "https://api.openai.com/v1",
+            Transport::OpenaiResponses,
+        ),
+        (
+            "anthropic",
+            "https://api.anthropic.com/v1",
+            Transport::Anthropic,
+        ),
+    ] {
+        let first = registry.ensure_api_connection(provider).unwrap();
+        let second = registry.ensure_api_connection(provider).unwrap();
+        assert_eq!(first.id, second.id);
+        assert_eq!(first.endpoint, endpoint);
+        assert_eq!(first.transports, [transport]);
+        assert_eq!(first.revision, second.revision);
+    }
+    assert_eq!(registry.connections().unwrap().len(), 2);
+    assert!(registry.list(|_| true).unwrap().1.is_empty());
+    assert!(registry.ensure_api_connection("custom").is_err());
+    assert_eq!(registry.connections().unwrap().len(), 2);
+}

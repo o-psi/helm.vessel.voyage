@@ -29,6 +29,7 @@ import tempfile
 import termios
 import threading
 import time
+import tomllib
 import urllib.request
 import uuid
 
@@ -346,7 +347,7 @@ def main():
     child = workspace / "synthetic.py"
     child.write_text(CHILD)
     env = {"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8", "TERM": "xterm-256color",
-           "COLORTERM": "truecolor"}
+           "COLORTERM": "truecolor", "PROVIDER_FIXTURE_KEY": "synthetic-offline-key"}
     for key in ("HOME", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME"):
         path = root / key.lower()
         path.mkdir(mode=0o700)
@@ -369,6 +370,9 @@ def main():
     config.write_text('provider = "openai-chat"\nmodel = "fixture-model"\napi_key_required = false\n'
                       f'base_url = "http://127.0.0.1:{server.server_port}/v1"\n'
                       'provider_retry_attempts = 1\naccess = "unrestricted"\ncontext_window = 0\n')
+    config.write_text(json.dumps({"version": 1, "workspace": str(workspace),
+        "config": tomllib.loads(config.read_text()), "explicit": {"access": "unrestricted"},
+        "selection": None, "confirmation": None}))
     config.chmod(0o600)
     supervisor, runner, clients, logs = None, None, [], []
     canary = "PRIVATE_CANARY_" + uuid.uuid4().hex
@@ -447,8 +451,27 @@ def main():
             str(directory), "--voyage-binary", str(binaries / "voyage")], cwd=workspace, env=env,
             stdin=subprocess.DEVNULL, stdout=vessel_log, stderr=subprocess.STDOUT)
         wait_for(lambda: (directory / "process-http.json").exists(), "Vessel discovery")
-        request({"op": "start_configured", "session_id": session, "command_id": str(uuid.uuid4()),
-                 "workspace": str(workspace), "config_path": str(config)})
+        # Named/default account setup matches the current start_settings contract.
+        # The isolated environment never inherits the operator's credentials.
+        def account_cli(*arguments):
+            result = subprocess.run([str(binaries / "vessel"), "auth", "accounts", *arguments],
+                env=env, cwd=workspace, capture_output=True, text=True, timeout=15)
+            assert result.returncode == 0, result.stderr
+            return json.loads(result.stdout)
+        connection = account_cli("connect", "--label", session, "--endpoint",
+            f"http://127.0.0.1:{server.server_port}/v1", "--transports", "openai-chat")
+        account = account_cli("add", "--connection", connection["id"], "--account", session,
+            "--env", "PROVIDER_FIXTURE_KEY")
+        binding = {"account_id": account["id"], "connection_id": connection["id"],
+            "identity_generation": account["identity_generation"],
+            "connection_revision": connection["revision"], "transport": "openai_chat"}
+        request({"op": "account_set_default", "command_id": str(uuid.uuid4()),
+            "workspace": str(workspace), "account": binding, "expected_revision": 0})
+        launch = json.loads(config.read_text())
+        launch["config"]["account"] = binding
+        config.write_text(json.dumps(launch))
+        request({"op": "start_settings", "session_id": session, "command_id": str(uuid.uuid4()),
+            "workspace": str(workspace), "config_path": str(config), "binding": binding, "settings": {}})
         runner = subprocess.Popen([str(binaries / "helm"), "connect", "--directory", str(directory),
             "--no-start", "run", session, PROMPT], cwd=workspace, env=env, stdin=subprocess.DEVNULL,
             stdout=log("run.out"), stderr=log("run.err"))
@@ -507,6 +530,14 @@ def main():
         tui.resize(103, 31)
         wait_for(lambda: (tui.pump(), observation().get("size") == [103, 27])[1], "resize reaches child PTY")
         evidence["checks"].append("normal cursor, mode-aware plain paste, cursor position and resize")
+
+        # Raw synthetic child records ETX: prove Ctrl+C targets the child, not Helm Stop.
+        tui.send(b"\x03")
+        expected += b"\x03"
+        wait_for(lambda: observed_bytes() == expected, "Ctrl+C reaches private child")
+        assert tui.process.poll() is None, "private Ctrl+C exited Helm"
+        assert alive(json.loads((workspace / "child-identity.json").read_text()))
+        evidence["checks"].append("private Ctrl+C forwarded as ETX to raw child, not global Stop/detach")
 
         tail = b"PRIVATE_QUEUED_TAIL_MUST_BE_DISCARDED"
         tui.send(b"\x1d" + tail)  # One write: detach and queued tail never become chat input.
@@ -617,6 +648,7 @@ def main():
         evidence["checks"].append("private output withheld after detach; model write refused; no canary in provider/history/state/logs")
         identity = json.loads((workspace / "child-identity.json").read_text())
         wait_for(lambda: not alive(identity), "process.terminate reaps synthetic child")
+        evidence["child_cleanup"] = {"identity": identity, "alive_after_terminate": alive(identity)}
         wait_for(lambda: not owned_voyages(), "completed voyage suspension")
     finally:
         server.aborted.set()

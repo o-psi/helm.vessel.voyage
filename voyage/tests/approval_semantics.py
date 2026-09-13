@@ -7,11 +7,15 @@ existing delivery-recovery fixture rather than a replacement test framework.
 import argparse
 from concurrent.futures import ThreadPoolExecutor
 import json
+import os
+import tempfile
 from pathlib import Path
 import socket
+import subprocess
 import sqlite3
 import subprocess
 import time
+import tomllib
 import urllib.error
 import urllib.request
 import uuid
@@ -24,11 +28,28 @@ def uid():
 
 
 class ApprovalFixture(Fixture):
+    def start(self):
+        self.env["APPROVAL_FIXTURE_KEY"] = "synthetic-approval-key"
+        # Disposable synthetic connection encryption key, private tmpfs only.
+        self.key_root = tempfile.TemporaryDirectory(prefix="ux272-approval-", dir="/dev/shm")
+        key = Path(self.key_root.name) / "connection-key"
+        descriptor = os.open(key, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(descriptor, "wb") as file:
+            file.write(os.urandom(32))
+        self.env["VOYAGE_CREDENTIAL_KEY_FILE"] = str(key)
+        super().start()
+
+    def close(self):
+        try:
+            super().close()
+        finally:
+            if hasattr(self, "key_root"):
+                self.key_root.cleanup()
+
     def session(self, approval=False):
         # Consent routing needs no account enrollment. Explicit anonymous native
         # loopback Responses avoids the retired implicit ChatGPT login contract.
         session = uid()
-        self.sessions.append(session)
         config = self.root / (session + ".toml")
         config.write_text('provider = "openai-responses"\nmodel = "fixture-model"\n'
             f'base_url = "http://127.0.0.1:{self.provider.server_port}/v1"\n'
@@ -36,8 +57,31 @@ class ApprovalFixture(Fixture):
             'context_window = 0\ncommand_timeout_secs = 2\n'
             f'access = "{"approval" if approval else "read-only"}"\n')
         config.chmod(0o600)
-        self.request({"op": "start_configured", "session_id": session, "command_id": uid(),
-            "workspace": str(self.workspace), "config_path": str(config)})
+        # Named executing-host account/default readiness is required before launch.
+        # All keys and endpoints are synthetic and isolated to this fixture.
+        if not hasattr(self, "binding"):
+            self.env["APPROVAL_FIXTURE_KEY"] = "synthetic-approval-key"
+            def account_cli(*args):
+                result = subprocess.run([str(self.binaries / "vessel"), "auth", "accounts", *args],
+                    env=self.env, cwd=self.workspace, capture_output=True, text=True, timeout=15)
+                assert result.returncode == 0, result.stderr
+                return json.loads(result.stdout)
+            connection = account_cli("connect", "--label", "approval fixture", "--endpoint",
+                f"http://127.0.0.1:{self.provider.server_port}/v1", "--transports", "openai-responses")
+            account = account_cli("add", "--connection", connection["id"], "--account", "approval-fixture",
+                "--env", "APPROVAL_FIXTURE_KEY")
+            self.binding = {"account_id":account["id"], "connection_id":connection["id"],
+                "identity_generation":account["identity_generation"], "connection_revision":connection["revision"],
+                "transport":"openai_responses"}
+            self.request({"op":"account_set_default", "command_id":uid(), "workspace":str(self.workspace),
+                "account":self.binding, "expected_revision":0})
+        settings = tomllib.loads(config.read_text())
+        settings["account"] = self.binding
+        config.write_text(json.dumps({"version":1, "workspace":str(self.workspace), "config":settings,
+            "explicit":{"access":"approval" if approval else "read-only"}, "selection":None, "confirmation":None}))
+        self.request({"op": "start_settings", "session_id": session, "command_id": uid(),
+            "workspace": str(self.workspace), "config_path": str(config), "binding":self.binding, "settings":{}})
+        self.sessions.append(session)  # Own only successfully admitted sessions for cleanup.
         return session
 
 
@@ -73,9 +117,12 @@ class Gateway:
             return False
 
     def grant(self, session, rights, lifetime=60000):
+        if "execute" in rights:
+            rights = [*rights, "account_use"]
         return self.fixture.request({"op": "grant", "command_id": uid(),
             "grant_id": uid(), "principal_id": uid(), "session_id": session,
             "workspace": str(self.fixture.workspace), "rights": rights,
+            "accounts": [self.fixture.binding["account_id"]] if "account_use" in rights else [],
             "expires_at_ms": int(time.time() * 1000) + lifetime,
             "endpoint": self.origin})
 

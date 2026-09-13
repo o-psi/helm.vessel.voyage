@@ -538,6 +538,15 @@ where
                     yield ProviderStreamEvent::UsageReported(super::reported_usage(usage, "input_tokens", "output_tokens")?);
                 }
                 match kind {
+                    "response.reasoning_summary_text.delta" => {
+                        if let Some(text) = event.get("delta").and_then(Value::as_str) {
+                            yield ProviderStreamEvent::Delta(ProviderDelta::Reasoning {
+                                index: output_index(&event),
+                                kind: voyage_protocol::reasoning_preview::ReasoningKind::Summary,
+                                text: text.into(),
+                            });
+                        }
+                    },
                     "response.output_text.delta"=>if let Some(delta)=event.get("delta").and_then(Value::as_str){assembly.content.push_str(delta);yield ProviderStreamEvent::Delta(ProviderDelta::Text(delta.into()));},
                     "response.output_item.added"=>if event.pointer("/item/type").and_then(Value::as_str)==Some("function_call"){let index=output_index(&event);let call=assembly.calls.entry(index).or_default();call.id=event.pointer("/item/call_id").and_then(Value::as_str).unwrap_or_default().into();call.name=event.pointer("/item/name").and_then(Value::as_str).unwrap_or_default().into();yield ProviderStreamEvent::Delta(ProviderDelta::ToolCall{index,id:Some(call.id.clone()),name:Some(call.name.clone()),arguments:String::new()});},
                     "response.function_call_arguments.delta"=>{let index=output_index(&event);let call=assembly.calls.entry(index).or_default();let delta=event.get("delta").and_then(Value::as_str).unwrap_or_default();call.arguments.push_str(delta);yield ProviderStreamEvent::Delta(ProviderDelta::ToolCall{index,id:None,name:None,arguments:delta.into()});},

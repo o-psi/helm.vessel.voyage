@@ -131,11 +131,24 @@ pub struct BrowserReceipt {
     pub state: BrowserRequestState,
     pub cleanup_pending: bool,
 }
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum BrowserLocalReason {
+    Denied,
+    Expired,
+    Invalidated,
+    Unavailable,
+    Cancelled,
+}
 /// Observations are untrusted web content, not instructions. Raster data uses the existing
 /// tool-result ingestion pipeline; never accept arbitrary server filesystem references.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BrowserResult {
+    /// Fixed local gate outcome, separate from untrusted browser text. Receipt state
+    /// remains authoritative: unresolved effects must never become a safe refusal.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local_reason: Option<BrowserLocalReason>,
     pub request_id: Uuid,
     pub action_sha256: String,
     pub state: BrowserRequestState,
@@ -234,4 +247,34 @@ pub enum BrowserReply {
     Status { status: BrowserStatus },
     Pending { requests: Vec<BrowserRequest> },
     Receipt { receipt: BrowserReceipt },
+}
+
+#[cfg(test)]
+mod local_reason_tests {
+    use super::*;
+
+    #[test]
+    fn legacy_results_and_typed_local_reasons_round_trip() {
+        let legacy = serde_json::json!({
+            "request_id": Uuid::new_v4(), "action_sha256": "a".repeat(64),
+            "state": "refused", "text": "untrusted", "page_id": null,
+            "observation_id": null, "image": null, "file": null
+        });
+        let mut result: BrowserResult = serde_json::from_value(legacy).unwrap();
+        assert_eq!(result.local_reason, None);
+        for reason in [
+            BrowserLocalReason::Denied,
+            BrowserLocalReason::Expired,
+            BrowserLocalReason::Invalidated,
+            BrowserLocalReason::Unavailable,
+            BrowserLocalReason::Cancelled,
+        ] {
+            result.local_reason = Some(reason);
+            let decoded: BrowserResult =
+                serde_json::from_slice(&serde_json::to_vec(&result).unwrap()).unwrap();
+            assert_eq!(decoded.local_reason, Some(reason));
+            assert_eq!(decoded.request_id, result.request_id);
+            assert_eq!(decoded.action_sha256, result.action_sha256);
+        }
+    }
 }

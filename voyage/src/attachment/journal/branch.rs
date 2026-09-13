@@ -182,3 +182,260 @@ impl Journal {
         Ok(configuration)
     }
 }
+
+/// Select canonical context, never a display projection. A historical boundary
+/// includes the selected saved user message, but no later assistant/tool output.
+/// Validate every retained group, not merely the message adjacent to the cutoff.
+pub(super) fn branch_messages(messages: &[Message], through: Option<u64>) -> Result<Vec<Message>> {
+    let Some(index) = through else {
+        return Ok(messages.to_vec());
+    };
+    let index = usize::try_from(index).context("branch message index exceeds platform range")?;
+    ensure!(
+        messages.get(index).is_some_and(|m| m.role == Role::User),
+        "branch point must be a saved user message"
+    );
+    let prefix = &messages[..=index];
+    let mut pending = std::collections::BTreeSet::new();
+    let mut seen = std::collections::BTreeSet::new();
+    for message in prefix {
+        if message.role == Role::Tool {
+            ensure!(
+                message.tool_calls.is_empty(),
+                "tool result cannot declare tool calls"
+            );
+            let id = message
+                .tool_call_id
+                .as_deref()
+                .context("tool result has no call ID")?;
+            ensure!(
+                pending.remove(id),
+                "orphan, duplicate or mismatched tool result"
+            );
+        } else {
+            ensure!(
+                pending.is_empty(),
+                "branch history contains an incomplete tool group"
+            );
+            ensure!(
+                message.tool_call_id.is_none(),
+                "non-tool message has a result ID"
+            );
+            ensure!(
+                message.tool_calls.is_empty() || message.role == Role::Assistant,
+                "only assistant messages may declare tool calls"
+            );
+            for call in &message.tool_calls {
+                ensure!(
+                    !call.id.trim().is_empty() && seen.insert(call.id.as_str()),
+                    "empty or duplicate tool call ID"
+                );
+                pending.insert(call.id.as_str());
+            }
+        }
+    }
+    ensure!(pending.is_empty(), "branch would split a tool group");
+    let mut context = prefix.to_vec();
+    for message in &mut context {
+        message.provider_state = None;
+    }
+    Ok(context)
+}
+
+#[cfg(test)]
+mod historical_tests {
+    use super::*;
+    use crate::model::ToolCall;
+
+    fn user(text: &str) -> Message {
+        Message::new(Role::User, text)
+    }
+    fn calls(ids: &[&str]) -> Message {
+        let mut message = Message::new(Role::Assistant, "tools");
+        message.tool_calls = ids
+            .iter()
+            .map(|id| ToolCall {
+                id: (*id).into(),
+                name: "read_file".into(),
+                arguments: serde_json::json!({}),
+            })
+            .collect();
+        message
+    }
+    #[test]
+    fn exact_inclusive_canonical_prefix_and_source_unchanged() {
+        let mut messages = vec![
+            user("first"),
+            calls(&["a", "b"]),
+            Message::tool("b", "B"),
+            Message::tool("a", "A"),
+            user("selected"),
+            Message::new(Role::Assistant, "excluded"),
+            user("later"),
+        ];
+        messages[1].provider_state = Some(serde_json::json!({"continuation":"old"}));
+        let before = serde_json::to_value(&messages).unwrap();
+        let branch = branch_messages(&messages, Some(4)).unwrap();
+        assert_eq!(branch.len(), 5);
+        assert_eq!(branch[4].content, "selected");
+        assert!(branch.iter().all(|m| m.provider_state.is_none()));
+        assert_eq!(serde_json::to_value(&messages).unwrap(), before);
+        assert_eq!(branch_messages(&messages, None).unwrap().len(), 7);
+    }
+    #[test]
+    fn rejects_non_user_out_of_range_and_every_malformed_group() {
+        for messages in [
+            vec![calls(&["a"]), user("split")],
+            vec![
+                calls(&["a", "a"]),
+                Message::tool("a", "x"),
+                user("duplicate"),
+            ],
+            vec![calls(&[""]), Message::tool("", "x"), user("empty")],
+            vec![calls(&["a"]), Message::tool("b", "x"), user("mismatch")],
+            vec![Message::tool("a", "x"), user("orphan")],
+            vec![
+                calls(&["a"]),
+                Message::tool("a", "x"),
+                Message::tool("a", "x"),
+                user("duplicate result"),
+            ],
+            vec![
+                calls(&["a", "b"]),
+                Message::tool("a", "x"),
+                user("incomplete"),
+                user("later"),
+            ],
+            vec![
+                calls(&["a"]),
+                Message::tool("a", "x"),
+                calls(&["a"]),
+                Message::tool("a", "x"),
+                user("reused"),
+            ],
+        ] {
+            assert!(branch_messages(&messages, Some((messages.len() - 1) as u64)).is_err());
+        }
+        assert!(branch_messages(&[user("ok")], Some(u64::MAX)).is_err());
+        assert!(branch_messages(&[calls(&[])], Some(0)).is_err());
+        assert!(branch_messages(&[], Some(0)).is_err());
+    }
+    #[test]
+    fn validates_role_metadata_and_ignores_excluded_suffix() {
+        let mut malformed = user("wrong");
+        malformed.tool_call_id = Some("a".into());
+        assert!(branch_messages(&[malformed], Some(0)).is_err());
+        let mut malformed = calls(&["a"]);
+        malformed.role = Role::User;
+        assert!(branch_messages(&[malformed], Some(0)).is_err());
+        let mut result = Message::tool("a", "x");
+        result.tool_calls = calls(&["b"]).tool_calls;
+        assert!(branch_messages(&[calls(&["a"]), result, user("end")], Some(2)).is_err());
+        assert_eq!(
+            branch_messages(&[user("selected"), calls(&["unfinished"])], Some(0))
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+}
+
+#[cfg(test)]
+mod journal_cutoff_tests {
+    use super::*;
+    use voyage_protocol::process::RuntimeCommand;
+    #[test]
+    fn snapshot_import_cutoff_revision_deduplication_and_identity() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("source");
+        std::fs::create_dir_all(&source).unwrap();
+        let workspace = root.path().canonicalize().unwrap();
+        let mut journal = Journal::open(source.join("journal")).unwrap();
+        let mut session = Session::new(workspace.clone(), "fixture".into());
+        session.messages = vec![
+            Message::new(Role::User, "first"),
+            Message::new(Role::Assistant, "answer"),
+            Message::new(Role::User, "selected"),
+            Message::new(Role::Assistant, "excluded"),
+        ];
+        journal.create_session(&session).unwrap();
+        let guard = journal.acquire_execution(session.id).unwrap();
+        journal.initialize_lifecycle(&guard).unwrap();
+        journal.initialize_process_commands(&guard).unwrap();
+        let before =
+            serde_json::to_value(&journal.load_session(session.id).unwrap().session).unwrap();
+        let command_id = Uuid::new_v4();
+        let branch_id = Uuid::new_v4();
+        let now = chrono::Utc::now().timestamp_millis();
+        let command = RuntimeCommand::Branch {
+            command_id,
+            expected_revision: 0,
+            expires_at_ms: (now + 60000) as u64,
+            branch_id,
+            name: None,
+            through_message: Some(2),
+        };
+        let mut stale = command.clone();
+        if let RuntimeCommand::Branch {
+            expected_revision, ..
+        } = &mut stale
+        {
+            *expected_revision = 1;
+        }
+        assert!(
+            journal
+                .apply_lifecycle(&guard, &stale, now, Some("{}"))
+                .is_err()
+        );
+        let receipt = journal
+            .apply_lifecycle(&guard, &command, now, Some("{}"))
+            .unwrap();
+        assert_eq!(receipt["through_message"], 2);
+        assert_eq!(receipt["message_count"], 3);
+        assert_eq!(
+            journal
+                .apply_lifecycle(&guard, &command, now, Some("{}"))
+                .unwrap(),
+            receipt
+        );
+        let mut conflict = command.clone();
+        if let RuntimeCommand::Branch {
+            through_message, ..
+        } = &mut conflict
+        {
+            *through_message = Some(0);
+        }
+        assert!(
+            journal
+                .apply_lifecycle(&guard, &conflict, now, Some("{}"))
+                .is_err()
+        );
+        let mut after =
+            serde_json::to_value(&journal.load_session(session.id).unwrap().session).unwrap();
+        // Lifecycle receipt advances the revision; canonical history is unchanged.
+        after["revision"] = before["revision"].clone();
+        assert_eq!(after, before);
+        let destination = root.path().join("destination");
+        std::fs::create_dir(&destination).unwrap();
+        let mut dest = Journal::open(destination.join("journal")).unwrap();
+        let init = RuntimeInitialization::Branch {
+            source_directory: source,
+            source_session_id: session.id,
+            source_command_id: command_id,
+            branch_id,
+        };
+        dest.import_process_branch(&init, &workspace).unwrap();
+        let branch = dest.load_session(branch_id).unwrap().session;
+        assert_ne!(branch.id, session.id);
+        assert_eq!(branch.parent_id, Some(session.id));
+        assert_eq!(branch.workspace, workspace);
+        assert_eq!(branch.messages.len(), 3);
+        assert_eq!(branch.messages[2].content, "selected");
+        assert_eq!(branch.working_context.generation, 0);
+        dest.import_process_branch(&init, &workspace).unwrap();
+        assert_eq!(
+            dest.load_session(branch_id).unwrap().session.messages.len(),
+            3
+        );
+    }
+}

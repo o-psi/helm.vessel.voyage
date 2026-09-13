@@ -26,6 +26,8 @@ impl App {
             Mode::Confirm(_) => " Settings for next run ",
             Mode::Enrollment | Mode::Connections | Mode::Alias(_) => " Sign in to an account ",
             Mode::List => " Choose account ",
+            Mode::DefaultConsent(_) => " Review host default ",
+            Mode::ApiSetup => " Private API setup ",
         };
         let block = Block::default().borders(Borders::ALL).title(title);
         let inner = block.inner(area);
@@ -84,6 +86,18 @@ impl App {
             return;
         }
         match &p.mode {
+            Mode::DefaultConsent(settings) => {
+                frame.render_widget(Paragraph::new(format!(
+                    "Use {} as the default on {}?\n\nChanges the persistent default for future voyages on this host, not just this draft. Existing voyages stay unchanged.\n\nRequests use this account’s billing. No prompt is sent now.\n\nEnter confirms · Esc returns without saving",
+                    p.label(settings), safe(&self.clients[p.route].label())
+                )).wrap(Wrap { trim: false }), body);
+            }
+            Mode::ApiSetup => {
+                frame.render_widget(Paragraph::new(format!(
+                    "Private terminal on {} · API billed separately from subscriptions.\n\nOpenAI:\nvessel auth accounts setup --provider openai --account personal\nAnthropic:\nvessel auth accounts setup --provider anthropic --account personal\n\nPrivate key prompt: never paste keys into chat.\nThen Enter here → choose account → review host default.",
+                    safe(&self.clients[p.route].label())
+                )).wrap(Wrap { trim: false }), body);
+            }
             Mode::List => {
                 frame.render_widget(
                     Paragraph::new(format!(
@@ -174,7 +188,7 @@ impl App {
                 }
             }
             Mode::Alias(_) => {
-                frame.render_widget(Paragraph::new(format!("Native ChatGPT device sign-in\nNew account alias: {}\nEnter starts explicitly; no browser opens automatically",safe(&p.query))).wrap(Wrap {trim:false}),body);
+                frame.render_widget(Paragraph::new(format!("ChatGPT subscription sign-in\nName this account: {}\nUse letters, digits, _ or - (for example personal).\nEnter starts private sign-in on the displayed host.\nNo browser opens automatically; Esc back.",safe(&p.query))).wrap(Wrap {trim:false}),body);
             }
             Mode::Confirm(s) => {
                 let mut resolved = s.clone();
@@ -335,7 +349,7 @@ R refreshes its status"
         }
         let notice = if matches!(p.mode, Mode::List) {
             let default = if p.catalogue.default_account.is_none() {
-                "Default account required before starting a new voyage.\n"
+                "Choose an account; we will guide you through the required host default.\n"
             } else {
                 ""
             };

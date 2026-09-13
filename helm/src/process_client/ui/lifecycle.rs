@@ -13,6 +13,7 @@ impl App {
         target: Target,
         name: Option<String>,
         preserve_draft: bool,
+        review: super::history_review::BranchReview,
     ) -> Result<()> {
         ensure!(
             self.clients.available(target.route),
@@ -30,10 +31,17 @@ impl App {
             .snapshot
             .as_ref()
             .context("waiting for canonical snapshot")?;
-        let expected_revision = snapshot.revision;
+        ensure!(
+            review.target == target
+                && review.incarnation == view.process.incarnation
+                && review.revision == snapshot.revision,
+            "Voyage changed; reopen branch review"
+        );
+        let expected_revision = review.revision;
         let incarnation = view.process.incarnation;
         let command_id = Uuid::new_v4();
-        let branch_id = Uuid::new_v4();
+        let branch_id = review.branch_id;
+        let through_message = review.through_message();
         let expires_at_ms = super::super::frontend::deadline()?;
         view.pending = Some(Pending {
             account_host: None,
@@ -62,6 +70,7 @@ impl App {
                     expires_at_ms,
                     branch_id,
                     name,
+                    through_message,
                 })
                 .await;
             let refused = result.as_ref().err().is_some_and(|error| {

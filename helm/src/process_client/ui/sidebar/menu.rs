@@ -44,7 +44,7 @@ impl App {
             |view| super::super::safe(&view.title()),
         );
         let mut lines =
-            super::super::presentation::wrap(Text::raw(format!("{title}\n")), body.width).lines;
+            super::super::presentation::wrap(Text::raw(format!("{title}\nHost: {} · Voyage: {}\nEffective: after reviewed action is admitted; current state rechecked.\n", self.route_label(menu.target.route), menu.target.session)), body.width).lines;
         if !menu.error.is_empty() {
             lines.extend(
                 super::super::presentation::wrap(
@@ -71,9 +71,9 @@ impl App {
                         format!("Vessel: {}\nWorkspace: {}\nModel: {}\nState: {state}\nArchived: {}\nCleanup: {cleanup}\nPending command: {}\nVoyage: {}\n{}", self.route_label(menu.target.route), v.process.workspace.display(), v.snapshot.as_ref().map_or("Unavailable", |s| s.model.as_str()), v.archived(), v.pending.is_some(), menu.target.session, v.error.as_deref().map(super::super::presentation::notice).unwrap_or_default())
                     }),
                     Action::Rename => "Rename voyage\nEnter a new name:".into(),
-                    Action::Branch => "Branch conversation\nOptional name for the new voyage:".into(),
+                    Action::Branch => menu.branch_review.as_ref().map(|r| r.text()).unwrap_or_else(|| "Reopen branch review".into()),
                     Action::Clear => "Clear conversation\nRemove this voyage’s current messages and provider continuation. The voyage identity and prior run/receipt evidence remain. This is not forensic erasure. Export or branch first if you need a copy. Your unsent draft is preserved.\nType CLEAR to confirm:".into(),
-                    Action::Compact => "Compact older messages\nReduce older provider working context using extractive summaries and canonical references. Full conversation history remains saved and readable. Task and steering stay intact; tool groups remain valid. The newest-message target stays verbatim. Reduced context survives restart; your unsent draft is preserved.\nType KEEP followed by a number (1–100000), for example KEEP 128:".into(),
+                    Action::Compact => super::super::history_review::compact(&menu.text.text),
                     Action::Delete => format!("Delete permanently\nThis removes the selected voyage's conversation history.\nVoyage: {}\nType DELETE to confirm:", menu.target.session),
                     _ => String::new(),
                 };

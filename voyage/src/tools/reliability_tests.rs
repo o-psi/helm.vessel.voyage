@@ -356,3 +356,33 @@ async fn retired_denials_allow_harmless_shell_output_and_preserve_access() {
             .observation_complete
     );
 }
+
+#[test]
+fn approval_outcome_matrix_preserves_reason_and_fixed_diagnostics() {
+    use super::ApprovalOutcome;
+    assert!(ApprovalOutcome::Approved.require_approved().is_ok());
+    for (approval, expected) in [
+        (ApprovalOutcome::Denied, ExecutionOutcome::ApprovalDenied),
+        (ApprovalOutcome::Expired, ExecutionOutcome::ApprovalExpired),
+        (
+            ApprovalOutcome::Invalidated,
+            ExecutionOutcome::ApprovalInvalidated,
+        ),
+        (
+            ApprovalOutcome::Unavailable,
+            ExecutionOutcome::ApprovalUnavailable,
+        ),
+        (ApprovalOutcome::Cancelled, ExecutionOutcome::Cancelled),
+    ] {
+        let error = approval.require_approved().unwrap_err();
+        let report = ToolReport::error(error);
+        assert_eq!(report.outcome.execution, expected);
+        assert!(report.output.is_error);
+        assert!(!report.outcome.success());
+        let encoded = serde_json::to_vec(&report.outcome).unwrap();
+        let decoded: voyage_protocol::tool_result::ToolOutcome =
+            serde_json::from_slice(&encoded).unwrap();
+        assert_eq!(decoded, report.outcome);
+        assert!(!report.output.text_fallback().contains("fixture-secret"));
+    }
+}

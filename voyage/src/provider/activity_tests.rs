@@ -49,15 +49,27 @@ fn native_reasoning_and_protocol_activity_is_visible_without_public_text() {
             activity_frame(adapter)
         );
         let mut events = stream(adapter, frames.as_bytes());
-        for _ in 0..3 {
-            assert!(
-                matches!(
-                    events.next().now_or_never(),
-                    Some(Some(Ok(ProviderStreamEvent::Activity)))
-                ),
-                "{adapter:?} must yield protocol progress before waiting for more bytes"
-            );
+        let mut activities = 0;
+        let mut disclosures = 0;
+        while let Some(Some(Ok(event))) = events.next().now_or_never() {
+            match event {
+                ProviderStreamEvent::Activity => activities += 1,
+                ProviderStreamEvent::Delta(ProviderDelta::Reasoning { text, .. }) => {
+                    assert_eq!(text, "PRIVATE reasoning");
+                    disclosures += 1;
+                }
+                other => panic!("unexpected {other:?}"),
+            }
         }
+        assert_eq!(activities, 3);
+        assert_eq!(
+            disclosures,
+            if matches!(adapter, Adapter::Chat) {
+                0
+            } else {
+                1
+            }
+        );
         assert!(events.next().now_or_never().is_none(), "{adapter:?}");
     }
 }
@@ -113,7 +125,9 @@ fn activity_never_changes_completed_assistant_content() {
                 panic!("{adapter:?} did not complete");
             };
             match event {
-                ProviderStreamEvent::Activity | ProviderStreamEvent::UsageReported(_) => {}
+                ProviderStreamEvent::Activity
+                | ProviderStreamEvent::UsageReported(_)
+                | ProviderStreamEvent::Delta(ProviderDelta::Reasoning { .. }) => {}
                 ProviderStreamEvent::Delta(ProviderDelta::Text(delta)) => text.push_str(&delta),
                 ProviderStreamEvent::Completed(response) => {
                     assert_eq!(text, "answer");
@@ -145,5 +159,31 @@ fn only_known_interruption_io_kinds_enable_stream_recovery() {
         assert!(!interrupted_stream_io(&std::io::Error::new(
             kind, "PRIVATE"
         )));
+    }
+}
+
+#[test]
+fn opaque_reasoning_never_enters_display_channel() {
+    for (adapter, data) in [
+        (
+            Adapter::Responses,
+            r#"{"type":"response.output_item.added","item":{"type":"reasoning","encrypted_content":"opaque-secret"}}"#,
+        ),
+        (
+            Adapter::Anthropic,
+            r#"{"type":"content_block_delta","index":1,"delta":{"type":"signature_delta","signature":"opaque-secret"}}"#,
+        ),
+        (
+            Adapter::Anthropic,
+            r#"{"type":"content_block_start","index":1,"content_block":{"type":"redacted_thinking","data":"opaque-secret"}}"#,
+        ),
+    ] {
+        let frames = format!("data: {data}\n\n");
+        let mut events = stream(adapter, frames.as_bytes());
+        assert!(matches!(
+            events.next().now_or_never(),
+            Some(Some(Ok(ProviderStreamEvent::Activity)))
+        ));
+        assert!(events.next().now_or_never().is_none());
     }
 }

@@ -225,7 +225,7 @@ impl Journal {
                 saved.session.draft.clear();
                 saved.session.name = None;
                 saved.session.title_state = None;
-                tx.execute("UPDATE runs SET record=json_set(record,'$.partial_text','','$.tool_previews',json('[]')) WHERE session_id=?1",[guard.session_id.to_string()])?;
+                tx.execute("UPDATE runs SET record=json_set(record,'$.partial_text','','$.tool_previews',json('[]'),'$.reasoning_previews',json('[]')) WHERE session_id=?1",[guard.session_id.to_string()])?;
                 tx.execute(
                     "DELETE FROM events WHERE session_id=?1",
                     [guard.session_id.to_string()],
@@ -235,7 +235,10 @@ impl Journal {
                 receipt["status"] = json!("cleanup_pending");
             }
             RuntimeCommand::Branch {
-                branch_id, name, ..
+                branch_id,
+                name,
+                through_message,
+                ..
             } => {
                 ensure!(
                     !branch_id.is_nil() && *branch_id != guard.session_id,
@@ -267,8 +270,13 @@ impl Journal {
                 if let Some(name) = name {
                     branch.set_name(name.clone());
                 }
-                branch.messages = saved.session.messages.clone();
-                branch.working_context = saved.session.working_context.clone();
+                branch.messages =
+                    super::branch::branch_messages(&saved.session.messages, *through_message)?;
+                // Historical branches rebuild provider context from the exact canonical
+                // prefix. Source reductions may reference omitted suffix messages.
+                if through_message.is_none() {
+                    branch.working_context = saved.session.working_context.clone();
+                }
                 for message in &mut branch.messages {
                     message.provider_state = None;
                 }
@@ -294,6 +302,8 @@ impl Journal {
                 )?;
                 receipt["branch_id"] = json!(branch_id);
                 receipt["source_revision"] = json!(revision);
+                receipt["through_message"] = json!(through_message);
+                receipt["message_count"] = json!(branch.messages.len());
                 receipt["status"] = json!("snapshot_committed");
             }
             _ => unreachable!(),

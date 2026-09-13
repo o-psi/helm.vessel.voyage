@@ -2,7 +2,21 @@ use super::*;
 
 impl App {
     pub(super) fn update(&mut self, update: Update) {
+        if let Update::Inspection(loaded) = update {
+            self.inspection_loaded(*loaded);
+            return;
+        }
+        if let Update::Command {
+            target,
+            command_id,
+            refused,
+            result,
+        } = &update
+        {
+            self.inspection_receipt(*target, *command_id, *refused, result);
+        }
         let route = match &update {
+            Update::Inspection(_) => unreachable!(),
             Update::Browser { target, .. }
             | Update::Live { target, .. }
             | Update::History { target, .. }
@@ -42,6 +56,7 @@ impl App {
             view.transcript.borrow_mut().dirty = true;
         }
         match update {
+            Update::Inspection(_) => unreachable!(),
             Update::InboxAttention { route: _, count } => {
                 // Passive footer only: no modal, voyage switch, composer edit or decision.
                 self.status = format!(
@@ -548,8 +563,15 @@ impl App {
                         if let Some(delivery) = &mut view.transcript.borrow_mut().delivery {
                             delivery.label = if rejected {
                                 "Not accepted · Draft kept"
+                            } else if matches!(
+                                pending.original.as_deref(),
+                                Some(voyage_protocol::vessel::VoyageCommand::Steer { .. })
+                            ) {
+                                super::presentation::steering_status(
+                                    value["status"].as_str().unwrap_or("unknown"),
+                                )
                             } else {
-                                "Received · Waiting for saved conversation"
+                                "Admitted · Waiting for saved conversation"
                             }
                             .into();
                         }

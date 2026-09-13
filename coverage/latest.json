@@ -1,12 +1,12 @@
 {
   "schema_version": 1,
-  "measured_at_utc": "2026-09-13T15:03:28.463481+00:00",
+  "measured_at_utc": "2026-09-13T18:30:18.830638+00:00",
   "source": {
-    "commit": "cb2fd96b4fd8f269067c78b902dc260587f473f5",
+    "commit": "b2d935c86f8795613c946abc779da5beedbd3cc3",
     "dirty": true,
-    "fingerprint_sha256": "e7767193f2832191bee79ed0f3fd8cbe8d488e8456f176f4b6d96e50f1ec9509",
-    "fingerprint_method": "SHA-256 of compact sorted JSON mapping tracked file contents and symlink target text to SHA-256 hashes; missing tracked files represented as null",
-    "note": "Source unchanged through tests and current-artifact export. Dirty source includes issue #270 and preserved unrelated rendering comments and deleted scripts/fixtures; those unrelated changes are not delivered."
+    "fingerprint_sha256": "490e04e0f6e35c7eea54f6f4ba46ae37eab9156957c279497bf2b0a4dee06d23",
+    "fingerprint_method": "SHA-256 of compact sorted JSON mapping tracked and new delivery file contents and symlink target text to SHA-256 hashes; missing tracked files represented as null; unrelated untracked inspiration/worktrees excluded",
+    "note": "Source unchanged through tests and current-artifact export. Dirty source includes issue #272 plus preserved unrelated rendering comments and deleted scripts/fixtures; those unrelated changes are not delivered."
   },
   "platform": "x86_64-unknown-linux-gnu",
   "tools": {
@@ -14,7 +14,7 @@
     "llvm": "22.1.8",
     "cargo_llvm_cov": "0.9.1"
   },
-  "command": "cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir \"$CARGO_LLVM_COV_TARGET_DIR/coverage-report/issue270-final/default-report\" -j 8",
+  "command": "cargo llvm-cov --workspace --locked --no-clean --no-fail-fast --html --output-dir \"$CARGO_LLVM_COV_TARGET_DIR/coverage-report/issue272-final/default-report\" -j 8",
   "environment": {
     "CARGO_LLVM_COV_TARGET_DIR": "existing shared workspace target",
     "LLVM_COV": "llvm-cov",
@@ -23,33 +23,33 @@
   },
   "scope": "All existing workspace Rust tests and current workspace executable artifacts, default features",
   "tests": {
-    "passed": 406,
+    "passed": 466,
     "failed": 0,
     "ignored": 1
   },
   "coverage": {
     "lines": {
-      "count": 92774,
-      "covered": 32368,
-      "percent": 34.88908530407226
+      "count": 95956,
+      "covered": 35457,
+      "percent": 36.951311017549706
     },
     "functions": {
-      "count": 9126,
-      "covered": 3068,
-      "percent": 33.61823361823362
+      "count": 9382,
+      "covered": 3320,
+      "percent": 35.38691110637391
     },
     "regions": {
-      "count": 151657,
-      "covered": 51376,
-      "notcovered": 100281,
-      "percent": 33.87644487231054
+      "count": 156854,
+      "covered": 56292,
+      "notcovered": 100562,
+      "percent": 35.88815076440511
     }
   },
   "report_selection": {
     "method": "Complete current Cargo compiler-artifact executable set from instrumented cargo test --workspace --locked --no-run --message-format=json; LLVM export/show retains tool-default exclusions plus distribution Rust standard-library debug paths",
     "workspace_executables": 11,
     "executed_test_binaries": 10,
-    "logical_source_files": 438,
+    "logical_source_files": 447,
     "byte_identical_reused_source_files": 0,
     "duplicate_logical_source_paths": 0,
     "mismatched_functions": 0
@@ -63,8 +63,8 @@
     "Tool-default dependency/test-source exclusions and distribution Rust standard-library debug paths"
   ],
   "notes": [
-    "Default shared-target report retained; corrected export includes all 11 current workspace executable artifacts and no duplicate logical sources or mismatched functions.",
-    "Prior comparison: lines +0.2111 percentage points, functions +0.1935 percentage points, regions +0.2290 percentage points.",
+    "Default shared-target report and missing distribution source diagnostics retained; corrected export includes all 11 current workspace executable artifacts and no duplicate logical sources or mismatched functions.",
+    "Prior comparison: lines +2.0622 percentage points, functions +1.7687 percentage points, regions +2.0117 percentage points.",
     "No live-provider or native macOS/Windows claim. Coverage measures execution, not correctness."
   ]
 }

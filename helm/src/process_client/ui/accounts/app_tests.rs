@@ -14,6 +14,8 @@ pub(in crate::process_client::ui) fn app(dir: &std::path::Path) -> App {
     let clients = super::super::routes::Routes::new(vec![Client::local(dir.join("no-vessel"))]);
     let (sender, _receiver) = tokio::sync::mpsc::channel(32);
     let app = App {
+        stop_review: None,
+        viewport: Default::default(),
         observation_target: tokio::sync::watch::channel(None).0,
         browsers: BTreeMap::new(),
         browser_opened: Default::default(),
@@ -51,9 +53,11 @@ pub(in crate::process_client::ui) fn app(dir: &std::path::Path) -> App {
         archives: false,
         help_scroll: 0,
         explore: None,
+        discovery: Default::default(),
         workflows: Default::default(),
         operator: None,
         operator_loading: None,
+        inspection: Default::default(),
         voyage_picker: None,
         interactions: Default::default(),
         terminal_request: None,
@@ -470,7 +474,7 @@ async fn expiry_denial_cancel_and_small_layout_clear_or_hide_material() {
     assert_clean(&app, t, fixture.0.path());
 }
 #[tokio::test]
-async fn enrollment_only_connection_mouse_choice_and_escape_preserve_composer() {
+async fn single_connection_signin_skips_metadata_and_back_preserves_composer() {
     let fixture = support::Fixture::new();
     let mut app = app(fixture.0.path());
     let t = live(&mut app);
@@ -480,24 +484,17 @@ async fn enrollment_only_connection_mouse_choice_and_escape_preserve_composer() 
     p.catalogue.connections[0].transports = vec![Transport::ChatgptOauth];
     p.catalogue.connections[0].endpoint = "https://chatgpt.com/backend-api/codex".into();
     key(&mut app, KeyCode::Enter); // Add / Sign in
-    assert!(matches!(
-        app.accounts.picker.as_ref().unwrap().mode,
-        Mode::Connections
-    ));
-    draw(&app, 110, 32);
-    let rect = app.accounts.hits.borrow()[0].0;
-    app.input(Event::Mouse(MouseEvent {
-        kind: MouseEventKind::Down(MouseButton::Left),
-        column: rect.x,
-        row: rect.y,
-        modifiers: KeyModifiers::NONE,
-    }))
-    .unwrap();
+    // One supported connection skips internal connection selection.
     assert!(matches!(
         app.accounts.picker.as_ref().unwrap().mode,
         Mode::Alias(_)
     ));
     key(&mut app, KeyCode::Char('w'));
+    key(&mut app, KeyCode::Esc);
+    assert!(matches!(
+        app.accounts.picker.as_ref().unwrap().mode,
+        Mode::List
+    ));
     key(&mut app, KeyCode::Esc);
     assert!(app.accounts.picker.is_none());
     assert!(support::browsers().is_empty());
@@ -589,6 +586,7 @@ async fn draft_override_does_not_change_new_voyage_default() {
     p.destination = Destination::Draft(draft);
     p.workspace = fixture.0.path().into();
     p.host = Some(host);
+    p.catalogue.default_account = original.account.clone();
     p.original = original;
     key(&mut app, KeyCode::Enter);
     let p = app.accounts.picker.as_ref().unwrap();
@@ -927,4 +925,320 @@ async fn reconnected_enter_reloads_accounts_without_replaying_enrollment() {
     assert!(p.busy && p.private.is_none() && p.intent.is_none());
     assert!(app.accounts.reply.is_some());
     assert_eq!(app.views[&t].draft.text, "preserve my composer");
+}
+
+#[tokio::test]
+async fn host_default_requires_explicit_consent_and_escape_has_no_effect() {
+    let fixture = support::Fixture::new();
+    let mut app = app(fixture.0.path());
+    let t = live(&mut app);
+    let _socket = picker(&mut app, t);
+    draw(&app, 100, 30);
+    key(&mut app, KeyCode::F(6));
+    let p = app.accounts.picker.as_ref().unwrap();
+    assert!(matches!(p.mode, Mode::DefaultConsent(_)));
+    assert!(!p.busy && !p.default_change_pending);
+    assert!(app.accounts.reply.is_none());
+    let screen = draw(&app, 100, 30);
+    assert!(screen.contains("persistent default") && screen.contains("billing"));
+    key(&mut app, KeyCode::Esc);
+    assert!(matches!(
+        app.accounts.picker.as_ref().unwrap().mode,
+        Mode::List
+    ));
+    assert!(app.accounts.reply.is_none());
+    assert!(app.views[&t].pending.is_none());
+}
+
+#[tokio::test]
+async fn api_setup_has_friendly_private_commands_without_identity_detour() {
+    let fixture = support::Fixture::new();
+    let mut app = app(fixture.0.path());
+    let t = live(&mut app);
+    let _socket = picker(&mut app, t);
+    let p = app.accounts.picker.as_mut().unwrap();
+    p.selected = p.choices().len() - 1;
+    draw(&app, 120, 40);
+    key(&mut app, KeyCode::Enter);
+    let screen = draw(&app, 120, 40);
+    assert!(screen.contains("--provider openai") && screen.contains("--provider anthropic"));
+    assert!(screen.contains("never paste") && screen.contains("separately"));
+    assert!(!screen.contains("--connection") && !screen.contains("UUID"));
+    assert!(app.accounts.reply.is_none());
+}
+
+#[tokio::test]
+async fn missing_default_is_part_of_draft_apply_not_an_f6_prerequisite() {
+    let fixture = support::Fixture::new();
+    let mut app = app(fixture.0.path());
+    let t = live(&mut app);
+    app.create(Some(fixture.0.path().to_str().unwrap()))
+        .unwrap();
+    let draft = app.active_draft.unwrap();
+    let original = settings();
+    let host = Uuid::new_v4();
+    app.set_draft_account(draft, host, original.clone())
+        .unwrap();
+    app.new_draft_composer_mut(draft).unwrap().text = "retained first task".into();
+    let _socket = picker(&mut app, t);
+    let p = app.accounts.picker.as_mut().unwrap();
+    p.destination = Destination::Draft(draft);
+    p.original = original.clone();
+    p.mode = Mode::Confirm(original.clone());
+    p.host = Some(host);
+    app.apply_account(original).unwrap();
+    let p = app.accounts.picker.as_ref().unwrap();
+    assert!(matches!(p.mode, Mode::DefaultConsent(_)));
+    assert!(!p.busy && !p.default_change_pending);
+    assert!(app.new_drafts[&draft].saved.start.is_none());
+    assert_eq!(
+        app.copy_new_draft_images(draft).unwrap().0.text,
+        "retained first task"
+    );
+}
+
+#[tokio::test]
+async fn default_save_is_not_readiness_until_catalogue_confirms_exact_account() {
+    let fixture = support::Fixture::new();
+    let mut app = app(fixture.0.path());
+    let t = live(&mut app);
+    let _socket = picker(&mut app, t);
+    let p = app.accounts.picker.as_mut().unwrap();
+    let expected = p.choices()[0].1.clone().unwrap();
+    let mut settings = p.original.clone();
+    settings.account = Some(expected.clone());
+    p.mode = Mode::DefaultConsent(settings);
+    p.default_change_pending = true;
+    p.busy = true;
+    let id = p.id;
+    let catalogue = Catalogue {
+        default_account: None,
+        default_revision: 1,
+        can_set_default: true,
+        accounts: p.catalogue.accounts.clone(),
+        connections: p.catalogue.connections.clone(),
+    };
+    assert!(
+        app.account_reply(id, Ok(Reply::DefaultAccount(catalogue)))
+            .is_err()
+    );
+    let p = app.accounts.picker.as_ref().unwrap();
+    assert!(p.default_change_pending && matches!(p.mode, Mode::DefaultConsent(_)));
+    assert!(p.notice.contains("not confirmed"));
+    assert!(app.set_default_account().is_err());
+    assert!(app.views[&t].pending.is_none());
+}
+
+#[tokio::test]
+async fn one_chatgpt_destination_goes_directly_to_account_name_without_auth_effect() {
+    let fixture = support::Fixture::new();
+    let mut app = app(fixture.0.path());
+    let t = live(&mut app);
+    let _socket = picker(&mut app, t);
+    let p = app.accounts.picker.as_mut().unwrap();
+    p.catalogue.accounts.clear();
+    p.catalogue.connections[0].transports = vec![Transport::ChatgptOauth];
+    p.catalogue.connections[0].endpoint = "https://chatgpt.com/backend-api/codex".into();
+    draw(&app, 120, 40);
+    key(&mut app, KeyCode::Enter);
+    let p = app.accounts.picker.as_ref().unwrap();
+    assert!(matches!(p.mode, Mode::Alias(_)));
+    assert!(p.intent.is_none() && !p.busy);
+    assert!(app.accounts.reply.is_none());
+    assert!(draw(&app, 120, 40).contains("Name this account"));
+}
+
+#[tokio::test]
+async fn unresolved_first_send_opens_setup_and_keeps_original_text() {
+    let fixture = support::Fixture::new();
+    let mut app = app(fixture.0.path());
+    app.create(Some(fixture.0.path().to_str().unwrap()))
+        .unwrap();
+    let draft = app.active_draft.unwrap();
+    app.new_draft_composer_mut(draft).unwrap().text = "explain this project".into();
+    app.send_draft(draft).unwrap();
+    assert!(app.accounts.open());
+    assert!(app.new_drafts[&draft].saved.start.is_none());
+    assert!(!app.new_drafts[&draft].busy);
+    assert_eq!(
+        app.copy_new_draft_images(draft).unwrap().0.text,
+        "explain this project"
+    );
+}
+
+#[tokio::test]
+async fn new_provider_advertised_default_is_reviewed_not_silently_applied() {
+    let fixture = support::Fixture::new();
+    let mut app = app(fixture.0.path());
+    let t = live(&mut app);
+    let _socket = picker(&mut app, t);
+    let p = app.accounts.picker.as_mut().unwrap();
+    p.destination = Destination::Draft(Uuid::new_v4());
+    let original = p.original.clone();
+    p.mode = Mode::Confirm(original.clone());
+    let id = p.id;
+    let mut model = crate::provider::ModelInfo::minimal("new-provider-default");
+    model.is_default = true;
+    app.account_reply(
+        id,
+        Ok(Reply::Models(original.account.unwrap(), vec![model])),
+    )
+    .unwrap();
+    let p = app.accounts.picker.as_ref().unwrap();
+    let Mode::Confirm(settings) = &p.mode else {
+        panic!("review required")
+    };
+    assert_eq!(settings.model, "new-provider-default");
+    assert!(settings.reasoning_effort.is_none() && settings.service_tier.is_none());
+    assert!(app.views[&t].pending.is_none());
+}
+
+#[tokio::test]
+async fn confirmed_default_returns_to_review_without_sending_draft() {
+    let fixture = support::Fixture::new();
+    let mut app = app(fixture.0.path());
+    let t = live(&mut app);
+    let _socket = picker(&mut app, t);
+    let p = app.accounts.picker.as_mut().unwrap();
+    let settings = p.original.clone();
+    p.destination = Destination::Draft(Uuid::new_v4());
+    p.mode = Mode::DefaultConsent(settings.clone());
+    p.default_change_pending = true;
+    p.busy = true;
+    let id = p.id;
+    let catalogue = Catalogue {
+        default_account: settings.account,
+        default_revision: 1,
+        can_set_default: true,
+        accounts: p.catalogue.accounts.clone(),
+        connections: p.catalogue.connections.clone(),
+    };
+    app.account_reply(id, Ok(Reply::DefaultAccount(catalogue)))
+        .unwrap();
+    let p = app.accounts.picker.as_ref().unwrap();
+    assert!(!p.default_change_pending && !p.busy);
+    assert!(matches!(p.mode, Mode::Confirm(_)));
+    assert!(app.views[&t].pending.is_none());
+    assert!(p.notice.contains("no message is sent"));
+}
+
+#[tokio::test]
+async fn discovery_app_retains_composer_images_and_refuses_unavailable() {
+    use base64::Engine as _;
+    let fixture = support::Fixture::new();
+    let mut app = app(fixture.0.path());
+    let t = live(&mut app);
+    let bytes = base64::engine::general_purpose::STANDARD.decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==").unwrap();
+    let image = super::super::attachments::Image::from_bytes("pixel.png".into(), &bytes).unwrap();
+    let id = image.metadata().id;
+    let view = app.views.get_mut(&t).unwrap();
+    view.draft.cursor = view.draft.text.len();
+    view.draft.insert_image(id);
+    view.images.push(image);
+    let before = serde_json::to_value(
+        super::super::attachments::content(&view.draft, &view.images).unwrap(),
+    )
+    .unwrap();
+    key(&mut app, KeyCode::F(8));
+    app.input(Event::Paste("not composer text".into())).unwrap();
+    for c in "settings".chars() {
+        key(&mut app, KeyCode::Char(c));
+    }
+    key(&mut app, KeyCode::Enter);
+    assert!(app.help && app.discovery.settings);
+    key(&mut app, KeyCode::Esc);
+    assert!(!app.help);
+    app.selected = None;
+    assert!(
+        app.discovery_reason("tools")
+            .unwrap()
+            .contains("Select a voyage")
+    );
+    app.discovery_open("tools").unwrap();
+    assert!(app.operator.is_none());
+    assert!(app.status.contains("Select a voyage"));
+    let view = &app.views[&t];
+    assert_eq!(
+        before,
+        serde_json::to_value(
+            super::super::attachments::content(&view.draft, &view.images).unwrap()
+        )
+        .unwrap()
+    );
+    assert_eq!(view.images[0].metadata().id, id);
+}
+
+#[tokio::test]
+async fn discovery_private_f1_overlays_without_dispatch_or_disclosure() {
+    let fixture = support::Fixture::new();
+    let mut app = app(fixture.0.path());
+    let t = live(&mut app);
+    let _connection = picker(&mut app, t);
+    material(&mut app);
+    let intent = app
+        .accounts
+        .picker
+        .as_ref()
+        .unwrap()
+        .intent
+        .as_ref()
+        .unwrap()
+        .command
+        .clone();
+    key(&mut app, KeyCode::F(1));
+    assert!(app.help);
+    assert!(app.discovery_help().contains("Accounts: private"));
+    assert!(!app.discovery_help().contains("SYNTHETIC-1234"));
+    for (width, height) in [(80, 24), (40, 18)] {
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        terminal
+            .draw(|frame| super::super::render::draw(frame, &app))
+            .unwrap();
+        let rendered: String = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|c| c.symbol())
+            .collect();
+        assert!(rendered.contains("Accounts: private"));
+        assert!(!rendered.contains("SYNTHETIC-1234"));
+    }
+    app.input(Event::Paste("do not dispatch".into())).unwrap();
+    key(&mut app, KeyCode::Char('o'));
+    key(&mut app, KeyCode::Enter);
+    key(&mut app, KeyCode::Esc);
+    assert!(!app.help);
+    let p = app.accounts.picker.as_ref().unwrap();
+    assert!(p.private.is_some() && !p.busy);
+    assert_eq!(
+        serde_json::to_value(&p.intent.as_ref().unwrap().command).unwrap(),
+        serde_json::to_value(intent).unwrap()
+    );
+    assert_clean(&app, t, fixture.0.path());
+}
+
+#[tokio::test]
+async fn discovery_draft_focus_and_detach_never_edit_or_send_hidden_composer() {
+    let fixture = support::Fixture::new();
+    let mut app = app(fixture.0.path());
+    let t = live(&mut app);
+    let before = app.views[&t].draft.text.clone();
+    // A draft identity need not have a live voyage; F8 must work before first send.
+    app.active_draft = Some(Uuid::new_v4());
+    key(&mut app, KeyCode::F(8));
+    assert!(app.explore.is_some());
+    for c in "settings".chars() {
+        key(&mut app, KeyCode::Char(c));
+    }
+    app.input(Event::Paste("do not send".into())).unwrap();
+    assert_eq!(app.discovery.query, "settings");
+    assert_eq!(app.views[&t].draft.text, before);
+    app.input(Event::Key(KeyEvent::new(
+        KeyCode::Char('c'),
+        KeyModifiers::CONTROL,
+    )))
+    .unwrap();
+    assert!(app.quit);
+    assert!(app.command_checks.is_empty());
 }

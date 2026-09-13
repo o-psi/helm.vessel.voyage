@@ -70,6 +70,8 @@ enum Mode {
     List,
     Connections,
     Confirm(Settings),
+    DefaultConsent(Settings),
+    ApiSetup,
     Alias(Uuid),
     Enrollment,
 }
@@ -294,8 +296,8 @@ impl Picker {
                 }
             }
         }
-        items.push(("+ Sign in to another account".into(), None));
-        items.push(("Set up an API account…".into(), None));
+        items.push(("+ ChatGPT — sign in with your subscription".into(), None));
+        items.push(("+ OpenAI / Anthropic — use an API key…".into(), None));
         items
     }
     fn label(&self, s: &Settings) -> String {
@@ -307,7 +309,7 @@ impl Picker {
                     .iter()
                     .find(|a| a.id == b.account_id)
                     .map(|a| safe(&a.label))
-                    .unwrap_or_else(|| b.account_id.to_string())
+                    .unwrap_or_else(|| "Account (refresh to load name)".into())
             })
             .unwrap_or_else(|| "No account selected".into())
     }
@@ -333,7 +335,7 @@ impl App {
                     .labels
                     .get(&(route, a.account_id))
                     .cloned()
-                    .unwrap_or_else(|| a.account_id.to_string())
+                    .unwrap_or_else(|| "Account (refresh to load name)".into())
             })
             .unwrap_or_else(|| "unresolved — review".into());
         if let Destination::Live(t) = destination {
@@ -350,7 +352,7 @@ impl App {
                         .labels
                         .get(&(route, current.account_id))
                         .cloned()
-                        .unwrap_or_else(|| current.account_id.to_string());
+                        .unwrap_or_else(|| "Account (refresh to load name)".into());
                     return format!("Running {running}; next {label}");
                 }
             }
@@ -706,10 +708,20 @@ impl App {
                     p.notice = "Signed in. Select the account and review its model to use it. Your current account has not changed.".into();
                 }
                 Reply::Models(binding, models) => {
-                    if let Mode::Confirm(s) = &p.mode {
+                    if let Mode::Confirm(s) = &mut p.mode {
                         if s.account.as_ref() == Some(&binding)
                             && crate::provider::validate_models(&models, &[]).is_ok()
                         {
+                            if matches!(p.destination, Destination::Draft(_))
+                                && !models.iter().any(|model| model.id == s.model)
+                            {
+                                if let Some(model) = models.iter().find(|model| model.is_default) {
+                                    s.model = model.id.clone();
+                                    s.reasoning_effort = None;
+                                    s.service_tier = None;
+                                    p.notice = "Provider's advertised default model selected for review. Enter applies; Tab edits. Access and billing are not guaranteed by the catalogue.".into();
+                                }
+                            }
                             p.models = models;
                         }
                     }
@@ -731,12 +743,24 @@ impl App {
                     p.notice = "Usage observation updated. It does not guarantee access.".into();
                 }
                 Reply::DefaultAccount(catalogue) => {
+                    if let Mode::DefaultConsent(settings) = &p.mode {
+                        ensure!(
+                            catalogue.default_account == settings.account,
+                            "Default change not confirmed. Reopen to inspect; do not repeat it."
+                        );
+                    }
                     p.default_change_pending = false;
                     p.catalogue = catalogue;
                     p.usage.clear();
                     p.usage_requested.clear();
-                    p.notice =
-                        "Default account observed from host. This voyage is unchanged.".into();
+                    if let Mode::DefaultConsent(settings) = &p.mode {
+                        p.mode = if matches!(p.destination, Destination::Draft(_)) {
+                            Mode::Confirm(settings.clone())
+                        } else {
+                            Mode::List
+                        };
+                    }
+                    p.notice = "Default saved for future voyages. Existing voyages unchanged. Enter applies the reviewed settings to this draft; no message is sent.".into();
                 }
                 Reply::Mutation => {
                     p.poll = Instant::now() - Duration::from_secs(4);
@@ -955,7 +979,7 @@ impl App {
         );
         ensure!(
             valid_alias(&p.query),
-            "Use a safe alias: 1–64 ASCII letters, digits, underscore or hyphen"
+            "Name this account using 1–64 letters, digits, underscore or hyphen (for example personal)"
         );
         let host = p.host.context("host missing")?;
         let command = VesselCommand::EnrollAccount {
@@ -1074,6 +1098,16 @@ impl App {
                 "Invalid inference override"
             );
         }
+        if matches!(p.destination, Destination::Draft(_)) && p.catalogue.default_account.is_none() {
+            ensure!(
+                p.catalogue.can_set_default,
+                "This host has no default. Ask its owner to choose one; your draft is retained."
+            );
+            let p = self.accounts.picker.as_mut().unwrap();
+            p.mode = Mode::DefaultConsent(settings);
+            p.notice = "Enter: save this host default · Esc: back without changing it".into();
+            return Ok(());
+        }
         let current = self.inference_settings(p.destination)?;
         ensure!(
             current.account == p.original.account
@@ -1146,6 +1180,24 @@ impl App {
         };
         // Esc is closure, never cancellation. Drop private view material immediately.
         if matches!(event, Event::Key(k) if k.code == KeyCode::Esc) {
+            if let Some(p) = self.accounts.picker.as_mut() {
+                if !p.busy
+                    && matches!(
+                        p.mode,
+                        Mode::DefaultConsent(_)
+                            | Mode::ApiSetup
+                            | Mode::Connections
+                            | Mode::Alias(_)
+                    )
+                {
+                    p.mode = Mode::List;
+                    p.query.clear();
+                    p.notice =
+                        "No change made. Choose an account or close to return to your draft."
+                            .into();
+                    return Ok(true);
+                }
+            }
             self.accounts.picker = None;
             self.accounts.reply = None;
             self.accounts.usage_reply = None;
@@ -1296,6 +1348,20 @@ impl App {
                     }
                     return Ok(true);
                 }
+                Mode::DefaultConsent(_) => {
+                    if k.code == KeyCode::Enter {
+                        self.set_default_account()?;
+                    }
+                    return Ok(true);
+                }
+                Mode::ApiSetup => {
+                    if k.code == KeyCode::Enter {
+                        let destination = p.destination;
+                        self.accounts.picker = None;
+                        self.open_accounts(destination, "")?;
+                    }
+                    return Ok(true);
+                }
                 Mode::Confirm(s) => {
                     match k.code {
                         KeyCode::Enter if p.edit == 4 => {
@@ -1373,7 +1439,16 @@ impl App {
                     return Ok(true);
                 }
                 KeyCode::F(6) if matches!(p.mode, Mode::List) => {
-                    self.set_default_account()?;
+                    let binding = p
+                        .choices()
+                        .get(p.selected)
+                        .and_then(|(_, b)| b.clone())
+                        .context("Select an available account first")?;
+                    let mut settings = p.original.clone();
+                    settings.account = Some(binding);
+                    p.mode = Mode::DefaultConsent(settings);
+                    p.notice =
+                        "Enter: save this host default · Esc: back without changing it".into();
                     return Ok(true);
                 }
                 KeyCode::Up => p.selected = p.selected.saturating_sub(1),
@@ -1423,12 +1498,26 @@ impl App {
                             && c.endpoint == "https://chatgpt.com/backend-api/codex"),
                     "No authorized native device connection. Use the private execution-host terminal alternative"
                 );
-                p.mode = Mode::Connections;
+                let connections: Vec<_> = p
+                    .catalogue
+                    .connections
+                    .iter()
+                    .filter(|c| {
+                        c.transports.contains(&Transport::ChatgptOauth)
+                            && c.endpoint == "https://chatgpt.com/backend-api/codex"
+                    })
+                    .collect();
+                p.mode = if connections.len() == 1 {
+                    Mode::Alias(connections[0].id)
+                } else {
+                    Mode::Connections
+                };
                 p.selected = 0;
                 p.query.clear();
-                p.notice = "Choose the authorized executing-host ChatGPT connection. API keys are enrolled in a private execution-host terminal, not this view.".into();
+                p.notice = "Name this ChatGPT account, then Enter starts private sign-in on the displayed host. Subscription limits/entitlement depend on your account. Esc back.".into();
             } else if index == choices.len().saturating_sub(1) {
-                p.notice = "On the executing host, use a private human terminal: vessel auth accounts connections; vessel auth accounts add --connection UUID --account ALIAS. It privately prompts for an API key; --env NAME binds a HOST environment name. Never paste a key into Helm chat. For device CLI: vessel auth accounts login --connection UUID --account ALIAS. Helm does not resolve host credentials.".into();
+                p.mode = Mode::ApiSetup;
+                p.notice = "Enter refreshes accounts after private setup · Esc back".into();
             } else {
                 p.notice = "This account is unavailable; sign in or ask its host owner. No fallback selected.".into();
             }

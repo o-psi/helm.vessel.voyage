@@ -6,6 +6,30 @@ not executed TUI acceptance. Paths below are relative to this document. This
 inventory separates fixed UI actions from runtime-advertised tools: a schema-driven
 operator action is not a permanently installed command.
 
+## #272 implementation delta (not a replacement for the pinned baseline)
+
+The 138-row inventory below remains evidence for its original source pin.
+The current implementation changes these interactions; see the
+[delivery ledger](ux-272-delivery.md) for executed verification, not an assumed pass.
+
+| Baseline/action | Current interaction | Scope and recovery |
+|---|---|---|
+| `/help` / F1 | Focus-aware help overlay | Retains private form focus, does not expose fields or answer requests; Esc returns; Ctrl+C detaches |
+| F8 / new `/actions` | Search commands, descriptions, shortcuts and scope | Direct existing handlers; unavailable reasons; query never becomes a prompt |
+| New `/settings` | Effective current/next-run settings and known provenance | Unknown source/support remains unknown; fixed keys/no general extension loader explicit |
+| `/branch [name]` | Frozen full/history-boundary review | Ctrl+Up/Down chooses loaded saved user boundary; Enter uses exact revision/new identity; no file rollback |
+| `/compact N` / F9 Keep N | Review extractive reduction before dispatch | Older user text and canonical history retained; no generated summary or restoration of earlier reductions |
+| `/cancel` / new `/stop` | Exact-run Stop review | Enter requests cancellation; Esc Back; Ctrl+C detach does not cancel; uncertain identity retained |
+| Composer Enter | Idle Submit versus active Steer | Pending admission versus delivered steering explicit; images cannot steer; no after-run queue |
+| Ctrl+F | Loaded rendered-display search | Enter next / Shift+Enter previous; Ctrl+Home older; excludes hidden/unloaded and cross-wrapped phrases |
+| New Ctrl+Up/Down | Previous/next saved user message | Retains reading anchors across reflow and older loading |
+| New Ctrl+Shift+Up/Down / Ctrl+Space | Select/toggle tool and reasoning disclosure | Keyboard alternative to double-click; effort configuration remains separate |
+| New `/inspect` / `/diff` | Executing-host scoped coding inspection | Runtime tools/policy; staged/unstaged/untracked scopes; exact admitted result; no local fallback |
+| New `/copy` | Canonical assistant response clipboard review | Explicit external clipboard effect, revision-bound complete read, no clipboard-success claim |
+| `/account` / first send | Guided named-account/default readiness | Sole built-in connection skips metadata picker; explicit persistent host-default consent; prompt retained |
+| API setup CLI | `vessel auth accounts setup --provider openai\|anthropic --account NAME` | Private executing-host prompt; separate billing; no key in chat or arguments |
+| Below 40×18 | Input paused rather than hidden forms active | Resize restores state; detach remains available; private account review has its own minimum |
+
 ## Source key
 
 - **H1** [completion registry](../../helm/src/process_client/ui/completion.rs), [dispatch](../../helm/src/process_client/ui/actions.rs), [control mutations](../../helm/src/process_client/ui/controls.rs).

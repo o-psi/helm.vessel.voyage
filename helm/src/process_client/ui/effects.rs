@@ -45,7 +45,8 @@ impl Navigation {
         self.last_frame = now;
         // Use current hit geometry, not a duplicate layout or stale coordinates.
         // Modal forms must never receive effects intended for underlying widgets.
-        let visible = !app.help
+        let visible = super::layout_guard::supported(frame.area().width, frame.area().height)
+            && !app.help
             && app.explore.is_none()
             && app.active_draft.is_none()
             && app.sidebar.menu.is_none()

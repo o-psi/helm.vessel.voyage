@@ -236,6 +236,47 @@ impl Registry {
             Ok(connection)
         })
     }
+    /// Stable official API destinations for private first-use enrollment.
+    /// This writes metadata only, never credentials or an implicit host default.
+    pub fn ensure_api_connection(&self, provider: &str) -> Result<ConnectionDescriptor> {
+        let (id, label, endpoint, transport) = match provider {
+            "openai" => (
+                0x6b8a43c98b3d4d178f00798f37f66214,
+                "OpenAI",
+                "https://api.openai.com/v1",
+                Transport::OpenaiResponses,
+            ),
+            "anthropic" => (
+                0x6b8a43c98b3d4d178f00798f37f66215,
+                "Anthropic",
+                "https://api.anthropic.com/v1",
+                Transport::Anthropic,
+            ),
+            _ => anyhow::bail!(
+                "Choose openai or anthropic; custom endpoints require explicit connection setup"
+            ),
+        };
+        self.transaction(|db| {
+            let id = Uuid::from_u128(id);
+            if let Some(connection) = db.connections.iter().find(|c| c.id == id) {
+                ensure!(
+                    connection.endpoint == endpoint && connection.transports == [transport],
+                    "built-in connection conflict"
+                );
+                return Ok(connection.clone());
+            }
+            ensure!(db.connections.len() < 32, "connection capacity reached");
+            let connection = ConnectionDescriptor {
+                id,
+                revision: 1,
+                label: label.into(),
+                endpoint: endpoint.into(),
+                transports: vec![transport],
+            };
+            db.connections.push(connection.clone());
+            Ok(connection)
+        })
+    }
     pub fn connections(&self) -> Result<Vec<ConnectionDescriptor>> {
         self.transaction(|db| Ok(db.connections.clone()))
     }

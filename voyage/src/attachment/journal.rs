@@ -127,6 +127,8 @@ pub struct RunRecord {
     pub partial_text: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tool_previews: Vec<voyage_protocol::tool_preview::ToolPreview>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub reasoning_previews: Vec<voyage_protocol::reasoning_preview::ReasoningPreview>,
     pub terminal_reason: Option<String>,
     pub usage: Usage,
     pub final_checkpointed: bool,
@@ -710,6 +712,7 @@ impl Journal {
             state: RunState::Accepted,
             partial_text: String::new(),
             tool_previews: Vec::new(),
+            reasoning_previews: Vec::new(),
             terminal_reason: None,
             usage: Usage::default(),
             final_checkpointed: false,
@@ -845,6 +848,53 @@ impl Journal {
         Ok(())
     }
 
+    /// Persist public disclosures only. Retain a bounded run window across attempts.
+    pub fn reasoning_previews(
+        &mut self,
+        guard: &ExecutionGuard,
+        run_id: Uuid,
+        previews: Vec<voyage_protocol::reasoning_preview::ReasoningPreview>,
+    ) -> Result<()> {
+        use voyage_protocol::reasoning_preview::{MAX_BLOCKS, MAX_TEXT_BYTES};
+        ensure!(
+            previews.len() <= MAX_BLOCKS
+                && previews
+                    .iter()
+                    .all(|p| p.text.len() <= MAX_TEXT_BYTES && !p.finalized),
+            "reasoning capacity/state invalid"
+        );
+        let run = self.run(run_id)?;
+        self.check_guard(guard, run.session_id)?;
+        let tx = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        check_transaction_schema(&tx, self.opened_schema)?;
+        let mut run = read_run(&tx, run_id)?;
+        ensure!(run.state == RunState::Running, "run is terminal");
+        for preview in previews {
+            if let Some(old) = run.reasoning_previews.iter_mut().find(|p| {
+                p.attempt_id == preview.attempt_id
+                    && p.index == preview.index
+                    && p.kind == preview.kind
+            }) {
+                ensure!(!old.finalized, "reasoning already finalized");
+                *old = preview;
+            } else {
+                if run.reasoning_previews.len() == MAX_BLOCKS {
+                    run.reasoning_previews.remove(0);
+                }
+                run.reasoning_previews.push(preview);
+            }
+        }
+        tx.execute(
+            "UPDATE runs SET record=?1 WHERE id=?2",
+            params![serde_json::to_string(&run)?, run.id.to_string()],
+        )?;
+        append_event(&tx, &run, EventKind::CanonicalCheckpoint)?;
+        commit(tx, &self.commit_fence)?;
+        Ok(())
+    }
+
     /// Persist the complete canonical provider/tool history before further effects.
     /// History is append-only within a run; no compaction or private history rewrite.
     pub fn checkpoint_canonical(
@@ -965,6 +1015,32 @@ impl Journal {
             .any(|message| message.role == crate::model::Role::Assistant)
         {
             run.tool_previews.clear();
+            if messages
+                .iter()
+                .skip(previous)
+                .any(|m| m.role == crate::model::Role::Assistant && m.interrupted_attempt.is_none())
+            {
+                let attempt = current
+                    .session
+                    .run_summaries
+                    .iter()
+                    .find(|summary| summary.run_id == run_id)
+                    .and_then(|summary| summary.provider_attempts.last())
+                    .filter(|attempt| {
+                        attempt.decision
+                            == voyage_protocol::provider_attempt::RetryDecision::Completed
+                    })
+                    .map(|attempt| attempt.attempt_id);
+                for preview in &mut run.reasoning_previews {
+                    if Some(preview.attempt_id) == attempt
+                        && !messages
+                            .iter()
+                            .any(|m| m.interrupted_attempt == Some(preview.attempt_id))
+                    {
+                        preview.finalized = true;
+                    }
+                }
+            }
         }
         current.session.replace_messages(messages.clone());
         current.session.refresh_active_run_summary();

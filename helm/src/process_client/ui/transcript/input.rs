@@ -36,8 +36,18 @@ impl App {
                         state.search_error = false;
                     }
                     KeyCode::Enter => {
+                        state.search_previous = key.modifiers.contains(KeyModifiers::SHIFT);
                         state.query = state.search.clone().unwrap_or_default();
                         state.search_next = !state.query.is_empty();
+                    }
+                    KeyCode::Home if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        if let Some(snapshot) = &view.snapshot {
+                            let first = state
+                                .messages
+                                .first()
+                                .map_or(snapshot.message_offset, |m| m.message_index);
+                            state.older(first);
+                        }
                     }
                     KeyCode::Backspace => {
                         state.search.as_mut().unwrap().pop();
@@ -75,6 +85,12 @@ impl App {
         let mut older = false;
         match event {
             Event::Key(key) if key.modifiers.contains(KeyModifiers::CONTROL) => match key.code {
+                KeyCode::Up | KeyCode::Down if key.modifiers.contains(KeyModifiers::SHIFT) => {
+                    state.disclosure_jump(key.code == KeyCode::Up);
+                }
+                KeyCode::Char(' ') => {
+                    state.toggle_disclosure();
+                }
                 KeyCode::Char('t') => {
                     state.details = !state.details;
                     state.expanded.clear();
@@ -97,6 +113,19 @@ impl App {
                     state.search_error = false;
                 }
                 KeyCode::Home => older = true,
+                KeyCode::Up | KeyCode::Down => {
+                    let users = state
+                        .messages
+                        .iter()
+                        .chain(view.snapshot.iter().flat_map(|s| &s.messages))
+                        .filter(|m| m.role == "user")
+                        .map(|m| m.message_index)
+                        .collect::<Vec<_>>();
+                    let previous = key.code == KeyCode::Up;
+                    if !state.user_jump(&users, previous) && previous {
+                        older = true;
+                    }
+                }
                 _ => return false,
             },
             Event::Key(key) => match key.code {
@@ -151,12 +180,7 @@ impl App {
                 .messages
                 .first()
                 .map_or(snapshot.message_offset, |m| m.message_index);
-            state.requested_from = Some(first.saturating_sub(128));
-            if !state.loading {
-                state.attempted = None;
-                state.live_attempt = None;
-            }
-            state.remember(0);
+            state.older(first);
         }
         true
     }
@@ -223,5 +247,109 @@ mod detail_checks {
         assert!(state.tool_expanded.contains("b"));
         state.click(Key::ActivityHeader(0), 5, 3, now);
         assert_eq!(state.expanded.get(&0), Some(&true));
+    }
+}
+
+impl super::State {
+    fn disclosure_jump(&mut self, previous: bool) -> bool {
+        let current = self
+            .anchor
+            .as_ref()
+            .and_then(|anchor| {
+                self.rows
+                    .iter()
+                    .position(|row| row.key == anchor.key && row.offset >= anchor.offset)
+            })
+            .unwrap_or(self.top);
+        let mut headers = self
+            .rows
+            .iter()
+            .enumerate()
+            .filter(|(i, row)| {
+                matches!(row.key, super::Key::Tool(_) | super::Key::ActivityHeader(_))
+                    && row.offset == 0
+                    && (*i == 0 || self.rows[*i - 1].key != row.key)
+            })
+            .map(|(i, _)| i);
+        let next = if previous {
+            headers.filter(|i| *i < current).next_back()
+        } else {
+            headers.find(|i| *i > current)
+        };
+        if let Some(next) = next {
+            self.remember(next);
+            true
+        } else {
+            false
+        }
+    }
+    fn toggle_disclosure(&mut self) -> bool {
+        let key = self
+            .anchor
+            .as_ref()
+            .map(|a| a.key.clone())
+            .or_else(|| self.rows.get(self.top).map(|r| r.key.clone()));
+        match key {
+            Some(super::Key::Tool(id)) => {
+                if !self.tool_expanded.remove(&id) {
+                    self.tool_expanded.insert(id);
+                }
+            }
+            Some(super::Key::ActivityHeader(id)) => {
+                let expanded = self.expanded.get(&id).copied().unwrap_or(self.details);
+                self.expanded.insert(id, !expanded);
+            }
+            _ => return false,
+        }
+        self.last_click = None;
+        self.dirty = true;
+        true
+    }
+}
+
+#[cfg(test)]
+mod keyboard_disclosure_tests {
+    use super::super::{Key, Row, State};
+    #[test]
+    fn navigate_and_toggle_tools_reasoning_and_groups_without_composer_enter() {
+        let mut state = State::default();
+        for key in [
+            Key::Message(0),
+            Key::ActivityHeader(0),
+            Key::Tool("call".into()),
+            Key::Tool("reasoning:run:0:Summary:false".into()),
+        ] {
+            state.rows.push(Row {
+                key,
+                offset: 0,
+                line: ratatui::text::Line::raw("header"),
+            });
+        }
+        state.remember(0);
+        assert!(!state.toggle_disclosure());
+        assert!(!state.disclosure_jump(true));
+        assert!(state.disclosure_jump(false));
+        assert!(state.toggle_disclosure());
+        assert_eq!(state.expanded.get(&0), Some(&true));
+        assert!(state.disclosure_jump(false));
+        assert!(state.toggle_disclosure());
+        assert!(state.tool_expanded.contains("call"));
+        assert!(state.disclosure_jump(false));
+        assert!(state.toggle_disclosure());
+        assert!(
+            state
+                .tool_expanded
+                .contains("reasoning:run:0:Summary:false")
+        );
+        assert!(!state.disclosure_jump(false));
+        assert!(state.toggle_disclosure());
+        assert!(
+            !state
+                .tool_expanded
+                .contains("reasoning:run:0:Summary:false")
+        );
+        assert!(state.tool_expanded.contains("call"));
+        assert!(state.disclosure_jump(true));
+        assert_eq!(state.top, 2);
     }
 }

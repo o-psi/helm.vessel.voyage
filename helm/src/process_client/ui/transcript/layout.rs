@@ -285,12 +285,7 @@ fn build(view: &View, state: &State, width: u16) -> Vec<Row> {
                 );
             }
             if let Some(status) = message.steering["status"].as_str() {
-                let label = match status {
-                    "queued" => "Queued for the next step",
-                    "applied" => "Received during this run",
-                    "not_applied" => "Not applied",
-                    _ => "Delivery unconfirmed",
-                };
+                let label = super::super::presentation::steering_status(status);
                 note(&mut out, key.clone(), label, width);
             }
             let ends_turn = snapshot.turns.iter().any(|t| {
@@ -359,6 +354,7 @@ fn build(view: &View, state: &State, width: u16) -> Vec<Row> {
         }
     }
     super::activity::flush(&mut out, &mut calls, messages, snapshot, state, width);
+    super::stream::reasoning(&mut out, snapshot, state, width);
     super::activity::previews(&mut out, snapshot, state, width);
     // Unanchored/older turns still retain retry history; do not silently lose it
     // just because their canonical message range is outside the loaded window.
@@ -581,6 +577,7 @@ pub(in crate::process_client::ui) fn draw(frame: &mut Frame<'_>, app: &App, area
     let mut state = view.transcript.borrow_mut();
     let resized = state.width != area.width;
     if state.dirty || state.rows.is_empty() || resized {
+        super::stream::reconcile(&view.snapshot, &mut state);
         state.rows = build(view, &state, area.width);
         state.width = area.width;
         state.dirty = false;
@@ -603,15 +600,7 @@ pub(in crate::process_client::ui) fn draw(frame: &mut Frame<'_>, app: &App, area
         .min(maximum);
     if state.search_next {
         state.search_next = false;
-        let query = state.query.to_lowercase();
-        let found = (top + 1..state.rows.len())
-            .chain(0..=top.min(state.rows.len().saturating_sub(1)))
-            .find(|&i| {
-                state
-                    .rows
-                    .get(i)
-                    .is_some_and(|r| r.line.to_string().to_lowercase().contains(&query))
-            });
+        let found = state.find_match(top);
         if let Some(index) = found {
             top = index.min(maximum);
             state.anchor = Some(Anchor {
@@ -675,9 +664,9 @@ pub(in crate::process_client::ui) fn draw(frame: &mut Frame<'_>, app: &App, area
         },
     );
     let hint = if let Some(search) = &state.search {
-        format!("Find: {search} · Enter next · Esc close")
+        format!("Loaded display: {search} · Enter/⇧Enter next/prev · ^Home older · Esc")
     } else if state.search_error {
-        "No match in loaded messages · Ctrl+Home loads earlier history".into()
+        "No match in loaded display (hidden details excluded) · Ctrl+Home load older".into()
     } else if state.anchor.is_some() && area.width < 65 {
         format!(
             "{} · Ctrl+End Latest",
@@ -689,7 +678,7 @@ pub(in crate::process_client::ui) fn draw(frame: &mut Frame<'_>, app: &App, area
         )
     } else if state.anchor.is_some() {
         format!(
-            "Reading earlier{} · Ctrl+End Latest · Ctrl+Home Older",
+            "Reading earlier{} · Ctrl+End Latest · Ctrl+Home Older · Ctrl+↑/↓ User",
             if state.new_output {
                 " · New output"
             } else {
@@ -699,7 +688,7 @@ pub(in crate::process_client::ui) fn draw(frame: &mut Frame<'_>, app: &App, area
     } else if area.width < 45 {
         "^T Activity · ^F Find · PgUp Earlier".into()
     } else {
-        "Ctrl+T Activity · Ctrl+F Find · PgUp Earlier".into()
+        "Ctrl+T Activity · Ctrl+F Find loaded · PgUp Earlier · Ctrl+↑/↓ User".into()
     };
     frame.render_widget(
         Paragraph::new(hint).style(muted()),

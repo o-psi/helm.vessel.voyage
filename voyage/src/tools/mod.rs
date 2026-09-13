@@ -41,6 +41,14 @@ pub enum ToolError {
     InvalidArguments(String),
     #[error("denied: {0}")]
     Denied(String),
+    #[error("approval denied by user")]
+    ApprovalDenied,
+    #[error("approval expired without a response")]
+    ApprovalExpired,
+    #[error("approval invalidated by an authority or access change")]
+    ApprovalInvalidated,
+    #[error("approval interface unavailable; no approval was granted")]
+    ApprovalUnavailable,
     #[error("tool timed out after {0:?}")]
     Timeout(Duration),
     #[error("tool was cancelled")]
@@ -155,17 +163,11 @@ impl ApprovalOutcome {
     pub fn require_approved(&self) -> Result<(), ToolError> {
         match self {
             Self::Approved => Ok(()),
-            Self::Denied => Err(ToolError::Denied("user declined approval".into())),
-            Self::Expired => Err(ToolError::Denied(
-                "approval expired without a response".into(),
-            )),
+            Self::Denied => Err(ToolError::ApprovalDenied),
+            Self::Expired => Err(ToolError::ApprovalExpired),
             Self::Cancelled => Err(ToolError::Cancelled),
-            Self::Invalidated => Err(ToolError::Denied(
-                "approval invalidated by an authority or access change".into(),
-            )),
-            Self::Unavailable => Err(ToolError::Denied(
-                "approval interface unavailable; no approval was granted".into(),
-            )),
+            Self::Invalidated => Err(ToolError::ApprovalInvalidated),
+            Self::Unavailable => Err(ToolError::ApprovalUnavailable),
         }
     }
 
@@ -901,6 +903,10 @@ impl ToolError {
             Self::Failed(message) => Self::Failed(redactor.redact(message)),
             Self::Timeout(duration) => Self::Timeout(duration),
             Self::Cancelled => Self::Cancelled,
+            Self::ApprovalDenied => Self::ApprovalDenied,
+            Self::ApprovalExpired => Self::ApprovalExpired,
+            Self::ApprovalInvalidated => Self::ApprovalInvalidated,
+            Self::ApprovalUnavailable => Self::ApprovalUnavailable,
         }
     }
 }

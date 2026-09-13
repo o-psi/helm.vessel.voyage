@@ -5,6 +5,33 @@ native-platform validation. Focused regression and explicitly enabled live check
 are described in [quality](quality.md). The [implementation ledger](implementation.md)
 records delivery evidence and its limits.
 
+## Guided setup and daily interaction
+
+The [local first-task guide](getting-started.md) is the front door; architecture,
+remote setup and custom configuration are separate paths. A first-send draft with
+no selected account opens account readiness without sending the prompt. Native
+ChatGPT setup skips a sole connection choice, names the account, and reviews an
+explicit persistent host default. API setup uses an executing-host private prompt
+via `vessel auth accounts setup`; billing and model entitlement remain distinct.
+
+F8 and `/actions` search actual command metadata, scope and unavailable reasons;
+`/settings` shows observed current/next-run values and provenance where available.
+F1 is a focus-aware help overlay, including private panels without disclosing their
+fields. Fixed keymaps and no general extension loader remain explicit limitations.
+`/stop` and `/cancel` review an exact run; Ctrl+C detaches without cancellation.
+The composer distinguishes Submit, Steer and unresolved admission. No after-run
+queue is implemented. Unsupported terminal sizes pause hidden form input.
+
+[History/context review](history-context-review.md) covers Keep-N extractive
+reduction, loaded-display search, user/disclosure keyboard navigation and genuine
+historical user-message branching. [Coding-result inspection](ux272-inspection-wiring.md)
+provides executing-host staged/unstaged/untracked scopes and canonical response
+copy with explicit local clipboard disclosure. [Tool previews](tool-previews.md)
+separate provisional arguments and provider-exposed reasoning from final calls,
+canonical answers and effort settings. See the [#272 delivery ledger](audits/ux-272-delivery.md)
+for actual checks and remaining limitations; source behavior is not a hands-on
+four-product usability certification.
+
 ## Notification inbox and owner references
 
 Vessel supports explicitly configured source-voyage notification destinations with
@@ -532,7 +559,13 @@ need a clean stop/restart to acquire the new archive shutdown behavior.
 
 Idle lifecycle commands support rename, next-turn model/configuration, branch,
 archive/restore, clear, compaction and confirmed deletion. Branches have new UUIDs
-and omit provider continuation. Clear resets the current conversation; prior run
+and omit provider continuation. Optional `through_message` selects an inclusive
+canonical saved user-message boundary; the owner validates complete retained tool
+groups and snapshots only that prefix with fresh working context. Omission retains
+full-history behavior. Helm Branch reviews the selected loaded historical point,
+counts, source/new identities, host and exact revision before confirmation. No
+workspace files are copied or restored; see [history/context review](history-context-review.md).
+Clear resets the current conversation; prior run
 and receipt evidence remains. Compaction preserves canonical history and saves a separate fingerprint-bound
 working projection. Large active-turn results are prepared automatically; explicit
 provider context rejection triggers bounded materially smaller requests without
@@ -654,9 +687,15 @@ outside the listener accept loop, excludes mutation dispatch, and drains queued
 connections into explicit non-dispatch responses where transport permits. Lost
 connections still require command resolution, not inferred success or replay.
 
-Approval tools distinguish explicit refusal, expiry without an answer, cancellation,
+Approval reports distinguish policy refusal from a user declining approval, expiry without an answer, cancellation,
 authority invalidation and an unavailable approval interface. An answer durably
 recorded before expiry remains the answer even when read after the deadline.
+The browser Voyage gate uses that same bounded decision deadline rather than a
+competing outer timeout. Local browser consent carries a fixed typed reason
+(denied, expired, invalidated, unavailable or cancelled), not web-page text.
+An unresolved browser receipt or post-dispatch timeout remains unconfirmed,
+regardless of that local reason; neither permits automatic replay. Private-shell
+gate diagnostics remain fixed strings without command, secret or policy detail.
 Local workers, including nested workers, use the owning voyage's decision interface
 when one is available. Helm identifies the requesting worker in the approval panel;
 approving one action does not mark its execution complete. Delegated access, tools,

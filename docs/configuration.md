@@ -1,5 +1,12 @@
 # Configuring the current implementation
 
+**New user? Start with [Your first voyage](getting-started.md).** It follows a local
+Linux installation and private named-account setup without requiring a TOML edit.
+This page is a reference for deliberate configuration changes, not an onboarding
+prerequisite. [Named accounts](provider-accounts.md) explains account selection,
+defaults, API billing, and migration; a legacy login cache is not a ready default.
+
+
 Execution configuration and policy are resolved in the voyage process on the
 executing host. Helm submits configuration references through Vessel; remote routes
 never copy provider credentials. See [Architecture](architecture.md) and
@@ -216,8 +223,11 @@ model = "YOUR_API_MODEL"
 api_key_env = "OPENAI_API_KEY"
 ```
 
-Set the named environment variable privately before invoking Helm. TOML names the
-variable, not its secret value. `base_url` selects a deliberate API endpoint for
+Set the named environment variable privately in the **executing host's** environment.
+A running Vessel does not inherit later changes to your shell; changing an environment
+binding can require a deliberate supervisor restart. For first-time setup, prefer
+[private stored-key enrollment](provider-accounts.md#execution-host-api-enrollment),
+then set the host default. TOML names the variable, not its secret value. `base_url` selects a deliberate API endpoint for
 native compatible transports. Subscription credentials are not redirected by that
 field; `chatgpt_base_url` is separate and should normally remain unset. Native HTTP
 requests do not follow redirects. Native provider endpoints require HTTPS except
@@ -225,6 +235,15 @@ literal-loopback HTTP for local/development use. Userinfo and fragments are
 rejected, and loopback requests bypass environment proxies. Local compatible endpoints and keyless access
 require explicit configuration; inspect `helm local-provider --help` for discovery,
 probe and config-generation commands before changing endpoints.
+
+### Legacy cache commands — not first-time named-account setup
+
+Prefer [private named-account enrollment](provider-accounts.md#device-sign-in-in-helm)
+for a new setup. The commands below operate the legacy cache; login success alone
+neither creates the named default required to start a voyage nor establishes model
+access. Existing cache users must follow [migration](provider-accounts.md#legacy-migration)
+and explicitly choose the host default. Do not run legacy credential writers after
+migration.
 
 ```sh
 vessel auth login

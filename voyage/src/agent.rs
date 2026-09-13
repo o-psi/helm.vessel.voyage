@@ -215,6 +215,14 @@ pub trait RunCheckpoint: Send + Sync {
         Ok(())
     }
 
+    /// Bounded provider disclosure only, never canonical assistant text.
+    async fn reasoning_previews(
+        &self,
+        _previews: &[voyage_protocol::reasoning_preview::ReasoningPreview],
+    ) -> Result<(), CheckpointError> {
+        Ok(())
+    }
+
     /// Publish and return the canonical history. Managed journals may atomically
     /// reject expired, not-yet-canonical steering; accepted history is immutable.
     async fn reconciled(
@@ -1002,7 +1010,10 @@ impl Agent {
                     }
                 };
                 match event {
-                    crate::provider::ProviderStreamEvent::Activity
+                    crate::provider::ProviderStreamEvent::Delta(
+                        crate::provider::ProviderDelta::Reasoning { .. },
+                    )
+                    | crate::provider::ProviderStreamEvent::Activity
                     | crate::provider::ProviderStreamEvent::ResponseMetadata { .. } => {}
                     crate::provider::ProviderStreamEvent::UsageReported(report) => {
                         self.inference_report(permit.as_ref(), report).await.ok()?
@@ -1798,4 +1809,5 @@ fn runtime_guidance(base: &str, tools: &[ToolDefinition], access: AccessMode) ->
     )
 }
 
+mod reasoning_preview;
 mod tool_preview;

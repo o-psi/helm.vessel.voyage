@@ -18,7 +18,7 @@ pub(super) struct Loaded {
     pub result: std::result::Result<[Value; 3], String>,
 }
 impl App {
-    fn operator_observation(&self, target: Target) -> Result<Observation> {
+    pub(super) fn operator_observation(&self, target: Target) -> Result<Observation> {
         ensure!(
             self.clients.available(target.route),
             "Vessel unavailable; Ctrl+G reconnects without replay"

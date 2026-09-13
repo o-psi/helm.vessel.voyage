@@ -159,6 +159,9 @@ impl App {
             self.quit = true;
             return Ok(());
         }
+        if self.discovery_command(text)? {
+            return Ok(());
+        }
         if text == "/help" {
             self.status = "Draft commands: /vessels, /account, /model [NAME], /thinking [VALUE], /service [VALUE], /access read-only|approval|unrestricted, /workspace PATH, /new [PATH], /discard. Enter sends; Tab changes view; Alt+P toggles attachment previews. Receipt checks are automatic; no creation or message is replayed on reconnect.".into();
         } else {

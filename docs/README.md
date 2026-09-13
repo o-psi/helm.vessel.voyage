@@ -1,5 +1,10 @@
 # Documentation
 
+**Start here: [Your first voyage](getting-started.md)** — a local Linux walkthrough
+from installation and private account setup to a first task, inspection and resume.
+Provider, remote, administrator and developer alternatives stay separate.
+
+
 The architecture documents define the intended product. Current-operation guides
 only describe the binaries in the source tree. Commands for unimplemented features
 are not presented as usable commands.

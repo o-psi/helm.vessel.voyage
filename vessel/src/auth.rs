@@ -130,6 +130,14 @@ pub(crate) enum AuthCommand {
 
 #[derive(Subcommand)]
 pub(crate) enum AccountCommand {
+    /// Create a named API account using a private key prompt on this host.
+    Setup {
+        /// Official provider endpoint; custom endpoints use connect/add.
+        #[arg(long, value_parser = ["openai", "anthropic"])]
+        provider: String,
+        #[arg(long)]
+        account: String,
+    },
     List,
     Connections,
     /// Add an explicit approved connection, separate from credentials.
@@ -268,6 +276,24 @@ async fn accounts(command: &AccountCommand) -> Result<()> {
                     endpoint.clone(),
                     transports
                 )?)?
+            );
+        }
+        AccountCommand::Setup { provider, account } => {
+            // Prompt before metadata effects. Keys never pass through arguments or Helm.
+            let Some(key) = voyage_runtime::accounts::private_input::api_key()? else {
+                println!("Cancelled; no account created");
+                return Ok(());
+            };
+            let connection = registry.ensure_api_connection(provider)?;
+            let enrolled = registry.add_api(
+                connection.id,
+                account.clone(),
+                account.clone(),
+                ApiKeyInput::Stored(key),
+            )?;
+            println!(
+                "Account {} saved on this host. Return to Helm, refresh accounts, select it and review the host default. No provider request was made; API billing/entitlement is not verified.",
+                enrolled.label
             );
         }
         AccountCommand::Add {

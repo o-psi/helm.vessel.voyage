@@ -106,6 +106,12 @@ pub enum ProviderError {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ProviderDelta {
     Text(String),
+    /// Explicit public prose only, not private continuation/signature data.
+    Reasoning {
+        index: usize,
+        kind: voyage_protocol::reasoning_preview::ReasoningKind,
+        text: String,
+    },
     ToolCall {
         index: usize,
         id: Option<String>,

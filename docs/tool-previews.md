@@ -8,9 +8,10 @@ JSON, assistant message, or permission to replay an action.
 ## Presentation and retention
 
 A card appears while arguments are generating. Three decoded argument lines are
-shown by default; **double-click** expands up to 128 lines. Unicode wrapping and
+shown by default; **double-click** expands up to 128 lines. Keyboard-only: use
+**Ctrl+Shift+Up/Down** to select a disclosure and **Ctrl+Space** to toggle it. Unicode wrapping and
 terminal-control sanitization use the transcript renderer. Existing scroll anchors
-and expansion keys use provider call IDs when available, with attempt/index fallback.
+and expansion keys use stable attempt/index identity during generation.
 The preview label always says **not executed** and **not final JSON**. Arguments
 are decoded for readability, not repaired for execution. A completed canonical
 assistant checkpoint atomically replaces the previews with ordinary call cards.
@@ -52,21 +53,37 @@ Its thinking blocks are separate, italic and clickable; Ctrl+T toggles visibilit
 whereas Shift+Tab changes generation effort. Thinking is visible by default.
 Responses reasoning summaries enter its generic thinking channel.
 
-**Decision for this delivery:** adopt early tool generation cards; do not yet adopt
-reasoning display. Existing native `ProviderDelta` has text and tool calls, not a
-typed displayable reasoning channel. Responses retains private continuation items;
-Anthropic signed/opaque thinking requires protocol-specific handling. Chat-compatible
-models do not offer a uniform display channel. No provider is claimed to display
-reasoning in Helm today, and existing Thinking/inference settings only configure
-generation. Private replay records must not be surfaced as a shortcut.
+## Typed reasoning disclosure (U05 follow-up)
 
-A future implementation should label **Reasoning summary** separately from
-**Provider-exposed thinking**, stream only explicitly supplied content, use collapsed
-blocks by default and after completion, offer a discoverable independent toggle
-(Ctrl+T is already Activity in Helm), and retain sanitized bounded display records
-separately from private signatures/encrypted continuation. Unsupported providers
-should show no fabricated block. That adoption requires its own typed channel,
-privacy/retention tests and provider-support evidence.
+The live display now accepts only explicitly typed provider disclosures:
+OpenAI Responses (including the native ChatGPT OAuth Responses adapter) emits
+`response.reasoning_summary_text.delta` as **Reasoning summary**; Anthropic emits
+`thinking_delta.thinking` as **Provider-exposed thinking**. Chat-compatible
+`reasoning_content`, encrypted Responses items, Anthropic signatures and redacted
+thinking blocks are not displayed. A provider/model that supplies no supported
+public disclosure has no block; Helm does not infer hidden reasoning.
+
+Blocks are collapsed initially. Their header offers double-click or
+**Ctrl+Shift+Up/Down**, then **Ctrl+Space**, to show/hide; this changes display
+only, never the provider's effort setting. A canonical answer
+checkpoint marks the associated disclosure finalized and collapses it again. A
+cancelled, failed or interrupted generation retains an **unfinished disclosure**,
+not an answer or successful tool action. Provisional disclosure text is separate
+from canonical assistant text, provider request reconstruction and private replay.
+
+Voyage redacts configured secrets across chunk boundaries before checkpointing or
+transport. Each run retains at most 32 display blocks, each capped at 16 KiB on a
+Unicode boundary; oldest blocks can be evicted. Signatures/opaque continuation are
+never used as prose. The bounded records persist in the run journal and reconnect
+through its current run snapshot. They are not canonical conversation history:
+older-run browsing/export does not currently expose these records. Clear/import
+removes them with other provisional display data. Default deserialization accepts
+older records with no disclosures.
+
+Provisional tool keys now always use attempt/index, not a potentially fragmented
+provider ID. The UI records bounded correlation and transfers expansion/reading
+anchors only when an exact canonical call ID exists. Final canonical calls still
+replace, never execute, previews; malformed JSON remains display-only.
 
 ## Evidence and remaining acceptance
 

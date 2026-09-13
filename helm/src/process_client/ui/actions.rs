@@ -19,6 +19,10 @@ impl App {
         if let Some((target, draft)) = original
             && super::inference::parse(draft.trim()).is_none()
             && !super::inbox::is_command(draft.trim())
+            && !matches!(draft.trim(), "/stop" | "/cancel" | "/compact" | "/branch")
+            && !draft.trim().starts_with("/compact ")
+            && !draft.trim().starts_with("/branch ")
+            && !matches!(draft.trim(), "/inspect" | "/diff" | "/copy")
             && draft.trim_start().starts_with('/')
             && let Some(view) = self.views.get_mut(&target)
             && view.pending.is_none()
@@ -43,6 +47,15 @@ impl App {
         {
             return self.provider_attempts_command(target, &text);
         }
+        let inspection_text = self
+            .views
+            .get(&target)
+            .map(|v| v.draft.text.trim().to_owned());
+        if let Some(text) =
+            inspection_text.filter(|t| matches!(t.as_str(), "/inspect" | "/diff" | "/copy"))
+        {
+            return self.command_for(target, text, true);
+        }
         // Inbox commands are local presentation even when the composer retains images.
         let inbox_text = self
             .views
@@ -51,6 +64,29 @@ impl App {
             .filter(|text| super::inbox::is_command(text));
         if let Some(text) = inbox_text {
             return self.inbox_command(target, &text);
+        }
+        if self
+            .views
+            .get(&target)
+            .is_some_and(|view| matches!(view.draft.text.trim(), "/stop" | "/cancel"))
+        {
+            return self.review_stop(target);
+        }
+        if let Some(text) = self
+            .views
+            .get(&target)
+            .map(|view| view.draft.text.trim().to_owned())
+            && (text == "/compact" || text.starts_with("/compact "))
+        {
+            return self.review_compact(target, text.strip_prefix("/compact "));
+        }
+        if let Some(text) = self
+            .views
+            .get(&target)
+            .map(|view| view.draft.text.trim().to_owned())
+            && (text == "/branch" || text.starts_with("/branch "))
+        {
+            return self.review_branch(target, text.strip_prefix("/branch ").unwrap_or("").into());
         }
         if !self
             .views
@@ -78,6 +114,9 @@ impl App {
         preserve_draft: bool,
     ) -> Result<()> {
         let command_text = draft.trim();
+        if matches!(command_text, "/stop" | "/cancel") {
+            return self.review_stop(target);
+        }
         if command_text == "/attempts" || command_text.starts_with("/attempts ") {
             return self.provider_attempts_command(target, command_text);
         }
@@ -86,6 +125,9 @@ impl App {
         }
         if command_text == "/browser" || command_text.starts_with("/browser ") {
             return self.browser_command(target, command_text);
+        }
+        if self.discovery_command(command_text)? {
+            return Ok(());
         }
         if command_text == "/workflows" {
             return self.open_workflows();
@@ -139,6 +181,12 @@ impl App {
             self.selected = Some(key);
             return Ok(());
         }
+        if matches!(command_text, "/inspect" | "/diff") {
+            return self.open_inspection(target);
+        }
+        if command_text == "/copy" {
+            return self.request_response_copy(target);
+        }
         if let Some(path) = command_text.strip_prefix("/export ") {
             return self.export(target, path);
         }
@@ -148,10 +196,12 @@ impl App {
             return Ok(());
         }
         if command_text == "/branch" || command_text.starts_with("/branch ") {
-            return self.branch(
+            return self.review_branch(
                 target,
-                command_text.strip_prefix("/branch ").map(str::to_owned),
-                preserve_draft,
+                command_text
+                    .strip_prefix("/branch ")
+                    .unwrap_or_default()
+                    .to_owned(),
             );
         }
         if command_text == "/terminals" || command_text == "/terminal" {
@@ -190,7 +240,7 @@ impl App {
         }
         ensure!(
             view.pending.is_none(),
-            "Waiting for delivery confirmation; Helm checks automatically. Draft preserved"
+            "Command outcome pending; Helm checks the original identity automatically. Draft preserved"
         );
         ensure!(
             !command_text.is_empty() || !view.images.is_empty(),
@@ -204,6 +254,24 @@ impl App {
             .snapshot
             .as_ref()
             .context("waiting for an authenticated snapshot")?;
+        if !command_text.starts_with('/') {
+            ensure!(
+                !snapshot.recovery_pending,
+                "Voyage recovery pending; draft retained; no automatic replay"
+            );
+            ensure!(
+                snapshot
+                    .run
+                    .as_ref()
+                    .is_none_or(|run| run.state != "cancel_requested"),
+                "Stop is pending; wait for cleanup, then Submit explicitly. Draft retained"
+            );
+            ensure!(
+                snapshot.run.as_ref().is_some_and(|run| run.active())
+                    || snapshot.pending_cleanup_run.is_none(),
+                "Previous run cleanup pending; draft retained; no after-run queue"
+            );
+        }
         let expected_revision = snapshot.revision;
         let command_id = Uuid::new_v4();
         let expires_at_ms = u64::try_from(
@@ -272,18 +340,6 @@ impl App {
                 expected_revision,
                 expires_at_ms,
                 name: name.into(),
-            }
-        } else if command_text == "/cancel" {
-            let run = snapshot
-                .run
-                .as_ref()
-                .filter(|run| run.active() && !snapshot.recovery_pending)
-                .context("no observed active run to cancel")?;
-            VoyageCommand::Cancel {
-                command_id,
-                expected_revision,
-                expires_at_ms,
-                run_id: run.run_id,
             }
         } else if command_text.starts_with('/') {
             anyhow::bail!("unknown command; /help lists connected controls");
@@ -372,7 +428,16 @@ impl App {
             VoyageCommand::Resolve { .. } | VoyageCommand::Receipt { .. }
         );
         if !resolving {
-            self.status = "Sending...".into();
+            self.status = match &command {
+                VoyageCommand::Steer { .. } => {
+                    "Steering pending · admission unknown; no after-run queue"
+                }
+                VoyageCommand::Submit { .. } | VoyageCommand::SubmitContent { .. } => {
+                    "Submission pending · admission unknown; draft retained"
+                }
+                _ => "Request pending · outcome not yet confirmed",
+            }
+            .into();
         }
         let job = tokio::spawn(async move {
             let checked_host = async {

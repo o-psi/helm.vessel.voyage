@@ -27,7 +27,7 @@ function fence(mode='private',reason='local_control') {
   releaseInput();
   for(const v of S.refs.values())v.handle.dispose().catch(()=>{});
   S.boundRun=null;S.chooser=null;for(const u of S.uploads.values())u.shared=false;for(const d of S.downloads.values())d.disclose=false;S.epoch++; S.mode=mode; S.shared=false; S.refs.clear(); S.observations.clear();
-  for (const p of S.prompts.values()) p.resolve(false); S.prompts.clear();
+  for (const p of S.prompts.values()) p.resolve(reason==='remote_cancellation'?'cancelled':'invalidated'); S.prompts.clear();
   // Pending commands cannot inherit renewed authority. Dispatched effects remain unknown.
   for (const job of S.queue) job.cancelled=true;
   if (S.active) S.active.cancelled=true;
@@ -117,11 +117,11 @@ async function init(req) {
 }
 async function confirmation(job,summary) {
   authority(job.epoch);
-  if(!S.controller||Date.now()-S.controller.seen>5000)refuse('local_controller_required');
+  if(!S.controller||Date.now()-S.controller.seen>5000)return 'unavailable';
   const id=crypto.randomUUID();
   output({event:'approval',request_id:job.id,pending:true});
   return await new Promise(resolve=> {
-    const timer=setTimeout(()=>{S.prompts.delete(id);output({event:'approval',request_id:job.id,pending:false});resolve(false);},limits.prompt_timeout_ms);
+    const timer=setTimeout(()=>{S.prompts.delete(id);output({event:'approval',request_id:job.id,pending:false});resolve('expired');},limits.prompt_timeout_ms);
     S.prompts.set(id,{id,request_id:job.id,summary,epoch:job.epoch,resolve:value=>{clearTimeout(timer);S.prompts.delete(id);output({event:'approval',request_id:job.id,pending:false});resolve(value);}});
   });
 }
@@ -201,12 +201,23 @@ function normalizeAction(a) {
   }
   return n;
 }
+function localReason(code) {
+  if(code?.startsWith('local_confirmation_')) {
+    const reason=code.slice('local_confirmation_'.length);
+    if(['denied','expired','invalidated','unavailable','cancelled'].includes(reason))return reason;
+  }
+  if(code==='request_expired')return 'expired';
+  if(code==='authority_fenced')return 'invalidated';
+  if(code==='cancelled_before_dispatch')return 'cancelled';
+  return null;
+}
 function wireResult(job,rec,result,error) {
   const state=rec.state==='completed'?'completed':rec.state==='unknown'||rec.state==='dispatched'?'unresolved':rec.state==='cancelled_before_dispatch'?'cancelled':'refused';
   const image=result?.mime_type==='image/jpeg'?{mime_type:result.mime_type,data_base64:result.data_base64}:null;
   const file=result?.download_id&&typeof result?.data_base64==='string'?{name:result.name,mime_type:'application/octet-stream',data_base64:result.data_base64}:null;
   const text=error?error.code:image?'Browser screenshot':file?'Locally approved download':JSON.stringify(result??{receipt:rec,content_withheld:true});
-  return {request_id:job.id,action_sha256:job.action_sha256,state,text,page_id:result?.page_id||null,observation_id:result?.observation_id||null,image,file};
+  const local_reason=localReason(rec.code);
+  return {request_id:job.id,action_sha256:job.action_sha256,state,local_reason,text,page_id:result?.page_id||null,observation_id:result?.observation_id||null,image,file};
 }
 async function dispatch(job,fn) {
   authority(job.epoch);if(job.cancelled)refuse('cancelled_before_dispatch');
@@ -234,7 +245,8 @@ async function execute(job) {
       filename:op==='upload_stage'?safeName(a.name):file?safeName(file.name):undefined,
       mime_type:op==='upload_stage'?String(a.mime_type||'application/octet-stream').slice(0,127):file?.mime_type|| (op==='download'?'application/octet-stream':undefined),
       bytes:op==='upload_stage'&&typeof a.data_base64==='string'?Math.floor(a.data_base64.length*3/4)-(a.data_base64.endsWith('==')?2:a.data_base64.endsWith('=')?1:0):file?.size,ref:a.ref||null};
-    if(!await confirmation(job,summary))refuse('local_confirmation_denied');
+    const consent=await confirmation(job,summary);
+    if(consent!=='approved')refuse('local_confirmation_'+consent);
     authority(job.epoch);if(job.expires_at_ms&&job.expires_at_ms<=Date.now())refuse('request_expired'); if(job.cancelled)refuse('cancelled_before_dispatch');
   }
   switch(op) {
@@ -272,7 +284,7 @@ async function drain() {
   catch(e) {error=safeError(e);}
   finally{clearTimeout(deadline);}
   const rec=S.receipts.get(job.id);
-  rec.state=error?((job.cancelled&&rec.state!=='dispatched')||error.code==='cancelled_before_dispatch'?'cancelled_before_dispatch':rec.state==='dispatched'?'unknown':'refused'):'completed';
+  rec.state=error?(rec.state==='dispatched'?'unknown':localReason(error.code)==='cancelled'?'cancelled_before_dispatch':'refused'):'completed';
   rec.code=error?.code || null;
   try { await durable(rec); } catch { rec.state='unknown';rec.code='receipt_persistence_failed';fence();error={code:'receipt_persistence_failed',message:'Outcome unknown'}; }
   // No DOM, screenshot, dialog or private input survives an authority transition.
@@ -387,7 +399,7 @@ async function localOperation(c,b) {
     if(b.mode==='agent'){if(S.inputReset)await S.inputReset;if(Date.now()-S.heartbeat>=limits.heartbeat_ms||!b.confirm_share) {fence();refuse('sharing_not_confirmed');}S.shared=true;output({event:'control',...status()});}
     return status();
   }
-  if(b.op==='confirm') {const p=S.prompts.get(b.prompt_id);if(!p||p.epoch!==S.epoch)refuse('stale_prompt');p.resolve(b.allow===true);return {};}
+  if(b.op==='confirm') {const p=S.prompts.get(b.prompt_id);if(!p||p.epoch!==S.epoch)refuse('stale_prompt');p.resolve(b.allow===true?'approved':'denied');return {};}
   if(b.op==='origin') {
     human(c,b);const o=origin(b.url);if(b.remove){S.allowed.delete(o);proxy.fence();}else{if(S.allowed.size>=64&&!S.allowed.has(o))refuse('origin_limit');if(S.allowed.has(o))proxy.fence();S.allowed.set(o,{private_network:b.private_network===true});}
     return {};

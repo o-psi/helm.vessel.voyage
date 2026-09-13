@@ -40,6 +40,10 @@ impl ToolReport {
     pub fn error(error: ToolError) -> Self {
         let execution = match &error {
             ToolError::Denied(_) => ExecutionOutcome::PolicyRefused,
+            ToolError::ApprovalDenied => ExecutionOutcome::ApprovalDenied,
+            ToolError::ApprovalExpired => ExecutionOutcome::ApprovalExpired,
+            ToolError::ApprovalInvalidated => ExecutionOutcome::ApprovalInvalidated,
+            ToolError::ApprovalUnavailable => ExecutionOutcome::ApprovalUnavailable,
             ToolError::Cancelled => ExecutionOutcome::Cancelled,
             // A timeout does not prove effects stopped or were rolled back.
             ToolError::Timeout(_) => ExecutionOutcome::Unknown,

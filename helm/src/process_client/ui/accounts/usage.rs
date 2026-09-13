@@ -68,11 +68,11 @@ impl App {
             p.catalogue.can_set_default,
             "Only the host owner can change the default account"
         );
-        let account = p
-            .choices()
-            .get(p.selected)
-            .and_then(|(_, b)| b.clone())
-            .context("Select an available account first")?;
+        let account = match &p.mode {
+            super::Mode::DefaultConsent(settings) => settings.account.clone(),
+            _ => None,
+        }
+        .context("Review and confirm the host default first")?;
         let workspace = p.workspace.clone();
         let expected_revision = p.catalogue.default_revision;
         let client = self.clients[p.route].clone();

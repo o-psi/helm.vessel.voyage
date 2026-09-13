@@ -630,6 +630,10 @@ pub enum VesselCommand {
         expires_at_ms: u64,
         branch_id: Uuid,
         name: Option<String>,
+        /// Inclusive zero-based canonical saved user-message index. Omitted means full history.
+        /// The owner validates the complete retained tool groups at expected_revision.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        through_message: Option<u64>,
     },
     Restart {
         command_id: Uuid,

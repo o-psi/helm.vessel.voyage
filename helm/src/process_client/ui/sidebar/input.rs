@@ -296,6 +296,17 @@ impl App {
             }
             return Ok(key.code == KeyCode::Enter);
         }
+        if menu.editor == Some(Action::Branch)
+            && key.modifiers.contains(KeyModifiers::CONTROL)
+            && matches!(key.code, KeyCode::Up | KeyCode::Down)
+        {
+            if let Some(review) = &mut menu.branch_review {
+                review.move_point(key.code == KeyCode::Up);
+                menu.scroll.set(0);
+                self.sidebar.visible.set(None);
+            }
+            return Ok(false);
+        }
         if let Some(action) = menu.editor {
             menu.follow_selection.set(true);
             match key.code {
@@ -310,7 +321,17 @@ impl App {
                             ensure!(!text.is_empty(), "Enter a name");
                             format!("/rename {text}")
                         }
-                        Action::Branch => format!("/branch {text}"),
+                        Action::Branch => {
+                            let review =
+                                menu.branch_review.clone().context("reopen branch review")?;
+                            self.branch(
+                                menu.target,
+                                (!text.is_empty()).then(|| text.to_owned()),
+                                true,
+                                review,
+                            )?;
+                            return Ok(true);
+                        }
                         Action::Clear | Action::Compact => {
                             ensure!(
                                 self.views[&menu.target]
@@ -413,8 +434,11 @@ impl App {
             | Action::Details => {
                 self.sidebar.visible.set(None);
                 menu.editor = Some(action);
+                if action == Action::Branch {
+                    self.prepare_branch_review(menu)?;
+                }
                 menu.scroll.set(0);
-                menu.follow_selection.set(true);
+                menu.follow_selection.set(action != Action::Branch);
                 menu.error.clear();
                 menu.text = Composer::default();
                 menu.revision = self

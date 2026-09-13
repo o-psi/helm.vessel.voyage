@@ -13,6 +13,14 @@ outcomes and limitations. Build/package checks alone do not establish functional
 journey correctness. Historical evidence remains scoped in
 [implementation](implementation.md); current focused checks are in [quality](quality.md).
 
+## #272 parallel delivery evidence
+
+The [#272 delivery ledger](audits/ux-272-delivery.md) and
+[focused journey report](audits/ux-272-verification.md) track guided onboarding,
+exact-run Stop, action discovery, coding inspection, historical branching and
+provider disclosure UX. They distinguish executed Linux synthetic checks from
+unverified native/provider/clipboard behavior; source inventory is not acceptance.
+
 ## What counts as complete
 
 A journey starts with a user intention and ends with an understandable outcome or

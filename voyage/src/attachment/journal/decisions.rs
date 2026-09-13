@@ -292,6 +292,9 @@ mod tests {
             .respond_decision(&guard, incarnation, &command, || Ok(99))
             .unwrap();
         assert_eq!(receipt["status"], "applied");
+        journal
+            .finish_decision(&guard, decision, "expired")
+            .unwrap();
         assert_eq!(
             journal.decision_response(decision, 101).unwrap(),
             Some(json!("approved"))

@@ -8,12 +8,17 @@ mod attachments;
 mod browser;
 mod completion;
 mod controls;
+mod discovery;
 mod explore;
 mod export;
+mod history_review;
 mod inbox;
 mod inference;
 mod input;
+mod inspection;
+mod inspection_bridge;
 mod interactions;
+mod layout_guard;
 mod lifecycle;
 mod operator;
 mod operator_bridge;
@@ -21,6 +26,7 @@ mod paste;
 mod previews;
 mod reconcile;
 mod routes;
+mod run_controls;
 mod transcript;
 mod updates;
 mod vessels;
@@ -59,6 +65,8 @@ use std::{
 use tokio::sync::mpsc;
 
 pub(super) struct App {
+    stop_review: Option<run_controls::StopReview>,
+    viewport: std::cell::Cell<Option<(u16, u16)>>,
     observation_target: tokio::sync::watch::Sender<Option<Target>>,
     browsers: BTreeMap<Target, crate::process_client::browser::Handle>,
     browser_opened: std::collections::BTreeSet<Target>,
@@ -96,8 +104,10 @@ pub(super) struct App {
     archives: bool,
     help_scroll: u16,
     explore: Option<usize>,
+    discovery: discovery::Discovery,
     workflows: workflows::State,
     operator: Option<operator::Panel>,
+    inspection: inspection_bridge::State,
     operator_loading: Option<(uuid::Uuid, Instant)>,
     voyage_picker: Option<voyage_picker::Picker>,
     interactions: std::cell::RefCell<interactions::Review>,
@@ -188,6 +198,8 @@ pub async fn run_with_notice(
     let selected =
         session.and_then(|session| clients.first_route().map(|route| Target { route, session }));
     let mut app = App {
+        stop_review: None,
+        viewport: Default::default(),
         observation_target: tokio::sync::watch::channel(selected).0,
         browsers: BTreeMap::new(),
         browser_opened: Default::default(),
@@ -227,9 +239,11 @@ pub async fn run_with_notice(
         archives: false,
         help_scroll: 0,
         explore: None,
+        discovery: Default::default(),
         workflows: Default::default(),
         operator: None,
         operator_loading: None,
+        inspection: Default::default(),
         voyage_picker: None,
         interactions: Default::default(),
         terminal_request: None,
@@ -264,6 +278,7 @@ pub async fn run_with_notice(
                 if *target == next { false } else { *target = next; true }
             });
             app.poll_operator();
+            app.poll_inspection();
             app.poll_workflows();
             app.poll_browsers();
             app.poll_clipboard();
@@ -309,6 +324,7 @@ pub async fn run_with_notice(
         for (target, view) in &app.views { drafts::save(&app.clients[target.route], view)?; }
         Ok(())
     }.await;
+    app.close_inspection();
     let browser_cleanup = app.finish_browsers().await;
     let clipboard_cleanup = app.finish_clipboard().await;
     let preview_cleanup = app.previews.finish();

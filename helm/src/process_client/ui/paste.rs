@@ -508,6 +508,10 @@ impl App {
             !snapshot.run.as_ref().is_some_and(|r| r.active()),
             "Wait for the active run to finish before sending images; draft preserved"
         );
+        ensure!(
+            !snapshot.recovery_pending && snapshot.pending_cleanup_run.is_none(),
+            "Recovery or cleanup pending; images and text retained; no after-run queue"
+        );
         let command_id = Uuid::new_v4();
         let command = attachments::prepare(
             VoyageCommand::Submit {

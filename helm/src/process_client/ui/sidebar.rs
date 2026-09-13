@@ -4,6 +4,7 @@ mod input;
 mod menu;
 use super::{App, state::Target};
 use crate::composer::Composer;
+use anyhow::Context;
 use ratatui::layout::Rect;
 use uuid::Uuid;
 
@@ -59,6 +60,7 @@ pub(super) struct Menu {
     scroll: std::cell::Cell<u16>,
     follow_selection: std::cell::Cell<bool>,
     editor: Option<Action>,
+    branch_review: Option<super::history_review::BranchReview>,
     revision: Option<u64>,
     text: Composer,
     error: String,
@@ -130,6 +132,35 @@ impl App {
         self.sidebar.focus = Focus::Composer;
     }
 
+    pub(in crate::process_client::ui) fn review_compact(
+        &mut self,
+        target: Target,
+        keep: Option<&str>,
+    ) -> anyhow::Result<()> {
+        self.open_actions(target);
+        let mut menu = self.sidebar.menu.take().context("voyage unavailable")?;
+        if let Some(reason) = self.action_reason(&menu, Action::Compact) {
+            self.sidebar.menu = Some(menu);
+            anyhow::bail!(reason);
+        }
+        menu.editor = Some(Action::Compact);
+        menu.revision = self
+            .views
+            .get(&target)
+            .and_then(|v| v.snapshot.as_ref())
+            .map(|s| s.revision);
+        if let Some(keep) = keep {
+            let count: u32 = keep
+                .trim()
+                .parse()
+                .context("Use /compact N, where N is 1–100000")?;
+            anyhow::ensure!((1..=100_000).contains(&count), "Keep N must be 1–100000");
+            menu.text.insert_str(&format!("KEEP {count}"));
+        }
+        self.sidebar.menu = Some(menu);
+        Ok(())
+    }
+
     fn open_actions(&mut self, target: Target) {
         self.sidebar.visible.set(None);
         self.sidebar.menu_hits.borrow_mut().clear();
@@ -150,6 +181,7 @@ impl App {
             scroll: std::cell::Cell::new(0),
             follow_selection: std::cell::Cell::new(true),
             editor: None,
+            branch_review: None,
             revision: None,
             text: Composer::default(),
             error: String::new(),
@@ -376,5 +408,47 @@ impl App {
             target,
             incarnation: view.process.incarnation,
         }));
+    }
+}
+
+impl App {
+    fn prepare_branch_review(&self, menu: &mut Menu) -> anyhow::Result<()> {
+        use anyhow::Context;
+        let view = self.views.get(&menu.target).context("voyage unavailable")?;
+        let snapshot = view
+            .snapshot
+            .as_ref()
+            .context("waiting for canonical snapshot")?;
+        let (points, selected) = view.transcript.borrow().branch_points_for(snapshot);
+        menu.branch_review = Some(super::history_review::BranchReview {
+            target: menu.target,
+            incarnation: menu.incarnation,
+            revision: snapshot.revision,
+            branch_id: Uuid::new_v4(),
+            host: self.route_label(menu.target.route),
+            total: snapshot.total_messages,
+            points,
+            selected,
+        });
+        Ok(())
+    }
+    pub(super) fn review_branch(&mut self, target: Target, name: String) -> anyhow::Result<()> {
+        self.open_actions(target);
+        let mut menu = self
+            .sidebar
+            .menu
+            .take()
+            .ok_or_else(|| anyhow::anyhow!("voyage unavailable"))?;
+        if let Some(reason) = self.action_reason(&menu, Action::Branch) {
+            self.sidebar.menu = Some(menu);
+            anyhow::bail!(reason);
+        }
+        self.prepare_branch_review(&mut menu)?;
+        menu.revision = menu.branch_review.as_ref().map(|review| review.revision);
+        menu.editor = Some(Action::Branch);
+        menu.follow_selection.set(false);
+        menu.text.insert_str(&name);
+        self.sidebar.menu = Some(menu);
+        Ok(())
     }
 }

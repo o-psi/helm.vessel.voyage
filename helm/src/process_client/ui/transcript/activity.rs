@@ -706,10 +706,8 @@ pub(super) fn previews(out: &mut Vec<Row>, snapshot: &Snapshot, state: &State, w
         return;
     };
     for preview in &run.tool_previews {
-        let id = preview
-            .call_id
-            .clone()
-            .unwrap_or_else(|| format!("preview:{}:{}", preview.attempt_id, preview.index));
+        // Provider IDs may arrive in fragments. Never change the display key mid-stream.
+        let id = format!("preview:{}:{}", preview.attempt_id, preview.index);
         let key = Key::Tool(id.clone());
         let expanded = state.tool_expanded.contains(&id);
         note(

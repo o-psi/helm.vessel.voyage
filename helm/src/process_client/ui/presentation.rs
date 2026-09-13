@@ -120,7 +120,7 @@ pub(super) fn receipt(value: &Value) -> String {
     )
 }
 
-pub(super) const HELP: &str = "HELM / YOUR WORKSPACE\n  Ctrl+G /vessels   Manage Vessels (also clickable in header)\n\nMove around\n  F2                Find voyages and drafts by name (all widths)\n  Drag sidebar edge Resize voyage navigation (↔ divider)\n  Tab / Shift+Tab   Switch voyages\n  Up / Down         Navigate voyages with empty composer or sidebar focus\n  Right, Enter      Focus the sidebar ⋮ button and open Actions\n  F9                Open selected voyage Actions (also in narrow terminals)\n  Ctrl+N            Start a new voyage\n  F1                Help\n  F5                Switch between current and archived voyages\n  F6 /browser       Open the local shared-browser companion\n  F8                Explore tools, tasks, models and permissions\n  Esc               Go back without losing your draft\n  PageUp / PageDown Scroll the current view\n  Ctrl+Home         Load earlier messages\n  Ctrl+End          Return to latest output\n  Ctrl+F            Find in loaded messages; Enter next, Esc close\n  Ctrl+T            Expand or collapse activity groups\n  Double-click call Expand or collapse saved tool details\n\nTalk to the assistant\n  /                 Open command menu\n  Up / Down         Select command or argument while menu is open\n  Tab               Complete selection; Enter executes\n  Esc               Dismiss command menu\n  Enter             Send your message\n  Alt+Enter         Add a line\n  Ctrl+V / Alt+V    Paste clipboard text or images into the composer\n  Alt+P             Show/hide owned attachment previews\n  Paste image path Attach a local PNG, JPEG or WebP (drag/drop paths work)\n  Backspace/Delete Remove the adjacent owned image marker\n  Esc               Cancel an in-progress clipboard read\n  Up / Down         Recall an earlier message while editing a draft\n  /cancel           Ask the assistant to stop\n\nQuestions and permissions\n  Requests open ready for your response.\n  Up / Down         Choose an answer or permission decision\n  Enter             Confirm selection; open or send a custom answer\n  Esc               Skip question / deny permission; leave custom editor\n  Left / Right      Previous / next request\n  PageUp / PageDown Read request details\n\nLocal shared browser\n  /browser          Open the local companion for the selected voyage\n  /browser private  Fence agent input and capture locally\n  /browser takeover Take human control\n  /browser close    Close owned browser; Voyage continues\n  Return to agent requires explicit local companion review.\n\nPrograms and passwords\n  F3                Find your running programs\n  Up / Down         Choose a program\n  Enter             Open its private terminal\n  Ctrl+]            Return to Helm\n  Type passwords only in the private terminal.\n  A password prompt may show no characters while you type.\n\nSee what is happening\n  /todos            Tasks\n  /subagents        Agents working on your request\n  /tools            Available tools\n  /policy           Permissions\n  /access           Change access (Read only / Ask first / Unrestricted)\n  /workflows        Saved workflows\n  /models           Available models\n  /host_resources   Machine cleanup records\n\nInference for the next turn\n  /account          Choose account / private device sign-in\n  /model [ID]       Choose or type a model\n  /thinking [VALUE] Choose or type reasoning effort\n  /service [VALUE]  Choose or type service tier\n  inherit           Clear a thinking/service override\n  /service default  Disable catalog tier (API: standard)\n  Click composer controls for the same pickers.\n  Picker: type to search, Up/Down select, Enter apply, Esc cancel.\n  Model changes review existing overrides; never silently reset.\n  Unknown capabilities are not support; runtime/provider validates.\n  Pending changes keep text; Helm checks their outcome automatically.\n\nOrganize your work\n  /rename A name    Name this voyage\n  /branch A name    Continue in a separate voyage\n  /archive          Preserve history and stop this idle voyage after cleanup\n  /archived         Browse archived voyages (F5)\n  /voyages          Return to current voyages\n  /restore          Restart and restore the selected archived voyage\n  /export PATH      Save your conversation as Markdown\n\nLeave\n  Ctrl+C / Ctrl+Q   Close Helm\n  Active turns keep running when you leave. Finished voyages resume when you send again.";
+pub(super) const HELP: &str = "HELM / YOUR WORKSPACE\n  Ctrl+G /vessels   Manage Vessels (also clickable in header)\n\nMove around\n  F2                Find voyages and drafts by name (all widths)\n  Drag sidebar edge Resize voyage navigation (↔ divider)\n  Tab / Shift+Tab   Switch voyages\n  Up / Down         Navigate voyages with empty composer or sidebar focus\n  Right, Enter      Focus the sidebar ⋮ button and open Actions\n  F9                Open selected voyage Actions (also in narrow terminals)\n  Ctrl+N            Start a new voyage\n  F1                Help\n  F5                Switch between current and archived voyages\n  F6 /browser       Open the local shared-browser companion\n  F8                Search actions, scope and availability\n  Esc               Go back without losing your draft\n  PageUp / PageDown Scroll the current view\n  Ctrl+Home         Load earlier messages\n  Ctrl+End          Return to latest output\n  Ctrl+F            Find loaded display only; Enter next / Shift+Enter previous\n  Ctrl+Up/Down      Previous/next saved user message\n  Ctrl+Shift+Up/Down Move to tool/reasoning disclosure\n  Ctrl+Space        Toggle the disclosure at the reading position\n  Ctrl+T            Expand or collapse activity groups\n  Double-click call Expand or collapse saved tool details\n\nTalk to the assistant\n  /                 Open command menu\n  Up / Down         Select command or argument while menu is open\n  Tab               Complete selection; Enter executes\n  Esc               Dismiss command menu\n  Enter             Submit idle / Steer active run\n  Alt+Enter         Add a line\n  Ctrl+V / Alt+V    Paste clipboard text or images into the composer\n  Alt+P             Show/hide owned attachment previews\n  Paste image path Attach a local PNG, JPEG or WebP (drag/drop paths work)\n  Backspace/Delete Remove the adjacent owned image marker\n  Esc               Cancel an in-progress clipboard read\n  Up / Down         Recall an earlier message while editing a draft\n  /stop /cancel     Review Stop for the exact active run\n\nQuestions and permissions\n  Requests open ready for your response.\n  Up / Down         Choose an answer or permission decision\n  Enter             Confirm selection; open or send a custom answer\n  Esc               Skip question / deny permission; leave custom editor\n  Left / Right      Previous / next request\n  PageUp / PageDown Read request details\n\nLocal shared browser\n  /browser          Open the local companion for the selected voyage\n  /browser private  Fence agent input and capture locally\n  /browser takeover Take human control\n  /browser close    Close owned browser; Voyage continues\n  Return to agent requires explicit local companion review.\n\nPrograms and passwords\n  F3                Find your running programs\n  Up / Down         Choose a program\n  Enter             Open its private terminal\n  Ctrl+]            Return to Helm\n  Type passwords only in the private terminal.\n  A password prompt may show no characters while you type.\n\nSee what is happening\n  /inspect /diff    Read-only executing-host workspace inspection\n  /copy             Review canonical response clipboard disclosure\n  /todos            Tasks\n  /subagents        Agents working on your request\n  /tools            Available tools\n  /policy           Permissions\n  /access           Change access (Read only / Ask first / Unrestricted)\n  /workflows        Saved workflows\n  /models           Available models\n  /host_resources   Machine cleanup records\n\nInference for the next turn\n  /account          Choose account / private device sign-in\n  /model [ID]       Choose or type a model\n  /thinking [VALUE] Choose or type reasoning effort\n  /service [VALUE]  Choose or type service tier\n  inherit           Clear a thinking/service override\n  /service default  Disable catalog tier (API: standard)\n  Click composer controls for the same pickers.\n  Picker: type to search, Up/Down select, Enter apply, Esc cancel.\n  Model changes review existing overrides; never silently reset.\n  Unknown capabilities are not support; runtime/provider validates.\n  Pending changes keep text; Helm checks their outcome automatically.\n\nOrganize your work\n  /rename A name    Name this voyage\n  /branch A name    Continue in a separate voyage\n  /archive          Preserve history and stop this idle voyage after cleanup\n  /archived         Browse archived voyages (F5)\n  /voyages          Return to current voyages\n  /restore          Restart and restore the selected archived voyage\n  /export PATH      Save your conversation as Markdown\n\nLeave\n  Ctrl+C / Ctrl+Q   Detach Helm; voyages continue\n  Active turns keep running when you leave. Finished voyages resume when you send again.";
 
 /// Recency is derived from the durable turn completion, never observation time.
 /// Failure/cancellation and outstanding cleanup retain their own visible state.
@@ -348,5 +348,59 @@ mod recovery_status_tests {
         assert_eq!(voyage_state(&snapshot), "Working");
         snapshot.run = None;
         assert_eq!(voyage_state(&snapshot), "Ready");
+    }
+}
+
+/// Composer intent follows observed runtime admission, never an invented follow-up queue.
+pub(super) fn composer_intent(view: &super::state::View) -> &'static str {
+    if view.pending.is_some() {
+        return "Pending · checking original identity · draft retained";
+    }
+    let Some(snapshot) = &view.snapshot else {
+        return "Waiting for voyage · draft retained";
+    };
+    if snapshot.recovery_pending {
+        return "Recovery pending · no replay · draft retained";
+    }
+    if let Some(run) = snapshot.run.as_ref().filter(|run| run.active()) {
+        if run.state == "cancel_requested" {
+            return "Stopping · wait for cleanup · draft retained";
+        }
+        if !view.images.is_empty() {
+            return "Images cannot steer · wait then Submit explicitly · no after-run queue";
+        }
+        return "Enter Steer active run · admitted before delivered · no after-run queue";
+    }
+    if snapshot.pending_cleanup_run.is_some() {
+        return "Cleanup pending · Submit unavailable · draft retained";
+    }
+    "Enter Submit new turn"
+}
+
+pub(super) fn steering_status(status: &str) -> &'static str {
+    match status {
+        "queued" => "Steering admitted · awaiting delivery in this run",
+        "applied" => "Steering delivered to this run",
+        "not_applied" => "Steering not delivered · no automatic follow-up",
+        _ => "Steering delivery unknown · checking original identity",
+    }
+}
+
+#[cfg(test)]
+mod composer_tests {
+    use super::*;
+
+    #[test]
+    fn steering_admission_is_not_delivery_or_after_run_queue() {
+        assert_eq!(
+            steering_status("queued"),
+            "Steering admitted · awaiting delivery in this run"
+        );
+        assert_eq!(steering_status("applied"), "Steering delivered to this run");
+        assert_eq!(
+            steering_status("not_applied"),
+            "Steering not delivered · no automatic follow-up"
+        );
+        assert!(steering_status("future_wire_state").contains("unknown"));
     }
 }

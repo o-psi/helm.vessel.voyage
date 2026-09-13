@@ -186,7 +186,7 @@ fn private_shell_error(error: ToolError) -> ToolError {
             ToolError::InvalidArguments("invalid private one-shot shell arguments or limits".into())
         }
         ToolError::Denied(_) => {
-            ToolError::Denied("private one-shot shell denied by local policy or approval".into())
+            ToolError::Denied("private one-shot shell denied by local policy".into())
         }
         ToolError::Failed(_) => ToolError::Failed(
             "private one-shot shell failed; cleanup observation must be checked".into(),
@@ -244,3 +244,36 @@ fn terminate_process_group(process_id: Option<u32>) {
 }
 #[cfg(not(unix))]
 fn terminate_process_group(_: Option<u32>) {}
+
+#[cfg(test)]
+mod approval_diagnostics_tests {
+    use super::*;
+    use crate::tools::{ApprovalOutcome, ToolReport};
+
+    #[test]
+    fn private_shell_keeps_fixed_gate_reasons_and_redacts_policy_detail() {
+        for outcome in [
+            ApprovalOutcome::Denied,
+            ApprovalOutcome::Expired,
+            ApprovalOutcome::Invalidated,
+            ApprovalOutcome::Unavailable,
+            ApprovalOutcome::Cancelled,
+        ] {
+            let expected = ToolReport::error(outcome.require_approved().unwrap_err());
+            let actual =
+                ToolReport::error(private_shell_error(outcome.require_approved().unwrap_err()));
+            assert_eq!(actual.outcome, expected.outcome);
+            assert_eq!(
+                actual.output.text_fallback(),
+                expected.output.text_fallback()
+            );
+        }
+        let report = ToolReport::error(private_shell_error(ToolError::Denied(
+            "fixture-secret".into(),
+        )));
+        assert_eq!(
+            report.output.text_fallback(),
+            "denied: private one-shot shell denied by local policy"
+        );
+    }
+}

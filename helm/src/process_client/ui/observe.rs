@@ -11,6 +11,7 @@ use tokio::sync::{Semaphore, mpsc};
 use voyage_protocol::vessel::{ProcessInfo, VesselCommand, VesselEventSubscription, VoyageCommand};
 
 pub enum Update {
+    Inspection(Box<super::inspection_bridge::Loaded>),
     InboxAttention {
         route: Route,
         count: u64,

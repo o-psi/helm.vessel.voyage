@@ -266,3 +266,12 @@ to the host is not implemented; paste requires local confirmation and the host
 browser's clipboard permission. The agent cannot accept page dialogs; a local
 human must take over. Application policy is not an OS sandbox or a claim that
 external effects can be rolled back after dispatch.
+
+### Local consent outcome check
+
+Run `node helm/browser/outcomes-probe.mjs` from the repository root for a focused,
+Chromium-free check of the actual helper consent/wire functions. It covers denial,
+unanswered expiry, invalidation, unavailable controller and cancellation, including
+unresolved receipt precedence. This is not a native-browser or cleanup journey.
+Local result `local_reason` is a fixed optional enum, separate from page text;
+`state: unresolved` always remains unknown even if a gate reason is present.

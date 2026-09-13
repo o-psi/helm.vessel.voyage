@@ -139,9 +139,14 @@ fn sidebar_style(
 }
 
 pub fn draw(frame: &mut Frame<'_>, app: &App) {
+    app.viewport
+        .set(Some((frame.area().width, frame.area().height)));
     app.working.begin_frame();
     app.vessel_sidebar_button.set(Rect::default());
     draw_inner(frame, app);
+    if !super::layout_guard::supported(frame.area().width, frame.area().height) {
+        return;
+    }
     if frame.area().width >= 40 && frame.area().height >= 18 {
         if let Some(picker) = &app.voyage_picker {
             super::voyage_picker::draw(frame, picker, frame.area());
@@ -150,16 +155,43 @@ pub fn draw(frame: &mut Frame<'_>, app: &App) {
             panel.render(frame, frame.area());
         }
         super::workflows::draw(frame, app);
+        if let Some(panel) = &app.inspection.panel {
+            panel.render(frame, frame.area());
+        }
+        if let Some((observation, index)) = app.inspection.confirmation {
+            frame.render_widget(ratatui::widgets::Clear, frame.area());
+            let text = format!(
+                "Copy canonical assistant response to this terminal/system clipboard?\nHost: {}\nVoyage: {} · Message: {} · Revision: {}\nEffective: after Enter and a fresh revision-bound read. Other local applications may read the clipboard.\n\nEnter confirms · Esc cancels.\nClipboard support required; no portable acknowledgment. /export PATH is the file fallback.",
+                app.route_label(observation.target.route),
+                observation.target.session,
+                index + 1,
+                observation.revision
+            );
+            frame.render_widget(
+                Paragraph::new(presentation::wrap(Text::raw(text), frame.area().width)),
+                frame.area(),
+            );
+        }
     }
     // A late account observation must never leave private input focused behind
     // an opaque operator/navigation screen.
-    if app.voyage_picker.is_some() || app.operator.is_some() || app.workflows_open() {
+    if app.voyage_picker.is_some()
+        || app.operator.is_some()
+        || app.inspection.panel.is_some()
+        || app.inspection.confirmation.is_some()
+        || app.workflows_open()
+    {
         app.draw_accounts(frame);
     }
     app.draw_vessel_control(frame);
     app.draw_workspace_picker(frame, frame.area());
     if let Some(manager) = &app.vessels {
         manager.borrow_mut().render(frame, frame.area());
+    }
+    app.draw_stop(frame, frame.area());
+    if app.help {
+        frame.render_widget(ratatui::widgets::Clear, frame.area());
+        draw_discovery_help(frame, app, frame.area());
     }
 }
 
@@ -178,10 +210,16 @@ fn draw_inner(frame: &mut Frame<'_>, app: &App) {
         if let Some(view) = view {
             view.terminals.clear_displayed();
         }
-        frame.render_widget(Paragraph::new(presentation::wrap(Text::raw("Helm\nEnlarge to at least 40 columns x 18 rows.\nCtrl+C leaves; your work continues."), area.width)), area);
+        frame.render_widget(Paragraph::new(presentation::wrap(Text::raw("Helm\nEnlarge to at least 40 columns x 18 rows.\nInput paused; drafts retained.
+Ctrl+C detaches; voyages continue."), area.width)), area);
         return;
     }
-    if app.voyage_picker.is_some() || app.operator.is_some() || app.workflows_open() {
+    if app.voyage_picker.is_some()
+        || app.operator.is_some()
+        || app.inspection.panel.is_some()
+        || app.inspection.confirmation.is_some()
+        || app.workflows_open()
+    {
         app.sidebar.resize.clear();
         if let Some(view) = view {
             view.terminals.clear_displayed();
@@ -215,6 +253,7 @@ fn draw_inner(frame: &mut Frame<'_>, app: &App) {
                     ),
                 area,
             );
+            draw_discovery_help(frame, app, area);
         }
         return;
     }
@@ -384,29 +423,24 @@ fn draw_inner(frame: &mut Frame<'_>, app: &App) {
 
 fn footer(app: &App, width: u16, reviewing: bool, overlay: bool, status: &str) -> Text<'static> {
     let view = app.selected.and_then(|key| app.views.get(&key));
-    let pending = view.is_some_and(|view| view.pending.is_some());
-    let active = view
-        .and_then(|view| view.snapshot.as_ref())
-        .is_some_and(|snapshot| snapshot.inference_next_turn);
     let hint = if reviewing || overlay {
         ""
-    } else if pending {
-        "Pending · Checking automatically · Text preserved"
-    } else if active {
-        "Next-turn settings · Enter Send · / Commands"
-    } else if width >= 60 {
-        "Enter Send · Alt+Enter New line · / Commands"
     } else {
-        "Enter Send · / Commands"
+        view.map(presentation::composer_intent)
+            .unwrap_or("Select a voyage · F2")
     };
     let mut line = Line::styled(hint.to_owned(), muted());
     for shortcuts in [
-        "F1 Help · F2 Voyages · F3 Console · F6 Browser · F8 Explore · F9 Actions · Ctrl+C Leave",
-        "F2 Voyages · F8 Explore · F9 Actions",
+        "F1 Help · F2 Voyages · F3 Console · F6 Browser · F8 Explore · F9 Actions · Ctrl+C Detach · voyages continue",
+        "/stop Review Stop · Ctrl+C Detach",
         "F2 Voyages · F8 Explore",
         "F2 Voyages",
     ] {
-        let shortcuts = if reviewing { "Ctrl+C Leave" } else { shortcuts };
+        let shortcuts = if reviewing {
+            "Ctrl+C Detach · voyages continue"
+        } else {
+            shortcuts
+        };
         let separator = if hint.is_empty() { "" } else { " · " };
         let suffix = format!("{separator}{shortcuts}");
         if line.width() + Line::raw(suffix.clone()).width() <= width as usize {
@@ -783,4 +817,25 @@ mod sidebar_tests {
         assert_eq!(text.lines[0].spans[1].style, muted());
         assert_eq!(sidebar_text("Title", None).lines[0].to_string(), "Title");
     }
+}
+
+fn draw_discovery_help(frame: &mut Frame<'_>, app: &App, area: Rect) {
+    let area = inset(area, 2, 1);
+    let text = presentation::wrap(Text::raw(app.discovery_help()), area.width);
+    let maximum = text
+        .lines
+        .len()
+        .saturating_sub(area.height.saturating_sub(2) as usize)
+        .min(u16::MAX as usize) as u16;
+    frame.render_widget(
+        Paragraph::new(text)
+            .scroll((app.help_scroll.min(maximum), 0))
+            .block(
+                Block::default()
+                    .borders(Borders::BOTTOM)
+                    .title_bottom(" PageUp / PageDown   Esc back ")
+                    .border_style(muted()),
+            ),
+        area,
+    );
 }

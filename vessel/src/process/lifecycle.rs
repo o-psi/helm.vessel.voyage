@@ -85,6 +85,7 @@ impl Supervisor {
             expires_at_ms,
             branch_id,
             name,
+            through_message,
         } = &command
         else {
             anyhow::bail!("not branch")
@@ -114,6 +115,7 @@ impl Supervisor {
                     expires_at_ms: *expires_at_ms,
                     branch_id: *branch_id,
                     name: name.clone(),
+                    through_message: *through_message,
                 },
                 None,
             )

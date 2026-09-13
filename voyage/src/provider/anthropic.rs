@@ -375,6 +375,15 @@ fn apply_stream_event(value: &Value, assembly: &mut StreamAssembly) -> Vec<Provi
                         events.push(ProviderDelta::Text(text.into()));
                     }
                 }
+                Some("thinking_delta") => {
+                    if let Some(text) = value.pointer("/delta/thinking").and_then(Value::as_str) {
+                        events.push(ProviderDelta::Reasoning {
+                            index,
+                            kind: voyage_protocol::reasoning_preview::ReasoningKind::Thinking,
+                            text: text.into(),
+                        });
+                    }
+                }
                 Some("input_json_delta") => {
                     while assembly.calls.len() <= index {
                         assembly.calls.push(CallAssembly::default());

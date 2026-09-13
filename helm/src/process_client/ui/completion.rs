@@ -10,132 +10,7 @@ use ratatui::{
 use uuid::Uuid;
 use voyage_protocol::vessel::VoyageCommand;
 
-const COMMANDS: &[(&str, &str, &str)] = &[
-    ("help", "Show help", ""),
-    (
-        "attempts",
-        "Read provider retry history",
-        "Optional RUN_UUID and OFFSET; all OFFSET for all runs",
-    ),
-    (
-        "inbox",
-        "Read notification metadata (never responds)",
-        "destinations | list DESTINATION [AFTER] | open/seen/dismiss DESTINATION EVENT",
-    ),
-    (
-        "account",
-        "Choose next-run account / private sign-in",
-        "Optional safe label search",
-    ),
-    ("vessels", "Manage connected Vessels", ""),
-    (
-        "new",
-        "Start a voyage",
-        "Optional absolute workspace on the executing host",
-    ),
-    ("use", "Switch voyage", "Choose a voyage"),
-    ("rename", "Rename this voyage", "Type a name"),
-    (
-        "branch",
-        "Continue in a separate voyage",
-        "Type an optional name",
-    ),
-    (
-        "model",
-        "Change the next-turn model",
-        "Choose or type a model ID",
-    ),
-    (
-        "thinking",
-        "Change next-turn thinking",
-        "Choose or type an effort; inherit clears",
-    ),
-    (
-        "service",
-        "Change next-turn service",
-        "Choose or type a tier; inherit clears",
-    ),
-    ("models", "Show available models", ""),
-    (
-        "configure",
-        "Load next-turn configuration",
-        "Type an absolute configuration path on the executing host",
-    ),
-    ("tools", "Show available tools", ""),
-    (
-        "tool",
-        "Run an operator tool",
-        "Choose a tool, then type JSON arguments",
-    ),
-    ("policy", "Show permissions", ""),
-    (
-        "access",
-        "Change voyage access",
-        "Choose an access mode; Enter reviews the change",
-    ),
-    ("todos", "Show tasks", ""),
-    ("subagents", "Show delegated work", ""),
-    ("workflows", "Show saved workflows", ""),
-    ("host_resources", "Show machine cleanup records", ""),
-    (
-        "browser",
-        "Share a local browser",
-        "open | status | takeover | private | close | reconcile",
-    ),
-    ("terminals", "Browse program terminals", ""),
-    (
-        "terminal",
-        "Open a program terminal",
-        "Choose a terminal or press Enter to browse",
-    ),
-    (
-        "approve",
-        "Allow a pending permission request",
-        "Choose a pending approval",
-    ),
-    (
-        "deny",
-        "Deny a pending permission request",
-        "Choose a pending approval",
-    ),
-    (
-        "answer",
-        "Answer a pending question",
-        "Choose a question, then type your answer",
-    ),
-    ("cancel", "Request cancellation of the active run", ""),
-    ("receipt", "Check an unconfirmed command", ""),
-    (
-        "compact",
-        "Compact older conversation messages",
-        "Choose how many recent messages to retain",
-    ),
-    (
-        "clear",
-        "Clear this conversation",
-        "Type this voyage's full UUID to confirm clearing history",
-    ),
-    (
-        "archive",
-        "Archive this voyage and release its process after cleanup",
-        "",
-    ),
-    ("archived", "Browse archived voyages", ""),
-    ("voyages", "Browse current voyages", ""),
-    ("restore", "Restore this voyage", ""),
-    (
-        "delete",
-        "Delete this conversation",
-        "Type this voyage's full UUID to confirm deletion",
-    ),
-    (
-        "export",
-        "Save conversation as Markdown",
-        "Type a destination path on this computer",
-    ),
-    ("conversation", "Return to the conversation", ""),
-    ("quit", "Leave Helm; voyages keep running", ""),
-];
+use super::discovery::COMMANDS;
 
 #[derive(Default)]
 pub(super) struct Completion {
@@ -357,7 +232,10 @@ impl App {
             }
             "compact" => {
                 for count in [1, 10, 20, 50, 100] {
-                    options.push((count.to_string(), format!("Retain {count} recent messages")));
+                    options.push((
+                        count.to_string(),
+                        format!("Protect newest {count} from this reduction pass"),
+                    ));
                 }
             }
             "approve" | "deny" | "answer" => {

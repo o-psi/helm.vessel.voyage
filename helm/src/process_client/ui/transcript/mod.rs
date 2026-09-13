@@ -1,9 +1,11 @@
 //! A readable projection of canonical messages, activity and provisional output.
 mod activity;
 mod history;
+mod history_ux;
 mod input;
 mod layout;
 pub(in crate::process_client::ui) mod navigation;
+mod stream;
 use super::state::Message;
 use ratatui::text::Line;
 
@@ -44,6 +46,7 @@ pub(in crate::process_client::ui) struct State {
     expanded: std::collections::BTreeMap<usize, bool>,
     hits: Vec<(ratatui::layout::Rect, Key)>,
     tool_expanded: std::collections::BTreeSet<String>,
+    preview_calls: std::collections::BTreeMap<String, String>,
     last_click: Option<(Key, u16, u16, std::time::Instant)>,
     pub requested_from: Option<usize>,
     pub attempted: Option<u64>,
@@ -58,6 +61,7 @@ pub(in crate::process_client::ui) struct State {
     pub search: Option<String>,
     query: String,
     search_next: bool,
+    search_previous: bool,
     search_error: bool,
     pub delivery: Option<Delivery>,
 }

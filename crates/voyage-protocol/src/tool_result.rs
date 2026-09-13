@@ -111,6 +111,10 @@ pub enum ExecutionOutcome {
     Succeeded,
     ExecutionError,
     PolicyRefused,
+    ApprovalDenied,
+    ApprovalExpired,
+    ApprovalInvalidated,
+    ApprovalUnavailable,
     Cancelled,
     Unknown,
 }
@@ -141,6 +145,10 @@ impl ToolOutcome {
     pub fn label(&self) -> &'static str {
         match self.execution {
             ExecutionOutcome::PolicyRefused => "Refused",
+            ExecutionOutcome::ApprovalDenied => "Approval denied",
+            ExecutionOutcome::ApprovalExpired => "Approval expired",
+            ExecutionOutcome::ApprovalInvalidated => "Approval invalidated",
+            ExecutionOutcome::ApprovalUnavailable => "Approval unavailable",
             ExecutionOutcome::Cancelled => "Cancelled",
             ExecutionOutcome::Unknown => "Unconfirmed",
             ExecutionOutcome::ExecutionError => "Execution error",

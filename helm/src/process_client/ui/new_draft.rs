@@ -432,6 +432,22 @@ impl App {
 
     fn drive_draft(&mut self, id: Uuid, observe_only: bool) -> Result<()> {
         self.ensure_paste_finished(super::paste::Destination::Draft(id))?;
+        let draft = self.new_drafts.get(&id).context("draft unavailable")?;
+        if !observe_only
+            && draft.saved.start.is_none()
+            && !draft.busy
+            && draft
+                .saved
+                .account_settings
+                .as_ref()
+                .is_none_or(|settings| settings.account.is_none())
+        {
+            self.open_accounts(super::inference::Destination::Draft(id), "")?;
+            self.status =
+                "Choose an account to get ready. Your message is retained; setup does not send it."
+                    .into();
+            return Ok(());
+        }
         let draft = self.new_drafts.get_mut(&id).context("draft unavailable")?;
         anyhow::ensure!(!draft.busy, "First send is already being checked");
         anyhow::ensure!(

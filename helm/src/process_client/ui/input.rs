@@ -2,6 +2,12 @@ use super::*;
 
 impl App {
     pub(super) fn input(&mut self, event: Event) -> Result<()> {
+        if self.guard_small_layout(&event) {
+            return Ok(());
+        }
+        if self.discovery_input(&event) {
+            return Ok(());
+        }
         // Private enrollment consumes every event before clipboard/composer/history handlers.
         if self.account_input(&event)? {
             return Ok(());
@@ -13,6 +19,9 @@ impl App {
         if self.workflow_input(&event)? {
             return Ok(());
         }
+        if self.stop_input(&event) {
+            return Ok(());
+        }
         // Private connection input (especially paste) precedes every composer path.
         if self.vessel_input(&event)? {
             return Ok(());
@@ -21,10 +30,32 @@ impl App {
             return Ok(());
         }
         self.sync_interactions();
+        if self.inspection_input(&event) {
+            return Ok(());
+        }
         if self.operator_input(&event) {
             return Ok(());
         }
         if self.voyage_picker_input(&event) {
+            return Ok(());
+        }
+        // The catalogue owns all input while open, including drafts; neither
+        // search text nor clipboard shortcuts may fall through to composition.
+        if self.explore.is_some() {
+            if let Event::Key(key) = &event {
+                if key.kind != crossterm::event::KeyEventKind::Release {
+                    if key.modifiers.contains(KeyModifiers::CONTROL)
+                        && matches!(key.code, KeyCode::Char('c' | 'q'))
+                    {
+                        self.quit = true;
+                    } else if !key
+                        .modifiers
+                        .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+                    {
+                        self.explore_input(key)?;
+                    }
+                }
+            }
             return Ok(());
         }
         if self.paste_input(&event)? {
@@ -60,6 +91,21 @@ impl App {
             return Ok(());
         }
         self.sync_interactions();
+        // Catalogue owns editing before a draft composer, but after private forms.
+        if let Event::Key(key) = &event
+            && key.kind != crossterm::event::KeyEventKind::Release
+            && (self.explore.is_some() || key.code == KeyCode::F(8))
+            && !self.interactions.borrow().focused
+            && self.explore_input(key)?
+        {
+            return Ok(());
+        }
+        if self.active_draft.is_some()
+            && matches!(&event, Event::Key(key) if key.code == KeyCode::F(8) && key.kind != crossterm::event::KeyEventKind::Release)
+        {
+            self.discovery_open("actions")?;
+            return Ok(());
+        }
         if self.new_draft_input(&event)? {
             return Ok(());
         }

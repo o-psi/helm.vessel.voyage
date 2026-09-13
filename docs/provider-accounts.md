@@ -3,6 +3,25 @@
 Tracking: [#213](https://github.com/o-psi/voyage/issues/213). The design and
 acceptance matrix are in [the account plan](provider-accounts-plan.md).
 
+New here? Follow [Your first voyage](getting-started.md) for installation, private
+sign-in, a first task, and returning to the same conversation. This page is the
+account reference, including alternative providers and existing installations.
+
+## Choose the right authentication path
+
+| Goal | Use | Check before the first task |
+| --- | --- | --- |
+| New ChatGPT subscription/device-flow account | [Helm private sign-in](#device-sign-in-in-helm) | Named account, explicit host default, model availability; experimental transport, not API credit |
+| OpenAI or Anthropic API key | [Executing-host private API enrollment](#execution-host-api-enrollment) | Endpoint/transport, API billing and explicit default; a chat subscription is not API credit |
+| Existing legacy native OAuth cache | [Legacy migration](#legacy-migration) | Stop old credential writers, migrate explicitly, select a named account and set a default |
+| Remote account | [Remote authority](#remote-authority) | Authenticated executing host, account-use/enrollment grants and host-owner default |
+
+A stored credential or a successful login is **not** a verified entitlement, usable
+model, or sufficient balance. No live-provider success is implied by these
+instructions. Never paste secrets into chat, a question dialog, a tool argument, or
+a model-observed terminal. Use only the dedicated private sign-in view or a private
+human terminal on the executing host.
+
 Helm's **Account** composer control and `/account` select an executing-host account.
 Use different aliases, such as `personal` and `work`, for two accounts with the same
 provider. Aliases are display names, not provider identity verification. OpenAI API
@@ -44,14 +63,19 @@ not simulated by a local-only selection.
 ## Required default account
 
 The host owner must explicitly choose a **default account** before new voyages can
-start. In the account list, **F6 Set default** changes that host-wide default separately
-from the current voyage selection. There is no automatic first-account selection.
+start. Applying draft account settings with no default opens **Ready for the first
+task**: review the host and named account, then Enter saves that host-wide default;
+Esc returns without changing it. Once the host confirms the default, Enter applies
+the reviewed settings to the draft without sending a message. **F6 Set default**
+opens the separate default
+review for account management. There is no automatic first-account selection.
 New voyages inherit the default unless explicitly overridden; model/reasoning/service
 settings do not need explicit defaults. Legacy per-Helm remembered account choices no
 longer override the host default. Existing/frozen voyage selections remain unchanged.
 An unavailable default requires human action, never automatic fallback. Replace the
 default before removing its account. With no accounts, sign in or use private API
-setup first, then explicitly set a default. Scoped users ask the host owner to set it.
+setup first, then select the account, review settings and the explicit host-default
+consent. Scoped users ask the host owner to set it.
 
 ## Usage observations
 
@@ -79,10 +103,12 @@ the read-only upstream endpoint is not a live compatibility guarantee.
 
 ## Device sign-in in Helm
 
-In Account choose **Sign in to another account**, select the native ChatGPT connection,
-and enter a new safe alias. Adding an existing alias fails; it does not overwrite a
-working account. API providers without this device flow offer the private host CLI
-alternative, not a callback relay or API-key form in chat.
+In Account choose **+ ChatGPT — sign in with your subscription**. Select the
+native ChatGPT connection if more than one is available, then enter a new safe alias.
+Adding an existing alias fails; it does not overwrite a working account.
+**+ OpenAI / Anthropic — use an API key…** opens private host CLI instructions,
+not a callback relay or API-key form in chat. Both choices remain visible with no
+accounts. Review subscription versus API billing before choosing.
 
 A dedicated private view displays the fixed provider verification website,
 temporary user code, authenticated executing host, expiry, and status. Open the
@@ -134,23 +160,52 @@ inside the picker rather than behind it in the main status line.
 
 ## Execution-host API enrollment
 
-Run these commands **on the machine executing Voyage**, as its OS account. UUIDs
-below are placeholders obtained from safe metadata, not secret-bearing arguments:
+This is the alternative API-key branch, not a prerequisite for the ChatGPT device
+flow. You need the API provider's credit/billing separately from any chat-product
+subscription. In your **own private terminal on the machine executing Voyage**,
+as its OS account, choose **one**:
+
+```sh
+# OpenAI API credit/key
+vessel auth accounts setup --provider openai --account personal-api
+
+# Or Anthropic API credit/key
+vessel auth accounts setup --provider anthropic --account personal-api
+```
+
+`setup` selects the official provider endpoint and privately prompts for the key
+without echo. Escape/Ctrl-C cancels. It creates a named account without a connection
+UUID detour; it does **not** send a provider request, validate credit/model access,
+or silently set a host default. Never send a key in chat, a command argument, a
+URL, or a model-observed terminal. If using a Helm terminal requested for this
+purpose, press **F3**, choose its name, and press **Enter** to attach privately;
+**Ctrl+]** returns to Helm. Do not type a secret before private attachment.
+For remote Vessels, input belongs on that execution host rather than in Helm on
+your local machine.
+
+Return to Helm's **Account** view. In the API instructions view, **Enter** refreshes
+the accounts; choose the new alias, review model/settings, Apply, and review the
+explicit host-default consent if this host has no default. The host owner must
+confirm it, then apply the reviewed draft settings with Enter. Rejoin [First task](getting-started.md#4-first-task) after the default
+and draft selection are confirmed. A stored key alone is not provider readiness.
+
+### Advanced connections and environment bindings
+
+Custom endpoints and explicit transport selection use `connect`/`add`. UUIDs below
+are placeholders obtained from safe metadata, not secrets. Review the endpoint
+before enrolling a credential; do not reuse a connection for a different provider.
 
 ```sh
 vessel auth accounts connections
 vessel auth accounts connect --label "OpenAI API" \
   --endpoint https://api.openai.com/v1 --transports openai-responses,openai-chat
 vessel auth accounts add --connection CONNECTION_UUID --account work-api
-vessel auth accounts add --connection CONNECTION_UUID --account personal-api
 vessel auth accounts list
 ```
 
-`add` without `--env` requires an attached private human terminal and reads the key
-without echo. Escape/Ctrl-C cancels. In Helm, use the executing-host private terminal
-workflow; never send a key in chat, a command argument, a URL, or a model-observed
-terminal. For remote Vessels, perform the input on that execution host rather than
-copying the key through Helm.
+`add` without `--env` also requires an attached private human terminal and reads
+the key without echo. The official Anthropic endpoint is
+`https://api.anthropic.com/v1` with `--transports anthropic`.
 
 An explicitly named host environment binding is also supported:
 
@@ -215,12 +270,24 @@ Model-facing tools receive no account enumeration, enrollment, or switching capa
 
 ## Existing installations
 
+### Legacy migration
+
+The commands `vessel auth login`, `vessel auth login --device`, and
+`vessel auth import-codex` manage the **legacy native OAuth cache**. They do not,
+on their own, enroll a named account or set the host default required for a new
+voyage. New users should use Helm's named-account sign-in instead. Importing an
+existing Codex cache does not launch Codex or transfer its product billing to API
+access.
+
 Legacy OAuth migration is an explicit upgrade boundary:
 
 ```sh
 # First stop old credential-writing binaries; this flag is an owner assertion.
 vessel auth accounts migrate-legacy --old-writers-stopped
 ```
+
+After migration, use **Account** in Helm to review the named account and explicitly
+set the host default (**F6 Set default**). Check the selected model before sending.
 
 Before admitting a turn with an old unbound OAuth configuration, select a named
 account or perform this explicit migration. The refusal is intentional: reading a
